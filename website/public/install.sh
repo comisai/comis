@@ -405,6 +405,9 @@ show_install_plan() {
     if [[ -n "$detected_checkout" ]]; then
         ui_kv "Detected checkout" "$detected_checkout"
     fi
+    if should_create_dedicated_user; then
+        ui_kv "Run as user" "$COMIS_USER"
+    fi
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_kv "Dry run" "yes"
     fi
@@ -921,6 +924,8 @@ Options:
   --beta                               Use beta if available, else latest
   --git-dir, --dir <path>             Checkout directory (default: ~/comis)
   --no-git-update                      Skip git pull for existing checkout
+  --user <name>                          Dedicated Linux user (default: comis, created if root)
+  --no-user                              Install as current user even when root (skip user creation)
   --no-init                            Skip interactive init (non-interactive)
   --no-prompt                           Disable prompts (required in CI/automation)
   --dry-run                             Print what would happen (no changes)
@@ -933,6 +938,7 @@ Environment variables:
   COMIS_BETA=0|1
   COMIS_GIT_DIR=...
   COMIS_GIT_UPDATE=0|1
+  COMIS_USER=comis                    Default user for Linux root installs
   COMIS_NO_PROMPT=1
   COMIS_DRY_RUN=1
   COMIS_NO_INIT=1
@@ -1000,6 +1006,14 @@ parse_args() {
                 ;;
             --no-git-update)
                 GIT_UPDATE=0
+                shift
+                ;;
+            --user)
+                COMIS_USER="$2"
+                shift 2
+                ;;
+            --no-user)
+                COMIS_REEXEC=1
                 shift
                 ;;
             *)
@@ -1628,6 +1642,99 @@ check_git() {
 
 is_root() {
     [[ "$(id -u)" -eq 0 ]]
+}
+
+COMIS_USER="${COMIS_USER:-comis}"
+COMIS_REEXEC="${COMIS_REEXEC:-0}"
+
+should_create_dedicated_user() {
+    # Only on Linux, only when running as root, and not already re-execed
+    [[ "$OS" == "linux" ]] && is_root && [[ "$COMIS_REEXEC" != "1" ]]
+}
+
+comis_user_exists() {
+    id "$COMIS_USER" &>/dev/null
+}
+
+create_comis_user() {
+    if comis_user_exists; then
+        ui_success "User '$COMIS_USER' already exists"
+        return 0
+    fi
+
+    ui_info "Creating dedicated system user '$COMIS_USER'"
+    useradd --system --create-home --shell /bin/bash \
+        --comment "Comis AI agent platform" "$COMIS_USER"
+    ui_success "User '$COMIS_USER' created (home: $(eval echo "~$COMIS_USER"))"
+}
+
+install_system_deps_as_root() {
+    # Install Node.js and Git as root before switching to the dedicated user
+    ui_stage "Preparing system (as root)"
+
+    if ! check_node; then
+        install_node
+    fi
+    if ! check_git; then
+        install_git
+    fi
+
+    ui_success "System dependencies ready"
+}
+
+reexec_as_comis_user() {
+    local comis_home
+    comis_home="$(eval echo "~$COMIS_USER")"
+
+    # Forward relevant args and env to the re-exec
+    local -a forwarded_args=()
+    [[ "$NO_INIT" == "1" ]] && forwarded_args+=(--no-init)
+    [[ "$NO_PROMPT" == "1" ]] && forwarded_args+=(--no-prompt)
+    [[ "$DRY_RUN" == "1" ]] && forwarded_args+=(--dry-run)
+    [[ "$VERBOSE" == "1" ]] && forwarded_args+=(--verbose)
+    [[ -n "$INSTALL_METHOD" ]] && forwarded_args+=(--install-method "$INSTALL_METHOD")
+    [[ "$COMIS_VERSION" != "latest" ]] && forwarded_args+=(--version "$COMIS_VERSION")
+    [[ "$USE_BETA" == "1" ]] && forwarded_args+=(--beta)
+
+    # Copy the install script to a location the comis user can read
+    local script_copy="${comis_home}/.comis-install.sh"
+    if [[ -f "$0" ]]; then
+        cp "$0" "$script_copy"
+    else
+        # Piped via curl — save stdin copy
+        local self_tmp
+        self_tmp="$(mktemp)"
+        TMPFILES+=("$self_tmp")
+        # The script is already running, so we need the original file.
+        # Fall back to re-downloading if we can't find ourselves.
+        if [[ -f "/proc/self/fd/255" ]]; then
+            cp /proc/self/fd/255 "$script_copy" 2>/dev/null || true
+        fi
+        if [[ ! -s "$script_copy" ]]; then
+            download_file "https://comis.ai/install.sh" "$script_copy"
+        fi
+    fi
+    chmod +x "$script_copy"
+    chown "$COMIS_USER:$COMIS_USER" "$script_copy"
+
+    ui_info "Handing off to user '$COMIS_USER'"
+    echo ""
+
+    # Re-exec as the comis user with COMIS_REEXEC=1 to skip the handoff loop
+    su - "$COMIS_USER" -c "COMIS_REEXEC=1 bash '$script_copy' ${forwarded_args[*]}"
+    local rc=$?
+
+    rm -f "$script_copy" 2>/dev/null || true
+
+    if [[ "$rc" -eq 0 ]]; then
+        echo ""
+        ui_section "Run commands as the comis user"
+        echo "  su - $COMIS_USER"
+        echo "  comis init"
+        echo "  comis daemon start"
+    fi
+
+    return "$rc"
 }
 
 maybe_sudo() {
@@ -2268,6 +2375,14 @@ main() {
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_success "Dry run complete (no changes made)"
         return 0
+    fi
+
+    # On Linux as root: install system deps, create dedicated user, re-exec
+    if should_create_dedicated_user; then
+        install_system_deps_as_root
+        create_comis_user
+        reexec_as_comis_user
+        return $?
     fi
 
     # Check for existing installation
