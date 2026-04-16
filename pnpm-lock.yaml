@@ -236,6 +236,15 @@ importers:
 
   packages/comis:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^0.15.0
+        version: 0.15.0(zod@4.3.6)
+      '@clack/core':
+        specifier: ^1.1.0
+        version: 1.1.0
+      '@clack/prompts':
+        specifier: ^1.1.0
+        version: 1.1.0
       '@comis/agent':
         specifier: workspace:*
         version: link:../agent
@@ -269,6 +278,192 @@ importers:
       '@comis/skills':
         specifier: workspace:*
         version: link:../skills
+      '@elevenlabs/elevenlabs-js':
+        specifier: ^2.38.1
+        version: 2.38.1
+      '@fal-ai/client':
+        specifier: 1.9.5
+        version: 1.9.5
+      '@google/genai':
+        specifier: 1.47.0
+        version: 1.47.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))
+      '@grammyjs/auto-retry':
+        specifier: ^2.0.2
+        version: 2.0.2(grammy@1.41.1)
+      '@grammyjs/files':
+        specifier: ^1.2.0
+        version: 1.2.0(grammy@1.41.1)
+      '@grammyjs/runner':
+        specifier: ^2.0.3
+        version: 2.0.3(grammy@1.41.1)
+      '@hapi/boom':
+        specifier: ^10.0.1
+        version: 10.0.1
+      '@homebridge/ciao':
+        specifier: ^1.3.5
+        version: 1.3.5
+      '@hono/node-server':
+        specifier: ^1.19.11
+        version: 1.19.11(hono@4.12.7)
+      '@hono/node-ws':
+        specifier: ^1.3.0
+        version: 1.3.0(@hono/node-server@1.19.11(hono@4.12.7))(hono@4.12.7)
+      '@line/bot-sdk':
+        specifier: ^10.6.0
+        version: 10.6.0
+      '@mariozechner/pi-agent-core':
+        specifier: 0.65.0
+        version: 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-ai':
+        specifier: 0.65.0
+        version: 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-coding-agent':
+        specifier: 0.65.0
+        version: 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.27.1
+        version: 1.27.1(zod@4.3.6)
+      '@mozilla/readability':
+        specifier: ^0.6.0
+        version: 0.6.0
+      '@napi-rs/canvas':
+        specifier: ^0.1.96
+        version: 0.1.96
+      '@sinclair/typebox':
+        specifier: ^0.34.48
+        version: 0.34.49
+      '@slack/bolt':
+        specifier: ^4.6.0
+        version: 4.6.0(@types/express@5.0.6)
+      '@slack/web-api':
+        specifier: ^7.14.1
+        version: 7.14.1
+      '@whiskeysockets/baileys':
+        specifier: ^7.0.0-rc.9
+        version: 7.0.0-rc.9(sharp@0.34.5)
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.6.2
+      chalk:
+        specifier: ^5.6.2
+        version: 5.6.2
+      chardet:
+        specifier: ^2.1.1
+        version: 2.1.1
+      chokidar:
+        specifier: ^5.0.0
+        version: 5.0.0
+      cli-table3:
+        specifier: ^0.6.5
+        version: 0.6.5
+      commander:
+        specifier: ^14.0.0
+        version: 14.0.3
+      croner:
+        specifier: ^10.0.1
+        version: 10.0.1
+      diff:
+        specifier: 8.0.4
+        version: 8.0.4
+      discord.js:
+        specifier: ^14.25.1
+        version: 14.25.1
+      edge-tts-universal:
+        specifier: ^1.4.0
+        version: 1.4.0
+      file-type:
+        specifier: ^21.3.0
+        version: 21.3.4
+      grammy:
+        specifier: ^1.41.1
+        version: 1.41.1
+      hono:
+        specifier: ^4.12.5
+        version: 4.12.7
+      hono-rate-limiter:
+        specifier: ^0.5.3
+        version: 0.5.3(hono@4.12.7)
+      iconv-lite:
+        specifier: ^0.7.2
+        version: 0.7.2
+      ignore:
+        specifier: ^7.0.5
+        version: 7.0.5
+      imapflow:
+        specifier: ^1.2.18
+        version: 1.2.18
+      impit:
+        specifier: ^0.8.2
+        version: 0.8.2
+      ipaddr.js:
+        specifier: ^2.3.0
+        version: 2.3.0
+      irc-framework:
+        specifier: ^4.14.0
+        version: 4.14.0
+      json-rpc-2.0:
+        specifier: ^1.7.1
+        version: 1.7.1
+      linkedom:
+        specifier: ^0.18.12
+        version: 0.18.12
+      lru-cache:
+        specifier: ^11.2.6
+        version: 11.2.7
+      mailparser:
+        specifier: ^3.9.6
+        version: 3.9.6
+      music-metadata:
+        specifier: ^11.12.1
+        version: 11.12.1
+      node-llama-cpp:
+        specifier: ^3.17.1
+        version: 3.17.1(typescript@5.9.3)
+      nodemailer:
+        specifier: ^8.0.5
+        version: 8.0.5
+      openai:
+        specifier: ^6.27.0
+        version: 6.27.0(ws@8.20.0)(zod@4.3.6)
+      ora:
+        specifier: ^9.0.0
+        version: 9.3.0
+      p-queue:
+        specifier: ^9.1.0
+        version: 9.1.0
+      pdfjs-dist:
+        specifier: ^5.5.207
+        version: 5.5.207
+      pino:
+        specifier: ^10.3.1
+        version: 10.3.1
+      pino-roll:
+        specifier: ^4.0.0
+        version: 4.0.0
+      playwright-core:
+        specifier: ^1.58.2
+        version: 1.58.2
+      proper-lockfile:
+        specifier: ^4.1.2
+        version: 4.1.2
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
+      sqlite-vec:
+        specifier: 0.1.7-alpha.2
+        version: 0.1.7-alpha.2
+      undici:
+        specifier: ^7.22.0
+        version: 7.24.6
+      ws:
+        specifier: ^8.19.0
+        version: 8.20.0
+      yaml:
+        specifier: ^2.8.2
+        version: 2.8.3
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       typescript:
         specifier: ^5.9.3
@@ -512,10 +707,10 @@ importers:
         version: 1.9.5
       '@mariozechner/pi-agent-core':
         specifier: 0.65.0
-        version: 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)
+        version: 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@mariozechner/pi-coding-agent':
         specifier: 0.65.0
-        version: 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)
+        version: 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(zod@4.3.6)
@@ -557,7 +752,7 @@ importers:
         version: 11.12.1
       openai:
         specifier: ^6.27.0
-        version: 6.27.0(ws@8.19.0)(zod@4.3.6)
+        version: 6.27.0(ws@8.20.0)(zod@4.3.6)
       p-queue:
         specifier: ^9.1.0
         version: 9.1.0
@@ -2431,6 +2626,7 @@ packages:
   basic-ftp@5.2.0:
     resolution: {integrity: sha512-VoMINM2rqJwJgfdHq6RiUudKt2BV+FY5ZFezP/ypmwayk68+NzzAQy4XXLlqsGD4MCzq3DrmNFD/uUmBJuGoXw==}
     engines: {node: '>=10.0.0'}
+    deprecated: Security vulnerability fixed in 5.2.1, please upgrade
 
   better-sqlite3@12.6.2:
     resolution: {integrity: sha512-8VYKM3MjCa9WcaSAI3hzwhmyHVlH8tiGFwf0RlTsZPWJ1I5MkzjiudCo4KC4DxOaL/53A5B1sI/IbldNFDbsKA==}
@@ -4692,11 +4888,6 @@ packages:
     resolution: {integrity: sha512-CzhO+pFNo8ajLM2d2IW/R93ipy99LWjtwblvC1RsoSUMZgyLbYFr221TnSNT7GjGdYui6P459mw9JH/g/zW2ug==}
     engines: {node: '>=18'}
 
-  zod-to-json-schema@3.25.1:
-    resolution: {integrity: sha512-pM/SU9d3YAggzi6MtR4h7ruuQlqKtad8e9S0fmxcMi+ueAK5Korys/aWcV9LIIHTVbj01NdzxcnXSN+O74ZIVA==}
-    peerDependencies:
-      zod: ^3.25 || ^4
-
   zod-to-json-schema@3.25.2:
     resolution: {integrity: sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==}
     peerDependencies:
@@ -5177,7 +5368,7 @@ snapshots:
       '@vladfrangu/async_event_emitter': 2.4.7
       discord-api-types: 0.38.42
       tslib: 2.8.1
-      ws: 8.19.0
+      ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -5186,7 +5377,7 @@ snapshots:
     dependencies:
       command-exists: 1.2.9
       node-fetch: 2.7.0
-      ws: 8.19.0
+      ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
       - encoding
@@ -5375,7 +5566,7 @@ snapshots:
     dependencies:
       '@hono/node-server': 1.19.11(hono@4.12.7)
       hono: 4.12.7
-      ws: 8.19.0
+      ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -5591,45 +5782,9 @@ snapshots:
       std-env: 3.10.0
       yoctocolors: 2.1.2
 
-  '@mariozechner/pi-agent-core@0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)':
-    dependencies:
-      '@mariozechner/pi-ai': 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - aws-crt
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
   '@mariozechner/pi-agent-core@0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)':
     dependencies:
       '@mariozechner/pi-ai': 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - aws-crt
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
-  '@mariozechner/pi-ai@0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)':
-    dependencies:
-      '@anthropic-ai/sdk': 0.73.0(zod@4.3.6)
-      '@aws-sdk/client-bedrock-runtime': 3.1019.0
-      '@google/genai': 1.47.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))
-      '@mistralai/mistralai': 1.14.1
-      '@sinclair/typebox': 0.34.49
-      ajv: 8.18.0
-      ajv-formats: 3.0.1(ajv@8.18.0)
-      chalk: 5.6.2
-      openai: 6.26.0(ws@8.19.0)(zod@4.3.6)
-      partial-json: 0.1.7
-      proxy-agent: 6.5.0
-      undici: 7.24.6
-      zod-to-json-schema: 3.25.2(zod@4.3.6)
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - aws-crt
@@ -5654,39 +5809,6 @@ snapshots:
       proxy-agent: 6.5.0
       undici: 7.24.6
       zod-to-json-schema: 3.25.2(zod@4.3.6)
-    transitivePeerDependencies:
-      - '@modelcontextprotocol/sdk'
-      - aws-crt
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
-      - zod
-
-  '@mariozechner/pi-coding-agent@0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)':
-    dependencies:
-      '@mariozechner/jiti': 2.6.5
-      '@mariozechner/pi-agent-core': 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)
-      '@mariozechner/pi-ai': 0.65.0(@modelcontextprotocol/sdk@1.27.1(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)
-      '@mariozechner/pi-tui': 0.65.0
-      '@silvia-odwyer/photon-node': 0.3.4
-      ajv: 8.18.0
-      chalk: 5.6.2
-      cli-highlight: 2.1.11
-      diff: 8.0.4
-      extract-zip: 2.0.1
-      file-type: 21.3.4
-      glob: 13.0.6
-      hosted-git-info: 9.0.2
-      ignore: 7.0.5
-      marked: 15.0.12
-      minimatch: 10.2.4
-      proper-lockfile: 4.1.2
-      strip-ansi: 7.2.0
-      undici: 7.24.6
-      yaml: 2.8.3
-    optionalDependencies:
-      '@mariozechner/clipboard': 0.3.2
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - aws-crt
@@ -5766,7 +5888,7 @@ snapshots:
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
       zod: 4.3.6
-      zod-to-json-schema: 3.25.1(zod@4.3.6)
+      zod-to-json-schema: 3.25.2(zod@4.3.6)
     transitivePeerDependencies:
       - supports-color
 
@@ -6060,7 +6182,7 @@ snapshots:
       '@types/node': 22.19.17
       '@types/ws': 8.18.1
       eventemitter3: 5.0.4
-      ws: 8.19.0
+      ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
       - debug
@@ -6072,7 +6194,7 @@ snapshots:
     dependencies:
       '@slack/logger': 4.0.0
       '@slack/types': 2.20.0
-      '@types/node': 25.5.0
+      '@types/node': 22.19.17
       '@types/retry': 0.12.0
       axios: 1.13.6
       eventemitter3: 5.0.4
@@ -7145,9 +7267,9 @@ snapshots:
       axios: 1.13.6
       cross-fetch: 4.1.0
       https-proxy-agent: 7.0.6
-      isomorphic-ws: 5.0.0(ws@8.19.0)
+      isomorphic-ws: 5.0.0(ws@8.20.0)
       uuid: 11.1.0
-      ws: 8.19.0
+      ws: 8.20.0
       xml-escape: 1.1.0
     transitivePeerDependencies:
       - bufferutil
@@ -7615,7 +7737,7 @@ snapshots:
       '@types/ws': 8.18.1
       entities: 7.0.1
       whatwg-mimetype: 3.0.0
-      ws: 8.19.0
+      ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -7872,9 +7994,9 @@ snapshots:
     dependencies:
       fast-text-encoding: 1.0.6
 
-  isomorphic-ws@5.0.0(ws@8.19.0):
+  isomorphic-ws@5.0.0(ws@8.20.0):
     dependencies:
-      ws: 8.19.0
+      ws: 8.20.0
 
   jiti@2.6.1: {}
 
@@ -8153,7 +8275,7 @@ snapshots:
       '@tokenizer/token': 0.3.0
       content-type: 1.0.5
       debug: 4.4.3
-      file-type: 21.3.1
+      file-type: 21.3.4
       media-typer: 1.1.0
       strtok3: 10.3.4
       token-types: 6.1.2
@@ -8279,19 +8401,9 @@ snapshots:
     dependencies:
       mimic-function: 5.0.1
 
-  openai@6.26.0(ws@8.19.0)(zod@4.3.6):
-    optionalDependencies:
-      ws: 8.19.0
-      zod: 4.3.6
-
   openai@6.26.0(ws@8.20.0)(zod@4.3.6):
     optionalDependencies:
       ws: 8.20.0
-      zod: 4.3.6
-
-  openai@6.27.0(ws@8.19.0)(zod@4.3.6):
-    optionalDependencies:
-      ws: 8.19.0
       zod: 4.3.6
 
   openai@6.27.0(ws@8.20.0)(zod@4.3.6):
@@ -9427,10 +9539,6 @@ snapshots:
   yocto-queue@0.1.0: {}
 
   yoctocolors@2.1.2: {}
-
-  zod-to-json-schema@3.25.1(zod@4.3.6):
-    dependencies:
-      zod: 4.3.6
 
   zod-to-json-schema@3.25.2(zod@4.3.6):
     dependencies:
