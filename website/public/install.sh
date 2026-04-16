@@ -314,7 +314,7 @@ ui_info() {
     if [[ -n "$GUM" ]]; then
         "$GUM" log --level info "$msg"
     else
-        echo -e "  ${INFO}→${NC} ${msg}"
+        echo -e "  ${MUTED}·${NC} ${msg}"
     fi
 }
 
@@ -551,10 +551,10 @@ run_quiet_step() {
         fi
     fi
 
-    ui_error "${title} failed - re-run with --verbose for details"
     if [[ -s "$log" ]]; then
-        tail -n 80 "$log" >&2 || true
+        tail -n 20 "$log" >&2 || true
     fi
+    ui_error "${title} failed - re-run with --verbose for details"
     return 1
 }
 
@@ -649,10 +649,10 @@ install_build_tools_linux() {
     if command -v apt-get &> /dev/null; then
         wait_for_apt_lock
         if is_root; then
-            run_quiet_step "Updating package index" apt-get update
+            run_quiet_step "Updating package index" apt-get update || ui_warn "Package index update had errors (continuing)"
             run_quiet_step "Installing build tools" apt-get install -y -qq build-essential python3 make g++ cmake
         else
-            run_quiet_step "Updating package index" sudo apt-get update
+            run_quiet_step "Updating package index" sudo apt-get update || ui_warn "Package index update had errors (continuing)"
             run_quiet_step "Installing build tools" sudo apt-get install -y -qq build-essential python3 make g++ cmake
         fi
         return 0
@@ -772,7 +772,13 @@ run_npm_global_install() {
         return $?
     fi
 
+    echo -e "  ${INFO}→${NC} Installing Comis package (this may take a minute)..."
     "${cmd[@]}" >"$log" 2>&1
+    local rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+        echo -e "  ${SUCCESS}✓${NC} Comis package installed"
+    fi
+    return "$rc"
 }
 
 extract_npm_debug_log_path() {
@@ -2370,9 +2376,15 @@ main() {
     fi
 
     bootstrap_gum_temp || true
-    print_installer_banner
-    print_gum_status
-    detect_os_or_die
+    if [[ "$COMIS_REEXEC" == "1" ]]; then
+        detect_os_or_die
+        echo ""
+        ui_info "Continuing as user '$(whoami)'"
+    else
+        print_installer_banner
+        print_gum_status
+        detect_os_or_die
+    fi
 
     local detected_checkout=""
     detected_checkout="$(detect_comis_checkout "$PWD" || true)"
@@ -2406,7 +2418,9 @@ main() {
         exit 2
     fi
 
-    show_install_plan "$detected_checkout"
+    if [[ "$COMIS_REEXEC" != "1" ]]; then
+        show_install_plan "$detected_checkout"
+    fi
 
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_success "Dry run complete (no changes made)"
