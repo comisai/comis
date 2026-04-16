@@ -543,9 +543,9 @@ run_quiet_step() {
             return 0
         fi
     else
-        # Non-interactive: show step name, run command, show result
+        # Non-interactive: show step name, let output flow, show result
         echo -e "  ${INFO}→${NC} ${title}..."
-        if "$@" >"$log" 2>&1; then
+        if "$@" 2>&1 | tee "$log"; then
             echo -e "  ${SUCCESS}✓${NC} ${title}"
             return 0
         fi
