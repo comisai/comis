@@ -273,9 +273,9 @@ print_installer_banner() {
         return
     fi
 
-    echo -e "${ACCENT}${BOLD}"
-    echo "  Comis Installer"
-    echo -e "${NC}${INFO}  ${TAGLINE}${NC}"
+    echo ""
+    echo -e "  ${BOLD}${SUCCESS}C${ACCENT}O${SUCCESS}M${ACCENT}I${SUCCESS}S${NC} ${MUTED}Installer${NC}"
+    echo -e "  ${SUCCESS}Friendly${NC} by nature. ${ACCENT}Powerful${NC} by design."
     echo ""
 }
 
@@ -314,7 +314,7 @@ ui_info() {
     if [[ -n "$GUM" ]]; then
         "$GUM" log --level info "$msg"
     else
-        echo -e "${MUTED}.${NC} ${msg}"
+        echo -e "  ${INFO}→${NC} ${msg}"
     fi
 }
 
@@ -323,7 +323,7 @@ ui_warn() {
     if [[ -n "$GUM" ]]; then
         "$GUM" log --level warn "$msg"
     else
-        echo -e "${WARN}!${NC} ${msg}"
+        echo -e "  ${WARN}⚠${NC} ${msg}"
     fi
 }
 
@@ -331,10 +331,10 @@ ui_success() {
     local msg="$*"
     if [[ -n "$GUM" ]]; then
         local mark
-        mark="$("$GUM" style --foreground "#06B6D4" --bold "[ok]")"
-        echo "${mark} ${msg}"
+        mark="$("$GUM" style --foreground "#06B6D4" --bold "✓")"
+        echo "  ${mark} ${msg}"
     else
-        echo -e "${SUCCESS}[ok]${NC} ${msg}"
+        echo -e "  ${SUCCESS}✓${NC} ${msg}"
     fi
 }
 
@@ -343,7 +343,7 @@ ui_error() {
     if [[ -n "$GUM" ]]; then
         "$GUM" log --level error "$msg"
     else
-        echo -e "${ERROR}[X]${NC} ${msg}"
+        echo -e "  ${ERROR}✗${NC} ${msg}"
     fi
 }
 
@@ -353,10 +353,10 @@ INSTALL_STAGE_CURRENT=0
 ui_section() {
     local title="$1"
     if [[ -n "$GUM" ]]; then
-        "$GUM" style --bold --foreground "#FF6B4A" --padding "1 0" "$title"
+        "$GUM" style --bold --foreground "#06B6D4" --padding "1 0" "$title"
     else
         echo ""
-        echo -e "${ACCENT}${BOLD}${title}${NC}"
+        echo -e "  ${SUCCESS}${BOLD}${title}${NC}"
     fi
 }
 
@@ -375,7 +375,7 @@ ui_kv() {
         value_part="$("$GUM" style --bold "$value")"
         "$GUM" join --horizontal "$key_part" "$value_part"
     else
-        echo -e "${MUTED}${key}:${NC} ${value}"
+        echo -e "  ${MUTED}${key}${NC}  ${BOLD}${value}${NC}"
     fi
 }
 
@@ -479,7 +479,7 @@ ui_celebrate() {
     if [[ -n "$GUM" ]]; then
         "$GUM" style --bold --foreground "#06B6D4" "$msg"
     else
-        echo -e "${SUCCESS}${BOLD}${msg}${NC}"
+        echo -e "  ${SUCCESS}${BOLD}${msg}${NC}"
     fi
 }
 
