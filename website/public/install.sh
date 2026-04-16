@@ -522,6 +522,37 @@ run_with_spinner() {
     "$@"
 }
 
+SPINNER_FRAMES=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+SPINNER_PID=""
+
+start_spinner() {
+    local title="$1"
+    (
+        local i=0
+        while true; do
+            printf '\r  %b %s...' "${SUCCESS}${SPINNER_FRAMES[$i]}${NC}" "$title"
+            i=$(( (i + 1) % ${#SPINNER_FRAMES[@]} ))
+            sleep 0.1
+        done
+    ) &
+    SPINNER_PID=$!
+}
+
+stop_spinner() {
+    local title="$1"
+    local ok="${2:-true}"
+    if [[ -n "$SPINNER_PID" ]]; then
+        kill "$SPINNER_PID" 2>/dev/null
+        wait "$SPINNER_PID" 2>/dev/null || true
+        SPINNER_PID=""
+    fi
+    if [[ "$ok" == "true" ]]; then
+        printf '\r  %b %s   \n' "${SUCCESS}✓${NC}" "$title"
+    else
+        printf '\r  %b %s   \n' "${ERROR}✗${NC}" "$title"
+    fi
+}
+
 run_quiet_step() {
     local title="$1"
     shift
@@ -543,12 +574,14 @@ run_quiet_step() {
             return 0
         fi
     else
-        # Non-interactive: show step name, suppress output, show result
-        echo -e "  ${INFO}→${NC} ${title}..."
-        if "$@" >"$log" 2>&1; then
-            echo -e "  ${SUCCESS}✓${NC} ${title}"
+        start_spinner "$title"
+        "$@" >"$log" 2>&1
+        local rc=$?
+        if [[ "$rc" -eq 0 ]]; then
+            stop_spinner "$title" true
             return 0
         fi
+        stop_spinner "$title" false
     fi
 
     if [[ -s "$log" ]]; then
@@ -772,12 +805,14 @@ run_npm_global_install() {
         return $?
     fi
 
-    echo -e "  ${INFO}→${NC} Installing Comis package..."
+    start_spinner "Installing Comis package"
     env "SHARP_IGNORE_GLOBAL_LIBVIPS=$SHARP_IGNORE_GLOBAL_LIBVIPS" \
         npm --silent --no-fund --no-audit install -g "$spec" >"$log" 2>&1
     local rc=$?
     if [[ "$rc" -eq 0 ]]; then
-        echo -e "  ${SUCCESS}✓${NC} Comis package installed"
+        stop_spinner "Comis package installed" true
+    else
+        stop_spinner "Comis package install failed" false
     fi
     return "$rc"
 }
