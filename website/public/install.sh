@@ -630,29 +630,29 @@ install_build_tools_linux() {
 
     if command -v apt-get &> /dev/null; then
         if is_root; then
-            run_quiet_step "Updating package index" apt-get update -qq
-            run_quiet_step "Installing build tools" apt-get install -y -qq build-essential python3 make g++ cmake
+            run_quiet_step "Updating package index" apt-get update -q
+            run_quiet_step "Installing build tools" apt-get install -y -q build-essential python3 make g++ cmake
         else
-            run_quiet_step "Updating package index" sudo apt-get update -qq
-            run_quiet_step "Installing build tools" sudo apt-get install -y -qq build-essential python3 make g++ cmake
+            run_quiet_step "Updating package index" sudo apt-get update -q
+            run_quiet_step "Installing build tools" sudo apt-get install -y -q build-essential python3 make g++ cmake
         fi
         return 0
     fi
 
     if command -v dnf &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing build tools" dnf install -y -q gcc gcc-c++ make cmake python3
+            run_quiet_step "Installing build tools" dnf install -y gcc gcc-c++ make cmake python3
         else
-            run_quiet_step "Installing build tools" sudo dnf install -y -q gcc gcc-c++ make cmake python3
+            run_quiet_step "Installing build tools" sudo dnf install -y gcc gcc-c++ make cmake python3
         fi
         return 0
     fi
 
     if command -v yum &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing build tools" yum install -y -q gcc gcc-c++ make cmake python3
+            run_quiet_step "Installing build tools" yum install -y gcc gcc-c++ make cmake python3
         else
-            run_quiet_step "Installing build tools" sudo yum install -y -q gcc gcc-c++ make cmake python3
+            run_quiet_step "Installing build tools" sudo yum install -y gcc gcc-c++ make cmake python3
         fi
         return 0
     fi
@@ -1543,11 +1543,11 @@ install_node() {
                 if download_file "https://deb.nodesource.com/setup_22.x" "$tmp"; then
                     if is_root; then
                         run_quiet_step "Configuring NodeSource repository" bash "$tmp" && \
-                        run_quiet_step "Installing Node.js" apt-get install -y -qq nodejs && \
+                        run_quiet_step "Installing Node.js" apt-get install -y -q nodejs && \
                         nodesource_ok=true
                     else
                         run_quiet_step "Configuring NodeSource repository" sudo -E bash "$tmp" && \
-                        run_quiet_step "Installing Node.js" sudo apt-get install -y -qq nodejs && \
+                        run_quiet_step "Installing Node.js" sudo apt-get install -y -q nodejs && \
                         nodesource_ok=true
                     fi
                 fi
@@ -1557,11 +1557,11 @@ install_node() {
                 if download_file "https://rpm.nodesource.com/setup_22.x" "$tmp"; then
                     if is_root; then
                         run_quiet_step "Configuring NodeSource repository" bash "$tmp" && \
-                        run_quiet_step "Installing Node.js" dnf install -y -q nodejs && \
+                        run_quiet_step "Installing Node.js" dnf install -y nodejs && \
                         nodesource_ok=true
                     else
                         run_quiet_step "Configuring NodeSource repository" sudo bash "$tmp" && \
-                        run_quiet_step "Installing Node.js" sudo dnf install -y -q nodejs && \
+                        run_quiet_step "Installing Node.js" sudo dnf install -y nodejs && \
                         nodesource_ok=true
                     fi
                 fi
@@ -1571,11 +1571,11 @@ install_node() {
                 if download_file "https://rpm.nodesource.com/setup_22.x" "$tmp"; then
                     if is_root; then
                         run_quiet_step "Configuring NodeSource repository" bash "$tmp" && \
-                        run_quiet_step "Installing Node.js" yum install -y -q nodejs && \
+                        run_quiet_step "Installing Node.js" yum install -y nodejs && \
                         nodesource_ok=true
                     else
                         run_quiet_step "Configuring NodeSource repository" sudo bash "$tmp" && \
-                        run_quiet_step "Installing Node.js" sudo yum install -y -q nodejs && \
+                        run_quiet_step "Installing Node.js" sudo yum install -y nodejs && \
                         nodesource_ok=true
                     fi
                 fi
@@ -1777,23 +1777,23 @@ install_git() {
         require_sudo
         if command -v apt-get &> /dev/null; then
             if is_root; then
-                run_quiet_step "Updating package index" apt-get update -qq
-                run_quiet_step "Installing Git" apt-get install -y -qq git
+                run_quiet_step "Updating package index" apt-get update -q
+                run_quiet_step "Installing Git" apt-get install -y -q git
             else
-                run_quiet_step "Updating package index" sudo apt-get update -qq
-                run_quiet_step "Installing Git" sudo apt-get install -y -qq git
+                run_quiet_step "Updating package index" sudo apt-get update -q
+                run_quiet_step "Installing Git" sudo apt-get install -y -q git
             fi
         elif command -v dnf &> /dev/null; then
             if is_root; then
-                run_quiet_step "Installing Git" dnf install -y -q git
+                run_quiet_step "Installing Git" dnf install -y git
             else
-                run_quiet_step "Installing Git" sudo dnf install -y -q git
+                run_quiet_step "Installing Git" sudo dnf install -y git
             fi
         elif command -v yum &> /dev/null; then
             if is_root; then
-                run_quiet_step "Installing Git" yum install -y -q git
+                run_quiet_step "Installing Git" yum install -y git
             else
-                run_quiet_step "Installing Git" sudo yum install -y -q git
+                run_quiet_step "Installing Git" sudo yum install -y git
             fi
         else
             ui_error "Could not detect package manager for Git"
