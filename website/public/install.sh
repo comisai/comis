@@ -681,30 +681,34 @@ install_build_tools_linux() {
 
     if command -v apt-get &> /dev/null; then
         wait_for_apt_lock
+        # python3-venv: agent exec tool needs venvs for pip installs
+        # ffmpeg: media processing (TTS, audio/video)
+        # bubblewrap: sandbox for secure command execution
+        local apt_pkgs="build-essential python3 python3-venv make g++ cmake ffmpeg bubblewrap"
         if is_root; then
             run_quiet_step "Updating package index" apt-get update || ui_warn "Package index update had errors (continuing)"
-            run_quiet_step "Installing build tools" apt-get install -y -qq build-essential python3 make g++ cmake
+            run_quiet_step "Installing system packages" apt-get install -y -qq $apt_pkgs
         else
             run_quiet_step "Updating package index" sudo apt-get update || ui_warn "Package index update had errors (continuing)"
-            run_quiet_step "Installing build tools" sudo apt-get install -y -qq build-essential python3 make g++ cmake
+            run_quiet_step "Installing system packages" sudo apt-get install -y -qq $apt_pkgs
         fi
         return 0
     fi
 
     if command -v dnf &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing build tools" dnf install -y gcc gcc-c++ make cmake python3
+            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap
         else
-            run_quiet_step "Installing build tools" sudo dnf install -y gcc gcc-c++ make cmake python3
+            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap
         fi
         return 0
     fi
 
     if command -v yum &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing build tools" yum install -y gcc gcc-c++ make cmake python3
+            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap
         else
-            run_quiet_step "Installing build tools" sudo yum install -y gcc gcc-c++ make cmake python3
+            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap
         fi
         return 0
     fi
@@ -1589,7 +1593,7 @@ install_node() {
         # Try NodeSource first (system-managed, gets security updates via apt/dnf).
         # Both build tools and NodeSource require root/sudo.
         if is_root || (command -v sudo &> /dev/null && sudo -n true 2>/dev/null); then
-            ui_info "Installing Linux build tools (make/g++/cmake/python3)"
+            ui_info "Installing system packages (build tools, python3-venv, ffmpeg, bubblewrap)"
             if install_build_tools_linux; then
                 ui_success "Build tools installed"
             else
