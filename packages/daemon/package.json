@@ -1,18 +1,18 @@
 {
   "name": "@comis/daemon",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Background daemon and orchestrator for the Comis platform",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": ["comis", "ai", "agent", "daemon", "orchestrator"],
   "engines": { "node": ">=22" },
   "files": [
     "dist",
     "bundled-skills"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "bin": {
     "comis-daemon": "./dist/daemon.js"
   },

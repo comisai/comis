@@ -1,17 +1,17 @@
 {
   "name": "@comis/agent",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "AI agent executor, budget control, and session management for Comis",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": ["comis", "ai", "agent", "executor", "llm", "session"],
   "engines": { "node": ">=22" },
   "files": [
     "dist"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

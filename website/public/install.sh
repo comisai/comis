@@ -2246,9 +2246,8 @@ main() {
                     INSTALL_METHOD="$selected_method"
                     ;;
                 *)
-                    ui_error "no install method selected"
-                    echo "Re-run with: --install-method git|npm (or set COMIS_INSTALL_METHOD)."
-                    exit 2
+                    ui_info "Defaulting to npm install"
+                    INSTALL_METHOD="npm"
                     ;;
             esac
         fi
