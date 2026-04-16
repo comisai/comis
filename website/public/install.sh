@@ -684,7 +684,7 @@ install_build_tools_linux() {
         # python3-venv: agent exec tool needs venvs for pip installs
         # ffmpeg: media processing (TTS, audio/video)
         # bubblewrap: sandbox for secure command execution
-        local apt_pkgs="build-essential python3 python3-venv make g++ cmake ffmpeg bubblewrap"
+        local apt_pkgs="build-essential python3 python3-venv python3-pip make g++ cmake ffmpeg bubblewrap"
         if is_root; then
             run_quiet_step "Updating package index" apt-get update || ui_warn "Package index update had errors (continuing)"
             run_quiet_step "Installing system packages" apt-get install -y -qq $apt_pkgs
