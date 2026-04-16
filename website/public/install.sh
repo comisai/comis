@@ -522,16 +522,6 @@ run_with_spinner() {
     "$@"
 }
 
-run_dots_while() {
-    # Print a dot every 2 seconds while a background process runs.
-    # Usage: run_dots_while <pid>
-    local pid="$1"
-    while kill -0 "$pid" 2>/dev/null; do
-        printf '.' >&2
-        sleep 2
-    done
-}
-
 run_quiet_step() {
     local title="$1"
     shift
@@ -553,19 +543,22 @@ run_quiet_step() {
             return 0
         fi
     else
-        # Show progress dots in non-interactive mode so the user knows
-        # something is happening during long operations (apt install, etc.)
-        printf '%s ' "  $title" >&2
+        # Show progress dots so the user knows something is happening
+        # during long operations (apt install, npm install, etc.)
+        echo -n "  ${title} " # no newline — dots append on same line
         "$@" >"$log" 2>&1 &
         local cmd_pid=$!
-        run_dots_while "$cmd_pid"
+        while kill -0 "$cmd_pid" 2>/dev/null; do
+            echo -n "."
+            sleep 2
+        done
         wait "$cmd_pid"
         local rc=$?
         if [[ "$rc" -eq 0 ]]; then
-            echo " done" >&2
+            echo " done"
             return 0
         fi
-        echo " failed" >&2
+        echo " FAILED"
     fi
 
     ui_error "${title} failed - re-run with --verbose for details"
