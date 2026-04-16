@@ -1688,7 +1688,16 @@ create_comis_user() {
     ui_info "Creating dedicated system user '$COMIS_USER'"
     useradd --system --create-home --shell /bin/bash \
         --comment "Comis AI agent platform" "$COMIS_USER"
-    ui_success "User '$COMIS_USER' created (home: $(eval echo "~$COMIS_USER"))"
+
+    # Ensure the user has a .bashrc so PATH exports persist across logins
+    local comis_home
+    comis_home="$(eval echo "~$COMIS_USER")"
+    if [[ ! -f "$comis_home/.bashrc" ]]; then
+        touch "$comis_home/.bashrc"
+        chown "$COMIS_USER:$COMIS_USER" "$comis_home/.bashrc"
+    fi
+
+    ui_success "User '$COMIS_USER' created (home: $comis_home)"
 }
 
 install_system_deps_as_root() {
@@ -1845,8 +1854,10 @@ fix_npm_permissions() {
     # shellcheck disable=SC2016
     local path_line='export PATH="$HOME/.npm-global/bin:$PATH"'
     for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
-        if [[ -f "$rc" ]] && ! grep -q ".npm-global" "$rc"; then
-            echo "$path_line" >> "$rc"
+        if [[ -f "$rc" || "$rc" == "$HOME/.bashrc" ]]; then
+            if ! grep -q ".npm-global" "$rc" 2>/dev/null; then
+                echo "$path_line" >> "$rc"
+            fi
         fi
     done
 
@@ -2004,8 +2015,10 @@ ensure_user_local_bin_on_path() {
     # shellcheck disable=SC2016
     local path_line='export PATH="$HOME/.local/bin:$PATH"'
     for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
-        if [[ -f "$rc" ]] && ! grep -q ".local/bin" "$rc"; then
-            echo "$path_line" >> "$rc"
+        if [[ -f "$rc" || "$rc" == "$HOME/.bashrc" ]]; then
+            if ! grep -q ".local/bin" "$rc" 2>/dev/null; then
+                echo "$path_line" >> "$rc"
+            fi
         fi
     done
 }
