@@ -543,9 +543,9 @@ run_quiet_step() {
             return 0
         fi
     else
-        # Non-interactive: show step name, let output flow, show result
+        # Non-interactive: show step name, suppress output, show result
         echo -e "  ${INFO}→${NC} ${title}..."
-        if "$@" 2>&1 | tee "$log"; then
+        if "$@" >"$log" 2>&1; then
             echo -e "  ${SUCCESS}✓${NC} ${title}"
             return 0
         fi
@@ -650,10 +650,10 @@ install_build_tools_linux() {
         wait_for_apt_lock
         if is_root; then
             run_quiet_step "Updating package index" apt-get update
-            run_quiet_step "Installing build tools" apt-get install -y -q build-essential python3 make g++ cmake
+            run_quiet_step "Installing build tools" apt-get install -y -qq build-essential python3 make g++ cmake
         else
             run_quiet_step "Updating package index" sudo apt-get update
-            run_quiet_step "Installing build tools" sudo apt-get install -y -q build-essential python3 make g++ cmake
+            run_quiet_step "Installing build tools" sudo apt-get install -y -qq build-essential python3 make g++ cmake
         fi
         return 0
     fi
@@ -1563,11 +1563,11 @@ install_node() {
                 if download_file "https://deb.nodesource.com/setup_22.x" "$tmp"; then
                     if is_root; then
                         run_quiet_step "Configuring NodeSource repository" bash "$tmp" && \
-                        run_quiet_step "Installing Node.js" apt-get install -y -q nodejs && \
+                        run_quiet_step "Installing Node.js" apt-get install -y -qq nodejs && \
                         nodesource_ok=true
                     else
                         run_quiet_step "Configuring NodeSource repository" sudo -E bash "$tmp" && \
-                        run_quiet_step "Installing Node.js" sudo apt-get install -y -q nodejs && \
+                        run_quiet_step "Installing Node.js" sudo apt-get install -y -qq nodejs && \
                         nodesource_ok=true
                     fi
                 fi
@@ -1807,10 +1807,10 @@ install_git() {
         if command -v apt-get &> /dev/null; then
             if is_root; then
                 run_quiet_step "Updating package index" apt-get update
-                run_quiet_step "Installing Git" apt-get install -y -q git
+                run_quiet_step "Installing Git" apt-get install -y -qq git
             else
                 run_quiet_step "Updating package index" sudo apt-get update
-                run_quiet_step "Installing Git" sudo apt-get install -y -q git
+                run_quiet_step "Installing Git" sudo apt-get install -y -qq git
             fi
         elif command -v dnf &> /dev/null; then
             if is_root; then
