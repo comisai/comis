@@ -649,10 +649,10 @@ install_build_tools_linux() {
     if command -v apt-get &> /dev/null; then
         wait_for_apt_lock
         if is_root; then
-            run_quiet_step "Updating package index" apt-get update -qq
+            run_quiet_step "Updating package index" apt-get update
             run_quiet_step "Installing build tools" apt-get install -y -q build-essential python3 make g++ cmake
         else
-            run_quiet_step "Updating package index" sudo apt-get update -qq
+            run_quiet_step "Updating package index" sudo apt-get update
             run_quiet_step "Installing build tools" sudo apt-get install -y -q build-essential python3 make g++ cmake
         fi
         return 0
@@ -1806,10 +1806,10 @@ install_git() {
         require_sudo
         if command -v apt-get &> /dev/null; then
             if is_root; then
-                run_quiet_step "Updating package index" apt-get update -qq
+                run_quiet_step "Updating package index" apt-get update
                 run_quiet_step "Installing Git" apt-get install -y -q git
             else
-                run_quiet_step "Updating package index" sudo apt-get update -qq
+                run_quiet_step "Updating package index" sudo apt-get update
                 run_quiet_step "Installing Git" sudo apt-get install -y -q git
             fi
         elif command -v dnf &> /dev/null; then
