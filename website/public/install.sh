@@ -773,10 +773,9 @@ run_npm_global_install() {
     fi
 
     echo -e "  ${INFO}→${NC} Installing Comis package..."
-    # Show npm progress (override --silent for this step so user sees download bar)
     env "SHARP_IGNORE_GLOBAL_LIBVIPS=$SHARP_IGNORE_GLOBAL_LIBVIPS" \
-        npm --loglevel notice --no-fund --no-audit install -g "$spec" 2>&1 | tee "$log"
-    local rc=${PIPESTATUS[0]}
+        npm --loglevel error --no-fund --no-audit install -g "$spec" >"$log" 2>&1
+    local rc=$?
     if [[ "$rc" -eq 0 ]]; then
         echo -e "  ${SUCCESS}✓${NC} Comis package installed"
     fi
