@@ -625,15 +625,34 @@ npm_log_indicates_missing_build_tools() {
     grep -Eiq "(not found: make|make: command not found|cmake: command not found|CMAKE_MAKE_PROGRAM is not set|Could not find CMAKE|gyp ERR! find Python|no developer tools were found|is not able to compile a simple test program|It seems that \"make\" is not installed in your system|It seems that the used \"cmake\" doesn't work properly)" "$log"
 }
 
+wait_for_apt_lock() {
+    # On fresh VPS, unattended-upgrades often holds the dpkg lock.
+    # Wait up to 120 seconds for it to finish.
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+        if [[ "$waited" -eq 0 ]]; then
+            ui_info "Waiting for unattended-upgrades to finish..."
+        fi
+        sleep 5
+        waited=$((waited + 5))
+        if [[ "$waited" -ge 120 ]]; then
+            ui_warn "dpkg lock still held after 120s — trying anyway"
+            break
+        fi
+    done
+}
+
 install_build_tools_linux() {
     require_sudo
+    export DEBIAN_FRONTEND=noninteractive
 
     if command -v apt-get &> /dev/null; then
+        wait_for_apt_lock
         if is_root; then
-            run_quiet_step "Updating package index" apt-get update -q
+            run_quiet_step "Updating package index" apt-get update -qq
             run_quiet_step "Installing build tools" apt-get install -y -q build-essential python3 make g++ cmake
         else
-            run_quiet_step "Updating package index" sudo apt-get update -q
+            run_quiet_step "Updating package index" sudo apt-get update -qq
             run_quiet_step "Installing build tools" sudo apt-get install -y -q build-essential python3 make g++ cmake
         fi
         return 0
@@ -1538,6 +1557,7 @@ install_node() {
             ui_info "Installing Node.js via NodeSource"
             require_sudo
             if command -v apt-get &> /dev/null; then
+                wait_for_apt_lock
                 local tmp
                 tmp="$(mktempfile)"
                 if download_file "https://deb.nodesource.com/setup_22.x" "$tmp"; then
@@ -1777,10 +1797,10 @@ install_git() {
         require_sudo
         if command -v apt-get &> /dev/null; then
             if is_root; then
-                run_quiet_step "Updating package index" apt-get update -q
+                run_quiet_step "Updating package index" apt-get update -qq
                 run_quiet_step "Installing Git" apt-get install -y -q git
             else
-                run_quiet_step "Updating package index" sudo apt-get update -q
+                run_quiet_step "Updating package index" sudo apt-get update -qq
                 run_quiet_step "Installing Git" sudo apt-get install -y -q git
             fi
         elif command -v dnf &> /dev/null; then
