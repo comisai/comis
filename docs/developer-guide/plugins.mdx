@@ -466,7 +466,7 @@ interface AuditEntry {
 export const auditPlugin: PluginPort = {
   id: "audit-logger",
   name: "Audit Logger Plugin",
-  version: "1.0.0",
+  version: "1.0.2",
 
   register(registry: PluginRegistryApi): Result<void, Error> {
     const recentLogs: AuditEntry[] = [];

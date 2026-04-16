@@ -79,7 +79,7 @@ the full list.
 
   <Step title="Install Comis">
     ```bash
-    npm install -g comis
+    npm install -g comisai
     ```
 
     Verify:
@@ -91,7 +91,7 @@ the full list.
     Expected output:
 
     ```
-    comis/0.1.0
+    comis/1.0.2
     ```
 
     <Tip>
@@ -186,7 +186,7 @@ for all 27 available flags.
 
 <AccordionGroup>
   <Accordion title="Permission denied during npm install">
-    **Symptom:** `EACCES: permission denied` when running `npm install -g comis`
+    **Symptom:** `EACCES: permission denied` when running `npm install -g comisai`
 
     **Fix:** Configure npm to use a directory you own instead of the
     system-level global directory:
@@ -201,7 +201,7 @@ for all 27 available flags.
     Then retry the install:
 
     ```bash
-    npm install -g comis
+    npm install -g comisai
     ```
   </Accordion>
 
@@ -215,7 +215,7 @@ for all 27 available flags.
     retry:
 
     ```bash
-    npm install -g comis
+    npm install -g comisai
     ```
 
     If the problem persists, check that Python 3 is installed and accessible as
