@@ -1,0 +1,201 @@
+tenantId: test
+logLevel: debug
+dataDir: ""
+agents:
+  default:
+    name: TestBot
+    model: claude-opus-4-6
+    thinkingLevel: off
+    provider: anthropic
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 3
+      resetTimeoutMs: 30000
+      halfOpenTimeoutMs: 30000
+    rag:
+      enabled: false
+      maxResults: 5
+      maxContextChars: 4000
+      minScore: 0.1
+      includeTrustLevels:
+        - system
+        - learned
+    skills:
+      toolPolicy:
+        profile: full
+        allow:
+          - memory_search
+          - memory_get
+          - memory_store
+        deny: []
+      discoveryPaths:
+        - ./skills
+        - ./workspace/skills
+      builtinTools:
+        read: true
+        write: true
+        edit: true
+        grep: true
+        find: true
+        ls: true
+        exec: true
+        process: true
+        webSearch: false
+        webFetch: false
+        browser: true
+      promptSkills:
+        maxBodyLength: 20000
+        enableDynamicContext: false
+        maxAutoInject: 3
+        allowedSkills: []
+        deniedSkills: []
+      runtimeEligibility:
+        enabled: true
+      contentScanning:
+        enabled: true
+        blockOnCritical: false
+      watchEnabled: false
+      watchDebounceMs: 400
+    scheduler:
+      cron:
+        enabled: false
+        maxConcurrentRuns: 3
+        defaultTimezone: ""
+        maxJobs: 100
+    maxContextChars: 100000
+    maxToolResultChars: 50000
+    preserveRecent: 4
+    modelRoutes: {}
+    bootstrap:
+      maxChars: 20000
+      promptMode: full
+    modelFailover:
+      fallbackModels: []
+      authProfiles: []
+      allowedModels: []
+      maxAttempts: 6
+      cooldownInitialMs: 60000
+      cooldownMultiplier: 5
+      cooldownCapMs: 3600000
+    sdkRetry:
+      enabled: true
+      maxRetries: 3
+      baseDelayMs: 2000
+      maxDelayMs: 60000
+    session:
+      resetPolicy:
+        mode: daily
+        dailyResetHour: 0
+        dailyResetTimezone: UTC
+        idleTimeoutMs: 14400000
+        sweepIntervalMs: 300000
+        resetTriggers: []
+        perType: {}
+    concurrency:
+      maxConcurrentRuns: 1
+      maxQueuedPerSession: 50
+    broadcastGroups: []
+    elevatedReply:
+      enabled: false
+      trustModelRoutes: {}
+      trustPromptOverrides: {}
+      defaultTrustLevel: external
+      senderTrustMap: {}
+    tracing:
+      enabled: false
+      outputDir: ~/.comis/traces
+    contextGuard:
+      enabled: true
+      warnPercent: 80
+      blockPercent: 95
+gateway:
+  enabled: true
+  host: 127.0.0.1
+  port: 8602
+  tokens:
+    - id: system-tester
+      scopes:
+        - rpc
+        - ws
+        - admin
+    - id: readonly-client
+      scopes:
+        - rpc
+    - id: no-scope-client
+      scopes: []
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 1000
+  maxBatchSize: 10
+  wsHeartbeatMs: 15000
+webhooks:
+  enabled: true
+  path: /hooks
+  token: webhook-hmac-secret-2026-padded32
+  presets: []
+  mappings:
+    - id: test-ping
+      match:
+        path: ping
+      action: wake
+      wakeMode: now
+    - id: test-webhook
+      match:
+        path: webhook
+      action: wake
+      wakeMode: now
+    - id: test-github
+      match:
+        path: github
+      action: agent
+      messageTemplate: "Webhook received: {{payload.action}} on
+        {{payload.repository.full_name}}"
+scheduler:
+  cron:
+    enabled: false
+    storeDir: ./data/scheduler
+    maxConcurrentRuns: 5
+    defaultTimezone: UTC
+    maxJobs: 100
+  heartbeat:
+    enabled: true
+    intervalMs: 300000
+    showOk: true
+    showAlerts: true
+  quietHours:
+    enabled: false
+    start: 22:00
+    end: 07:00
+    timezone: ""
+    criticalBypass: true
+  execution:
+    lockDir: ./data/scheduler/locks
+    staleMs: 600000
+    updateMs: 30000
+    logDir: ./data/scheduler/logs
+    maxLogBytes: 2000000
+    keepLines: 2000
+  tasks:
+    enabled: false
+    confidenceThreshold: 0.8
+    storeDir: ./data/scheduler/tasks
+memory:
+  dbPath: test-memory-system-integrations.db
+security:
+  agentToAgent:
+    enabled: true
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

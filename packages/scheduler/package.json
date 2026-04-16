@@ -1,0 +1,45 @@
+{
+  "name": "@comis/scheduler",
+  "version": "1.0.0",
+  "author": "Moshe Anconina",
+  "license": "Apache-2.0",
+  "description": "Task scheduling and cron management for Comis",
+  "keywords": ["comis", "ai", "agent", "scheduler", "cron"],
+  "engines": { "node": ">=22" },
+  "files": ["dist"],
+  "publishConfig": { "access": "public" },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comisai/comis.git",
+    "directory": "packages/scheduler"
+  },
+  "homepage": "https://github.com/comisai/comis#readme",
+  "bugs": {
+    "url": "https://github.com/comisai/comis/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@comis/core": "workspace:*",
+    "@comis/shared": "workspace:*",
+    "croner": "^10.0.1",
+    "proper-lockfile": "^4.1.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/proper-lockfile": "^4.1.4",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}

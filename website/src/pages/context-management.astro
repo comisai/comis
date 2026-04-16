@@ -1,0 +1,1046 @@
+---
+import Base from "../layouts/Base.astro";
+import Footer from "../components/Footer.astro";
+
+const title = "Context Management - How Comis Cuts LLM Costs by 81%";
+const description = "Deep dive into Comis's 8-layer context engine, cache fence system, TTL monotonicity enforcement, adaptive cold-start retention, sub-agent spawn staggering, progressive tool disclosure, and 20 mechanisms that reduce multi-agent pipeline costs.";
+
+const layers = [
+  {
+    num: 1,
+    name: "Thinking Block Cleaner",
+    desc: "Strips extended thinking traces from older turns (default: 10 turns), keeping recent reasoning while reclaiming tokens from stale deliberation.",
+    saves: "Old reasoning traces",
+    when: "Every call",
+  },
+  {
+    num: 2,
+    name: "Reasoning Tag Stripper",
+    desc: "Strips inline reasoning tags (<think>, <thinking>, <thought>, <antThinking>) from non-Anthropic provider responses persisted in session history. Always active regardless of the current model's reasoning capabilities, since sessions may contain messages from multiple providers.",
+    saves: "Inline reasoning traces",
+    when: "Every call",
+  },
+  {
+    num: 3,
+    name: "History Window",
+    desc: "Caps conversation history to the last N user turns (default: 15, configurable per channel). Pair-safe: never splits a tool-call/tool-result pair. Compaction summaries always preserved as anchors.",
+    saves: "Old conversation turns",
+    when: "Every call",
+  },
+  {
+    num: 4,
+    name: "Dead Content Evictor",
+    desc: "Uses forward-index O(n) analysis to detect provably superseded tool results. If an agent read a file at turn 5 and again at turn 20, the turn-5 result is replaced with a 50-byte placeholder. Tracks 5 categories: file_read, exec, web, image, error.",
+    saves: "Superseded results",
+    when: "Every call",
+  },
+  {
+    num: 5,
+    name: "Observation Masker",
+    desc: "Three-tier masking when total context exceeds 120K characters. Protected tools (memory, file reads) are never masked. Standard tools use a keep window (default: 25 most recent). Ephemeral tools (web searches, fetches) get a shorter keep window (default: 10). Masked entries persist to disk for stable cache prefixes. Hysteresis prevents oscillation: activates at 120K, deactivates below 80K.",
+    saves: "Old tool outputs",
+    when: "Context > 120K chars",
+  },
+  {
+    num: 6,
+    name: "LLM Compaction",
+    desc: "Last-resort compression when context exceeds 85% of the model window. Compresses 50+ messages into a structured 9-section summary using a cheaper model (Haiku by default). Three-tier fallback: full summarization, filtered summarization, count-only note.",
+    saves: "Entire conversation",
+    when: "Context > 85% of window",
+  },
+  {
+    num: 7,
+    name: "Rehydration",
+    desc: "After compaction, strategically re-injects only what was lost: workspace instructions (AGENTS.md, max 3K chars), recently-accessed files (max 5 files, 8K each), and a resume instruction for seamless continuation.",
+    saves: "Re-injects critical context",
+    when: "After compaction",
+  },
+  {
+    num: 8,
+    name: "Objective Reinforcement",
+    desc: "For sub-agents, re-injects the original task objective after compaction so delegated tasks stay on track even through context compression.",
+    saves: "Agent goals",
+    when: "After compaction",
+  },
+];
+
+const cacheZones = [
+  {
+    zone: "System Prompt",
+    type: "Static",
+    content: "Identity, personality, workspace files, tool definitions, security rules",
+    behavior: "Cached - paid once at write rate, then $0.50/MTok on every subsequent call",
+  },
+  {
+    zone: "Dynamic Preamble",
+    type: "Per-turn",
+    content: "Timestamp, sender metadata, channel context, RAG results, active skills, trust entries",
+    behavior: "Prepended to user message - never invalidates the cache prefix",
+  },
+];
+
+const cacheFenceMechanisms = [
+  {
+    name: "Cache Fence Index",
+    code: "CACHE-20",
+    desc: "Tracks the highest cache breakpoint position from each LLM call. On the next turn, context engine layers skip all messages at or below this index - preventing modifications that would invalidate the cached prefix.",
+    impact: "Eliminated 36K+ tokens of unnecessary cache invalidation per pipeline turn",
+  },
+  {
+    name: "Trim Offset Translation",
+    code: "CACHE-20",
+    desc: "The history window trims 100+ messages from the front of the session, shifting all indices. The fence index is stored in pre-trim space and correctly adjusted after trimming so protection survives across turns.",
+    impact: "Fixed fence being zeroed out by 97-120 message trims",
+  },
+  {
+    name: "Sub-Agent Spawn Staggering",
+    code: "CACHE-21",
+    desc: "Concurrent sub-agents in a pipeline wave are staggered by 4 seconds. The first sub-agent populates the shared cache prefix (system prompt + tools), then siblings read it instead of each paying the write cost.",
+    impact: "49K avg cache reads on sub-agent first turn (shared prefix)",
+  },
+  {
+    name: "Adaptive Cold-Start Retention",
+    code: "CACHE-23",
+    desc: "Parent agents write at 1h TTL from the first call so the system prompt survives pipeline gaps (>5m). Sub-agents inherit mixed 5m/1h TTLs - shared prefix blocks use the first writer's TTL, conversation-specific content uses 5m. Cache refreshes don't upgrade TTL, so the initial write determines the cache lifetime.",
+    impact: "Eliminates re-writes per pipeline gap. 81% cost reduction at steady state.",
+  },
+  {
+    name: "TTL Monotonicity Enforcement",
+    code: "CACHE-23",
+    desc: "Anthropic's API requires cache breakpoint TTLs to be non-increasing (system >= tools >= messages). The SDK sets system to 5m, but tool breakpoints escalate to 1h. Comis upgrades system block TTLs in the onPayload hook to satisfy the constraint, preventing silent downgrades.",
+    impact: "Unlocked 1h cache writes for the first time. Without this, all 1h TTLs were silently downgraded to 5m.",
+  },
+  {
+    name: "Breakpoint Threshold Tuning",
+    code: "CACHE-20/23",
+    desc: "Sub-agents use 512-token minimum for breakpoint placement. Parent agents use 1,024 tokens (lowered from 4,096). Enables message-level cache breakpoints in conversational exchanges where individual messages are 500-2000 tokens.",
+    impact: "Sub-agent cache ratio improved from 3.0x to 4.7x. Parent agent gained 1 message breakpoint per call (was 0).",
+  },
+];
+
+const pricingTiers = [
+  { model: "Claude Opus 4.6", input: "$5.00", write5m: "$6.25", write1h: "$10.00", read: "$0.50", output: "$25.00", readSaving: "10x cheaper" },
+  { model: "Claude Sonnet 4.6", input: "$3.00", write5m: "$3.75", write1h: "$6.00", read: "$0.30", output: "$15.00", readSaving: "10x cheaper" },
+  { model: "Claude Haiku 4.5", input: "$1.00", write5m: "$1.25", write1h: "$2.00", read: "$0.10", output: "$5.00", readSaving: "10x cheaper" },
+];
+
+const microcompaction = [
+  { tool: "file_read", threshold: "15,000 chars", reason: "Code context is high-value" },
+  { tool: "MCP tools", threshold: "15,000 chars", reason: "MCP responses tend to be verbose" },
+  { tool: "Default tools", threshold: "8,000 chars", reason: "Standard inline limit" },
+  { tool: "Hard cap", threshold: "100,000 chars", reason: "Truncated before offload" },
+];
+
+const budgets = [
+  { scope: "Per-execution", default_val: "200K tokens", purpose: "Prevent runaway single calls" },
+  { scope: "Per-hour", default_val: "1M tokens", purpose: "Rate limiting" },
+  { scope: "Per-day", default_val: "5M tokens", purpose: "Daily cost ceiling" },
+];
+
+const realCosts = [
+  { op: 'First "Hello"', cost: "$0.25", note: "Cold cache - full system prompt write (Opus)" },
+  { op: "Second message", cost: "$0.03", note: "Warm cache - fence protects prefix" },
+  { op: "Subsequent messages", cost: "$0.04-0.09", note: "Stable cache reads, fence active" },
+  { op: "8-agent trading pipeline", cost: "~$2.11", note: "4 analysts + debate + trader + risk + PM (788K tokens, 70% cache effectiveness)" },
+  { op: "Pipeline without optimizations", cost: "~$22.51", note: "Same pipeline, no caching" },
+];
+
+// Real production data from daemon logs - April 11, 2026 (76-call session, 2 cache breaks from skill hot-loading)
+const realExample = {
+  date: "April 11, 2026",
+  input: { tokens: 62, rate: 5.00, cost: 0.00 },
+  output: { tokens: 20662, rate: 25.00, cost: 0.52 },
+  cacheWrite1h: { tokens: 289900, rate: 7.11, cost: 2.06 },
+  cacheRead: { tokens: 4892893, rate: 0.50, cost: 2.45 },
+  total: { tokens: 5213517, cost: 5.02 },
+  withoutCaching: 26.42,
+  savings: 81,
+  readWriteRatio: 16.9,
+};
+---
+
+<Base title={title} description={description}>
+  <main>
+    <!-- Hero -->
+    <section class="relative overflow-hidden px-6 pt-32 pb-16 md:pt-40 md:pb-20">
+      <div class="absolute inset-0 pointer-events-none">
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-teal/5 rounded-full blur-[120px]"></div>
+      </div>
+
+      <div class="relative max-w-3xl mx-auto text-center">
+        <a href="/" class="inline-flex items-center gap-1 text-sm text-muted hover:text-teal transition-colors mb-8">
+          &larr; Back to Home
+        </a>
+        <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.1] text-white">
+          How Comis cuts LLM costs by 81%
+        </h1>
+        <p class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed">
+          8-layer context engine, cache fence system, sub-agent spawn staggering, progressive tool disclosure, and 20 mechanisms - so your agents run indefinitely with predictable costs.
+        </p>
+      </div>
+    </section>
+
+    <!-- Key stat -->
+    <section class="px-6 pb-16">
+      <div class="max-w-4xl mx-auto">
+        <div class="bg-navy-light/80 border border-teal/20 rounded-2xl p-8 md:p-12">
+          <div class="grid md:grid-cols-4 gap-8 text-center">
+            <div>
+              <p class="text-4xl font-bold text-teal font-mono">17x</p>
+              <p class="text-muted text-sm mt-2">Cache read/write ratio</p>
+            </div>
+            <div>
+              <p class="text-4xl font-bold text-teal font-mono">94%</p>
+              <p class="text-muted text-sm mt-2">Tokens served from cache</p>
+            </div>
+            <div>
+              <p class="text-4xl font-bold text-teal font-mono">93%</p>
+              <p class="text-muted text-sm mt-2">Writes are cold-start only</p>
+            </div>
+            <div>
+              <p class="text-4xl font-bold text-teal font-mono">$0.50</p>
+              <p class="text-muted text-sm mt-2">Per MTok cached reads</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- The Problem -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-4xl mx-auto">
+        <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">The problem</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-6">
+          Context windows are expensive.
+        </h2>
+        <div class="grid md:grid-cols-2 gap-6">
+          <div class="bg-navy rounded-xl border border-white/5 p-6">
+            <p class="text-white font-semibold mb-2">System prompts are large</p>
+            <p class="text-muted text-sm leading-relaxed">Identity, instructions, tool definitions, workspace files, and security guardrails easily reach 30-60K tokens.</p>
+          </div>
+          <div class="bg-navy rounded-xl border border-white/5 p-6">
+            <p class="text-white font-semibold mb-2">Conversations grow fast</p>
+            <p class="text-muted text-sm leading-relaxed">Tool results (file reads, web fetches, API responses) can be 10-50K tokens each. A 30-turn session with tool use can cost $5-15.</p>
+          </div>
+          <div class="bg-navy rounded-xl border border-white/5 p-6">
+            <p class="text-white font-semibold mb-2">Multi-agent pipelines multiply costs</p>
+            <p class="text-muted text-sm leading-relaxed">A 7-agent stock analysis pipeline costs 7x the base rate per message. Without optimization, this becomes prohibitive.</p>
+          </div>
+          <div class="bg-navy rounded-xl border border-white/5 p-6">
+            <p class="text-white font-semibold mb-2">Cache misses are silent killers</p>
+            <p class="text-muted text-sm leading-relaxed">Anthropic charges 10-20x more for cache writes ($6.25-10/MTok) than reads ($0.50/MTok). A single modified message in the cached prefix invalidates the entire KV cache.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8-Layer Pipeline -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">The solution</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          8-layer context engine pipeline
+        </h2>
+        <p class="text-muted text-lg mb-6 max-w-2xl">
+          Every conversation is processed through a composable pipeline of 8 layers before each LLM call. Each layer targets a specific source of token waste.
+        </p>
+        <p class="text-muted text-sm mb-12 max-w-2xl italic">
+          Every layer has a circuit breaker - 3 consecutive failures disables the layer. No single optimization bug can bring down the pipeline.
+        </p>
+
+        <div class="space-y-4">
+          {layers.map((layer) => (
+            <div class="bg-navy-light/80 border border-white/5 rounded-xl overflow-hidden">
+              <div class="flex flex-col md:flex-row">
+                <div class="md:w-16 shrink-0 flex items-center justify-center py-4 md:py-0 bg-teal/10">
+                  <span class="text-teal font-mono font-bold text-lg">{layer.num}</span>
+                </div>
+                <div class="flex-1 p-6">
+                  <div class="flex flex-wrap items-center gap-3 mb-2">
+                    <h3 class="text-white font-semibold">{layer.name}</h3>
+                    <span class="text-xs font-mono px-2 py-0.5 rounded bg-teal/10 text-teal">{layer.when}</span>
+                  </div>
+                  <p class="text-muted text-sm leading-relaxed">{layer.desc}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Cache-Stable Prompts -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Prompt caching</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Cache-stable prompt architecture
+        </h2>
+        <p class="text-muted text-lg mb-12 max-w-2xl">
+          Anthropic's prompt caching cuts costs 7.5x - but only if the system prompt stays identical across turns. Most frameworks embed timestamps or channel metadata in the system prompt, silently invalidating the cache on every message.
+        </p>
+
+        <div class="space-y-4">
+          {cacheZones.map((z) => (
+            <div class="bg-navy rounded-xl border border-white/5 overflow-hidden">
+              <div class="px-6 py-4 border-b border-white/5 flex items-center gap-3">
+                <span class={`text-xs font-mono px-2 py-0.5 rounded ${z.type === "Static" ? "bg-teal/10 text-teal" : "bg-coral/10 text-coral"}`}>
+                  {z.type}
+                </span>
+                <h3 class="text-lg font-semibold text-white">{z.zone}</h3>
+              </div>
+              <div class="grid md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-white/5">
+                <div class="px-6 py-5">
+                  <p class="text-xs font-medium text-muted uppercase tracking-wider mb-2">Content</p>
+                  <p class="text-muted-light text-sm leading-relaxed">{z.content}</p>
+                </div>
+                <div class="px-6 py-5">
+                  <p class="text-xs font-medium text-muted uppercase tracking-wider mb-2">Cache behavior</p>
+                  <p class="text-muted-light text-sm leading-relaxed">{z.behavior}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div class="mt-8 bg-navy rounded-xl border border-teal/15 p-6">
+          <p class="text-white font-semibold mb-2">Six categories kept out of the system prompt</p>
+          <p class="text-muted text-sm leading-relaxed">
+            Date/time, inbound message metadata, channel context, RAG memory results, active skill content, and sender trust entries. Each would invalidate the entire cache prefix if left inline (CACHE-01 through CACHE-06).
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cache Fence & Feedback Loop -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">Cache fence system</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Protecting the cached prefix across turns
+        </h2>
+        <p class="text-muted text-lg mb-6 max-w-3xl">
+          Without protection, context engine layers modify messages within the cached region - stripping thinking blocks, masking tool results, evicting dead content. Each modification invalidates Anthropic's KV cache, forcing expensive re-writes. The cache fence prevents this.
+        </p>
+
+        <!-- Philosophy callout -->
+        <div class="bg-navy rounded-xl border border-teal/20 p-6 mb-12">
+          <p class="text-white font-semibold mb-3">Active cache optimization, not passive configuration</p>
+          <p class="text-muted text-sm leading-relaxed mb-4">
+            Most agent platforms treat caching as a provider feature to configure - a single <code class="text-teal text-xs">cache_control</code> tag on the system message. <strong class="text-white">Comis treats the Anthropic cache as a target architecture to optimize for.</strong> The context engine pipeline is cache-aware: it knows where the cache boundary is and actively prevents modifications within the cached region.
+          </p>
+          <div class="bg-navy-light/80 rounded-lg p-4 font-mono text-xs text-teal overflow-x-auto">
+            <pre class="whitespace-pre">breakpoint callback &rarr; fence index &rarr; layer guards &rarr; trim offset translation
+         &uarr;                                                    &darr;
+         &larr;&mdash;&mdash;&mdash;&mdash; persisted across execute() calls &mdash;&mdash;&mdash;&mdash;&rarr;</pre>
+          </div>
+          <p class="text-muted text-sm mt-4 leading-relaxed">
+            Multiple feedback loops ensure cache stability across turns, achieving a <span class="text-teal font-semibold font-mono">16.9x</span> read/write ratio in production - meaning for every token written to cache, 17 tokens are served from it at 10x lower cost.
+          </p>
+        </div>
+
+        <!-- SVG Diagram: Cache Fence Feedback Loop -->
+        <div class="bg-navy-light/80 border border-white/5 rounded-2xl p-8 mb-12 overflow-x-auto">
+          <p class="text-xs font-mono text-muted mb-6 uppercase tracking-widest">Cache fence feedback loop</p>
+          <svg viewBox="0 0 800 340" class="w-full max-w-3xl mx-auto" xmlns="http://www.w3.org/2000/svg">
+            <!-- Turn N -->
+            <rect x="20" y="30" width="340" height="280" rx="12" fill="#1E293B" stroke="#334155" stroke-width="1"/>
+            <text x="190" y="22" text-anchor="middle" fill="#94A3B8" font-size="11" font-family="JetBrains Mono, monospace">TURN N</text>
+
+            <!-- Messages array -->
+            <text x="40" y="60" fill="#CBD5E1" font-size="11" font-family="Inter, sans-serif" font-weight="600">Session Messages</text>
+            <!-- Protected zone -->
+            <rect x="40" y="72" width="200" height="28" rx="4" fill="#06B6D4" fill-opacity="0.15" stroke="#06B6D4" stroke-opacity="0.4" stroke-width="1"/>
+            <text x="140" y="90" text-anchor="middle" fill="#06B6D4" font-size="10" font-family="JetBrains Mono, monospace">Protected by fence (0..52)</text>
+            <!-- Unprotected zone -->
+            <rect x="244" y="72" width="100" height="28" rx="4" fill="#FF6B4A" fill-opacity="0.1" stroke="#FF6B4A" stroke-opacity="0.3" stroke-width="1"/>
+            <text x="294" y="90" text-anchor="middle" fill="#FF6B4A" font-size="10" font-family="JetBrains Mono, monospace">Modifiable</text>
+
+            <!-- Context Engine -->
+            <rect x="40" y="115" width="304" height="36" rx="6" fill="#0F172A" stroke="#06B6D4" stroke-opacity="0.3" stroke-width="1"/>
+            <text x="192" y="137" text-anchor="middle" fill="#CBD5E1" font-size="11" font-family="Inter, sans-serif">Context Engine (8 layers + fence guard)</text>
+
+            <!-- Arrow down -->
+            <line x1="192" y1="151" x2="192" y2="170" stroke="#334155" stroke-width="1.5"/>
+            <polygon points="192,176 187,170 197,170" fill="#334155"/>
+
+            <!-- Post-CE output -->
+            <rect x="40" y="178" width="304" height="28" rx="4" fill="#1E293B" stroke="#334155" stroke-width="1"/>
+            <text x="192" y="196" text-anchor="middle" fill="#94A3B8" font-size="10" font-family="JetBrains Mono, monospace">Post-CE output (64 msgs after trim)</text>
+
+            <!-- Arrow down -->
+            <line x1="192" y1="206" x2="192" y2="222" stroke="#334155" stroke-width="1.5"/>
+            <polygon points="192,228 187,222 197,222" fill="#334155"/>
+
+            <!-- LLM Call -->
+            <rect x="80" y="230" width="220" height="36" rx="6" fill="#06B6D4" fill-opacity="0.1" stroke="#06B6D4" stroke-opacity="0.4" stroke-width="1.5"/>
+            <text x="190" y="252" text-anchor="middle" fill="#06B6D4" font-size="12" font-family="Inter, sans-serif" font-weight="600">LLM Call + Breakpoints</text>
+
+            <!-- Arrow down from LLM to callback -->
+            <line x1="190" y1="266" x2="190" y2="285" stroke="#06B6D4" stroke-opacity="0.5" stroke-width="1.5"/>
+            <polygon points="190,291 185,285 195,285" fill="#06B6D4" fill-opacity="0.5"/>
+
+            <!-- Callback box -->
+            <rect x="100" y="292" width="180" height="22" rx="4" fill="#06B6D4" fill-opacity="0.08"/>
+            <text x="190" y="307" text-anchor="middle" fill="#06B6D4" font-size="9" font-family="JetBrains Mono, monospace">onBreakpointsPlaced(idx=52)</text>
+
+            <!-- Turn N+1 -->
+            <rect x="440" y="30" width="340" height="280" rx="12" fill="#1E293B" stroke="#334155" stroke-width="1"/>
+            <text x="610" y="22" text-anchor="middle" fill="#94A3B8" font-size="11" font-family="JetBrains Mono, monospace">TURN N+1</text>
+
+            <!-- Seed -->
+            <rect x="460" y="55" width="300" height="30" rx="4" fill="#06B6D4" fill-opacity="0.08"/>
+            <text x="610" y="74" text-anchor="middle" fill="#06B6D4" font-size="10" font-family="JetBrains Mono, monospace">Seed: fence = 52 + trimOffset(116) = 168</text>
+
+            <!-- Messages with fence -->
+            <text x="460" y="105" fill="#CBD5E1" font-size="11" font-family="Inter, sans-serif" font-weight="600">Session Messages (grew by 4)</text>
+            <rect x="460" y="117" width="220" height="28" rx="4" fill="#06B6D4" fill-opacity="0.15" stroke="#06B6D4" stroke-opacity="0.4" stroke-width="1"/>
+            <text x="570" y="135" text-anchor="middle" fill="#06B6D4" font-size="10" font-family="JetBrains Mono, monospace">Protected (0..168)</text>
+            <rect x="684" y="117" width="80" height="28" rx="4" fill="#FF6B4A" fill-opacity="0.1" stroke="#FF6B4A" stroke-opacity="0.3" stroke-width="1"/>
+            <text x="724" y="135" text-anchor="middle" fill="#FF6B4A" font-size="10" font-family="JetBrains Mono, monospace">New msgs</text>
+
+            <!-- History window -->
+            <rect x="460" y="160" width="300" height="30" rx="4" fill="#0F172A" stroke="#334155" stroke-width="1"/>
+            <text x="610" y="179" text-anchor="middle" fill="#94A3B8" font-size="10" font-family="JetBrains Mono, monospace">History window trims 118 from front</text>
+
+            <!-- Arrow down -->
+            <line x1="610" y1="190" x2="610" y2="206" stroke="#334155" stroke-width="1.5"/>
+            <polygon points="610,212 605,206 615,206" fill="#334155"/>
+
+            <!-- Adjusted fence -->
+            <rect x="460" y="214" width="300" height="30" rx="4" fill="#06B6D4" fill-opacity="0.08"/>
+            <text x="610" y="233" text-anchor="middle" fill="#06B6D4" font-size="10" font-family="JetBrains Mono, monospace">Adjusted: fence = max(-1, 168-118) = 50</text>
+
+            <!-- Layers -->
+            <rect x="460" y="258" width="300" height="36" rx="6" fill="#0F172A" stroke="#06B6D4" stroke-opacity="0.3" stroke-width="1"/>
+            <text x="610" y="280" text-anchor="middle" fill="#CBD5E1" font-size="11" font-family="Inter, sans-serif">Layers skip msgs 0..50 (cache preserved)</text>
+
+            <!-- Feedback arrow (curved) -->
+            <path d="M 280 304 C 280 340 500 340 500 92" stroke="#06B6D4" stroke-width="1.5" stroke-dasharray="6 3" fill="none" stroke-opacity="0.5"/>
+            <polygon points="500,86 495,94 505,94" fill="#06B6D4" fill-opacity="0.5"/>
+            <text x="390" y="338" text-anchor="middle" fill="#06B6D4" font-size="9" font-family="JetBrains Mono, monospace" fill-opacity="0.7">Persisted via Map across execute() calls</text>
+          </svg>
+        </div>
+
+        <!-- Fence mechanisms -->
+        <div class="space-y-4">
+          {cacheFenceMechanisms.map((m) => (
+            <div class="bg-navy rounded-xl border border-white/5 overflow-hidden">
+              <div class="flex flex-col md:flex-row">
+                <div class="md:w-24 shrink-0 flex items-center justify-center py-3 md:py-0 bg-coral/5">
+                  <span class="text-coral font-mono font-bold text-xs">{m.code}</span>
+                </div>
+                <div class="flex-1 p-6">
+                  <div class="flex flex-wrap items-center gap-3 mb-2">
+                    <h3 class="text-white font-semibold">{m.name}</h3>
+                  </div>
+                  <p class="text-muted text-sm leading-relaxed mb-3">{m.desc}</p>
+                  <p class="text-teal text-xs font-mono">{m.impact}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Cache Break Detection -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">Cache diagnostics</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Cache break detection and attribution
+        </h2>
+        <p class="text-muted text-lg mb-6 max-w-3xl">
+          When cache invalidation happens, knowing <em class="text-white">why</em> is critical. Comis uses a two-phase detection system that records pre-call state and performs post-call analysis to attribute every cache break to its root cause.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-6 mb-8">
+          <div class="bg-navy rounded-xl border border-white/5 p-6">
+            <p class="text-white font-semibold mb-2">Phase 1: Pre-call snapshot</p>
+            <p class="text-muted text-sm leading-relaxed">Records SHA-256 hashes of system prompt, tool schemas, and cache_control metadata before the LLM call. These fingerprints establish the baseline for comparison.</p>
+          </div>
+          <div class="bg-navy rounded-xl border border-white/5 p-6">
+            <p class="text-white font-semibold mb-2">Phase 2: Post-call analysis</p>
+            <p class="text-muted text-sm leading-relaxed">After the API response, compares actual cache write tokens against expected values. Dual threshold: >5% relative AND >2K absolute tokens triggers attribution.</p>
+          </div>
+        </div>
+
+        <div class="bg-navy rounded-xl border border-teal/15 p-6">
+          <p class="text-white font-semibold mb-3">Attribution priority chain</p>
+          <p class="text-muted text-sm leading-relaxed mb-3">When a cache break is detected, the system walks a priority chain to identify the cause:</p>
+          <div class="flex flex-wrap gap-2">
+            <span class="text-xs font-mono px-2 py-1 rounded bg-coral/10 text-coral">model change</span>
+            <span class="text-muted text-xs">&rarr;</span>
+            <span class="text-xs font-mono px-2 py-1 rounded bg-coral/10 text-coral">system prompt</span>
+            <span class="text-muted text-xs">&rarr;</span>
+            <span class="text-xs font-mono px-2 py-1 rounded bg-coral/10 text-coral">tool schemas</span>
+            <span class="text-muted text-xs">&rarr;</span>
+            <span class="text-xs font-mono px-2 py-1 rounded bg-coral/10 text-coral">retention change</span>
+            <span class="text-muted text-xs">&rarr;</span>
+            <span class="text-xs font-mono px-2 py-1 rounded bg-teal/10 text-teal">metadata</span>
+            <span class="text-muted text-xs">&rarr;</span>
+            <span class="text-xs font-mono px-2 py-1 rounded bg-teal/10 text-teal">TTL expiry</span>
+            <span class="text-muted text-xs">&rarr;</span>
+            <span class="text-xs font-mono px-2 py-1 rounded bg-teal/10 text-teal">server eviction</span>
+          </div>
+          <p class="text-muted text-xs mt-3">Lazy content diffing: full serialization only runs when a break is actually detected, keeping hot-path overhead near zero.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Gemini Explicit Caching -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Multi-provider caching</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Gemini explicit caching via CachedContent API
+        </h2>
+        <p class="text-muted text-lg mb-8 max-w-3xl">
+          Beyond Anthropic's prompt cache, Comis implements explicit caching for Google's Gemini models using the CachedContent API - a guaranteed 90% discount on cached tokens.
+        </p>
+
+        <div class="grid md:grid-cols-3 gap-6 mb-8">
+          <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-6">
+            <p class="text-white font-semibold mb-2">Cache Manager</p>
+            <p class="text-muted text-sm leading-relaxed">Full CachedContent lifecycle: create, reuse, refresh, and dispose. SHA-256 content hashing detects changes. Concurrent request deduplication prevents duplicate cache entries.</p>
+          </div>
+          <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-6">
+            <p class="text-white font-semibold mb-2">Per-model thresholds</p>
+            <p class="text-muted text-sm leading-relaxed">Gemini Flash requires 1,024 minimum cacheable tokens. Gemini Pro requires 4,096. Below-minimum requests fall through to uncached calls automatically.</p>
+          </div>
+          <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-6">
+            <p class="text-white font-semibold mb-2">Lifecycle management</p>
+            <p class="text-muted text-sm leading-relaxed">Session expiry events trigger cache disposal. Orphaned caches (from crashes or disconnects) are detected and cleaned up automatically.</p>
+          </div>
+        </div>
+
+        <div class="bg-navy rounded-xl border border-white/5 p-6">
+          <p class="text-white font-semibold mb-2">Provider isolation</p>
+          <p class="text-muted text-sm leading-relaxed">
+            Anthropic's <code class="text-teal text-xs">requestBodyInjector</code> and Google's <code class="text-teal text-xs">geminiCacheInjector</code> are mutually exclusive at runtime via provider guards. The Gemini injector atomically strips inherited fields (systemInstruction, tools, toolConfig) when a CachedContent name is present, since these are already baked into the cache.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Multi-Agent Pipeline Cache Flow -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Pipeline caching</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          How 8 agents share a single cache prefix
+        </h2>
+        <p class="text-muted text-lg mb-8 max-w-3xl">
+          In a multi-agent pipeline, each sub-agent shares the same system prompt and tool definitions. Without staggering, all agents would write the same content simultaneously - paying the write cost 8 times. With staggered spawning, the first agent writes once and the rest read at 10x lower cost.
+        </p>
+
+        <!-- SVG Diagram: Staggered Spawn -->
+        <div class="bg-navy rounded-2xl border border-white/5 p-8 mb-8 overflow-x-auto">
+          <p class="text-xs font-mono text-muted mb-6 uppercase tracking-widest">Staggered sub-agent spawning (4s intervals)</p>
+          <svg viewBox="0 0 760 220" class="w-full max-w-3xl mx-auto" xmlns="http://www.w3.org/2000/svg">
+            <!-- Timeline -->
+            <line x1="60" y1="180" x2="720" y2="180" stroke="#334155" stroke-width="1.5"/>
+            <text x="390" y="210" text-anchor="middle" fill="#94A3B8" font-size="10" font-family="JetBrains Mono, monospace">Time</text>
+
+            <!-- Time markers -->
+            <line x1="100" y1="175" x2="100" y2="185" stroke="#334155" stroke-width="1"/>
+            <text x="100" y="198" text-anchor="middle" fill="#94A3B8" font-size="9" font-family="JetBrains Mono, monospace">0s</text>
+            <line x1="230" y1="175" x2="230" y2="185" stroke="#334155" stroke-width="1"/>
+            <text x="230" y="198" text-anchor="middle" fill="#94A3B8" font-size="9" font-family="JetBrains Mono, monospace">4s</text>
+            <line x1="360" y1="175" x2="360" y2="185" stroke="#334155" stroke-width="1"/>
+            <text x="360" y="198" text-anchor="middle" fill="#94A3B8" font-size="9" font-family="JetBrains Mono, monospace">5s</text>
+            <line x1="490" y1="175" x2="490" y2="185" stroke="#334155" stroke-width="1"/>
+            <text x="490" y="198" text-anchor="middle" fill="#94A3B8" font-size="9" font-family="JetBrains Mono, monospace">7.5s</text>
+
+            <!-- Agent 1: Fundamentals (writes) -->
+            <rect x="100" y="30" width="560" height="28" rx="4" fill="#FF6B4A" fill-opacity="0.12" stroke="#FF6B4A" stroke-opacity="0.3" stroke-width="1"/>
+            <rect x="100" y="30" width="80" height="28" rx="4" fill="#FF6B4A" fill-opacity="0.25"/>
+            <text x="140" y="48" text-anchor="middle" fill="#FF6B4A" font-size="9" font-family="JetBrains Mono, monospace">WRITE</text>
+            <text x="68" y="48" text-anchor="end" fill="#CBD5E1" font-size="10" font-family="Inter, sans-serif" font-weight="500">Agent 1</text>
+
+            <!-- Agent 2: Sentiment (reads) -->
+            <rect x="230" y="68" width="430" height="28" rx="4" fill="#06B6D4" fill-opacity="0.12" stroke="#06B6D4" stroke-opacity="0.3" stroke-width="1"/>
+            <rect x="230" y="68" width="80" height="28" rx="4" fill="#06B6D4" fill-opacity="0.25"/>
+            <text x="270" y="86" text-anchor="middle" fill="#06B6D4" font-size="9" font-family="JetBrains Mono, monospace">READ</text>
+            <text x="68" y="86" text-anchor="end" fill="#CBD5E1" font-size="10" font-family="Inter, sans-serif" font-weight="500">Agent 2</text>
+
+            <!-- Agent 3: News (reads) -->
+            <rect x="360" y="106" width="300" height="28" rx="4" fill="#06B6D4" fill-opacity="0.12" stroke="#06B6D4" stroke-opacity="0.3" stroke-width="1"/>
+            <rect x="360" y="106" width="80" height="28" rx="4" fill="#06B6D4" fill-opacity="0.25"/>
+            <text x="400" y="124" text-anchor="middle" fill="#06B6D4" font-size="9" font-family="JetBrains Mono, monospace">READ</text>
+            <text x="68" y="124" text-anchor="end" fill="#CBD5E1" font-size="10" font-family="Inter, sans-serif" font-weight="500">Agent 3</text>
+
+            <!-- Agent 4: Technical (reads) -->
+            <rect x="490" y="144" width="170" height="28" rx="4" fill="#06B6D4" fill-opacity="0.12" stroke="#06B6D4" stroke-opacity="0.3" stroke-width="1"/>
+            <rect x="490" y="144" width="80" height="28" rx="4" fill="#06B6D4" fill-opacity="0.25"/>
+            <text x="530" y="162" text-anchor="middle" fill="#06B6D4" font-size="9" font-family="JetBrains Mono, monospace">READ</text>
+            <text x="68" y="162" text-anchor="end" fill="#CBD5E1" font-size="10" font-family="Inter, sans-serif" font-weight="500">Agent 4</text>
+
+            <!-- Legend -->
+            <rect x="580" y="30" width="10" height="10" rx="2" fill="#FF6B4A" fill-opacity="0.3"/>
+            <text x="596" y="39" fill="#FF6B4A" font-size="9" font-family="JetBrains Mono, monospace">Write ($6.25-10/MTok)</text>
+            <rect x="580" y="48" width="10" height="10" rx="2" fill="#06B6D4" fill-opacity="0.3"/>
+            <text x="596" y="57" fill="#06B6D4" font-size="9" font-family="JetBrains Mono, monospace">Read ($0.50/MTok)</text>
+          </svg>
+        </div>
+
+        <!-- Cost comparison -->
+        <div class="grid md:grid-cols-2 gap-6">
+          <div class="bg-navy rounded-xl border border-coral/15 p-6">
+            <p class="text-coral font-semibold text-sm mb-2">Without staggering</p>
+            <p class="text-3xl font-bold text-white font-mono mb-2">$22.51</p>
+            <p class="text-muted text-sm">4M prompt tokens at input rate. No cache sharing. Each agent pays full write cost for identical system prompts.</p>
+          </div>
+          <div class="bg-navy rounded-xl border border-teal/15 p-6">
+            <p class="text-teal font-semibold text-sm mb-2">With Comis cache system</p>
+            <p class="text-3xl font-bold text-white font-mono mb-2">$12.48</p>
+            <p class="text-muted text-sm">4.9M tokens from cache reads at $0.50/MTok. First agent writes, siblings read. Fence prevents invalidation. <span class="text-teal font-semibold">81% cost reduction.</span></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pricing Reference -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Anthropic pricing</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Why cache reads matter
+        </h2>
+        <p class="text-muted text-lg mb-8 max-w-2xl">
+          Cache reads are <span class="text-teal font-semibold">10-20x cheaper</span> than writes and <span class="text-teal font-semibold">10x cheaper</span> than base input. Every token shifted from write to read directly reduces cost.
+        </p>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left">
+            <thead>
+              <tr class="border-b border-white/10">
+                <th scope="col" class="py-3 pr-4 text-sm font-medium text-muted">Model</th>
+                <th scope="col" class="py-3 px-4 text-sm font-medium text-muted">Input</th>
+                <th scope="col" class="py-3 px-4 text-sm font-medium text-muted">5m Write</th>
+                <th scope="col" class="py-3 px-4 text-sm font-medium text-muted">1h Write</th>
+                <th scope="col" class="py-3 px-4 text-sm font-medium text-teal">Cache Read</th>
+                <th scope="col" class="py-3 pl-4 text-sm font-medium text-muted">Saving</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pricingTiers.map((p) => (
+                <tr class="border-b border-white/5">
+                  <td class="py-3 pr-4 text-sm text-white font-medium">{p.model}</td>
+                  <td class="py-3 px-4 text-sm text-muted font-mono">{p.input}</td>
+                  <td class="py-3 px-4 text-sm text-coral font-mono">{p.write5m}</td>
+                  <td class="py-3 px-4 text-sm text-coral font-mono">{p.write1h}</td>
+                  <td class="py-3 px-4 text-sm text-teal font-mono font-semibold">{p.read}</td>
+                  <td class="py-3 pl-4 text-sm text-teal font-mono">{p.readSaving}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p class="text-muted text-xs mt-4">Prices per million tokens. Source: Anthropic pricing page, June 2025.</p>
+      </div>
+    </section>
+
+    <!-- Microcompaction + Tool Optimization -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <div class="grid md:grid-cols-2 gap-12">
+          <!-- Microcompaction -->
+          <div>
+            <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Write-time optimization</p>
+            <h2 class="text-2xl font-bold text-white mb-4">Microcompaction</h2>
+            <p class="text-muted text-sm mb-6 leading-relaxed">
+              Tool results are intercepted at write time. Oversized results are offloaded to disk and replaced with lightweight references. The agent can re-read if needed.
+            </p>
+            <div class="space-y-3">
+              {microcompaction.map((m) => (
+                <div class="flex items-center gap-4 bg-navy-light/80 border border-white/5 rounded-lg px-4 py-3">
+                  <code class="text-teal text-xs font-mono shrink-0 w-24">{m.tool}</code>
+                  <span class="text-white text-sm font-mono">{m.threshold}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <!-- Tool Definition Optimization -->
+          <div>
+            <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Tool optimization</p>
+            <h2 class="text-2xl font-bold text-white mb-4">Lean tool definitions</h2>
+            <p class="text-muted text-sm mb-6 leading-relaxed">
+              Most frameworks send verbose tool descriptions on every turn - usage guides, action lists, workspace paths. Comis uses lean, structured descriptions optimized for tool selection, with detailed guidance delivered just-in-time on first use.
+            </p>
+            <div class="bg-navy-light/80 border border-white/5 rounded-lg p-6">
+              <div class="flex items-start gap-4">
+                <div class="w-1 shrink-0 rounded-full h-full bg-gradient-to-b from-teal to-coral min-h-[80px]"></div>
+                <div class="space-y-3 text-sm">
+                  <p class="text-muted-light"><span class="text-teal font-semibold">Lean contracts</span> - every tool gets a structured description under 150 characters, optimized for selection accuracy.</p>
+                  <p class="text-muted-light"><span class="text-coral font-semibold">Just-in-time guides</span> - detailed usage instructions delivered in the tool response on first use, not loaded upfront.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Progressive Tool Disclosure -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Progressive disclosure</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Three-tier tool context management
+        </h2>
+        <p class="text-muted text-lg mb-6 max-w-2xl">
+          With 50+ built-in tools and unlimited MCP integrations, tool definitions can consume more context than the conversation itself. Comis uses a three-tier system that loads tool information progressively based on relevance.
+        </p>
+        <p class="text-muted text-sm mb-12 max-w-2xl italic">
+          Research shows fewer, better-described tools outperform large tool sets. Disambiguation between similar tools yields 8-38% accuracy gains.
+        </p>
+
+        <div class="grid md:grid-cols-3 gap-6">
+          <!-- Tier 1 -->
+          <div class="bg-navy rounded-xl border border-teal/15 p-6">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="text-xs font-mono px-2 py-0.5 rounded bg-teal/10 text-teal">Tier 1</span>
+              <span class="text-xs text-muted">Always present</span>
+            </div>
+            <h3 class="text-white font-semibold mb-2">Lean definitions</h3>
+            <p class="text-muted text-sm leading-relaxed mb-4">
+              Every tool gets a short, structured description optimized for selection - not usage. Confusable tool pairs include explicit disambiguation suffixes so the model picks the right one.
+            </p>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-teal font-mono">~20 tokens/tool</span>
+              <span class="text-muted">vs ~240 typical</span>
+            </div>
+          </div>
+
+          <!-- Tier 2 -->
+          <div class="bg-navy rounded-xl border border-teal/15 p-6">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="text-xs font-mono px-2 py-0.5 rounded bg-teal/10 text-teal">Tier 2</span>
+              <span class="text-xs text-muted">On first use</span>
+            </div>
+            <h3 class="text-white font-semibold mb-2">Just-in-time guidance</h3>
+            <p class="text-muted text-sm leading-relaxed mb-4">
+              Detailed usage instructions, workspace guides, and action requirements are injected into the tool response the first time a tool is called. Delivered exactly when needed, paid only once per session.
+            </p>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-teal font-mono">~0 tokens upfront</span>
+              <span class="text-muted">loaded on demand</span>
+            </div>
+          </div>
+
+          <!-- Tier 3 -->
+          <div class="bg-navy rounded-xl border border-coral/15 p-6">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="text-xs font-mono px-2 py-0.5 rounded bg-coral/10 text-coral">Tier 3</span>
+              <span class="text-xs text-muted">Context-dependent</span>
+            </div>
+            <h3 class="text-white font-semibold mb-2">Deferred loading</h3>
+            <p class="text-muted text-sm leading-relaxed mb-4">
+              Tools irrelevant to the current context - wrong platform, insufficient trust, rarely used - are deferred behind a semantic discovery tool. Admin tools defer for non-admin sessions. Discord tools defer on Telegram.
+            </p>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-coral font-mono">0 tokens</span>
+              <span class="text-muted">until discovered</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Model-aware optimization -->
+        <div class="mt-8 bg-navy rounded-xl border border-white/5 p-6">
+          <p class="text-white font-semibold mb-2">Model-aware tool presentation</p>
+          <p class="text-muted text-sm leading-relaxed">
+            Small models (8B-70B) get aggressive deferral, pruned parameter schemas, and a focused core tool set. Large models get full schemas with lean descriptions. The model tier is resolved automatically from the context window size - no configuration needed.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Budget Guard -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-4xl mx-auto">
+        <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">Cost control</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Three-tier budget guard
+        </h2>
+        <p class="text-muted text-lg mb-12 max-w-2xl">
+          Every agent has three budget caps, checked <span class="text-white font-semibold">before</span> the LLM call - not after the money is spent.
+        </p>
+
+        <div class="grid md:grid-cols-3 gap-4">
+          {budgets.map((b) => (
+            <div class="bg-navy rounded-xl border border-white/5 p-6 text-center">
+              <p class="text-2xl font-bold text-white font-mono mb-1">{b.default_val}</p>
+              <p class="text-coral font-semibold text-sm mb-2">{b.scope}</p>
+              <p class="text-muted text-sm">{b.purpose}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Real-World Costs -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-4xl mx-auto">
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Production data</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Real-world cost profile
+        </h2>
+        <p class="text-muted text-lg mb-12 max-w-2xl">
+          From a production session running an 8-agent stock analysis pipeline with Claude Opus 4.6 (TradingAgents: 4 analysts, bull-bear debate, trader, risk management, portfolio manager).
+        </p>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left">
+            <thead>
+              <tr class="border-b border-white/10">
+                <th scope="col" class="py-3 pr-6 text-sm font-medium text-muted">Operation</th>
+                <th scope="col" class="py-3 px-6 text-sm font-medium text-muted">Cost</th>
+                <th scope="col" class="py-3 pl-6 text-sm font-medium text-muted">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {realCosts.map((r) => (
+                <tr class="border-b border-white/5">
+                  <td class="py-4 pr-6 text-sm text-white font-medium">{r.op}</td>
+                  <td class="py-4 px-6 text-sm text-teal font-mono font-semibold">{r.cost}</td>
+                  <td class="py-4 pl-6 text-sm text-muted">{r.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mt-8 bg-navy-light/80 border border-coral/15 rounded-xl p-6">
+          <p class="text-white font-semibold mb-2">Without context management</p>
+          <p class="text-muted text-sm leading-relaxed">
+            The same 8-agent pipeline without caching costs <span class="text-coral font-semibold">$22.51</span> - 4M prompt tokens at full input rate. With Comis cache system: <span class="text-teal font-semibold">$12.48</span>. The cache fence alone prevented 36K+ tokens of unnecessary re-writes per pipeline turn by protecting the cached prefix from context engine modifications.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Observability -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-4xl mx-auto">
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Observability</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-6">
+          Every token accounted for
+        </h2>
+        <p class="text-muted text-lg mb-8 max-w-2xl">
+          Every pipeline run logs structured metrics. Events fire on every significant action, feeding into the observability dashboard for real-time cost monitoring.
+        </p>
+
+        <div class="bg-navy rounded-xl border border-white/5 p-6 font-mono text-sm text-muted-light overflow-x-auto">
+          <pre class="whitespace-pre">{`{
+  "tokensLoaded": 40112,
+  "tokensEvicted": 0,
+  "tokensMasked": 0,
+  "tokensCompacted": 0,
+  "thinkingBlocksRemoved": 0,
+  "budgetUtilization": 0.05,
+  "cacheFenceIndex": 54,
+  "sessionDepth": 188,
+  "sessionToolResults": 50,
+  "durationMs": 1
+}`}</pre>
+        </div>
+        <p class="text-muted text-sm mt-4">
+          <code class="text-teal">cacheFenceIndex: 54</code> means messages 0-54 are protected from modification. <code class="text-teal">thinkingBlocksRemoved: 0</code> confirms the fence is preventing unnecessary stripping. Budget utilization at 5% with 188-message depth shows the history window and context layers are keeping costs controlled even in long sessions.
+        </p>
+      </div>
+    </section>
+
+    <!-- Summary Table -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-4xl mx-auto">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4 text-center">
+          The full picture.
+        </h2>
+        <p class="text-muted text-lg mb-12 text-center max-w-xl mx-auto">
+          20 mechanisms working together to keep costs predictable at any scale.
+        </p>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left">
+            <thead>
+              <tr class="border-b border-white/10">
+                <th scope="col" class="py-3 pr-6 text-sm font-medium text-muted">Mechanism</th>
+                <th scope="col" class="py-3 px-6 text-sm font-medium text-muted">What it saves</th>
+                <th scope="col" class="py-3 pl-6 text-sm font-medium text-muted">When it fires</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["Thinking cleaner", "Old reasoning traces", "Every call (layer 1)"],
+                ["Reasoning tag stripper", "Non-Anthropic inline reasoning tags", "Every call (layer 2)"],
+                ["History window", "Old conversation turns", "Every call (layer 3)"],
+                ["Dead content evictor", "Superseded file reads, exec results", "Every call (layer 4)"],
+                ["Observation masker", "Old tool outputs (3-tier: protected/standard/ephemeral)", "Context > 120K chars (layer 5)"],
+                ["LLM compaction", "Entire conversation \u2192 9-section summary", "Context > 85% of window (layer 6)"],
+                ["Rehydration", "Re-injects critical context", "After compaction (layer 7)"],
+                ["Objective reinforcement", "Sub-agent goals survive compaction", "After compaction (layer 8)"],
+                ["Cache fence", "Prevents cache prefix invalidation", "Every call (all layers)"],
+                ["Trim offset translation", "Fence survives history-window", "After layer 3"],
+                ["Spawn staggering", "Shared cache prefix across sub-agents", "Pipeline wave start"],
+                ["Tiered cache retention", "5m for sub-agents, 1h for parent", "Per-session"],
+                ["Cache-stable prompts", "Dynamic fields out of system prompt", "Every call after first"],
+                ["Cache break detection", "Detects and attributes cache invalidation causes", "Post-LLM call"],
+                ["Gemini explicit caching", "CachedContent API with SHA-256 hashing", "Gemini providers"],
+                ["Prefix instability detection", "Forces short TTL on stuck cache reads", "Per-session"],
+                ["Microcompaction", "Large tool results offloaded", "At write time"],
+                ["Re-read detector", "Identifies duplicate tool calls", "Every call"],
+                ["Lean tool definitions", "88% of tool description tokens", "Every call"],
+                ["Just-in-time guidance", "Upfront instructional overhead", "On first tool use"],
+                ["Tool deferral", "Irrelevant tool schemas", "Context-dependent"],
+                ["Model-aware presentation", "Schema overhead on small models", "Auto by model tier"],
+                ["Budget guard", "Prevents runaway calls", "Pre-call estimation"],
+              ].map(([mech, saves, when]) => (
+                <tr class="border-b border-white/5">
+                  <td class="py-3 pr-6 text-sm text-white font-medium">{mech}</td>
+                  <td class="py-3 px-6 text-sm text-muted">{saves}</td>
+                  <td class="py-3 pl-6 text-sm text-teal font-mono text-xs">{when}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Real Production Example -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">Real production data</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Anthropic dashboard: {realExample.date}
+        </h2>
+        <p class="text-muted text-lg mb-8 max-w-2xl">
+          Actual token usage and costs from a production Comis instance running multi-agent pipelines on Claude Opus 4.6. Not a benchmark - real user traffic.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-8">
+          <!-- Token breakdown -->
+          <div class="bg-navy-light/80 border border-white/5 rounded-2xl p-8">
+            <p class="text-xs font-mono text-muted mb-6 uppercase tracking-widest">Token breakdown</p>
+            <div class="space-y-4">
+              <div class="flex items-center justify-between">
+                <span class="text-muted text-sm">Input</span>
+                <span class="text-muted font-mono text-sm">{realExample.input.tokens.toLocaleString()}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-muted text-sm">Output</span>
+                <span class="text-white font-mono text-sm">{realExample.output.tokens.toLocaleString()}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-coral text-sm">Cache write (1h)</span>
+                <span class="text-coral font-mono text-sm">{realExample.cacheWrite1h.tokens.toLocaleString()}</span>
+              </div>
+              <div class="flex items-center justify-between border-t border-white/5 pt-4">
+                <span class="text-teal text-sm font-semibold">Cache read</span>
+                <span class="text-teal font-mono text-sm font-semibold">{realExample.cacheRead.tokens.toLocaleString()}</span>
+              </div>
+              <div class="flex items-center justify-between border-t border-white/10 pt-4">
+                <span class="text-white text-sm font-semibold">Total</span>
+                <span class="text-white font-mono text-sm font-semibold">{realExample.total.tokens.toLocaleString()}</span>
+              </div>
+            </div>
+
+            <!-- Visual bar -->
+            <div class="mt-6 h-4 rounded-full overflow-hidden bg-navy flex">
+              <div class="bg-teal" style={`width: ${(realExample.cacheRead.tokens / realExample.total.tokens * 100).toFixed(0)}%`} title="Cache reads"></div>
+              <div class="bg-coral" style={`width: ${(realExample.cacheWrite1h.tokens / realExample.total.tokens * 100).toFixed(0)}%`} title="Cache writes"></div>
+              <div class="bg-muted" style={`width: ${((realExample.output.tokens + realExample.input.tokens) / realExample.total.tokens * 100).toFixed(0)}%`} title="Input + Output"></div>
+            </div>
+            <div class="flex items-center gap-4 mt-2 text-xs text-muted">
+              <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-teal"></span> Cache read (94%)</span>
+              <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-coral"></span> Cache write (6%)</span>
+            </div>
+          </div>
+
+          <!-- Cost breakdown -->
+          <div class="bg-navy-light/80 border border-teal/20 rounded-2xl p-8">
+            <p class="text-xs font-mono text-muted mb-6 uppercase tracking-widest">Cost breakdown (Opus 4.6)</p>
+            <div class="space-y-4">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="text-muted text-sm">Input</span>
+                  <span class="text-muted text-xs ml-2">$5/MTok</span>
+                </div>
+                <span class="text-muted font-mono text-sm">${realExample.input.cost.toFixed(2)}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="text-muted text-sm">Output</span>
+                  <span class="text-muted text-xs ml-2">$25/MTok</span>
+                </div>
+                <span class="text-white font-mono text-sm">${realExample.output.cost.toFixed(2)}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="text-coral text-sm">Cache write</span>
+                  <span class="text-muted text-xs ml-2">mixed 5m/1h TTL</span>
+                </div>
+                <span class="text-coral font-mono text-sm">${realExample.cacheWrite1h.cost.toFixed(2)}</span>
+              </div>
+              <div class="flex items-center justify-between border-t border-white/5 pt-4">
+                <div>
+                  <span class="text-teal text-sm font-semibold">Cache read</span>
+                  <span class="text-teal text-xs ml-2">$0.50/MTok</span>
+                </div>
+                <span class="text-teal font-mono text-sm font-semibold">${realExample.cacheRead.cost.toFixed(2)}</span>
+              </div>
+              <div class="flex items-center justify-between border-t border-white/10 pt-4">
+                <span class="text-white text-sm font-semibold">Total</span>
+                <span class="text-white font-mono text-lg font-bold">${realExample.total.cost.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div class="mt-6 grid grid-cols-3 gap-4 pt-4 border-t border-white/5">
+              <div class="text-center">
+                <p class="text-2xl font-bold text-teal font-mono">{realExample.readWriteRatio}x</p>
+                <p class="text-muted text-xs mt-1">Read/write ratio</p>
+              </div>
+              <div class="text-center">
+                <p class="text-2xl font-bold text-teal font-mono">{realExample.savings}%</p>
+                <p class="text-muted text-xs mt-1">Cost savings</p>
+              </div>
+              <div class="text-center">
+                <p class="text-2xl font-bold text-coral font-mono line-through">${realExample.withoutCaching.toFixed(2)}</p>
+                <p class="text-muted text-xs mt-1">Without caching</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Production agents with predictable costs.
+        </h2>
+        <p class="text-muted text-lg mb-10">
+          Run agents indefinitely, across thousands of turns, without the exponential token growth that makes naive frameworks unusable at scale.
+        </p>
+
+        <div class="flex flex-wrap gap-4 justify-center">
+          <a href="https://docs.comis.ai" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
+            Get Started
+          </a>
+          <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            View on GitHub
+          </a>
+          <a href="/" class="inline-flex items-center justify-center px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-medium rounded-lg transition-colors border border-white/10">
+            Back to Home
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Base>

@@ -1,0 +1,232 @@
+---
+title: "Messaging"
+description: "Send, reply, react, edit, and delete messages across channels"
+icon: "paper-plane"
+---
+
+The `message` tool gives agents the ability to send and manage messages across all connected channels. Agents can send new messages, reply to existing ones, add reactions, edit their messages, delete messages, fetch message history, and attach files.
+
+## message -- Cross-Channel Messaging
+
+The `message` tool supports 7 actions that cover every aspect of message management. All actions work across every connected channel -- Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, and LINE.
+
+All actions require the `channel_type` parameter to specify which platform adapter handles the request. This is a required string identifying the channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`).
+
+### Quick Reference
+
+| Action | What It Does |
+|--------|-------------|
+| `send` | Send a new message to a channel |
+| `reply` | Reply to a specific message |
+| `react` | Add an emoji reaction |
+| `edit` | Edit a previously sent message |
+| `delete` | Delete a message |
+| `fetch` | Retrieve recent messages from a channel |
+| `attach` | Send a message with a file attachment |
+
+### Actions
+
+<AccordionGroup>
+  <Accordion title="send -- Send a new message">
+    Sends a new message to a specified channel. The agent does not need to be actively conversing in that channel -- it can send messages to any channel it has access to.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `send` |
+    | `channel_type` | string | Yes | Channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`) |
+    | `channel_id` | string | Yes | The target channel identifier |
+    | `text` | string | Yes | The message content |
+    | `buttons` | array | No | Button rows for interactive messages. Each inner array is one row of buttons with `text`, optional `callback_data`, `url`, and `style` (`primary`, `secondary`, `danger`, `link`). |
+    | `cards` | array | No | Rich card embeds. Renders as embeds on Discord, blocks on Slack, HTML on Telegram. Each card has optional `title`, `description`, `image_url`, `color`, and `fields`. |
+    | `effects` | array | No | Message delivery effects: `spoiler` (wraps text in spoiler) or `silent` (suppresses notification) |
+    | `thread_reply` | boolean | No | Create or continue a thread from this message. Discord creates thread, Slack uses thread_ts. |
+
+    **Example -- Send a notification:**
+    ```yaml
+    action: send
+    channel_type: discord
+    channel_id: "general"
+    text: "The daily report is ready. Check the #reports channel for details."
+    ```
+
+    <Tip>
+    Use `send` for proactive messages like notifications, alerts, and announcements. The agent can send to channels it is not currently conversing in, making this ideal for cross-channel coordination.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="reply -- Reply to a specific message">
+    Replies to an existing message, creating a threaded response on platforms that support threading (like Discord and Slack). On platforms without threading, this sends a regular message.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `reply` |
+    | `channel_type` | string | Yes | Channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`) |
+    | `channel_id` | string | Yes | The channel containing the message |
+    | `message_id` | string | Yes | The ID of the message to reply to |
+    | `text` | string | Yes | The reply content |
+    | `buttons` | array | No | Button rows for interactive messages (same format as `send`) |
+    | `cards` | array | No | Rich card embeds (same format as `send`) |
+    | `effects` | array | No | Message delivery effects: `spoiler` or `silent` |
+    | `thread_reply` | boolean | No | Create or continue a thread from this message |
+
+    **Example -- Reply to a user's question:**
+    ```yaml
+    action: reply
+    channel_type: slack
+    channel_id: "support"
+    message_id: "msg_abc123"
+    text: "Great question! Here's what I found..."
+    ```
+  </Accordion>
+
+  <Accordion title="react -- Add an emoji reaction">
+    Adds an emoji reaction to an existing message. This is a lightweight way for agents to acknowledge messages without sending a full reply.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `react` |
+    | `channel_type` | string | Yes | Channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`) |
+    | `channel_id` | string | Yes | The channel containing the message |
+    | `message_id` | string | Yes | The ID of the message to react to |
+    | `emoji` | string | Yes | The emoji to add in Unicode format (e.g., `thumbsup`, `check`, `eyes`) |
+
+    **Example -- Acknowledge a request:**
+    ```yaml
+    action: react
+    channel_type: telegram
+    channel_id: "requests"
+    message_id: "msg_def456"
+    emoji: "thumbsup"
+    ```
+
+    <Info>
+    Emoji names vary by platform. Discord uses custom emoji names, Telegram uses Unicode emoji, and Slack uses shortcodes like `:thumbsup:`. The agent handles the translation automatically.
+    </Info>
+  </Accordion>
+
+  <Accordion title="edit -- Edit a sent message">
+    Edits a message that the agent previously sent. Useful for updating status messages or correcting errors.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `edit` |
+    | `channel_type` | string | Yes | Channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`) |
+    | `channel_id` | string | Yes | The channel containing the message |
+    | `message_id` | string | Yes | The ID of the message to edit |
+    | `text` | string | Yes | The new message content |
+
+    <Warning>
+    Not all platforms support message editing. Telegram supports editing within 48 hours. Discord supports editing with no time limit. Some platforms (like IRC) do not support editing at all. The tool will return an error if editing is not supported.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="delete -- Delete a message">
+    Deletes a message from a channel. The agent can only delete messages it has permission to delete -- typically its own messages or, on platforms with moderation rights, other users' messages.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `delete` |
+    | `channel_type` | string | Yes | Channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`) |
+    | `channel_id` | string | Yes | The channel containing the message |
+    | `message_id` | string | Yes | The ID of the message to delete |
+
+    <Info>
+    Platform permissions apply. On Discord, the bot needs "Manage Messages" permission to delete other users' messages. On Telegram, the bot needs admin rights. Check your platform's documentation for permission requirements. This is a destructive action that requires user confirmation via the `_confirmed` parameter.
+    </Info>
+  </Accordion>
+
+  <Accordion title="fetch -- Retrieve recent messages">
+    Fetches recent messages from a channel. Useful when the agent needs to review recent conversation history or catch up on messages it may have missed.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `fetch` |
+    | `channel_type` | string | Yes | Channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`) |
+    | `channel_id` | string | Yes | The channel to fetch messages from |
+    | `limit` | integer | No | Maximum number of messages to return (default: 20) |
+    | `before` | string | No | Fetch messages before this message ID (for pagination) |
+
+    Returns a list of messages including their IDs, authors, timestamps, and content.
+
+    **Example -- Get the last 5 messages:**
+    ```yaml
+    action: fetch
+    channel_type: discord
+    channel_id: "general"
+    limit: 5
+    ```
+  </Accordion>
+
+  <Accordion title="attach -- Send a message with a file">
+    Sends a message with a file attachment. The agent can attach images, documents, audio files, or any other file type supported by the target platform.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `attach` |
+    | `channel_type` | string | Yes | Channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`) |
+    | `channel_id` | string | Yes | The target channel |
+    | `attachment_url` | string | Yes | URL or workspace path of file to send: `http://`, `https://`, `file://`, or absolute path |
+    | `attachment_type` | string | No | Attachment media type: `image`, `file`, `audio`, or `video` (default: `file`) |
+    | `mime_type` | string | No | MIME type of attachment |
+    | `file_name` | string | No | Display filename for the attachment |
+    | `caption` | string | No | Caption text for the attachment |
+
+    **Example -- Send a generated report:**
+    ```yaml
+    action: attach
+    channel_type: telegram
+    channel_id: "reports"
+    attachment_url: "https://example.com/weekly-report.pdf"
+    attachment_type: file
+    file_name: "weekly-report.pdf"
+    caption: "Here's the weekly summary report."
+    ```
+
+    <Info>
+    File size limits vary by platform. Discord allows up to 25 MB (or 100 MB with Nitro). Telegram allows up to 50 MB for most files. Check your platform's limits if sending large files.
+    </Info>
+  </Accordion>
+</AccordionGroup>
+
+## Cross-Channel Messaging
+
+The `message` tool works across all connected channels. The `channel_type` and `channel_id` parameters together identify which channel to target. Agents can send messages to channels they are not currently conversing in -- this is a key capability for building notification systems, alert pipelines, and cross-channel coordination workflows.
+
+For example, a monitoring agent could:
+1. Detect an issue through its heartbeat check
+2. Send an alert to the `#ops-alerts` Discord channel using `channel_type: discord`
+3. Send a summary to the Telegram admin group using `channel_type: telegram`
+4. React with a warning emoji on the original message that triggered the check
+
+All of this happens through the same `message` tool with different `channel_type` and `channel_id` values.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Channels Overview" icon="messages" href="/channels/index">
+    Connect Discord, Telegram, Slack, and 5 more platforms
+  </Card>
+  <Card title="Sessions" icon="users" href="/agent-tools/sessions">
+    Sub-agents, pipelines, and session management
+  </Card>
+  <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
+    Master reference table of all 47 tools
+  </Card>
+  <Card title="Platform Actions" icon="gavel" href="/agent-tools/platform-actions">
+    Moderation actions for Discord, Telegram, Slack, and WhatsApp
+  </Card>
+</CardGroup>

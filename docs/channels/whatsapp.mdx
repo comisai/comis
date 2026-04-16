@@ -1,0 +1,178 @@
+---
+title: "WhatsApp"
+description: "Connect Comis to WhatsApp with step-by-step setup"
+icon: "whatsapp"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+Connect your Comis agent to WhatsApp personal and group chats. WhatsApp
+supports reactions, buttons, file attachments up to 100 MB, and
+block-streaming responses. Unlike other adapters, WhatsApp uses phone-based
+QR pairing instead of API tokens.
+
+## Prerequisites
+
+<Prereqs />
+
+- A phone with WhatsApp installed
+- The phone must stay connected to the internet (WhatsApp multi-device requires periodic syncs)
+
+<Warning>
+WhatsApp does not use an API key. On first run, you will scan a QR code with
+your phone to link Comis as a companion device. Keep your phone connected --
+if it goes offline for extended periods, the link may expire and you will need
+to pair again.
+</Warning>
+
+## Setup
+
+<Steps>
+  <Step title="Configure Comis">
+    Unlike other adapters, WhatsApp does not need a token upfront. Add the
+    WhatsApp channel to your Comis configuration file (`~/.comis/config.yaml`):
+
+    ```yaml
+    channels:
+      whatsapp:
+        enabled: true
+        authDir: "~/.comis/whatsapp-auth"
+        printQR: true
+    ```
+
+    The `authDir` directory stores session files that keep you connected across
+    restarts. Make sure it points to a persistent location (not `/tmp/`).
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Start Comis and scan the QR code">
+    Start (or restart) the Comis daemon:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Watch the terminal output or logs. A QR code will appear (when `printQR: true`).
+
+    On your phone:
+    1. Open **WhatsApp**
+    2. Go to **Settings** then **Linked Devices**
+    3. Tap **Link a Device**
+    4. Scan the QR code displayed in the terminal
+
+    Wait for the logs to show **"WhatsApp adapter connected"**. This confirms
+    the pairing was successful.
+  </Step>
+
+  <Step title="Send a test message">
+    From another phone or contact, send a message to the linked WhatsApp
+    number. Verify the agent responds.
+
+    In group chats, the agent must be a participant in the group -- you cannot
+    send messages to groups the linked number has not joined.
+  </Step>
+
+  <Step title="Verify session persistence">
+    Stop and restart Comis:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    It should reconnect automatically **without** a new QR scan. If it asks for
+    a QR code again, check that `authDir` points to a persistent directory and
+    that the session files were not deleted.
+  </Step>
+</Steps>
+
+## Configuration
+
+These options go under `channels.whatsapp` in your `config.yaml`:
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Turns on the WhatsApp adapter |
+| `authDir` | string | `~/.comis/whatsapp-auth` | Directory for multi-device session files. Must be persistent. |
+| `printQR` | boolean | `true` | Print QR code to the terminal on first pairing |
+| `allowFrom` | string[] | `[]` (all) | Restrict to specific WhatsApp phone numbers. Empty means all contacts can talk to the bot. |
+| `mediaProcessing.transcribeAudio` | boolean | `true` | Transcribe voice messages to text before passing to the agent |
+| `mediaProcessing.analyzeImages` | boolean | `true` | Describe images sent to the bot using AI vision |
+| `mediaProcessing.describeVideos` | boolean | `true` | Extract descriptions from video content |
+| `mediaProcessing.extractDocuments` | boolean | `true` | Extract text from PDFs, DOCX, and other documents |
+| `mediaProcessing.understandLinks` | boolean | `true` | Fetch and summarize URLs included in messages |
+
+## What your agent can do
+
+Once connected to WhatsApp, your agent can:
+
+- Send, edit, and delete messages
+- React to messages with emoji
+- Send interactive buttons for user choices
+- Send file attachments up to 100 MB
+- Stream responses as separate message blocks (updates every 600 ms)
+
+WhatsApp does **not** support threads, fetching message history, rich
+formatting (plain text only), mentions, or cards/embeds.
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 65,536 characters | Rarely hit; automatically splits if exceeded |
+| Attachment size | 100 MB | Files over 100 MB are rejected with a user-friendly error message |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="QR code not appearing">
+    **What happened:** The QR code is not being printed to the terminal.
+
+    **How to fix it:** Check that `printQR: true` is set in your config. Also
+    ensure your terminal supports QR rendering (most modern terminals do). If
+    running via pm2 or systemd, check the logs instead of the terminal -- the
+    QR code is logged there.
+  </Accordion>
+
+  <Accordion title="Session expired, asking for QR again">
+    **What happened:** The session files in `authDir` were deleted, or `authDir`
+    points to a temporary directory.
+
+    **How to fix it:** Set `authDir` to a persistent path like
+    `~/.comis/whatsapp-auth`. If the files were intentionally deleted, scan the
+    QR code again to re-pair.
+  </Accordion>
+
+  <Accordion title="WhatsApp adapter starts but nothing happens">
+    **What happened:** You likely missed the QR pairing step on first run. The
+    adapter is waiting for you to scan the QR code.
+
+    **How to fix it:** Watch the terminal output or logs on first start for the
+    QR code. Open WhatsApp on your phone, go to **Settings** then **Linked
+    Devices** then **Link a Device**, and scan the QR code.
+  </Accordion>
+
+  <Accordion title="Messages not delivered to groups">
+    **What happened:** The agent can only participate in groups that the linked
+    WhatsApp number has already joined.
+
+    **How to fix it:** Add the linked phone number to the group in WhatsApp
+    first, then the agent will be able to receive and send messages there.
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 9 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>

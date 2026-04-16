@@ -1,0 +1,201 @@
+---
+title: "Hot Reload"
+description: "Config and skill hot reload mechanism reference covering SIGUSR1 restart and chokidar file watching"
+icon: "rotate"
+---
+
+Comis has two distinct hot reload mechanisms: **config hot reload** uses RPC-based writes followed by a SIGUSR1-triggered process restart, while **skill hot reload** uses chokidar file watchers for discovery directory monitoring. These are completely separate systems.
+
+<Warning>
+  Config hot reload is NOT file watching. The daemon does not watch config files for changes. Config changes go through the RPC API, which validates, writes, and then sends SIGUSR1 to restart the daemon.
+</Warning>
+
+## Config Hot Reload
+
+Config changes are applied through RPC methods that validate the change, write to the local YAML file, and trigger a SIGUSR1 signal for process restart.
+
+<Info>
+  **Source:** `packages/daemon/src/rpc/config-handlers.ts` -- 10 RPC methods including `config.patch`, `config.apply`, `config.rollback`, `gateway.restart`.
+</Info>
+
+### config.patch
+
+Deep-merges a partial config change into the existing configuration.
+
+**Flow:**
+
+1. **Rate limit check** -- token bucket, 5 patches per 60 seconds (shared with `config.apply`)
+2. **Immutable path check** -- certain config paths cannot be modified at runtime
+3. **Build patch object** -- supports dot-notation keys (e.g., `budget.maxTokens`)
+4. **Type coercion** -- automatically converts string booleans (`"true"` / `"false"`) and numeric strings to native types (handles LLM tool call quirks)
+5. **Deep merge** -- merge patch into current in-memory config
+6. **Zod validation** -- validate merged result against `AppConfigSchema`
+7. **MCP server env restore** -- ENVREF-04: restore `env` fields from existing YAML when the UI patch omits them (because `config.read` redacts secret values)
+8. **Duplicate MCP server name check** -- MCPDUP-01: reject patches with duplicate server names
+9. **Suspicious env value check** -- ENVREF-03: reject bare `$VAR`, `[REDACTED]`, raw keys
+10. **Atomic write** -- write to temp file, then `rename()` to `config.local.yaml`
+11. **Best-effort git commit** -- record the change in config git history
+12. **Audit event** -- emit `audit:event` with `actionType: "config.patch"`
+13. **200ms delayed SIGUSR1** -- schedule process restart to pick up new config
+
+### config.apply
+
+Full section replacement (not deep merge). Same flow as `config.patch` except step 5 replaces the entire section instead of merging. Shares the rate limit bucket with `config.patch`.
+
+### config.rollback
+
+Restores config from git history to a specific commit SHA. Calls `configGitManager.rollback(sha)`, then sends SIGUSR1 for restart.
+
+### persistToConfig (Internal Utility)
+
+Used by management RPC handlers (agents, tokens, channels) to persist config changes. Follows the same validate-write-restart pattern but with a **2-second debounced SIGUSR1** instead of the 200ms delay used by `config.patch`. This allows batch operations (e.g., creating 8 agents in sequence) to coalesce into a single restart.
+
+<Info>
+  **Source:** `packages/daemon/src/rpc/persist-to-config.ts` -- PERSIST-05/PERSIST-06: debounced SIGUSR1 for batch config operations.
+</Info>
+
+### Immutable Config Keys
+
+Certain config paths cannot be modified at runtime through the RPC API. Attempting to patch these paths returns an error instructing the operator to modify config files manually.
+
+### Git Versioning
+
+Config changes are recorded in a git repository for history and rollback. The git operations are best-effort: if git is unavailable or the commit fails, the config change still proceeds. History and diff operations are available through the `config.history` and `config.diff` RPC methods.
+
+### Config Patch Rate Limiting
+
+A token bucket rate limiter enforces a maximum of 5 patches per 60 seconds. This limit is shared between `config.patch` and `config.apply` to prevent runaway config changes from agent tool calls or automated scripts.
+
+When the rate limit is exceeded, the RPC returns an error with a retry-after duration:
+
+```
+Config patch rate limit exceeded: max 5 patches per minute.
+Try again in N seconds.
+```
+
+## Skill Hot Reload
+
+Skill hot reload uses chokidar file watchers to monitor discovery directories for SKILL.md file changes. This is a completely separate mechanism from config hot reload.
+
+<Info>
+  **Source:** `packages/skills/src/registry/skill-watcher.ts` -- chokidar-based file watcher with batch debounce.
+</Info>
+
+### createSkillWatcher
+
+```typescript
+function createSkillWatcher(options: SkillWatcherOptions): SkillWatcherHandle
+```
+
+Options:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `discoveryPaths` | `string[]` | Directories to watch for skill file changes |
+| `debounceMs` | `number` | Batch debounce interval in milliseconds |
+| `onReload` | `() => void` | Callback fired after debounce window closes |
+| `logger` | `SkillsLogger?` | Optional logger for diagnostic output |
+
+### Watched Events
+
+The watcher monitors for three chokidar events on discovery directories:
+
+| Event | Trigger |
+|-------|---------|
+| `add` | New SKILL.md file created |
+| `change` | Existing SKILL.md file modified |
+| `unlink` | SKILL.md file deleted |
+
+### Batch Debounce
+
+Rapid file changes within the `debounceMs` window are coalesced into a single `onReload()` invocation. This prevents redundant re-discovery when multiple skill files are modified simultaneously (e.g., during a git checkout or bulk file operation).
+
+### Late Directory Creation
+
+When discovery paths do not exist yet (e.g., the workspace `skills/` directory has not been created by an agent), the watcher monitors their parent directories for creation:
+
+1. For each missing discovery path, walk up to the nearest existing ancestor directory
+2. Watch those ancestor directories with chokidar at depth 3
+3. When a missing discovery path appears (detected via `addDir` event):
+   - Close the parent watcher (its job is done)
+   - Start the real skill file watcher on all now-existing discovery paths
+   - Trigger re-discovery for newly available paths
+
+### Lifecycle
+
+The `SkillWatcherHandle` provides a `close()` method for shutdown cleanup. During graceful shutdown, all skill watchers are closed in the teardown sequence (HTRL-08).
+
+## Gateway Restart
+
+The `gateway.restart` RPC method triggers the same SIGUSR1 mechanism as config hot reload:
+
+```typescript
+// 200ms delay allows the RPC response to flush over WebSocket
+setTimeout(() => {
+  process.kill(process.pid, "SIGUSR1");
+}, 200);
+```
+
+This is used when the gateway needs to restart for reasons other than config changes (e.g., TLS certificate rotation).
+
+## SIGUSR1 Lifecycle
+
+When SIGUSR1 is received, the daemon initiates an ordered teardown sequence followed by process exit. The process manager (pm2 or systemd) detects the exit and restarts the daemon with the updated config.
+
+<Info>
+  **Source:** `packages/daemon/src/wiring/setup-shutdown.ts` -- ordered teardown with hard timeout.
+</Info>
+
+### Teardown Sequence
+
+The shutdown handler stops components in dependency order:
+
+1. Graph coordinator (cancel running graph pipelines)
+2. Sub-agent runner (drain active sub-agent runs)
+3. Lock cleanup timer
+4. Approval gate (dispose pending timers)
+5. Skill file watchers (close chokidar instances)
+6. Cron schedulers (per-agent)
+7. Session reset schedulers (per-agent)
+8. Browser services (close Chrome processes)
+9. Restart continuation tracker (capture active sessions)
+10. Lifecycle reactors
+11. Channel manager (stop all channel adapters)
+12. Heartbeat runner
+13. Per-agent heartbeat runner
+14. Wake coalescer
+15. Media temp manager
+16. Gateway HTTP/WebSocket server
+17. Observability modules (diagnostic collector, activity tracker, delivery tracer)
+18. Background embedding indexing (with 5-second timeout)
+19. Audit aggregator
+20. Injection rate limiter
+21. Secret store database
+22. Memory database
+
+### Hard Timeout
+
+The shutdown handler has a hard timeout of **30 seconds** (default `timeoutMs`). If the teardown sequence does not complete within this window, the process is forcibly terminated. This timeout must be less than the process manager's stop timeout (e.g., systemd `TimeoutStopSec`).
+
+### Signal Registration
+
+```typescript
+process.on("SIGUSR1", () => {
+  daemonLogger.info("SIGUSR1 received, initiating restart");
+  void shutdownHandle.trigger("SIGUSR1");
+});
+```
+
+The SIGUSR1 handler triggers the same graceful shutdown used for SIGTERM/SIGINT, ensuring all components are properly cleaned up regardless of the restart trigger.
+
+<CardGroup cols={2}>
+  <Card title="Security Model" icon="shield" href="/security">
+    Defense-in-depth security architecture
+  </Card>
+  <Card title="Rate Limiting" icon="gauge-high" href="/reference/rate-limiting">
+    Multi-layer rate limiting
+  </Card>
+  <Card title="Config YAML" icon="file-code" href="/reference/config-yaml">
+    Configuration file reference
+  </Card>
+</CardGroup>

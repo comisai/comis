@@ -1,0 +1,97 @@
+{
+  "name": "comisai",
+  "version": "1.0.0",
+  "author": "Moshe Anconina",
+  "license": "Apache-2.0",
+  "description": "Security-first AI agent platform — connects AI agents to Discord, Telegram, Slack, WhatsApp, and more",
+  "keywords": ["comis", "ai", "agent", "chatbot", "discord", "telegram", "slack", "whatsapp", "signal", "imessage", "irc", "line", "mcp", "multi-agent", "assistant"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": { "node": ">=22" },
+  "files": ["dist"],
+  "bin": {
+    "comis": "./dist/cli-entry.js"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comisai/comis.git",
+    "directory": "packages/comis"
+  },
+  "homepage": "https://comis.ai",
+  "bugs": {
+    "url": "https://github.com/comisai/comis/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./shared": {
+      "types": "./dist/shared.d.ts",
+      "import": "./dist/shared.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./infra": {
+      "types": "./dist/infra.d.ts",
+      "import": "./dist/infra.js"
+    },
+    "./memory": {
+      "types": "./dist/memory.d.ts",
+      "import": "./dist/memory.js"
+    },
+    "./gateway": {
+      "types": "./dist/gateway.d.ts",
+      "import": "./dist/gateway.js"
+    },
+    "./skills": {
+      "types": "./dist/skills.d.ts",
+      "import": "./dist/skills.js"
+    },
+    "./scheduler": {
+      "types": "./dist/scheduler.d.ts",
+      "import": "./dist/scheduler.js"
+    },
+    "./agent": {
+      "types": "./dist/agent.d.ts",
+      "import": "./dist/agent.js"
+    },
+    "./channels": {
+      "types": "./dist/channels.d.ts",
+      "import": "./dist/channels.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    },
+    "./daemon": {
+      "types": "./dist/daemon.d.ts",
+      "import": "./dist/daemon.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@comis/shared": "workspace:*",
+    "@comis/core": "workspace:*",
+    "@comis/infra": "workspace:*",
+    "@comis/memory": "workspace:*",
+    "@comis/gateway": "workspace:*",
+    "@comis/skills": "workspace:*",
+    "@comis/scheduler": "workspace:*",
+    "@comis/agent": "workspace:*",
+    "@comis/channels": "workspace:*",
+    "@comis/cli": "workspace:*",
+    "@comis/daemon": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,33 @@
+---
+---
+
+<section class="px-6 py-20 md:py-28 bg-navy-light/50">
+  <div class="max-w-5xl mx-auto">
+    <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Under the hood</p>
+    <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+      Hexagonal architecture. Plug anything in.
+    </h2>
+    <p class="text-muted text-lg mb-12 max-w-2xl">
+      Core defines interfaces. Everything else - channels, tools, memory, LLM providers - plugs in from the outside. Adding a new channel or tool means implementing a port, not rewriting logic.
+    </p>
+
+    <div class="bg-navy rounded-xl border border-white/5 overflow-hidden">
+      <img
+        src="/images/comis-architecture.jpg"
+        alt="Comis hexagonal architecture - channels on the left, core in the center, tools on the right, security layer wrapping everything"
+        class="w-full"
+        loading="lazy"
+      />
+    </div>
+
+    <p class="text-muted mt-8 text-center">
+      13 packages. TypeScript monorepo. Every function returns a typed Result - no thrown exceptions. Fully open source.
+    </p>
+    <div class="text-center mt-6">
+      <a href="/architecture" class="inline-flex items-center gap-2 text-sm font-semibold text-teal hover:text-teal-dark transition-colors">
+        Deep dive: Ports, adapters, and why it matters
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+      </a>
+    </div>
+  </div>
+</section>

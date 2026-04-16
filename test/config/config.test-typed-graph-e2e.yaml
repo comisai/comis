@@ -1,0 +1,115 @@
+# Comis Test Configuration — Typed Graph E2E Integration Tests (TEST-06 + TEST-08)
+#
+# Uses port 8741 to avoid conflicts when running in parallel via vitest pool: "forks".
+# Three agents (default, alpha, beta) for debate/vote typed node tests.
+# graphMaxGlobalSubAgents: 2 for concurrency contention in TEST-08.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "Default"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 5000000
+      perHour: 50000000
+      perDay: 500000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+
+  alpha:
+    name: "Alpha"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 5000000
+      perHour: 50000000
+      perDay: 500000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+
+  beta:
+    name: "Beta"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 5000000
+      perHour: 50000000
+      perDay: 500000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8741
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-typed-graph-e2e"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-typed-graph-e2e.db"
+
+security:
+  agentToAgent:
+    enabled: true
+    graphMaxGlobalSubAgents: 2
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

@@ -1,0 +1,303 @@
+---
+title: "Voice"
+description: "Speech-to-text transcription and text-to-speech auto-reply for voice messages"
+icon: "microphone"
+---
+
+When someone sends a voice message to your agent, Comis can transcribe it to text
+so the agent can read and respond. Optionally, the agent can reply with a voice
+message of its own using text-to-speech. The entire flow -- from receiving a voice
+note to sending a spoken reply -- can be fully automatic.
+
+## How Voice Works
+
+<Steps>
+  <Step title="User sends a voice message">
+    A user records a voice note in Telegram, Discord, WhatsApp, or any connected
+    platform.
+  </Step>
+
+  <Step title="Comis transcribes the audio">
+    The voice message is automatically converted to text using your configured
+    speech-to-text provider. The agent sees the written transcript.
+  </Step>
+
+  <Step title="Agent reads and responds">
+    Your agent processes the transcript like any text message and writes a reply.
+  </Step>
+
+  <Step title="Response is converted to speech (optional)">
+    If auto-TTS is enabled, Comis converts the text reply into audio and sends it
+    back as a voice message.
+  </Step>
+</Steps>
+
+<Info>
+Voice also helps with mention detection. In group chats where the bot only responds
+when mentioned, Comis can pre-transcribe voice messages to check if the user said
+the bot's name.
+</Info>
+
+## Transcription (Speech-to-Text)
+
+Comis supports three speech-to-text providers. You only need one configured, but
+you can set up multiple for automatic failover. Each provider connects to a
+different speech recognition service, so the best choice depends on your needs
+and which API keys you already have.
+
+| Provider | Default Model | API Key | Special Features |
+|----------|--------------|---------|------------------|
+| OpenAI | gpt-4o-mini-transcribe | `OPENAI_API_KEY` | Default provider, fast |
+| Groq | whisper-large-v3-turbo | `GROQ_API_KEY` | Returns language detection and duration |
+| Deepgram | nova-3 | `DEEPGRAM_API_KEY` | High accuracy, real-time streaming |
+
+<AccordionGroup>
+  <Accordion title="OpenAI">
+    Default transcription provider. Uses the gpt-4o-mini-transcribe model. Reliable
+    and fast for most use cases. Requires an OpenAI API key. Does not return
+    language or duration metadata in the response.
+
+    This is the provider Comis uses out of the box if you have an OpenAI API key
+    configured. No additional setup beyond the API key is needed.
+  </Accordion>
+
+  <Accordion title="Groq">
+    Uses Whisper Large V3 Turbo. Returns rich metadata including the detected
+    language of the audio and total duration. Requires a Groq API key. A good
+    alternative if you want automatic language detection.
+
+    The language detection feature is especially useful for multilingual communities
+    where voice messages arrive in different languages.
+  </Accordion>
+
+  <Accordion title="Deepgram">
+    Uses the Nova 3 model. Known for high accuracy and fast processing speeds.
+    Requires a Deepgram API key. Internally uses a different API format (raw binary
+    instead of form data), but this is handled automatically -- you just provide
+    the API key.
+
+    Deepgram is a good choice when transcription accuracy is your top priority,
+    especially for noisy audio or accented speech.
+  </Accordion>
+</AccordionGroup>
+
+### Fallback Chains
+
+If your primary provider fails (API error, timeout, rate limit), Comis tries the
+next provider in your fallback list. This keeps voice transcription working even
+when a single provider has issues.
+
+```yaml
+integrations:
+  media:
+    transcription:
+      provider: openai                   # Primary provider
+      fallbackProviders:                 # Try these if primary fails
+        - groq
+        - deepgram
+```
+
+In this example, Comis tries OpenAI first. If OpenAI fails, it tries Groq. If Groq
+also fails, it tries Deepgram. The first successful transcription is used.
+
+## Text-to-Speech (TTS)
+
+Comis can convert your agent's text replies into spoken audio using three TTS
+providers. Like transcription, you only need one provider configured. The right
+choice depends on voice quality requirements, budget, and whether you need an
+API key.
+
+| Provider | Default Model | Default Voice | API Key | Cost |
+|----------|--------------|--------------|---------|------|
+| OpenAI | tts-1 | alloy | `OPENAI_API_KEY` | Paid |
+| ElevenLabs | eleven_multilingual_v2 | Rachel | `ELEVENLABS_API_KEY` | Paid |
+| Edge | -- | en-US-AvaMultilingualNeural | None needed | Free |
+
+<AccordionGroup>
+  <Accordion title="OpenAI">
+    Default TTS provider. Uses the tts-1 model with the "alloy" voice. Supports
+    speed adjustment from 0.25x to 4.0x. Requires an OpenAI API key. A good
+    balance of quality and speed.
+
+    OpenAI offers several voice options beyond "alloy." You can change the voice
+    in your configuration or per-reply using TTS directives.
+  </Accordion>
+
+  <Accordion title="ElevenLabs">
+    Premium voice synthesis using the eleven_multilingual_v2 model. Default voice
+    is "Rachel." Offers advanced voice settings: stability, similarity boost, style,
+    and speaker boost. Requires an ElevenLabs API key. Best voice quality for
+    human-like speech.
+
+    ElevenLabs voices sound the most natural and expressive. The advanced settings
+    let you fine-tune how the voice sounds -- for example, increasing stability
+    makes the voice more consistent, while boosting style adds more expressiveness.
+  </Accordion>
+
+  <Accordion title="Edge TTS">
+    Microsoft Edge text-to-speech. Free, no API key required. Default voice is
+    en-US-AvaMultilingualNeural. A good option for testing or budget-conscious
+    setups. Limited customization compared to OpenAI and ElevenLabs.
+
+    Since Edge TTS is free and requires no API key, it is the easiest way to try
+    out voice replies. You can always switch to OpenAI or ElevenLabs later for
+    higher quality.
+  </Accordion>
+</AccordionGroup>
+
+## Auto-Reply Modes
+
+The `autoMode` setting controls when Comis automatically converts text replies
+into voice messages.
+
+| Mode | Behavior |
+|------|----------|
+| `"off"` (default) | TTS only when the agent explicitly uses the `tts_synthesize` tool |
+| `"always"` | Every text reply is automatically converted to a voice message |
+| `"inbound"` | Reply with voice only when the user sent a voice message first |
+| `"tagged"` | Reply with voice only when the agent's response contains a `[[tts]]` directive |
+
+### Off
+
+The default. Your agent's text replies are sent as text. The agent can still
+generate voice on demand using the [tts_synthesize](/agent-tools/media) tool,
+but nothing is automatic.
+
+### Always
+
+Every text reply from the agent is also sent as a voice message. Useful for
+accessibility or when users prefer listening. Replies that already contain media
+attachments skip TTS to avoid sending double media.
+
+### Inbound
+
+The agent mirrors the user. If the user sends a voice message, the reply is a
+voice message. If the user sends text, the reply is text. This creates natural
+conversational behavior where the agent adapts to how the user is communicating.
+
+### Tagged
+
+The agent controls when to use voice. When the LLM includes `[[tts]]` in its
+output, that reply is converted to speech. The tag is stripped from the final
+text so the user never sees it.
+
+## TTS Directives
+
+In tagged mode, the agent can include directives to fine-tune how the voice
+reply sounds. The `[[tts:...]]` syntax allows overriding the voice, provider,
+format, and speed for individual replies.
+
+```
+[[tts]]                                    # Use default voice and provider
+[[tts:voice=nova]]                         # Override the voice
+[[tts:voice=nova provider=openai]]         # Override voice and provider
+[[tts:voice=nova speed=1.5 format=mp3]]    # Override multiple settings
+```
+
+Available directive parameters:
+
+| Parameter | Description |
+|-----------|-------------|
+| `voice` | Voice identifier (provider-specific) |
+| `provider` | TTS provider to use for this reply |
+| `format` | Audio format (`opus`, `mp3`, etc.) |
+| `speed` | Playback speed multiplier |
+
+<Tip>
+Directives work in `tagged` mode. In `always` or `inbound` mode, TTS happens
+automatically using your default settings -- directives are not needed.
+</Tip>
+
+## Per-Channel Audio Formats
+
+Different platforms work best with different audio formats. Comis automatically
+converts audio to the best format for each platform so you do not have to worry
+about compatibility. You can override these defaults in your configuration if
+needed.
+
+| Platform | Default Format | Why |
+|----------|---------------|-----|
+| Telegram | opus | Native voice message format for Telegram |
+| Discord | mp3 | Widely supported across Discord clients |
+| WhatsApp | mp3 | Compatible with WhatsApp voice playback |
+| Slack | mp3 | Standard audio format for Slack file uploads |
+| Other | mp3 | Safe default for any platform |
+
+The format conversion happens automatically. Your agent does not need to know
+which platform the user is on -- Comis selects the right format based on the
+channel type.
+
+## Configuration
+
+Full configuration reference for both transcription and text-to-speech:
+
+```yaml
+integrations:
+  media:
+    transcription:
+      provider: openai                # Primary: openai, groq, or deepgram
+      model: gpt-4o-mini-transcribe   # Model override (provider-dependent)
+      maxFileSizeMb: 25               # Max audio file size
+      timeoutMs: 60000                # API timeout (1 min)
+      language: ""                    # BCP-47 hint (e.g., "en", "es") -- empty = auto-detect
+      autoTranscribe: true            # Auto-transcribe voice messages
+      preflight: true                 # Pre-transcribe for mention detection
+      fallbackProviders: []           # Ordered fallback list
+
+    tts:
+      provider: openai                # openai, elevenlabs, or edge
+      voice: alloy                    # Voice identifier
+      format: opus                    # Default output format
+      model: tts-1                    # Model override
+      autoMode: off                   # off, always, inbound, or tagged
+      maxTextLength: 4096             # Max text for synthesis
+      tagPattern: "\\[\\[tts(?::.*?)?\\]\\]"  # Regex for tagged mode
+      outputFormats:                  # Per-channel format overrides
+        telegram: opus
+        discord: mp3
+        whatsapp: mp3
+        slack: mp3
+        default: mp3
+      elevenlabsSettings:             # ElevenLabs-specific
+        stability: 0.5
+        similarityBoost: 0.75
+        style: 0.0
+        useSpeakerBoost: true
+        speed: 1.0
+```
+
+## What Happens Without a Provider
+
+Voice features degrade gracefully. You do not need every provider configured for
+the system to work.
+
+**Without a transcription provider**, voice messages are not auto-transcribed.
+Instead, your agent receives a hint: "Voice message attached -- use
+transcribe_audio tool to listen." The agent can still process voice messages
+using the [transcribe_audio](/agent-tools/media) on-demand tool if a provider
+key is available to the tool.
+
+**Without a TTS provider**, auto-reply modes have no effect. Text replies are
+sent as text regardless of the `autoMode` setting. The agent can still use
+[tts_synthesize](/agent-tools/media) if the tool and a provider key are
+available.
+
+This means you can start with just transcription, add TTS later, or use neither
+and rely entirely on the on-demand tools.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Vision" icon="eye" href="/media/vision">
+    Image and video analysis
+  </Card>
+  <Card title="Documents" icon="file-lines" href="/media/documents">
+    Document text extraction
+  </Card>
+  <Card title="Media Tools" icon="toolbox" href="/agent-tools/media">
+    transcribe_audio and tts_synthesize tool reference
+  </Card>
+  <Card title="Media Overview" icon="photo-film" href="/media/index">
+    Back to media overview
+  </Card>
+</CardGroup>

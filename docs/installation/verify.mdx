@@ -1,0 +1,227 @@
+---
+title: "Verify Your Installation"
+description: "Confirm that Comis is installed correctly and running as expected"
+icon: "circle-check"
+---
+
+After installing and configuring Comis, run these checks to make sure everything
+is working.
+
+## Quick health check
+
+Run these three commands in order. If all three pass, your installation is healthy.
+
+**Check 1 -- CLI health:**
+
+```bash
+comis health
+```
+
+Expected output when everything is working:
+
+```
+All checks passed
+```
+
+If there are issues, you will see them listed by category with suggested fixes.
+
+**Check 2 -- System status:**
+
+```bash
+comis status
+```
+
+Expected output:
+
+```
+  Daemon
+  Status    online
+  Uptime    2m 30s
+
+  Gateway
+  Status    online
+  Address   127.0.0.1:4766
+
+  Channels
+  No channels configured
+
+  Agents
+  Name      Provider    Model                        Bindings
+  default   anthropic   claude-sonnet-4-5-20250929     -
+```
+
+**Check 3 -- Gateway endpoint:**
+
+```bash
+curl http://localhost:4766/health
+```
+
+Expected response:
+
+```json
+{ "status": "ok" }
+```
+
+<Tip>
+If all three checks pass, your installation is healthy. Open
+`http://localhost:4766` in your browser to start chatting with your agent.
+</Tip>
+
+## Full diagnostic
+
+For a comprehensive check across all subsystems, run the doctor command:
+
+```bash
+comis doctor
+```
+
+The doctor runs checks in five categories:
+
+| Category | What it verifies |
+|----------|-----------------|
+| **Config** | YAML syntax, required fields, valid provider settings |
+| **Daemon** | Background process is running and responsive |
+| **Gateway** | HTTP server is listening on the configured port |
+| **Channel** | Connectivity for each configured channel |
+| **Workspace** | File permissions, data directory structure |
+
+Expected output when all checks pass:
+
+```
+  Category     Status   Details
+  Config       pass     Configuration is valid
+  Daemon       pass     Daemon is running (PID: 12345)
+  Gateway      pass     Gateway listening on 127.0.0.1:4766
+  Channel      pass     No channels configured
+  Workspace    pass     Data directory OK
+```
+
+If a check fails, the output includes the specific error and a suggested fix:
+
+```
+  Category     Status   Details
+  Config       pass     Configuration is valid
+  Daemon       pass     Daemon is running (PID: 12345)
+  Gateway      fail     Gateway not responding on 127.0.0.1:4766
+                        → Check if port 4766 is available
+  Channel      pass     No channels configured
+  Workspace    pass     Data directory OK
+```
+
+<Info>
+If doctor finds fixable issues, run `comis doctor --repair` to attempt
+automatic fixes. The repair mode handles common problems like stale PID files,
+incorrect file permissions, and missing directories.
+</Info>
+
+## Security audit
+
+Run a security check to verify your installation follows best practices:
+
+```bash
+comis security audit
+```
+
+The audit runs 14 checks and reports findings by severity: critical, high,
+medium, and low.
+
+<Info>
+For details on each security check and how to resolve findings, see
+[Security: Audit](/security/audit).
+</Info>
+
+## What each check means
+
+| Check | What It Verifies | Common Fix |
+|-------|-----------------|------------|
+| Config | YAML syntax, required fields | Run `comis config validate` for details |
+| Daemon | Background process is running | Run `comis daemon start` |
+| Gateway | HTTP server listening on port | Check port 4766 availability |
+| Channel | Platform bot tokens are valid | Re-enter token in config or `.env` |
+| Workspace | File permissions, data directory | Run `comis doctor --repair` |
+
+## Common problems
+
+<AccordionGroup>
+  <Accordion title="Daemon not starting">
+    **Symptom:** `comis daemon start` fails or the daemon exits immediately.
+
+    **Fix:**
+
+    1. Check the daemon logs: `comis daemon logs`
+    2. Verify your config is valid: `comis config validate`
+    3. Make sure no other process is using port 4766
+    4. Check file permissions on `~/.comis/`
+  </Accordion>
+
+  <Accordion title="Gateway not responding">
+    **Symptom:** `curl http://localhost:4766/health` returns "connection refused."
+
+    **Fix:**
+
+    1. Confirm the daemon is running: `comis daemon status`
+    2. Check that the gateway is enabled in config (it is enabled by default)
+    3. Verify the correct port: check `gateway.port` in your config
+    4. If running in Docker, ensure the host is set to `0.0.0.0`
+  </Accordion>
+
+  <Accordion title="Config parse error">
+    **Symptom:** Daemon fails to start with a configuration error message.
+
+    **Fix:**
+
+    1. Run `comis config validate` to see the exact error with line number
+    2. Common YAML issues: incorrect indentation, missing quotes around special
+       characters, tabs instead of spaces
+    3. Verify all `${VAR}` references have matching entries in your `.env` file
+  </Accordion>
+
+  <Accordion title="Channel disconnected">
+    **Symptom:** `comis doctor` reports a channel check failure.
+
+    **Fix:**
+
+    1. Verify the bot token is correct in your `.env` file
+    2. Check that the bot has not been deactivated on the platform
+    3. Confirm network connectivity to the platform API
+    4. For Telegram: make sure the bot token is from [@BotFather](https://t.me/BotFather)
+  </Accordion>
+
+  <Accordion title="Permission denied on data directory">
+    **Symptom:** Errors mentioning `EACCES` or `permission denied` for paths
+    under `~/.comis/`.
+
+    **Fix:**
+
+    1. Run `comis doctor --repair` to fix common permission issues
+    2. Manually fix ownership: `sudo chown -R $(whoami) ~/.comis`
+    3. Check that `~/.comis/` has mode `700`: `ls -ld ~/.comis`
+  </Accordion>
+</AccordionGroup>
+
+## Getting help
+
+If the checks above do not resolve your issue:
+
+- **[Troubleshooting](/operations/troubleshooting)** -- detailed solutions for
+  common problems organized by category
+- **[FAQ](/operations/faq)** -- answers to frequently asked questions
+- **[GitHub Issues](https://github.com/comis/comis/issues)** -- report a bug or
+  search for known issues
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Detailed solutions for common problems.
+  </Card>
+  <Card title="FAQ" icon="circle-question" href="/operations/faq">
+    Answers to frequently asked questions.
+  </Card>
+  <Card title="Connect a Channel" icon="messages" href="/channels/index">
+    Add Telegram, Discord, Slack, and more.
+  </Card>
+  <Card title="Configuration Guide" icon="gear" href="/installation/configuration">
+    Customize your agent settings and advanced options.
+  </Card>
+</CardGroup>

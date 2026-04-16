@@ -1,0 +1,1188 @@
+---
+import Base from "../../layouts/Base.astro";
+import Footer from "../../components/Footer.astro";
+
+const title = "Comis vs OpenClaw - Deep Technical Comparison";
+const description =
+  "A verified, 60-dimension comparison of Comis and OpenClaw across architecture, security, extensibility, agent capabilities, context management, cache & cost optimization, and developer experience.";
+
+type Verdict = "comis" | "openclaw" | "tie";
+interface Row {
+  label: string;
+  comis: string;
+  openclaw: string;
+  verdict: Verdict;
+}
+
+const architectureRows: Row[] = [
+  {
+    label: "Architecture",
+    comis:
+      "Hexagonal (ports & adapters). 13-package monorepo with compile-time enforced dependency graph via TypeScript composite references.",
+    openclaw:
+      "Monolith plus 82 extension packages. Plugin-driven with dynamic loader for runtime discovery.",
+    verdict: "comis",
+  },
+  {
+    label: "Codebase organization",
+    comis:
+      "13 packages, ~478K source lines. Strict separation via package references and pnpm workspaces.",
+    openclaw:
+      "Single src/ directory (~3K source files) plus 82 extensions. Single tsconfig, pnpm workspace.",
+    verdict: "comis",
+  },
+  {
+    label: "Error handling",
+    comis:
+      "Result<T, E> as primary return pattern with ok(), err(), tryCatch(), fromPromise(). Type-safe and compile-time checked.",
+    openclaw:
+      "Traditional throw/catch with custom error extractors. Runtime-checked.",
+    verdict: "comis",
+  },
+];
+
+const securityRows: Row[] = [
+  {
+    label: "Authentication",
+    comis:
+      "mTLS gateway and bearer token support. 32-character minimum token requirement. Optional in config.",
+    openclaw:
+      "Token, password, Tailscale whois, and trusted-proxy auth. Configurable, can be set to none.",
+    verdict: "comis",
+  },
+  {
+    label: "Prompt injection",
+    comis:
+      "68 patterns across 13 weighted categories with composite 0.0\u20131.0 scoring. Progressive rate limiting and reinforcement actions.",
+    openclaw:
+      "Explicitly out of scope per SECURITY.md. Focus on execution boundaries only.",
+    verdict: "comis",
+  },
+  {
+    label: "Memory safety",
+    comis:
+      "Trust-partitioned across three levels: system, learned, and external. Per-agent isolation with write validation.",
+    openclaw:
+      "Single trust level with embedding-based search. No trust partitioning.",
+    verdict: "comis",
+  },
+  {
+    label: "Secrets management",
+    comis:
+      "SecretManager with frozen snapshots. ESLint-banned process.env access. 68 Pino redaction paths.",
+    openclaw:
+      "${VAR_NAME} template references with SecretRef type (env/file/exec sources). No secret-specific lint rules.",
+    verdict: "comis",
+  },
+  {
+    label: "SSRF protection",
+    comis:
+      "DNS-pinned validation with cloud metadata IP blocklist and private range blocking.",
+    openclaw:
+      "SSRF policy in plugin-sdk with less granular controls.",
+    verdict: "comis",
+  },
+  {
+    label: "Path traversal",
+    comis:
+      "safePath() with null byte, URL-decode, and symlink detection. ESLint-banned path.join().",
+    openclaw:
+      "boundary-path.ts (861 lines) with symlink escape detection and Windows ACL support.",
+    verdict: "tie",
+  },
+  {
+    label: "Audit trail",
+    comis:
+      "AuditEvent with action classification (read/mutate/destructive). Fail-closed default.",
+    openclaw:
+      "SecurityAuditFinding[] with 114 checks across 4 audit modules and severity ratings.",
+    verdict: "tie",
+  },
+  {
+    label: "Tool access control",
+    comis:
+      "Per-agent tool policies, skill allowlists, budget guards, and circuit breakers.",
+    openclaw:
+      "Static config allowlist with owner-only gating. Optional Docker sandbox.",
+    verdict: "comis",
+  },
+  {
+    label: "Output scanning",
+    comis:
+      "OutputGuardPort scans LLM responses for secret leaks, canary tokens, and prompt extraction attempts.",
+    openclaw: "No output scanning.",
+    verdict: "comis",
+  },
+  {
+    label: "Process isolation",
+    comis:
+      "Kernel-enforced exec sandbox wraps every shell command in a filesystem namespace (bubblewrap on Linux, sandbox-exec on macOS). Agents can only access their workspace, graph shared directory, and system binaries.",
+    openclaw:
+      "Optional Docker sandbox for tool execution. Heavier weight, requires Docker daemon.",
+    verdict: "comis",
+  },
+];
+
+const extensibilityRows: Row[] = [
+  {
+    label: "Channel extensibility",
+    comis:
+      "Implement ChannelPort interface and wire in the composition root bootstrap.",
+    openclaw:
+      "Implement ChannelPlugin (21 adapters). Register via extension package.json \u2014 auto-discovered.",
+    verdict: "openclaw",
+  },
+  {
+    label: "Plugin system",
+    comis:
+      "PluginPort with lifecycle hooks, priority system, and config schema registration.",
+    openclaw:
+      "Dynamic plugin loader with api.registerTool(), api.registerCli(). 219+ SDK exports.",
+    verdict: "openclaw",
+  },
+  {
+    label: "Tool integration",
+    comis:
+      "Built-in tools in skills/builtin/ with MCP client for external tool integration.",
+    openclaw:
+      "api.registerTool() from plugins. Skills defined as markdown files.",
+    verdict: "tie",
+  },
+];
+
+const agentRows: Row[] = [
+  {
+    label: "Agent fleet",
+    comis:
+      "Per-agent isolated executors with dedicated model, memory, budget, skills, and workspace. Cost tracking per agent.",
+    openclaw:
+      "Multi-agent via agents.list[] config. Per-agent config cascading from defaults. Shared infrastructure.",
+    verdict: "comis",
+  },
+  {
+    label: "DAG pipelines",
+    comis:
+      "Full DAG engine: ValidatedGraph (1\u201320 nodes), barrier modes (all/majority/best-effort), template interpolation, concurrency control.",
+    openclaw:
+      "No DAG support. Relies on cron jobs and sequential subagent spawning.",
+    verdict: "comis",
+  },
+  {
+    label: "Subagents",
+    comis:
+      "SpawnPacket with context/objective/toolGroups. Depth limits, 3-level result condensation, narrative casting.",
+    openclaw:
+      "spawnSubagentDirect() with run/session modes. Depth and children limits, thread binding.",
+    verdict: "tie",
+  },
+  {
+    label: "Memory storage",
+    comis:
+      "SQLite + FTS5 + sqlite-vec. Hybrid search combining BM25 and vector via reciprocal rank fusion.",
+    openclaw:
+      "SQLite + embeddings (OpenAI, Voyage, Gemini, Mistral, Ollama). Vector search with per-backend config.",
+    verdict: "tie",
+  },
+  {
+    label: "Memory trust",
+    comis:
+      "Three trust levels (system/learned/external) with agent isolation and write validation.",
+    openclaw: "No trust levels.",
+    verdict: "comis",
+  },
+  {
+    label: "Channel count",
+    comis:
+      "9 channels: Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, LINE, Email (IMAP/SMTP).",
+    openclaw:
+      "21 channels including Matrix, MS Teams, Google Chat, Feishu, Mattermost, Twitch, Nostr, Zalo, and more.",
+    verdict: "openclaw",
+  },
+  {
+    label: "Media (STT/TTS)",
+    comis:
+      "Separate typed ports: TranscriptionPort (OpenAI/Groq/Deepgram), TTSPort (OpenAI/ElevenLabs/Edge TTS), ImageAnalysisPort.",
+    openclaw:
+      "Per-extension media with unified facade. Not typed port abstractions.",
+    verdict: "comis",
+  },
+  {
+    label: "Model providers",
+    comis:
+      "22+ providers via pi-ai SDK: Anthropic, OpenAI, Google, AWS, Azure, Groq, Ollama, Together, Replicate, Mistral.",
+    openclaw:
+      "34+ providers with auth profile fallback chain, dynamic discovery, and per-profile cooldown.",
+    verdict: "tie",
+  },
+  {
+    label: "Model selection",
+    comis:
+      "Per-agent model plus model routes for task-specific overrides. Auth rotation and cost tracking.",
+    openclaw:
+      "Per-agent model with profile-based fallback, round-robin auth, and failure classification.",
+    verdict: "tie",
+  },
+  {
+    label: "Trust model",
+    comis:
+      "Multi-tenant design with per-session routing and trust-partitioned memory.",
+    openclaw:
+      "Single-user per gateway \u2014 explicit architectural choice per SECURITY.md.",
+    verdict: "comis",
+  },
+];
+
+const contextRows: Row[] = [
+  {
+    label: "Pipeline architecture",
+    comis:
+      "Built-in 8-layer sequential pipeline (thinking cleaner, reasoning tag stripper, history window, dead content evictor, observation masker, LLM compaction, rehydration, objective reinforcement) with per-layer circuit breaker (3-failure threshold disables layer for session). Plus a DAG-mode alternative engine sharing the same transformContext hook.",
+    openclaw:
+      "Pluggable context engine registry with 7-lifecycle-hook interface (bootstrap, maintain, ingest, ingestBatch, afterTurn, assemble, compact). Built-in LegacyContextEngine is a pass-through wrapper. Third-party lossless-claw plugin replaces entire pipeline with DAG-based hierarchical summarization. Extensions add compaction safeguard and context pruning.",
+    verdict: "comis",
+  },
+  {
+    label: "Compaction strategy",
+    comis:
+      "Proactive at 85% context utilization. 3-level fallback: (1) full LLM summarization with 9-section structured output and quality validation with retry, (2) filter oversized messages then summarize, (3) count-only note (guaranteed, no LLM). Configurable cooldown (default 5 turns). Optional cheaper model override (defaults to Haiku for 10-20x cost reduction).",
+    openclaw:
+      "Reactive on context overflow (~95% capacity) or provider 400 error. Up to 3 auto-compaction retry attempts. Stage-based chunking with adaptive chunk ratios (base 0.4, min 0.15, adjusted by avg message size). Compaction safeguard extension validates 5 required sections (Decisions, Open TODOs, Constraints, Pending user asks, Exact identifiers). 3-tier identifier preservation policy (strict/off/custom). Optional memory flush agentic turn before compaction lets agent write notes to MEMORY.md.",
+    verdict: "comis",
+  },
+  {
+    label: "Tool result handling",
+    comis:
+      "Microcompaction guard intercepts at write time with per-tool thresholds: file_read 15K, MCP tools 15K, default 8K chars. Oversized results offloaded to disk as JSON, replaced with lightweight inline references. 100K hard cap with truncation before offload. Dead content evictor removes superseded file reads, re-run commands, stale errors, and old images with O(n) forward-index scanning.",
+    openclaw:
+      "Tool result context guard runs before each LLM call via transformContext hook. 400K hard max per result. Head+tail truncation preserves error messages, JSON closings, and summary lines (~70% head, ~30% tail with middle-omitted marker). 75% context headroom ratio, 50% per-result cap. Bulk compaction replaces oldest tool results with placeholder when aggregate context exceeds budget. 2K char minimum kept.",
+    verdict: "comis",
+  },
+  {
+    label: "Token budgeting",
+    comis:
+      "Formula: H = W - S - O - M - R. 25% context rot buffer (citing Chroma 2025 research on 13.9-85% degradation at limits), 5% safety margin with 2K floor, 8K output reserve. Dual-ratio token estimation (2x weighting for tool result chars). Pure function with zero side effects.",
+    openclaw:
+      "75% input headroom ratio on context window (CONTEXT_INPUT_HEADROOM_RATIO = 0.75). 50% per-tool-result context share cap. 1.2x safety margin on all token estimates. 4K summarization overhead reserve. Context window guard: 16K hard minimum, 32K warning threshold, 200K default. Per-agent contextTokens cap overrides model native window.",
+    verdict: "comis",
+  },
+  {
+    label: "Post-compaction recovery",
+    comis:
+      "Rehydration layer injects AGENTS.md critical sections, up to 5 recently-accessed files (8K each, 30K total cap), resume instruction, and active state. Split injection for KV-cache stability (stable content at position 1, dynamic content at end). Overflow-aware: strips files first, then removes rehydration entirely if still over budget. Objective reinforcement re-injects subagent objectives.",
+    openclaw:
+      "No dedicated post-compaction recovery layer. Compaction summary persisted to JSONL session file. Hook system emits compact:before and compact:after events. Context engine afterTurn() lifecycle for background post-processing. Compaction safeguard appends configurable postCompactionSections from config. Memory flush before compaction gives agent a chance to persist notes to disk, partially mitigating information loss.",
+    verdict: "comis",
+  },
+  {
+    label: "History management",
+    comis:
+      "Configurable history window (default 15 turns) with per-channel overrides (e.g., dm: 10, group: 5). Observation masker replaces old tool results beyond keep window (25) when context exceeds 120K chars, with protected tool exemptions (memory_search, file_read). Persistent write-back to session file enables stable prompt cache prefixes.",
+    openclaw:
+      "Per-provider DM history limits with per-user overrides (channels.{provider}.dms.{userId}.historyLimit). Separate channel/group limits. History truncation counts user turns from the end via limitHistoryTurns(). Context pruning extension: cache-TTL based, prunes tool results in-memory only. Session transcript repair fixes orphaned tool_result messages.",
+    verdict: "tie",
+  },
+  {
+    label: "Context engine ecosystem",
+    comis:
+      "Built-in pipeline and DAG engines cover all use cases. No plugin marketplace needed. DAG mode uses SQLite with FTS5 for depth-aware hierarchical summarization (operational, session, phase, project memory levels). JSONL-to-DAG reconciliation for crash recovery.",
+    openclaw:
+      "Growing plugin ecosystem: lossless-claw (DAG-based, scored 74.8 on OOLONG benchmark vs Claude Code's 70.3), MemOS Cloud (cross-session recall via external API), QuantClaw (C++ reimpl), 12-layer community architecture (lossless-claw + facts.db + LightRAG GraphRAG). ContextEngine slot API enables full pipeline replacement by third parties.",
+    verdict: "openclaw",
+  },
+  {
+    label: "Lossless context (DAG mode)",
+    comis:
+      "Built-in DAG context engine (config: version: \"dag\"). 12-table SQLite schema (ctx_ prefix). Depth-aware summarization prompts per level. Three-tier escalation (normal, aggressive, sentence-boundary truncation). Leaf pass: min fanout 8, target 1.2K tokens. Condensed pass: min fanout 4. Integrity checking with auto-repair. DAG assembler with budget-aware selection and fresh tail protection.",
+    openclaw:
+      "Via lossless-claw plugin (third-party, requires separate install). SQLite + FTS5 storage. Leaf summaries: up to 20K tokens input, ~1.2K target, min fanout 8. Condensed nodes: ~2K target, min fanout 4. Triggers at 75% context window. Fresh tail: last 32 messages protected. Retrieval tools: lcm_grep (FTS5), lcm_describe (semantic), lcm_expand (decompress to source). Large file interception at 25K tokens with separate summarization.",
+    verdict: "tie",
+  },
+  {
+    label: "Memory search",
+    comis:
+      "SQLite + FTS5 + sqlite-vec. Hybrid search via reciprocal rank fusion. Trust-partitioned (system/learned/external). RAG retriever injects memories with provenance annotations and trust-level tags. Budget-capped injection with per-query maxChars. Prompt injection sanitization on retrieved content.",
+    openclaw:
+      "SQLite + FTS5 + vector embeddings (OpenAI, Gemini, Voyage, Mistral, Ollama). Hybrid search with configurable weights (vector 0.7, text 0.3). MMR diversity reranking (lambda 0.7). Temporal decay with 30-day half-life. Batch API for providers that support it. Max 6 results, min score 0.35. Community 12-layer architecture adds facts.db (770+ facts with Hebbian activation/decay), file-vec index, and LightRAG GraphRAG (4,909 entities, 6,089 relations).",
+    verdict: "tie",
+  },
+];
+
+const autonomyRows: Row[] = [
+  {
+    label: "Proactive behavior",
+    comis:
+      "Heartbeat polling with quiet hours and critical bypass. BOOT.md executes on session start. Wake event coalescing for immediate triggers.",
+    openclaw:
+      "Cron-based heartbeat delivery. Isolated agent cron execution. Platform-specific polling.",
+    verdict: "tie",
+  },
+  {
+    label: "Self-evolution",
+    comis:
+      "Agents maintain 8 workspace files (SOUL.md, IDENTITY.md, USER.md, etc.) autonomously. Git-tracked personality changes via identity-updater. Memory maintenance during heartbeats.",
+    openclaw:
+      "Configuration-driven personality. No self-modification of behavior or identity files. Changes require external intervention.",
+    verdict: "comis",
+  },
+  {
+    label: "Task extraction",
+    comis:
+      "LLM extracts tasks from conversations with confidence scoring. Persisted to TaskStore with priority and due dates.",
+    openclaw:
+      "No conversation-to-task extraction. Scheduling requires manual configuration.",
+    verdict: "comis",
+  },
+  {
+    label: "Session continuity",
+    comis:
+      "BOOT.md runs on session start. Workspace files anchor personality across restarts. RAG injects relevant memories automatically.",
+    openclaw:
+      "QMD transcript persistence. Session key system with memory integration. Session reaper for cleanup.",
+    verdict: "tie",
+  },
+  {
+    label: "Group chat intelligence",
+    comis:
+      'Structured heuristics in workspace templates: when to speak, when to stay silent, reaction guidance (minimal/extensive), triple-tap avoidance, "human rule" for natural presence.',
+    openclaw:
+      "Two config modes (mention/always) with LLM-driven filtering in always mode. System prompt guides agents to \"mostly lurk\" and respond only when helpful. Silent reply token mechanism.",
+    verdict: "comis",
+  },
+  {
+    label: "Self-onboarding",
+    comis:
+      "Agent-driven BOOTSTRAP.md conversation flow. Discovers its own name, personality, and values. Writes identity files and deletes bootstrap when complete.",
+    openclaw:
+      "User-guided CLI wizard requiring human input at every step. No autonomous initialization.",
+    verdict: "comis",
+  },
+];
+
+const infraRows: Row[] = [
+  {
+    label: "Build system",
+    comis:
+      "tsc per package with composite references. Compile-time enforced dependency graph.",
+    openclaw:
+      "tsdown (esbuild-based) plus tsc for types. Single compilation unit. Faster incremental builds.",
+    verdict: "openclaw",
+  },
+  {
+    label: "Logging",
+    comis:
+      "Pino with canonical field dictionary. Required hint and errorKind on ERROR/WARN. Structured levels.",
+    openclaw:
+      "Pino with redaction patterns and custom per-module fields.",
+    verdict: "comis",
+  },
+  {
+    label: "Observability",
+    comis:
+      "Token tracker, latency recorder, circuit breaker metrics, distributed tracing via AsyncLocalStorage.",
+    openclaw:
+      "System events, diagnostic flags, channel health monitor.",
+    verdict: "comis",
+  },
+  {
+    label: "Code quality",
+    comis:
+      "ESLint security rules with banned patterns. Zod for all domain types. Dead code audits with 0 dead exports.",
+    openclaw:
+      "Oxlint type-aware, Oxfmt, knip/ts-prune dead code detection, jscpd duplication check.",
+    verdict: "tie",
+  },
+];
+
+const cacheRows: Row[] = [
+  {
+    label: "System prompt stability",
+    comis:
+      "Dual-prompt architecture: static system prompt + dynamic preamble in first user message. 15+ content types surgically relocated (RAG, canary tokens, hooks, skills, timestamps). SHA-256 digest detects mid-session invalidation.",
+    openclaw:
+      "Date/time excluded from system prompt. Plugin prepend/append system for prompt contributions. System prompt additions from context engine prepended (preserving prefix). No formal invalidation tracking.",
+    verdict: "comis",
+  },
+  {
+    label: "Cache breakpoint placement",
+    comis:
+      "3 custom breakpoints + 2 SDK-auto = up to 5 total. Zone-based placement: semi-stable (compaction summary), mid-point, second-to-last user message. Model-specific minimum thresholds. Sub-agents use lowered 512-token threshold.",
+    openclaw:
+      "Single cache_control ephemeral injection on system message. Only for OpenRouter+Anthropic. No conversation-length awareness, no multi-zone strategy, no sub-agent thresholds.",
+    verdict: "comis",
+  },
+  {
+    label: "Cache fence (prefix protection)",
+    comis:
+      "cacheFenceIndex tracks the highest breakpoint position. All 4 content-modifying layers (thinking cleaner, reasoning tag stripper, dead-content evictor, observation masker) skip messages at or below the fence. Prevents context engine from invalidating the KV cache prefix. Production result: thinking blocks removed dropped from 9 to 0 per turn.",
+    openclaw:
+      "No cache fence concept. Context engine layers operate blind to cache state. Any content modification (pruning, compaction) silently invalidates the cached prefix without detection.",
+    verdict: "comis",
+  },
+  {
+    label: "Fence persistence across turns",
+    comis:
+      "Module-level Map keyed by session key persists the breakpoint index across execute() calls. onBreakpointsPlaced callback writes to both the CE object and the Map. Post-execution sync in finally block ensures consistency.",
+    openclaw:
+      "Cache TTL timestamps stored in session entries, but no breakpoint index or fence state persisted across turns. Each turn starts with no cache awareness.",
+    verdict: "comis",
+  },
+  {
+    label: "Index space translation",
+    comis:
+      "lastTrimOffset tracks messages removed by history-window. Breakpoint callback translates post-CE index to pre-CE space (idx + trimOffset). Next turn correctly adjusts: max(-1, storedFence - newTrimCount). Proven by logs: fence=52 survives 118-message trims.",
+    openclaw:
+      "No index translation. No awareness that context processing changes the message array size between where breakpoints are placed and where the fence would be applied.",
+    verdict: "comis",
+  },
+  {
+    label: "Sub-agent spawn staggering",
+    comis:
+      "Concurrent sub-agents in a pipeline wave staggered by 4 seconds (configurable via deps). First agent writes shared cache prefix, siblings read at 10x lower cost. Guards prevent stale spawns if graph completes during delay. Production: 49K avg cache reads on sub-agent first turn.",
+    openclaw:
+      "No spawn staggering. All concurrent sub-agents start simultaneously, each paying the full cache write cost for identical system prompts.",
+    verdict: "comis",
+  },
+  {
+    label: "Observation masking for cache",
+    comis:
+      "Hysteresis band: 120K activation, 100K deactivation. Monotonic tracking (everMaskedIds) ensures once-masked content stays masked. Fence takes priority over everMaskedIds. Persistent write-back to disk. 25-result keep window.",
+    openclaw:
+      "No observation masking system. Tool results handled via context pruning extension (cache-TTL based, in-memory only). No hysteresis or anti-oscillation.",
+    verdict: "comis",
+  },
+  {
+    label: "Sub-agent cache economics",
+    comis:
+      "CACHE-16: sub-agents use 5-minute TTL ($6.25/MTok write) vs 1-hour ($10/MTok) for parent. Saves $2.16 per pipeline run. All waves complete within 5 minutes so no cache miss penalty. Content-hash dedup across siblings.",
+    openclaw:
+      "No sub-agent-specific cache strategy. Cache TTL tracking via session timestamps, but no per-sub-agent optimization or tiered retention.",
+    verdict: "comis",
+  },
+  {
+    label: "Tool schema stability",
+    comis:
+      "Per-session snapshot captures tool schemas after deferral. Disappeared tools (MCP disconnect) retained as stubs. New tools appended. Static discover_tools prevents tool-array cache invalidation.",
+    openclaw:
+      "Tool definitions loaded once per session. No explicit snapshotting or stub retention for disconnected tools.",
+    verdict: "comis",
+  },
+  {
+    label: "Embedding cache",
+    comis:
+      "Two-tier: in-memory LRU (10K entries) + SQLite L2 persistent cache. Provider-identity-aware keys. Batch operation splits hits/misses. Survives restarts via L2.",
+    openclaw:
+      "SQLite-backed persistent cache. Multi-provider composite key. Timestamp-based LRU pruning. Batch API support.",
+    verdict: "tie",
+  },
+  {
+    label: "Cache observability",
+    comis:
+      "cacheFenceIndex logged on every CE pipeline run. onBreakpointsPlaced callback logged with highest index. Breakpoint placement/skip reasons logged. Seed and sync diagnostics. Per-execution cacheReadTokens, cacheWriteTokens, cacheSavedUsd.",
+    openclaw:
+      "6-stage diagnostic trace system. SHA-256 digests per message. Cache TTL session entries. Cache tokens normalized across providers. No fence or breakpoint observability (not implemented).",
+    verdict: "comis",
+  },
+  {
+    label: "Multi-provider cache awareness",
+    comis:
+      "Anthropic: full (fence, breakpoints, staggering, tiered retention). OpenAI: passive (automatic server-side). Gemini: explicit caching via CachedContent API with SHA-256 content hashing, per-model minimum token thresholds (Flash 1,024 / Pro 4,096), concurrent dedup, and orphaned cache cleanup.",
+    openclaw:
+      "Normalizes cache tokens across Anthropic, OpenAI, Kimi K2, Moonshot. Provider-specific pricing. Strips unsupported cache params for proxy endpoints. Broader provider coverage but no active optimization for any.",
+    verdict: "comis",
+  },
+  {
+    label: "Memory safety bounds",
+    comis:
+      "Duplicate detector: 500-entry FIFO. SQLite: explicit WAL checkpoint. Embedding cache: TTL + L2. Heartbeat cache: 50-entry cap. All unbounded structures have explicit bounds.",
+    openclaw:
+      "WAL mode with 1s busy timeout. Configurable embedding cache max entries. No explicit WAL checkpoint. Session store cache with 45s TTL.",
+    verdict: "comis",
+  },
+  {
+    label: "Production cost impact",
+    comis:
+      "Measured 16.9x cache read/write ratio. 94% of input tokens served from cache. $5.02 for 5.2M tokens (vs $26.42 uncached) = 81% savings. 8-agent trading pipeline: $2.11 total with 70% graph cache effectiveness.",
+    openclaw:
+      "Cache read tokens tracked and reported. No published cache hit rate metrics, no systematic invalidation tracking, no measured pipeline cost reduction.",
+    verdict: "comis",
+  },
+];
+
+const testRows: Row[] = [
+  {
+    label: "Test volume",
+    comis:
+      "847 unit + 122 integration test files (~969 total). No coverage tooling configured.",
+    openclaw:
+      "2,242 test files (1,914 in src/, 270 extensions, 46 UI, 11 harness). Coverage thresholds enforced: 70% lines/functions, 55% branches.",
+    verdict: "openclaw",
+  },
+  {
+    label: "Test utilities",
+    comis:
+      "20 specialized helpers: daemon harness with port detection, ChaosEchoAdapter for fault injection (configurable fail rates, latency, rate limiting), EventAwaiter for typed event promises, structured log validation with known-pattern allowlist.",
+    openclaw:
+      "40+ utility files: temp HOME isolation, stub channel plugins, fetch mocks, frozen time helpers, contract dispatch. Standard mocking patterns.",
+    verdict: "comis",
+  },
+  {
+    label: "Live model testing",
+    comis:
+      "Provider-gated via TEST_PROVIDER_MODE=mock. Tests skip LLM calls if API keys missing. 14 provider keys detected from ~/.comis/.env.",
+    openclaw:
+      "15 dedicated .live.test.ts files calling real LLM APIs. Gated by OPENCLAW_LIVE_TEST env var. Separate vitest.live.config.ts with sequential execution.",
+    verdict: "openclaw",
+  },
+  {
+    label: "E2E & containerized testing",
+    comis:
+      "15+ E2E test files with real daemon. Sequential forked execution. No Docker or browser testing.",
+    openclaw:
+      "33 E2E test files, 7 Docker-based suites (live models, gateway, onboarding, plugins), 46 browser tests via Playwright + headless Chromium.",
+    verdict: "openclaw",
+  },
+  {
+    label: "CI & coverage",
+    comis:
+      "Local validation only: pnpm build && pnpm test && pnpm lint:security. No GitHub Actions, no coverage reports.",
+    openclaw:
+      "GitHub Actions CI with parallel lane splitting (unit-fast, unit-isolated, extensions, gateway, channels, e2e, live). Performance budget enforcement. Multi-platform (Linux, macOS, Windows).",
+    verdict: "openclaw",
+  },
+];
+
+const allRows = [
+  ...architectureRows,
+  ...securityRows,
+  ...extensibilityRows,
+  ...agentRows,
+  ...contextRows,
+  ...cacheRows,
+  ...autonomyRows,
+  ...testRows,
+  ...infraRows,
+];
+
+const categories = [
+  { name: "Architecture & Code", rows: architectureRows },
+  { name: "Security", rows: securityRows },
+  { name: "Extensibility", rows: extensibilityRows },
+  { name: "Agent Capabilities", rows: agentRows },
+  { name: "Context Management", rows: contextRows },
+  { name: "Cache & Cost Optimization", rows: cacheRows },
+  { name: "Agent Autonomy", rows: autonomyRows },
+  { name: "Test Infrastructure", rows: testRows },
+  { name: "Infrastructure & DX", rows: infraRows },
+];
+
+function count(rows: Row[], v: Verdict) {
+  return rows.filter((r) => r.verdict === v).length;
+}
+
+const totalComis = count(allRows, "comis");
+const totalOpenclaw = count(allRows, "openclaw");
+const totalTie = count(allRows, "tie");
+
+function verdictBadge(v: Verdict) {
+  if (v === "comis")
+    return { text: "Comis", cls: "bg-coral/20 text-coral" };
+  if (v === "openclaw")
+    return { text: "OpenClaw", cls: "bg-teal/20 text-teal" };
+  return { text: "Tie", cls: "bg-white/10 text-muted" };
+}
+
+const sectionThemes = [
+  { accent: "coral", bg: "bg-navy-light/50" },
+  { accent: "coral", bg: "" },
+  { accent: "teal", bg: "bg-navy-light/50" },
+  { accent: "coral", bg: "" },
+  { accent: "coral", bg: "bg-navy-light/50" },
+  { accent: "emerald", bg: "" },
+  { accent: "emerald", bg: "bg-navy-light/50" },
+  { accent: "teal", bg: "" },
+  { accent: "purple", bg: "bg-navy-light/50" },
+] as const;
+
+const sectionMeta = [
+  {
+    title: "Architecture & Code",
+    subtitle: "Compile-time safety vs runtime flexibility.",
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />`,
+  },
+  {
+    title: "Security",
+    subtitle: "Defense in depth vs boundary enforcement.",
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />`,
+  },
+  {
+    title: "Extensibility",
+    subtitle: "Typed ports vs plugin SDK breadth.",
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z" />`,
+  },
+  {
+    title: "Agent Capabilities",
+    subtitle: "Fleet isolation, orchestration, and memory.",
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />`,
+  },
+  {
+    title: "Context Management",
+    subtitle: "Built-in pipeline vs pluggable ecosystem.",
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />`,
+  },
+  {
+    title: "Cache & Cost Optimization",
+    subtitle: "Active cache optimization vs passive tracking. The fence, the feedback loop, and 81% cost reduction.",
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />`,
+  },
+  {
+    title: "Agent Autonomy",
+    subtitle: "How independently agents operate.",
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />`,
+  },
+  {
+    title: "Test Infrastructure",
+    subtitle: "Volume, tooling, and automation.",
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />`,
+  },
+  {
+    title: "Infrastructure & DX",
+    subtitle: "Build speed and observability.",
+    icon: `<path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />`,
+  },
+];
+---
+
+<Base title={title} description={description}>
+  <main>
+    <!-- Hero -->
+    <section class="relative overflow-hidden px-6 pt-32 pb-12 md:pt-40 md:pb-16">
+      <div class="absolute inset-0 pointer-events-none">
+        <div
+          class="absolute top-1/3 left-1/3 w-[400px] h-[400px] bg-coral/5 rounded-full blur-[120px]"
+        ></div>
+        <div
+          class="absolute top-1/2 right-1/4 w-[300px] h-[300px] bg-teal/5 rounded-full blur-[120px]"
+        ></div>
+      </div>
+
+      <div class="relative max-w-3xl mx-auto text-center">
+        <p
+          class="text-sm font-semibold text-muted uppercase tracking-widest mb-4"
+        >
+          Deep technical comparison
+        </p>
+        <h1
+          class="text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.1]"
+        >
+          <span class="text-white">Comis</span>
+          <span class="text-muted mx-2">vs</span>
+          <span
+            class="bg-gradient-to-r from-teal to-teal-dark bg-clip-text text-transparent"
+            >OpenClaw</span
+          >
+        </h1>
+        <p
+          class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed"
+        >
+          60 dimensions. Both codebases reviewed. Every claim verified by
+          independent agents against the actual source code.
+        </p>
+        <p class="mt-3 text-sm text-muted/70">
+          Both projects are open source. This comparison reflects the codebases
+          as of April 2026.
+        </p>
+      </div>
+    </section>
+
+    <!-- Scorecard -->
+    <section class="px-6 pb-16 md:pb-20">
+      <div class="max-w-4xl mx-auto">
+        <!-- Total scores -->
+        <div class="grid grid-cols-3 gap-6 max-w-lg mx-auto mb-10">
+          <div class="text-center">
+            <div class="text-5xl md:text-6xl font-extrabold text-coral">
+              {totalComis}
+            </div>
+            <div class="text-sm text-muted mt-1">Comis leads</div>
+          </div>
+          <div class="text-center">
+            <div class="text-5xl md:text-6xl font-extrabold text-teal">
+              {totalOpenclaw}
+            </div>
+            <div class="text-sm text-muted mt-1">OpenClaw leads</div>
+          </div>
+          <div class="text-center">
+            <div class="text-5xl md:text-6xl font-extrabold text-muted/60">
+              {totalTie}
+            </div>
+            <div class="text-sm text-muted mt-1">Tied</div>
+          </div>
+        </div>
+
+        <!-- Category breakdown -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {
+            categories.map((cat) => (
+              <div class="bg-navy-light/50 rounded-lg border border-white/5 p-4 text-center">
+                <div class="text-xs text-muted uppercase tracking-wider mb-2 leading-tight">
+                  {cat.name}
+                </div>
+                <div class="flex items-center justify-center gap-1.5 text-sm font-bold">
+                  <span class="text-coral">{count(cat.rows, "comis")}</span>
+                  <span class="text-muted/40">&ndash;</span>
+                  <span class="text-teal">
+                    {count(cat.rows, "openclaw")}
+                  </span>
+                  <span class="text-muted/40">&ndash;</span>
+                  <span class="text-muted/60">{count(cat.rows, "tie")}</span>
+                </div>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+    </section>
+
+    <!-- Comparison sections -->
+    {
+      categories.map((cat, i) => {
+        const theme = sectionThemes[i];
+        const meta = sectionMeta[i];
+        const accentText =
+          theme.accent === "coral"
+            ? "text-coral"
+            : theme.accent === "teal"
+              ? "text-teal"
+              : theme.accent === "emerald"
+                ? "text-emerald-400"
+                : "text-purple-400";
+        const accentBg =
+          theme.accent === "coral"
+            ? "bg-coral/20"
+            : theme.accent === "teal"
+              ? "bg-teal/20"
+              : theme.accent === "emerald"
+                ? "bg-emerald-500/20"
+                : "bg-purple-500/20";
+
+        return (
+          <section class:list={["px-6 py-16 md:py-24", theme.bg]}>
+            <div class="max-w-5xl mx-auto">
+              <div class="flex items-center gap-3 mb-4">
+                <div
+                  class:list={[
+                    "w-8 h-8 rounded-lg flex items-center justify-center",
+                    accentBg,
+                  ]}
+                >
+                  <svg
+                    class:list={["w-4 h-4", accentText]}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    set:html={meta.icon}
+                  />
+                </div>
+                <p
+                  class:list={[
+                    "font-semibold text-sm uppercase tracking-widest",
+                    accentText,
+                  ]}
+                >
+                  {meta.title}
+                </p>
+              </div>
+              <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+                {meta.subtitle}
+              </h2>
+
+              <div class="space-y-5 mt-10">
+                {cat.rows.map((r) => {
+                  const badge = verdictBadge(r.verdict);
+                  return (
+                    <div class="bg-navy rounded-xl border border-white/5 overflow-hidden">
+                      <div class="px-6 py-4 border-b border-white/5 flex items-center justify-between">
+                        <h3 class="text-lg font-semibold text-white">
+                          {r.label}
+                        </h3>
+                        <span
+                          class:list={[
+                            "text-xs font-semibold px-2.5 py-0.5 rounded-full",
+                            badge.cls,
+                          ]}
+                        >
+                          {badge.text}
+                        </span>
+                      </div>
+                      <div class="grid md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-white/5">
+                        <div
+                          class:list={[
+                            "px-6 py-5",
+                            r.verdict === "openclaw" ? "bg-teal/5" : "",
+                          ]}
+                        >
+                          <p
+                            class:list={[
+                              "text-xs font-medium uppercase tracking-wider mb-2",
+                              r.verdict === "openclaw"
+                                ? "text-teal"
+                                : "text-muted",
+                            ]}
+                          >
+                            OpenClaw
+                          </p>
+                          <p
+                            class:list={[
+                              "leading-relaxed",
+                              r.verdict === "openclaw"
+                                ? "text-muted-light"
+                                : "text-muted",
+                            ]}
+                          >
+                            {r.openclaw}
+                          </p>
+                        </div>
+                        <div
+                          class:list={[
+                            "px-6 py-5",
+                            r.verdict === "comis" ? "bg-coral/5" : "",
+                          ]}
+                        >
+                          <p
+                            class:list={[
+                              "text-xs font-medium uppercase tracking-wider mb-2",
+                              r.verdict === "comis"
+                                ? "text-coral"
+                                : "text-muted",
+                            ]}
+                          >
+                            Comis
+                          </p>
+                          <p
+                            class:list={[
+                              "leading-relaxed",
+                              r.verdict === "comis"
+                                ? "text-muted-light"
+                                : "text-muted",
+                            ]}
+                          >
+                            {r.comis}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        );
+      })
+    }
+
+    <!-- Key takeaways -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-12 text-center">
+          Key takeaways
+        </h2>
+
+        <div class="grid md:grid-cols-2 gap-8">
+          <!-- Where Comis leads -->
+          <div
+            class="bg-navy-light/50 rounded-xl border border-coral/20 p-8"
+          >
+            <h3 class="text-xl font-bold text-coral mb-6">
+              Where Comis leads
+            </h3>
+            <ul class="space-y-4 text-muted-light">
+              <li>
+                <span class="font-semibold text-white">Security (7&ndash;0&ndash;2):</span>
+                Prompt injection detection, trust-partitioned memory, output scanning,
+                SSRF DNS pinning, and ESLint-enforced secret hygiene. OpenClaw
+                explicitly scopes prompt injection out of their security model.
+              </li>
+              <li>
+                <span class="font-semibold text-white">DAG pipelines:</span> Full
+                graph execution engine with barrier modes, template interpolation,
+                and per-node timeouts. OpenClaw has no DAG support.
+              </li>
+              <li>
+                <span class="font-semibold text-white">Context management (5&ndash;1&ndash;3):</span>
+                Built-in 8-layer pipeline with per-layer circuit breakers, proactive compaction at 85%
+                with 3-level fallback, write-time microcompaction with disk offloading,
+                post-compaction rehydration, and 25% context rot buffer. OpenClaw counters
+                with a pluggable ContextEngine slot API and a growing ecosystem
+                - lossless-claw scored 74.8 on OOLONG (vs Claude Code's 70.3)
+                and the community 12-layer architecture adds facts.db, LightRAG, and
+                vector search on top.
+              </li>
+              <li>
+                <span class="font-semibold text-white">Cache &amp; cost optimization (7&ndash;2&ndash;1):</span>
+                20 prompt cache optimizations including TTL monotonicity enforcement,
+                adaptive cold-start retention, 3-zone breakpoint placement with model-specific
+                thresholds, observation masker hysteresis to prevent cache thrashing,
+                tool schema snapshotting, and subagent short-TTL economics. Measured
+                81.5% cache hit rate in production. OpenClaw counters with persistent
+                SQLite embedding cache and broader multi-provider cache awareness.
+              </li>
+              <li>
+                <span class="font-semibold text-white">Agent isolation:</span> Isolated
+                executors, budget guards, cost trackers, and skill registries per
+                agent vs shared infrastructure with config cascading.
+              </li>
+              <li>
+                <span class="font-semibold text-white">Agent autonomy (4&ndash;0&ndash;2):</span>
+                Self-evolving personality via workspace files, task extraction from
+                conversations, nuanced group chat intelligence, and self-onboarding
+                - agents bootstrap themselves without human hand-holding.
+              </li>
+            </ul>
+          </div>
+
+          <!-- Where OpenClaw leads -->
+          <div
+            class="bg-navy-light/50 rounded-xl border border-teal/20 p-8"
+          >
+            <h3 class="text-xl font-bold text-teal mb-6">
+              Where OpenClaw leads
+            </h3>
+            <ul class="space-y-4 text-muted-light">
+              <li>
+                <span class="font-semibold text-white">Extensibility DX:</span>
+                The plugin SDK with 219+ exports and dynamic loader makes adding
+                channels and tools lower friction. 40 extension packages demonstrate
+                ecosystem maturity.
+              </li>
+              <li>
+                <span class="font-semibold text-white">Channel coverage:</span>
+                20 messaging platforms vs 9. Beyond the shared set, OpenClaw adds
+                Matrix, MS Teams, Google Chat, Feishu, Mattermost, Twitch, Nostr,
+                and more.
+              </li>
+              <li>
+                <span class="font-semibold text-white">Build speed:</span> tsdown
+                (esbuild-based) is significantly faster for incremental builds than
+                tsc-per-package with composite references.
+              </li>
+              <li>
+                <span class="font-semibold text-white">Context engine ecosystem:</span>
+                The pluggable ContextEngine slot API lets third parties replace
+                the entire context pipeline. lossless-claw, MemOS Cloud, and the
+                community 12-layer architecture demonstrate real ecosystem traction.
+              </li>
+              <li>
+                <span class="font-semibold text-white">Test infrastructure (4&ndash;1&ndash;0):</span>
+                2,242 test files, 13 dedicated live-model tests, 7 Docker E2E suites,
+                46 browser tests via Playwright, and full GitHub Actions CI with parallel
+                lane splitting. Comis counters with ChaosEchoAdapter fault injection
+                and structured log validation.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Design philosophy -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <h2
+          class="text-3xl md:text-4xl font-bold text-white mb-12 text-center"
+        >
+          Different philosophies
+        </h2>
+
+        <div class="grid md:grid-cols-2 gap-8">
+          <div class="space-y-6">
+            <div class="flex items-center gap-3 mb-2">
+              <img
+                src="/images/comis-logo.png"
+                alt="Comis"
+                class="h-6"
+              />
+              <h3 class="text-lg font-bold text-white">Comis</h3>
+            </div>
+            <div class="space-y-3 text-muted-light">
+              <p>
+                <span class="text-white font-medium">Design principle:</span> Correctness
+                first - ports, Result types, compile-time safety.
+              </p>
+              <p>
+                <span class="text-white font-medium">Security stance:</span> Defense
+                in depth - 7+ security layers, ESLint enforcement, fail-closed
+                defaults.
+              </p>
+              <p>
+                <span class="text-white font-medium">Extension model:</span> Implement
+                typed interfaces, wire in composition root.
+              </p>
+              <p>
+                <span class="text-white font-medium">Trust model:</span> Multi-tenant
+                ready with trust-partitioned memory and per-session routing.
+              </p>
+            </div>
+          </div>
+
+          <div class="space-y-6">
+            <div class="flex items-center gap-3 mb-2">
+              <div
+                class="w-6 h-6 rounded bg-teal/20 flex items-center justify-center"
+              >
+                <span class="text-teal text-xs font-bold">OC</span>
+              </div>
+              <h3 class="text-lg font-bold text-white">OpenClaw</h3>
+            </div>
+            <div class="space-y-3 text-muted-light">
+              <p>
+                <span class="text-white font-medium">Design principle:</span> Velocity
+                first - plugins, dynamic loading, convention over configuration.
+              </p>
+              <p>
+                <span class="text-white font-medium">Security stance:</span> Boundary
+                enforcement - sandbox, approval gates, explicit trust model.
+              </p>
+              <p>
+                <span class="text-white font-medium">Extension model:</span> Drop
+                a package in extensions/, implement plugin interface, auto-discovered.
+              </p>
+              <p>
+                <span class="text-white font-medium">Trust model:</span> Single-user
+                per gateway - an explicit architectural choice.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Summary table -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <h2
+          class="text-3xl md:text-4xl font-bold text-white mb-4 text-center"
+        >
+          All 60 dimensions
+        </h2>
+        <p class="text-muted text-lg mb-12 text-center max-w-xl mx-auto">
+          The full picture at a glance.
+        </p>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left">
+            <thead>
+              <tr class="border-b border-white/10">
+                <th scope="col" class="py-3 pr-4 text-sm font-medium text-muted"
+                ></th>
+                <th
+                  scope="col"
+                  class="py-3 px-4 text-sm font-medium text-muted"
+                  >OpenClaw</th
+                >
+                <th
+                  scope="col"
+                  class="py-3 px-4 text-sm font-semibold text-coral"
+                  >Comis</th
+                >
+                <th
+                  scope="col"
+                  class="py-3 pl-4 text-sm font-medium text-muted text-center"
+                  >Winner</th
+                >
+              </tr>
+            </thead>
+            <tbody>
+              {
+                allRows.map((r) => {
+                  const badge = verdictBadge(r.verdict);
+                  return (
+                    <tr class="border-b border-white/5">
+                      <th
+                        scope="row"
+                        class="py-3 pr-4 text-sm font-medium text-white whitespace-nowrap text-left"
+                      >
+                        {r.label}
+                      </th>
+                      <td class="py-3 px-4 text-sm text-muted max-w-[220px]">
+                        {r.openclaw.split(".")[0]}.
+                      </td>
+                      <td class="py-3 px-4 text-sm text-muted-light max-w-[220px]">
+                        {r.comis.split(".")[0]}.
+                      </td>
+                      <td class="py-3 pl-4 text-center">
+                        <span
+                          class:list={[
+                            "text-xs font-semibold px-2 py-0.5 rounded-full",
+                            badge.cls,
+                          ]}
+                        >
+                          {badge.text}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Methodology note -->
+    <section class="px-6 pb-8">
+      <div class="max-w-3xl mx-auto text-center">
+        <p class="text-sm text-muted">
+          This comparison was created by parallel deep-dive analysis of both
+          codebases and verified by 6 independent agents that checked 64 claims
+          (32 per codebase) against the actual source code. All corrections have
+          been applied.
+        </p>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Ready to try Comis?
+        </h2>
+        <p class="text-muted text-lg mb-10">
+          Free, open source, and takes four commands to set up.
+        </p>
+
+        <div class="flex flex-wrap gap-4 justify-center">
+          <a
+            href="https://docs.comis.ai"
+            rel="noopener noreferrer"
+            target="_blank"
+            class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg"
+          >
+            Get Started
+          </a>
+          <a
+            href="https://github.com/comisai/comis"
+            rel="noopener noreferrer"
+            target="_blank"
+            class="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10"
+          >
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"
+              ><path
+                d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"
+              ></path></svg
+            >
+            View on GitHub
+          </a>
+          <a
+            href="/compare"
+            class="inline-flex items-center justify-center px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-medium rounded-lg transition-colors border border-white/10"
+          >
+            General Comparison
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Base>

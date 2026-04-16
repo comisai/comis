@@ -1,0 +1,83 @@
+# Skill Isolation Multi-Agent E2E Test Config (port 8730)
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  alpha:
+    name: "AlphaAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+  beta:
+    name: "BetaAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+
+routing:
+  defaultAgentId: alpha
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8730
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-skill-isolation-e2e"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+approvals:
+  enabled: false
+
+memory:
+  dbPath: "test-memory-skill-isolation.db"
+
+security:
+  agentToAgent:
+    enabled: false
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

@@ -1,0 +1,203 @@
+---
+title: "Execution Graphs"
+description: "Multi-agent DAG orchestration -- define, execute, and monitor workflows where each node is a sub-agent task"
+icon: "diagram-project"
+---
+
+Execution graphs let your agents coordinate complex, multi-step workflows as directed acyclic graphs (DAGs). Each node in the graph is a sub-agent task. Nodes can run in parallel when they have no dependencies, or wait for upstream nodes to finish before starting. The graph coordinator handles scheduling, result forwarding, timeouts, budget enforcement, and failure cascading automatically.
+
+## When to use execution graphs
+
+Execution graphs are the right tool when your workflow has multiple steps that need to coordinate:
+
+- **Research pipelines** -- search for information, analyze results, write a summary (sequential chain)
+- **Fan-out/fan-in** -- analyze 5 repositories in parallel, then synthesize findings into a single report
+- **Adversarial debate** -- have bull and bear analysts argue before a synthesizer makes a final call (`debate` node type)
+- **Consensus voting** -- have multiple agents vote independently in parallel (`vote` node type)
+- **Editorial refinement** -- draft, review, and polish through sequential agents (`refine` node type)
+- **Human-in-the-loop** -- pause for user approval before executing a high-stakes action (`approval-gate` node type)
+- **Budget-controlled batch processing** -- process multiple items with a total cost ceiling
+
+If you just need one agent to call another, use [sub-agent sessions](/agent-tools/sessions) instead. Execution graphs are for workflows with multiple coordinated steps.
+
+## Quick example
+
+Here is a 3-node graph that researches a topic, analyzes the findings, and writes a report:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: research
+    task: "Search the web for recent developments in quantum computing"
+  - node_id: analyze
+    task: "Analyze the research findings and identify key trends: {{research.result}}"
+    depends_on: [research]
+  - node_id: write
+    task: "Write a 500-word summary of quantum computing trends based on: {{analyze.result}}"
+    depends_on: [analyze]
+label: "Quantum Computing Research"
+```
+
+The `research` node runs first (no dependencies). When it finishes, `analyze` starts with the research output injected into its task text via `{{research.result}}`. Finally, `write` produces the report.
+
+## Key concepts
+
+### Nodes
+
+Each node represents a sub-agent task. A graph can have between 1 and 20 nodes. Every node requires a `node_id` (unique within the graph) and a `task` (the instruction for the sub-agent).
+
+Optional node settings:
+
+| Setting | Description |
+|---------|-------------|
+| `depends_on` | Array of upstream node IDs that must complete first |
+| `agent` | Agent ID to run this node (defaults to the calling agent) |
+| `model` | Model override for this node |
+| `timeout_ms` | Per-node timeout in milliseconds |
+| `max_steps` | Maximum agentic steps for the sub-agent |
+| `barrier_mode` | When to proceed if dependencies fail: `all`, `majority`, or `best-effort` |
+| `retries` | Number of automatic retries on failure (0-3, default 1). Uses exponential backoff: 1s, 2s, 4s, 8s, capped at 30s |
+| `type_id` | Built-in node type: `agent`, `debate`, `vote`, `refine`, `collaborate`, `approval-gate`, or `map-reduce` |
+| `type_config` | Type-specific configuration (required when `type_id` is set). See [Node Types](/developer-guide/pipelines#node-types) |
+| `context_mode` | Controls upstream output verbosity: `full` (default), `summary`, or `none` |
+
+### Node types
+
+By default, each node spawns a single sub-agent to execute its task. For multi-agent orchestration patterns, set `type_id` and `type_config` to use a built-in node type:
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| `debate` | Adversarial rounds between agents | Bull vs bear analysis |
+| `vote` | Independent parallel voting | Analyst consensus |
+| `refine` | Sequential improvement chain | Draft -> edit -> polish |
+| `collaborate` | Sequential additive contributions | Team brainstorming |
+| `approval-gate` | Human checkpoint via chat | "Approve before trading" |
+| `map-reduce` | Parallel work + reducer | Multi-source research |
+
+See [Node Types](/developer-guide/pipelines#node-types) for configuration details and examples.
+
+### Dependencies
+
+Nodes declare their dependencies using `depends_on` arrays. The graph coordinator validates the dependency structure at define time -- it detects cycles, missing references, duplicate node IDs, and self-dependencies. Nodes with no dependencies are root nodes and start immediately.
+
+### Barrier modes
+
+Barrier modes control when a fan-in node (a node with multiple dependencies) should proceed:
+
+| Mode | Behavior |
+|------|----------|
+| `all` (default) | Every dependency must complete successfully |
+| `majority` | More than 50% of dependencies must complete, and all must reach a terminal state |
+| `best-effort` | At least one dependency must complete, and all must reach a terminal state |
+
+<Tip>
+All barrier modes wait for every dependency to reach a terminal state (completed, failed, or skipped) before evaluating. A `best-effort` node does not fire as soon as one dependency completes -- it waits until all dependencies have finished, then checks that at least one succeeded.
+</Tip>
+
+### Failure policies
+
+The graph-level `on_failure` setting controls what happens when a node fails:
+
+| Policy | Behavior |
+|--------|----------|
+| `fail-fast` (default) | A failed node immediately cascades: all downstream dependents are skipped |
+| `continue` | Downstream nodes are only skipped if their barrier can never be satisfied. Nodes whose barrier is still satisfiable keep running |
+
+### Data flow
+
+Nodes consume outputs from upstream nodes using `{{nodeId.result}}` templates directly in the task text. The `nodeId` in the template must appear in the consuming node's `depends_on` array.
+
+```yaml
+- node_id: summarize
+  task: "Summarize the analysis: {{analyze.result}}"
+  depends_on: [analyze]
+```
+
+When `analyze` completes, its output text replaces `{{analyze.result}}` in the `summarize` node's task description.
+
+**User-provided variables:** Use `${VARIABLE_NAME}` syntax for values the user provides before execution. Variables are resolved at `graph.execute` time via the `variables` parameter. See the [Developer Guide](/developer-guide/pipelines#data-flow) for details.
+
+<Warning>
+Nodes can only reference outputs from nodes listed in their `depends_on` array. The graph coordinator validates this at execution time and rejects invalid references.
+</Warning>
+
+### Shared data folder
+
+Each graph execution gets a temporary shared directory at `~/.comis/graph-runs/{graphId}/`. All nodes in the graph can read and write files in this folder, making it useful for exchanging large payloads (reports, data files, images) that do not fit in text-based template passing. The folder persists after graph completion so output files remain accessible.
+
+### Budget and timeouts
+
+Graphs support resource limits at both the node and graph level:
+
+- **Per-node timeout** (`timeout_ms` on the node) -- kills the node's sub-agent if it runs too long
+- **Graph-level timeout** (`timeout_ms` on the graph) -- cancels all remaining nodes if the entire graph exceeds the time limit
+- **Budget limits** (`budget.max_tokens`, `budget.max_cost`) -- cancels the graph if cumulative token usage or cost across all nodes exceeds the limit
+
+### Graph lifecycle
+
+Every graph follows the same lifecycle:
+
+1. **Define** -- validate the graph structure (DAG check, dependency resolution) without executing
+2. **Execute** -- start the graph; root nodes run immediately, others wait for dependencies
+3. **Monitor** -- check status of running and completed nodes
+4. **Complete or cancel** -- the graph reaches a terminal state when all nodes finish, or it can be manually cancelled
+
+Node status transitions: `pending` -> `ready` -> `running` -> `completed` / `failed` / `skipped`
+
+Graph status values: `running`, `completed`, `failed`, `cancelled`
+
+## The pipeline tool
+
+Agents create and manage execution graphs using the `pipeline` built-in tool. It supports 9 actions: `define`, `execute`, `status`, `outputs`, `cancel`, `save`, `load`, `list`, and `delete`.
+
+See the [Pipeline Tool Guide](/agent-tools/pipelines) for the complete action reference with examples.
+
+## Visual builder
+
+The web dashboard includes a visual graph builder where you can design execution graphs by dragging and connecting nodes, then save and execute them directly.
+
+See the [Visual Builder Guide](/web-dashboard/pipelines) for details.
+
+## Configuration
+
+Execution graphs require agent-to-agent communication to be enabled:
+
+```yaml
+security:
+  agentToAgent:
+    enabled: true
+```
+
+Without this setting, the `pipeline` tool will not be available to agents.
+
+See [Configuration Reference](/reference/config-yaml) for all security settings.
+
+## Events
+
+The graph coordinator emits three events during execution:
+
+| Event | When | Key fields |
+|-------|------|------------|
+| `graph:started` | Graph execution begins | `graphId`, `label`, `nodeCount` |
+| `graph:node_updated` | A node transitions to a new status | `graphId`, `nodeId`, `status`, `durationMs`, `error` |
+| `graph:completed` | Graph reaches terminal state | `graphId`, `status`, `durationMs`, `nodesCompleted`, `nodesFailed`, `nodesSkipped`, `cancelReason` |
+
+See [Event Bus](/developer-guide/event-bus) for the full event reference.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Pipeline Tool Guide" icon="diagram-project" href="/agent-tools/pipelines">
+    Complete reference for the pipeline tool's 9 actions
+  </Card>
+  <Card title="Visual Builder" icon="window-maximize" href="/web-dashboard/pipelines">
+    Design and run graphs from the web dashboard
+  </Card>
+  <Card title="Developer API" icon="code" href="/developer-guide/pipelines">
+    API reference for building graph integrations
+  </Card>
+  <Card title="Sub-Agent Sessions" icon="users" href="/agents/subagent-lifecycle">
+    How each graph node runs as a sub-agent
+  </Card>
+</CardGroup>

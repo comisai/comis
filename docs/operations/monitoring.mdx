@@ -1,0 +1,155 @@
+---
+title: "Monitoring"
+description: "Health monitoring and system alerts"
+icon: "heart-pulse"
+---
+
+Comis continuously monitors the health of your system and alerts you if something needs attention. Think of it as a health dashboard that watches the important vital signs — disk space, CPU usage, memory, system services, and more — so you do not have to.
+
+## What Gets Monitored
+
+Comis checks five different health sources. Each source can be enabled or disabled independently.
+
+<AccordionGroup>
+  <Accordion title="Disk Space">
+    Watches the disk usage on configured paths and alerts when usage exceeds the threshold.
+
+    **Why it matters:** If the disk fills up, Comis cannot write logs, save memories, or store agent data. Getting an early warning gives you time to free up space.
+
+    **Default behavior:** Monitors `/` and alerts at 90% usage.
+
+    ```yaml
+    # config.yaml
+    monitoring:
+      disk:
+        enabled: true
+        paths: ["/"]
+        thresholdPercent: 90
+    ```
+  </Accordion>
+
+  <Accordion title="System Resources">
+    Monitors CPU and memory usage and alerts when utilization is consistently high.
+
+    **Why it matters:** High CPU or memory usage can slow down agent responses and cause the watchdog to skip pings (which may trigger an unnecessary restart).
+
+    **Default behavior:** Alerts at 85% CPU and 90% memory usage.
+
+    ```yaml
+    # config.yaml
+    monitoring:
+      resources:
+        enabled: true
+        cpuThresholdPercent: 85
+        memoryThresholdPercent: 90
+    ```
+  </Accordion>
+
+  <Accordion title="systemd Services (Linux only)">
+    Checks for failed system services on Linux servers running systemd.
+
+    **Why it matters:** A failed dependency (like a database or reverse proxy) can affect Comis even if the daemon itself is running fine.
+
+    **Default behavior:** Checks all system services for failures. Set `services` to a specific list to limit which services are checked.
+
+    ```yaml
+    # config.yaml
+    monitoring:
+      systemd:
+        enabled: true
+        services: []     # Empty = check all failed services
+    ```
+
+    <Warning>systemd monitoring only works on Linux. On macOS, these checks are skipped automatically.</Warning>
+  </Accordion>
+
+  <Accordion title="Security Updates">
+    Checks whether security patches are available for your operating system.
+
+    **Why it matters:** Unpatched systems are vulnerable. This check gives your agent visibility into pending security updates so it can alert you.
+
+    **Default behavior:** Checks for security updates only (not all package updates).
+
+    ```yaml
+    # config.yaml
+    monitoring:
+      securityUpdates:
+        enabled: true
+        securityOnly: true
+    ```
+  </Accordion>
+
+  <Accordion title="Git Repositories">
+    Optionally monitors git repositories for uncommitted changes or unpushed commits.
+
+    **Why it matters:** Useful for development environments where you want your agent to remind you about uncommitted work.
+
+    **Default behavior:** Disabled by default. Enable and add repository paths to activate.
+
+    ```yaml
+    # config.yaml
+    monitoring:
+      git:
+        enabled: false
+        repositories: []
+        checkRemote: true
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## How Alerts Work
+
+Monitoring runs on the heartbeat schedule — every 5 minutes by default. When a threshold is exceeded, the agent receives an alert and can notify you through your connected chat channels.
+
+Alerts have built-in protection against repeated notifications:
+
+- **Alert threshold**: A source must fail multiple consecutive checks (default: 2) before triggering an alert
+- **Alert cooldown**: After alerting, the same source will not alert again for 5 minutes
+
+<Tip>Monitoring integrates with the heartbeat system. See the [Scheduler](/operations/scheduler) page for how to configure check intervals and quiet hours.</Tip>
+
+## Full Configuration Reference
+
+```yaml
+# config.yaml
+monitoring:
+  disk:
+    enabled: true           # Watch disk space
+    paths: ["/"]            # Paths to monitor
+    thresholdPercent: 90    # Alert above this percentage
+
+  resources:
+    enabled: true           # Watch CPU and memory
+    cpuThresholdPercent: 85
+    memoryThresholdPercent: 90
+
+  systemd:
+    enabled: true           # Check for failed services (Linux)
+    services: []            # Empty = check all
+
+  securityUpdates:
+    enabled: true           # Check for security patches
+    securityOnly: true      # Only security updates, not all
+
+  git:
+    enabled: false          # Watch git repos (off by default)
+    repositories: []        # Absolute paths to repos
+    checkRemote: true       # Check for unpushed commits
+```
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    Daemon lifecycle and watchdog
+  </Card>
+  <Card title="Scheduler" icon="clock" href="/operations/scheduler">
+    Heartbeat intervals and quiet hours
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/operations/observability">
+    Token tracking and performance metrics
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Solutions to common issues
+  </Card>
+</CardGroup>

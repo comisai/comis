@@ -1,0 +1,45 @@
+# Comis monorepo overrides
+# Re-include files ignored by root .gitignore
+!pnpm-lock.yaml
+!packages/core/
+!packages/core/**
+!dist/
+
+# Environment files (keep .example files)
+.env
+.env.*
+!.env.example
+!.env.docker.example
+
+# Comis-specific ignores
+node_modules/
+**/node_modules/
+coverage/
+.DS_Store
+**/.DS_Store
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+
+# Claude Code working directory
+.claude/
+
+# Build outputs (each package's dist/ is gitignored, built on CI)
+packages/*/dist/
+website/dist/
+website/.astro/
+*.tsbuildinfo
+
+# Integration test artifacts
+test/.test-results.json
+test/.test-daemon.log
+test/config/*.last-good.yaml
+
+# Playwright test results
+**/test-results/

@@ -1,0 +1,149 @@
+---
+title: "Requirements"
+description: "Hardware, software, and account prerequisites for running Comis"
+icon: "clipboard-check"
+---
+
+Before installing Comis, make sure your system meets these requirements. Most
+of the software prerequisites can be installed in a few minutes.
+
+## Platform Support
+
+<Note>
+**Linux** is the primary deployment platform. Comis supports Ubuntu 22.04+,
+Debian 12+, Fedora 38+, RHEL 9+, and Arch Linux.
+
+**macOS** (13+ with Apple Silicon or Intel) works for development and testing
+but is not the primary deployment target.
+</Note>
+
+## Hardware
+
+| Component | Minimum | Recommended |
+|---|---|---|
+| CPU | 1 core | 2+ cores |
+| RAM | 512 MB | 1 GB+ |
+| Disk | 500 MB | 2 GB+ (includes ~260 MB for local embedding model) |
+| Network | Outbound HTTPS access | Stable broadband |
+
+Comis is lightweight by design. The main resource consumers are the local
+SQLite database (grows with conversation history) and the optional embedding
+model used for semantic memory search.
+
+## Software
+
+You need Node.js and a small set of build tools. The build tools are required
+because Comis includes native modules (better-sqlite3 for the local database,
+sharp for image processing) that compile during installation.
+
+<Tabs>
+  <Tab title="Ubuntu / Debian">
+    Install Node.js 22 from NodeSource:
+
+    ```bash
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    ```
+
+    Install build tools:
+
+    ```bash
+    sudo apt-get install -y build-essential python3
+    ```
+  </Tab>
+  <Tab title="Fedora / RHEL">
+    Install Node.js 22 from NodeSource:
+
+    ```bash
+    curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo -E bash -
+    sudo dnf install -y nodejs
+    ```
+
+    Install build tools:
+
+    ```bash
+    sudo dnf install -y gcc-c++ make python3
+    ```
+  </Tab>
+  <Tab title="Arch">
+    Install Node.js and npm from the official repositories:
+
+    ```bash
+    sudo pacman -S nodejs npm
+    ```
+
+    Install build tools:
+
+    ```bash
+    sudo pacman -S --needed base-devel python
+    ```
+  </Tab>
+</Tabs>
+
+<AccordionGroup>
+  <Accordion title="macOS Development Setup">
+    Install Xcode Command Line Tools (provides the C++ compiler):
+
+    ```bash
+    xcode-select --install
+    ```
+
+    Install Node.js 22 via Homebrew:
+
+    ```bash
+    brew install node@22
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## AI Provider Account
+
+<Warning>
+You need an API key from at least one AI provider. The setup wizard will ask
+for this during installation.
+</Warning>
+
+| Provider | API key required | Notes |
+|---|---|---|
+| Anthropic (Claude) | Yes | Recommended default |
+| OpenAI (GPT) | Yes | |
+| Google (Gemini) | Yes | |
+| Groq | Yes | Fast inference |
+| Mistral | Yes | |
+| DeepSeek | Yes | |
+| xAI (Grok) | Yes | |
+| Together AI | Yes | |
+| Cerebras | Yes | Fast inference |
+| OpenRouter | Yes | Multi-provider gateway |
+| Ollama (local) | No | Local inference, no account needed |
+
+<Tip>
+You can add more providers later. Start with whichever one you already have an
+account with. If you are unsure, Anthropic or OpenAI are the most commonly
+used.
+</Tip>
+
+## Check Your Setup
+
+Run these commands to verify your system is ready:
+
+```bash
+node --version    # Should show v22.x.x or later
+npm --version     # Should show 10.x.x or later
+python3 --version # Should show 3.x.x
+```
+
+If `node --version` shows a version below 22, follow the installation
+instructions in the Software section above to upgrade. If `python3` is not
+found, install it using your distribution's package manager.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Install on Linux" icon="linux" href="/installation/install-linux">
+    Step-by-step procedure for Ubuntu, Fedora, and Arch.
+  </Card>
+  <Card title="Install with Docker" icon="docker" href="/installation/install-docker">
+    Container-based setup with Docker Compose.
+  </Card>
+</CardGroup>

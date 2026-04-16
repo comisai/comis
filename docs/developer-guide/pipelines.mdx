@@ -1,0 +1,670 @@
+---
+title: "Pipelines"
+description: "Multi-agent execution graphs with DAG validation, dependency resolution, and parallel coordination"
+icon: "diagram-project"
+---
+
+Execution graphs let you orchestrate multi-agent workflows as directed acyclic graphs (DAGs). Each node in the graph is a task executed by an agent, with dependencies determining execution order. Nodes without dependencies run in parallel. The graph coordinator manages scheduling, result forwarding between nodes, timeout enforcement, and aggregate completion.
+
+## Domain Types
+
+The execution graph system is built on three core types defined in `@comis/core`. These types represent the graph structure, individual nodes, and resource limits.
+
+### ExecutionGraph
+
+```typescript
+import type { ExecutionGraph, GraphNode, GraphBudget } from "@comis/core";
+
+// ExecutionGraph structure
+const graph: ExecutionGraph = {
+  nodes: [],                          // 1-20 GraphNode entries
+  label: "My Pipeline",              // Human-readable graph name (optional)
+  onFailure: "fail-fast",            // "fail-fast" | "continue"
+  timeoutMs: 300_000,                // Graph-level timeout in ms (optional)
+  budget: {                          // Resource limits (optional)
+    maxTokens: 100_000,
+    maxCost: 5.0,
+  },
+};
+```
+
+### GraphNode
+
+Each node represents a sub-agent task with optional dependency constraints, per-node timeouts, retry behavior, built-in node types, and context verbosity control. Upstream node outputs are referenced directly via `{{nodeId.result}}` templates in task text, where `nodeId` must appear in the node's `dependsOn` array.
+
+```typescript
+import type { GraphNode } from "@comis/core";
+
+// Regular node — single sub-agent task (most common)
+const node: GraphNode = {
+  nodeId: "analyze",                  // Unique within the graph
+  task: "Analyze: {{gather.result}}", // Task with upstream output template
+  agentId: "analyst",                 // Which agent executes (optional)
+  model: "claude-sonnet-4-5-20250929",  // Model override (optional)
+  dependsOn: ["gather"],              // Nodes that must complete first
+  timeoutMs: 60_000,                  // Per-node timeout (optional)
+  maxSteps: 10,                       // Maximum tool call steps (optional)
+  barrierMode: "all",                 // "all" | "majority" | "best-effort"
+  retries: 1,                         // Retry count 0-3 (default: 0)
+  contextMode: "full",                // "full" | "summary" | "none" (default: "full")
+};
+
+// Typed node — uses a built-in driver for multi-agent patterns
+const debateNode: GraphNode = {
+  nodeId: "evaluate",
+  task: "Is this investment strategy sound?",
+  dependsOn: ["research"],
+  typeId: "debate",                   // Built-in node type
+  typeConfig: {                       // Type-specific configuration
+    agents: ["bull", "bear"],
+    rounds: 2,
+    synthesizer: "moderator",
+  },
+};
+```
+
+### GraphBudget
+
+Resource limits applied across the entire graph execution.
+
+```typescript
+import type { GraphBudget } from "@comis/core";
+
+const budget: GraphBudget = {
+  maxTokens: 100_000,                // Total token limit across all nodes
+  maxCost: 5.0,                      // Total cost limit in USD
+};
+```
+
+When a budget limit is exceeded during execution, the coordinator cancels all running nodes and fails the graph.
+
+## Node Lifecycle
+
+Each node transitions through a defined set of states during execution:
+
+```
+pending -> ready -> running -> completed
+                           \-> failed
+               \------------\-> skipped
+```
+
+- **`pending`** -- Waiting for dependencies to reach terminal state
+- **`ready`** -- All dependency barriers satisfied, eligible for scheduling
+- **`running`** -- Agent is actively executing the task
+- **`completed`** -- Task finished successfully with output
+- **`failed`** -- Task encountered an error
+- **`skipped`** -- Dependencies failed and barrier cannot be satisfied
+
+Graph-level states: `running` -> `completed` | `failed` | `cancelled`
+
+### Failure Strategies
+
+The `onFailure` field controls how the graph responds when a node fails:
+
+- **`fail-fast`** (default) -- If any node fails, skip all dependent nodes (cascade) and fail the graph as soon as all running nodes finish. Dependents with failed or skipped dependencies are immediately marked as skipped.
+- **`continue`** -- If a node fails, only skip dependent nodes whose barrier can never be satisfied. Independent nodes and nodes with satisfied barriers continue executing.
+
+### Barrier Modes
+
+For nodes with multiple dependencies, the `barrierMode` controls when the node becomes ready:
+
+| Mode | Condition | Use Case |
+|------|-----------|----------|
+| `all` (default) | ALL dependencies must complete successfully | Sequential pipelines, data aggregation |
+| `majority` | More than half of dependencies completed, all are terminal | Quorum-based decisions, redundant workers |
+| `best-effort` | All dependencies are terminal, at least one completed | Resilient pipelines, optional enrichment |
+
+All barrier modes require dependencies to reach a terminal state (completed, failed, or skipped) before the node becomes ready. A `best-effort` node does not fire as soon as one dependency completes -- it waits for all dependencies to finish.
+
+## Graph Validation
+
+The `validateAndSortGraph()` function performs both schema and structural validation before a graph can execute.
+
+### Schema Validation (Zod)
+
+- Node count: 1-20 nodes
+- Required fields: `nodeId` (non-empty string), `task` (non-empty string)
+- Type checks on all optional fields
+
+### Structural Validation (DAG)
+
+- **Unique node IDs** -- No two nodes can share the same `nodeId`
+- **No self-dependencies** -- A node cannot list itself in `dependsOn`
+- **Valid references** -- All `dependsOn` entries must point to existing nodes
+- **Acyclicity** -- The graph must be a DAG (no circular dependencies)
+
+Cycle detection uses Kahn's algorithm for topological sorting. When a cycle is detected, a DFS trace identifies the exact cycle path for actionable error messages.
+
+### GraphValidationError
+
+Validation failures return a structured `GraphValidationError` with a `kind` field:
+
+| Kind | Description | Example |
+|------|-------------|---------|
+| `cycle` | Circular dependency detected | `A -> B -> C -> A` |
+| `missing_dependency` | `dependsOn` references a non-existent node | Node "X" depends on "Y" which does not exist |
+| `duplicate_node_id` | Two nodes share the same ID | Two nodes both named "analyze" |
+| `self_dependency` | Node depends on itself | Node "A" lists "A" in `dependsOn` |
+
+### Usage
+
+```typescript
+import { validateAndSortGraph } from "@comis/core";
+import type { ExecutionGraph } from "@comis/core";
+
+const myGraph: ExecutionGraph = {
+  nodes: [
+    { nodeId: "a", task: "First task", dependsOn: [] },
+    { nodeId: "b", task: "Second task", dependsOn: ["a"] },
+  ],
+  onFailure: "fail-fast",
+};
+
+const result = validateAndSortGraph(myGraph);
+if (!result.ok) {
+  console.error(`Validation failed: ${result.error.kind} - ${result.error.message}`);
+  // e.g., "cycle - Cycle detected: A -> B -> C -> A"
+  return;
+}
+const { graph, executionOrder } = result.value;
+// executionOrder: ["a", "b"] (topologically sorted)
+```
+
+The returned `ValidatedGraph` contains the original graph paired with its topological execution order -- the sequence in which nodes can be safely scheduled.
+
+## Graph Coordinator
+
+The graph coordinator is the runtime engine that executes validated graphs end-to-end. It lives in the daemon process and orchestrates node scheduling, result forwarding, and lifecycle management.
+
+Key responsibilities:
+
+- **Node spawning** -- Each node is spawned as a sub-agent via the SubAgentRunner. Nodes without dependencies start immediately; dependent nodes wait for their barriers.
+- **Completion tracking** -- Event-driven via `session:sub_agent_completed` events. A single global handler routes completion events to the correct graph instance.
+- **Result forwarding** -- Upstream node outputs are injected into downstream node task descriptions via `{{nodeId.result}}` template interpolation (see [Data Flow](#data-flow)).
+- **Timeout enforcement** -- Both per-node timeouts (kills the individual sub-agent) and graph-level timeouts (cancels all running nodes).
+- **Concurrency limiting** -- Three-tier concurrency control: per-node (`maxParallelSpawns`, default 10 for `spawn_all` typed nodes), per-graph (`maxConcurrency`, default 4 concurrent nodes), and global (`maxGlobalSubAgents`, default 20 across all graphs). Ready nodes wait in a FIFO queue when limits are reached.
+- **Aggregate announcement** -- A single completion message summarizing all node results is sent to the originating channel when the graph finishes.
+
+<Info>
+The graph coordinator runs inside the daemon process. It is not directly accessible from other packages -- you interact with execution graphs by creating them through the CLI, RPC, or web dashboard.
+</Info>
+
+## Graph Events
+
+The event bus emits events at key points during graph execution:
+
+| Event | When | Payload |
+|-------|------|---------|
+| `graph:started` | Graph execution begins | `graphId`, `label`, `nodeCount`, `timestamp` |
+| `graph:node_updated` | Node state changes | `graphId`, `nodeId`, `status`, `durationMs`, `error`, `timestamp` |
+| `graph:driver_lifecycle` | Typed node driver phase transition | `graphId`, `nodeId`, `typeId`, `phase` (`initialized`, `progress`, `completed`, `failed`, `aborted`) |
+| `graph:completed` | Graph execution finishes | `graphId`, `status`, `durationMs`, `nodeCount`, `nodesCompleted`, `nodesFailed`, `nodesSkipped`, `timestamp` |
+
+Subscribe to these events via the [Event Bus](/developer-guide/event-bus) for monitoring, logging, or triggering downstream actions.
+
+## Data Flow
+
+Nodes pass data to downstream nodes using `{{nodeId.result}}` templates directly in the task text. The `nodeId` in the template must appear in the consuming node's `dependsOn` array.
+
+```yaml
+nodes:
+  - nodeId: "research"
+    task: "Research the topic of quantum computing"
+  - nodeId: "summarize"
+    task: "Summarize this research: {{research.result}}"
+    dependsOn: ["research"]
+```
+
+When node `research` completes, its output text replaces `{{research.result}}` in the `summarize` node's task description. This creates a direct data flow between nodes without shared state or intermediate variable mappings.
+
+### Context Envelope
+
+The coordinator also builds a context envelope around each node's task, providing awareness of the graph structure and upstream results. The `contextMode` field controls how much upstream output is included in the envelope (see [Context Verbosity Modes](#context-verbosity-modes)).
+
+### User Variables
+
+Use `${VARIABLE_NAME}` syntax in task text for values the user provides at execution time. Variables are resolved before template interpolation when the graph starts via the `variables` parameter passed to `graph.execute`.
+
+```yaml
+nodes:
+  - nodeId: "search"
+    task: "Search for information about ${TOPIC}"
+  - nodeId: "analyze"
+    task: "Analyze the search results about ${TOPIC}: {{search.result}}"
+    dependsOn: ["search"]
+```
+
+User variables are validated at define time -- `graph.define` returns a `userVariables` array listing all `${VAR}` placeholders found in node tasks. Unresolved variables at execution time produce a warning but do not block execution.
+
+<Warning>
+User variable values are escaped to prevent injection of `{{nodeId.result}}` templates. A zero-width space character is inserted into any `{{` or `}}` sequences in variable values.
+</Warning>
+
+## Shared Data Folder
+
+When a graph starts, the coordinator creates a per-graph shared directory at `~/.comis/graph-runs/{graphId}/`. All nodes in the graph get read-write access to this directory, enabling file-based data exchange between nodes.
+
+Each node receives the shared folder path in its context envelope under a "Shared Pipeline Folder" section. Nodes can write output files -- reports, structured data, artifacts -- for other nodes to read. This complements template-based data passing with file-based exchange for larger payloads that would exceed the result truncation limit.
+
+### Directory structure
+
+```
+~/.comis/graph-runs/
+  {graphId}/          # Created per graph execution
+    report.md         # Example: node writes output file
+    data.json         # Example: node writes structured data
+```
+
+### Lifecycle
+
+The shared directory is created with owner-only permissions (`0o700`) at graph start. The directory persists after graph completion so output files remain accessible. Driver artifacts (debate transcripts, vote tallies, etc.) are also written to this directory (see [Node Types](#node-types)).
+
+### Security
+
+The directory is created with `0o700` permissions, restricting access to the owner. File tool access is enforced through the safe-path-wrapper's `sharedPaths` mechanism, which grants read-write access only to nodes within the same graph execution. Nodes in different graph runs cannot access each other's shared directories.
+
+<Info>
+The shared data folder is separate from `{{nodeId.result}}` template passing. Use templates for passing text results between nodes. Use the shared folder for larger artifacts like files, reports, or structured data that would exceed the result truncation limit (default 12000 characters).
+</Info>
+
+## Per-Node Retry
+
+Nodes can be configured to retry automatically on failure using the `retries` field.
+
+| Setting | Type | Range | Default |
+|---------|------|-------|---------|
+| `retries` | integer | 0-3 | 0 (no retries) |
+
+When a node fails and has retries remaining, the coordinator waits with exponential backoff (1s, 2s, 4s) before restarting the node from scratch. The node's status transitions back to `ready` during retry, making it visually distinct from permanently failed nodes.
+
+```typescript
+{
+  nodeId: "fetch-data",
+  task: "Fetch the latest stock data from the API",
+  retries: 2,  // Retry up to 2 times on failure
+}
+```
+
+Runtime state includes `retryAttempt` (current attempt number, starting at 0) and `retriesRemaining` (how many retries are left). These are visible in `graph.status` responses.
+
+<Tip>
+Retries restart the node completely -- the sub-agent begins fresh with no memory of the failed attempt. For typed nodes (debate, vote, etc.), retry restarts the entire driver from scratch (no partial continuation). Retries on `approval-gate` nodes will re-prompt the user.
+</Tip>
+
+## NodeTypeDriver Interface
+
+The `NodeTypeDriver` interface defines the contract for pluggable graph node type drivers. Drivers are pure synchronous functions -- they receive context and return action objects that the graph coordinator interprets and executes. The coordinator handles all async operations (agent spawning, I/O, event emission).
+
+```typescript
+interface NodeTypeDriver {
+  readonly typeId: string;                          // Unique type identifier (e.g., "debate", "vote")
+  readonly name: string;                            // Human-readable driver name
+  readonly description: string;                     // Short description of what this driver does
+  readonly configSchema: z.ZodObject<z.ZodRawShape>; // Zod schema for validating typeConfig
+  readonly defaultTimeoutMs: number;                // Default timeout for nodes using this driver
+  estimateDurationMs(config: Record<string, unknown>): number;
+  initialize(ctx: NodeDriverContext): NodeDriverAction;
+  onTurnComplete(ctx: NodeDriverContext, agentOutput: string): NodeDriverAction;
+  onParallelTurnComplete?(ctx: NodeDriverContext, outputs: Array<{ agentId: string; output: string }>): NodeDriverAction;
+  onAbort(ctx: NodeDriverContext): void;
+}
+```
+
+| Property / Method | Description |
+|-------------------|-------------|
+| `typeId` | Unique identifier string (e.g., `"debate"`, `"vote"`, `"map-reduce"`) |
+| `name` | Human-readable display name for UIs and logging |
+| `description` | Short text describing the driver's purpose |
+| `configSchema` | Zod schema used to validate the `typeConfig` field on nodes using this driver. Invalid configs produce an error with a `schemaToExample` hint (see [JSON-RPC reference](/reference/json-rpc)) |
+| `defaultTimeoutMs` | Fallback timeout applied when the node does not specify its own `timeoutMs` |
+| `estimateDurationMs(config)` | Returns an estimated execution time based on the type-specific config (used for scheduling hints) |
+| `initialize(ctx)` | Called once when the node starts. Returns the first action (typically `spawn` or `spawn_all`) |
+| `onTurnComplete(ctx, agentOutput)` | Called after a single sub-agent completes. Returns the next action |
+| `onParallelTurnComplete(ctx, outputs)` | Called after all parallel sub-agents complete. Optional -- required only for drivers that use `spawn_all` |
+| `onAbort(ctx)` | Called when the node is aborted (timeout, graph cancellation). Cleans up driver state |
+
+### NodeDriverAction
+
+Every driver method returns a `NodeDriverAction` -- a discriminated union identified by the `action` field. The coordinator interprets each action and performs the corresponding async operation.
+
+| Action | Fields | Description |
+|--------|--------|-------------|
+| `spawn` | `agentId`, `task`, `model?`, `maxSteps?` | Dispatch a single sub-agent with the given task |
+| `spawn_all` | `spawns[]` (each with `agentId`, `task`, `model?`, `maxSteps?`) | Dispatch multiple sub-agents in parallel (used by `vote`, `map-reduce`) |
+| `complete` | `output`, `artifacts?` | Driver finished successfully with output text and optional file artifacts |
+| `fail` | `error`, `artifacts?` | Driver failed with an error message and optional file artifacts |
+| `wait` | -- | Do nothing -- wait for in-progress agents to finish before the next callback |
+| `wait_for_input` | `message`, `timeoutMs` | Pause execution and prompt a human for input via the originating channel (used by `approval-gate`) |
+| `progress` | `stage`, `current`, `total`, `detail?` | Report intermediate progress to observers (e.g., "Round 2 of 3 complete") |
+
+### NodeDriverContext
+
+The `NodeDriverContext` object is passed to every driver method, providing node metadata and a state bag for persisting data across turns.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `nodeId` | `string` | Unique node identifier within the graph |
+| `task` | `string` | Task description assigned to this node |
+| `typeConfig` | `Record<string, unknown>` | Type-specific configuration validated against the driver's `configSchema` |
+| `sharedDir` | `string` | Absolute path to the shared directory for inter-node file exchange |
+| `graphLabel` | `string \| undefined` | Human-readable graph label, if one was provided |
+| `defaultAgentId` | `string` | Default agent ID inherited from the graph executor |
+| `typeName` | `string` | Registered name of this node's type (matches `NodeTypeDriver.typeId`) |
+| `getState<T>()` | `() => T \| undefined` | Retrieve opaque driver state persisted between turns. Returns `undefined` on first call |
+| `setState<T>(state)` | `(state: T) => void` | Persist opaque driver state for retrieval on subsequent turns |
+
+The `getState` / `setState` pair enables drivers to track multi-turn progress (e.g., current debate round, accumulated vote tallies, refinement chain position) without external storage.
+
+## Driver Lifecycle
+
+The coordinator drives execution through a turn-based loop, calling driver methods and interpreting the returned actions.
+
+1. **Initialize** -- The coordinator calls `initialize(ctx)` on the driver, which returns the first action (typically `spawn` for sequential drivers or `spawn_all` for parallel drivers). A `graph:driver_lifecycle` event fires with phase `initialized`.
+
+2. **Turn loop (sequential)** -- For sequential drivers (`debate`, `refine`, `collaborate`): the coordinator spawns a single agent. When the agent completes, the coordinator calls `onTurnComplete(ctx, output)` which returns the next action. This loop continues until the driver returns `complete` or `fail`.
+
+3. **Turn loop (parallel)** -- For parallel drivers (`vote`, `map-reduce`): the coordinator spawns all agents via `spawn_all`. When all agents complete, the coordinator calls `onParallelTurnComplete(ctx, outputs)` which returns the next action (e.g., `complete` for vote tallying, or `spawn` for the reducer in map-reduce).
+
+4. **Completion** -- When the driver returns `complete`, a `graph:driver_lifecycle` event fires with phase `completed`, the output is stored, and dependent nodes become eligible for scheduling.
+
+5. **Failure** -- When the driver returns `fail` or an unhandled error occurs, a `graph:driver_lifecycle` event fires with phase `failed`, and the node transitions to the failed state.
+
+6. **Abort** -- On timeout, cancellation, or graph shutdown, the coordinator calls `onAbort(ctx)` and emits `graph:driver_lifecycle` with phase `aborted`.
+
+Each transition emits a [`graph:driver_lifecycle`](/developer-guide/event-bus) event with the corresponding phase value. See the [Event Bus](/developer-guide/event-bus) reference for the full event payload.
+
+## Three-Tier Concurrency Model
+
+The coordinator enforces three independent concurrency limits to prevent resource exhaustion while maximizing parallelism.
+
+### Tier 1 -- Per-Node Parallel Cap (`maxParallelSpawns`)
+
+| Setting | Default | Scope |
+|---------|---------|-------|
+| `maxParallelSpawns` | 10 | Single `spawn_all` action |
+
+Limits how many agents a single `spawn_all` action can start simultaneously. Prevents a single map-reduce node with 50 mappers from monopolizing all available agent slots.
+
+### Tier 2 -- Per-Graph Concurrency (`maxConcurrency`)
+
+| Setting | Default | Scope |
+|---------|---------|-------|
+| `maxConcurrency` | 4 | Nodes within one graph |
+
+Limits how many nodes within one graph can execute concurrently. Independent nodes with satisfied dependencies run in parallel up to this cap. Additional ready nodes wait in a per-graph queue.
+
+### Tier 3 -- Global Sub-Agent Cap (`maxGlobalSubAgents`)
+
+| Setting | Default | Scope |
+|---------|---------|-------|
+| `maxGlobalSubAgents` | 20 | All active graphs |
+
+Limits the total number of concurrent sub-agents across ALL active graphs. When the cap is hit, new spawns queue in FIFO order and drain as agents complete. This prevents multiple concurrent graphs from overwhelming LLM provider rate limits or system resources.
+
+The `graph.status` RPC (called without a `graphId`) returns live concurrency stats:
+
+```typescript
+{
+  globalActiveSubAgents: 3,    // Currently running sub-agents
+  maxGlobalSubAgents: 20,      // Configured cap
+  queueDepth: 0,               // Spawns waiting in FIFO queue
+}
+```
+
+See the [JSON-RPC reference](/reference/json-rpc) for the full `graph.status` response format.
+
+<Info>
+These limits are configurable via YAML config under `agentToAgent.graphMaxConcurrency`, `agentToAgent.graphMaxParallelSpawns`, and `agentToAgent.graphMaxGlobalSubAgents`.
+</Info>
+
+## Node Types
+
+Nodes can optionally use a built-in **node type** via the `typeId` and `typeConfig` fields. When `typeId` is set, the node uses a driver that controls multi-agent orchestration patterns (debates, voting, review chains, etc.) instead of spawning a single sub-agent.
+
+If `typeId` is not set, the node behaves as a regular single-agent task -- this is the default and most common pattern.
+
+### Available Types
+
+| Type ID | Description | LLM Calls |
+|---------|-------------|-----------|
+| `agent` | Single sub-agent executes the task independently | 1 |
+| `debate` | Multi-round adversarial debate between agents, optional synthesizer | N x R (+1) |
+| `vote` | All agents vote independently in parallel, results tallied | N (parallel) |
+| `refine` | Sequential refinement -- each agent improves the previous agent's output | N |
+| `collaborate` | Agents contribute sequentially, building on prior contributions | N x R |
+| `approval-gate` | Pauses for human approval before the pipeline continues | 0 |
+| `map-reduce` | Parallel processing by multiple agents, then a reducer aggregates | N + 1 |
+
+### `debate` -- Multi-Round Adversarial Debate
+
+Two or more agents argue in rounds, with an optional synthesizer producing the final output.
+
+| Config Field | Type | Range | Default |
+|-------------|------|-------|---------|
+| `agents` | string[] | 2+ agent IDs | required |
+| `rounds` | integer | 1-5 | 2 |
+| `synthesizer` | string | agent ID | optional |
+
+In each round, agents speak in round-robin order. Each agent sees the full debate transcript from prior turns. After all rounds complete, an optional synthesizer agent produces the final output based on the entire discussion.
+
+```typescript
+{
+  nodeId: "investment-decision",
+  task: "Is this investment strategy sound given the market conditions?",
+  dependsOn: ["market-research"],
+  typeId: "debate",
+  typeConfig: {
+    agents: ["bull-analyst", "bear-analyst"],
+    rounds: 3,
+    synthesizer: "portfolio-manager",
+  },
+}
+```
+
+The debate transcript is saved to `{nodeId}-debate-transcript.md` in the graph's shared data folder. If no synthesizer is specified, the last debater's final turn becomes the node output.
+
+### `vote` -- Parallel Independent Voting
+
+All agents vote independently and concurrently, with results tallied into a summary.
+
+| Config Field | Type | Description |
+|-------------|------|-------------|
+| `voters` | string[] | 2+ agent IDs (required) |
+| `prompt_suffix` | string | Appended to each voter's task (optional) |
+| `verdict_format` | string | Expected format, e.g., "BUY/HOLD/SELL" (optional) |
+
+```typescript
+{
+  nodeId: "analyst-vote",
+  task: "Should we invest in AAPL based on: {{research.result}}",
+  dependsOn: ["research"],
+  typeId: "vote",
+  typeConfig: {
+    voters: ["analyst-1", "analyst-2", "analyst-3", "analyst-4"],
+    verdict_format: "BUY/HOLD/SELL",
+  },
+}
+```
+
+### `refine` -- Sequential Refinement Chain
+
+Each agent reviews and improves the previous agent's output, like an editorial pipeline.
+
+| Config Field | Type | Description |
+|-------------|------|-------------|
+| `reviewers` | string[] | 2+ agent IDs in order (required) |
+
+```typescript
+{
+  nodeId: "polished-report",
+  task: "Write a market analysis report",
+  typeId: "refine",
+  typeConfig: {
+    reviewers: ["drafter", "editor", "pm"],
+  },
+}
+```
+
+### `collaborate` -- Sequential Multi-Perspective
+
+Agents contribute perspectives sequentially, each building on all prior contributions. Collaborative, not adversarial.
+
+| Config Field | Type | Range | Default |
+|-------------|------|-------|---------|
+| `agents` | string[] | 2+ agent IDs | required |
+| `rounds` | integer | 1-3 | 1 |
+
+```typescript
+{
+  nodeId: "team-report",
+  task: "Build the quarterly report for Q1 2026",
+  typeId: "collaborate",
+  typeConfig: {
+    agents: ["sales-lead", "engineering-lead", "marketing-lead"],
+    rounds: 1,
+  },
+}
+```
+
+### `approval-gate` -- Human Approval Checkpoint
+
+Pauses pipeline execution and sends a message to the user's channel, waiting for their response before continuing. Requires the graph to be triggered from a channel context (Telegram, Discord, etc.).
+
+| Config Field | Type | Range | Default |
+|-------------|------|-------|---------|
+| `message` | string | -- | optional |
+| `timeout_minutes` | number | 1-1440 | 60 |
+
+```typescript
+{
+  nodeId: "user-approval",
+  task: "Review the analysis before proceeding to execution",
+  dependsOn: ["analysis"],
+  typeId: "approval-gate",
+  typeConfig: {
+    message: "Analysis complete. Approve to proceed with trade execution?",
+    timeout_minutes: 60,
+  },
+}
+```
+
+The user responds via their chat channel. Approval keywords (yes, approve, go, confirm) continue the pipeline. Denial keywords (no, deny, stop, reject) fail the node.
+
+### `map-reduce` -- Parallel Processing with Aggregation
+
+Splits work across multiple agents in parallel, then a reducer agent aggregates all results.
+
+| Config Field | Type | Description |
+|-------------|------|-------------|
+| `mappers` | array | 2+ objects with `agent` (required) and `task_suffix` (optional) |
+| `reducer` | string | Agent ID for aggregation (required) |
+| `reducer_prompt` | string | Custom aggregation instruction (optional) |
+
+```typescript
+{
+  nodeId: "competitive-analysis",
+  task: "Research the competitive landscape",
+  typeId: "map-reduce",
+  typeConfig: {
+    mappers: [
+      { agent: "analyst-1", task_suffix: "Focus on competitor A" },
+      { agent: "analyst-2", task_suffix: "Focus on competitor B" },
+      { agent: "analyst-3", task_suffix: "Focus on competitor C" },
+    ],
+    reducer: "pm",
+    reducer_prompt: "Synthesize the competitive research into an executive summary",
+  },
+}
+```
+
+<Warning>
+The `agentId` field on a typed node is ignored -- typed nodes use agents specified in their `typeConfig`. Setting both produces a validation warning.
+</Warning>
+
+<Info>
+Custom driver registration is not yet available in the public API. The 7 built-in drivers (`agent`, `debate`, `vote`, `refine`, `collaborate`, `approval-gate`, `map-reduce`) cover the standard multi-agent orchestration patterns. The `NodeTypeDriver` interface is documented above for contributors and internal extension.
+</Info>
+
+## Context Verbosity Modes
+
+The `contextMode` field controls how much upstream output the coordinator includes in each node's context envelope.
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `full` (default) | Complete upstream outputs included in the context envelope | Nodes that need full awareness of upstream results |
+| `summary` | Upstream outputs truncated to 500 characters with a reference to the shared data folder | Nodes that need a brief overview without consuming full token budgets |
+| `none` | Upstream output sections are skipped entirely in the envelope | Nodes that use explicit `{{nodeId.result}}` templates and do not need envelope context |
+
+```typescript
+{
+  nodeId: "synthesize",
+  task: "Synthesize all findings: {{a.result}}, {{b.result}}, {{c.result}}",
+  dependsOn: ["a", "b", "c"],
+  contextMode: "none",  // Only use explicitly inlined template data
+}
+```
+
+<Tip>
+Use `contextMode: "none"` with explicit `{{nodeId.result}}` templates for maximum control over what data the node sees. Use `contextMode: "summary"` to reduce token usage on nodes that only need a high-level overview of upstream work.
+</Tip>
+
+## Example: Research Pipeline
+
+A complete execution graph that researches a topic, analyzes sources, and writes a report:
+
+```typescript
+import type { ExecutionGraph } from "@comis/core";
+
+const researchPipeline: ExecutionGraph = {
+  label: "Research and Report",
+  onFailure: "fail-fast",
+  timeoutMs: 300_000,  // 5 minutes
+  budget: { maxTokens: 100_000, maxCost: 5.0 },
+  nodes: [
+    {
+      nodeId: "gather-sources",
+      task: "Find 5 authoritative sources about quantum computing",
+      agentId: "researcher",
+      dependsOn: [],
+      barrierMode: "all",
+    },
+    {
+      nodeId: "analyze",
+      task: "Analyze these sources: {{gather-sources.result}}",
+      agentId: "analyst",
+      dependsOn: ["gather-sources"],
+      retries: 1,
+      barrierMode: "all",
+    },
+    {
+      nodeId: "write-report",
+      task: "Write a summary report from this analysis: {{analyze.result}}",
+      agentId: "writer",
+      dependsOn: ["analyze"],
+      contextMode: "none",
+      barrierMode: "all",
+    },
+  ],
+};
+```
+
+This pipeline creates a three-stage sequential workflow: gather -> analyze -> write. Each node runs with a dedicated agent, and outputs flow downstream via `{{nodeId.result}}` templates in task text. The `fail-fast` strategy ensures the pipeline stops quickly if any stage fails, and the budget limits prevent runaway costs.
+
+<Tip>
+Graphs saved before v49.0 that used `inputFrom` are automatically migrated on load -- the `graph.load` RPC strips any `inputFrom` or `inputMapping` fields from persisted graph definitions. Update your saved graphs to use the `{{nodeId.result}}` pattern directly for best results.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Web Dashboard: Pipelines" icon="browser" href="/web-dashboard/pipelines">
+    Visual pipeline builder and monitor
+  </Card>
+  <Card title="Plugins" icon="puzzle-piece" href="/developer-guide/plugins">
+    Hook into graph lifecycle events
+  </Card>
+  <Card title="Architecture" icon="hexagon" href="/developer-guide/architecture">
+    Domain types and validation
+  </Card>
+  <Card title="Event Bus" icon="tower-broadcast" href="/developer-guide/event-bus">
+    graph:* events reference
+  </Card>
+</CardGroup>

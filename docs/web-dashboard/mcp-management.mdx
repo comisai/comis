@@ -1,0 +1,92 @@
+---
+title: "MCP Servers"
+description: "Manage Model Context Protocol server connections, tools, and health"
+icon: "server"
+---
+
+The MCP Servers view provides a unified interface for managing your Model Context Protocol (MCP) server connections. You can see both the configuration-level details and the runtime status of each server, add new servers, and control connections -- all without editing configuration files.
+
+## Route
+
+- `/mcp` -- opens the MCP server management view
+
+## What You See
+
+### Server List
+
+The main area displays all configured MCP servers as cards. Each server card shows:
+
+| Element | Description |
+|---------|-------------|
+| **Name** | The server's configured name |
+| **Transport** | Connection type: `stdio`, `sse`, or `http` |
+| **Status** | Runtime connection state shown as a colored tag (connected, disconnected, error) |
+| **Enabled** | Toggle switch to enable or disable the server in configuration |
+| **Server Version** | The MCP server's reported name and version (when connected) |
+| **Capability Badges** | Tags showing what the server supports: tools, resources, prompts |
+| **Tool Count** | Number of tools exposed by the server |
+
+Click a server card to expand its detail panel and see configuration details, tool inventory, and runtime actions.
+
+### Server Detail Panel
+
+When you select a server, the detail panel shows:
+
+- **Configuration** -- the server's command, arguments, URL, environment variables, and custom headers (depending on transport type)
+- **Server Instructions** -- if the server provides instructions text, a toggle reveals it
+- **Tool Inventory** -- a list of all tools the server exposes, each with its name and description. Tools are listed as they were discovered during the last connection
+
+### Add Server Form
+
+Click the "Add Server" button in the header to open the inline form. The form adapts based on the selected transport:
+
+- **stdio** -- enter a server name and command (e.g., `npx -y @mcp/server`)
+- **sse** -- enter a server name, SSE URL, optional custom headers, and environment variables
+- **http** -- enter a server name, HTTP URL, optional custom headers, and environment variables
+
+Environment variables are entered one per line in `KEY=VALUE` format. Custom headers use `Header-Name: value` format.
+
+### Runtime Actions
+
+For each server, the available actions depend on its current state:
+
+| Action | When Available | What It Does |
+|--------|---------------|-------------|
+| **Connect** | Server is disconnected | Initiates a new connection to the MCP server |
+| **Disconnect** | Server is connected | Closes the active connection |
+| **Reconnect** | Server is connected | Disconnects and reconnects (useful after server updates) |
+| **Test** | Server is connected | Sends a test request to verify the connection is healthy |
+| **Delete** | Always | Removes the server from configuration (with confirmation dialog) |
+
+The view uses a poll-on-action pattern: after any connection change (connect, disconnect, reconnect), the server list reloads to reflect the updated state.
+
+## Common Tasks
+
+<Steps>
+  <Step title="Add a new MCP server">
+    Click "Add Server", enter the server name, select the transport type, fill in the command or URL, and click "Add Server" to save.
+  </Step>
+  <Step title="Check server health">
+    Look at the status tag on each server card. Connected servers show a green status. Click a connected server and use the "Test" action to verify the connection.
+  </Step>
+  <Step title="View available tools">
+    Click a connected server to expand its detail panel. The tool inventory section lists all tools with their names and descriptions.
+  </Step>
+  <Step title="Reconnect after server update">
+    Select the server and click "Reconnect". The server will disconnect and establish a fresh connection, picking up any tool changes.
+  </Step>
+</Steps>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="MCP Integration" icon="plug" href="/skills/mcp">
+    Learn about the Model Context Protocol and how Comis uses it.
+  </Card>
+  <Card title="Skills View" icon="wand-magic-sparkles" href="/web-dashboard/index">
+    Browse installed skills per agent, including MCP-provided tools.
+  </Card>
+  <Card title="Config Editor" icon="gear" href="/web-dashboard/config-editor">
+    Edit MCP server configuration directly in the YAML editor.
+  </Card>
+</CardGroup>

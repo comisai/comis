@@ -1,0 +1,112 @@
+---
+title: "Sessions View"
+description: "View and manage conversation sessions across all your agents"
+icon: "messages"
+---
+
+The Sessions view shows every conversation your agents have had. You can search for specific sessions, filter by agent or channel, review full conversation histories, and manage sessions with actions like reset, compact, export, and delete.
+
+## What You See
+
+### Session List
+
+The main view displays a filterable table of all conversation sessions. At the top, you will find:
+
+- **Search box** -- type to filter sessions by session key, agent name, or channel type.
+- **Agent dropdown** -- show sessions for a specific agent or all agents.
+- **Channel dropdown** -- show sessions from a specific channel (Telegram, Discord, Slack, etc.) or all channels.
+
+The table displays sortable columns with information about each session. Click the checkbox next to any row to select it for bulk operations.
+
+### Bulk Operations
+
+When you select one or more sessions, a bulk operations bar appears with three actions:
+
+- **Reset Selected** -- clears conversation history for the selected sessions. A confirmation dialog appears first.
+- **Export Selected** -- downloads the selected sessions as a file.
+- **Delete Selected** -- permanently removes the selected sessions. A confirmation dialog appears first.
+
+Click any row (not the checkbox) to open the full session detail view.
+
+## Session Details
+
+When you click a session row, you navigate to the detail view for that session. At the top, a breadcrumb trail lets you navigate back to the session list.
+
+### Session Info Bar
+
+A summary bar displays key information about the session:
+
+- **Agent** -- which agent handled this conversation.
+- **Channel** -- which platform the conversation took place on.
+- **Messages** -- total number of messages in the session.
+- **Tokens** -- total token usage for the session.
+- **Created** -- when the session was first started.
+
+### Action Buttons
+
+Below the info bar, four action buttons let you manage the session:
+
+- **Reset** -- clears all conversation history. The agent will start fresh with no memory of previous messages in this session.
+- **Compact** -- summarizes older messages to save space while keeping the essential context. Useful for long-running sessions.
+- **Export JSONL** -- downloads the full session as a JSONL file for backup or analysis.
+- **Delete** -- permanently removes the session and all its conversation history.
+
+### Conversation History
+
+A scrollable area shows the full conversation with role-based styling:
+
+- **User messages** appear with a neutral background.
+- **Assistant messages** appear with an accent border on the left.
+- **System messages** appear centered in italics.
+- **Tool calls** appear in a bordered box with the tool name as a header and the input/output below.
+
+Each message includes a timestamp.
+
+### Session Statistics
+
+At the bottom of the detail view, a stats grid shows:
+
+- **Input Tokens** -- tokens used by incoming messages.
+- **Output Tokens** -- tokens used by agent responses.
+- **Tool Calls** -- how many tools the agent invoked during this session.
+- **Compactions** -- how many times the session has been compacted.
+- **Resets** -- how many times the session has been reset.
+
+## Common Tasks
+
+<Steps>
+  <Step title="Find a specific session">
+    Use the search box at the top of the session list. Type any part of a session key, agent name, or channel type to filter the table instantly.
+  </Step>
+  <Step title="Export session history">
+    Select one or more sessions using the checkboxes, then click **Export Selected** in the bulk operations bar. A file downloads automatically.
+  </Step>
+  <Step title="Reset a session">
+    Click a session to open the detail view, then click **Reset**. Confirm the action in the dialog that appears. The conversation history is cleared and the agent will start fresh in this session.
+  </Step>
+  <Step title="Compact a session">
+    Click a session to open the detail view, then click **Compact**. Confirm the action in the dialog. Older messages are summarized into a shorter form, freeing up space while preserving the important context.
+  </Step>
+</Steps>
+
+<Tip>
+**Reset vs Compact:**
+
+- **Reset** clears everything -- the agent gets a completely fresh start with no memory of previous messages in this session.
+- **Compact** summarizes old messages -- the agent keeps the essential context but the detailed history is condensed to save space.
+
+Use Reset when you want a clean slate. Use Compact when a session has grown large and you want to keep the conversation going without losing important context.
+</Tip>
+
+<Warning>
+**Deleting a session permanently removes all conversation history and cannot be undone.** If you want to keep the data, export the session first.
+</Warning>
+
+<CardGroup cols={2}>
+  <Card title="Chat Console" icon="message" href="/web-dashboard/chat">
+    Have real-time conversations with your agents through the browser.
+  </Card>
+  <Card title="Agents View" icon="robot" href="/web-dashboard/agents-view">
+    View, configure, and manage your AI agents.
+  </Card>
+</CardGroup>

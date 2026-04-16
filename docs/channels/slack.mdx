@@ -1,0 +1,262 @@
+---
+title: "Slack"
+description: "Connect Comis to Slack with step-by-step setup"
+icon: "slack"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+Connect your Comis agent to Slack workspaces. Slack supports threads, reactions,
+buttons, rich formatting (mrkdwn), file attachments up to 1 GB, and
+live-streaming responses. Choose between Socket Mode (simpler, no public URL
+needed) or HTTP Mode (for production behind a reverse proxy).
+
+## Prerequisites
+
+<Prereqs />
+
+- A Slack workspace where you have permission to install apps
+
+<Warning>
+Slack offers two connection modes: **Socket Mode** (recommended for getting
+started) and **HTTP Mode** (for production). Each requires different credentials.
+Choose one before starting setup.
+</Warning>
+
+## Setup
+
+<Steps>
+  <Step title="Create a Slack App">
+    Go to the [Slack API portal](https://api.slack.com/apps) and sign in.
+
+    Click **Create New App** and choose **From scratch**. Give your app a name
+    (e.g. "Comis Agent") and select the workspace you want to install it in.
+  </Step>
+
+  <Step title="Configure bot permissions">
+    In the left sidebar, go to **OAuth & Permissions**.
+
+    Scroll down to **Bot Token Scopes** and add the following scopes:
+    - `chat:write` -- Send messages
+    - `channels:history` -- Read public channel messages
+    - `groups:history` -- Read private channel messages
+    - `im:history` -- Read direct messages
+    - `mpim:history` -- Read group direct messages
+    - `reactions:read` -- View reactions
+    - `reactions:write` -- Add reactions
+    - `files:read` -- Access shared files
+    - `files:write` -- Upload files
+    - `users:read` -- Look up user information
+  </Step>
+
+  <Step title="Choose your connection mode">
+    <Tabs>
+      <Tab title="Socket Mode (Recommended)">
+        Socket Mode uses a WebSocket connection -- no public URL or reverse
+        proxy needed.
+
+        1. In the left sidebar, go to **Settings** then **Socket Mode**
+        2. Toggle **Enable Socket Mode** on
+        3. Click **Generate** to create an App-Level Token
+        4. Give it a name (e.g. "comis-socket") and add the `connections:write` scope
+        5. Copy the token starting with `xapp-` -- you will need it later
+
+        Then set up event subscriptions:
+        1. In the left sidebar, go to **Event Subscriptions**
+        2. Toggle **Enable Events** on
+        3. Under **Subscribe to bot events**, add:
+           - `message.channels`
+           - `message.groups`
+           - `message.im`
+           - `message.mpim`
+           - `app_mention`
+        4. Click **Save Changes**
+      </Tab>
+
+      <Tab title="HTTP Mode">
+        HTTP Mode receives events via HTTP webhooks. Your Comis instance must be
+        reachable from the internet.
+
+        1. In the left sidebar, go to **Settings** then **Basic Information**
+        2. Under **App Credentials**, copy the **Signing Secret**
+
+        Then set up event subscriptions:
+        1. In the left sidebar, go to **Event Subscriptions**
+        2. Toggle **Enable Events** on
+        3. Set the **Request URL** to `https://your-domain:port/webhooks/slack`
+        4. Slack will send a verification challenge -- your Comis gateway handles
+           this automatically once running
+        5. Under **Subscribe to bot events**, add:
+           - `message.channels`
+           - `message.groups`
+           - `message.im`
+           - `message.mpim`
+           - `app_mention`
+        6. Click **Save Changes**
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Install to workspace">
+    In the left sidebar, go to **Install App** and click **Install to Workspace**.
+
+    Authorize the app when prompted. After installation, copy the
+    **Bot User OAuth Token** starting with `xoxb-`.
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the Slack channel to your Comis configuration file (`~/.comis/config.yaml`):
+
+    <Tabs>
+      <Tab title="Socket Mode">
+        ```yaml
+        channels:
+          slack:
+            enabled: true
+            botToken: "${SLACK_BOT_TOKEN}"
+            appToken: "${SLACK_APP_TOKEN}"
+            mode: "socket"
+        ```
+
+        Set the environment variables in your `~/.comis/.env` file:
+
+        ```bash
+        SLACK_BOT_TOKEN=xoxb-your-bot-token
+        SLACK_APP_TOKEN=xapp-your-app-token
+        ```
+      </Tab>
+
+      <Tab title="HTTP Mode">
+        ```yaml
+        channels:
+          slack:
+            enabled: true
+            botToken: "${SLACK_BOT_TOKEN}"
+            signingSecret: "${SLACK_SIGNING_SECRET}"
+            mode: "http"
+        ```
+
+        Set the environment variables in your `~/.comis/.env` file:
+
+        ```bash
+        SLACK_BOT_TOKEN=xoxb-your-bot-token
+        SLACK_SIGNING_SECRET=your-signing-secret
+        ```
+      </Tab>
+    </Tabs>
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check the logs for a successful connection:
+
+    ```bash
+    comis daemon logs
+    ```
+
+    Look for a line containing **"Slack adapter connected"** or
+    **"channel-slack activated"**. If you see this, your bot is online.
+
+    Go to your Slack workspace. The bot must be invited to a channel before it
+    can see messages there -- type `/invite @your-bot-name` in any channel.
+    Send a message to confirm it responds.
+  </Step>
+</Steps>
+
+## Configuration
+
+These options go under `channels.slack` in your `config.yaml`:
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Turns on the Slack adapter |
+| `botToken` | string / SecretRef | (required) | Bot User OAuth Token (`xoxb-...`) from the Install App page |
+| `mode` | `"socket"` or `"http"` | (required) | Connection mode -- Socket Mode or HTTP Mode |
+| `appToken` | string / SecretRef | (Socket Mode only) | App-Level Token (`xapp-...`) for Socket Mode |
+| `signingSecret` | string / SecretRef | (HTTP Mode only) | Signing Secret for HTTP request verification |
+| `allowFrom` | string[] | `[]` (all) | Restrict to specific Slack user IDs. Empty means all users can talk to the bot. |
+| `mediaProcessing.transcribeAudio` | boolean | `true` | Transcribe voice messages to text before passing to the agent |
+| `mediaProcessing.analyzeImages` | boolean | `true` | Describe images sent to the bot using AI vision |
+| `mediaProcessing.describeVideos` | boolean | `true` | Extract descriptions from video content |
+| `mediaProcessing.extractDocuments` | boolean | `true` | Extract text from PDFs, DOCX, and other documents |
+| `mediaProcessing.understandLinks` | boolean | `true` | Fetch and summarize URLs included in messages |
+
+## What your agent can do
+
+Once connected to Slack, your agent can:
+
+- Send, edit, and delete messages in any channel it has been invited to
+- React to messages with emoji
+- Reply in threads (native Slack reply-chain threads)
+- Send files and images (up to 1 GB per attachment)
+- Create interactive buttons for user choices
+- Send rich cards and embeds with formatted content
+- Use mrkdwn formatting (bold, italic, code, links, lists)
+- Stream responses with live editing (updates every 400 ms)
+- Mention users and channels
+- Fetch message history for conversation context
+
+Slack does **not** natively support typing indicators (Comis skips them for
+Slack automatically).
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 4,000 characters | Automatically splits long responses into multiple messages at paragraph boundaries |
+| Attachment size | 1,000 MB | Generous limit, rarely hit in practice |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Socket Mode requires appToken">
+    **What happened:** You configured `mode: "socket"` but did not provide an
+    app-level token.
+
+    **How to fix it:** Go to the [Slack API portal](https://api.slack.com/apps),
+    select your app, navigate to **Settings** then **Socket Mode**, and generate an
+    App-Level Token with `connections:write` scope. Copy the `xapp-...` token
+    into your `.env` file.
+  </Accordion>
+
+  <Accordion title="HTTP Mode requires signingSecret">
+    **What happened:** You configured `mode: "http"` but did not provide a
+    signing secret.
+
+    **How to fix it:** Go to the [Slack API portal](https://api.slack.com/apps),
+    select your app, navigate to **Basic Information** under **App Credentials**,
+    and copy the Signing Secret into your `.env` file.
+  </Accordion>
+
+  <Accordion title="Bot doesn't respond in channels">
+    **What happened:** The bot has not been invited to the channel. Slack bots
+    can only see messages in channels they have been explicitly added to.
+
+    **How to fix it:** In the Slack channel where you want the bot, type
+    `/invite @your-bot-name` and press Enter. The bot will start receiving
+    messages in that channel immediately.
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 9 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>

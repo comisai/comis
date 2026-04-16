@@ -1,0 +1,181 @@
+---
+title: "Sessions"
+description: "How Comis manages conversations between you and your agent"
+icon: "comments"
+---
+
+Every time you chat with your agent, Comis keeps track of the conversation in a
+*session*. Sessions remember what was said so your agent can follow along without
+starting from scratch every time you send a message.
+
+## What is a session?
+
+A session is a single conversation thread between you and your agent. When you
+send a message, Comis finds your active session or creates a new one
+automatically. Everything you and the agent say is stored in the session so the
+agent has full context of the conversation.
+
+Sessions persist across messages -- if you chat in the morning, go to lunch, and
+come back in the afternoon, your agent still remembers what you talked about
+earlier (unless you have configured automatic resets).
+
+Each session belongs to a specific agent and is identified by a combination of
+the channel, user, and other details. This means if you talk to the same agent
+from two different Discord servers, those are two separate sessions with their
+own histories.
+
+## Session reset policies
+
+By default, sessions last forever until you manually reset them. But you can
+configure automatic resets so conversations start fresh on a schedule. There are
+four reset modes:
+
+**none** (default) -- Sessions last until you manually reset with `/new` or
+`/reset`. Your agent remembers everything from the entire conversation history.
+
+**daily** -- Automatically starts a fresh session at a set hour each day.
+Good for agents that should start each day with a clean slate. You can
+configure which hour the reset happens (default is 4 AM) and which timezone
+to use. For a community support bot, daily resets keep each day's questions
+organized.
+
+**idle** -- Resets after a period of inactivity. If nobody sends a message for
+a while (default 4 hours), the next message starts a new session. Good for
+agents where long gaps usually mean a new topic. For example, if you use your
+agent for quick lookups throughout the day, idle resets ensure each burst of
+activity is its own session.
+
+**hybrid** -- Combines daily and idle, resetting whichever comes first. This
+gives you the predictability of a daily reset with the responsiveness of an
+idle timeout. Most production deployments use hybrid for the best balance.
+
+<Tip>
+  You can set different reset policies for DMs, group chats, and threads using
+  the `perType` overrides. For example, use `idle` for DMs but `daily` for
+  group chats.
+</Tip>
+
+## DM scope modes
+
+When your agent receives direct messages, Comis needs to decide how to organize
+those conversations. DM scope modes control this:
+
+**main** -- All DMs share a single session. Simple, but everyone's conversation
+blends together. Best for personal use with one user.
+
+**per-peer** -- One session per person, shared across all channels. If you
+message the agent on both Telegram and Discord, it is the same conversation.
+
+**per-channel-peer** (default) -- One session per person per channel. Your
+Telegram conversation with the agent is separate from your Discord conversation.
+
+**per-account-channel-peer** -- The most isolated option. Also separates by
+bot account, which matters if you run multiple instances of the same agent.
+
+For most setups, the default `per-channel-peer` works well. Only change this
+if you have a specific reason to share or further isolate conversations.
+
+## Thread and topic isolation
+
+When your agent is in a platform that supports threads or forum topics -- like
+Discord threads, Slack reply chains, or Telegram forum topics -- each thread or
+topic gets its own session by default. This means conversations in different topics
+stay completely separate, just as if they were happening in different channels.
+
+For example, in a Telegram forum group with topics for "Support", "General", and
+"Feature Requests", your agent maintains three independent sessions. A conversation
+about a bug in the Support topic does not bleed into the Feature Requests topic.
+
+This behavior is controlled by the `threadIsolation` setting:
+
+| Value | Behavior |
+|-------|----------|
+| `true` (default) | Each thread or topic gets its own session. Conversations are fully isolated. |
+| `false` | All threads and topics in the same channel share a single session. The agent sees all messages together. |
+
+<Note>
+Thread isolation activates automatically when Comis detects thread context in an
+incoming message. You do not need to enable anything -- it works out of the box
+on platforms that support threads.
+</Note>
+
+## Session pruning
+
+When your agent uses tools that return very long results (like reading a large
+file or scraping a web page), those results stay in the session and take up
+space. Session pruning automatically trims oversized tool results to keep the
+conversation lean. Results above the soft threshold are trimmed to show just
+the beginning and end, while results above the hard threshold are replaced
+entirely with a brief marker.
+
+For broader context management beyond tool result trimming -- including history
+windowing, observation masking, and LLM compaction -- see
+[Compaction](/agents/compaction), which describes the context engine that runs
+before each AI call.
+
+Pruning only affects copies sent to the AI -- the original tool results are
+never modified in your stored session data. This means you can always review
+the full results later through the web dashboard.
+
+## Session branching
+
+You can fork a conversation to try a different direction without losing your
+place. Use `/fork` to create a branch and `/branch` to navigate between
+branches. This is useful when you want to explore an idea without committing to
+it.
+
+See [Slash Commands](/agents/slash-commands) for the full list of session
+management commands.
+
+<Note>
+  When a session resets or is manually cleared, the conversation history is
+  not deleted -- it is simply archived. Your agent's long-term memory
+  (compaction summaries and learned facts) persists across session resets.
+  See [Memory](/agents/memory) to learn what is preserved.
+</Note>
+
+## Configuration
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `session.resetPolicy.mode` | string | `"none"` | Reset mode: `none`, `daily`, `idle`, or `hybrid` |
+| `session.resetPolicy.dailyResetHour` | number | `4` | Hour of day for daily reset (0-23) |
+| `session.resetPolicy.dailyResetTimezone` | string | `""` (system local) | IANA timezone for daily reset |
+| `session.resetPolicy.idleTimeoutMs` | number | `14400000` | Idle timeout in milliseconds (default 4 hours) |
+| `session.resetPolicy.sweepIntervalMs` | number | `300000` | How often to check for expired sessions (default 5 min) |
+| `session.dmScope.mode` | string | `"per-channel-peer"` | DM isolation: `main`, `per-peer`, `per-channel-peer`, or `per-account-channel-peer` |
+| `session.dmScope.threadIsolation` | boolean | `true` | Give each thread or forum topic its own isolated session |
+| `session.pruning.enabled` | boolean | `true` | Automatically trim oversized tool results before sending to the AI |
+| `session.pruning.softTrimThresholdChars` | number | `8000` | Trim long tool results above this character count |
+| `session.pruning.hardClearThresholdChars` | number | `30000` | Replace entire tool result above this character count |
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    session:
+      resetPolicy:
+        mode: "idle"
+        idleTimeoutMs: 7200000  # 2 hours
+      dmScope:
+        mode: "per-channel-peer"
+        threadIsolation: true  # Each forum topic/thread gets its own session
+      pruning:
+        enabled: true
+        softTrimThresholdChars: 8000
+        hardClearThresholdChars: 30000
+```
+
+<CardGroup cols={2}>
+  <Card title="Compaction" icon="compress" href="/agents/compaction">
+    What happens when conversations get too long.
+  </Card>
+  <Card title="Slash Commands" icon="terminal" href="/agents/slash-commands">
+    Commands for managing sessions, including reset and branching.
+  </Card>
+  <Card title="Subagent Context Lifecycle" icon="diagram-subtask" href="/agents/subagent-lifecycle">
+    How sub-agents receive context, condense results, and report back.
+  </Card>
+  <Card title="Telegram Forum Topics" icon="comments" href="/channels/telegram#forum-topics">
+    How forum topic threading works in Telegram groups.
+  </Card>
+</CardGroup>

@@ -1,0 +1,302 @@
+---
+title: "Rich Messages"
+description: "Buttons, cards, embeds, and polls across Discord, Telegram, Slack, LINE, and more"
+icon: "rectangle-list"
+---
+
+Your agents can send more than just text. Rich messages include interactive
+buttons, styled cards with images and fields, polls for gathering opinions, and
+special effects like spoiler text. Comis provides a unified way to create these
+-- your agent writes them once, and Comis renders them correctly on each platform
+using that platform's native features.
+
+## What Your Agent Can Send
+
+Comis supports four types of rich messages:
+
+- **Buttons** -- Clickable actions that appear below a message. Users tap a
+  button instead of typing a response. Great for choices like "Yes/No,"
+  "Approve/Reject," or navigation menus.
+
+- **Cards (Embeds)** -- Styled message blocks with a title, description, optional
+  image, color accent, and structured fields. Think of them like a mini web page
+  embedded in the chat.
+
+- **Polls** -- Questions with multiple choice answers. Users vote by clicking an
+  option. Results are visible to everyone.
+
+- **Effects** -- Special delivery modifiers like spoiler (content hidden until
+  tapped) and silent (no notification sound).
+
+## Platform Support
+
+Not every platform supports every rich message type. The table below shows what
+works where.
+
+| Feature | Discord | Telegram | Slack | LINE | WhatsApp | Signal | iMessage | IRC |
+|---------|---------|----------|-------|------|----------|--------|----------|-----|
+| Buttons | Yes | Yes | Yes | Yes | Limited | No | No | No |
+| Cards/Embeds | Yes | Styled text | Yes | Flex Messages | No | No | No | No |
+| Polls | Yes | Yes | No | No | No | No | No | No |
+| Spoiler | Yes | Yes | No | No | No | No | No | No |
+| Silent | Yes | Yes | No | No | No | No | No | No |
+
+<Info>
+When your agent tries to send a rich message to a platform that does not support
+it, Comis gracefully falls back to plain text. Buttons become a numbered list,
+cards become formatted text, and polls are not sent. Your agent's message always
+gets through.
+</Info>
+
+## Buttons
+
+Buttons give users a quick way to respond without typing. Your agent defines the
+button labels and what happens when each is clicked. Buttons are the most commonly
+used rich message type -- they work on the most platforms and provide a simple,
+intuitive interaction.
+
+### Button Types
+
+There are two kinds of buttons:
+
+- **Action buttons** use `callback_data` -- when a user clicks the button, the
+  identifier is sent back to the agent so it knows which button was pressed.
+- **Link buttons** use `url` -- clicking the button opens a web page in the
+  user's browser. No data is sent back to the agent.
+
+### Button Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `text` | string | The label shown on the button |
+| `callback_data` | string | Identifier sent back when the button is clicked |
+| `url` | string | URL to open (for link buttons -- mutually exclusive with `callback_data`) |
+| `style` | string | Visual hint: `primary`, `secondary`, `danger`, or `link` |
+
+Each button is either an **action button** (sends `callback_data` back to the
+agent when clicked) or a **link button** (opens a URL in the user's browser).
+You cannot have both `callback_data` and `url` on the same button.
+
+### Platform Limits
+
+<AccordionGroup>
+  <Accordion title="Discord">
+    Buttons appear in "action rows." Maximum 5 buttons per row and 5 rows per
+    message (25 buttons total). Supports all 4 styles: primary (blue), secondary
+    (gray), danger (red), and link (opens a URL).
+  </Accordion>
+
+  <Accordion title="Telegram">
+    Buttons appear as inline keyboards below the message. Maximum `callback_data`
+    length is 64 bytes -- longer values are silently truncated. URL buttons and
+    callback buttons are both supported. Styles are not visually distinct (Telegram
+    shows all buttons the same way regardless of the `style` property).
+  </Accordion>
+
+  <Accordion title="Slack">
+    Buttons appear in actions blocks. Only `primary` and `danger` styles are
+    supported -- other styles fall back to the default appearance. Each button
+    needs a unique identifier internally.
+  </Accordion>
+
+  <Accordion title="LINE">
+    Buttons appear as actions in Flex Messages. Labels are truncated to 20
+    characters. Postback data (equivalent to `callback_data`) is limited to 300
+    characters. Supports URL, message, and postback action types.
+  </Accordion>
+
+  <Accordion title="WhatsApp">
+    Limited interactive button support via the WhatsApp Business API. Fewer
+    customization options than other platforms. Only basic callback and URL
+    buttons are available.
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+Keep `callback_data` short (under 64 bytes) and button labels under 20 characters
+for maximum cross-platform compatibility.
+</Warning>
+
+## Cards and Embeds
+
+Cards are styled message blocks that stand out from regular text. They can include
+a title, description, image, color accent, and structured fields. Cards are the
+most visually rich message type and are ideal for displaying structured
+information like status reports, product listings, or summaries.
+
+### Card Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `title` | string | Card title (bold, larger text) |
+| `description` | string | Card body text |
+| `image_url` | string | URL for a thumbnail or hero image |
+| `color` | number | Accent color as integer (e.g., `0x0099FF` for blue) |
+| `fields` | array | Structured key-value pairs with `name`, `value`, and `inline` flag |
+| `buttons` | array | Button rows attached to the card |
+
+Fields are key-value pairs that appear inside the card. Each field has a `name`
+(the label), a `value` (the content), and an `inline` flag. When `inline` is
+true, fields are displayed side by side rather than stacked vertically.
+
+### How Cards Render on Each Platform
+
+<AccordionGroup>
+  <Accordion title="Discord">
+    Full embed support. Supports title, description, color sidebar, up to 25
+    fields (inline or stacked), thumbnail image, and footer. Discord provides the
+    richest card experience with native embed styling, color accents, and image
+    previews.
+  </Accordion>
+
+  <Accordion title="Telegram">
+    No native embed format. Cards are rendered as HTML-formatted text with bold
+    titles, italic descriptions, and an invisible link for image previews. The
+    result is functional but less visually striking than Discord embeds.
+  </Accordion>
+
+  <Accordion title="Slack">
+    Uses Block Kit section blocks. Title becomes a header block, description
+    becomes markdown text, fields render as two-column sections, and images
+    become accessory elements. Slack's block layout provides a clean, structured
+    appearance.
+  </Accordion>
+
+  <Accordion title="LINE">
+    Uses Flex Messages with FlexBubble containers. Cards render as structured
+    bubbles with header, body, and footer sections. Carousels (multiple cards) are
+    supported up to 12 bubbles. This is LINE's most flexible layout system and
+    provides a native look.
+  </Accordion>
+</AccordionGroup>
+
+## Polls
+
+Polls let your agent ask a question and collect votes. Users click to select
+their answer, and results are visible to everyone in the chat.
+
+### Poll Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `question` | string | The poll question |
+| `options` | array | 2 to 10 answer choices |
+| `maxSelections` | number | Maximum selections per voter (default: 1) |
+| `durationHours` | number | How long the poll stays open (1 to 168 hours) |
+
+The `maxSelections` property controls whether users can pick one answer or
+multiple answers. Set it to 1 for single-choice polls (like "Which day works
+best?") or higher for multi-select polls (like "Which features do you want?").
+
+### Platform Support
+
+<AccordionGroup>
+  <Accordion title="Discord">
+    Native poll support. Duration is clamped to 1-168 hours (1 hour to 7 days).
+    Polls appear as a dedicated message type with clickable options and a live
+    vote count.
+  </Accordion>
+
+  <Accordion title="Telegram">
+    Native poll support. Supports multiple answer selection. Polls appear below
+    the message with radio buttons (single-select) or checkboxes (multi-select).
+    Results update in real time as users vote.
+  </Accordion>
+
+  <Accordion title="Other platforms">
+    Polls are not supported on Slack, LINE, WhatsApp, Signal, iMessage, or IRC.
+    If your agent sends a poll to one of these platforms, the poll will not be
+    delivered. The accompanying text message (if any) is still sent.
+  </Accordion>
+</AccordionGroup>
+
+## Effects
+
+Effects are delivery modifiers that change how a message appears or is delivered.
+They do not change the message content itself. Effects can be combined with any
+other rich message type -- for example, you can send a card with a spoiler effect.
+
+### Spoiler
+
+Content is hidden behind a spoiler tag. Users must tap or click to reveal it.
+Supported on Discord (spoiler markdown formatting) and Telegram (spoiler entity).
+
+Common uses:
+- Hiding quiz answers until the user is ready
+- Concealing plot spoilers in entertainment channels
+- Masking sensitive information that should not be visible at a glance
+
+### Silent
+
+The message is delivered without triggering a notification sound. Supported on
+Discord (silent message flag) and Telegram (notification disabled).
+
+Common uses:
+- Low-priority status updates or periodic reports
+- Automated messages that should not interrupt the user
+- Batch notifications where only the first should make a sound
+
+Effects are ignored on platforms that do not support them. The message is still
+delivered normally -- it just does not have the spoiler or silent behavior.
+
+## How Agents Create Rich Messages
+
+Agents create rich messages through the `message` tool. The agent specifies
+buttons, cards, polls, or effects as part of the message action. For example, an
+agent might send a card with a summary and a row of buttons for the user to choose
+from.
+
+The agent does not need to know the specifics of each platform's message format.
+Comis handles the conversion automatically. A single rich message definition works
+across all connected platforms, with Comis adapting it to each platform's native
+capabilities.
+
+For the full tool reference and usage examples, see
+[Messaging Tools](/agent-tools/messaging).
+
+<Tip>
+Your agent does not need to know which platform the user is on. Comis
+automatically adapts the rich message format. The agent writes one message, and
+it renders correctly everywhere it is supported.
+</Tip>
+
+## Fallback Behavior
+
+When a rich message is sent to a platform that does not support it, Comis
+converts it to the closest plain text equivalent:
+
+| Rich Type | Fallback |
+|-----------|----------|
+| Buttons | Numbered list of button labels |
+| Cards | Formatted text with title, description, and fields |
+| Polls | Not sent (text message still delivered) |
+| Spoiler | Content shown without hiding |
+| Silent | Normal notification behavior |
+
+This means your agent can always use rich messages without worrying about
+platform compatibility. Users on platforms with full support get the native
+interactive experience, while users on simpler platforms still receive the
+essential information as plain text.
+
+<Note>
+Fallback conversion is automatic. You do not need to define separate message
+formats for different platforms. Comis detects the target platform and chooses the
+best rendering approach available.
+</Note>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Messaging Tools" icon="paper-plane" href="/agent-tools/messaging">
+    message tool reference with rich message examples
+  </Card>
+  <Card title="Channels Overview" icon="comments" href="/channels/index">
+    Platform-specific capabilities and limits
+  </Card>
+  <Card title="Media Overview" icon="photo-film" href="/media/index">
+    Back to media overview
+  </Card>
+  <Card title="Platform Actions" icon="gavel" href="/agent-tools/platform-actions">
+    Platform-specific moderation tools
+  </Card>
+</CardGroup>

@@ -1,0 +1,69 @@
+tenantId: web-console-sse-test
+logLevel: debug
+dataDir: ""
+agents:
+  default:
+    name: TestAgent
+    model: default
+    thinkingLevel: off
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: UTC
+gateway:
+  enabled: true
+  host: 127.0.0.1
+  port: 8701
+  tokens:
+    - id: web-console-sse-token
+      secret: test-web-console-sse-secret-key-for-integration-tests
+      scopes:
+        - rpc
+        - ws
+        - admin
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: UTC
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+memory:
+  dbPath: test-memory-web-console-sse.db
+security:
+  agentToAgent:
+    enabled: true
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

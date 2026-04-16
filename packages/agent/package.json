@@ -1,0 +1,61 @@
+{
+  "name": "@comis/agent",
+  "version": "1.0.0",
+  "author": "Moshe Anconina",
+  "license": "Apache-2.0",
+  "description": "AI agent executor, budget control, and session management for Comis",
+  "keywords": ["comis", "ai", "agent", "executor", "llm", "session"],
+  "engines": { "node": ">=22" },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comisai/comis.git",
+    "directory": "packages/agent"
+  },
+  "homepage": "https://github.com/comisai/comis#readme",
+  "bugs": {
+    "url": "https://github.com/comisai/comis/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@comis/core": "workspace:*",
+    "@comis/infra": "workspace:*",
+    "@comis/memory": "workspace:*",
+    "@comis/scheduler": "workspace:*",
+    "@comis/shared": "workspace:*",
+    "@google/genai": "1.47.0",
+    "@mariozechner/pi-agent-core": "0.65.0",
+    "@mariozechner/pi-ai": "0.65.0",
+    "@mariozechner/pi-coding-agent": "0.65.0",
+    "diff": "8.0.4",
+    "p-queue": "^9.1.0",
+    "proper-lockfile": "^4.1.2",
+    "sharp": "^0.34.5",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/diff": "^8.0.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "better-sqlite3": "^12.6.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}

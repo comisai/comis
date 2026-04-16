@@ -1,0 +1,150 @@
+---
+title: "Audit Logging"
+description: "How Comis records security-relevant events for monitoring and compliance"
+icon: "scroll"
+---
+
+Every security-relevant action in Comis is recorded as an audit event. Whether an agent sends a message, accesses a secret, triggers a jailbreak detection, or has an action denied, the event is logged with a timestamp, the acting agent, the action taken, and the outcome. These records give you visibility into what your agents are doing and help you meet compliance requirements.
+
+## What Gets Logged
+
+Comis generates audit events for a wide range of security-relevant actions. These include agent executions, tool invocations, secret access, message sends, approval decisions, and any action that is denied or times out. Every event is structured as JSON, making it machine-readable from the start.
+
+Each audit event captures a set of fields that tell you exactly what happened:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| Timestamp | When the event occurred (ISO 8601) | `2026-03-12T14:30:00.000Z` |
+| Event ID | Unique identifier (UUID v4) | `a1b2c3d4-...` |
+| Tenant ID | Your installation identifier | `default` |
+| Agent ID | Which agent performed the action | `customer-support` |
+| User ID | Which user triggered the action (if applicable) | `user-123` |
+| Action | What was done | `file.delete`, `message.send` |
+| Classification | Action risk level | `read`, `mutate`, `destructive` |
+| Outcome | What happened | `success`, `failure`, `denied` |
+| Trace ID | Request correlation identifier | `trace-abc-123` |
+| Duration | How long the action took | `150ms` |
+
+Not every field is present in every event. For example, background tasks may not have a User ID, and read-only actions may not include a Duration.
+
+### Common Audit Actions
+
+Here are some of the actions you will see most frequently in your audit logs:
+
+| Action | Classification | What It Means |
+|--------|---------------|---------------|
+| `message.send` | `mutate` | An agent sent a message to a channel |
+| `tool.execute` | varies | An agent used a tool (classification depends on the tool) |
+| `secret.access` | `read` | An agent accessed an encrypted secret |
+| `file.delete` | `destructive` | An agent deleted a file |
+| `approval.grant` | `mutate` | An operator approved a pending action |
+| `approval.deny` | `mutate` | An operator denied a pending action |
+| `injection.detect` | `read` | A potential jailbreak attempt was detected |
+
+For the complete list of all action classifications, see the [Action Classifier Reference](/reference/action-classifier).
+
+## Viewing Audit Logs
+
+There are three ways to access your audit events, depending on your needs.
+
+### Web Dashboard
+
+The easiest way to view audit events. Open the [Security dashboard](/web-dashboard/security-view) and click the Audit Log tab. You can filter by agent, action, classification, and time range.
+
+The dashboard displays events in reverse chronological order, so you always see the most recent activity first. Click any event row to expand it and see the full event details including the trace ID, which you can use to correlate the event with other log entries from the same request.
+
+This is the best option for quick investigations or spot-checking agent behavior.
+
+### Structured Log Files
+
+Audit events are written to the standard Comis log output as structured JSON. You can find them in your log files and filter by the audit event marker. Each event is a single JSON line, making it easy to parse with standard tools:
+
+```bash
+# View recent audit events from the log file
+grep '"audit"' ~/.comis/logs/comis.log | tail -20
+```
+
+This is useful when you need to search through events on the command line or when the web dashboard is not available.
+
+### Log Aggregation
+
+For production deployments, forward Comis logs to your preferred log aggregation service -- Datadog, Elasticsearch, Grafana Loki, Splunk, or similar. The structured JSON format makes it straightforward to create dashboards, alerts, and retention policies based on audit events.
+
+Common aggregation patterns include:
+
+- **Alert on denied actions** -- Get notified when agents are blocked from performing actions
+- **Track destructive action frequency** -- Monitor how often agents attempt high-risk operations
+- **Compliance reporting** -- Generate periodic reports of all security-relevant activity
+
+<Tip>
+Start with the web dashboard for quick checks. Move to log aggregation when you need historical analysis, alerts, or compliance reporting.
+</Tip>
+
+## Event Aggregation
+
+When the same event fires many times in quick succession -- for example, a user repeatedly triggering jailbreak detection -- Comis aggregates these events within 60-second windows. Instead of flooding your logs with hundreds of identical entries, you see a single aggregated event with a count. This keeps your audit log readable without losing information.
+
+Aggregated events include:
+
+- The original event details (agent, action, classification)
+- A count of how many times the event occurred
+- The time window over which events were grouped
+
+This deduplication is automatic and requires no configuration. Individual event details are preserved in the detailed log output if you need them.
+
+For example, if the same user triggers jailbreak detection 15 times in 30 seconds, your audit log will show a single aggregated event with a count of 15 rather than 15 separate entries. When the 60-second window closes, any new occurrences start a fresh aggregation window.
+
+## Trace Correlation
+
+Every audit event includes a Trace ID that connects it to the full request lifecycle. If an agent execution generates multiple audit events -- for example, reading a secret, calling a tool, and sending a message -- all of those events share the same Trace ID. This makes it straightforward to reconstruct what happened during a single agent execution, even when reviewing logs from a production system with many agents running simultaneously.
+
+When investigating an incident, start with the audit event that caught your attention, note its Trace ID, and filter your logs for that ID to see the complete picture.
+
+```bash
+# Find all audit events for a specific trace
+grep 'trace-abc-123' ~/.comis/logs/comis.log
+```
+
+This is especially valuable when debugging approval workflows, where a single user action may trigger classification, confirmation, approval, and execution events across multiple agents.
+
+## Log Redaction
+
+Comis automatically scrubs sensitive values from all log output, including audit events. If an API key, password, JWT token, or other credential accidentally appears in a log message, it is replaced with `[REDACTED]` before being written. This prevents credentials from ending up in log files, log aggregation dashboards, or error reports.
+
+Log redaction works alongside audit logging -- audit events record what actions were taken without exposing the sensitive data involved in those actions. For example, an audit event records that an agent accessed a secret named `OPENAI_API_KEY`, but the actual key value never appears in the log.
+
+## Configuration
+
+Audit logging is controlled by two settings in your configuration:
+
+```yaml title="~/.comis/config.yaml"
+security:
+  auditLog: true         # Enable audit event logging (default: true)
+  logRedaction: true     # Scrub credentials from log output (default: true)
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `security.auditLog` | `true` | Enable audit event logging |
+| `security.logRedaction` | `true` | Scrub credentials from all log output |
+
+<Info>
+Audit logging is enabled by default. You generally should not disable it, especially in production. If you need to reduce log volume, consider using log aggregation with filtering rather than turning off audit events entirely.
+</Info>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Security Dashboard" icon="desktop" href="/web-dashboard/security-view">
+    View audit logs in the web UI
+  </Card>
+  <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
+    All security layers that generate audit events
+  </Card>
+  <Card title="Hardening" icon="lock" href="/security/hardening">
+    Verify audit logging in the hardening checklist
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/operations/logging">
+    General logging configuration
+  </Card>
+</CardGroup>

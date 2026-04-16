@@ -1,0 +1,155 @@
+---
+title: "Security Scanning"
+description: "What Comis checks for when loading custom skills"
+icon: "shield-check"
+---
+
+Before any custom skill reaches your agents, Comis scans its contents for dangerous patterns. This automatic security check catches common threats like command injection, data exfiltration, and crypto mining -- protecting your system even if you load a skill from an untrusted source.
+
+## What Gets Scanned
+
+The content scanner checks skill bodies for six categories of dangerous patterns. Each scan looks for specific techniques that attackers use to abuse AI agent systems.
+
+<AccordionGroup>
+  <Accordion title="Command Injection" icon="terminal">
+    **Severity:** CRITICAL
+
+    Detects attempts to run system commands through skill content. Attackers embed shell commands hoping the agent will execute them blindly.
+
+    **Examples caught:**
+    - `$(command)` -- subshell execution
+    - Backtick command substitution
+    - `eval()` calls
+    - Piped commands like `curl | bash`
+  </Accordion>
+
+  <Accordion title="Environment Harvesting" icon="key">
+    **Severity:** CRITICAL
+
+    Detects attempts to read sensitive environment variables where API keys, passwords, and secrets are often stored.
+
+    **Examples caught:**
+    - `printenv` commands
+    - Reading `/proc/*/environ`
+    - `env | grep` patterns that filter for specific secrets
+  </Accordion>
+
+  <Accordion title="Crypto Mining" icon="microchip">
+    **Severity:** CRITICAL
+
+    Detects cryptocurrency mining attempts that would hijack your server's computing power.
+
+    **Examples caught:**
+    - `stratum+tcp://` mining pool URLs
+    - Known miner binary names
+    - Mining pool domain references
+  </Accordion>
+
+  <Accordion title="Network Exfiltration" icon="globe">
+    **Severity:** CRITICAL
+
+    Detects attempts to send your data to external servers without authorization.
+
+    **Examples caught:**
+    - `curl | sh` patterns that download and execute remote code
+    - `wget -O- | bash` download-and-run chains
+    - Reverse shell patterns that open a connection back to an attacker
+  </Accordion>
+
+  <Accordion title="Obfuscated Encoding" icon="eye-slash">
+    **Severity:** WARN
+
+    Detects suspiciously encoded content that may be hiding malicious instructions. Encoding is not always malicious, but large encoded blocks in a skill body are a red flag.
+
+    **Examples caught:**
+    - Unusually long base64-encoded strings
+    - Hex-encoded payloads
+    - `base64 -d | bash` decode-and-execute patterns
+  </Accordion>
+
+  <Accordion title="XML Breakout" icon="code">
+    **Severity:** CRITICAL
+
+    Detects attempts to escape the skill boundary and inject content directly into the agent's system prompt.
+
+    **Examples caught:**
+    - `</skill>` close tags that try to end the skill context early
+    - `<system>` tags that attempt to hijack the prompt structure
+  </Accordion>
+</AccordionGroup>
+
+## The Sanitization Pipeline
+
+In addition to scanning for threats, every prompt skill body goes through a four-step sanitization pipeline before it reaches the agent. This pipeline runs automatically on all skills, regardless of scan results.
+
+<Steps>
+  <Step title="Strip HTML comments">
+    Removes all `<!-- ... -->` comment blocks. HTML comments are invisible in rendered content, making them a common way to hide malicious instructions that humans would not notice during review.
+  </Step>
+
+  <Step title="Unicode normalization">
+    Converts fancy characters to their standard forms using NFKC normalization. This prevents visual tricks where an attacker uses fullwidth or ligature characters that look identical to normal text but bypass pattern matching. For example, a fullwidth `ｅｖａｌ` looks like `eval` but would not match a simple text scan.
+  </Step>
+
+  <Step title="Strip invisible characters">
+    Removes zero-width Unicode characters like zero-width spaces, zero-width joiners, and Unicode tag characters. These are completely invisible in text but can carry hidden payloads or break security boundaries.
+  </Step>
+
+  <Step title="Enforce size limit">
+    Truncates the skill body at the configured maximum length (default: 20,000 characters). If the body exceeds this limit, the excess is removed and a `[TRUNCATED]` marker is appended. This prevents skills from overwhelming the agent's context window.
+  </Step>
+</Steps>
+
+## What Happens When a Threat is Found
+
+The scanner classifies each finding by severity:
+
+- **CRITICAL findings:** The skill is **blocked from loading entirely** when `contentScanning.blockOnCritical` is enabled (which it is by default). The agent never sees the skill content. A log entry records what was found and why it was blocked.
+
+- **WARN findings:** The skill **loads normally**, but a warning is logged. Review the warning and decide whether the skill is safe. Obfuscated encoding, for example, may be legitimate -- some skills include base64 data for valid reasons.
+
+<Info>
+Even if a skill passes content scanning, it still goes through the full sanitization pipeline. Scanning catches known dangerous patterns, while sanitization removes entire classes of hidden content. Together, they provide layered protection.
+</Info>
+
+## Configuration
+
+Content scanning is enabled by default. You can adjust its behavior in your configuration file:
+
+```yaml
+skills:
+  contentScanning:
+    enabled: true            # Enable or disable scanning (default: true)
+    blockOnCritical: true    # Block skills with CRITICAL findings (default: true)
+```
+
+<Warning>
+Disabling content scanning or setting `blockOnCritical` to `false` removes an important security layer. Only do this if you fully trust every skill that Comis will load, and you understand the risks.
+</Warning>
+
+## How Scanning Fits into the Security Stack
+
+Content scanning is one layer in the Comis [defense-in-depth](/security/defense-in-depth) security model:
+
+1. **Content scanning** catches malicious patterns before a skill loads (this page)
+2. **Sanitization** removes hidden or obfuscated content from all skills (this page)
+3. **The sandbox** isolates skill execution with memory, time, and access limits ([Sandbox](/security/sandbox))
+4. **Tool policy** controls which tools a skill can access ([Tool Policy](/skills/tool-policy))
+5. **Output scanning** catches leaked secrets in agent responses before they reach the chat
+
+Each layer works independently, so even if one is bypassed, the others still protect you.
+
+<CardGroup cols={2}>
+  <Card title="Sandbox" icon="lock" href="/security/sandbox">
+    How skill execution is isolated
+  </Card>
+  <Card title="Defense in Depth" icon="shield" href="/security/defense-in-depth">
+    All security layers explained
+  </Card>
+  <Card title="Manifest Reference" icon="file-code" href="/skills/manifest">
+    Declaring skill permissions
+  </Card>
+  <Card title="Prompt Skills" icon="file-lines" href="/skills/prompt-skills">
+    Creating custom prompt skills
+  </Card>
+</CardGroup>

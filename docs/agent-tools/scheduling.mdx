@@ -1,0 +1,245 @@
+---
+title: "Scheduling"
+description: "Create scheduled jobs and manage agent heartbeat timing"
+icon: "clock"
+---
+
+The scheduling tools let your agents create automated tasks that run on a schedule. From daily briefings to periodic health checks, agents can set up cron jobs and manage their own heartbeat timing.
+
+## cron -- Scheduled Jobs
+
+The `cron` tool manages scheduled jobs with 8 actions and 3 schedule types. Agents can create, update, monitor, and remove jobs -- all from within a conversation.
+
+### Schedule Types
+
+| Type | Syntax | Example | Meaning |
+|------|--------|---------|---------|
+| `cron` | Standard cron expression | `0 9 * * *` | Every day at 9:00 AM |
+| `every` | Interval in milliseconds | `1800000` | Every 30 minutes |
+| `at` | ISO 8601 timestamp | `2026-03-15T14:00:00Z` | One-time at a specific time |
+
+<Tip>
+Use `cron` for recurring jobs on a fixed schedule (like "every weekday at 9am"). Use `every` for repeating intervals specified in milliseconds. Use `at` for one-time tasks at a specific moment.
+</Tip>
+
+### Actions
+
+<AccordionGroup>
+  <Accordion title="add -- Create a scheduled job">
+    Creates a new cron job with a specified schedule and payload.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `add` |
+    | `name` | string | Yes | A human-readable name for the job |
+    | `schedule_kind` | string | Yes | Schedule type: `cron`, `every`, or `at` |
+    | `schedule_expr` | string | For cron | Standard cron expression (for `schedule_kind: cron`) |
+    | `schedule_every_ms` | integer | For every | Interval in milliseconds (for `schedule_kind: every`) |
+    | `schedule_at` | string | For at | ISO 8601 datetime string (for `schedule_kind: at`) |
+    | `timezone` | string | No | IANA timezone (e.g., `America/New_York`). Defaults to UTC. |
+    | `payload_kind` | string | Yes | What happens when the job fires: `system_event` or `agent_turn` |
+    | `payload_text` | string | Yes | The message or payload content sent when the job triggers |
+    | `session_strategy` | string | No | Session history strategy for recurring jobs: `fresh` (new session each run, default), `rolling` (keep last N turns), or `accumulate` (keep all history) |
+    | `max_history_turns` | integer | No | Number of recent turns to keep when using `rolling` strategy (default: 3) |
+    | `model` | string | No | Model override for cron-triggered agent turns (e.g., `gemini-2.5-flash`). Only applies to `agent_turn` payload kind. |
+
+    **Example -- Daily 9am briefing:**
+    ```yaml
+    action: add
+    name: morning-briefing
+    schedule_kind: cron
+    schedule_expr: "0 9 * * *"
+    timezone: America/New_York
+    payload_kind: agent_turn
+    payload_text: "Good morning! Run the daily briefing."
+    session_strategy: rolling
+    max_history_turns: 5
+    ```
+
+    **Example -- One-time reminder:**
+    ```yaml
+    action: add
+    name: meeting-reminder
+    schedule_kind: at
+    schedule_at: "2026-03-15T14:00:00Z"
+    payload_kind: agent_turn
+    payload_text: "Reminder: Team meeting starts now."
+    ```
+
+    **Example -- Periodic system event every 30 minutes:**
+    ```yaml
+    action: add
+    name: health-check
+    schedule_kind: every
+    schedule_every_ms: 1800000
+    payload_kind: system_event
+    payload_text: "Run health check"
+    ```
+  </Accordion>
+
+  <Accordion title="list -- List all scheduled jobs">
+    Lists all scheduled jobs with their names, schedules, and current status.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `list` |
+
+    Returns a list of all jobs including their name, schedule type, expression, and whether they are active or paused.
+  </Accordion>
+
+  <Accordion title="update -- Update an existing job">
+    Modifies an existing scheduled job. You can change the name or enable/disable the job.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `update` |
+    | `job_name` | string | Yes | The name of the job to update |
+    | `name` | string | No | New name for the job |
+    | `enabled` | boolean | No | Enable or disable the job |
+
+    **Example -- Disable a job:**
+    ```yaml
+    action: update
+    job_name: morning-briefing
+    enabled: false
+    ```
+  </Accordion>
+
+  <Accordion title="remove -- Delete a scheduled job">
+    Permanently deletes a scheduled job. This is a destructive action requiring user confirmation.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `remove` |
+    | `job_name` | string | Yes | The name of the job to delete |
+  </Accordion>
+
+  <Accordion title="status -- Check scheduler status">
+    Shows the current status of the scheduler, including overall health information.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `status` |
+
+    Returns the scheduler's health status, active job count, and overall state.
+  </Accordion>
+
+  <Accordion title="runs -- View recent run history">
+    Shows recent execution history for a job, including success/failure status and timestamps.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `runs` |
+    | `job_name` | string | Yes | The name of the job |
+    | `limit` | integer | No | Maximum number of run history entries to return (default: 20) |
+  </Accordion>
+
+  <Accordion title="run -- Manually trigger a job">
+    Immediately triggers a scheduled job, regardless of its schedule. Useful for testing or one-off execution.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `run` |
+    | `job_name` | string | Yes | The name of the job to trigger |
+    | `mode` | string | No | Run mode: `force` (ignore schedule, run now -- default) or `due` (run only if overdue) |
+  </Accordion>
+
+  <Accordion title="wake -- Wake the scheduler">
+    Wakes the scheduler after a daemon restart. This is primarily used internally to ensure the scheduler picks up any jobs that were due while the daemon was stopped.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `wake` |
+    | `source` | string | No | Audit trail source identifier (default: `agent`) |
+  </Accordion>
+</AccordionGroup>
+
+## heartbeat_manage -- Agent Heartbeat
+
+The `heartbeat_manage` tool controls the agent's periodic heartbeat -- a scheduled event that triggers the agent to perform routine tasks. Think of it as the agent's internal clock that periodically wakes it up to check on things.
+
+### Actions
+
+<AccordionGroup>
+  <Accordion title="get -- View heartbeat configuration">
+    Returns the current heartbeat settings, including the interval and the prompt that runs on each beat.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `get` |
+  </Accordion>
+
+  <Accordion title="update -- Change heartbeat settings">
+    Updates the heartbeat interval and/or the prompt. The prompt tells the agent what to do each time the heartbeat fires.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `update` |
+    | `interval` | string | No | How often the heartbeat fires (e.g., `5m`, `1h`, `30s`) |
+    | `prompt` | string | No | What the agent should do on each heartbeat |
+
+    **Example -- Check for new emails every 5 minutes:**
+    ```yaml
+    action: update
+    interval: "5m"
+    prompt: "Check for new emails and summarize any important ones."
+    ```
+  </Accordion>
+
+  <Accordion title="status -- Check heartbeat status">
+    Shows whether the heartbeat is running or stopped, when it last fired, and when it will fire next.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `status` |
+  </Accordion>
+
+  <Accordion title="trigger -- Manually trigger a heartbeat">
+    Immediately fires the heartbeat, running the configured prompt right now.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Must be `trigger` |
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Operations Scheduler" icon="gears" href="/operations/scheduler">
+    Server-side scheduler configuration and monitoring
+  </Card>
+  <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
+    Master reference table of all 47 tools
+  </Card>
+  <Card title="Messaging" icon="paper-plane" href="/agent-tools/messaging">
+    Send, reply, react, edit, and delete messages
+  </Card>
+  <Card title="Sessions" icon="users" href="/agent-tools/sessions">
+    Sub-agents, pipelines, and session management
+  </Card>
+</CardGroup>

@@ -1,0 +1,206 @@
+---
+title: "Safety"
+description: "How Comis protects you from unexpected costs and runaway agents"
+icon: "shield-check"
+---
+
+AI agents can be expensive if left unchecked. Comis includes multiple safety
+features that prevent unexpected costs and stop agents from going off the rails.
+Think of these as guardrails -- your agent works freely within them, but cannot
+exceed the limits you set.
+
+## Budget protection
+
+Budget protection prevents unexpected costs -- your agent automatically stops
+before spending more than you allow. Budgets are measured in tokens (the units
+AI providers use for billing).
+
+Comis enforces three budget windows:
+
+**Per execution** (default: 2,000,000 tokens) -- The maximum tokens for a
+single agent run. This is like a spending cap per task. If your agent hits this
+limit during a single conversation turn, it stops and lets you know.
+
+**Per hour** (default: 10,000,000 tokens) -- A rolling hourly limit. This
+prevents a burst of activity from running up your bill. Even if each individual
+execution is within budget, the hourly cap prevents a flood of requests from
+adding up.
+
+**Per day** (default: 100,000,000 tokens) -- Your absolute daily spending cap.
+This is the last line of defense against unexpected costs from sustained heavy
+usage.
+
+### What do these numbers mean for your bill?
+
+Token costs vary by provider and model, but here are approximate ranges to give
+you a sense of scale:
+
+- **2,000,000 tokens** (the default per-execution limit) costs roughly **$3-10**
+  depending on your model. Claude Sonnet is about $3/million input tokens.
+  GPT-4o is about $2.50/million input tokens. Exact prices vary -- check your
+  provider's pricing page.
+- **10,000,000 tokens** (the default hourly limit) costs roughly **$15-50** per
+  hour at sustained maximum usage. In practice, most agents use far less.
+- **100,000,000 tokens** (the default daily limit) represents a hard ceiling
+  of roughly **$150-500** per day, which would require sustained heavy usage to
+  reach.
+
+<Note>
+  These are approximate ranges based on current pricing. Token costs vary by
+  provider, model, and whether tokens are input or output. Check your
+  provider's pricing page for exact numbers.
+</Note>
+
+<Note>
+  When prompt caching is active, cached tokens cost 50-90% less than regular
+  input tokens depending on your provider. This means your actual spending is
+  often lower than raw token counts suggest. Comis tracks these savings
+  automatically -- see [Observability](/operations/observability) for cache
+  savings details.
+</Note>
+
+### What happens when a budget is exceeded
+
+When your agent reaches a budget limit:
+
+1. The current execution stops gracefully.
+2. The agent sends a message explaining it hit a spending limit.
+3. The limit resets when the time window passes (hourly or daily) or
+   automatically on the next execution (for per-execution limits).
+
+You are never charged beyond your configured limits. The agent simply pauses
+until the window resets.
+
+## Circuit breaker
+
+The circuit breaker works like a fuse in your electrical panel. If your agent
+hits too many errors in a row, the circuit breaker *trips* and pauses the
+agent. This prevents cascading failures -- one bad API response will not cause
+your agent to retry endlessly and rack up costs.
+
+The circuit breaker has three states:
+
+**Closed** (normal operation) -- Everything works normally. Your agent processes
+messages and calls its AI provider as usual. Behind the scenes, Comis counts
+consecutive errors. As long as requests succeed, the error count resets to zero.
+
+**Open** (tripped) -- After too many consecutive errors (default: 5 in a row),
+the circuit breaker trips. The agent stops making API calls entirely. No tokens
+are used, no costs accumulate. This is the "fuse has blown" state.
+
+**Half-open** (testing) -- After a cooldown period (default: 60 seconds), the
+circuit breaker lets the agent try one request. If it succeeds, the breaker
+closes and normal operation resumes. If it fails, the breaker opens again and
+waits for another cooldown period.
+
+This pattern means a temporary outage at your AI provider causes a brief pause,
+not an avalanche of failed requests. Once the provider recovers, your agent
+automatically resumes.
+
+## Step limit
+
+Your agent has a maximum number of reasoning steps per execution (default: 150).
+Each step is one cycle of the agent thinking and optionally using a tool.
+
+The step limit prevents infinite loops where the agent keeps thinking and using
+tools without making progress. If the agent reaches the limit, it stops and
+delivers whatever response it has so far. For most conversations, agents finish
+well within 150 steps -- typically 3-10 steps for a normal response.
+
+## Context window guard
+
+The context window guard monitors how full the agent's working memory is. Every
+AI model has a maximum amount of text it can process at once, and approaching
+that limit can cause problems.
+
+The guard has two thresholds:
+
+- **Warn** (default: 80%) -- When the context window is 80% full, the agent
+  receives a warning. It can still work but should avoid adding more context.
+- **Block** (default: 95%) -- At 95% full, the guard stops the agent from
+  making further API calls. This prevents out-of-memory errors and garbled
+  responses that happen when the context overflows.
+
+If the block threshold is reached, the agent triggers
+[compaction](/agents/compaction) to free up space before continuing.
+
+The [context engine](/agents/compaction) handles most context
+management automatically through its 8-layer pipeline. The context window guard
+remains as a safety net -- if the context engine's layers are unable to bring
+the conversation within budget, the guard's block threshold prevents the request
+from proceeding. In practice, the context engine resolves most overflow
+situations before the guard needs to intervene.
+
+## SDK retry
+
+When your AI provider returns a temporary error (like "too many requests" or
+a server error), Comis automatically retries the request a few times before
+giving up. This handles brief network glitches and rate limits without
+requiring any action from you.
+
+The retry uses exponential backoff -- it waits a short time before the first
+retry and progressively longer before subsequent retries, up to a maximum
+delay. This is gentler on the provider and more likely to succeed than
+immediate retries.
+
+## Configuration
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `budgets.perExecution` | number | `2000000` | Maximum tokens per single agent run |
+| `budgets.perHour` | number | `10000000` | Maximum tokens per hour (rolling window) |
+| `budgets.perDay` | number | `100000000` | Maximum tokens per day (rolling window) |
+| `circuitBreaker.failureThreshold` | number | `5` | Consecutive failures before the breaker trips |
+| `circuitBreaker.resetTimeoutMs` | number | `60000` | Cooldown before testing recovery (1 minute) |
+| `circuitBreaker.halfOpenTimeoutMs` | number | `30000` | Timeout for the half-open test request |
+| `maxSteps` | number | `150` | Maximum reasoning steps per execution |
+| `contextGuard.enabled` | boolean | `true` | Enable context window monitoring |
+| `contextGuard.warnPercent` | number | `80` | Warn when context window is this percent full |
+| `contextGuard.blockPercent` | number | `95` | Block execution when context window is this percent full |
+| `sdkRetry.enabled` | boolean | `true` | Enable automatic retry for temporary errors |
+| `sdkRetry.maxRetries` | number | `5` | Maximum retry attempts |
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    budgets:
+      perExecution: 2000000    # ~$3-10 per run
+      perHour: 10000000        # ~$15-50 per hour max
+      perDay: 100000000        # ~$150-500 per day max
+
+    circuitBreaker:
+      failureThreshold: 5     # Trip after 5 consecutive errors
+      resetTimeoutMs: 60000   # Wait 1 minute before testing recovery
+      halfOpenTimeoutMs: 30000
+
+    maxSteps: 150               # Maximum reasoning steps per execution
+
+    contextGuard:
+      enabled: true
+      warnPercent: 80
+      blockPercent: 95
+
+    sdkRetry:
+      enabled: true
+      maxRetries: 5
+```
+
+<Tip>
+  Start with the defaults. They are designed to handle typical usage without
+  surprises. Adjust only if you find your agents are hitting limits during
+  normal operation -- for example, lower `perExecution` if you want tighter
+  cost control per response, or raise `maxSteps` if your agent legitimately
+  needs more reasoning steps for complex tasks.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Models" icon="microchip-ai" href="/agents/models">
+    Configure AI providers and automatic failover.
+  </Card>
+  <Card title="Sessions" icon="comments" href="/agents/sessions">
+    How conversations are managed and when they reset.
+  </Card>
+  <Card title="Resilience" icon="shield-heart" href="/agents/resilience">
+    Timeout guards, provider health monitoring, and dead-letter queue.
+  </Card>
+</CardGroup>

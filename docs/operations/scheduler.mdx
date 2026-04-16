@@ -1,0 +1,157 @@
+---
+title: "Scheduler"
+description: "Cron jobs, heartbeat monitoring, and task extraction"
+icon: "clock"
+---
+
+The scheduler lets your agents work on a schedule — sending periodic reports, running health checks, and even creating their own tasks from conversations. Think of it as a personal assistant's calendar that agents manage themselves.
+
+## Three Scheduling Systems
+
+Comis includes three complementary scheduling systems, each designed for a different kind of automated work.
+
+### Cron Jobs
+
+Cron jobs are recurring tasks that run on a schedule, like "check email every morning" or "send a daily summary at 5pm." Your agents create and manage cron jobs using the scheduling tools — you configure the limits, and they handle the details.
+
+```yaml
+# config.yaml
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 3    # Maximum jobs running at the same time
+    defaultTimezone: ""     # Empty = UTC
+    maxJobs: 100            # Maximum number of scheduled jobs
+```
+
+| Setting | Default | What It Does |
+|---------|---------|--------------|
+| `enabled` | `true` | Whether cron scheduling is active |
+| `maxConcurrentRuns` | 3 | How many cron jobs can run simultaneously |
+| `defaultTimezone` | `""` (UTC) | Default timezone for cron expressions |
+| `maxJobs` | 100 | Maximum number of cron jobs allowed (0 = unlimited) |
+
+<Tip>Agents can create their own cron jobs using the scheduling tools. You set the limits (how many jobs, how many run at once); they decide what to schedule and when.</Tip>
+
+### Heartbeat Monitoring
+
+The heartbeat system runs periodic health checks at regular intervals (every 5 minutes by default). This is how the [monitoring sources](/operations/monitoring) — disk space, CPU, memory, systemd services, and security updates — get checked.
+
+```yaml
+# config.yaml
+scheduler:
+  heartbeat:
+    enabled: true
+    intervalMs: 300000        # Check every 5 minutes
+    alertThreshold: 2         # Failures before alerting
+    alertCooldownMs: 300000   # Wait 5 min between alerts for same source
+    staleMs: 120000           # Detect stuck checks after 2 min
+    showOk: false             # Don't report when everything is fine
+    showAlerts: true          # Do report problems
+```
+
+| Setting | Default | What It Does |
+|---------|---------|--------------|
+| `intervalMs` | 300000 (5 min) | How often health checks run |
+| `alertThreshold` | 2 | Consecutive failures required before sending an alert |
+| `alertCooldownMs` | 300000 (5 min) | Minimum time between repeated alerts for the same issue |
+| `staleMs` | 120000 (2 min) | If a check runs longer than this, it is considered stuck |
+| `showOk` | `false` | Whether to include healthy sources in the report |
+| `showAlerts` | `true` | Whether to include alerts in the report |
+
+The heartbeat uses **wake coalescing** — all monitoring checks are batched together into a single heartbeat cycle rather than each running independently. This prevents multiple checks from overwhelming the system simultaneously.
+
+### Task Extraction
+
+During a conversation, your agent might notice follow-up work — "I should check back on this tomorrow" or "remind the user about that deadline." Task extraction lets agents automatically schedule these follow-ups.
+
+```yaml
+# config.yaml
+scheduler:
+  tasks:
+    enabled: false              # Off by default
+    confidenceThreshold: 0.8    # Minimum confidence (0-1) to schedule a task
+```
+
+<Info>Task extraction is disabled by default because it requires the agent to make judgment calls about what to schedule. Enable it once you are comfortable with how your agents behave and want them to proactively follow up on conversations.</Info>
+
+## Quiet Hours
+
+Quiet hours prevent non-critical scheduled tasks from running during specified times — for example, overnight when you do not want notifications.
+
+```yaml
+# config.yaml
+scheduler:
+  quietHours:
+    enabled: false
+    start: "22:00"
+    end: "07:00"
+    timezone: ""           # Empty = system local timezone
+    criticalBypass: true   # Critical tasks ignore quiet hours
+```
+
+When quiet hours are active, cron jobs and heartbeat alerts are suppressed. They resume when the quiet window ends.
+
+<Tip>Critical tasks (like security alerts) bypass quiet hours by default. Set `criticalBypass: false` only if you want complete silence during quiet hours.</Tip>
+
+## Safety
+
+The scheduler includes several safety mechanisms to prevent runaway tasks:
+
+- **Lock files** prevent the same cron job from running twice simultaneously
+- **`maxConcurrentRuns`** limits how many jobs can execute at the same time (default: 3)
+- **`staleMs`** detects stuck tasks that have been running too long (default: 2 minutes)
+- **`maxJobs`** caps the total number of scheduled jobs (default: 100)
+
+If a task exceeds the stale timeout, the scheduler marks it as stuck and releases the lock so it can run again on the next cycle.
+
+## Full Configuration Reference
+
+```yaml
+# config.yaml
+scheduler:
+  cron:
+    enabled: true
+    storeDir: "./data/scheduler"
+    maxConcurrentRuns: 3
+    defaultTimezone: ""
+    maxJobs: 100
+
+  heartbeat:
+    enabled: true
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+    alertThreshold: 2
+    alertCooldownMs: 300000
+    staleMs: 120000
+
+  quietHours:
+    enabled: false
+    start: "22:00"
+    end: "07:00"
+    timezone: ""
+    criticalBypass: true
+
+  tasks:
+    enabled: false
+    confidenceThreshold: 0.8
+    storeDir: "./data/scheduler/tasks"
+```
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="heart-pulse" href="/operations/monitoring">
+    The 5 health sources checked by heartbeat
+  </Card>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    The process that runs the scheduler
+  </Card>
+  <Card title="Agent Lifecycle" icon="arrows-spin" href="/agents/lifecycle">
+    How agents process messages and use tools
+  </Card>
+  <Card title="Scheduler View" icon="calendar" href="/web-dashboard/scheduler-view">
+    View and manage scheduled tasks in the dashboard
+  </Card>
+</CardGroup>

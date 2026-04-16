@@ -1,0 +1,68 @@
+tenantId: test
+logLevel: debug
+dataDir: ""
+agents:
+  default:
+    name: TestAgent
+    model: default
+    thinkingLevel: off
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+gateway:
+  enabled: true
+  host: 127.0.0.1
+  port: 8720
+  tokens:
+    - id: test-token
+      secret: test-secret-key-for-hot-add-e2e-2026
+      scopes:
+        - rpc
+        - ws
+        - admin
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+approvals:
+  enabled: true
+  defaultTimeoutMs: 5000
+  batchApprovalTtlMs: 30000
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+memory:
+  dbPath: test-memory-hot-add-e2e.db
+security:
+  agentToAgent:
+    enabled: false
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

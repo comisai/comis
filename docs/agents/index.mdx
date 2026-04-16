@@ -1,0 +1,112 @@
+---
+title: "Agents"
+description: "What agents are and how they work inside Comis"
+icon: "robot"
+---
+
+An agent is your AI assistant -- it reads messages, thinks about what to do,
+uses tools, and responds. Comis can run multiple agents, each with its own
+personality, skills, and memory.
+
+## What is an agent?
+
+Think of an agent as an AI employee that lives inside your chat channels. You
+give it a name, a personality, and a set of tools -- then it goes to work. It
+can answer questions, search the web, manage your schedule, send messages across
+platforms, and remember your preferences over time.
+
+Every agent runs independently. It has its own conversation history, its own
+memory, and its own set of instructions. You can have one agent handling your
+Discord server and another managing your Telegram chats -- each behaving
+differently based on how you set them up.
+
+## What agents can do
+
+<CardGroup cols={2}>
+  <Card title="Identity" icon="id-card" href="/agents/identity">
+    Give your agent a name, personality, and set of instructions using
+    workspace files -- simple Markdown documents that shape who your agent is.
+  </Card>
+  <Card title="Lifecycle" icon="arrows-spin" href="/agents/lifecycle">
+    Understand the journey of a message from arrival to response, including
+    memory recall, tool use, and safety checks along the way.
+  </Card>
+  <Card title="Memory" icon="brain" href="/agents/memory">
+    Your agent remembers past conversations, learns facts over time, and uses
+    that knowledge to give better answers.
+  </Card>
+  <Card title="Tools" icon="screwdriver-wrench" href="/skills/index">
+    Agents can search the web, manage schedules, send cross-platform messages,
+    analyze images, and much more through built-in and custom skills.
+  </Card>
+  <Card title="Safety" icon="shield-halved" href="/agents/safety">
+    Built-in cost protection stops your agent from spending too much. Budget
+    limits, a safety fuse, and step counters keep things under control.
+  </Card>
+  <Card title="Models" icon="microchip" href="/agents/models">
+    Choose from 11 AI providers including Anthropic, OpenAI, and Google.
+    Switch models per agent, set up automatic failover, and rotate API keys.
+  </Card>
+</CardGroup>
+
+## How it all fits together
+
+When someone sends a message to your agent, here is what happens at a high
+level:
+
+1. **The message arrives** from any connected platform (Discord, Telegram,
+   Slack, WhatsApp, or the web dashboard)
+2. **Comis routes it** to the right agent based on your routing rules
+3. **The agent recalls** relevant memories from past conversations
+4. **The agent thinks** and optionally uses tools (web search, scheduling, file
+   management, and more)
+5. **A reply is sent** back to the same chat
+
+The whole process takes just a few seconds. For the full walkthrough with a
+diagram, see the [Agent Lifecycle](/agents/lifecycle) page.
+
+## Slash commands
+
+While chatting, you can control your agent with slash commands -- short
+instructions that start with `/`. For example:
+
+- `/think high` -- Tell your agent to think harder about the next response
+- `/status` -- See session info, token usage, and model details
+- `/model switch openai gpt-4o` -- Switch to a different AI model mid-conversation
+- `/new` -- Start a fresh conversation
+
+There are 16 commands in total. See the full list on the
+[Slash Commands](/agents/slash-commands) page.
+
+## Running multiple agents
+
+You do not need routing rules if you only run one agent -- the default agent
+handles everything automatically. But if you want different agents for different
+situations, Comis supports that out of the box.
+
+For example, you might run:
+
+- A **support agent** on Slack that answers team questions
+- A **research agent** on Telegram that finds and summarizes information
+- A **scheduler agent** on Discord that manages reminders and recurring tasks
+
+Each agent only sees messages meant for it. Routing rules control which agent
+handles which channels, platforms, or users. See
+[Routing](/agents/routing) for details.
+
+## Explore agents
+
+<CardGroup cols={2}>
+  <Card title="Agent Lifecycle" icon="arrows-spin" href="/agents/lifecycle">
+    How your agent processes messages from arrival to response.
+  </Card>
+  <Card title="Identity" icon="id-card" href="/agents/identity">
+    The workspace files that shape your agent's personality.
+  </Card>
+  <Card title="Models" icon="microchip" href="/agents/models">
+    Choosing and configuring AI providers for your agents.
+  </Card>
+  <Card title="Safety" icon="shield-halved" href="/agents/safety">
+    Budget limits, safety fuses, and cost protection.
+  </Card>
+</CardGroup>

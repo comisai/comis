@@ -1,0 +1,70 @@
+{
+  "name": "@comis/skills",
+  "version": "1.0.0",
+  "author": "Moshe Anconina",
+  "license": "Apache-2.0",
+  "description": "Skill system, MCP integration, and tool sandbox for Comis agents",
+  "keywords": ["comis", "ai", "agent", "skills", "mcp", "tools"],
+  "engines": { "node": ">=22" },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comisai/comis.git",
+    "directory": "packages/skills"
+  },
+  "homepage": "https://github.com/comisai/comis#readme",
+  "bugs": {
+    "url": "https://github.com/comisai/comis/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@comis/core": "workspace:*",
+    "@comis/shared": "workspace:*",
+    "@elevenlabs/elevenlabs-js": "^2.38.1",
+    "@fal-ai/client": "1.9.5",
+    "@mariozechner/pi-agent-core": "0.65.0",
+    "@mariozechner/pi-coding-agent": "0.65.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@mozilla/readability": "^0.6.0",
+    "@napi-rs/canvas": "^0.1.96",
+    "@sinclair/typebox": "^0.34.48",
+    "chardet": "^2.1.1",
+    "chokidar": "^5.0.0",
+    "edge-tts-universal": "^1.4.0",
+    "file-type": "^21.3.0",
+    "iconv-lite": "^0.7.2",
+    "ignore": "^7.0.5",
+    "impit": "^0.8.2",
+    "linkedom": "^0.18.12",
+    "music-metadata": "^11.12.1",
+    "openai": "^6.27.0",
+    "p-queue": "^9.1.0",
+    "pdfjs-dist": "^5.5.207",
+    "playwright-core": "^1.58.2",
+    "sharp": "^0.34.5",
+    "undici": "^7.22.0",
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}

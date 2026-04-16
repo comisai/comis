@@ -1,0 +1,170 @@
+---
+const layers = [
+  {
+    name: "Thinking Block Cleaner",
+    desc: "Strips extended thinking traces from older turns (default: 10 turns), keeping recent reasoning while reclaiming tokens from stale deliberation. Zero overhead for non-reasoning models.",
+    badge: "Layer 1",
+    color: "teal",
+  },
+  {
+    name: "Reasoning Tag Stripper",
+    desc: "Strips inline reasoning tags from non-Anthropic providers persisted in session history. Always active regardless of the current model - sessions may contain mixed-provider responses.",
+    badge: "Layer 2",
+    color: "teal",
+  },
+  {
+    name: "History Window",
+    desc: "Keeps the last N user turns per channel type. Group chats get tighter windows than DMs. Pair-safe: never splits tool-call/tool-result pairs. Compaction summaries always preserved.",
+    badge: "Layer 3",
+    color: "teal",
+  },
+  {
+    name: "Dead Content Evictor",
+    desc: "Detects superseded file reads, re-run commands, stale errors, and old images. Replaces them with lightweight placeholders. O(n) forward-index scanning.",
+    badge: "Layer 4",
+    color: "teal",
+  },
+  {
+    name: "Observation Masker",
+    desc: "Three-tier masking: protected tools (memory, file reads) are exempt, standard tools use a normal keep window, ephemeral tools (web searches) get a shorter window. Changes persist to disk for stable cache prefixes.",
+    badge: "Layer 5",
+    color: "teal",
+  },
+  {
+    name: "LLM Compaction",
+    desc: "When context exceeds 85% of the model window, an LLM summarizes older messages into structured sections. Three-level fallback guarantees success. Cooldown prevents re-triggering.",
+    badge: "Layer 6",
+    color: "coral",
+  },
+  {
+    name: "Rehydration",
+    desc: "After compaction, critical instructions, recently-accessed files, and active state are re-injected. Split injection keeps stable content in cache-friendly positions.",
+    badge: "Layer 7",
+    color: "coral",
+  },
+  {
+    name: "Objective Reinforcement",
+    desc: "Subagent objectives are re-injected after compaction so delegated tasks stay on track even through context compression.",
+    badge: "Layer 8",
+    color: "coral",
+  },
+];
+
+const highlights = [
+  {
+    stat: "H = W - S - O - M - R",
+    label: "Token budget algebra",
+    desc: "Every LLM call gets a precise budget: window minus system prompt, output reserve, safety margin, and a 25% context rot buffer.",
+  },
+  {
+    stat: "3-tier disclosure",
+    label: "Progressive tool loading",
+    desc: "Lean definitions always present, detailed guides on first use, irrelevant tools deferred. 50+ tools cost the context of 15.",
+  },
+  {
+    stat: "3-level fallback",
+    label: "Compaction resilience",
+    desc: "Full structured summary with quality validation, filtered summarization, or guaranteed count-only note. Never fails.",
+  },
+  {
+    stat: "Depth-aware DAG",
+    label: "Next-gen compression",
+    desc: "A directed acyclic graph with hierarchical summarization: operational detail, session summaries, phase summaries, and durable project memory.",
+  },
+  {
+    stat: "Circuit breakers",
+    label: "Fault isolation",
+    desc: "Each pipeline layer has its own circuit breaker. Three consecutive failures disable a layer for the session. Other layers keep running.",
+  },
+];
+---
+
+<section class="px-6 py-20 md:py-28">
+  <div class="max-w-5xl mx-auto">
+    <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Context intelligence</p>
+    <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+      Context that never dies.
+    </h2>
+    <p class="text-muted text-lg mb-6 max-w-2xl">
+      Most AI agents degrade as conversations grow. Context windows fill up, earlier context gets dropped, and the agent forgets what mattered. Comis runs a multi-layer context engine before every LLM call - compressing intelligently, evicting dead content, and rehydrating critical context after compression.
+    </p>
+    <p class="text-muted-light text-sm mb-14 max-w-2xl">
+      The result: your agents maintain coherence across sessions that would break any other system.
+    </p>
+
+    <!-- Pipeline visualization -->
+    <div class="relative">
+      <!-- Pipeline label -->
+      <div class="flex items-center gap-3 mb-8">
+        <div class="w-8 h-8 rounded-lg bg-teal/20 flex items-center justify-center">
+          <svg class="w-4 h-4 text-teal" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          </svg>
+        </div>
+        <div>
+          <p class="text-white font-semibold">Context Pipeline</p>
+          <p class="text-muted text-sm">Runs before every LLM call. Each layer is fault-isolated.</p>
+        </div>
+      </div>
+
+      <!-- Pipeline flow -->
+      <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {layers.map((layer) => (
+          <div class={`relative bg-navy-light/80 border rounded-xl p-6 ${layer.color === "coral" ? "border-coral/15" : "border-teal/15"}`}>
+            <div class="flex items-center gap-2 mb-3">
+              <span class={`text-xs font-mono px-2 py-0.5 rounded ${layer.color === "coral" ? "bg-coral/10 text-coral" : "bg-teal/10 text-teal"}`}>
+                {layer.badge}
+              </span>
+              <h3 class="text-sm font-semibold text-white">{layer.name}</h3>
+            </div>
+            <p class="text-muted text-sm leading-relaxed">{layer.desc}</p>
+          </div>
+        ))}
+      </div>
+
+      <!-- 8 layers shown above, matching the context management deep dive -->
+    </div>
+
+    <!-- Key metrics / highlights -->
+    <div class="mt-16 grid md:grid-cols-2 gap-6">
+      {highlights.map((h) => (
+        <div class="flex gap-4">
+          <div class="shrink-0 w-1 rounded-full bg-gradient-to-b from-teal to-coral"></div>
+          <div>
+            <p class="text-white font-mono text-sm mb-1">{h.stat}</p>
+            <p class="text-white font-semibold mb-1">{h.label}</p>
+            <p class="text-muted text-sm leading-relaxed">{h.desc}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <!-- Memory + RAG teaser -->
+    <div class="mt-16 bg-navy-light/50 border border-white/5 rounded-xl p-8">
+      <div class="flex flex-col md:flex-row gap-8">
+        <div class="flex-1">
+          <h3 class="text-lg font-semibold text-white mb-3">Persistent memory with semantic search</h3>
+          <p class="text-muted leading-relaxed">
+            SQLite + FTS5 full-text search with vector embeddings for semantic recall. Trust-partitioned memory ensures external content can never overwrite your agent's learned knowledge. RAG retrieval pulls relevant memories into every conversation with provenance annotations and trust-level filtering.
+          </p>
+        </div>
+        <div class="flex-1">
+          <h3 class="text-lg font-semibold text-white mb-3">Session continuity across restarts</h3>
+          <p class="text-muted leading-relaxed">
+            JSONL session persistence with crash recovery. The DAG context engine reconciles session state after restarts - no lost context, no repeated work. Microcompaction offloads large tool results to disk while keeping lightweight references inline.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <p class="text-center mt-14 text-lg text-muted">
+      Other agents forget what matters. <span class="text-white font-semibold">Comis compresses, rehydrates, and remembers.</span>
+    </p>
+    <div class="text-center mt-6">
+      <a href="/context-management" class="inline-flex items-center gap-2 text-sm font-semibold text-teal hover:text-teal-dark transition-colors">
+        Deep dive: How Comis cuts LLM costs by 81%
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+      </a>
+    </div>
+  </div>
+</section>

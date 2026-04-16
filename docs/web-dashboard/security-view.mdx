@@ -1,0 +1,140 @@
+---
+title: "Security"
+description: "Manage security settings, audit logs, and approval gates from the dashboard"
+icon: "shield-check"
+---
+
+The Security view is your command center for reviewing what your agents are doing and controlling what they are allowed to do. It combines two areas of the dashboard: the **Security** page (click **Security** in the sidebar) for configuration and audit logs, and the **Approvals** page (click **Approvals** in the sidebar) for reviewing and acting on pending permission requests.
+
+## Security Dashboard
+
+The Security page has **seven tabs** covering different aspects of your system's security posture.
+
+### Security Events Tab
+
+The Security Events tab is the **default tab** when you open the Security page. It shows a real-time streaming log of security-relevant events with the following columns:
+
+- **Time** -- when the event occurred
+- **Agent** -- which agent triggered the event
+- **Action** -- what the agent did or tried to do
+- **Risk** -- the risk level of the action
+- **User** -- who or what initiated the action
+
+Events stream in as they happen. If you need to pause the stream to read through entries carefully, click the **Pause** button. While paused, new events are buffered and will appear when you click **Resume**.
+
+### Audit Log Tab
+
+The Audit Log provides a historical audit trail of all security decisions. It is filterable and searchable, showing past actions with their outcomes. The Audit Log is more comprehensive than Security Events -- it includes resolved approvals, denied actions, and administrative changes.
+
+### API Tokens Tab
+
+API Tokens are access keys that control who can connect to your Comis system. The API Tokens tab shows a table of all existing tokens with their ID, assigned scopes, and a **Revoke** button to disable them.
+
+Below the table is a **Create Token** form where you can generate a new token:
+
+- Enter a **name** to identify the token
+- Select one or more **scopes** to control what the token can do:
+  - **rpc** -- allows making API calls to the system
+  - **ws** -- allows real-time connections
+  - **admin** -- allows administrative operations
+- Click **Generate** to create the token
+
+<Warning>
+Copy the generated token immediately -- it is only shown once and cannot be retrieved later. If you lose it, you will need to create a new one.
+</Warning>
+
+### Secrets Tab
+
+The Secrets tab shows the status of your encrypted secrets store -- the secure vault where sensitive values like API keys are kept. You can see:
+
+- Whether the secrets store is **enabled or disabled**
+- The **database path** where encrypted secrets are stored on disk
+
+### Approval Rules Tab
+
+The Approval Rules tab provides toggles and editors for controlling what your agents can and cannot do. It covers four areas:
+
+**Action Confirmation**
+- **Require for destructive actions** -- when enabled, agents must get approval before performing actions that delete or modify data
+- **Require for sensitive actions** -- when enabled, agents must get approval for actions involving sensitive information
+- **Auto-approve list** -- actions listed here skip the confirmation step entirely
+
+**Agent-to-Agent Policy**
+- **Enable cross-agent messaging** -- allows agents to communicate with each other
+- **Allowed agents** -- a list of agent IDs that are permitted to participate in cross-agent conversations
+
+**Permissions**
+- **Enable Node.js permission model** -- restricts what the system can access at the operating system level
+- **Allowed filesystem paths** -- directories the system is permitted to read or write
+- **Allowed network hosts** -- servers the system is permitted to connect to
+
+### Pending Approvals Tab
+
+The Pending Approvals tab shows a queue of actions waiting for human approval. Each entry describes:
+
+- The **requesting agent** -- which agent wants to perform the action
+- The **action description** -- what the agent is trying to do
+- The **risk level** -- how risky the action is
+
+Each pending item has **Approve** and **Deny** buttons for your decision.
+
+<Info>
+The Pending Approvals tab provides the same functionality as the **Approvals** sidebar item. Both routes lead to the same approval queue.
+</Info>
+
+### Provider Health Tab
+
+The Provider Health tab shows the health status of your configured AI providers. It displays:
+
+- **Circuit breaker states** -- whether each provider is closed (normal), open (tripped due to errors), or half-open (testing after a cooldown)
+- **Recent error counts** -- how many errors each provider has had recently
+- **Latency metrics** -- response time data per provider
+
+This tab is useful for diagnosing provider outages or degraded performance.
+
+## Approvals
+
+When an agent wants to perform a sensitive or destructive action, it does not just go ahead -- it asks for permission first. The Approvals page (a separate item in the sidebar) is where you manage these permission requests. The **Pending Approvals** tab in the Security view provides the same approval queue functionality.
+
+### Pending Queue
+
+The Pending Queue shows approval cards for actions waiting for your decision. Each card describes what the agent wants to do, which agent is asking, and the risk level of the action. You have two options:
+
+- **Approve** -- allow the agent to proceed
+- **Deny** -- block the action
+
+### History
+
+The History section shows a table of past approval decisions for reference. Each row includes the agent, action, risk level, whether it was approved or denied, the reason given, when it was resolved, and who resolved it. You can filter the history by outcome (approved or denied) and by agent.
+
+### Rules
+
+The Rules section lets you configure how the approval system behaves:
+
+- **Default Mode** -- choose between manual approval for all requests, auto-approving low-risk actions, auto-approving low and medium-risk actions, or auto-approving everything
+- **Timeout** -- how long a request waits before expiring (set to 0 for no timeout)
+
+## Common Tasks
+
+<Steps>
+  <Step title="Review what your agents did">
+    Go to **Security** in the sidebar, then look at the **Security Events** tab (the default tab). Scroll through the entries or click **Pause** to freeze the stream while you read. Each row tells you which agent performed what action and when. For a more comprehensive historical view, switch to the **Audit Log** tab.
+  </Step>
+  <Step title="Create a new API token">
+    Go to the **API Tokens** tab. Enter a name for the token, select the scopes it needs (rpc, ws, or admin), then click **Generate**. Copy the token immediately -- it will not be shown again.
+  </Step>
+  <Step title="Approve a pending action">
+    Click **Approvals** in the sidebar, or go to the **Pending Approvals** tab on the Security page. Review the pending request card to understand what the agent wants to do and why. Click **Approve** to allow it or **Deny** to block it.
+  </Step>
+</Steps>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Security Documentation" icon="shield-check" href="/security/index">
+    Learn about Comis security architecture, secrets management, and hardening.
+  </Card>
+  <Card title="Config Editor" icon="sliders" href="/web-dashboard/config-editor">
+    View and edit your system configuration from the browser.
+  </Card>
+</CardGroup>

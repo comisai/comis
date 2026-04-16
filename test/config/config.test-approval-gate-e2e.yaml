@@ -1,0 +1,91 @@
+tenantId: test
+logLevel: debug
+dataDir: ""
+agents:
+  default:
+    name: TestAgent
+    model: default
+    thinkingLevel: off
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+  helper:
+    name: HelperAgent
+    model: default
+    thinkingLevel: off
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+  tool-test-deny-agent:
+    name: Tool Test Deny Agent
+    model: test-model
+    skills:
+      builtinTools:
+        webSearch: true
+        webFetch: true
+gateway:
+  enabled: true
+  host: 127.0.0.1
+  port: 8522
+  tokens:
+    - id: test-token
+      secret: test-secret-key-for-approval-gate-e2e
+      scopes:
+        - rpc
+        - ws
+        - admin
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+approvals:
+  enabled: true
+  defaultTimeoutMs: 3000
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+memory:
+  dbPath: test-memory-approval-gate-e2e.db
+security:
+  agentToAgent:
+    enabled: false
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

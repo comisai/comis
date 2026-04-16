@@ -1,0 +1,167 @@
+---
+title: "Operations"
+description: "Running, monitoring, and maintaining your Comis installation"
+icon: "gears"
+---
+
+Operations covers everything after installation -- keeping your Comis installation
+running smoothly, understanding what it is doing, and knowing how to fix things
+when they go wrong.
+
+Whether you just finished the [Quickstart](/get-started/quickstart) or are managing
+a production deployment, this section is your guide to day-to-day Comis operations.
+
+## What Operations Covers
+
+Operations is organized into three groups:
+
+### Management
+
+These pages explain the systems that keep Comis running and how to understand what
+is happening inside your installation.
+
+- **[Daemon](/operations/daemon)** -- The background process that powers everything. How it starts, runs, and shuts down.
+- **[Logging](/operations/logging)** -- Where logs go, what the levels mean, and how to view them.
+- **[Monitoring](/operations/monitoring)** -- Automatic health checks that watch disk space, CPU, memory, and more.
+- **[Observability](/operations/observability)** -- Token tracking, cost estimation, latency, and delivery tracing.
+- **[Scheduler](/operations/scheduler)** -- Cron jobs, heartbeat checks, quiet hours, and task extraction.
+- **[Web UI](/operations/web-ui)** -- Setting up the browser-based dashboard for managing Comis.
+
+### Deployment
+
+These pages cover how to run Comis in production with different process managers
+and reverse proxies.
+
+- **[systemd](/operations/systemd)** -- Running Comis as a Linux system service with automatic restarts and watchdog monitoring.
+- **[Docker](/operations/docker)** -- Production-ready container setup with health checks and volume management.
+- **[pm2](/operations/pm2)** -- Using the pm2 process manager for easy start/stop/restart workflows.
+- **[Reverse Proxy](/operations/reverse-proxy)** -- Putting Comis behind Nginx or Caddy with TLS termination.
+
+### Help
+
+When something goes wrong or you have questions, start here.
+
+- **[Troubleshooting](/operations/troubleshooting)** -- Common problems and how to solve them, with exact error messages and step-by-step fixes.
+- **[FAQ](/operations/faq)** -- Answers to frequently asked questions about running Comis.
+
+## Quick Health Check
+
+If you just want to confirm that Comis is running and healthy, follow these three
+steps:
+
+<Steps>
+  <Step title="Check if the daemon is running">
+    <Tabs>
+      <Tab title="pm2">
+        ```bash
+        pm2 status comis
+        ```
+
+        You should see a table with `comis` showing status `online`:
+
+        ```
+        ┌─────┬────────┬──────┬───────┬────────┬─────────┬────────┐
+        │ id  │ name   │ mode │ pid   │ status │ restart │ uptime │
+        ├─────┼────────┼──────┼───────┼────────┼─────────┼────────┤
+        │ 0   │ comis  │ fork │ 12345 │ online │ 0       │ 2h     │
+        └─────┴────────┴──────┴───────┴────────┴─────────┴────────┘
+        ```
+      </Tab>
+      <Tab title="systemd">
+        ```bash
+        systemctl status comis
+        ```
+
+        You should see `active (running)` in the output:
+
+        ```
+        ● comis.service - Comis AI Agent Daemon
+             Active: active (running) since Mon 2026-03-12 10:00:00 UTC
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Check the health endpoint">
+    The daemon exposes a health endpoint you can check from the command line:
+
+    ```bash
+    curl http://localhost:4766/health
+    ```
+
+    Expected response:
+
+    ```json
+    {"status":"ok","timestamp":"2026-03-12T10:00:00.000Z"}
+    ```
+
+    If you get a connection error, the daemon is not running or the gateway is not
+    enabled.
+  </Step>
+
+  <Step title="View recent logs">
+    <Tabs>
+      <Tab title="pm2">
+        ```bash
+        pm2 logs comis --lines 20 --nostream
+        ```
+      </Tab>
+      <Tab title="systemd">
+        ```bash
+        journalctl -u comis -n 20 --no-pager
+        ```
+      </Tab>
+    </Tabs>
+
+    Look for `"Comis daemon started"` in the output -- that confirms the daemon
+    initialized successfully. If you see `FATAL:` errors, check the
+    [Troubleshooting](/operations/troubleshooting) page.
+  </Step>
+</Steps>
+
+<Tip>
+If you just installed Comis, start with the [Daemon](/operations/daemon) page to
+understand how the background process works. Then visit
+[Logging](/operations/logging) to learn how to read what Comis is telling you.
+</Tip>
+
+## All Operations Pages
+
+<CardGroup cols={3}>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    How the background process starts, runs, and shuts down.
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/operations/logging">
+    Understanding and viewing Comis logs.
+  </Card>
+  <Card title="Monitoring" icon="heart-pulse" href="/operations/monitoring">
+    Health monitoring and system alerts.
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/operations/observability">
+    Token tracking, cost estimation, and delivery tracing.
+  </Card>
+  <Card title="Scheduler" icon="clock" href="/operations/scheduler">
+    Cron jobs, heartbeat checks, and task extraction.
+  </Card>
+  <Card title="Web UI" icon="browser" href="/operations/web-ui">
+    Setting up the browser-based dashboard.
+  </Card>
+  <Card title="systemd" icon="linux" href="/operations/systemd">
+    Running Comis as a Linux system service.
+  </Card>
+  <Card title="Docker" icon="docker" href="/operations/docker">
+    Production-ready container setup.
+  </Card>
+  <Card title="pm2" icon="play" href="/operations/pm2">
+    Easy process management with pm2.
+  </Card>
+  <Card title="Reverse Proxy" icon="shield-halved" href="/operations/reverse-proxy">
+    TLS termination with Nginx or Caddy.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Common problems and step-by-step fixes.
+  </Card>
+  <Card title="FAQ" icon="circle-question" href="/operations/faq">
+    Frequently asked questions about running Comis.
+  </Card>
+</CardGroup>

@@ -1,0 +1,325 @@
+---
+title: "Sessions"
+description: "Manage conversations, spawn sub-agents, run pipelines, and search memory"
+icon: "users"
+---
+
+Sessions are the conversations your agents have. The session tools let agents view their conversation status, browse other sessions, spawn sub-agents for specialized tasks, send messages between sessions, run multi-step pipelines, and access long-term memory.
+
+## Session Tools
+
+| Tool | What It Does |
+|------|-------------|
+| `session_status` | View current session info |
+| `sessions_list` | List active sessions |
+| `sessions_history` | Browse conversation history |
+| `sessions_send` | Send a message into another session |
+| `sessions_spawn` | Create a sub-agent session |
+| `subagents` | Manage running sub-agents |
+| `agents_list` | List all configured agents |
+| `pipeline` | Run multi-step DAG workflows |
+
+### Session Management
+
+<AccordionGroup>
+  <Accordion title="session_status -- View current session">
+    Shows the current session's status including the agent ID, channel, message count, and which tools are active. This is useful when the agent needs context about its own conversation.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | (none) | -- | -- | No parameters needed |
+
+    Returns the session ID, agent ID, channel type, message count, and active tool list.
+  </Accordion>
+
+  <Accordion title="sessions_list -- List active sessions">
+    Lists all active sessions across the platform, with optional filters by session type or recency.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `kind` | string | No | Filter by session type |
+    | `recent` | boolean | No | Show only recent sessions |
+
+    Returns a list of sessions with their IDs, agent assignments, channels, and last activity timestamps.
+  </Accordion>
+
+  <Accordion title="sessions_history -- Browse conversation history">
+    Views the conversation history for any session. The agent can look at its own history or browse the history of other sessions (useful for research or context gathering).
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `session_id` | string | Yes | The session to view |
+    | `limit` | number | No | Maximum messages to return |
+    | `offset` | number | No | Skip this many messages (for pagination) |
+
+    Returns a paginated list of messages with roles (user/assistant), content, timestamps, and any tool calls made.
+  </Accordion>
+
+  <Accordion title="sessions_send -- Send a message to another session">
+    Sends a message into another session. This is the primary way agents communicate with each other. The three modes control how the sending agent waits for a response.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `session_id` | string | Yes | The target session |
+    | `text` | string | Yes | The message to send |
+    | `mode` | string | Yes | How to handle the response: `fire-and-forget`, `wait`, or `ping-pong` |
+
+    **Modes explained:**
+
+    | Mode | Behavior |
+    |------|----------|
+    | `fire-and-forget` | Send the message and continue immediately. Do not wait for a response. Best for notifications and one-way updates. |
+    | `wait` | Send the message and wait for the target agent to finish processing. Returns the full response. Best for delegation. |
+    | `ping-pong` | Send the message and receive a conversational exchange. The agents go back and forth until the target completes. Best for collaborative tasks. |
+
+    **Example -- Delegate a task and wait:**
+    ```yaml
+    session_id: "sess_research_agent"
+    text: "Research the latest quarterly earnings for ACME Corp and summarize."
+    mode: "wait"
+    ```
+
+    **Example -- Send a notification:**
+    ```yaml
+    session_id: "sess_ops_bot"
+    text: "Deployment to staging completed successfully."
+    mode: "fire-and-forget"
+    ```
+  </Accordion>
+
+  <Accordion title="sessions_spawn -- Spawn a sub-agent session">
+    Creates a new sub-agent session with structured context. The spawned agent runs in an isolated workspace with its own conversation history and receives a context packet containing the task, artifact references, domain knowledge, and an optional objective that survives compaction.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `task` | string | Yes | Task description for the sub-agent |
+    | `agent` | string | No | Target agent ID for cross-agent spawning (defaults to the current agent) |
+    | `async` | boolean | No | Spawn asynchronously, returns `runId` immediately (default: `false` -- waits for result) |
+    | `model` | string | No | Model override for the sub-agent |
+    | `artifact_refs` | string[] | No | File paths for the sub-agent to reference in its workspace |
+    | `tool_groups` | string[] | No | Tool group names for sub-agent tool filtering (e.g., `"coding"`, `"web"`) |
+    | `objective` | string | No | Objective statement that survives context compaction |
+    | `include_parent_history` | `"none"` or `"summary"` | No | Include a condensed summary of the parent conversation (default: `"none"`) |
+    | `domain_knowledge` | string[] | No | Domain knowledge entries to pass to the sub-agent |
+    | `expected_outputs` | string[] | No | File paths to validate after sub-agent execution completes |
+    | `max_steps` | integer | No | Maximum execution steps (floor of 30, default 50, capped at config default) |
+    | `announce_channel_type` | string | No | Channel type for result announcement |
+    | `announce_channel_id` | string | No | Channel ID for result announcement |
+
+    When `async` is `false` (the default), the parent agent blocks until the sub-agent completes and returns its result. When `async` is `true`, the sub-agent runs in the background and the parent continues working. Use `subagents` to check on background sub-agents.
+
+    Sub-agent results are automatically condensed (if over the token threshold) and formatted with metadata tags before being returned to the parent. See [Subagent Context Lifecycle](/agents/subagent-lifecycle) for the full pipeline.
+
+    **Example -- Spawn a coding agent (sync):**
+    ```yaml
+    task: "Fix the broken login form validation in src/auth/login.ts"
+    agent: "coder"
+    ```
+
+    **Example -- Spawn an async researcher:**
+    ```yaml
+    task: "Find the top 10 competitors in the AI agent space and write a comparison."
+    agent: "researcher"
+    async: true
+    ```
+
+    **Example -- Spawn with artifacts and objective:**
+    ```yaml
+    task: "Refactor the authentication module to use JWT"
+    agent: "coder"
+    artifact_refs: ["src/auth/login.ts", "src/auth/middleware.ts"]
+    objective: "Modernize auth to use stateless JWT tokens"
+    ```
+  </Accordion>
+
+  <Accordion title="subagents -- Manage running sub-agents">
+    Manages sub-agents that were spawned with `sessions_spawn`. You can list running sub-agents, terminate them, or send guidance messages to steer their work.
+
+    **Actions:**
+
+    | Action | What It Does |
+    |--------|-------------|
+    | `list` | Show all running sub-agents with their status and progress |
+    | `kill` | Terminate a sub-agent by its session ID |
+    | `steer` | Send a guidance message to a running sub-agent to redirect its work |
+
+    **Example -- Check on sub-agents:**
+    ```yaml
+    action: list
+    ```
+
+    **Example -- Steer a running sub-agent:**
+    ```yaml
+    action: steer
+    session_id: "sess_researcher_001"
+    text: "Focus on open-source competitors only, skip proprietary solutions."
+    ```
+  </Accordion>
+
+  <Accordion title="agents_list -- List configured agents">
+    Lists all agent IDs configured in the system. This is useful when the agent needs to know which other agents are available for spawning or delegation.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | (none) | -- | -- | No parameters needed |
+
+    Returns the names and IDs of all configured agents in the system.
+  </Accordion>
+
+  <Accordion title="pipeline -- DAG pipeline execution">
+    Executes multi-step workflows defined as a directed acyclic graph (DAG). Pipelines let agents orchestrate complex tasks with parallel execution, dependencies between steps, and automatic result passing.
+
+    **Actions:**
+
+    | Action | What It Does |
+    |--------|-------------|
+    | `define` | Create a pipeline from a set of nodes with dependencies |
+    | `execute` | Run a defined pipeline |
+    | `status` | Check the progress of a running pipeline |
+    | `cancel` | Stop a running pipeline |
+    | `save` | Persist a pipeline definition for reuse |
+    | `load` | Load a previously saved pipeline |
+    | `list` | List all saved pipeline definitions |
+    | `delete` | Remove a saved pipeline definition |
+
+    **Example -- Define a simple pipeline:**
+    ```yaml
+    action: define
+    nodes:
+      - id: research
+        agent: researcher
+        prompt: "Research recent AI developments"
+      - id: summarize
+        agent: writer
+        prompt: "Write a summary based on the research"
+        depends_on: [research]
+    ```
+
+    Pipelines automatically handle parallel execution for nodes without dependencies and pass results between dependent nodes. For example, if three research tasks have no dependencies on each other, they run simultaneously. The summarize step waits until all its dependencies complete before starting.
+
+    When a pipeline runs, Comis creates a shared data folder that all nodes can read from and write to. Nodes can use this folder to exchange files, reports, and structured data that would be too large for the text-based result passing between nodes. The shared folder is cleaned up automatically when the pipeline completes. See [Pipelines: Shared Data Folder](/developer-guide/pipelines#shared-data-folder) for details.
+  </Accordion>
+</AccordionGroup>
+
+## Memory Tools
+
+Agents have access to long-term memory that persists across conversations. These tools let agents explicitly search, read, and store memories. Memory uses hybrid text and vector search, so agents can find relevant information even when the wording differs from the original.
+
+| Tool | What It Does |
+|------|-------------|
+| `memory_search` | Search long-term memory using text or semantic similarity |
+| `memory_get` | Read a specific memory entry by path |
+| `memory_store` | Explicitly save information to long-term memory |
+
+<AccordionGroup>
+  <Accordion title="memory_search -- Search long-term memory">
+    Searches the agent's long-term memory using hybrid text and vector similarity. Returns matching memory entries ranked by relevance.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `query` | string | Yes | The search text (natural language works best) |
+    | `limit` | number | No | Maximum results to return |
+
+    Returns matching entries with their paths, content previews, and relevance scores.
+
+    **Example:**
+    ```yaml
+    query: "What did the user say about their project deadline?"
+    limit: 5
+    ```
+  </Accordion>
+
+  <Accordion title="memory_get -- Read a specific memory entry">
+    Reads the full content of a specific memory entry identified by its path.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `path` | string | Yes | The memory entry path or key |
+
+    Returns the complete content of the memory entry.
+  </Accordion>
+
+  <Accordion title="memory_store -- Store a memory entry">
+    Explicitly stores information in the agent's long-term memory. While Comis automatically stores important information from conversations, this tool lets agents deliberately save specific facts, preferences, or notes.
+
+    **Parameters:**
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `content` | string | Yes | The information to remember |
+    | `path` | string | No | Where to store it (auto-generated if not provided) |
+
+    **Example:**
+    ```yaml
+    content: "User prefers weekly reports delivered on Monday mornings."
+    path: "preferences/reporting"
+    ```
+
+    <Warning>
+    Comis has built-in secret detection. Attempting to store API keys, passwords, tokens, or other secrets will be blocked automatically. This protects against accidental credential leakage into the memory system.
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+## Sub-Agent Patterns
+
+Sub-agents are one of the most powerful features in Comis. Here are common patterns for using them effectively:
+
+### Delegation
+
+Spawn a specialist agent for a specific task. For example, a general-purpose assistant can spawn a coding agent to fix a bug, wait for the result, and report back to the user.
+
+```yaml
+# Parent agent spawns a specialist
+task: "Fix the TypeScript compilation error in src/utils/parser.ts"
+agent: "coder"
+```
+
+### Parallel Work
+
+Spawn multiple sub-agents to work on different parts of a problem simultaneously. Each sub-agent runs independently, and the parent collects results when they finish.
+
+```yaml
+# Spawn three researchers in parallel (async: true for each)
+# Then use subagents list to check progress
+# Collect results when all three complete
+```
+
+### Pipeline Orchestration
+
+Use the `pipeline` tool to define a DAG of agent tasks with dependencies. The pipeline engine handles execution order, parallelism, and result passing automatically.
+
+This is the most structured approach to multi-agent coordination. Use it when you have a well-defined workflow with clear steps and dependencies between them.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Agent Sessions" icon="arrows-spin" href="/agents/sessions">
+    How sessions work under the hood
+  </Card>
+  <Card title="Messaging" icon="paper-plane" href="/agent-tools/messaging">
+    Send messages across channels
+  </Card>
+  <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
+    Master reference table of all 47 tools
+  </Card>
+  <Card title="Infrastructure" icon="server" href="/agent-tools/infrastructure">
+    Configuration, gateway control, and fleet management
+  </Card>
+</CardGroup>

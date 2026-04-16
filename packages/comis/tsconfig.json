@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../shared" },
+    { "path": "../core" },
+    { "path": "../infra" },
+    { "path": "../memory" },
+    { "path": "../gateway" },
+    { "path": "../skills" },
+    { "path": "../scheduler" },
+    { "path": "../agent" },
+    { "path": "../channels" },
+    { "path": "../cli" },
+    { "path": "../daemon" }
+  ]
+}

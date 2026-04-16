@@ -1,0 +1,155 @@
+---
+title: "Tool Policy"
+description: "Control which tools your agents can use with profiles, groups, and allow/deny lists"
+icon: "shield-halved"
+---
+
+Not every agent needs every tool. A customer service agent should not have shell access. A coding agent does not need platform moderation tools. Tool policies let you give each agent exactly the tools it needs -- and nothing more.
+
+## Profiles
+
+A profile is a named set of tools that serves as your starting point. Choose the profile that best matches your agent's role, then fine-tune with allow and deny lists.
+
+| Profile | Tools Included | Best For |
+|---------|---------------|----------|
+| `minimal` | `read`, `write` | Restricted agents with basic file access |
+| `coding` | `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process` | Development and coding agents |
+| `messaging` | `message`, `session_status` | Agents that only send messages |
+| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | Fleet management and administration |
+| `full` | All tools (no restrictions) | Unrestricted agents -- this is the default |
+
+<Info>
+The `full` profile is the default. If you do not configure a tool policy, your agent has access to every available tool. For production deployments, consider choosing a more restrictive profile and adding only what your agent needs.
+</Info>
+
+## Tool Groups
+
+Instead of listing individual tools in your allow and deny lists, you can use groups to manage entire categories at once. Each group expands to a specific set of tools.
+
+| Group | Tools | Purpose |
+|-------|-------|---------|
+| `group:coding` | `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process` | All file and shell tools |
+| `group:web` | `web_fetch`, `web_search`, `browser` | All web access tools |
+| `group:browser` | `browser` | Browser automation only |
+| `group:memory` | `memory_search`, `memory_get`, `memory_store` | All memory tools |
+| `group:scheduling` | `cron` | Scheduling tools |
+| `group:messaging` | `message` | Messaging tools |
+| `group:sessions` | `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`, `session_search`, `subagents`, `agents_list`, `pipeline` | All session and agent tools |
+| `group:platform_actions` | `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` | All platform moderation tools |
+| `group:supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | All supervisor tools |
+| `group:context` | `ctx_search`, `ctx_inspect`, `ctx_recall` | Context DAG search and recall tools |
+| `group:context_expand` | `ctx_expand`, `ctx_inspect` | Context DAG expansion tools (sub-agent only) |
+
+You can mix individual tool names and group names in the same allow or deny list.
+
+## Configuring Tool Policy
+
+Add a `toolPolicy` section under `skills` in your [configuration file](/reference/config-yaml). Here are three common setups:
+
+**Coding agent with web access:**
+
+```yaml
+skills:
+  toolPolicy:
+    profile: coding
+    allow:
+      - group:web
+      - group:memory
+```
+
+This agent starts with the coding profile (file tools and shell) and adds web access and memory tools on top.
+
+**Customer service agent -- messaging only, no file access:**
+
+```yaml
+skills:
+  toolPolicy:
+    profile: messaging
+    allow:
+      - group:memory
+    deny:
+      - exec
+```
+
+This agent can send messages and search memory, but has no shell access or file tools. The `deny` list explicitly removes `exec` even though it is not in the messaging profile -- this is a defensive measure in case the profile changes in a future version.
+
+**Supervisor agent:**
+
+```yaml
+skills:
+  toolPolicy:
+    profile: supervisor
+    allow:
+      - group:web
+```
+
+This agent can manage the fleet (agents, sessions, memory, channels, tokens, models, skills, MCP servers, heartbeats) and also has web access for checking external services.
+
+## How Resolution Works
+
+When Comis determines which tools an agent can use, it follows a three-step process:
+
+1. **Start with the profile** -- load the tools defined by the named profile
+2. **Add the allow list** -- include any additional tools or groups from the `allow` field
+3. **Remove the deny list** -- exclude any tools or groups from the `deny` field
+
+The deny list always wins. If a tool appears in both the profile and the deny list, it is denied. This means you can safely use a broad profile and then remove specific tools you do not want.
+
+<Tip>
+The `deny` list is applied last, so it takes priority over everything else. This is useful when you want to use a broad profile like `coding` but need to remove one specific tool -- for example, denying `exec` to prevent shell access while keeping all other coding tools.
+</Tip>
+
+### Example Resolution
+
+Given this configuration:
+
+```yaml
+skills:
+  toolPolicy:
+    profile: coding
+    allow:
+      - group:web
+    deny:
+      - exec
+      - browser
+```
+
+The resolution works like this:
+
+1. **Profile `coding`:** `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process`
+2. **Add `group:web`:** adds `web_fetch`, `web_search`, `browser`
+3. **Deny `exec`, `browser`:** removes both from the final set
+
+**Result:** `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `process`, `web_fetch`, `web_search`
+
+## Per-Skill Tool Restrictions
+
+In addition to the agent-level tool policy, individual skills can restrict which tools are available while they are active. This is set with the `allowedTools` field in the [skill manifest](/skills/manifest):
+
+```yaml
+---
+name: research-assistant
+description: "Search the web and summarize findings"
+allowedTools:
+  - web_search
+  - web_fetch
+  - read
+---
+```
+
+When this skill is active, the agent can only use the three listed tools -- even if its tool policy allows more. This adds a second layer of restriction on top of the policy.
+
+<CardGroup cols={2}>
+  <Card title="Skills Overview" icon="wand-magic-sparkles" href="/skills/index">
+    Understanding the three types of skills
+  </Card>
+  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
+    Full configuration reference including tool policy
+  </Card>
+  <Card title="Built-in Tools" icon="wrench" href="/skills/built-in-tools">
+    All built-in tools documented
+  </Card>
+  <Card title="Agent Tools" icon="toolbox" href="/agent-tools/index">
+    Complete platform tool reference
+  </Card>
+</CardGroup>

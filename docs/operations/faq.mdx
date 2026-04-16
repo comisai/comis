@@ -1,0 +1,163 @@
+---
+title: "FAQ"
+description: "Frequently asked questions about Comis"
+icon: "circle-question"
+---
+
+Answers to the most common questions about running and using Comis.
+
+## General
+
+<AccordionGroup>
+  <Accordion title="What is Comis?">
+    Comis is an open-source AI agent platform that connects AI models to real-time chat channels like Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, and IRC. It is not a chatbot builder — it is an autonomous agent framework where agents can schedule their own work, use tools, manage long-term memory, and operate independently across multiple platforms.
+  </Accordion>
+
+  <Accordion title="Is Comis free?">
+    Yes, Comis is fully open source under the Apache-2.0 license and free to use. There is no license fee, no usage cap, and no paid tier.
+
+    However, you will need API keys from AI providers (Anthropic, OpenAI, etc.) to power your agents. Those providers charge for API usage based on the number of tokens processed. Comis itself costs nothing.
+  </Accordion>
+
+  <Accordion title="What AI providers does Comis support?">
+    Comis supports:
+
+    - **Anthropic** (Claude models)
+    - **OpenAI** (GPT-4 and newer)
+    - **Any OpenAI-compatible provider** — this includes Ollama (for local models), Together AI, Groq, and many others
+
+    You can configure multiple providers and assign different models to different agents. See the [Models](/agents/models) page for details.
+  </Accordion>
+
+  <Accordion title="Do I need an API key?">
+    Yes, you need at least one AI provider API key. Agents need an AI model to think and respond — without an API key, there is no model to call.
+
+    Most users start with an Anthropic API key for Claude or an OpenAI API key for GPT models. See the [Configuration](/installation/configuration) page for how to set up your API key.
+  </Accordion>
+</AccordionGroup>
+
+## Cost and Resources
+
+<AccordionGroup>
+  <Accordion title="How much does it cost to run?">
+    Comis itself is free. Your costs come from AI provider API usage:
+
+    - **Simple conversations** typically cost a few cents per exchange
+    - **Complex agent executions** (using tools, multiple LLM calls) typically cost $3-10 per execution
+    - **Cron jobs and heartbeats** that involve LLM calls add incremental costs
+
+    Comis includes built-in budget controls to prevent unexpected spending. You can set per-agent token limits, cost caps, and circuit breakers that pause an agent if it exceeds your budget. See [Agent Safety](/agents/safety) for details.
+  </Accordion>
+
+  <Accordion title="What hardware do I need?">
+    Comis is lightweight. Minimum requirements:
+
+    - **OS**: Linux (production) or macOS (development)
+    - **CPU**: Any modern processor (1+ cores)
+    - **RAM**: 1 GB minimum, 2 GB recommended
+    - **Disk**: 500 MB for the application, plus space for the database and logs
+    - **Node.js**: Version 22 or newer
+
+    A $5/month VPS (like DigitalOcean, Hetzner, or Linode) is sufficient for personal use with a few agents. See the [Requirements](/installation/requirements) page for full details.
+  </Accordion>
+
+  <Accordion title="Can I run it on my laptop?">
+    Yes. macOS and Linux are both supported for development and personal use. Install Node.js 22+, clone the repository, build, and start.
+
+    For always-on operation (agents responding 24/7), use a server or VPS so the agents keep running when your laptop is closed. See the [Installation](/installation) guide to get started.
+  </Accordion>
+</AccordionGroup>
+
+## Setup and Platforms
+
+<AccordionGroup>
+  <Accordion title="Which chat platforms are supported?">
+    Comis supports 9 chat platforms:
+
+    - **Telegram** — full support including groups, inline keyboards, and media
+    - **Discord** — servers, DMs, threads, reactions, and embeds
+    - **Slack** — workspaces with Socket Mode or HTTP mode
+    - **WhatsApp** — via the WhatsApp Business API
+    - **Signal** — via signal-cli (self-hosted)
+    - **iMessage** — macOS only, via AppleScript integration
+    - **LINE** — via the LINE Messaging API
+    - **IRC** — any IRC network
+    - **Email** — via IMAP/SMTP (any email provider)
+
+    See the [Channels](/channels) overview for a detailed comparison of features and limitations across platforms.
+  </Accordion>
+
+  <Accordion title="Can I connect multiple platforms at once?">
+    Yes. Comis connects to all your configured platforms simultaneously. You can have the same agent responding on Telegram, Discord, and Slack at the same time, or assign different agents to different platforms.
+
+    Agent [routing](/agents/routing) controls which agent responds on which channel. You can route by platform, channel, or even specific users.
+  </Accordion>
+
+  <Accordion title="How do I update Comis?">
+    Pull the latest code and rebuild:
+
+    ```bash
+    git pull
+    pnpm install
+    pnpm build
+    ```
+
+    Then restart the daemon:
+
+    ```bash
+    pm2 restart comis
+    ```
+
+    Or with systemd:
+
+    ```bash
+    sudo systemctl restart comis
+    ```
+
+    Your configuration and data are preserved across updates — only the application code changes.
+  </Accordion>
+</AccordionGroup>
+
+## Security and Privacy
+
+<AccordionGroup>
+  <Accordion title="Is my data private?">
+    Yes. Comis runs entirely on your server. Conversations are stored locally in a SQLite database on your machine. The only external communication is with the AI provider API you configure (Anthropic, OpenAI, etc.) to process messages.
+
+    There is no telemetry, no analytics, no usage tracking, and no data sharing with anyone. Your data never leaves your server except for the API calls you explicitly configure.
+  </Accordion>
+
+  <Accordion title="Can agents access my files?">
+    Only if you explicitly enable file tools in the [tool policy](/skills/tool-policy). By default, agents have restricted file system access.
+
+    When running as a systemd service, the Node.js `--permission` flags provide an additional sandbox layer that restricts file access to specific directories. See the [Security](/security) documentation for details on all protection layers.
+  </Accordion>
+
+  <Accordion title="What if an agent goes rogue?">
+    Comis has multiple safety layers to prevent runaway agents:
+
+    - **Budget limits** cap token usage and estimated cost per agent
+    - **Circuit breakers** automatically pause agents that hit error thresholds
+    - **Tool policies** restrict which tools each agent can use
+    - **Approval workflows** require human approval for sensitive actions
+
+    If an agent exceeds its budget, it stops executing and logs a warning. You can configure all these limits in your `config.yaml`. See [Agent Safety](/agents/safety) for details.
+  </Accordion>
+</AccordionGroup>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Solutions to common issues with exact error messages
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Getting Comis installed and running
+  </Card>
+  <Card title="Channels" icon="comments" href="/channels">
+    Connecting chat platforms
+  </Card>
+  <Card title="Agent Safety" icon="shield" href="/agents/safety">
+    Budget limits, circuit breakers, and cost controls
+  </Card>
+</CardGroup>

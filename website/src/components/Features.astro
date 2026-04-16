@@ -1,0 +1,28 @@
+---
+const features = [
+  { icon: "context", title: "Context that gets smarter", desc: "An 8-layer pipeline manages context before every LLM call. Dead content eviction, observation masking, LLM compaction with 3-level fallback, and progressive tool disclosure that loads detailed guidance only when needed. Your agents never forget what matters." },
+  { icon: "automate", title: "Automate your mornings", desc: "Graph pipelines run multi-step workflows on a schedule. Scan the news, summarize your email, check your calendar, compile a briefing, deliver it to Telegram at 8am." },
+  { icon: "tools", title: "50+ tools, one config line", desc: "GitHub, Gmail, Notion, PostgreSQL, Brave Search, browser automation, sandboxed shell - connect anything via MCP. Shell commands run inside an OS-level filesystem sandbox so agents can only access their own workspace." },
+  { icon: "media", title: "Voice and media, naturally", desc: "Send a voice note, get a text reply. Analyze images with vision models. Transcribe audio with Whisper, Groq, or Deepgram. Generate speech with OpenAI, ElevenLabs, or Edge TTS." },
+  { icon: "models", title: "Any model, your choice", desc: "Claude, GPT, Gemini, Groq, local models via Ollama, or anything on OpenRouter. Different agents can use different models. Tool presentation adapts automatically to each model's context window - small models get focused tool sets, large models get the full picture. No vendor lock-in." },
+  { icon: "memory", title: "Memory that persists", desc: "SQLite with FTS5 full-text search and vector embeddings. Trust-partitioned storage prevents memory poisoning. RAG retrieval injects relevant history with provenance annotations." },
+];
+---
+
+<section class="px-6 py-20 md:py-28 bg-navy-light/50">
+  <div class="max-w-5xl mx-auto">
+    <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">What you can do</p>
+    <h2 class="text-3xl md:text-4xl font-bold text-white mb-14">
+      Real tools. Real workflows. Real results.
+    </h2>
+
+    <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+      {features.map((f) => (
+        <div class="bg-navy/80 border border-white/5 rounded-xl p-8">
+          <h3 class="text-xl font-semibold text-white mb-3">{f.title}</h3>
+          <p class="text-muted leading-relaxed">{f.desc}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>

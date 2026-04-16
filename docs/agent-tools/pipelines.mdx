@@ -1,0 +1,566 @@
+---
+title: "Pipelines"
+description: "The pipeline tool for defining, executing, and managing multi-agent execution graphs"
+icon: "diagram-project"
+---
+
+The `pipeline` tool lets agents define, execute, and manage multi-agent workflows as execution graphs (DAGs). Each node in a graph is a sub-agent task that runs independently. Nodes can execute in parallel when they have no dependencies, or wait for upstream nodes to complete before starting.
+
+For conceptual background on execution graphs, see [Execution Graphs](/agents/execution-graphs).
+
+## Prerequisite
+
+Agent-to-agent communication must be enabled in your configuration:
+
+```yaml
+security:
+  agentToAgent:
+    enabled: true
+```
+
+Without this setting, the `pipeline` tool will not be available.
+
+## Actions
+
+The pipeline tool supports 9 actions. The default action is `execute` if no action is specified.
+
+### define
+
+Validates a graph structure without executing it. Returns the topological execution order and any warnings. Use this to check a graph before running it.
+
+```yaml
+tool: pipeline
+action: define
+nodes:
+  - node_id: search
+    task: "Search for TypeScript best practices"
+  - node_id: summarize
+    task: "Summarize the search results: {{search.result}}"
+    depends_on: [search]
+label: "TS Best Practices"
+```
+
+### execute
+
+Starts a graph and returns a `graphId` for monitoring. Root nodes (no dependencies) begin immediately.
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: search
+    task: "Search for TypeScript best practices"
+  - node_id: summarize
+    task: "Summarize the findings: {{search.result}}"
+    depends_on: [search]
+label: "TS Best Practices"
+```
+
+### status
+
+Check the status of a specific graph or list recent graph executions.
+
+```yaml
+# Check a specific graph
+tool: pipeline
+action: status
+graph_id: "abc-123-def"
+
+# List recent graphs from the last 30 minutes
+tool: pipeline
+action: status
+recent_minutes: 30
+```
+
+### cancel
+
+Stop a running graph. All running nodes are terminated and remaining nodes are skipped. Requires user confirmation (`_confirmed: true`) because it is a destructive action gated by the action classifier.
+
+```yaml
+tool: pipeline
+action: cancel
+graph_id: "abc-123-def"
+_confirmed: true
+```
+
+### save
+
+Persist a graph definition for reuse. Edges are automatically derived from `depends_on` if not explicitly provided.
+
+```yaml
+tool: pipeline
+action: save
+label: "Research Pipeline"
+nodes:
+  - node_id: search
+    task: "Search for ${TOPIC}"
+  - node_id: analyze
+    task: "Analyze findings: {{search.result}}"
+    depends_on: [search]
+  - node_id: write
+    task: "Write a report based on: {{analyze.result}}"
+    depends_on: [analyze]
+```
+
+### load
+
+Retrieve a previously saved graph definition by its ID.
+
+```yaml
+tool: pipeline
+action: load
+id: "research-pipeline-id"
+```
+
+### list
+
+Browse saved graph definitions with optional pagination.
+
+```yaml
+tool: pipeline
+action: list
+limit: 10
+offset: 0
+```
+
+### delete
+
+Remove a saved graph definition. Requires user confirmation because it is a destructive action.
+
+```yaml
+tool: pipeline
+action: delete
+id: "research-pipeline-id"
+_confirmed: true
+```
+
+### outputs
+
+Retrieve node output values from a completed or running graph. Uses memory-first retrieval with disk fallback for expired graphs. Each node output is truncated at 12,000 characters.
+
+```yaml
+tool: pipeline
+action: outputs
+graph_id: "abc-123-def"
+```
+
+**Response:**
+
+```json
+{
+  "graphId": "abc-123-def",
+  "outputs": {
+    "search": "Found 5 sources on quantum computing...",
+    "analyze": "Key trends: 1) ..., 2) ..., 3) ...",
+    "write": null
+  },
+  "source": "memory"
+}
+```
+
+Nodes that have not completed yet return `null`. The `source` field indicates whether outputs were retrieved from the in-memory coordinator (`"memory"`) or from persisted output files on disk (`"disk"`).
+
+## Node configuration
+
+Each node in the `nodes` array accepts the following parameters:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `node_id` | `string` | Yes | Unique identifier within the graph |
+| `task` | `string` | Yes | Task description for the sub-agent. Use `{{nodeId.result}}` to inline upstream output. Use `${VAR}` for user-provided inputs. |
+| `depends_on` | `string[]` | No | Node IDs that must complete before this node runs |
+| `agent` | `string` | No | Agent ID to run this node (defaults to caller's agent) |
+| `model` | `string` | No | Model override for this node |
+| `timeout_ms` | `integer` | No | Per-node timeout in milliseconds (default: 300000) |
+| `max_steps` | `integer` | No | Maximum agentic steps for the sub-agent |
+| `barrier_mode` | `string` | No | `all` (default), `majority`, or `best-effort` |
+| `retries` | `integer` | No | Number of automatic retries on failure (0-3, default: 0). Exponential backoff delays: 1s, 2s, 4s. |
+| `type_id` | `string` | No | Built-in node type: `agent`, `debate`, `vote`, `refine`, `collaborate`, `approval-gate`, or `map-reduce`. If omitted, the node runs as a regular single-agent task. |
+| `type_config` | `object` | No | Type-specific configuration. Required when `type_id` is set. See [Node Types](/developer-guide/pipelines#node-types) for config schemas per type. |
+| `context_mode` | `string` | No | Upstream output verbosity: `full` (default, complete outputs), `summary` (500 chars + shared dir reference), `none` (no automatic injection -- use `{{nodeId.result}}` for explicit data). |
+
+## Graph settings
+
+Top-level parameters that apply to the entire graph:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | `string` | No | Pipeline action (default: `execute`) |
+| `nodes` | `array` | For define/execute/save | Array of node definitions |
+| `label` | `string` | No | Human-readable graph label |
+| `on_failure` | `string` | No | `fail-fast` (default) or `continue` |
+| `timeout_ms` | `integer` | No | Graph-level timeout in milliseconds |
+| `graph_id` | `string` | For status/cancel/outputs | ID of a running/completed graph |
+| `id` | `string` | For save/load/delete | Named graph ID for persistence |
+| `budget` | `object` | No | `{ max_tokens, max_cost }` -- resource limits |
+| `variables` | `object` | No | Key-value pairs for `${VARIABLE_NAME}` substitution in task text at execute time |
+| `edges` | `array` | No | Explicit edge definitions (auto-derived if omitted) |
+| `settings` | `object` | No | Additional graph settings |
+| `limit` | `integer` | No | Max entries for list action |
+| `offset` | `integer` | No | Pagination offset for list action |
+| `recent_minutes` | `integer` | No | Filter status listing to last N minutes |
+| `_confirmed` | `boolean` | No | Required for cancel/delete after user approval |
+
+### Edges
+
+Edges define structural connections between nodes. They are auto-derived from `depends_on` if not explicitly provided:
+
+```yaml
+edges:
+  - source: search
+    target: analyze
+  - from: analyze    # "from" is an alias for "source"
+    to: write        # "to" is an alias for "target"
+```
+
+Each edge can have an `id` (auto-generated as `source->target` if omitted), and `source`/`target` (or `from`/`to` aliases).
+
+## Data flow
+
+Nodes receive upstream results through `{{nodeId.result}}` template interpolation directly in the task text. The `nodeId` must appear in the node's `depends_on` array.
+
+```yaml
+nodes:
+  - node_id: search
+    task: "Search for information about quantum computing"
+  - node_id: analyze
+    task: "Analyze the search results: {{search.result}}"
+    depends_on: [search]
+```
+
+In this example, `search` is the upstream node ID referenced in `depends_on`, and `{{search.result}}` is replaced with the search node's output at runtime.
+
+<Tip>
+Use `${VARIABLE_NAME}` for user-provided inputs that the web dashboard prompts for before execution. Use `{{nodeId.result}}` to inline upstream node outputs. These are two different interpolation syntaxes -- `${VAR}` is resolved at execute time from the `variables` parameter, while `{{nodeId.result}}` is resolved at runtime when the upstream node completes.
+</Tip>
+
+**Important constraints:**
+
+- Template references (`{{X.result}}`) must use a node ID that appears in the same node's `depends_on` array
+- Outputs exceeding 12,000 characters are automatically truncated
+- If an upstream node did not complete (failed or skipped), the template is replaced with `[unavailable: node "nodeId" did not complete]`
+- Additionally, upstream outputs are automatically injected as context for downstream nodes. Set `context_mode: "none"` to disable automatic injection and rely solely on `{{nodeId.result}}` templates.
+
+## Shared data folder
+
+Each graph execution creates a temporary directory at `~/.comis/graph-runs/{graphId}/`. All nodes can read and write files here, making it ideal for exchanging large payloads between nodes.
+
+```yaml
+- node_id: generate
+  task: "Generate a CSV report and save it to the shared pipeline folder"
+- node_id: analyze
+  task: "Read the CSV report from the shared pipeline folder and summarize it"
+  depends_on: [generate]
+```
+
+The shared folder path is automatically provided to each sub-agent.
+
+## Error handling
+
+### Failure policies
+
+| Policy | When a node fails |
+|--------|------------------|
+| `fail-fast` | All downstream dependents are immediately skipped. The graph completes once remaining running nodes finish. |
+| `continue` | Only dependents whose barrier can never be satisfied are skipped. Other nodes continue running if their barrier may still be met. |
+
+### Barrier evaluation
+
+With `fail-fast`, any failed dependency cascades to skip all downstream nodes. With `continue`, the barrier mode determines whether a downstream node runs or is skipped:
+
+- **all**: skipped if any dependency failed
+- **majority**: skipped only if more than half the dependencies failed
+- **best-effort**: skipped only if every dependency failed
+
+### Node status lifecycle
+
+```
+pending -> ready -> running -> completed
+                           \-> failed
+                \----------\-> skipped
+```
+
+A node starts as `pending`, becomes `ready` when its dependencies are satisfied (or immediately if it has none), transitions to `running` when spawned, and ends as `completed`, `failed`, or `skipped`.
+
+### Budget and timeout cancellation
+
+If the graph exceeds its budget (`max_tokens` or `max_cost`) or timeout, all running nodes are killed and remaining nodes are skipped. The `graph:completed` event includes a `cancelReason` field (`timeout`, `budget`, or `manual`).
+
+## Examples
+
+### Research pipeline
+
+A sequential chain where each step builds on the previous:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: search
+    task: "Search the web for the latest developments in renewable energy storage"
+  - node_id: analyze
+    task: "Analyze the search results and identify the top 3 trends: {{search.result}}"
+    depends_on: [search]
+  - node_id: write
+    task: "Write a 1000-word article about renewable energy storage trends based on: {{analyze.result}}"
+    depends_on: [analyze]
+label: "Renewable Energy Research"
+```
+
+### Code review pipeline
+
+Parallel analysis steps that feed into a final decision:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: lint
+    task: "Run the linter on the repository and report all findings"
+  - node_id: test
+    task: "Run the test suite and report results including any failures"
+  - node_id: review
+    task: "Review the code changes in the latest commit for security and performance issues"
+  - node_id: merge
+    task: "Based on lint results, test results, and code review, decide whether to approve the merge: lint={{lint.result}}, tests={{test.result}}, review={{review.result}}"
+    depends_on: [lint, test, review]
+    barrier_mode: all
+label: "Code Review"
+on_failure: continue
+```
+
+### Content pipeline with budget limits
+
+A production pipeline with cost controls:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: outline
+    task: "Create a detailed outline for a blog post about ${TOPIC}"
+  - node_id: draft
+    task: "Write the full blog post based on this outline: {{outline.result}}"
+    depends_on: [outline]
+    model: "claude-sonnet-4-5-20250929"
+  - node_id: edit
+    task: "Edit and proofread the draft for clarity and grammar: {{draft.result}}"
+    depends_on: [draft]
+  - node_id: seo
+    task: "Generate SEO metadata (title, description, keywords) for: {{draft.result}}"
+    depends_on: [draft]
+label: "Blog Content Pipeline"
+budget:
+  max_tokens: 100000
+  max_cost: 2.00
+timeout_ms: 300000
+variables:
+  TOPIC: "AI-powered code review tools"
+```
+
+### Debate pipeline
+
+A pipeline with adversarial debate for balanced analysis:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: research
+    task: "Research the pros and cons of microservices vs monolith architecture"
+    retries: 2
+  - node_id: evaluate
+    task: "Is microservices the right architecture for a 10-person startup? Consider: {{research.result}}"
+    depends_on: [research]
+    type_id: debate
+    type_config:
+      agents: [optimist-architect, pragmatic-architect]
+      rounds: 3
+      synthesizer: lead-architect
+  - node_id: recommend
+    task: "Write a final recommendation based on the debate outcome: {{evaluate.result}}"
+    depends_on: [evaluate]
+    context_mode: none
+label: "Architecture Decision"
+```
+
+### Approval-gated pipeline
+
+A pipeline that pauses for human approval before executing a high-stakes action:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: analyze
+    task: "Analyze the proposed trade for ${TICKER}"
+    agent: ta-analyst
+  - node_id: approval
+    depends_on: [analyze]
+    task: "Review analysis before proceeding"
+    type_id: approval-gate
+    type_config:
+      message: "Analysis complete for ${TICKER}. Approve to proceed with execution?"
+      timeout_minutes: 60
+  - node_id: execute
+    task: "Execute the approved trade plan: {{analyze.result}}"
+    depends_on: [approval]
+    agent: ta-trader
+label: "Gated Trade Execution"
+variables:
+  TICKER: "NVDA"
+```
+
+### Vote pipeline
+
+A pipeline where multiple agents vote independently:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: research
+    task: "Research ${TICKER} fundamentals and technicals"
+    agent: ta-researcher
+  - node_id: vote
+    depends_on: [research]
+    task: "Based on the research, should we buy ${TICKER}?"
+    type_id: vote
+    type_config:
+      voters: [analyst-1, analyst-2, analyst-3, analyst-4]
+      verdict_format: "BUY/HOLD/SELL"
+label: "Analyst Vote"
+variables:
+  TICKER: "AAPL"
+```
+
+### Agent (typed) pipeline
+
+A pipeline that explicitly sets `type_id: agent` with driver-level configuration for model and step limits:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: gather
+    task: "Collect the latest financial data for ${TICKER}"
+    agent: data-collector
+  - node_id: analyze
+    depends_on: [gather]
+    task: "Perform deep technical analysis on: {{gather.result}}"
+    type_id: agent
+    type_config:
+      agent: senior-analyst
+      model: "claude-sonnet-4-5-20250929"
+      max_steps: 15
+  - node_id: report
+    depends_on: [analyze]
+    task: "Write an executive summary from: {{analyze.result}}"
+label: "Typed Agent Analysis"
+variables:
+  TICKER: "TSLA"
+```
+
+<Info>
+Setting `type_id: agent` explicitly is optional -- a node without `type_id` runs as a single-agent task by default. Use the explicit form when you need to override the agent's model or step limit via `type_config` while using the driver system.
+</Info>
+
+### Refine pipeline
+
+A pipeline where multiple reviewers sequentially improve a draft, each building on the previous reviewer's output:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: draft
+    task: "Write a first draft of the ${DOC_TYPE} about ${TOPIC}"
+    agent: content-writer
+  - node_id: refine
+    depends_on: [draft]
+    task: "Refine this draft through sequential review: {{draft.result}}"
+    type_id: refine
+    type_config:
+      reviewers: [style-editor, fact-checker, copy-editor]
+  - node_id: publish
+    depends_on: [refine]
+    task: "Format the refined document for publication: {{refine.result}}"
+label: "Editorial Review Chain"
+variables:
+  DOC_TYPE: "technical blog post"
+  TOPIC: "building reliable AI pipelines"
+```
+
+### Collaborate pipeline
+
+A pipeline where agents contribute sequentially, each adding a different perspective to the accumulated work:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: brief
+    task: "Write a project brief for ${PROJECT}"
+  - node_id: collaborate
+    depends_on: [brief]
+    task: "Develop a comprehensive plan based on: {{brief.result}}"
+    type_id: collaborate
+    type_config:
+      agents: [backend-architect, frontend-lead, security-reviewer]
+      rounds: 2
+  - node_id: finalize
+    depends_on: [collaborate]
+    task: "Compile the collaborative output into a final project plan: {{collaborate.result}}"
+label: "Cross-Team Collaboration"
+variables:
+  PROJECT: "user authentication redesign"
+```
+
+### Map-reduce pipeline
+
+A pipeline that fans out work to parallel mappers and then reduces their outputs into a single result:
+
+```yaml
+tool: pipeline
+action: execute
+nodes:
+  - node_id: plan
+    task: "Break ${TOPIC} into 3 independent research areas"
+  - node_id: research
+    depends_on: [plan]
+    task: "Research the assigned area in depth: {{plan.result}}"
+    type_id: map-reduce
+    type_config:
+      mappers:
+        - agent: researcher-1
+          task_suffix: "Focus on market trends"
+        - agent: researcher-2
+          task_suffix: "Focus on technical feasibility"
+        - agent: researcher-3
+          task_suffix: "Focus on competitive landscape"
+      reducer: lead-analyst
+      reducer_prompt: "Synthesize all research into a unified report with key findings and recommendations"
+  - node_id: summary
+    depends_on: [research]
+    task: "Write an executive summary from: {{research.result}}"
+label: "Parallel Research Analysis"
+variables:
+  TOPIC: "enterprise AI adoption"
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Execution Graphs" icon="diagram-project" href="/agents/execution-graphs">
+    Conceptual guide to execution graph architecture
+  </Card>
+  <Card title="Visual Builder" icon="window-maximize" href="/web-dashboard/pipelines">
+    Design and run graphs from the web dashboard
+  </Card>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">
+    Configure pipeline tool access via tool policy
+  </Card>
+  <Card title="Sessions Guide" icon="users" href="/agent-tools/sessions">
+    Sub-agent sessions for simpler delegation
+  </Card>
+</CardGroup>

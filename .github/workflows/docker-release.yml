@@ -1,0 +1,238 @@
+name: Docker Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "Dockerfile"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Build per-platform digests (native runners — no QEMU)
+  # Each runner builds both variants (default + slim) since the build stage
+  # layers are shared and cached, making the second variant near-instant.
+  # -------------------------------------------------------------------------
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-latest-arm64
+
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- default variant ---
+      - uses: docker/build-push-action@v6
+        id: build-default
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            COMIS_VARIANT=default
+          cache-from: type=gha,scope=default-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=default-${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+
+      # --- slim variant (reuses cached build stage from default) ---
+      - uses: docker/build-push-action@v6
+        id: build-slim
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            COMIS_VARIANT=slim
+          cache-from: |
+            type=gha,scope=slim-${{ matrix.platform }}
+            type=gha,scope=default-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=slim-${{ matrix.platform }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+
+      - name: Export digests
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests/default /tmp/digests/slim
+          default_digest="${{ steps.build-default.outputs.digest }}"
+          slim_digest="${{ steps.build-slim.outputs.digest }}"
+          touch "/tmp/digests/default/${default_digest#sha256:}"
+          touch "/tmp/digests/slim/${slim_digest#sha256:}"
+
+      - name: Upload default digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-default-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/default/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload slim digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-slim-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/slim/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # -------------------------------------------------------------------------
+  # Merge per-platform images into multi-arch manifest — default
+  # -------------------------------------------------------------------------
+  merge-default:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digests-default-*
+          path: /tmp/digests/default
+          merge-multiple: true
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      - name: Create multi-arch manifest
+        working-directory: /tmp/digests/default
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+
+  # -------------------------------------------------------------------------
+  # Merge per-platform images into multi-arch manifest — slim
+  # -------------------------------------------------------------------------
+  merge-slim:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digests-slim-*
+          path: /tmp/digests/slim
+          merge-multiple: true
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            suffix=-slim
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      - name: Create multi-arch manifest
+        working-directory: /tmp/digests/slim
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+
+  # -------------------------------------------------------------------------
+  # Build web dashboard image (amd64 only — lightweight SPA)
+  # -------------------------------------------------------------------------
+  build-web:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'push' && (
+        startsWith(github.ref, 'refs/tags/v') ||
+        contains(toJSON(github.event.commits.*.modified), 'packages/web/') ||
+        contains(toJSON(github.event.commits.*.modified), 'docker/nginx.conf') ||
+        contains(toJSON(github.event.commits.*.modified), 'Dockerfile.web')
+      ) || github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: web-meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-web
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,prefix=
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.web
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.web-meta.outputs.tags }}
+          labels: ${{ steps.web-meta.outputs.labels }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
