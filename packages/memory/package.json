@@ -1,12 +1,10 @@
 {
   "name": "@comis/memory",
+  "private": true,
   "version": "1.0.2",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "SQLite memory, embeddings, and RAG storage for Comis agents",
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": ["comis", "ai", "agent", "memory", "sqlite", "rag", "embeddings"],
   "engines": { "node": ">=22" },
   "files": ["dist"],

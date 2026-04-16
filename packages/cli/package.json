@@ -1,12 +1,10 @@
 {
   "name": "@comis/cli",
+  "private": true,
   "version": "1.0.2",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Command-line interface for the Comis AI agent platform",
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": ["comis", "ai", "agent", "cli", "chatbot", "discord", "telegram", "slack"],
   "engines": { "node": ">=22" },
   "files": ["dist"],
@@ -29,7 +27,8 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./cli.js": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",

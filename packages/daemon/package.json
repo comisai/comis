@@ -1,12 +1,10 @@
 {
   "name": "@comis/daemon",
+  "private": true,
   "version": "1.0.2",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Background daemon and orchestrator for the Comis platform",
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": ["comis", "ai", "agent", "daemon", "orchestrator"],
   "engines": { "node": ">=22" },
   "files": [

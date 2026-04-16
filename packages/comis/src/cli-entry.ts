@@ -9,9 +9,10 @@
  * @module
  */
 
-import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-const require = createRequire(import.meta.url);
-const cliPkgPath = require.resolve("@comis/cli/package.json");
-await import(join(dirname(cliPkgPath), "dist", "cli.js"));
+// Resolve @comis/cli index via ESM, then derive cli.js from the same dist/ dir
+const cliIndexUrl = import.meta.resolve("@comis/cli");
+const cliDistDir = dirname(fileURLToPath(cliIndexUrl));
+await import(join(cliDistDir, "cli.js"));

@@ -1,12 +1,10 @@
 {
   "name": "@comis/gateway",
+  "private": true,
   "version": "1.0.2",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "HTTP, JSON-RPC, and WebSocket gateway for Comis",
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": ["comis", "ai", "agent", "gateway", "json-rpc", "websocket", "hono"],
   "engines": { "node": ">=22" },
   "files": ["dist"],

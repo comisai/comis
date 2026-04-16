@@ -1,12 +1,10 @@
 {
   "name": "@comis/channels",
+  "private": true,
   "version": "1.0.2",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Chat platform adapters — Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, LINE",
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": ["comis", "ai", "agent", "discord", "telegram", "slack", "whatsapp", "signal", "irc"],
   "engines": { "node": ">=22" },
   "files": ["dist"],

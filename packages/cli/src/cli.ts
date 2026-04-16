@@ -31,7 +31,7 @@ import { registerSignalSetupCommand } from "./commands/signal-setup.js";
 
 export const program = new Command();
 
-program.name("comis").description("Comis AI agent management CLI").version("0.1.0");
+program.name("comis").description("Comis AI agent management CLI").version("1.0.2");
 
 // Register command groups
 registerDaemonCommand(program);

@@ -1,12 +1,10 @@
 {
   "name": "@comis/scheduler",
+  "private": true,
   "version": "1.0.2",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Task scheduling and cron management for Comis",
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": ["comis", "ai", "agent", "scheduler", "cron"],
   "engines": { "node": ">=22" },
   "files": ["dist"],

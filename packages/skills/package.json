@@ -1,12 +1,10 @@
 {
   "name": "@comis/skills",
+  "private": true,
   "version": "1.0.2",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Skill system, MCP integration, and tool sandbox for Comis agents",
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": ["comis", "ai", "agent", "skills", "mcp", "tools"],
   "engines": { "node": ">=22" },
   "files": [
