@@ -7,8 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/comisai/comis/stargazers"><img src="https://img.shields.io/github/stars/comisai/comis?style=flat&color=FF6B4A" alt="GitHub Stars" /></a>
-  <a href="https://github.com/comisai/comis/blob/main/LICENSE"><img src="https://img.shields.io/github/license/comisai/comis?style=flat&color=06B6D4" alt="License" /></a>
+  <a href="https://github.com/comisai/comis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-06B6D4?style=flat" alt="License" /></a>
   <a href="https://discord.gg/comis"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
