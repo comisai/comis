@@ -774,7 +774,7 @@ run_npm_global_install() {
 
     echo -e "  ${INFO}→${NC} Installing Comis package..."
     env "SHARP_IGNORE_GLOBAL_LIBVIPS=$SHARP_IGNORE_GLOBAL_LIBVIPS" \
-        npm --loglevel error --no-fund --no-audit install -g "$spec" >"$log" 2>&1
+        npm --silent --no-fund --no-audit install -g "$spec" >"$log" 2>&1
     local rc=$?
     if [[ "$rc" -eq 0 ]]; then
         echo -e "  ${SUCCESS}✓${NC} Comis package installed"
