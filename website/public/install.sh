@@ -543,22 +543,12 @@ run_quiet_step() {
             return 0
         fi
     else
-        # Show progress dots so the user knows something is happening
-        # during long operations (apt install, npm install, etc.)
-        echo -n "  ${title} " # no newline — dots append on same line
-        "$@" >"$log" 2>&1 &
-        local cmd_pid=$!
-        while kill -0 "$cmd_pid" 2>/dev/null; do
-            echo -n "."
-            sleep 2
-        done
-        wait "$cmd_pid"
-        local rc=$?
-        if [[ "$rc" -eq 0 ]]; then
-            echo " done"
+        # Non-interactive: show step name, run command, show result
+        echo -e "  ${INFO}→${NC} ${title}..."
+        if "$@" >"$log" 2>&1; then
+            echo -e "  ${SUCCESS}✓${NC} ${title}"
             return 0
         fi
-        echo " FAILED"
     fi
 
     ui_error "${title} failed - re-run with --verbose for details"
