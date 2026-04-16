@@ -60,8 +60,15 @@ for (const pkg of WORKSPACE_PACKAGES) {
   }
   cpSync(distSrc, join(destDir, "dist"), { recursive: true });
 
-  // Copy package.json
-  cpSync(join(srcDir, "package.json"), join(destDir, "package.json"));
+  // Copy package.json with dependencies stripped — all external deps are
+  // listed at the comisai top level, so bundled packages don't need their own.
+  // This prevents npm from trying to install transitive deps (like baileys)
+  // from the bundled packages, which causes preinstall script failures.
+  const bundledPkgJson = JSON.parse(readFileSync(join(srcDir, "package.json"), "utf8"));
+  delete bundledPkgJson.dependencies;
+  delete bundledPkgJson.devDependencies;
+  delete bundledPkgJson.peerDependencies;
+  writeFileSync(join(destDir, "package.json"), JSON.stringify(bundledPkgJson, null, 2) + "\n");
 
   // Copy extra files listed in the package's "files" field beyond dist/
   const pkgJson = JSON.parse(readFileSync(join(srcDir, "package.json"), "utf8"));
@@ -86,22 +93,21 @@ writeFileSync(backupPath, originalContent);
 
 const pkg = JSON.parse(originalContent);
 
-let rewritten = 0;
+// Resolve workspace:* to real versions — required for bundledDependencies to work
+// (npm needs valid version ranges in dependencies to include the bundled copies).
+let resolved = 0;
 if (pkg.dependencies) {
   for (const [name, version] of Object.entries(pkg.dependencies)) {
     if (typeof version === "string" && version.startsWith("workspace:")) {
       const real = resolvedVersions[name];
       if (real) {
         pkg.dependencies[name] = real;
-        rewritten++;
+        resolved++;
       }
     }
   }
 }
 
-if (rewritten > 0) {
-  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-  console.log(`  resolved ${rewritten} workspace:* references to real versions`);
-}
-
+writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+console.log(`  resolved ${resolved} workspace:* references to real versions`);
 console.log("prepack: done");

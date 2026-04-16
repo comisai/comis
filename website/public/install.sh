@@ -426,7 +426,12 @@ show_footer_links() {
 }
 
 needs_shell_reload() {
-    local bin_dir="$HOME/.local/bin"
+    local bin_dir=""
+    if [[ "$INSTALL_METHOD" == "git" ]]; then
+        bin_dir="$HOME/.local/bin"
+    else
+        bin_dir="$(npm_global_bin_dir 2>/dev/null || true)"
+    fi
     if [[ -z "$bin_dir" ]]; then
         return 1
     fi
@@ -718,61 +723,31 @@ run_npm_global_install() {
     local spec="$1"
     local log="$2"
 
-    # Install locally into ~/.comis/package/ to avoid npm global install bugs
-    # (--ignore-scripts creates empty dirs in global installs, broken postinstall
-    # scripts in transitive deps like @whiskeysockets/baileys abort global installs).
-    local install_dir="$HOME/.comis/package"
-    mkdir -p "$install_dir"
-
     local -a cmd
     cmd=(env "SHARP_IGNORE_GLOBAL_LIBVIPS=$SHARP_IGNORE_GLOBAL_LIBVIPS" npm --loglevel "$NPM_LOGLEVEL")
     if [[ -n "$NPM_SILENT_FLAG" ]]; then
         cmd+=("$NPM_SILENT_FLAG")
     fi
-    cmd+=(--no-fund --no-audit --ignore-scripts install --prefix "$install_dir" "$spec")
+    cmd+=(--no-fund --no-audit install -g "$spec")
     local cmd_display=""
     printf -v cmd_display '%q ' "${cmd[@]}"
     LAST_NPM_INSTALL_CMD="${cmd_display% }"
 
     if [[ "$VERBOSE" == "1" ]]; then
         "${cmd[@]}" 2>&1 | tee "$log"
-    elif [[ -n "$GUM" ]] && gum_is_tty; then
+        return $?
+    fi
+
+    if [[ -n "$GUM" ]] && gum_is_tty; then
         local cmd_quoted=""
         local log_quoted=""
         printf -v cmd_quoted '%q ' "${cmd[@]}"
         printf -v log_quoted '%q' "$log"
         run_with_spinner "Installing Comis package" bash -c "${cmd_quoted}>${log_quoted} 2>&1"
-    else
-        "${cmd[@]}" >"$log" 2>&1
-    fi
-    local status=$?
-    if [[ "$status" -ne 0 ]]; then
-        return "$status"
+        return $?
     fi
 
-    # Rebuild native modules (skipped by --ignore-scripts)
-    local rebuild_log
-    rebuild_log="$(mktempfile)"
-    if ! npm rebuild --prefix "$install_dir" >"$rebuild_log" 2>&1; then
-        ui_warn "Native module rebuild had warnings (non-fatal)"
-    fi
-
-    # Create shim binary
-    ensure_user_local_bin_on_path
-    local entry_js="${install_dir}/node_modules/comisai/dist/cli-entry.js"
-    if [[ ! -f "$entry_js" ]]; then
-        entry_js="${install_dir}/node_modules/.package-lock.json"
-        entry_js="${install_dir}/node_modules/comisai/dist/cli-entry.js"
-    fi
-    local node_bin=""
-    node_bin="$(command -v node 2>/dev/null || true)"
-    cat > "$HOME/.local/bin/comis" <<SHIMEOF
-#!/usr/bin/env bash
-set -euo pipefail
-exec "${node_bin}" "${entry_js}" "\$@"
-SHIMEOF
-    chmod +x "$HOME/.local/bin/comis"
-    return 0
+    "${cmd[@]}" >"$log" 2>&1
 }
 
 extract_npm_debug_log_path() {
