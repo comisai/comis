@@ -3,12 +3,30 @@
   "version": "1.0.3",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
-  "description": "Security-first AI agent platform — connects AI agents to Discord, Telegram, Slack, WhatsApp, and more",
-  "keywords": ["comis", "ai", "agent", "chatbot", "discord", "telegram", "slack", "whatsapp", "signal", "imessage", "irc", "line", "mcp", "multi-agent", "assistant"],
+  "description": "Security-first AI agent platform \u2014 connects AI agents to Discord, Telegram, Slack, WhatsApp, and more",
+  "keywords": [
+    "comis",
+    "ai",
+    "agent",
+    "chatbot",
+    "discord",
+    "telegram",
+    "slack",
+    "whatsapp",
+    "signal",
+    "imessage",
+    "irc",
+    "line",
+    "mcp",
+    "multi-agent",
+    "assistant"
+  ],
   "publishConfig": {
     "access": "public"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "files": [
     "dist",
     "node_modules/@comis"
@@ -173,6 +191,9 @@
     "ws": "^8.19.0",
     "yaml": "^2.8.2",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "sd-notify": "^2.8.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

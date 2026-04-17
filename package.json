@@ -42,7 +42,8 @@
   },
   "pnpm": {
     "overrides": {
-      "tar": ">=7.5.7"
+      "tar": ">=7.5.7",
+      "@sinclair/typebox": "0.34.49"
     }
   }
 }

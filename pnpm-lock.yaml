@@ -6,6 +6,7 @@ settings:
 
 overrides:
   tar: '>=7.5.7'
+  '@sinclair/typebox': 0.34.49
 
 importers:
 
@@ -330,7 +331,7 @@ importers:
         specifier: ^0.1.96
         version: 0.1.96
       '@sinclair/typebox':
-        specifier: ^0.34.48
+        specifier: 0.34.49
         version: 0.34.49
       '@slack/bolt':
         specifier: ^4.6.0
@@ -468,6 +469,10 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+    optionalDependencies:
+      sd-notify:
+        specifier: ^2.8.0
+        version: 2.8.0
 
   packages/core:
     dependencies:
@@ -548,6 +553,10 @@ importers:
       vitest:
         specifier: ^4.0.0
         version: 4.0.18(@types/node@25.5.0)(happy-dom@20.8.3)(jiti@2.6.1)(lightningcss@1.31.1)(yaml@2.8.2)
+    optionalDependencies:
+      sd-notify:
+        specifier: ^2.8.0
+        version: 2.8.0
 
   packages/gateway:
     dependencies:
@@ -721,8 +730,8 @@ importers:
         specifier: ^0.1.96
         version: 0.1.96
       '@sinclair/typebox':
-        specifier: ^0.34.48
-        version: 0.34.48
+        specifier: 0.34.49
+        version: 0.34.49
       chardet:
         specifier: ^2.1.1
         version: 2.1.1
@@ -1979,9 +1988,6 @@ packages:
 
   '@silvia-odwyer/photon-node@0.3.4':
     resolution: {integrity: sha512-bnly4BKB3KDTFxrUIcgCLbaeVVS8lrAkri1pEzskpmxu9MdfGQTy8b8EgcD83ywD3RPMsIulY8xJH5Awa+t9fA==}
-
-  '@sinclair/typebox@0.34.48':
-    resolution: {integrity: sha512-kKJTNuK3AQOrgjjotVxMrCn1sUJwM76wMszfq1kdU4uYVJjvEWuFQ6HgvLt4Xz3fSmZlTOxJ/Ie13KnIcWQXFA==}
 
   '@sinclair/typebox@0.34.49':
     resolution: {integrity: sha512-brySQQs7Jtn0joV8Xh9ZV/hZb9Ozb0pmazDIASBkYKCjXrXU3mpcFahmK/z4YDhGkQvP9mWJbVyahdtU5wQA+A==}
@@ -4312,6 +4318,11 @@ packages:
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
 
+  sd-notify@2.8.0:
+    resolution: {integrity: sha512-e+D1v0Y6UzmqXcPlaTkHk1QMdqk36mF/jIYv5gwry/N2Tb8/UNnpfG6ktGLpeBOR6TCC5hPKgqA+0hTl9sm2tA==}
+    engines: {node: '>=8.0.0'}
+    os: [linux, darwin, win32]
+
   secure-json-parse@4.1.0:
     resolution: {integrity: sha512-l4KnYfEyqYJxDwlNVyRfO2E4NTHfMKAWdUuA8J0yve2Dz/E/PdBepY03RvyJpssIpRFwJoCD55wA+mEDs6ByWA==}
 
@@ -6137,8 +6148,6 @@ snapshots:
       selderee: 0.11.0
 
   '@silvia-odwyer/photon-node@0.3.4': {}
-
-  '@sinclair/typebox@0.34.48': {}
 
   '@sinclair/typebox@0.34.49': {}
 
@@ -8818,6 +8827,11 @@ snapshots:
   safe-stable-stringify@2.5.0: {}
 
   safer-buffer@2.1.2: {}
+
+  sd-notify@2.8.0:
+    dependencies:
+      bindings: 1.5.0
+    optional: true
 
   secure-json-parse@4.1.0: {}
 
