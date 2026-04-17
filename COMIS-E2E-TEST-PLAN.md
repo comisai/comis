@@ -6,7 +6,11 @@
 
 **Why this matters:** a real user's first experience is either `--service auto` (resolves to systemd on Linux root) or `--service pm2` (chosen by users who want live reload and familiar tooling). Both must produce a working daemon with a working exec sandbox. Testing only one hides half the installer.
 
-> **Hard rule**: this plan is self-contained. If you find yourself needing information that is not in this file, treat that as a bug in the plan and extend it before proceeding.
+> **Hard rule #1 — self-contained**: if you find yourself needing information that is not in this file, treat that as a bug in the plan and extend it before proceeding.
+>
+> **Hard rule #2 — all code changes go through `/gsd:quick`**: every code fix, every code implementation, every config change that touches the repo — even a one-line typo — is written via the `/gsd:quick` slash command. `/gsd:quick` is non-negotiable because it guarantees (a) atomic commit per change, (b) state-tracking in `.planning/`, (c) a post-fix validation hook. Manual `git add && git commit` is forbidden for code changes made in response to a test failure. Plan docs, audit notes, and `/tmp/comis-e2e/…` artifacts are the only things that may be edited outside `/gsd:quick`.
+>
+> **Hard rule #3 — every fix commits before you move on**: no uncommitted work leaves a test cycle. If `/gsd:quick` did not commit (e.g. build failed and you stopped to debug), treat the branch as dirty, do not run the next scenario until you either finish the commit or revert the change. "I'll commit everything at the end" is banned — it hides which change broke which scenario.
 
 ---
 
@@ -1129,27 +1133,64 @@ Before you touch any code, sit with the plan for a moment. Four questions, answe
 
 If any answer is unsatisfying: **go back to Step 2**. Expanding the investigation is cheaper than landing the wrong fix.
 
-### Step 5 — Implement via `/gsd:quick`
+### Step 5 — Implement via `/gsd:quick` (mandatory — no exceptions)
 
-Only after Steps 1–4 are complete.
+**This is Hard Rule #2 from the top of the plan. Restated here in operational form:**
 
-- Use `/gsd:quick` for the implementation. It gives you atomic commits + state tracking but skips the discuss/plan agents — which you've already done manually in Steps 2–4.
-- `/gsd:quick` flow:
-  1. State the one-line change-goal.
-  2. It edits the files.
-  3. It runs `pnpm build` (or `pnpm --filter @comis/<pkg> build`).
-  4. It commits atomically with a message referencing the scenario id.
+**Every single code change made in response to a test failure goes through `/gsd:quick`.** Not `Edit` directly. Not a hand-run `pnpm build`. Not a hand-run `git commit`. The command itself is what gives you atomic commits, build verification, and `.planning/` state so that a week from now the link between "scenario TT27 failed" and "commit `abc123` fixed it" is still findable.
 
-For bigger changes (≥ 50 LoC or touching ≥ 2 packages), use `/gsd:plan-phase` instead — don't pretend a design-level change is "quick".
+This applies to:
+- Every daemon/CLI source code change (any file under `packages/*/src/`)
+- Every installer change (`website/public/install.sh`)
+- Every unit template change (`packages/daemon/systemd/comis.service.template`)
+- Every `package.json` / `pnpm-lock.yaml` update done in response to a bug
+- Every `Dockerfile` tweak in `/tmp/comis-installer-test/`
+- Every `/tmp/comis-e2e/config.yaml` edit that we expect to keep (not throwaway experiments)
 
-Commit message format:
+This does NOT apply to: the investigation notes in `/tmp/comis-e2e/investigations/`, the `repros/` scripts, or `COMIS-E2E-TEST-RESULTS.md` — those are working artifacts that aren't product code.
+
+**How to invoke:**
+```
+/gsd:quick <one-line description of the change, referencing the scenario>
+```
+
+The command will:
+1. Confirm the one-line goal with you.
+2. Edit the files (you guide it with the plan from Steps 2–4).
+3. Run the appropriate `pnpm build` (targeted — `pnpm --filter @comis/<pkg> build`).
+4. Run the package's unit tests if any exist.
+5. **Commit atomically** with a conventional-commits message tied to the scenario.
+6. Record the commit in `.planning/` for future traceability.
+
+**Required commit message format** (`/gsd:quick` will prompt you for these):
 ```
 fix(<package-or-area>): <what changed> (<scenario-id>)
 
-Root cause: <one sentence>
-Fix: <one sentence>
-Verified with: <repro-script-path>, <scenario-id>, and <spine-tests-re-run>
+Root cause: <one sentence from investigation notes>
+Fix: <one sentence from your plan>
+Verified with: <repro-script-path>, <scenario-id>, spine tests <list>
 ```
+
+**If the change is bigger than `/gsd:quick` can handle** (≥ 50 LoC, touches ≥ 2 packages, or introduces a new abstraction): stop the loop and run `/gsd:plan-phase` for a proper phase plan before writing any code. Don't pretend a design-level change is "quick" — that's how shortcuts become technical debt.
+
+**If `/gsd:quick` fails mid-flow** (e.g. `pnpm build` broke because of a type error you introduced): the branch is dirty. Do NOT proceed to Step 6. Either:
+  (a) Finish the fix until `/gsd:quick` commits cleanly, or
+  (b) Revert your working-tree changes (`git restore .`) and go back to Step 3 to rethink the plan.
+
+### Step 5.5 — Commit verification gate
+
+Before moving on, confirm:
+
+```bash
+# Working tree is clean
+git status --porcelain | grep . && { echo "DIRTY — do not proceed"; exit 1; } || echo "clean"
+# The last commit exists and references the scenario id
+git log -1 --format='%s%n%b' | grep -qE "<scenario-id>" && echo "commit references scenario" || echo "commit message missing scenario id"
+# The commit built clean (exit 0 from the build command)
+# /gsd:quick records this; verify by reading the commit's committer-date is within the last few minutes
+```
+
+If any of these fail, you're not done with Step 5 — circle back.
 
 ### Step 6 — Apply the fix to the containers
 
@@ -1221,17 +1262,20 @@ Append to `COMIS-E2E-TEST-RESULTS.md`:
 
 ### Quick-reference card (§7 at a glance)
 
-| Step | What you do                         | Output artifact                                    | Time budget |
-| ---- | ----------------------------------- | -------------------------------------------------- | ----------- |
-| 1    | Write minimal repro script         | `repros/<id>.sh`                                    | 5–10 min    |
-| 2    | Read code, git history, logs       | `investigations/<id>.md` (Evidence + Hypotheses)   | 15–30 min   |
-| 3    | Write fix plan                      | `investigations/<id>.md` (Chosen, Proposed, Alt)   | 10 min      |
-| 4    | Rethink 4 questions                 | answers appended to same file                      | 5 min       |
-| 5    | `/gsd:quick` → atomic commit        | git commit                                         | 10–20 min   |
-| 6    | Apply to containers                 | running daemons                                     | 3 min       |
-| 7    | Rerun repro — must pass             | green repro                                         | 2 min       |
-| 8    | Regression sweep in BOTH modes      | green spine tests                                   | 20 min      |
-| 9    | Record in results                   | `COMIS-E2E-TEST-RESULTS.md` entry                   | 5 min       |
+| Step | What you do                               | Output artifact                                    | Time budget |
+| ---- | ----------------------------------------- | -------------------------------------------------- | ----------- |
+| 1    | Write minimal repro script                | `repros/<id>.sh`                                    | 5–10 min    |
+| 2    | Read code, git history, logs              | `investigations/<id>.md` (Evidence + Hypotheses)   | 15–30 min   |
+| 3    | Write fix plan                             | `investigations/<id>.md` (Chosen, Proposed, Alt)   | 10 min      |
+| 4    | Rethink 4 questions                        | answers appended to same file                      | 5 min       |
+| 5    | **`/gsd:quick <desc>` → atomic commit**    | git commit (MANDATORY — no direct Edit/commit)     | 10–20 min   |
+| 5.5  | Commit verification gate                   | `git status` clean + commit references scenario id | 30s         |
+| 6    | Apply to containers                        | running daemons                                     | 3 min       |
+| 7    | Rerun repro — must pass                    | green repro                                         | 2 min       |
+| 8    | Regression sweep in BOTH modes             | green spine tests                                   | 20 min      |
+| 9    | Record in results                          | `COMIS-E2E-TEST-RESULTS.md` entry                   | 5 min       |
+
+**The non-negotiable rule of this loop**: *every code change goes through `/gsd:quick`, and every cycle commits before the next one starts*. No "I'll clean up later". No "small tweak outside the flow". If the change is too small for `/gsd:quick` to feel worth it, the change probably shouldn't be made at all — the test result is wrong, not the code.
 
 **Total per bug**: ~75–90 minutes. This is deliberate — the plan's correctness depends on the investigation being thorough, not the turnaround being fast. A test pass with 3 shallow fixes is worse than a test pass with 1 real fix and 2 open bugs explicitly tracked.
 
