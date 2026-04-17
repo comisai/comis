@@ -27,6 +27,7 @@ export { registerSessionsCommand } from "./commands/sessions.js";
 export { registerResetCommand } from "./commands/reset.js";
 export { registerSignalSetupCommand } from "./commands/signal-setup.js";
 export { registerSecretsCommand } from "./commands/secrets.js";
+export { registerUninstallCommand } from "./commands/uninstall.js";
 
 // ── Dead Export Audit ─────────────────────────────────────────────────
 // Total exports: 29 (28 value, 1 type)

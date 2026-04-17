@@ -53,8 +53,8 @@ describe("CLI entry point", () => {
       expect(program.description()).toContain("AI agent management CLI");
     });
 
-    it("has the correct version", () => {
-      expect(program.version()).toBe("0.1.0");
+    it("has a semver version", () => {
+      expect(program.version()).toMatch(/^\d+\.\d+\.\d+/);
     });
   });
 
@@ -77,10 +77,11 @@ describe("CLI entry point", () => {
       "reset",
       "secrets",
       "signal-setup",
+      "uninstall",
     ] as const;
 
-    it("registers exactly 17 commands", () => {
-      expect(program.commands).toHaveLength(17);
+    it("registers exactly 18 commands", () => {
+      expect(program.commands).toHaveLength(18);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

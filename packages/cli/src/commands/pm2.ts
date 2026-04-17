@@ -53,7 +53,7 @@ async function runPm2(...args: string[]): Promise<{ stdout: string; stderr: stri
 }
 
 /** Handle the `pm2 setup` subcommand — generate ecosystem config file. */
-async function handleSetup(): Promise<void> {
+async function handleSetup(options: { enableBoot?: boolean }): Promise<void> {
   await ensurePm2();
 
   const daemonPath = new URL("../../../daemon/dist/daemon.js", import.meta.url).pathname;
@@ -85,7 +85,77 @@ module.exports = {
   mkdirSync(COMIS_DIR, { recursive: true, mode: 0o700 });
   writeFileSync(ECOSYSTEM_FILE, content, { mode: 0o600 });
   success("Ecosystem file written to " + ECOSYSTEM_FILE);
-  info("Start with: comis pm2 start");
+
+  if (options.enableBoot) {
+    await enableBoot();
+  } else {
+    info("Start with: comis pm2 start");
+  }
+}
+
+/**
+ * Persist the pm2 process list and register with the platform's boot manager
+ * (launchd on macOS, systemd on Linux via pm2's systemd bridge).
+ *
+ * pm2 startup prints a `sudo env PATH=… pm2 startup <platform>` line that must
+ * run as root to install the boot hook. We capture it and execute it interactively
+ * so the user only sees one password prompt.
+ */
+async function enableBoot(): Promise<void> {
+  try {
+    await runPm2("save");
+    success("pm2 process list snapshotted");
+  } catch {
+    // runPm2 already reported the error
+    return;
+  }
+
+  info("Registering with system boot manager (may prompt for sudo password)...");
+
+  let startupOut: string;
+  try {
+    const { stdout, stderr } = await exec("pm2", ["startup"]);
+    startupOut = `${stdout}\n${stderr}`;
+  } catch (err) {
+    // pm2 startup exits non-zero when it can only print the sudo command (not auto-install)
+    // but it still writes the command to stdout/stderr. The SDK promisified version
+    // attaches stdout/stderr to the error object.
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    startupOut = `${e.stdout ?? ""}\n${e.stderr ?? ""}`;
+    if (!startupOut.trim()) {
+      warn(`pm2 startup failed: ${e.message ?? "unknown error"}`);
+      info("Run `pm2 startup` manually and paste the suggested sudo command.");
+      return;
+    }
+  }
+
+  // pm2 prints: "sudo env PATH=$PATH:… /usr/local/lib/node_modules/pm2/bin/pm2 startup launchd -u user --hp /Users/user"
+  const sudoCmdMatch = startupOut.match(/sudo\s+env\s+PATH=[^\n]+pm2\s+startup[^\n]+/);
+  if (!sudoCmdMatch) {
+    // pm2 reported success without needing sudo (already root, or previously set up)
+    if (startupOut.includes("[PM2] Init System found:") || startupOut.includes("already")) {
+      success("Boot persistence already configured");
+      return;
+    }
+    console.log(startupOut);
+    warn("Could not parse pm2 startup command.");
+    info("Run the command pm2 printed above manually to complete boot registration.");
+    return;
+  }
+
+  const sudoCmd = sudoCmdMatch[0].trim();
+  info(`Running: ${sudoCmd}`);
+  const child = spawn("sh", ["-c", sudoCmd], { stdio: "inherit" });
+  const code = await new Promise<number>((resolve) => {
+    child.on("exit", (c) => resolve(c ?? 1));
+    child.on("error", () => resolve(1));
+  });
+  if (code === 0) {
+    success("Boot persistence enabled");
+  } else {
+    warn(`Boot registration exited with code ${code}`);
+    info("You can retry later with: comis pm2 setup --enable-boot");
+  }
 }
 
 /** Handle the `pm2 start` subcommand. */
@@ -147,7 +217,11 @@ function handleLogs(options: { lines: string }): void {
 export function registerPm2Command(program: Command): void {
   const pm2 = program.command("pm2").description("Manage daemon via pm2 process supervisor");
 
-  pm2.command("setup").description("Generate pm2 ecosystem config").action(handleSetup);
+  pm2
+    .command("setup")
+    .description("Generate pm2 ecosystem config")
+    .option("--enable-boot", "Also register with platform boot manager (launchd/systemd)")
+    .action(handleSetup);
   pm2.command("start").description("Start daemon via pm2").action(handleStart);
   pm2.command("stop").description("Stop daemon via pm2").action(handleStop);
   pm2.command("restart").description("Restart daemon via pm2").action(handleRestart);

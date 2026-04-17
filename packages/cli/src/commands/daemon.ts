@@ -1,8 +1,10 @@
 /**
  * Daemon control commands: start, stop, status, logs.
  *
- * Provides `comis daemon [start|stop|status|logs]` subcommands
- * for controlling the Comis daemon process via systemd or direct spawn.
+ * Provides `comis daemon [start|stop|status|logs]` subcommands for controlling
+ * the Comis daemon. Dispatches to whichever supervisor actually owns the
+ * daemon — systemd (system or user scope), pm2, or direct-spawn — detected
+ * at runtime so the CLI works no matter how the installer wired things up.
  *
  * @module
  */
@@ -128,17 +130,69 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-/** Check if systemd is available and the comis service is installed. */
-async function hasSystemd(): Promise<boolean> {
+// ---------- Service manager detection ----------
+
+type ServiceManager = "systemd" | "systemd-user" | "pm2" | "direct";
+
+/** Check if system-scope systemd owns the comis unit. */
+async function hasSystemSystemd(): Promise<boolean> {
   if (!existsSync("/run/systemd/system")) return false;
   try {
-    await exec("systemctl", ["list-unit-files", "comis.service", "--no-pager"], {
-      timeout: 5_000,
-    });
-    return true;
+    const { stdout } = await exec(
+      "systemctl",
+      ["list-unit-files", "comis.service", "--no-pager", "--no-legend"],
+      { timeout: 5_000 },
+    );
+    return stdout.includes("comis.service");
   } catch {
     return false;
   }
+}
+
+/** Check if user-scope systemd owns the comis unit. */
+async function hasUserSystemd(): Promise<boolean> {
+  if (!existsSync("/run/systemd/system")) return false;
+  try {
+    const { stdout } = await exec(
+      "systemctl",
+      ["--user", "list-unit-files", "comis.service", "--no-pager", "--no-legend"],
+      { timeout: 5_000 },
+    );
+    return stdout.includes("comis.service");
+  } catch {
+    return false;
+  }
+}
+
+/** Check if pm2 has a process registered as "comis". */
+async function hasPm2Service(): Promise<boolean> {
+  try {
+    const { stdout } = await exec("pm2", ["jlist"], { timeout: 5_000 });
+    const parsed = JSON.parse(stdout) as Array<{ name?: string }>;
+    return parsed.some((p) => p.name === "comis");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Detect which supervisor owns this install.
+ *
+ * Priority: system systemd → user systemd → pm2 → direct-spawn fallback.
+ * Cached for the lifetime of a single CLI invocation.
+ */
+let cachedManager: ServiceManager | null = null;
+async function detectServiceManager(): Promise<ServiceManager> {
+  if (cachedManager !== null) return cachedManager;
+  if (await hasSystemSystemd()) return (cachedManager = "systemd");
+  if (await hasUserSystemd()) return (cachedManager = "systemd-user");
+  if (await hasPm2Service()) return (cachedManager = "pm2");
+  return (cachedManager = "direct");
+}
+
+/** Systemctl arg prefix for the current scope. */
+function systemctlArgs(manager: "systemd" | "systemd-user", ...rest: string[]): string[] {
+  return manager === "systemd-user" ? ["--user", ...rest] : rest;
 }
 
 // ---------- Subcommand handlers ----------
@@ -205,12 +259,26 @@ async function startDirectMode(): Promise<void> {
 /** Handle the `daemon start` subcommand. */
 async function handleDaemonStart(): Promise<void> {
   try {
-    if (await hasSystemd()) {
-      info("Starting daemon via systemd...");
-      await exec("systemctl", ["start", "comis"], { timeout: 10_000 });
-      success("Daemon started");
-    } else {
-      await startDirectMode();
+    const manager = await detectServiceManager();
+    switch (manager) {
+      case "systemd":
+      case "systemd-user": {
+        const scope = manager === "systemd-user" ? "systemd (user scope)" : "systemd";
+        info(`Starting daemon via ${scope}...`);
+        await exec("systemctl", systemctlArgs(manager, "start", "comis"), { timeout: 10_000 });
+        success("Daemon started");
+        return;
+      }
+      case "pm2": {
+        info("Starting daemon via pm2...");
+        await exec("pm2", ["start", "comis"], { timeout: 10_000 });
+        success("Daemon started");
+        return;
+      }
+      case "direct": {
+        await startDirectMode();
+        return;
+      }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -222,50 +290,65 @@ async function handleDaemonStart(): Promise<void> {
 /** Handle the `daemon stop` subcommand. */
 async function handleDaemonStop(): Promise<void> {
   try {
-    if (await hasSystemd()) {
-      info("Stopping daemon via systemd...");
-      await exec("systemctl", ["stop", "comis"], { timeout: 15_000 });
-      success("Daemon stopped");
-      return;
-    }
-
-    // Direct mode: use PID file
-    const pid = readPidFile();
-    if (!pid) {
-      warn("Daemon is not running (no PID file found)");
-      return;
-    }
-
-    if (!isProcessAlive(pid)) {
-      warn("Daemon is not running (stale PID file)");
-      removePidFile();
-      return;
-    }
-
-    info(`Stopping daemon (PID: ${pid})...`);
-    process.kill(pid, "SIGTERM");
-
-    // Wait for process to exit (up to 10 seconds)
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      if (!isProcessAlive(pid)) {
-        removePidFile();
+    const manager = await detectServiceManager();
+    switch (manager) {
+      case "systemd":
+      case "systemd-user": {
+        const scope = manager === "systemd-user" ? "systemd (user scope)" : "systemd";
+        info(`Stopping daemon via ${scope}...`);
+        await exec("systemctl", systemctlArgs(manager, "stop", "comis"), { timeout: 15_000 });
         success("Daemon stopped");
         return;
       }
-      await new Promise((r) => setTimeout(r, 200));
+      case "pm2": {
+        info("Stopping daemon via pm2...");
+        await exec("pm2", ["stop", "comis"], { timeout: 15_000 });
+        success("Daemon stopped");
+        return;
+      }
+      case "direct": {
+        await stopDirectMode();
+        return;
+      }
     }
-
-    // Force kill if still running
-    warn("Daemon did not stop gracefully, sending SIGKILL...");
-    process.kill(pid, "SIGKILL");
-    removePidFile();
-    success("Daemon killed");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     error(`Failed to stop daemon: ${msg}`);
     process.exit(1);
   }
+}
+
+/** Stop the daemon that was started via direct-spawn. */
+async function stopDirectMode(): Promise<void> {
+  const pid = readPidFile();
+  if (!pid) {
+    warn("Daemon is not running (no PID file found)");
+    return;
+  }
+
+  if (!isProcessAlive(pid)) {
+    warn("Daemon is not running (stale PID file)");
+    removePidFile();
+    return;
+  }
+
+  info(`Stopping daemon (PID: ${pid})...`);
+  process.kill(pid, "SIGTERM");
+
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) {
+      removePidFile();
+      success("Daemon stopped");
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  warn("Daemon did not stop gracefully, sending SIGKILL...");
+  process.kill(pid, "SIGKILL");
+  removePidFile();
+  success("Daemon killed");
 }
 
 /**
@@ -296,23 +379,22 @@ async function tryRpcStatus(): Promise<boolean> {
   }
 }
 
-/**
- * Try to get daemon status via systemd.
- *
- * @returns true if systemd check succeeded and status was displayed
- */
-async function trySystemdStatus(): Promise<boolean> {
+/** Try to describe daemon status via systemd. */
+async function trySystemdStatus(scope: "systemd" | "systemd-user"): Promise<boolean> {
   try {
-    if (!(await hasSystemd())) return false;
-
-    const { stdout } = await exec("systemctl", ["is-active", "comis"], { timeout: 5_000 });
+    const { stdout } = await exec(
+      "systemctl",
+      systemctlArgs(scope, "is-active", "comis"),
+      { timeout: 5_000 },
+    );
     const status = stdout.trim();
+    const label = scope === "systemd-user" ? "systemd (user)" : "systemd";
     if (status === "active") {
-      success("Daemon is running (systemd)");
+      success(`Daemon is running (${label})`);
       try {
         const { stdout: showOut } = await exec(
           "systemctl",
-          ["show", "comis", "--property=ActiveEnterTimestamp,MainPID", "--no-pager"],
+          systemctlArgs(scope, "show", "comis", "--property=ActiveEnterTimestamp,MainPID", "--no-pager"),
           { timeout: 5_000 },
         );
         const props = Object.fromEntries(
@@ -333,8 +415,39 @@ async function trySystemdStatus(): Promise<boolean> {
         // Extra info failed -- status already shown
       }
     } else {
-      warn(`Daemon status: ${status}`);
+      warn(`Daemon status (${label}): ${status}`);
     }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Try to describe daemon status via pm2. */
+async function tryPm2Status(): Promise<boolean> {
+  try {
+    const { stdout } = await exec("pm2", ["jlist"], { timeout: 5_000 });
+    const parsed = JSON.parse(stdout) as Array<{
+      name?: string;
+      pid?: number;
+      pm2_env?: { status?: string; pm_uptime?: number; restart_time?: number };
+    }>;
+    const entry = parsed.find((p) => p.name === "comis");
+    if (!entry) return false;
+
+    const status = entry.pm2_env?.status ?? "unknown";
+    if (status === "online") {
+      success("Daemon is running (pm2)");
+    } else {
+      warn(`Daemon status (pm2): ${status}`);
+    }
+    const pairs: [string, string][] = [];
+    if (entry.pid) pairs.push(["PID", String(entry.pid)]);
+    if (entry.pm2_env?.pm_uptime) pairs.push(["Since", new Date(entry.pm2_env.pm_uptime).toISOString()]);
+    if (typeof entry.pm2_env?.restart_time === "number") {
+      pairs.push(["Restarts", String(entry.pm2_env.restart_time)]);
+    }
+    if (pairs.length > 0) renderKeyValue(pairs);
     return true;
   } catch {
     return false;
@@ -343,19 +456,29 @@ async function trySystemdStatus(): Promise<boolean> {
 
 /** Handle the `daemon status` subcommand. */
 async function handleDaemonStatus(): Promise<void> {
-  // Try RPC first for detailed info
+  // Try RPC first for detailed info — works regardless of supervisor
   if (await tryRpcStatus()) return;
 
-  // Try systemd
-  if (await trySystemdStatus()) return;
+  const manager = await detectServiceManager();
+  switch (manager) {
+    case "systemd":
+    case "systemd-user":
+      if (await trySystemdStatus(manager)) return;
+      break;
+    case "pm2":
+      if (await tryPm2Status()) return;
+      break;
+    case "direct":
+      break;
+  }
 
   // Fall back to PID file check
   const pid = readPidFile();
   if (pid && isProcessAlive(pid)) {
-    success(`Daemon is running (PID: ${pid})`);
+    success(`Daemon is running (direct, PID: ${pid})`);
     renderKeyValue([["PID", String(pid)]]);
   } else {
-    if (pid) removePidFile(); // Clean up stale PID file
+    if (pid) removePidFile();
     warn("Daemon is not running");
   }
 }
@@ -363,54 +486,82 @@ async function handleDaemonStatus(): Promise<void> {
 /** Handle the `daemon logs` subcommand. */
 async function handleDaemonLogs(options: { follow?: boolean; lines: string }): Promise<void> {
   try {
-    if (await hasSystemd()) {
-      const args = ["--unit=comis", "--no-pager", `-n${options.lines}`];
-      if (options.follow) {
-        args.push("--follow");
-        // Stream output with spawn
-        const child = spawn("journalctl", args, { stdio: "inherit" });
-        child.on("error", (err) => {
-          error(`Failed to read logs: ${err.message}`);
-          process.exit(1);
-        });
-      } else {
-        const { stdout } = await exec("journalctl", args, { timeout: 10_000 });
-        if (stdout.trim()) {
-          console.log(stdout);
-        } else {
-          info("No logs found");
-        }
-      }
-    } else {
-      // Attempt to tail log file from default location
-      // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-      const logPath = process.env["COMIS_LOG_PATH"] ?? LOG_FILE;
-      if (!existsSync(logPath)) {
-        warn(`Log file not found: ${logPath}`);
-        info("Set COMIS_LOG_PATH to specify a custom log file location.");
+    const manager = await detectServiceManager();
+    switch (manager) {
+      case "systemd":
+      case "systemd-user":
+        await streamSystemdLogs(manager, options);
         return;
-      }
-      const args = ["-n", options.lines, logPath];
-      if (options.follow) {
-        args.unshift("-f");
-        const child = spawn("tail", args, { stdio: "inherit" });
-        child.on("error", (err) => {
-          error(`Failed to read logs: ${err.message}`);
-          process.exit(1);
-        });
-      } else {
-        const { stdout } = await exec("tail", args, { timeout: 5_000 });
-        if (stdout.trim()) {
-          console.log(stdout);
-        } else {
-          info("No logs found");
-        }
-      }
+      case "pm2":
+        streamPm2Logs(options);
+        return;
+      case "direct":
+        await streamDirectLogs(options);
+        return;
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     error(`Failed to read logs: ${msg}`);
     process.exit(1);
+  }
+}
+
+async function streamSystemdLogs(
+  scope: "systemd" | "systemd-user",
+  options: { follow?: boolean; lines: string },
+): Promise<void> {
+  const args = ["--unit=comis", "--no-pager", `-n${options.lines}`];
+  if (scope === "systemd-user") args.push("--user");
+  if (options.follow) {
+    args.push("--follow");
+    const child = spawn("journalctl", args, { stdio: "inherit" });
+    child.on("error", (err) => {
+      error(`Failed to read logs: ${err.message}`);
+      process.exit(1);
+    });
+    return;
+  }
+  const { stdout } = await exec("journalctl", args, { timeout: 10_000 });
+  if (stdout.trim()) {
+    console.log(stdout);
+  } else {
+    info("No logs found");
+  }
+}
+
+function streamPm2Logs(options: { follow?: boolean; lines: string }): void {
+  const args = ["logs", "comis", "--lines", options.lines];
+  if (!options.follow) args.push("--nostream");
+  const child = spawn("pm2", args, { stdio: "inherit" });
+  child.on("error", (err) => {
+    error(`Failed to read logs: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+async function streamDirectLogs(options: { follow?: boolean; lines: string }): Promise<void> {
+  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
+  const logPath = process.env["COMIS_LOG_PATH"] ?? LOG_FILE;
+  if (!existsSync(logPath)) {
+    warn(`Log file not found: ${logPath}`);
+    info("Set COMIS_LOG_PATH to specify a custom log file location.");
+    return;
+  }
+  const args = ["-n", options.lines, logPath];
+  if (options.follow) {
+    args.unshift("-f");
+    const child = spawn("tail", args, { stdio: "inherit" });
+    child.on("error", (err) => {
+      error(`Failed to read logs: ${err.message}`);
+      process.exit(1);
+    });
+    return;
+  }
+  const { stdout } = await exec("tail", args, { timeout: 5_000 });
+  if (stdout.trim()) {
+    console.log(stdout);
+  } else {
+    info("No logs found");
   }
 }
 
