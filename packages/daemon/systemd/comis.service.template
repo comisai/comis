@@ -106,7 +106,10 @@ ProtectClock=yes
 ProtectHostname=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
-RestrictNamespaces=yes
+# RestrictNamespaces: allowlist the namespace types bubblewrap uses for the
+# agent-command exec sandbox. With =yes, bwrap fails with "No permissions to
+# create new namespace" and the sandbox becomes a no-op.
+RestrictNamespaces=user mnt pid net ipc uts cgroup
 LockPersonality=yes
 
 [Install]

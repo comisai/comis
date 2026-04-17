@@ -2946,7 +2946,11 @@ ProtectClock=yes
 ProtectHostname=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
-RestrictNamespaces=yes
+# RestrictNamespaces: allow the namespace types bubblewrap needs for the exec
+# sandbox (agent-issued commands are bwrap-wrapped in new user/mount/pid/net/ipc
+# namespaces). Without this allowlist, bwrap fails with "No permissions to
+# create new namespace" and the exec tool degrades to a no-op.
+RestrictNamespaces=user mnt pid net ipc uts cgroup
 LockPersonality=yes
 
 [Install]
