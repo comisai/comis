@@ -30,6 +30,9 @@ coverage/
 # Claude Code working directory
 .claude/
 
+# GSD planning directory (local-only)
+.planning/
+
 # Build outputs (each package's dist/ is gitignored, built on CI)
 packages/*/dist/
 website/dist/
