@@ -347,7 +347,7 @@ ui_error() {
     fi
 }
 
-INSTALL_STAGE_TOTAL=3
+INSTALL_STAGE_TOTAL=4
 INSTALL_STAGE_CURRENT=0
 
 ui_section() {
@@ -394,7 +394,11 @@ show_install_plan() {
     ui_section "Install plan"
     ui_kv "OS" "$OS"
     ui_kv "Install method" "$INSTALL_METHOD"
-    ui_kv "Requested version" "$COMIS_VERSION"
+    if [[ -n "$COMIS_TARBALL" ]]; then
+        ui_kv "Tarball" "$COMIS_TARBALL"
+    else
+        ui_kv "Requested version" "$COMIS_VERSION"
+    fi
     if [[ "$USE_BETA" == "1" ]]; then
         ui_kv "Beta channel" "enabled"
     fi
@@ -407,6 +411,12 @@ show_install_plan() {
     fi
     if should_create_dedicated_user; then
         ui_kv "Run as user" "$COMIS_USER"
+    fi
+    if [[ -n "${RESOLVED_SERVICE_MANAGER:-}" ]]; then
+        ui_kv "Service manager" "$RESOLVED_SERVICE_MANAGER"
+    fi
+    if [[ "$NO_AUTOSTART" == "1" ]]; then
+        ui_kv "Boot persistence" "disabled (--no-autostart)"
     fi
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_kv "Dry run" "yes"
@@ -684,7 +694,8 @@ install_build_tools_linux() {
         # python3-venv: agent exec tool needs venvs for pip installs
         # ffmpeg: media processing (TTS, audio/video)
         # bubblewrap: sandbox for secure command execution
-        local apt_pkgs="build-essential python3 python3-venv python3-pip make g++ cmake ffmpeg bubblewrap"
+        # libsystemd-dev: headers for sd-notify native addon (watchdog integration)
+        local apt_pkgs="build-essential python3 python3-venv python3-pip make g++ cmake ffmpeg bubblewrap libsystemd-dev"
         if is_root; then
             run_quiet_step "Updating package index" apt-get update || ui_warn "Package index update had errors (continuing)"
             run_quiet_step "Installing system packages" apt-get install -y -qq $apt_pkgs
@@ -697,18 +708,18 @@ install_build_tools_linux() {
 
     if command -v dnf &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap
+            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap systemd-devel
         else
-            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap
+            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap systemd-devel
         fi
         return 0
     fi
 
     if command -v yum &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap
+            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap systemd-devel
         else
-            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap
+            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake python3 python3-pip ffmpeg bubblewrap systemd-devel
         fi
         return 0
     fi
@@ -954,7 +965,38 @@ install_comis_npm() {
         return 1
     fi
     ui_success "Comis npm package installed"
+    repair_comisai_bundled_deps || true
     return 0
+}
+
+# Workaround for an npm quirk with bundledDependencies + native deps: after
+# `npm install -g comisai(.tgz)`, some transitive deps (notably `bindings`)
+# end up as empty directories that fail at runtime. Running `npm install`
+# inside the installed package triggers a proper reify pass that nests the
+# missing deps correctly. Idempotent and fast on a clean install.
+repair_comisai_bundled_deps() {
+    local npm_root=""
+    npm_root="$(npm root -g 2>/dev/null || true)"
+    local comisai_dir=""
+    if [[ -n "$npm_root" && -d "${npm_root}/comisai" ]]; then
+        comisai_dir="${npm_root}/comisai"
+    elif [[ -d "/usr/lib/node_modules/comisai" ]]; then
+        comisai_dir="/usr/lib/node_modules/comisai"
+    else
+        return 0
+    fi
+
+    # Detect the broken state: bindings/ exists but is empty.
+    local bindings_dir="${comisai_dir}/node_modules/bindings"
+    if [[ -d "$bindings_dir" && -z "$(ls -A "$bindings_dir" 2>/dev/null)" ]]; then
+        ui_info "Repairing bundled native dep tree (one-time fix)"
+        if ( cd "$comisai_dir" && npm install --no-save --no-fund --no-audit --silent >/dev/null 2>&1 ); then
+            ui_success "Native deps repaired"
+        else
+            ui_warn "Native dep repair failed; daemon may not start correctly"
+            ui_info "Manually: cd ${comisai_dir} && npm install"
+        fi
+    fi
 }
 
 TAGLINE="$DEFAULT_TAGLINE"
@@ -977,6 +1019,39 @@ SELECTED_NODE_BIN=""
 PNPM_CMD=()
 HELP=0
 
+# Local-tarball install (bypasses npm registry). When set, overrides --version.
+COMIS_TARBALL="${COMIS_TARBALL:-}"
+
+# Service manager selection (auto|systemd|systemd-user|pm2|none)
+SERVICE_MANAGER="${COMIS_SERVICE:-auto}"
+# Skip boot-persistence registration (pm2 startup / systemctl enable)
+NO_AUTOSTART="${COMIS_NO_AUTOSTART:-0}"
+# Install + enable but do not start the service yet
+NO_SERVICE_START="${COMIS_NO_SERVICE_START:-0}"
+
+# Uninstall flags
+UNINSTALL=0
+PURGE="${COMIS_PURGE:-0}"
+REMOVE_USER_FLAG="${COMIS_REMOVE_USER:-0}"
+ASSUME_YES=0
+
+# Populated by resolve_service_template_vars
+COMIS_NODE_BIN=""
+COMIS_DAEMON_JS=""
+COMIS_DAEMON_DIR=""
+# Read-root granted to Node's --permission model. Wider than DAEMON_DIR because
+# the daemon imports sibling @comis/* packages from node_modules/.
+COMIS_READ_ROOT=""
+COMIS_SVC_USER=""
+COMIS_SVC_GROUP=""
+COMIS_SVC_HOME=""
+COMIS_DATA_DIR=""
+COMIS_CONFIG_FILE=""
+COMIS_ENV_FILE="/etc/comis/env"
+COMIS_WORKING_DIR=""
+# Resolved service manager (auto → concrete value)
+RESOLVED_SERVICE_MANAGER=""
+
 print_usage() {
     cat <<EOF
 Comis installer (macOS + Linux)
@@ -984,40 +1059,63 @@ Comis installer (macOS + Linux)
 Usage:
   curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- [options]
 
-Options:
+Install options:
   --install-method, --method npm|git   Install via npm (default) or from a git checkout
-  --npm                               Shortcut for --install-method npm
-  --git, --github                     Shortcut for --install-method git
+  --npm                                Shortcut for --install-method npm
+  --git, --github                      Shortcut for --install-method git
   --version <version|dist-tag>         npm install: version (default: latest)
   --beta                               Use beta if available, else latest
-  --git-dir, --dir <path>             Checkout directory (default: ~/comis)
+  --tarball <path>                     Install from a local .tgz (bypasses npm registry)
+  --git-dir, --dir <path>              Checkout directory (default: ~/comis)
   --no-git-update                      Skip git pull for existing checkout
-  --user <name>                          Dedicated Linux user (default: comis, created if root)
-  --no-user                              Install as current user even when root (skip user creation)
+  --user <name>                        Dedicated Linux user (default: comis, created if root)
+  --no-user                            Install as current user even when root (skip user creation)
   --no-init                            Skip interactive init (non-interactive)
-  --no-prompt                           Disable prompts (required in CI/automation)
-  --dry-run                             Print what would happen (no changes)
-  --verbose                             Print debug output (set -x, npm verbose)
-  --help, -h                            Show this help
+  --no-prompt                          Disable prompts (required in CI/automation)
+  --dry-run                            Print what would happen (no changes)
+  --verbose                            Print debug output (set -x, npm verbose)
+  --help, -h                           Show this help
+
+Service options (how to run the daemon):
+  --service auto|systemd|systemd-user|pm2|none
+                                       auto (default) picks systemd on Linux+root, systemd-user on
+                                       Linux non-root, pm2 on macOS. Use 'none' to skip registration
+                                       (CI / manual control).
+  --no-autostart                       Install service but skip boot persistence (no systemctl enable /
+                                       pm2 startup). Useful when you lack admin rights.
+  --no-service-start                   Register + enable but do not start the daemon yet.
+
+Uninstall:
+  --uninstall                          Remove Comis (keeps data by default)
+  --purge                              With --uninstall: also delete ~/.comis, /etc/comis, /var/log/comis
+  --remove-user                        Linux+root only: also delete the comis system user (implies --purge)
+  --yes                                Skip interactive confirmation prompts
 
 Environment variables:
   COMIS_INSTALL_METHOD=git|npm
   COMIS_VERSION=latest|next|<semver>
   COMIS_BETA=0|1
+  COMIS_TARBALL=/path/to/comisai.tgz
   COMIS_GIT_DIR=...
   COMIS_GIT_UPDATE=0|1
   COMIS_USER=comis                    Default user for Linux root installs
+  COMIS_SERVICE=auto|systemd|systemd-user|pm2|none
+  COMIS_NO_AUTOSTART=1
+  COMIS_NO_SERVICE_START=1
+  COMIS_PURGE=1
+  COMIS_REMOVE_USER=1
   COMIS_NO_PROMPT=1
   COMIS_DRY_RUN=1
   COMIS_NO_INIT=1
   COMIS_VERBOSE=1
-  COMIS_NPM_LOGLEVEL=error|warn|notice  Default: error (hide npm deprecation noise)
-  SHARP_IGNORE_GLOBAL_LIBVIPS=0|1    Default: 1 (avoid sharp building against global libvips)
+  COMIS_NPM_LOGLEVEL=error|warn|notice  Default: error
+  SHARP_IGNORE_GLOBAL_LIBVIPS=0|1    Default: 1
 
 Examples:
   curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash
   curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- --no-init
-  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- --install-method git --no-init
+  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- --service none
+  curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash -s -- --uninstall --purge --yes
 EOF
 }
 
@@ -1082,6 +1180,49 @@ parse_args() {
                 ;;
             --no-user)
                 COMIS_REEXEC=1
+                shift
+                ;;
+            --tarball)
+                COMIS_TARBALL="$2"
+                INSTALL_METHOD="npm"
+                shift 2
+                ;;
+            --tarball=*)
+                COMIS_TARBALL="${1#*=}"
+                INSTALL_METHOD="npm"
+                shift
+                ;;
+            --service)
+                SERVICE_MANAGER="$2"
+                shift 2
+                ;;
+            --service=*)
+                SERVICE_MANAGER="${1#*=}"
+                shift
+                ;;
+            --no-autostart)
+                NO_AUTOSTART=1
+                shift
+                ;;
+            --no-service-start)
+                NO_SERVICE_START=1
+                shift
+                ;;
+            --uninstall)
+                UNINSTALL=1
+                shift
+                ;;
+            --purge)
+                PURGE=1
+                shift
+                ;;
+            --remove-user)
+                REMOVE_USER_FLAG=1
+                PURGE=1
+                shift
+                ;;
+            --yes|-y)
+                ASSUME_YES=1
                 shift
                 ;;
             *)
@@ -1717,8 +1858,12 @@ COMIS_USER="${COMIS_USER:-comis}"
 COMIS_REEXEC="${COMIS_REEXEC:-0}"
 
 should_create_dedicated_user() {
-    # Only on Linux, only when running as root, and not already re-execed
-    [[ "$OS" == "linux" ]] && is_root && [[ "$COMIS_REEXEC" != "1" ]]
+    # Only on Linux, only when running as root, not re-exec'd, and only when
+    # we're actually going to register a system-scope systemd service that
+    # benefits from a dedicated user. For --service none, systemd-user, or pm2,
+    # install as the invoking user so `comis` is immediately on their PATH.
+    [[ "$OS" == "linux" ]] && is_root && [[ "$COMIS_REEXEC" != "1" ]] \
+        && [[ "$RESOLVED_SERVICE_MANAGER" == "systemd" ]]
 }
 
 comis_user_exists() {
@@ -1773,6 +1918,7 @@ reexec_as_comis_user() {
     [[ -n "$INSTALL_METHOD" ]] && forwarded_args+=(--install-method "$INSTALL_METHOD")
     [[ "$COMIS_VERSION" != "latest" ]] && forwarded_args+=(--version "$COMIS_VERSION")
     [[ "$USE_BETA" == "1" ]] && forwarded_args+=(--beta)
+    [[ -n "$COMIS_TARBALL" ]] && forwarded_args+=(--tarball "$COMIS_TARBALL")
 
     # Copy the install script to a location the comis user can read
     local script_copy="${comis_home}/.comis-install.sh"
@@ -1899,7 +2045,9 @@ fix_npm_permissions() {
 
     # shellcheck disable=SC2016
     local path_line='export PATH="$HOME/.npm-global/bin:$PATH"'
-    for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    # .bashrc/.zshrc cover interactive shells; .profile covers login shells
+    # (su -, ssh, etc.) which do not source .bashrc on Debian.
+    for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
         if [[ -f "$rc" || "$rc" == "$HOME/.bashrc" ]]; then
             if ! grep -q ".npm-global" "$rc" 2>/dev/null; then
                 echo "$path_line" >> "$rc"
@@ -2289,6 +2437,28 @@ resolve_beta_version() {
 
 install_comis() {
     local package_name="comisai"
+    local install_spec=""
+
+    # Local tarball overrides everything else — skips version resolution
+    if [[ -n "$COMIS_TARBALL" ]]; then
+        if [[ ! -f "$COMIS_TARBALL" ]]; then
+            ui_error "--tarball path does not exist: ${COMIS_TARBALL}"
+            exit 2
+        fi
+        install_spec="$COMIS_TARBALL"
+        ui_info "Installing Comis from local tarball: ${COMIS_TARBALL}"
+
+        if ! install_comis_npm "${install_spec}"; then
+            ui_warn "npm install from tarball failed; retrying after cleanup"
+            cleanup_npm_comis_paths
+            install_comis_npm "${install_spec}"
+        fi
+
+        ensure_comis_bin_link || true
+        ui_success "Comis installed"
+        return 0
+    fi
+
     if [[ "$USE_BETA" == "1" ]]; then
         local beta_version=""
         beta_version="$(resolve_beta_version || true)"
@@ -2312,7 +2482,6 @@ install_comis() {
     else
         ui_info "Installing Comis (${COMIS_VERSION})"
     fi
-    local install_spec=""
     if [[ "${COMIS_VERSION}" == "latest" ]]; then
         install_spec="${package_name}@latest"
     else
@@ -2408,6 +2577,1114 @@ resolve_comis_version() {
     echo "$version"
 }
 
+# ---------------------------------------------------------------------------
+# Service manager subsystem
+# ---------------------------------------------------------------------------
+
+# Detect whether this host has a running systemd (as opposed to just the binaries).
+# Two-stage check: /run/systemd/system must exist AND is-system-running must
+# report something other than "offline". Returns 0 if usable.
+has_working_systemd() {
+    [[ -d /run/systemd/system ]] || return 1
+    # is-system-running exits 0 on "running" and 1 on "degraded" (still OK).
+    # On "offline" or "unknown" the daemon isn't really managing the system.
+    local state
+    state="$(systemctl is-system-running --quiet 2>/dev/null; echo $?)"
+    case "$state" in
+        0|1) return 0 ;;
+        *)   return 1 ;;
+    esac
+}
+
+# User-scope systemd requires DBus + XDG_RUNTIME_DIR to be set up. On headless
+# Linux boxes, these only appear after loginctl enable-linger.
+has_working_user_systemd() {
+    [[ -n "${XDG_RUNTIME_DIR:-}" ]] || return 1
+    [[ -S "${XDG_RUNTIME_DIR}/bus" || -S "${XDG_RUNTIME_DIR}/systemd/private" ]] || return 1
+    systemctl --user --no-pager list-units >/dev/null 2>&1
+}
+
+is_wsl() {
+    [[ -n "${WSL_DISTRO_NAME:-}" ]] || grep -qi 'microsoft' /proc/version 2>/dev/null
+}
+
+# Detect version-manager-managed Node (nvm, nodenv, fnm, volta). Version-manager
+# paths bake the version string into the systemd unit's ExecStart, so service
+# mode requires system-installed Node.
+node_is_version_manager_managed() {
+    local node_bin
+    node_bin="${1:-$(command -v node 2>/dev/null || true)}"
+    [[ -z "$node_bin" ]] && return 1
+    local resolved
+    resolved="$(readlink -f "$node_bin" 2>/dev/null || echo "$node_bin")"
+    case "$resolved" in
+        */.nvm/*|*/.nodenv/*|*/.fnm/*|*/.volta/*|*/fnm_multishells/*)
+            return 0 ;;
+        *)
+            return 1 ;;
+    esac
+}
+
+# Decide which service manager to use.
+# Sets RESOLVED_SERVICE_MANAGER to one of: systemd | systemd-user | pm2 | none
+resolve_service_manager() {
+    local requested="$SERVICE_MANAGER"
+
+    case "$requested" in
+        auto|systemd|systemd-user|pm2|none) ;;
+        *)
+            ui_error "Invalid --service value: ${requested}"
+            echo "Valid values: auto, systemd, systemd-user, pm2, none"
+            exit 2
+            ;;
+    esac
+
+    # Explicit selections validate immediately
+    if [[ "$requested" == "systemd" ]]; then
+        if ! has_working_systemd; then
+            ui_error "--service systemd requested but systemd is not running on this host"
+            exit 2
+        fi
+        if ! is_root; then
+            ui_error "--service systemd requires root (use --service systemd-user for non-root)"
+            exit 2
+        fi
+        RESOLVED_SERVICE_MANAGER="systemd"
+        return 0
+    fi
+
+    if [[ "$requested" == "systemd-user" ]]; then
+        if ! has_working_systemd; then
+            ui_error "--service systemd-user requested but systemd is not running on this host"
+            exit 2
+        fi
+        RESOLVED_SERVICE_MANAGER="systemd-user"
+        return 0
+    fi
+
+    if [[ "$requested" == "pm2" ]]; then
+        RESOLVED_SERVICE_MANAGER="pm2"
+        return 0
+    fi
+
+    if [[ "$requested" == "none" ]]; then
+        RESOLVED_SERVICE_MANAGER="none"
+        return 0
+    fi
+
+    # auto
+    if [[ "$OS" == "macos" ]]; then
+        RESOLVED_SERVICE_MANAGER="pm2"
+        return 0
+    fi
+
+    if [[ "$OS" == "linux" ]]; then
+        if has_working_systemd; then
+            if is_root; then
+                RESOLVED_SERVICE_MANAGER="systemd"
+            else
+                RESOLVED_SERVICE_MANAGER="systemd-user"
+            fi
+            return 0
+        fi
+
+        # No systemd — user almost certainly wants WSL guidance
+        if is_wsl; then
+            ui_warn "WSL detected without systemd."
+            echo "  To enable systemd on WSL, add this to /etc/wsl.conf (Windows side):"
+            echo "    [boot]"
+            echo "    systemd=true"
+            echo "  Then from PowerShell/cmd: wsl --shutdown"
+            echo "  After relaunching WSL, re-run this installer."
+            ui_info "Falling back to --service none for this install."
+        else
+            ui_warn "systemd not detected; falling back to --service none."
+        fi
+        RESOLVED_SERVICE_MANAGER="none"
+        return 0
+    fi
+
+    RESOLVED_SERVICE_MANAGER="none"
+}
+
+# Stop a direct-spawn daemon and remove its stale PID file before handing
+# ownership to a service manager.
+cleanup_legacy_daemon_state() {
+    local pid_file
+    # Determine the correct home for the target user
+    local target_home="${HOME:-}"
+    if [[ -n "${COMIS_SVC_HOME:-}" ]]; then
+        target_home="$COMIS_SVC_HOME"
+    fi
+    pid_file="${target_home}/.comis/daemon.pid"
+
+    [[ -f "$pid_file" ]] || return 0
+
+    local pid
+    pid="$(tr -d '[:space:]' < "$pid_file" 2>/dev/null || true)"
+
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        ui_info "Stopping direct-spawn daemon (PID ${pid}) before migrating to ${RESOLVED_SERVICE_MANAGER}"
+        kill -TERM "$pid" 2>/dev/null || true
+        local waited=0
+        while kill -0 "$pid" 2>/dev/null && [[ "$waited" -lt 10 ]]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            ui_warn "Daemon did not stop gracefully; sending SIGKILL"
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    fi
+
+    rm -f "$pid_file" 2>/dev/null || true
+    ui_success "Legacy daemon state cleared"
+}
+
+# Populate COMIS_NODE_BIN, COMIS_DAEMON_JS, COMIS_SVC_USER, COMIS_SVC_HOME,
+# COMIS_DATA_DIR, COMIS_CONFIG_FILE based on the install method and service manager.
+resolve_service_template_vars() {
+    # Node binary — must be a real file, not a shim
+    local node_bin="${SELECTED_NODE_BIN:-}"
+    if [[ -z "$node_bin" ]]; then
+        node_bin="$(command -v node 2>/dev/null || true)"
+    fi
+    if [[ -z "$node_bin" ]]; then
+        ui_error "Could not locate the node binary."
+        return 1
+    fi
+
+    # Resolve symlinks — systemd units need an absolute, stable path
+    local resolved
+    resolved="$(readlink -f "$node_bin" 2>/dev/null || echo "$node_bin")"
+    COMIS_NODE_BIN="$resolved"
+
+    # Reject version-manager Node for systemd/pm2 service mode
+    if [[ "$RESOLVED_SERVICE_MANAGER" == "systemd" || "$RESOLVED_SERVICE_MANAGER" == "systemd-user" || "$RESOLVED_SERVICE_MANAGER" == "pm2" ]]; then
+        if node_is_version_manager_managed "$resolved"; then
+            ui_error "Service-managed Comis requires system-installed Node."
+            echo "  Detected version-manager Node at: ${resolved}"
+            echo "  Install system Node (the installer can do this) and re-run, or use --service none."
+            return 1
+        fi
+    fi
+
+    # Target service user
+    if [[ "$RESOLVED_SERVICE_MANAGER" == "systemd" ]] && is_root && [[ -n "${COMIS_USER:-}" ]] && comis_user_exists; then
+        COMIS_SVC_USER="$COMIS_USER"
+        COMIS_SVC_GROUP="$COMIS_USER"
+    else
+        COMIS_SVC_USER="$(id -un)"
+        COMIS_SVC_GROUP="$(id -gn)"
+    fi
+
+    # Home directory for that user
+    if [[ "$COMIS_SVC_USER" == "$(id -un)" ]]; then
+        COMIS_SVC_HOME="$HOME"
+    else
+        COMIS_SVC_HOME="$(getent passwd "$COMIS_SVC_USER" 2>/dev/null | cut -d: -f6)"
+        if [[ -z "$COMIS_SVC_HOME" ]]; then
+            COMIS_SVC_HOME="/home/${COMIS_SVC_USER}"
+        fi
+    fi
+
+    COMIS_DATA_DIR="${COMIS_SVC_HOME}/.comis"
+    COMIS_CONFIG_FILE="${COMIS_DATA_DIR}/config.yaml"
+    COMIS_WORKING_DIR="$COMIS_SVC_HOME"
+
+    # Daemon entry point
+    if [[ "$INSTALL_METHOD" == "git" ]]; then
+        local git_dir="${GIT_DIR}"
+        if [[ -n "${final_git_dir:-}" ]]; then
+            git_dir="$final_git_dir"
+        fi
+        COMIS_DAEMON_JS="${git_dir}/packages/daemon/dist/daemon.js"
+    else
+        # npm install — probe known layouts under the global npm root.
+        # The published `comisai` package bundles @comis/* under node_modules/;
+        # a monorepo-style install instead exposes packages/daemon/.
+        local npm_root=""
+        if [[ "$COMIS_SVC_USER" == "$(id -un)" ]]; then
+            npm_root="$(npm root -g 2>/dev/null || true)"
+        else
+            npm_root="$(su - "$COMIS_SVC_USER" -c 'npm root -g' 2>/dev/null || true)"
+        fi
+
+        local -a candidate_roots=()
+        [[ -n "$npm_root" ]] && candidate_roots+=("${npm_root}/comisai")
+        candidate_roots+=(
+            "/usr/lib/node_modules/comisai"
+            "/usr/local/lib/node_modules/comisai"
+        )
+
+        local -a candidate_entries=(
+            "node_modules/@comis/daemon/dist/daemon.js"
+            "packages/daemon/dist/daemon.js"
+        )
+
+        COMIS_DAEMON_JS=""
+        local root entry
+        for root in "${candidate_roots[@]}"; do
+            [[ -d "$root" ]] || continue
+            for entry in "${candidate_entries[@]}"; do
+                if [[ -f "${root}/${entry}" ]]; then
+                    COMIS_DAEMON_JS="${root}/${entry}"
+                    break 2
+                fi
+            done
+        done
+
+        if [[ -z "$COMIS_DAEMON_JS" ]]; then
+            ui_error "Could not locate comisai daemon entry point."
+            echo "  Searched under:"
+            for root in "${candidate_roots[@]}"; do
+                echo "    ${root}/{node_modules/@comis/daemon,packages/daemon}/dist/daemon.js"
+            done
+            return 1
+        fi
+    fi
+
+    COMIS_DAEMON_DIR="$(dirname "$COMIS_DAEMON_JS")"
+
+    # Determine read-root for Node's --permission model. The daemon imports
+    # bundled sibling packages under node_modules/@comis/*, so the read grant
+    # must cover the whole install root, not just the daemon's dist/ dir.
+    if [[ "$COMIS_DAEMON_JS" == */node_modules/@comis/daemon/dist/daemon.js ]]; then
+        # npm install: grant read on the `comisai/` package root
+        COMIS_READ_ROOT="${COMIS_DAEMON_JS%/node_modules/@comis/daemon/dist/daemon.js}"
+    elif [[ "$COMIS_DAEMON_JS" == */packages/daemon/dist/daemon.js ]]; then
+        # git checkout: grant read on the repo root (covers all packages + node_modules)
+        COMIS_READ_ROOT="${COMIS_DAEMON_JS%/packages/daemon/dist/daemon.js}"
+    else
+        # Unknown layout — grant read on the daemon's grandparent (best-effort)
+        COMIS_READ_ROOT="$(dirname "$(dirname "$COMIS_DAEMON_DIR")")"
+    fi
+
+    return 0
+}
+
+# Write the rendered unit with a managed-by header + sha256 of the body.
+# The header lets us detect user edits on upgrade without clobbering them.
+render_systemd_unit() {
+    local target_path="$1"
+    local scope="$2"  # "system" or "user"
+
+    local user_line="User=${COMIS_SVC_USER}"
+    local group_line="Group=${COMIS_SVC_GROUP}"
+    if [[ "$scope" == "user" ]]; then
+        # User units run as the invoking user — no User=/Group= needed
+        user_line="# User= (user scope: inherits invoking user)"
+        group_line="# Group= (user scope)"
+    fi
+
+    local body
+    body="$(cat <<UNIT
+[Unit]
+Description=Comis AI Agent Daemon
+Documentation=https://docs.comis.ai/operations/systemd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+${user_line}
+${group_line}
+WorkingDirectory=${COMIS_WORKING_DIR}
+
+# --permission: Node permission model. fs-write scoped to DATA_DIR.
+# fs-read wildcarded: ProtectSystem=strict + ProtectHome=read-only enforce the
+# real filesystem perimeter at the kernel level.
+# --allow-addons + --allow-worker: native deps like sharp and better-sqlite3.
+# --jitless and MemoryDenyWriteExecute are intentionally NOT set: both break
+# WebAssembly, which bundled undici uses for HTTP parsing.
+ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=${COMIS_DATA_DIR} --allow-child-process ${COMIS_DAEMON_JS}
+
+Restart=on-failure
+RestartSec=5s
+WatchdogSec=30s
+TimeoutStopSec=45
+
+MemoryMax=2G
+TasksMax=100
+
+# MemoryDenyWriteExecute intentionally omitted: it breaks V8 JIT and WebAssembly.
+# Bundled undici uses WASM for HTTP parsing. SystemCallFilter still blocks most
+# abuse vectors below.
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=comis
+
+Environment=NODE_ENV=production
+EnvironmentFile=-${COMIS_ENV_FILE}
+
+# --- Security hardening ---
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=${COMIS_DATA_DIR}
+
+# Privilege escalation prevention
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=${scope}.target
+UNIT
+)"
+    # user scope installs under default.target; system under multi-user.target
+    if [[ "$scope" == "user" ]]; then
+        body="${body//WantedBy=user.target/WantedBy=default.target}"
+    else
+        body="${body//WantedBy=system.target/WantedBy=multi-user.target}"
+    fi
+
+    local checksum
+    if command -v sha256sum >/dev/null 2>&1; then
+        checksum="$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)"
+    elif command -v shasum >/dev/null 2>&1; then
+        checksum="$(printf '%s' "$body" | shasum -a 256 | cut -d' ' -f1)"
+    else
+        checksum="unknown"
+    fi
+
+    local header
+    header="$(cat <<HDR
+# managed-by: comis-installer
+# template-version: 1
+# checksum: ${checksum}
+# Do not edit by hand — the installer will refuse to overwrite a modified unit.
+# To regenerate after an install.sh upgrade: re-run the installer.
+HDR
+)"
+
+    local tmp
+    tmp="$(mktempfile)"
+    printf '%s\n%s\n' "$header" "$body" > "$tmp"
+
+    local parent_dir
+    parent_dir="$(dirname "$target_path")"
+    if [[ "$scope" == "system" ]]; then
+        maybe_sudo mkdir -p "$parent_dir"
+        maybe_sudo install -m 0644 "$tmp" "$target_path"
+    else
+        mkdir -p "$parent_dir"
+        install -m 0644 "$tmp" "$target_path"
+    fi
+}
+
+# Check whether a previously-installed unit is still installer-managed.
+# Returns 0 if safe to overwrite, 1 if the user has edited it.
+unit_is_managed() {
+    local unit_path="$1"
+    [[ -f "$unit_path" ]] || return 0
+    grep -q "^# managed-by: comis-installer" "$unit_path" 2>/dev/null || return 1
+    # Extract recorded checksum
+    local recorded
+    recorded="$(grep '^# checksum:' "$unit_path" | head -n1 | awk '{print $3}')"
+    [[ -z "$recorded" ]] && return 1
+    # Extract the body (everything from the first "[Section]" header onward — the
+    # rendered unit's body always starts with "[Unit]"; no literal "[" appears
+    # in our managed-by header lines).
+    local body
+    body="$(sed -n '/^\[/,$p' "$unit_path")"
+    local computed=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        computed="$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)"
+    elif command -v shasum >/dev/null 2>&1; then
+        computed="$(printf '%s' "$body" | shasum -a 256 | cut -d' ' -f1)"
+    fi
+    [[ "$computed" == "$recorded" ]]
+}
+
+# Write /etc/comis/env with a placeholder. Does not overwrite an existing file
+# (user may have filled in API keys).
+render_env_file() {
+    local target="$COMIS_ENV_FILE"
+
+    if [[ -f "$target" ]]; then
+        ui_info "Env file already exists at ${target}; leaving untouched"
+        return 0
+    fi
+
+    local tmp
+    tmp="$(mktempfile)"
+    cat > "$tmp" <<ENV
+# Comis daemon environment — generated by install.sh.
+# Edit with: sudoedit ${target}
+# Restart after changes: sudo systemctl restart comis
+
+COMIS_CONFIG_PATHS=${COMIS_CONFIG_FILE}
+NODE_ENV=production
+
+# API keys (fill in as needed):
+# ANTHROPIC_API_KEY=
+# OPENAI_API_KEY=
+# GOOGLE_API_KEY=
+ENV
+
+    maybe_sudo mkdir -p "$(dirname "$target")"
+    maybe_sudo install -m 0640 -o root -g "$COMIS_SVC_GROUP" "$tmp" "$target" 2>/dev/null || \
+        maybe_sudo install -m 0640 "$tmp" "$target"
+    ui_success "Env file written to ${target}"
+}
+
+# Poll the gateway health endpoint after service start.
+wait_for_daemon_ready() {
+    local host="localhost"
+    local port=4766
+
+    # Read gateway settings from the config if present
+    if [[ -f "$COMIS_CONFIG_FILE" ]]; then
+        local cfg_host cfg_port
+        cfg_host="$(grep -E '^\s*host:' "$COMIS_CONFIG_FILE" 2>/dev/null | head -n1 | awk '{print $2}' || true)"
+        cfg_port="$(grep -E '^\s*port:' "$COMIS_CONFIG_FILE" 2>/dev/null | head -n1 | awk '{print $2}' || true)"
+        [[ -n "$cfg_host" && "$cfg_host" != "0.0.0.0" ]] && host="$cfg_host"
+        [[ -n "$cfg_port" ]] && port="$cfg_port"
+    fi
+
+    local deadline=$((SECONDS + 20))
+    while [[ $SECONDS -lt $deadline ]]; do
+        if command -v curl >/dev/null 2>&1; then
+            if curl -fsS --max-time 2 "http://${host}:${port}/health" >/dev/null 2>&1; then
+                return 0
+            fi
+        elif command -v wget >/dev/null 2>&1; then
+            if wget -q --timeout=2 -O /dev/null "http://${host}:${port}/health" 2>/dev/null; then
+                return 0
+            fi
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+# --- systemd registration (system scope) ---
+register_service_systemd() {
+    local unit_path="/etc/systemd/system/comis.service"
+
+    cleanup_legacy_daemon_state
+
+    if [[ -f "$unit_path" ]] && ! unit_is_managed "$unit_path"; then
+        ui_warn "Existing unit at ${unit_path} has been hand-edited; leaving untouched."
+        ui_info "To regenerate, remove it first: sudo rm ${unit_path} && rerun the installer."
+    else
+        ui_info "Writing systemd unit to ${unit_path}"
+        render_systemd_unit "$unit_path" "system"
+    fi
+
+    # Ensure the data directory exists before systemd tries to bind-mount it
+    # via ReadWritePaths=. Without this, systemctl start fails with 226/NAMESPACE.
+    maybe_sudo mkdir -p "$COMIS_DATA_DIR"
+    maybe_sudo chown -R "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" "$COMIS_DATA_DIR"
+    maybe_sudo chmod 0700 "$COMIS_DATA_DIR"
+
+    render_env_file
+
+    maybe_sudo systemctl daemon-reload
+
+    if [[ "$NO_AUTOSTART" == "1" ]]; then
+        ui_info "Skipping systemctl enable (--no-autostart)"
+    else
+        run_quiet_step "Enabling comis.service" maybe_sudo systemctl enable comis.service
+    fi
+
+    if [[ "$NO_SERVICE_START" == "1" ]]; then
+        ui_info "Skipping systemctl start (--no-service-start)"
+        return 0
+    fi
+
+    if run_quiet_step "Starting comis.service" maybe_sudo systemctl start comis.service; then
+        ui_success "comis.service started"
+    else
+        ui_error "Failed to start comis.service"
+        maybe_sudo systemctl status comis.service --no-pager --lines=20 || true
+        echo ""
+        ui_info "Recent logs:"
+        maybe_sudo journalctl -u comis.service -n 30 --no-pager || true
+        return 1
+    fi
+
+    if wait_for_daemon_ready; then
+        ui_success "Daemon is responding on the gateway port"
+    else
+        ui_warn "Service is active but the gateway didn't respond within 20s"
+        ui_info "Tail logs with: journalctl -u comis.service -f"
+    fi
+}
+
+# --- systemd registration (user scope) ---
+register_service_systemd_user() {
+    local unit_path="${HOME}/.config/systemd/user/comis.service"
+
+    cleanup_legacy_daemon_state
+
+    # User scope: env file lives under ~/.comis (not /etc/comis), and the
+    # data dir must exist before rendering the unit (so render sees a valid
+    # path and so systemd can bind-mount it via ReadWritePaths).
+    mkdir -p "$COMIS_DATA_DIR"
+    local user_env="${COMIS_DATA_DIR}/env"
+    if [[ ! -f "$user_env" ]]; then
+        cat > "$user_env" <<ENV
+COMIS_CONFIG_PATHS=${COMIS_CONFIG_FILE}
+NODE_ENV=production
+ENV
+        chmod 0600 "$user_env"
+    fi
+
+    # Override COMIS_ENV_FILE for this call so the rendered unit points at
+    # the user env file. Checksum is computed against the final body, so no
+    # post-render rewrite is needed.
+    local saved_env_file="$COMIS_ENV_FILE"
+    COMIS_ENV_FILE="$user_env"
+
+    if [[ -f "$unit_path" ]] && ! unit_is_managed "$unit_path"; then
+        ui_warn "Existing unit at ${unit_path} has been hand-edited; leaving untouched."
+        ui_info "To regenerate, remove it first: rm ${unit_path} && rerun the installer."
+    else
+        ui_info "Writing user systemd unit to ${unit_path}"
+        render_systemd_unit "$unit_path" "user"
+    fi
+
+    COMIS_ENV_FILE="$saved_env_file"
+
+    # daemon-reload may fail silently on headless/no-linger systems; the unit
+    # file is still in place and systemctl will pick it up once the user bus
+    # becomes available (login, enable-linger, etc.).
+    systemctl --user daemon-reload 2>/dev/null || true
+
+    if [[ "$NO_AUTOSTART" == "1" ]]; then
+        ui_info "Skipping systemctl --user enable (--no-autostart)"
+    else
+        run_quiet_step "Enabling user comis.service" systemctl --user enable comis.service
+    fi
+
+    if [[ "$NO_SERVICE_START" == "1" ]]; then
+        ui_info "Skipping systemctl --user start (--no-service-start)"
+        return 0
+    fi
+
+    if run_quiet_step "Starting user comis.service" systemctl --user start comis.service; then
+        ui_success "User comis.service started"
+    else
+        ui_error "Failed to start user comis.service"
+        systemctl --user status comis.service --no-pager --lines=20 || true
+        return 1
+    fi
+
+    if wait_for_daemon_ready; then
+        ui_success "Daemon is responding on the gateway port"
+    else
+        ui_warn "Service is active but the gateway didn't respond within 20s"
+        ui_info "Tail logs with: journalctl --user -u comis.service -f"
+    fi
+
+    ui_info "Note: user services stop when you log out."
+    ui_info "To survive logout, run: sudo loginctl enable-linger $(id -un)"
+}
+
+# --- pm2 registration (macOS) ---
+ensure_pm2_installed() {
+    if command -v pm2 >/dev/null 2>&1; then
+        return 0
+    fi
+    ui_info "Installing pm2 globally"
+    if npm install -g pm2 >/dev/null 2>&1; then
+        ui_success "pm2 installed"
+        return 0
+    fi
+    # Try sudo as a fallback for EACCES
+    if command -v sudo >/dev/null 2>&1; then
+        ui_warn "npm install -g pm2 failed; retrying with sudo"
+        if sudo npm install -g pm2 >/dev/null 2>&1; then
+            ui_success "pm2 installed"
+            return 0
+        fi
+    fi
+    ui_error "Could not install pm2"
+    return 1
+}
+
+# Probe whether we can run sudo without prompting, or with a likely-successful interactive prompt.
+can_elevate() {
+    if is_root; then
+        return 0
+    fi
+    command -v sudo >/dev/null 2>&1 || return 1
+    # Cached credentials — works without prompt
+    if sudo -n true 2>/dev/null; then
+        return 0
+    fi
+    # Interactive TTY available — sudo will prompt
+    if [[ -t 0 || -t 1 ]] || (echo -n "" > /dev/tty) 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+register_service_pm2() {
+    if ! ensure_pm2_installed; then
+        return 1
+    fi
+
+    cleanup_legacy_daemon_state
+
+    local comis_bin="${COMIS_BIN:-}"
+    if [[ -z "$comis_bin" ]]; then
+        comis_bin="$(resolve_comis_bin || true)"
+    fi
+    if [[ -z "$comis_bin" ]]; then
+        ui_error "comis binary not found on PATH; cannot configure pm2"
+        return 1
+    fi
+
+    # Phase A — no sudo required
+    run_quiet_step "Generating pm2 ecosystem config" "$comis_bin" pm2 setup
+    if [[ "$NO_SERVICE_START" == "1" ]]; then
+        ui_info "Skipping pm2 start (--no-service-start)"
+    else
+        if run_quiet_step "Starting daemon via pm2" "$comis_bin" pm2 start; then
+            ui_success "Daemon started via pm2"
+        else
+            ui_error "pm2 start failed"
+            "$comis_bin" pm2 status 2>&1 | tail -n 20 || true
+            return 1
+        fi
+    fi
+
+    if run_quiet_step "Saving pm2 process list" pm2 save; then
+        :
+    else
+        ui_warn "pm2 save failed; the daemon will not restart automatically on reboot"
+    fi
+
+    if wait_for_daemon_ready; then
+        ui_success "Daemon is responding on the gateway port"
+    else
+        ui_warn "Daemon started but gateway didn't respond within 20s"
+        ui_info "Tail logs with: pm2 logs comis"
+    fi
+
+    # Phase B — boot persistence (needs sudo)
+    if [[ "$NO_AUTOSTART" == "1" ]]; then
+        ui_info "Skipping boot persistence (--no-autostart)"
+        ui_info "To enable later: comis pm2 setup --enable-boot"
+        return 0
+    fi
+
+    if ! can_elevate; then
+        ui_warn "Cannot elevate to sudo; skipping boot persistence."
+        ui_info "To enable boot persistence later, as an Administrator run:"
+        ui_info "  comis pm2 setup --enable-boot"
+        return 0
+    fi
+
+    ui_info "Registering pm2 with launchd for boot persistence (may prompt for sudo password)"
+    # Capture pm2 startup output, extract the sudo line, and run it
+    local startup_out startup_err
+    startup_out="$(mktempfile)"
+    startup_err="$(mktempfile)"
+    pm2 startup >"$startup_out" 2>"$startup_err" || true
+
+    local combined
+    combined="$(cat "$startup_out" "$startup_err")"
+
+    if echo "$combined" | grep -q "already"; then
+        ui_success "Boot persistence already configured"
+        return 0
+    fi
+
+    local sudo_cmd
+    sudo_cmd="$(echo "$combined" | grep -oE 'sudo env PATH=[^\n]+pm2 startup[^\n]+' | head -n1 || true)"
+    if [[ -z "$sudo_cmd" ]]; then
+        echo "$combined"
+        ui_warn "Could not parse pm2 startup command."
+        ui_info "Run the command pm2 printed above manually to finish boot registration."
+        return 0
+    fi
+
+    if sh -c "$sudo_cmd" >/dev/null 2>&1; then
+        ui_success "Boot persistence enabled"
+    else
+        ui_warn "Boot registration command failed; you can retry later with: comis pm2 setup --enable-boot"
+    fi
+}
+
+# Dispatch entry point — called from main() once the binary is in place.
+register_service() {
+    if [[ "$RESOLVED_SERVICE_MANAGER" == "none" ]]; then
+        ui_info "Skipping service registration (--service none)"
+        ui_info "Start manually with: comis daemon start"
+        return 0
+    fi
+
+    ui_stage "Registering daemon as a service"
+
+    if ! resolve_service_template_vars; then
+        return 1
+    fi
+
+    ui_kv "Service manager" "$RESOLVED_SERVICE_MANAGER"
+    ui_kv "Run as user" "$COMIS_SVC_USER"
+    ui_kv "Daemon entry" "$COMIS_DAEMON_JS"
+    ui_kv "Data dir" "$COMIS_DATA_DIR"
+
+    case "$RESOLVED_SERVICE_MANAGER" in
+        systemd)
+            register_service_systemd
+            ;;
+        systemd-user)
+            register_service_systemd_user
+            ;;
+        pm2)
+            register_service_pm2
+            ;;
+        *)
+            ui_error "Unknown service manager: $RESOLVED_SERVICE_MANAGER"
+            return 1
+            ;;
+    esac
+}
+
+# Detect which manager already owns an existing install (for upgrade/restart).
+# Echoes: systemd | systemd-user | pm2 | direct | none
+detect_active_service_manager() {
+    # systemd system
+    if has_working_systemd && systemctl list-unit-files comis.service --no-pager 2>/dev/null | grep -q "^comis.service"; then
+        echo "systemd"
+        return 0
+    fi
+    # systemd user
+    if has_working_user_systemd && systemctl --user list-unit-files comis.service --no-pager 2>/dev/null | grep -q "^comis.service"; then
+        echo "systemd-user"
+        return 0
+    fi
+    # pm2
+    if command -v pm2 >/dev/null 2>&1 && pm2 jlist 2>/dev/null | grep -q '"name":"comis"'; then
+        echo "pm2"
+        return 0
+    fi
+    # direct (PID file present)
+    local pid_file="${HOME}/.comis/daemon.pid"
+    if [[ -f "$pid_file" ]]; then
+        echo "direct"
+        return 0
+    fi
+    echo "none"
+}
+
+# Restart (or start) the daemon under whichever manager already owns it.
+restart_service_if_running() {
+    local active
+    active="$(detect_active_service_manager)"
+    case "$active" in
+        systemd)
+            ui_info "Restarting comis.service via systemd"
+            maybe_sudo systemctl restart comis.service || ui_warn "systemctl restart failed"
+            ;;
+        systemd-user)
+            ui_info "Restarting comis.service via user systemd"
+            systemctl --user restart comis.service || ui_warn "systemctl --user restart failed"
+            ;;
+        pm2)
+            ui_info "Restarting comis via pm2"
+            pm2 restart comis 2>/dev/null || ui_warn "pm2 restart failed"
+            ;;
+        direct)
+            local comis_bin="${COMIS_BIN:-}"
+            [[ -z "$comis_bin" ]] && comis_bin="$(resolve_comis_bin || true)"
+            if [[ -n "$comis_bin" ]]; then
+                ui_info "Restarting direct-spawn daemon"
+                "$comis_bin" daemon stop >/dev/null 2>&1 || true
+                "$comis_bin" daemon start >/dev/null 2>&1 || ui_warn "daemon start failed"
+            fi
+            ;;
+        none)
+            :
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Uninstall subsystem
+# ---------------------------------------------------------------------------
+
+confirm_uninstall() {
+    if [[ "$ASSUME_YES" == "1" ]]; then
+        return 0
+    fi
+    if ! is_promptable; then
+        ui_error "Uninstall requires confirmation; pass --yes to skip (or run in a TTY)."
+        exit 2
+    fi
+
+    echo ""
+    ui_warn "About to uninstall Comis from this machine."
+    echo "  - Service registration (systemd/pm2) will be removed"
+    echo "  - CLI binary will be uninstalled"
+    if [[ "$PURGE" == "1" ]]; then
+        echo "  - Data directory (~/.comis) will be DELETED"
+        echo "  - /etc/comis and /var/log/comis will be DELETED"
+    else
+        echo "  - Data directory (~/.comis) will be PRESERVED"
+    fi
+    if [[ "$REMOVE_USER_FLAG" == "1" ]]; then
+        echo "  - The comis system user will be DELETED"
+    fi
+    echo ""
+    local ans
+    ans="$(prompt_choice "Continue? [y/N] ")"
+    case "$ans" in
+        y|Y|yes|YES) return 0 ;;
+        *)
+            ui_info "Uninstall cancelled."
+            exit 0
+            ;;
+    esac
+}
+
+uninstall_systemd_unit() {
+    local scope="$1"  # "system" or "user"
+    local unit_path
+    local systemctl_scope=()
+    if [[ "$scope" == "system" ]]; then
+        unit_path="/etc/systemd/system/comis.service"
+    else
+        unit_path="${HOME}/.config/systemd/user/comis.service"
+        systemctl_scope=("--user")
+    fi
+
+    if [[ ! -f "$unit_path" ]]; then
+        return 0
+    fi
+
+    # Check if user-edited — if so, don't delete
+    if ! unit_is_managed "$unit_path"; then
+        ui_warn "${unit_path} was hand-edited; leaving in place."
+        ui_info "Remove manually if desired: rm ${unit_path}"
+        return 0
+    fi
+
+    if [[ "$scope" == "system" ]]; then
+        if [[ "$DRY_RUN" == "1" ]]; then
+            ui_info "[dry-run] would: systemctl disable --now comis.service"
+            ui_info "[dry-run] would: rm ${unit_path} && systemctl daemon-reload"
+            return 0
+        fi
+        maybe_sudo systemctl disable --now comis.service 2>/dev/null || true
+        maybe_sudo rm -f "$unit_path"
+        maybe_sudo systemctl daemon-reload
+        maybe_sudo systemctl reset-failed comis.service 2>/dev/null || true
+    else
+        if [[ "$DRY_RUN" == "1" ]]; then
+            ui_info "[dry-run] would: systemctl --user disable --now comis.service"
+            ui_info "[dry-run] would: rm ${unit_path} && systemctl --user daemon-reload"
+            return 0
+        fi
+        systemctl "${systemctl_scope[@]}" disable --now comis.service 2>/dev/null || true
+        rm -f "$unit_path"
+        # daemon-reload can fail if the user bus isn't reachable (headless,
+        # non-lingering user sessions). Removal of the file is what matters.
+        systemctl "${systemctl_scope[@]}" daemon-reload 2>/dev/null || true
+    fi
+    ui_success "Removed systemd unit (${scope} scope)"
+}
+
+uninstall_pm2() {
+    if ! command -v pm2 >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! pm2 jlist 2>/dev/null | grep -q '"name":"comis"'; then
+        return 0
+    fi
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: pm2 delete comis && pm2 save"
+        if [[ "$OS" == "macos" ]]; then
+            ui_info "[dry-run] would: sudo env PATH=\$PATH pm2 unstartup launchd"
+        fi
+        return 0
+    fi
+    pm2 delete comis 2>/dev/null || true
+    pm2 save 2>/dev/null || true
+    if [[ "$OS" == "macos" ]] && can_elevate; then
+        # pm2 unstartup prints the sudo command and exits non-zero
+        local out
+        out="$(pm2 unstartup launchd 2>&1 || true)"
+        local sudo_cmd
+        sudo_cmd="$(echo "$out" | grep -oE 'sudo env PATH=[^\n]+pm2 unstartup[^\n]+' | head -n1 || true)"
+        if [[ -n "$sudo_cmd" ]]; then
+            sh -c "$sudo_cmd" >/dev/null 2>&1 || ui_warn "Could not remove launchd plist (may already be gone)"
+        fi
+    fi
+    ui_success "Removed from pm2"
+}
+
+uninstall_direct_daemon() {
+    local pid_file="${HOME}/.comis/daemon.pid"
+    [[ -f "$pid_file" ]] || return 0
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: stop direct-spawn daemon and remove ${pid_file}"
+        return 0
+    fi
+    cleanup_legacy_daemon_state
+}
+
+uninstall_binary() {
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: npm uninstall -g comisai OR rm ~/.local/bin/comis"
+        return 0
+    fi
+
+    # Remove the ~/.local/bin/comis wrapper (git install)
+    if [[ -L "${HOME}/.local/bin/comis" ]] || [[ -f "${HOME}/.local/bin/comis" ]]; then
+        rm -f "${HOME}/.local/bin/comis"
+        ui_info "Removed ${HOME}/.local/bin/comis"
+    fi
+
+    # Remove the npm global package
+    if npm list -g comisai >/dev/null 2>&1; then
+        if [[ "$OS" == "linux" ]] && ! is_root && ! [[ -w "$(npm root -g 2>/dev/null || echo /)" ]]; then
+            sudo npm uninstall -g comisai 2>/dev/null || true
+        else
+            npm uninstall -g comisai 2>/dev/null || true
+        fi
+        ui_info "npm uninstall -g comisai"
+    fi
+    ui_success "Binary removed"
+}
+
+uninstall_purge_data() {
+    [[ "$PURGE" == "1" ]] || return 0
+
+    local data_dir="${HOME}/.comis"
+    # If running as root for a service user, also clean ~comis/.comis
+    local comis_user_home=""
+    if is_root && id "$COMIS_USER" &>/dev/null; then
+        comis_user_home="$(getent passwd "$COMIS_USER" | cut -d: -f6)"
+    fi
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: rm -rf ${data_dir}"
+        [[ -n "$comis_user_home" ]] && ui_info "[dry-run] would: rm -rf ${comis_user_home}/.comis"
+        ui_info "[dry-run] would: rm -rf /etc/comis /var/log/comis"
+        return 0
+    fi
+
+    if [[ -d "$data_dir" ]] && [[ "$(stat -c %u "$data_dir" 2>/dev/null || stat -f %u "$data_dir" 2>/dev/null)" == "$(id -u)" ]]; then
+        rm -rf "$data_dir"
+        ui_success "Removed ${data_dir}"
+    fi
+
+    if [[ -n "$comis_user_home" && -d "${comis_user_home}/.comis" ]]; then
+        maybe_sudo rm -rf "${comis_user_home}/.comis"
+        ui_success "Removed ${comis_user_home}/.comis"
+    fi
+
+    if [[ -d /etc/comis ]]; then
+        maybe_sudo rm -rf /etc/comis
+        ui_success "Removed /etc/comis"
+    fi
+
+    if [[ -d /var/log/comis ]]; then
+        maybe_sudo rm -rf /var/log/comis
+        ui_success "Removed /var/log/comis"
+    fi
+}
+
+uninstall_remove_user() {
+    [[ "$REMOVE_USER_FLAG" == "1" ]] || return 0
+    if [[ "$OS" != "linux" ]]; then
+        ui_warn "--remove-user is Linux-only; ignoring"
+        return 0
+    fi
+    if ! is_root; then
+        ui_warn "--remove-user requires root; skipping"
+        return 0
+    fi
+    if ! id "$COMIS_USER" &>/dev/null; then
+        return 0
+    fi
+
+    # Safety: refuse if other processes are running as this user
+    if pgrep -u "$COMIS_USER" -a 2>/dev/null | grep -v -E '(comis|node.*daemon)' | grep -q .; then
+        ui_error "Other processes are running as ${COMIS_USER}; refusing to delete the user"
+        ui_info "Processes:"
+        pgrep -u "$COMIS_USER" -a || true
+        return 1
+    fi
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: userdel -r ${COMIS_USER}; groupdel ${COMIS_USER}"
+        return 0
+    fi
+
+    userdel -r "$COMIS_USER" 2>/dev/null || userdel "$COMIS_USER" 2>/dev/null || true
+    groupdel "$COMIS_USER" 2>/dev/null || true
+    ui_success "Removed user ${COMIS_USER}"
+}
+
+uninstall_main() {
+    bootstrap_gum_temp || true
+    print_installer_banner
+    detect_os_or_die
+
+    ui_section "Uninstall plan"
+    ui_kv "Mode" "uninstall"
+    [[ "$PURGE" == "1" ]] && ui_kv "Purge data" "yes"
+    [[ "$REMOVE_USER_FLAG" == "1" ]] && ui_kv "Remove user" "yes"
+    [[ "$DRY_RUN" == "1" ]] && ui_kv "Dry run" "yes"
+
+    confirm_uninstall
+
+    ui_stage "Stopping and unregistering services"
+
+    # Try all three paths — they're all idempotent no-ops if nothing matches
+    uninstall_systemd_unit "system"
+    [[ "$OS" == "linux" ]] && [[ "${HOME}" != "/root" ]] && uninstall_systemd_unit "user"
+    uninstall_pm2
+    uninstall_direct_daemon
+
+    ui_stage "Removing CLI"
+    uninstall_binary
+
+    if [[ "$PURGE" == "1" || "$REMOVE_USER_FLAG" == "1" ]]; then
+        ui_stage "Purging data"
+        uninstall_purge_data
+    fi
+
+    if [[ "$REMOVE_USER_FLAG" == "1" ]]; then
+        uninstall_remove_user
+    fi
+
+    echo ""
+    ui_celebrate "Comis uninstalled"
+
+    if [[ "$PURGE" != "1" ]]; then
+        echo ""
+        ui_info "Data preserved under ~/.comis. To delete manually:"
+        echo "  rm -rf ${HOME}/.comis"
+    fi
+
+    if [[ "$OS" == "macos" ]] && command -v pm2 >/dev/null 2>&1; then
+        echo ""
+        ui_info "pm2 is still installed. Other apps may depend on it."
+        ui_info "To remove pm2 itself: npm uninstall -g pm2"
+    fi
+}
+
 # Main installation flow
 main() {
     if [[ "$HELP" == "1" ]]; then
@@ -2415,11 +3692,20 @@ main() {
         return 0
     fi
 
+    # Uninstall dispatch happens before any other setup — it has its own flow
+    if [[ "$UNINSTALL" == "1" ]]; then
+        uninstall_main
+        return $?
+    fi
+
     bootstrap_gum_temp || true
     if [[ "$COMIS_REEXEC" == "1" ]]; then
         detect_os_or_die
         echo ""
         ui_info "Continuing as user '$(whoami)'"
+        # The re-exec'd instance installs the CLI for the comis user only.
+        # Service registration is the parent (root) shell's job.
+        SERVICE_MANAGER="none"
     else
         print_installer_banner
         print_gum_status
@@ -2458,21 +3744,38 @@ main() {
         exit 2
     fi
 
+    # Resolve which service manager we'll use (validates --service flag early)
+    resolve_service_manager
+
     if [[ "$COMIS_REEXEC" != "1" ]]; then
         show_install_plan "$detected_checkout"
     fi
 
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_success "Dry run complete (no changes made)"
+        if [[ "$RESOLVED_SERVICE_MANAGER" != "none" ]]; then
+            ui_info "Would register service via: ${RESOLVED_SERVICE_MANAGER}"
+        fi
         return 0
     fi
 
-    # On Linux as root: install system deps, create dedicated user, re-exec
+    # On Linux as root: install system deps, create dedicated user, install CLI
+    # as comis user (re-exec), then return here (still root) and register the
+    # systemd system-scope service pointing at the comis user's install.
     if should_create_dedicated_user; then
         install_system_deps_as_root
         create_comis_user
         reexec_as_comis_user
-        return $?
+        local user_rc=$?
+        if [[ "$user_rc" -ne 0 ]]; then
+            ui_error "CLI install as user '${COMIS_USER}' failed (rc=${user_rc})"
+            return "$user_rc"
+        fi
+
+        # Still root. Register the service on the parent's behalf.
+        register_service || ui_warn "Service registration encountered errors (see above)"
+        show_footer_links
+        return 0
     fi
 
     # Check for existing installation
@@ -2541,13 +3844,17 @@ main() {
 
     COMIS_BIN="$(resolve_comis_bin || true)"
 
-    # Restart daemon if already running
-    restart_daemon_if_running
+    # Restart daemon if already running under any manager
+    restart_service_if_running
 
     # Run doctor on upgrades and git installs
     if [[ "$is_upgrade" == "true" || "$INSTALL_METHOD" == "git" ]]; then
         run_doctor
     fi
+
+    # Register the daemon with the selected service manager.
+    # For re-exec'd children (SERVICE_MANAGER=none), this is a no-op.
+    register_service || ui_warn "Service registration encountered errors (see above)"
 
     local installed_version
     installed_version=$(resolve_comis_version)
@@ -2611,25 +3918,8 @@ main() {
         fi
     fi
 
-    # Restart daemon if running after upgrade
-    if command -v comis &> /dev/null; then
-        local comis_bin="${COMIS_BIN:-}"
-        if [[ -z "$comis_bin" ]]; then
-            comis_bin="$(resolve_comis_bin || true)"
-        fi
-        if [[ -n "$comis_bin" ]] && is_daemon_running "$comis_bin"; then
-            if [[ "$DRY_RUN" == "1" ]]; then
-                ui_info "Daemon detected; would restart (comis daemon stop && comis daemon start)"
-            else
-                ui_info "Daemon detected; restarting"
-                if "$comis_bin" daemon stop >/dev/null 2>&1 && "$comis_bin" daemon start >/dev/null 2>&1; then
-                    ui_success "Daemon restarted"
-                else
-                    ui_warn "Daemon restart failed; try: comis daemon stop && comis daemon start"
-                fi
-            fi
-        fi
-    fi
+    # Final restart via whichever manager owns the daemon now
+    restart_service_if_running
 
     show_footer_links
 }
