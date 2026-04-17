@@ -31,9 +31,14 @@ User=@USER@
 Group=@GROUP@
 WorkingDirectory=@WORKING_DIR@
 
-# --jitless: Disable JIT to reduce attack surface (no W^X pages)
-# --permission: Enable Node.js permission model for filesystem restrictions
-ExecStart=@NODE_BIN@ --jitless --permission --allow-fs-read=@DAEMON_DIR@ --allow-fs-read=@DATA_DIR@ --allow-fs-write=@DATA_DIR@ --allow-child-process @DAEMON_JS@
+# --permission: Node permission model. fs-read wildcarded because the daemon
+# reads from many locations (undici internals, CA bundle, source-map traces).
+# ProtectSystem=strict + ProtectHome=read-only already enforce the real
+# filesystem perimeter at the kernel level. Writes are scoped to DATA_DIR.
+# --allow-addons + --allow-worker: required by native deps (sharp, better-sqlite3).
+# --jitless and MemoryDenyWriteExecute are intentionally NOT set — both break
+# WebAssembly (Node's bundled undici uses WASM for HTTP parsing).
+ExecStart=@NODE_BIN@ --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=@DATA_DIR@ --allow-child-process @DAEMON_JS@
 
 # Restart policy
 Restart=on-failure
@@ -70,7 +75,9 @@ PrivateTmp=yes
 ReadWritePaths=@DATA_DIR@
 
 # Memory protection
-MemoryDenyWriteExecute=yes
+# MemoryDenyWriteExecute intentionally omitted — would break V8 JIT + WebAssembly
+# (undici uses WASM for HTTP parsing). SystemCallFilter and RestrictNamespaces
+# below still block the most dangerous W^X abuse vectors.
 
 # Privilege escalation prevention
 NoNewPrivileges=yes
