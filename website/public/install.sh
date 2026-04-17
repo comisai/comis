@@ -3100,6 +3100,12 @@ register_service_systemd() {
     maybe_sudo chown -R "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" "$COMIS_DATA_DIR"
     maybe_sudo chmod 0700 "$COMIS_DATA_DIR"
 
+    # Pre-create ~/.npm and ~/.pi for the same reason — both appear in the
+    # unit's ReadWritePaths= and must exist at service-start time. The daemon
+    # populates them on demand (npm cache, pi-agent SettingsManager).
+    maybe_sudo mkdir -p "${COMIS_SVC_HOME}/.npm" "${COMIS_SVC_HOME}/.pi"
+    maybe_sudo chown "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" "${COMIS_SVC_HOME}/.npm" "${COMIS_SVC_HOME}/.pi"
+
     render_env_file
 
     maybe_sudo systemctl daemon-reload
