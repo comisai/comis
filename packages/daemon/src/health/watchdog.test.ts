@@ -10,6 +10,7 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 function createMockNotify() {
   return {
     ready: vi.fn(),
+    watchdog: vi.fn(),
     watchdogInterval: vi.fn<() => number>().mockReturnValue(30_000),
     sendStatus: vi.fn<(status: string) => void>(),
     startWatchdogMode: vi.fn(),
@@ -80,16 +81,18 @@ describe("watchdog", () => {
     });
 
     // No ping yet
-    expect(notify.sendStatus).not.toHaveBeenCalled();
+    expect(notify.watchdog).not.toHaveBeenCalled();
 
     // After 5s (half of 10s) — first ping
     vi.advanceTimersByTime(5000);
-    expect(notify.sendStatus).toHaveBeenCalledTimes(1);
-    expect(notify.sendStatus).toHaveBeenCalledWith("WATCHDOG=1");
+    expect(notify.watchdog).toHaveBeenCalledTimes(1);
 
     // After another 5s — second ping
     vi.advanceTimersByTime(5000);
-    expect(notify.sendStatus).toHaveBeenCalledTimes(2);
+    expect(notify.watchdog).toHaveBeenCalledTimes(2);
+
+    // sendStatus is STATUS=... and must not be used for watchdog pings
+    expect(notify.sendStatus).not.toHaveBeenCalled();
   });
 
   it("skips ping when event loop delay exceeds threshold", () => {
@@ -110,7 +113,7 @@ describe("watchdog", () => {
     vi.advanceTimersByTime(5000);
 
     // Should NOT have pinged
-    expect(notify.sendStatus).not.toHaveBeenCalled();
+    expect(notify.watchdog).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
       { meanDelayMs: 600, thresholdMs: 500 },
       "Event loop delay exceeds threshold, skipping watchdog ping",
@@ -132,7 +135,7 @@ describe("watchdog", () => {
     });
 
     vi.advanceTimersByTime(5000);
-    expect(notify.sendStatus).toHaveBeenCalledWith("WATCHDOG=1");
+    expect(notify.watchdog).toHaveBeenCalledTimes(1);
   });
 
   it("does not ping when watchdogInterval returns 0", () => {
@@ -149,7 +152,7 @@ describe("watchdog", () => {
 
     // No interval — no pings
     vi.advanceTimersByTime(60_000);
-    expect(notify.sendStatus).not.toHaveBeenCalled();
+    expect(notify.watchdog).not.toHaveBeenCalled();
 
     expect(logger.debug).toHaveBeenCalledWith("WatchdogSec not set or 0, watchdog ping disabled");
   });
@@ -165,14 +168,14 @@ describe("watchdog", () => {
 
     // First ping
     vi.advanceTimersByTime(5000);
-    expect(notify.sendStatus).toHaveBeenCalledTimes(1);
+    expect(notify.watchdog).toHaveBeenCalledTimes(1);
 
     // Stop
     handle.stop();
 
     // No more pings
     vi.advanceTimersByTime(30_000);
-    expect(notify.sendStatus).toHaveBeenCalledTimes(1);
+    expect(notify.watchdog).toHaveBeenCalledTimes(1);
   });
 
   it("gracefully degrades when sd-notify is null", () => {
@@ -202,6 +205,6 @@ describe("watchdog", () => {
 
     // Should ping at 3s (half of 6s), not 15s (half of 30s)
     vi.advanceTimersByTime(3000);
-    expect(notify.sendStatus).toHaveBeenCalledTimes(1);
+    expect(notify.watchdog).toHaveBeenCalledTimes(1);
   });
 });

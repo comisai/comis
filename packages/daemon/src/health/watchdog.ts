@@ -18,6 +18,7 @@ import type { ProcessMonitor } from "../process/process-monitor.js";
 
 interface SdNotify {
   ready(): void;
+  watchdog(): void;
   watchdogInterval(): number;
   sendStatus(status: string): void;
   startWatchdogMode(interval: number): void;
@@ -122,8 +123,10 @@ export function startWatchdog(deps: WatchdogDeps): WatchdogHandle {
       }
     }
 
-    // Ping watchdog
-    notify.sendStatus("WATCHDOG=1");
+    // Ping watchdog. Must call notify.watchdog() (the native binding that
+    // sends "WATCHDOG=1" to NOTIFY_SOCKET); notify.sendStatus sends
+    // "STATUS=..." which systemd ignores for watchdog purposes.
+    notify.watchdog();
   }, pingInterval);
 
   // Don't keep process alive just for watchdog pings
