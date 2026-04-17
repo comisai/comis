@@ -1,0 +1,99 @@
+# Comis Daemon - systemd unit template
+#
+# This file is a TEMPLATE. Do not install it directly — it contains
+# @PLACEHOLDER@ tokens that the installer substitutes at install time.
+#
+# managed-by: comis-installer
+# template-version: 1
+#
+# Placeholders:
+#   @NODE_BIN@         absolute path to node (e.g. /usr/bin/node)
+#   @DAEMON_JS@        absolute path to daemon entry (e.g. .../packages/daemon/dist/daemon.js)
+#   @DAEMON_DIR@       dirname(@DAEMON_JS@)
+#   @WORKING_DIR@      WorkingDirectory for the service
+#   @USER@             system user (e.g. comis)
+#   @GROUP@            system group (e.g. comis)
+#   @DATA_DIR@         read-write data directory (e.g. /home/comis/.comis)
+#   @ENV_FILE@         path to EnvironmentFile (e.g. /etc/comis/env)
+#
+# Rendered units are written with a `# managed-by: comis-installer` header
+# plus a checksum so the installer can detect user edits on upgrade.
+
+[Unit]
+Description=Comis AI Agent Daemon
+Documentation=https://docs.comis.ai/operations/systemd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@WORKING_DIR@
+
+# --jitless: Disable JIT to reduce attack surface (no W^X pages)
+# --permission: Enable Node.js permission model for filesystem restrictions
+ExecStart=@NODE_BIN@ --jitless --permission --allow-fs-read=@DAEMON_DIR@ --allow-fs-read=@DATA_DIR@ --allow-fs-write=@DATA_DIR@ --allow-child-process @DAEMON_JS@
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Watchdog: systemd kills process if no ping within WatchdogSec
+# Daemon pings at half this interval (15s) with health gating
+WatchdogSec=30s
+
+# Shutdown: allow 45s for graceful shutdown (app timeout is 30s)
+TimeoutStopSec=45
+
+# Resource limits
+MemoryMax=2G
+TasksMax=100
+
+# Standard output/error to journald for structured log collection
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=comis
+
+# Environment
+Environment=NODE_ENV=production
+EnvironmentFile=-@ENV_FILE@
+
+# --- Security Hardening ---
+
+# Filesystem protection.
+# ProtectHome=read-only hides /root and other users' homes from the service
+# while the explicit ReadWritePaths below punches through to @DATA_DIR@.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=@DATA_DIR@
+
+# Memory protection
+MemoryDenyWriteExecute=yes
+
+# Privilege escalation prevention
+NoNewPrivileges=yes
+
+# Drop all capabilities
+CapabilityBoundingSet=
+
+# System call filtering: allow only standard service calls
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+
+# Kernel and device protection
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
