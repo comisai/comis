@@ -46,3 +46,6 @@ test/config/*.last-good.yaml
 
 # Playwright test results
 **/test-results/
+
+# npm pack output
+packages/*/*.tgz
