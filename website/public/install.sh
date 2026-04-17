@@ -2935,7 +2935,11 @@ ReadWritePaths=${COMIS_DATA_DIR} ${COMIS_SVC_HOME}/.npm ${COMIS_SVC_HOME}/.pi
 # Privilege escalation prevention
 NoNewPrivileges=yes
 CapabilityBoundingSet=
-SystemCallFilter=@system-service
+# @system-service covers the baseline; @mount + setns are needed by bubblewrap
+# when it sets up the exec-tool sandbox (pivot_root, mount, umount2, setns).
+# Without them, bwrap dies with SIGSYS (exit code 159) on seccomp violation.
+SystemCallFilter=@system-service @mount
+SystemCallFilter=setns
 SystemCallArchitectures=native
 PrivateDevices=yes
 ProtectKernelTunables=yes

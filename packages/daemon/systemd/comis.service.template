@@ -92,8 +92,12 @@ NoNewPrivileges=yes
 # Drop all capabilities
 CapabilityBoundingSet=
 
-# System call filtering: allow only standard service calls
-SystemCallFilter=@system-service
+# System call filtering: allow only standard service calls.
+# @mount (pivot_root, mount, umount2…) + setns are needed by bubblewrap
+# when wrapping agent-issued exec calls. Without them bwrap dies with SIGSYS
+# and the sandbox becomes a no-op.
+SystemCallFilter=@system-service @mount
+SystemCallFilter=setns
 SystemCallArchitectures=native
 
 # Kernel and device protection
