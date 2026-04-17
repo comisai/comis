@@ -60,8 +60,17 @@ export function wrapToolForAutoBackground(
         signal.addEventListener("abort", () => ac.abort(), { once: true });
       }
 
+      // Gate onUpdate: once the task is promoted to the background, the agent
+      // advances and its run ends (activeRun cleared), but the subprocess can
+      // keep emitting data. Calling the original onUpdate then lands in
+      // Agent.processEvents with no active run -> unhandled rejection.
+      let onUpdateActive = true;
+      const gatedOnUpdate = onUpdate
+        ? (text: string) => { if (onUpdateActive) onUpdate(text); }
+        : undefined;
+
       // Start the real tool execution (uses snapshot, not tool.execute)
-      const taskPromise = origExecute(toolCallId, params, ac.signal, onUpdate, ctx);
+      const taskPromise = origExecute(toolCallId, params, ac.signal, gatedOnUpdate, ctx);
 
       // Race: tool result vs. timeout
       const timeoutPromise = new Promise<"timeout">((resolve) => {
@@ -88,6 +97,9 @@ export function wrapToolForAutoBackground(
         // Concurrency limit hit: fall back to foreground (await normally)
         return await taskPromise;
       }
+
+      // Promotion succeeded: sever onUpdate before the agent moves on.
+      onUpdateActive = false;
 
       const taskId = promoteResult.value;
 
