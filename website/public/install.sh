@@ -2891,13 +2891,18 @@ ${user_line}
 ${group_line}
 WorkingDirectory=${COMIS_WORKING_DIR}
 
-# --permission: Node permission model. fs-write scoped to DATA_DIR.
+# --permission: Node permission model. fs-write scoped to paths the daemon
+# actually writes to at runtime:
+#   DATA_DIR        — config, logs, memory.db, workspace, sessions
+#   HOME/.npm       — npm cache + logs (MCP servers spawned via npx)
+#   HOME/.pi        — pi-agent-core SettingsManager (agent config dir)
+#   /tmp            — media temp files (PrivateTmp=yes sandboxes this already)
 # fs-read wildcarded: ProtectSystem=strict + ProtectHome=read-only enforce the
 # real filesystem perimeter at the kernel level.
 # --allow-addons + --allow-worker: native deps like sharp and better-sqlite3.
 # --jitless and MemoryDenyWriteExecute are intentionally NOT set: both break
 # WebAssembly, which bundled undici uses for HTTP parsing.
-ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=${COMIS_DATA_DIR} --allow-child-process ${COMIS_DAEMON_JS}
+ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=${COMIS_DATA_DIR},${COMIS_SVC_HOME}/.npm,${COMIS_SVC_HOME}/.pi,/tmp --allow-child-process ${COMIS_DAEMON_JS}
 
 Restart=on-failure
 RestartSec=5s
@@ -2922,7 +2927,10 @@ EnvironmentFile=-${COMIS_ENV_FILE}
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
-ReadWritePaths=${COMIS_DATA_DIR}
+# ReadWritePaths punches through ProtectHome=read-only for each of the runtime
+# write paths declared in --allow-fs-write above. Must match them or the Node
+# permission model will pass and the kernel will still deny.
+ReadWritePaths=${COMIS_DATA_DIR} ${COMIS_SVC_HOME}/.npm ${COMIS_SVC_HOME}/.pi
 
 # Privilege escalation prevention
 NoNewPrivileges=yes

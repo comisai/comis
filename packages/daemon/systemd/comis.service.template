@@ -13,6 +13,7 @@
 #   @WORKING_DIR@      WorkingDirectory for the service
 #   @USER@             system user (e.g. comis)
 #   @GROUP@            system group (e.g. comis)
+#   @SVC_HOME@         service user home (e.g. /home/comis)
 #   @DATA_DIR@         read-write data directory (e.g. /home/comis/.comis)
 #   @ENV_FILE@         path to EnvironmentFile (e.g. /etc/comis/env)
 #
@@ -34,11 +35,15 @@ WorkingDirectory=@WORKING_DIR@
 # --permission: Node permission model. fs-read wildcarded because the daemon
 # reads from many locations (undici internals, CA bundle, source-map traces).
 # ProtectSystem=strict + ProtectHome=read-only already enforce the real
-# filesystem perimeter at the kernel level. Writes are scoped to DATA_DIR.
+# filesystem perimeter at the kernel level. Writes are scoped to:
+#   @DATA_DIR@          — config, logs, memory.db, workspace, sessions
+#   @SVC_HOME@/.npm     — npm cache + logs (MCP servers spawned via npx)
+#   @SVC_HOME@/.pi      — pi-agent-core SettingsManager (agent config dir)
+#   /tmp                — media temp files (PrivateTmp=yes sandboxes this)
 # --allow-addons + --allow-worker: required by native deps (sharp, better-sqlite3).
 # --jitless and MemoryDenyWriteExecute are intentionally NOT set — both break
 # WebAssembly (Node's bundled undici uses WASM for HTTP parsing).
-ExecStart=@NODE_BIN@ --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=@DATA_DIR@ --allow-child-process @DAEMON_JS@
+ExecStart=@NODE_BIN@ --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=@DATA_DIR@,@SVC_HOME@/.npm,@SVC_HOME@/.pi,/tmp --allow-child-process @DAEMON_JS@
 
 # Restart policy
 Restart=on-failure
@@ -72,7 +77,9 @@ EnvironmentFile=-@ENV_FILE@
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
-ReadWritePaths=@DATA_DIR@
+# Must match the --allow-fs-write set above — Node's permission model and
+# systemd's kernel-level ProtectHome both have to allow the same paths.
+ReadWritePaths=@DATA_DIR@ @SVC_HOME@/.npm @SVC_HOME@/.pi
 
 # Memory protection
 # MemoryDenyWriteExecute intentionally omitted — would break V8 JIT + WebAssembly
