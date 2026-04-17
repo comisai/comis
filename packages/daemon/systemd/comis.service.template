@@ -43,7 +43,7 @@ WorkingDirectory=@WORKING_DIR@
 # --allow-addons + --allow-worker: required by native deps (sharp, better-sqlite3).
 # --jitless and MemoryDenyWriteExecute are intentionally NOT set — both break
 # WebAssembly (Node's bundled undici uses WASM for HTTP parsing).
-ExecStart=@NODE_BIN@ --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=@DATA_DIR@,@SVC_HOME@/.npm,@SVC_HOME@/.pi,/tmp --allow-child-process @DAEMON_JS@
+ExecStart=@NODE_BIN@ --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=@DATA_DIR@ --allow-fs-write=@SVC_HOME@/.npm --allow-fs-write=@SVC_HOME@/.pi --allow-fs-write=/tmp --allow-child-process @DAEMON_JS@
 
 # Restart policy
 Restart=on-failure

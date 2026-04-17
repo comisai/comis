@@ -2902,7 +2902,7 @@ WorkingDirectory=${COMIS_WORKING_DIR}
 # --allow-addons + --allow-worker: native deps like sharp and better-sqlite3.
 # --jitless and MemoryDenyWriteExecute are intentionally NOT set: both break
 # WebAssembly, which bundled undici uses for HTTP parsing.
-ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=${COMIS_DATA_DIR},${COMIS_SVC_HOME}/.npm,${COMIS_SVC_HOME}/.pi,/tmp --allow-child-process ${COMIS_DAEMON_JS}
+ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=${COMIS_DATA_DIR} --allow-fs-write=${COMIS_SVC_HOME}/.npm --allow-fs-write=${COMIS_SVC_HOME}/.pi --allow-fs-write=/tmp --allow-child-process ${COMIS_DAEMON_JS}
 
 Restart=on-failure
 RestartSec=5s
