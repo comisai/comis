@@ -95,7 +95,11 @@ ARG COMIS_DOCKER_APT_PACKAGES=""
 
 WORKDIR /app
 
-# Install runtime system dependencies
+# Install runtime system dependencies.
+# Mirrors `install_build_tools_linux` in website/public/install.sh so the same
+# config.yaml works identically under systemd and Docker. Build-only tools
+# (build-essential, make, g++, cmake) and systemd-only bits (libsystemd-dev)
+# are intentionally excluded — not needed at runtime inside a container.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -106,9 +110,26 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         dumb-init \
         # Git (for config versioning / agent operations)
         git \
+        # Python runtime — agent exec tool creates venvs for pip installs
+        python3 \
+        python3-venv \
+        python3-pip \
+        # Media processing — TTS, audio/video skills
+        ffmpeg \
+        # Sandbox for agent-issued exec
+        bubblewrap \
         # Optional user-specified packages
         ${COMIS_DOCKER_APT_PACKAGES} \
     && rm -rf /var/cache/apt/archives/*.deb
+
+# Install uv/uvx for Python-based MCP servers (e.g. nanobanana). Mirrors
+# install_uv() in install.sh. UV_UNMANAGED_INSTALL=/usr/local/bin puts the
+# binaries on PATH system-wide and disables the self-updater (image is
+# immutable; updates arrive via rebuild). Non-fatal: if the Astral CDN is
+# unreachable during build, the image still works for non-Python MCP servers.
+RUN curl -LsSf https://astral.sh/uv/install.sh \
+        | env UV_UNMANAGED_INSTALL=/usr/local/bin sh \
+    || echo "uv install failed — Python-based MCP servers will be unavailable"
 
 # Enable corepack (non-root writable location)
 ENV COREPACK_HOME=/usr/local/share/corepack
