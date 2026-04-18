@@ -737,6 +737,40 @@ install_build_tools_linux() {
     return 1
 }
 
+install_uv() {
+    # uv/uvx: Python package runner used by MCP servers that distribute via PyPI
+    # (e.g. nanobanana). Installed system-wide via the official Astral script so
+    # the service user picks up uvx on PATH without shell-profile modifications.
+    # Non-fatal: Python-based MCP servers are optional; a failure here shouldn't
+    # block the rest of the install.
+    if command -v uvx &> /dev/null; then
+        ui_success "uv already installed ($(uvx --version 2>/dev/null | head -1 || echo present))"
+        return 0
+    fi
+
+    local tmp
+    tmp="$(mktempfile)"
+    if ! download_file "https://astral.sh/uv/install.sh" "$tmp"; then
+        ui_warn "Could not download uv installer — skipping (Python-based MCP servers will be unavailable)"
+        return 0
+    fi
+
+    # UV_UNMANAGED_INSTALL=/usr/local/bin: system-wide install so the daemon service
+    # user picks up uvx on PATH. The "unmanaged" mode also disables the self-updater
+    # (system package manager or this installer owns updates) and skips shell-profile
+    # modification (not needed for system install).
+    if is_root; then
+        run_quiet_step "Installing uv (for Python-based MCP servers)" \
+            env UV_UNMANAGED_INSTALL=/usr/local/bin sh "$tmp" \
+            || ui_warn "uv install failed — Python-based MCP servers will be unavailable"
+    else
+        run_quiet_step "Installing uv (for Python-based MCP servers)" \
+            sudo env UV_UNMANAGED_INSTALL=/usr/local/bin sh "$tmp" \
+            || ui_warn "uv install failed — Python-based MCP servers will be unavailable"
+    fi
+    return 0
+}
+
 install_build_tools_macos() {
     local ok=true
     local brew_bin=""
@@ -1902,6 +1936,13 @@ install_system_deps_as_root() {
         install_git
     fi
 
+    # uv/uvx for Python-based MCP servers (e.g. nanobanana). Runs even when Node
+    # was already present, since install_uv is not part of install_node. Linux
+    # only — macOS users install uv separately via brew/pipx if needed.
+    if [[ "$OS" == "linux" ]]; then
+        install_uv
+    fi
+
     ui_success "System dependencies ready"
 }
 
@@ -2910,7 +2951,11 @@ WatchdogSec=30s
 TimeoutStopSec=45
 
 MemoryMax=2G
-TasksMax=100
+# TasksMax covers the entire cgroup: daemon + MCP children + exec sandbox children.
+# 512 leaves room for uv/uvx (rayon + tokio spawn ~N_CPU threads each on startup)
+# and parallel MCP downloads without being sloppy. Baseline daemon uses ~70 tasks;
+# bubblewrap adds ~5 per sandbox invocation; uvx adds 20-40 during package install.
+TasksMax=512
 
 # MemoryDenyWriteExecute intentionally omitted: it breaks V8 JIT and WebAssembly.
 # Bundled undici uses WASM for HTTP parsing. SystemCallFilter still blocks most
@@ -2930,7 +2975,9 @@ PrivateTmp=yes
 # ReadWritePaths punches through ProtectHome=read-only for each of the runtime
 # write paths declared in --allow-fs-write above. Must match them or the Node
 # permission model will pass and the kernel will still deny.
-ReadWritePaths=${COMIS_DATA_DIR} ${COMIS_SVC_HOME}/.npm ${COMIS_SVC_HOME}/.pi
+# ~/.cache is carved out for uv/uvx (Python-based MCP servers) — uv stores its
+# tool cache there and spawns as a non-Node child not subject to --allow-fs-write.
+ReadWritePaths=${COMIS_DATA_DIR} ${COMIS_SVC_HOME}/.npm ${COMIS_SVC_HOME}/.pi ${COMIS_SVC_HOME}/.cache
 
 # Privilege escalation prevention
 NoNewPrivileges=yes
@@ -3108,11 +3155,12 @@ register_service_systemd() {
     maybe_sudo chown -R "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" "$COMIS_DATA_DIR"
     maybe_sudo chmod 0700 "$COMIS_DATA_DIR"
 
-    # Pre-create ~/.npm and ~/.pi for the same reason — both appear in the
-    # unit's ReadWritePaths= and must exist at service-start time. The daemon
-    # populates them on demand (npm cache, pi-agent SettingsManager).
-    maybe_sudo mkdir -p "${COMIS_SVC_HOME}/.npm" "${COMIS_SVC_HOME}/.pi"
-    maybe_sudo chown "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" "${COMIS_SVC_HOME}/.npm" "${COMIS_SVC_HOME}/.pi"
+    # Pre-create ~/.npm, ~/.pi, and ~/.cache for the same reason — all appear
+    # in the unit's ReadWritePaths= and must exist at service-start time. The
+    # daemon (or uvx as a child) populates them on demand (npm cache, pi-agent
+    # SettingsManager, uv tool cache).
+    maybe_sudo mkdir -p "${COMIS_SVC_HOME}/.npm" "${COMIS_SVC_HOME}/.pi" "${COMIS_SVC_HOME}/.cache"
+    maybe_sudo chown "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" "${COMIS_SVC_HOME}/.npm" "${COMIS_SVC_HOME}/.pi" "${COMIS_SVC_HOME}/.cache"
 
     render_env_file
 
