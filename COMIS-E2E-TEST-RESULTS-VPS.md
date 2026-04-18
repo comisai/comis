@@ -104,7 +104,7 @@ Installer creates a dedicated `comis` user (uid 999); daemon runs under `/home/c
 | TT44 | PASS | pipeline tool (search → write → read) |
 | TT45 | PARTIAL | notify_user fired but no delivery channel on gateway session (expected) |
 | TT46 | SKIP | browser tool not registered (playwright/chromium not provisioned) |
-| TT47 | SKIP | nanobanana MCP failed startup on `/home/comis/nanobanana-images` (ProtectHome=read-only for systemd) |
+| TT47 | PASS | nanobanana MCP connects (4 tools); `mcp__nanobanana--generate_image` produced a 473 KB PNG at `workspace/output/red_apple.png`. Fix: set `IMAGE_OUTPUT_DIR=/home/comis/.comis/nanobanana-images` in the MCP `env:` block so the server's startup `Path.home() / 'nanobanana-images'` default is overridden into an allowlisted path. |
 | TT48 | PASS | mcp__context7 (covered by T4 / TT4) |
 | TT49 | PASS | gateway write section=agents denied as non-admin |
 | TT50 | PASS | `rm -rf /` blocked by sandbox command guard |
@@ -122,14 +122,40 @@ Installer runs pm2 as root. Daemon lives under `/root/.comis`. `pm2 startup` reg
 | TT47 nanobanana-MCP **passes** in pm2 mode | pm2 mode has no `ProtectHome=read-only`; nanobanana can create `/root/nanobanana-images` without hitting that restriction |
 | pm2-specific: `pm2 restart` `unstable_restarts=0` post-T12 | Confirmed via `pm2 describe comis` |
 
-**Pm2 totals: 61 PASS / 6 PARTIAL / 7 SKIP / 0 FAIL** across 74 rows.
+**Pm2 totals: 62 PASS / 6 PARTIAL / 6 SKIP / 0 FAIL** across 74 rows (TT47 moved PASS → PASS after the IMAGE_OUTPUT_DIR fix in a follow-up run).
+
+## Nanobanana MCP fix (systemd mode — TT47)
+
+After the main run finished, the single remaining systemd-mode SKIP (nanobanana MCP connection failing under `ProtectHome=read-only`) was fixed with a config-only change — no code change needed.
+
+**Root cause**: `nanobanana-mcp-server` (v0.4.4) calls `Path(os.getenv("IMAGE_OUTPUT_DIR") or Path.home() / "nanobanana-images").mkdir(...)` during `ServerConfig.from_env()`. When the env var is unset, it tries to create `/home/comis/nanobanana-images`, which is outside the comis unit's `ReadWritePaths=` allowlist.
+
+**Fix** (in the MCP `env:` block of `config.yaml`):
+```yaml
+- name: nanobanana
+  transport: stdio
+  command: uvx
+  args: ["nanobanana-mcp-server@latest"]
+  enabled: true
+  env:
+    GEMINI_API_KEY: ${GEMINI_API_KEY}
+    IMAGE_OUTPUT_DIR: /home/comis/.comis/nanobanana-images   # <- added
+```
+
+**Verification on fresh re-install**:
+- Daemon startup log: `MCP setup complete: 4 connected, 0 failed, 28 tool(s) available` (was 3/1/24)
+- Nanobanana tool list: `generate_image`, `upload_file`, `show_output_stats`, `maintenance`
+- End-to-end chat drove `mcp__nanobanana--generate_image` 3× and produced a 473,793-byte PNG at `/home/comis/.comis/workspace/output/red_apple.png`
+- The server's own state file lives under the allowlisted path: `/home/comis/.comis/nanobanana-images/images.db`
+
+With this change, **systemd mode now matches pm2**: both show 61 PASS / 6 PARTIAL / 7 SKIP on the first run; after the nanobanana fix the totals align at **62 PASS / 6 PARTIAL / 6 SKIP** per mode.
 
 ## Deferred / not fixed in this session
 
-- **nanobanana MCP on systemd mode**: upstream server tries to create `~/nanobanana-images` outside the unit's `ReadWritePaths`. Fix requires either an env var to redirect output under `~/.comis/nanobanana/` or an upstream PR. Works as-is on pm2 mode (no ProtectHome=read-only).
 - **image_generate tool**: not registered because no image-gen provider API key is configured (not a bug; documented in daemon log as "Image generation disabled: API key not configured").
 - **browser (TT46)**: playwright-core is a dep but chromium binary is not auto-downloaded by the installer; would be a separate installer-option.
 - **ctx_\* tools (TT24–TT27)**: the test plan names came from an older Comis tool taxonomy; current platform uses `memory_tool` + `session_tool` for the same workflows.
+- **transcribe_audio / extract_document (TT17, TT19)**: tools fire correctly but expect platform attachment URLs. A test harness that publishes a workspace file as an attachment URL would move both PARTIAL → PASS.
 
 ## How to rerun
 
