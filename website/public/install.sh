@@ -703,6 +703,7 @@ install_build_tools_linux() {
             run_quiet_step "Updating package index" sudo apt-get update || ui_warn "Package index update had errors (continuing)"
             run_quiet_step "Installing system packages" sudo apt-get install -y -qq $apt_pkgs
         fi
+        apply_apparmor_bwrap_profile
         return 0
     fi
 
@@ -735,6 +736,52 @@ install_build_tools_linux() {
 
     ui_warn "Could not detect package manager for auto-installing build tools"
     return 1
+}
+
+# apply_apparmor_bwrap_profile
+# ----------------------------
+# Ubuntu 23.10+ ships with `kernel.apparmor_restrict_unprivileged_userns=1`,
+# which denies user-namespace creation unless the calling binary has an
+# AppArmor profile that grants `userns`. bubblewrap ships no such profile,
+# so the exec sandbox fails with "bwrap: setting up uid map: Permission denied"
+# on any agent-issued shell command. Writing a tiny permissive profile for
+# /usr/bin/bwrap restores normal sandboxing.
+#
+# Safe to call on non-AppArmor distros (RHEL/Fedora) — returns early when
+# AppArmor isn't active or the bwrap binary isn't present.
+apply_apparmor_bwrap_profile() {
+    if ! command -v bwrap >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ ! -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+        return 0
+    fi
+    if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" != "1" ]; then
+        return 0
+    fi
+    if [ ! -d /etc/apparmor.d ] || ! command -v apparmor_parser >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local profile=/etc/apparmor.d/bwrap
+    local write_cmd="tee"
+    local reload_cmd="apparmor_parser"
+    if ! is_root; then
+        write_cmd="sudo tee"
+        reload_cmd="sudo apparmor_parser"
+    fi
+
+    $write_cmd "$profile" >/dev/null <<'PROFILE'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+PROFILE
+    run_quiet_step "Loading AppArmor profile for bubblewrap" $reload_cmd -r "$profile" \
+        || ui_warn "apparmor_parser -r failed — exec sandbox may fail until bwrap profile is loaded"
 }
 
 install_uv() {
