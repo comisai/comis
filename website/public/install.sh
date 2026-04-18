@@ -3036,12 +3036,20 @@ SystemCallFilter=@system-service @mount
 SystemCallFilter=setns
 SystemCallArchitectures=native
 PrivateDevices=yes
-ProtectKernelTunables=yes
+# ProtectKernelTunables / ProtectKernelLogs / ProtectHostname are intentionally
+# OFF: on Linux 6.8+ (Ubuntu 24.04, Debian trixie) any of the three makes bwrap
+# fail with "Can't mount proc on /newroot/proc: Operation not permitted" when
+# the exec sandbox tries to spin up a nested PID namespace. Bisected on a live
+# VPS: enabling any of them cascades with the other hardening we do keep and
+# blocks /proc remount inside bwrap. The daemon runs trusted code — untrusted
+# agent commands are isolated by bwrap — so the relaxation does not materially
+# weaken the threat model.
+ProtectKernelTunables=no
 ProtectKernelModules=yes
-ProtectKernelLogs=yes
+ProtectKernelLogs=no
 ProtectControlGroups=yes
 ProtectClock=yes
-ProtectHostname=yes
+ProtectHostname=no
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 # RestrictNamespaces: allow the namespace types bubblewrap needs for the exec
