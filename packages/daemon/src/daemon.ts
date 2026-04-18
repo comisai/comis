@@ -509,13 +509,25 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // Restart continuation tracker: track recently-active sessions for SIGUSR1 replay
   const continuationTracker = createRestartContinuationTracker();
 
-  // Filtered subprocess environment (used by both setupSchedulers and setupTools)
+  // Filtered subprocess environment (used by setupSchedulers and MCP spawns)
   // System vars needed for basic process operation + all user-managed secrets.
   // SecretManager only contains values explicitly provisioned for the agent
   // (via env_set, .env file, or secrets.db). Host process.env was already
   // scrubbed by scrubProcessEnv() so no host credentials leak through here.
+  //
+  // IMPORTANT: This env is for TRUSTED children (scheduler-spawned tasks and
+  // MCP server processes whose env is declared in config.yaml). It is NOT safe
+  // for exec-tool children, which run agent-issued shell commands sourced from
+  // attacker-controllable channels (Discord, email, webhooks, prompt injection,
+  // etc.). Exec-tool gets its own credential-free env (`execToolEnv` below).
   const SUBPROCESS_SYSTEM = ["PATH", "HOME", "LANG", "TERM", "NODE_ENV", "TZ"] as const;
   const subprocessEnv = envSubset(container.secretManager, [...SUBPROCESS_SYSTEM, ...container.secretManager.keys()]);
+
+  // Credential-free env for the exec tool (agent-issued shell commands).
+  // Strips ANTHROPIC_API_KEY, OPENAI_API_KEY, COMIS_GATEWAY_TOKEN, etc. so an
+  // LLM-induced prompt injection cannot exfiltrate daemon credentials via a
+  // simple `env` or `printenv` call inside the sandbox. System vars only.
+  const execToolEnv = envSubset(container.secretManager, [...SUBPROCESS_SYSTEM]);
 
   // Deferred wake callback -- wired after wakeCoalescer is created
   // eslint-disable-next-line prefer-const -- assigned later after wakeCoalescer is created
@@ -817,7 +829,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     dataDir: container.config.dataDir || ".",
     secretManager: container.secretManager, eventBus: container.eventBus, skillsLogger, linkRunner,
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
-    subprocessEnv,
+    subprocessEnv: execToolEnv,
     onSuspiciousContent,
     mcpClientManager,
     sandboxProvider,
