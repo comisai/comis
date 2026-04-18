@@ -166,9 +166,9 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
           "Env secret set",
         );
 
-        // Schedule daemon restart (same 200ms + SIGUSR1 pattern as config-handlers)
+        // Schedule daemon restart (same 200ms + SIGUSR2 pattern as config-handlers)
         setTimeout(() => {
-          process.kill(process.pid, "SIGUSR1");
+          process.kill(process.pid, "SIGUSR2");
         }, 200);
 
         return {

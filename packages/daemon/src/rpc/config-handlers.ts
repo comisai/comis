@@ -456,7 +456,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         // Schedule daemon restart so all subsystems pick up new config atomically.
         // 200ms delay allows the RPC response to flush over WebSocket before shutdown begins.
         setTimeout(() => {
-          process.kill(process.pid, "SIGUSR1");
+          process.kill(process.pid, "SIGUSR2");
         }, 200);
 
         return { patched: true, section, key, value, restarting: true };
@@ -636,7 +636,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
 
         // Schedule restart
         setTimeout(() => {
-          process.kill(process.pid, "SIGUSR1");
+          process.kill(process.pid, "SIGUSR2");
         }, 200);
 
         return { applied: true, section, restarting: true };
@@ -693,7 +693,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       // Use setTimeout to allow the rpcCall response to flush over WebSocket before shutdown begins.
       // setImmediate fires too early and can race with the RPC response write.
       setTimeout(() => {
-        process.kill(process.pid, "SIGUSR1");
+        process.kill(process.pid, "SIGUSR2");
       }, 200);
 
       deps.logger.info({ method: "gateway.restart", durationMs: Date.now() - startMs, outcome: "success", systemd: isSystemd }, "Gateway restart initiated");
@@ -768,7 +768,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
 
       // Trigger daemon restart (same pattern as gateway.restart) per user decision
       setTimeout(() => {
-        process.kill(process.pid, "SIGUSR1");
+        process.kill(process.pid, "SIGUSR2");
       }, 200);
 
       deps.logger.info({ method: "config.rollback", durationMs: Date.now() - startMs, outcome: "success", sha, section: "all" }, "Config rollback applied");

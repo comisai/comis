@@ -376,7 +376,7 @@ describe("env.set handler", () => {
   // Restart scheduling
   // -----------------------------------------------------------------------
 
-  it("schedules SIGUSR1 restart after successful set", async () => {
+  it("schedules SIGUSR2 restart after successful set", async () => {
     const secretStore = createMockSecretStore();
     const deps = makeDeps({ secretStore });
     const handlers = createEnvHandlers(deps);
@@ -386,7 +386,7 @@ describe("env.set handler", () => {
     // Advance timers to trigger the 200ms setTimeout
     vi.advanceTimersByTime(200);
 
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
   });
 
   // -----------------------------------------------------------------------

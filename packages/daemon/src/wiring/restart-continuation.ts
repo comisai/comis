@@ -1,6 +1,6 @@
 /**
  * Restart continuation: capture active sessions on shutdown, replay on startup.
- * When the daemon shuts down via SIGUSR1 (config-change restart), recently-active
+ * When the daemon shuts down via SIGUSR2 (config-change restart), recently-active
  * sessions are written to a JSON file. On startup, synthetic inbound messages are
  * injected for each record so the LLM auto-resumes in-progress conversations.
  * @module

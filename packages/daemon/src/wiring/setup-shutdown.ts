@@ -149,7 +149,7 @@ async function withStepTimeout(
 // ---------------------------------------------------------------------------
 
 /**
- * Register graceful shutdown with ordered teardown sequence, SIGUSR1 restart
+ * Register graceful shutdown with ordered teardown sequence, SIGUSR2 restart
  * handler, and unhandledRejection safety net.
  * @param deps - Shutdown dependencies (all services to tear down)
  */
@@ -474,10 +474,10 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     },
   });
 
-  // 8.5. Register SIGUSR1 handler for graceful restart
-  process.on("SIGUSR1", () => {
-    daemonLogger.info("SIGUSR1 received, initiating restart");
-    void shutdownHandle.trigger("SIGUSR1");
+  // 8.5. Register SIGUSR2 handler for graceful restart
+  process.on("SIGUSR2", () => {
+    daemonLogger.info("SIGUSR2 received, initiating restart");
+    void shutdownHandle.trigger("SIGUSR2");
   });
 
   // 8.6. Safety net: catch unhandled promise rejections (non-fatal)

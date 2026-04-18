@@ -65,17 +65,17 @@ export function resolveGraphCacheRetention(_graphNodeDepth: number | undefined):
 /** Minimum step budget for sub-agent spawns — prevents boot sequence from consuming all steps. */
 export const MIN_SUB_AGENT_STEPS = 30;
 
-/** Tools denied to sub-agents -- management tools that trigger SIGUSR1 daemon restart. */
+/** Tools denied to sub-agents -- management tools that trigger SIGUSR2 daemon restart. */
 export const SUB_AGENT_TOOL_DENYLIST = new Set([
-  "gateway",          // config.patch, gateway.restart, config.rollback, env.set -> SIGUSR1
-  "channels_manage",  // channels.restart, config.patch -> SIGUSR1
-  "agents_manage",    // agent create/delete -> config persistence -> SIGUSR1
-  "models_manage",    // model config changes -> config persistence -> SIGUSR1
-  "tokens_manage",    // token CRUD -> config persistence -> SIGUSR1
-  "skills_manage",    // skill config changes -> config persistence -> potential SIGUSR1
+  "gateway",          // config.patch, gateway.restart, config.rollback, env.set -> SIGUSR2
+  "channels_manage",  // channels.restart, config.patch -> SIGUSR2
+  "agents_manage",    // agent create/delete -> config persistence -> SIGUSR2
+  "models_manage",    // model config changes -> config persistence -> SIGUSR2
+  "tokens_manage",    // token CRUD -> config persistence -> SIGUSR2
+  "skills_manage",    // skill config changes -> config persistence -> potential SIGUSR2
   "sessions_manage",  // session purge is destructive
   "memory_manage",    // memory purge is destructive
-  "heartbeat_manage", // heartbeat config -> config persistence -> potential SIGUSR1
+  "heartbeat_manage", // heartbeat config -> config persistence -> potential SIGUSR2
 ]);
 
 // ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ export function setupCrossSession(deps: {
       }
     }
 
-    // Remove management tools that could trigger SIGUSR1 daemon restart.
+    // Remove management tools that could trigger SIGUSR2 daemon restart.
     // Applied unconditionally -- sub-agents can USE the system but not CONFIGURE it.
     const beforeDenylist = tools.length;
     const deniedTools: string[] = [];

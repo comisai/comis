@@ -452,10 +452,10 @@ describe("persistToConfig", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SIGUSR1 tests (isolated with fake timers)
+// SIGUSR2 tests (isolated with fake timers)
 // ---------------------------------------------------------------------------
 
-describe("persistToConfig SIGUSR1 scheduling", () => {
+describe("persistToConfig SIGUSR2 scheduling", () => {
   let tempDir: string;
   let configPath: string;
   let killSpy: ReturnType<typeof vi.spyOn>;
@@ -476,7 +476,7 @@ describe("persistToConfig SIGUSR1 scheduling", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("SIGUSR1: schedules process.kill with 2000ms debounce delay on success", async () => {
+  it("SIGUSR2: schedules process.kill with 2000ms debounce delay on success", async () => {
     const deps = makeDeps({ configPaths: [configPath] });
     const opts = makeOpts({
       patch: { logLevel: "debug" },
@@ -484,17 +484,17 @@ describe("persistToConfig SIGUSR1 scheduling", () => {
 
     await persistToConfig(deps, opts);
 
-    // SIGUSR1 should NOT have been called yet
+    // SIGUSR2 should NOT have been called yet
     expect(killSpy).not.toHaveBeenCalled();
 
     // Advance timers by 2000ms
     vi.advanceTimersByTime(2000);
 
-    // Now SIGUSR1 should have been sent
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    // Now SIGUSR2 should have been sent
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
   });
 
-  it("SIGUSR1: coalesces multiple rapid calls into single signal", async () => {
+  it("SIGUSR2: coalesces multiple rapid calls into single signal", async () => {
     const deps = makeDeps({ configPaths: [configPath] });
     const opts = makeOpts({ patch: { logLevel: "debug" } });
 
@@ -509,16 +509,16 @@ describe("persistToConfig SIGUSR1 scheduling", () => {
     // Advance past the debounce window
     vi.advanceTimersByTime(2000);
 
-    // Only ONE SIGUSR1 should have been sent
+    // Only ONE SIGUSR2 should have been sent
     expect(killSpy).toHaveBeenCalledTimes(1);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
   });
 
   // -----------------------------------------------------------------------
-  // skipRestart suppresses SIGUSR1
+  // skipRestart suppresses SIGUSR2
   // -----------------------------------------------------------------------
 
-  it("SIGUSR1: NOT scheduled when skipRestart is true", async () => {
+  it("SIGUSR2: NOT scheduled when skipRestart is true", async () => {
     const deps = makeDeps({ configPaths: [configPath] });
     const opts = makeOpts({
       patch: { logLevel: "debug" },
@@ -530,11 +530,11 @@ describe("persistToConfig SIGUSR1 scheduling", () => {
     // Advance well past the normal 2000ms debounce + extra margin
     vi.advanceTimersByTime(5000);
 
-    // SIGUSR1 should NOT have been called at all
+    // SIGUSR2 should NOT have been called at all
     expect(killSpy).not.toHaveBeenCalled();
   });
 
-  it("SIGUSR1: still scheduled when skipRestart is false (explicit)", async () => {
+  it("SIGUSR2: still scheduled when skipRestart is false (explicit)", async () => {
     const deps = makeDeps({ configPaths: [configPath] });
     const opts = makeOpts({
       patch: { logLevel: "debug" },
@@ -546,11 +546,11 @@ describe("persistToConfig SIGUSR1 scheduling", () => {
     // Advance past 2000ms debounce
     vi.advanceTimersByTime(2000);
 
-    // SIGUSR1 should have been called
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    // SIGUSR2 should have been called
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
   });
 
-  it("SIGUSR1: still scheduled when skipRestart is omitted (default behavior)", async () => {
+  it("SIGUSR2: still scheduled when skipRestart is omitted (default behavior)", async () => {
     const deps = makeDeps({ configPaths: [configPath] });
     const opts = makeOpts({
       patch: { logLevel: "debug" },
@@ -562,11 +562,11 @@ describe("persistToConfig SIGUSR1 scheduling", () => {
     // Advance past 2000ms debounce
     vi.advanceTimersByTime(2000);
 
-    // SIGUSR1 should have been called (default behavior preserved)
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    // SIGUSR2 should have been called (default behavior preserved)
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
   });
 
-  it("SIGUSR1: resets timer on each call (debounce)", async () => {
+  it("SIGUSR2: resets timer on each call (debounce)", async () => {
     const deps = makeDeps({ configPaths: [configPath] });
     const opts = makeOpts({ patch: { logLevel: "debug" } });
 
@@ -591,7 +591,7 @@ describe("persistToConfig SIGUSR1 scheduling", () => {
 
     // Now it should fire
     expect(killSpy).toHaveBeenCalledTimes(1);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
   });
 });
 
@@ -620,7 +620,7 @@ describe("config mutation fence", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("SIGUSR1 deferred while fence > 0, fires after fence reaches 0", async () => {
+  it("SIGUSR2 deferred while fence > 0, fires after fence reaches 0", async () => {
     const deps = makeDeps({ configPaths: [configPath] });
     const opts = makeOpts({ patch: { logLevel: "debug" } });
 
@@ -632,7 +632,7 @@ describe("config mutation fence", () => {
     // Advance past the 2000ms debounce
     vi.advanceTimersByTime(2000);
 
-    // SIGUSR1 should NOT fire -- fence is still held
+    // SIGUSR2 should NOT fire -- fence is still held
     expect(killSpy).not.toHaveBeenCalled();
 
     // Release fence
@@ -641,12 +641,12 @@ describe("config mutation fence", () => {
     // Advance 500ms for the retry check
     vi.advanceTimersByTime(500);
 
-    // Now SIGUSR1 should fire
+    // Now SIGUSR2 should fire
     expect(killSpy).toHaveBeenCalledTimes(1);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
   });
 
-  it("SIGUSR1 fires immediately (after debounce) when fence is 0", async () => {
+  it("SIGUSR2 fires immediately (after debounce) when fence is 0", async () => {
     const deps = makeDeps({ configPaths: [configPath] });
     const opts = makeOpts({ patch: { logLevel: "debug" } });
 
@@ -656,7 +656,7 @@ describe("config mutation fence", () => {
     vi.advanceTimersByTime(2000);
 
     expect(killSpy).toHaveBeenCalledTimes(1);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
   });
 
   it("multiple fence enter/leave pairs: defers until fully released", async () => {
@@ -686,6 +686,6 @@ describe("config mutation fence", () => {
 
     // Now it should fire
     expect(killSpy).toHaveBeenCalledTimes(1);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
   });
 });

@@ -104,7 +104,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
           entityId: agentId,
           actingUser: ctx?.userId ?? (params._agentId as string | undefined),
           traceId: ctx?.traceId ?? (params._traceId as string | undefined),
-          skipRestart: !!deps.hotAdd,  // skip SIGUSR1 when hot-add handles it in-process
+          skipRestart: !!deps.hotAdd,  // skip SIGUSR2 when hot-add handles it in-process
         });
         if (!persistResult.ok) {
           deps.persistDeps.logger.warn(
@@ -254,7 +254,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
           entityId: agentId,
           actingUser: ctx?.userId ?? (params._agentId as string | undefined),
           traceId: ctx?.traceId ?? (params._traceId as string | undefined),
-          skipRestart: !!deps.hotRemove,  // skip SIGUSR1 when hot-remove handles it in-process
+          skipRestart: !!deps.hotRemove,  // skip SIGUSR2 when hot-remove handles it in-process
         });
         if (!persistResult.ok) {
           deps.persistDeps.logger.warn(

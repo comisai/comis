@@ -506,7 +506,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     logger: daemonLogger,
   });
 
-  // Restart continuation tracker: track recently-active sessions for SIGUSR1 replay
+  // Restart continuation tracker: track recently-active sessions for SIGUSR2 replay
   const continuationTracker = createRestartContinuationTracker();
 
   // Filtered subprocess environment (used by setupSchedulers and MCP spawns)
@@ -693,7 +693,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     rpcCall,
     // Task extraction callback (gated by config.scheduler.tasks.enabled)
     onTaskExtraction: extractFromConversation,
-    // Restart continuation: track recently-active sessions for SIGUSR1 replay
+    // Restart continuation: track recently-active sessions for SIGUSR2 replay
     onMessageProcessed: (msg, channelType) => {
       continuationTracker.track({
         agentId: defaultAgentId,

@@ -306,18 +306,18 @@ describe("setupShutdown", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 8. SIGUSR1 handler
+  // 8. SIGUSR2 handler
   // -------------------------------------------------------------------------
 
-  it("registers SIGUSR1 handler that triggers shutdown", async () => {
+  it("registers SIGUSR2 handler that triggers shutdown", async () => {
     const deps = createMinimalDeps();
 
     const setupShutdown = await getSetupShutdown();
     const result = setupShutdown(deps);
 
-    // Find the SIGUSR1 handler registration
+    // Find the SIGUSR2 handler registration
     const sigusr1Call = processOnSpy.mock.calls.find(
-      (call) => call[0] === "SIGUSR1",
+      (call) => call[0] === "SIGUSR2",
     );
     expect(sigusr1Call).toBeDefined();
 
@@ -325,8 +325,8 @@ describe("setupShutdown", () => {
     const handler = sigusr1Call![1] as () => void;
     handler();
 
-    expect(deps.daemonLogger.info).toHaveBeenCalledWith("SIGUSR1 received, initiating restart");
-    expect(result.shutdownHandle.trigger).toHaveBeenCalledWith("SIGUSR1");
+    expect(deps.daemonLogger.info).toHaveBeenCalledWith("SIGUSR2 received, initiating restart");
+    expect(result.shutdownHandle.trigger).toHaveBeenCalledWith("SIGUSR2");
   });
 
   // -------------------------------------------------------------------------

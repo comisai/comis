@@ -59,7 +59,7 @@ describe("config.patch", () => {
     tempConfig.cleanup();
   });
 
-  it("schedules SIGUSR1 restart after successful write", async () => {
+  it("schedules SIGUSR2 restart after successful write", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
 
@@ -69,14 +69,14 @@ describe("config.patch", () => {
       _trustLevel: "admin",
     });
 
-    // SIGUSR1 should NOT have been called yet (it's on a 200ms timer)
+    // SIGUSR2 should NOT have been called yet (it's on a 200ms timer)
     expect(killSpy).not.toHaveBeenCalled();
 
     // Advance timers by 200ms
     vi.advanceTimersByTime(200);
 
-    // Now SIGUSR1 should have been sent
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    // Now SIGUSR2 should have been sent
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
 
     // Return value should include restarting: true
     expect(result).toMatchObject({
@@ -114,7 +114,7 @@ describe("config.patch", () => {
       }),
     ).rejects.toThrow("Config validation failed");
 
-    // Advance timers -- SIGUSR1 should NOT have been called
+    // Advance timers -- SIGUSR2 should NOT have been called
     vi.advanceTimersByTime(200);
     expect(killSpy).not.toHaveBeenCalled();
   });
@@ -447,7 +447,7 @@ describe("config.apply", () => {
     tempConfig.cleanup();
   });
 
-  it("replaces section atomically and schedules SIGUSR1 restart", async () => {
+  it("replaces section atomically and schedules SIGUSR2 restart", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
 
@@ -460,12 +460,12 @@ describe("config.apply", () => {
     // Return value
     expect(result).toMatchObject({ applied: true, section: "scheduler", restarting: true });
 
-    // SIGUSR1 should not have been called yet (200ms timer)
+    // SIGUSR2 should not have been called yet (200ms timer)
     expect(killSpy).not.toHaveBeenCalled();
 
     // Advance timers by 200ms
     vi.advanceTimersByTime(200);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
 
     // Verify YAML was written with full replacement (not deep merge)
     const raw = readFileSync(tempConfig.configPath, "utf-8");

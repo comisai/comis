@@ -25,7 +25,7 @@ import { dirname } from "node:path";
 import { parse as parseYaml, stringify as yamlStringify } from "yaml";
 
 // ---------------------------------------------------------------------------
-// Module-scoped debounce timer for SIGUSR1 coalescing.
+// Module-scoped debounce timer for SIGUSR2 coalescing.
 // Multiple rapid persistToConfig calls (e.g., 8 agent creates) coalesce
 // into a single restart signal. The 2-second window allows batch operations
 // to complete before triggering one restart.
@@ -33,7 +33,7 @@ import { parse as parseYaml, stringify as yamlStringify } from "yaml";
 
 let sigusr1Timer: ReturnType<typeof setTimeout> | undefined;
 
-/** Reset the module-scoped SIGUSR1 debounce timer. For test isolation only. */
+/** Reset the module-scoped SIGUSR2 debounce timer. For test isolation only. */
 export function _resetSigusr1Timer(): void {
   if (sigusr1Timer !== undefined) {
     clearTimeout(sigusr1Timer);
@@ -43,14 +43,14 @@ export function _resetSigusr1Timer(): void {
 
 // ---------------------------------------------------------------------------
 // Config mutation fence.
-// While pendingConfigMutations > 0, SIGUSR1 is deferred. This prevents
-// batch agent creation (N parallel tool calls) from firing SIGUSR1
+// While pendingConfigMutations > 0, SIGUSR2 is deferred. This prevents
+// batch agent creation (N parallel tool calls) from firing SIGUSR2
 // mid-batch, which would lose N-1 agents.
 // ---------------------------------------------------------------------------
 
 let pendingConfigMutations = 0;
 
-/** Increment the config mutation fence counter. While > 0, SIGUSR1 is deferred. */
+/** Increment the config mutation fence counter. While > 0, SIGUSR2 is deferred. */
 export function enterConfigMutationFence(): void {
   pendingConfigMutations++;
 }
@@ -102,7 +102,7 @@ export interface PersistToConfigOpts {
   actingUser?: string;
   /** Request trace ID for correlation */
   traceId?: string;
-  /** When true, skip scheduling SIGUSR1 after persist. Used when the caller handles the mutation in-process (hot-add) and no restart is needed. */
+  /** When true, skip scheduling SIGUSR2 after persist. Used when the caller handles the mutation in-process (hot-add) and no restart is needed. */
   skipRestart?: boolean;
 }
 
@@ -245,7 +245,7 @@ export async function persistToConfig(
     );
 
     // Schedule daemon restart so all subsystems pick up new config atomically.
-    // Debounced: multiple rapid calls coalesce into a single SIGUSR1.
+    // Debounced: multiple rapid calls coalesce into a single SIGUSR2.
     // The 2-second window allows batch operations to complete before triggering one restart.
     // Skip restart when caller handles the mutation in-process (hot-add/hot-remove).
     if (!opts.skipRestart) {
@@ -259,7 +259,7 @@ export async function persistToConfig(
           return;
         }
         sigusr1Timer = undefined;
-        process.kill(process.pid, "SIGUSR1");
+        process.kill(process.pid, "SIGUSR2");
       }, 2000);
     }
 

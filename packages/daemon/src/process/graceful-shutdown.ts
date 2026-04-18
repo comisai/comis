@@ -126,8 +126,16 @@ export function registerGracefulShutdown(deps: ShutdownDeps): ShutdownHandle {
     }
 
     clearTimeout(timer);
+    // Exit code encodes intent for the supervisor.
+    // - SIGUSR2 is the "restart me" signal from config.patch / gateway.restart
+    //   flows. Must exit non-zero so systemd's Restart=on-failure triggers a
+    //   restart. Docker's unless-stopped and pm2's default auto-restart treat
+    //   any non-explicit exit as a crash and restart too — so 42 works across
+    //   all three supervisors.
+    // - SIGTERM/SIGINT are "operator asked me to stop" — exit 0 is correct.
+    const isRestartSignal = signal === "SIGUSR2";
     try {
-      exit(0);
+      exit(isRestartSignal ? 42 : 0);
     } catch {
       // Test harness overrides exit() to throw — this is intentional.
       // Swallowing prevents a spurious "Unhandled promise rejection" ERROR log.
