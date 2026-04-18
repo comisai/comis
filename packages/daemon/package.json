@@ -51,7 +51,8 @@
     "hono": "^4.12.5",
     "pino": "^10.3.1",
     "pino-roll": "^4.0.0",
-    "yaml": "^2.8.2"
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
   },
   "optionalDependencies": {
     "sd-notify": "^2.8.0"
