@@ -260,14 +260,41 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
   // Transport creation helper
   // -----------------------------------------------------------------------
 
+  /**
+   * Wrap a stdio command so the child Node process (if any) does NOT inherit
+   * the daemon's --permission flags via NODE_OPTIONS.
+   *
+   * Node 22's permission model propagates by setting NODE_OPTIONS on spawned
+   * children, even when the caller passes an override env. Unsetting
+   * NODE_OPTIONS via `env -u NODE_OPTIONS <cmd>` is the only mechanism that
+   * clears it before the child Node process reads it at startup.
+   *
+   * Non-Node MCP servers (uvx, Python, etc.) are unaffected by NODE_OPTIONS
+   * but still go through the wrapper for uniformity — `env -u` on a missing
+   * var is a no-op. Linux-only production target (per CLAUDE.md); macOS and
+   * WSL both have `/usr/bin/env` with `-u` support.
+   *
+   * See COMIS-E2E-FOLLOWUP-DESIGN.md Issue 2 for the empirical rationale.
+   */
+  function wrapStdioCommand(
+    command: string,
+    args: readonly string[] | undefined,
+  ): { command: string; args: string[] } {
+    return {
+      command: "/usr/bin/env",
+      args: ["-u", "NODE_OPTIONS", command, ...(args ?? [])],
+    };
+  }
+
   function createTransport(config: McpServerConfig) {
     if (config.transport === "stdio") {
       if (!config.command) {
         throw new Error(`MCP server "${config.name}": stdio transport requires "command"`);
       }
+      const wrapped = wrapStdioCommand(config.command, config.args);
       return new StdioClientTransport({
-        command: config.command,
-        args: config.args,
+        command: wrapped.command,
+        args: wrapped.args,
         stderr: "pipe",  // capture stderr for debugging
         ...(config.env ? { env: { ...process.env, ...config.env } as Record<string, string> } : {}),
         ...(config.cwd ? { cwd: config.cwd } : {}),
