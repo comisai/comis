@@ -2997,12 +2997,18 @@ RestartSec=5s
 WatchdogSec=30s
 TimeoutStopSec=45
 # The daemon self-restarts by trapping SIGUSR2, shutting down cleanly, and
-# exiting with code 42 (see packages/daemon/src/daemon.ts). systemd must
-# treat that status as a clean termination so hot config reloads don't
-# show up as "Failed with result 'exit-code'" in journalctl / systemctl status.
-# Combined with Restart=on-failure, systemd still respawns the daemon; this
-# only changes how the exit is *classified*, not whether the restart happens.
+# exiting with code 42 (see packages/daemon/src/daemon.ts). Two settings work
+# together here:
+#   SuccessExitStatus=42       -- classify exit 42 as clean (no "Failed with
+#                                  result 'exit-code'" spam in journal on
+#                                  every hot config reload)
+#   RestartForceExitStatus=42  -- *still* respawn on exit 42, regardless of
+#                                  the Restart=on-failure setting above
+# Without RestartForceExitStatus, SuccessExitStatus would also suppress the
+# restart (on-failure only fires on non-success exits), leaving the daemon
+# dead after every hot reload.
 SuccessExitStatus=42
+RestartForceExitStatus=42
 
 MemoryMax=2G
 # TasksMax covers the entire cgroup: daemon + MCP children + exec sandbox children.
