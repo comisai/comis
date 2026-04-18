@@ -347,6 +347,34 @@ describe("McpClientManager", () => {
       expect(constructorArg).not.toHaveProperty("cwd");
     });
 
+    it("wraps stdio command with /usr/bin/env -u NODE_OPTIONS to strip inherited --permission flags", async () => {
+      const mgr = createMcpClientManager(makeDeps());
+      await mgr.connect(makeStdioConfig());
+
+      // The wrapper prefixes /usr/bin/env -u NODE_OPTIONS before the original
+      // command + args, so Node children do not inherit the daemon's
+      // NODE_OPTIONS (which would propagate --permission flags).
+      // See COMIS-E2E-FOLLOWUP-DESIGN.md Issue 2.
+      expect(StdioClientTransport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "/usr/bin/env",
+          args: ["-u", "NODE_OPTIONS", "/usr/bin/test-mcp", "--flag"],
+        }),
+      );
+    });
+
+    it("wraps stdio command correctly when config.args is undefined", async () => {
+      const mgr = createMcpClientManager(makeDeps());
+      await mgr.connect(makeStdioConfig({ args: undefined }));
+
+      expect(StdioClientTransport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "/usr/bin/env",
+          args: ["-u", "NODE_OPTIONS", "/usr/bin/test-mcp"],
+        }),
+      );
+    });
+
     it("connects to an SSE MCP server using SSEClientTransport", async () => {
       const mgr = createMcpClientManager(makeDeps());
       const result = await mgr.connect(makeSseConfig());
