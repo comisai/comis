@@ -11,6 +11,7 @@ import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
 import { execFile as execFileCb } from "node:child_process";
 import { access, constants } from "node:fs/promises";
 import { promisify } from "node:util";
+import { envWithoutSystemdNotify } from "./exec-helpers.js";
 
 const execFile = promisify(execFileCb);
 
@@ -29,7 +30,7 @@ async function isSystemdAvailable(): Promise<boolean> {
   } catch {
     // Fallback: check if systemctl is on PATH
     try {
-      await execFile("which", ["systemctl"], { timeout: EXEC_TIMEOUT_MS });
+      await execFile("which", ["systemctl"], { timeout: EXEC_TIMEOUT_MS, env: envWithoutSystemdNotify() });
       return true;
     } catch {
       return false;
@@ -44,6 +45,7 @@ async function getFailedServices(): Promise<string[]> {
   try {
     const { stdout } = await execFile("systemctl", ["--failed", "--no-legend", "--plain"], {
       timeout: EXEC_TIMEOUT_MS,
+      env: envWithoutSystemdNotify(),
     });
     // Each line: "unit-name.service loaded failed failed description..."
     // Extract the service name (first field)

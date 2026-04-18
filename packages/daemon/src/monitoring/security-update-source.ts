@@ -10,6 +10,7 @@ import type { HeartbeatSourcePort, HeartbeatCheckResult } from "@comis/scheduler
 import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
+import { envWithoutSystemdNotify } from "./exec-helpers.js";
 
 const execFile = promisify(execFileCb);
 
@@ -25,7 +26,7 @@ type PackageManager = "apt" | "dnf" | "yum";
 async function detectPackageManager(): Promise<PackageManager | null> {
   for (const pm of ["apt-get", "dnf", "yum"] as const) {
     try {
-      await execFile("which", [pm], { timeout: 5_000 });
+      await execFile("which", [pm], { timeout: 5_000, env: envWithoutSystemdNotify() });
       return pm === "apt-get" ? "apt" : pm;
     } catch {
       // Not found, try next
@@ -40,6 +41,7 @@ async function detectPackageManager(): Promise<PackageManager | null> {
 async function checkApt(securityOnly: boolean): Promise<{ count: number; securityCount: number }> {
   const { stdout } = await execFile("apt-get", ["-s", "upgrade"], {
     timeout: EXEC_TIMEOUT_MS,
+    env: envWithoutSystemdNotify(),
   });
 
   // Parse "X upgraded, Y newly installed" line
@@ -73,6 +75,7 @@ async function checkDnf(
 
     const { stdout } = await execFile(pm, args, {
       timeout: EXEC_TIMEOUT_MS,
+      env: envWithoutSystemdNotify(),
     });
 
     // Count non-empty lines after the header

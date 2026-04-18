@@ -11,6 +11,7 @@ import type { HeartbeatSourcePort, HeartbeatCheckResult } from "@comis/scheduler
 import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
+import { envWithoutSystemdNotify } from "./exec-helpers.js";
 
 const execFile = promisify(execFileCb);
 
@@ -34,7 +35,7 @@ async function checkRepo(repoPath: string, checkRemote: boolean): Promise<RepoSt
     const { stdout: statusOutput } = await execFile(
       "git",
       ["-C", repoPath, "status", "--porcelain"],
-      { timeout: EXEC_TIMEOUT_MS },
+      { timeout: EXEC_TIMEOUT_MS, env: envWithoutSystemdNotify() },
     );
     const uncommittedFiles = statusOutput
       .trim()
@@ -48,7 +49,7 @@ async function checkRepo(repoPath: string, checkRemote: boolean): Promise<RepoSt
         const { stdout: revListOutput } = await execFile(
           "git",
           ["-C", repoPath, "rev-list", "--count", "HEAD...@{upstream}"],
-          { timeout: EXEC_TIMEOUT_MS },
+          { timeout: EXEC_TIMEOUT_MS, env: envWithoutSystemdNotify() },
         );
         unpushedCommits = parseInt(revListOutput.trim(), 10) || 0;
       } catch {
