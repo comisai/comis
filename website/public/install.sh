@@ -3467,6 +3467,14 @@ register_service() {
     ui_kv "Daemon entry" "$COMIS_DAEMON_JS"
     ui_kv "Data dir" "$COMIS_DATA_DIR"
 
+    # Ensure bubblewrap can create user namespaces on distros that ship
+    # `kernel.apparmor_restrict_unprivileged_userns=1` by default (Ubuntu 23.10+).
+    # Idempotent no-op on non-AppArmor distros and on systems where the profile
+    # is already loaded.
+    if [[ "$OS" == "linux" ]]; then
+        apply_apparmor_bwrap_profile
+    fi
+
     case "$RESOLVED_SERVICE_MANAGER" in
         systemd)
             register_service_systemd
