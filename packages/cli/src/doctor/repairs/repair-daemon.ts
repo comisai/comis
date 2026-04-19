@@ -37,7 +37,7 @@ export async function repairDaemon(
   }
 
   try {
-    for (const _finding of repairableFindings) { // eslint-disable-line @typescript-eslint/no-unused-vars
+    for (const _finding of repairableFindings) {  
       unlinkSync(pidFile);
       actions.push(`Removed stale PID file: ${pidFile}`);
     }

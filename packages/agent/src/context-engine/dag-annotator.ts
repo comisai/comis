@@ -199,7 +199,7 @@ export function createDagAnnotatorLayer(
 
       // Step 5: Build annotated array immutably
       /* eslint-disable @typescript-eslint/no-explicit-any */
-      /* eslint-disable security/detect-object-injection -- array index access */
+       
       const result: AgentMessage[] = messages.map((msg, i) => {
         if (!annotateSet.has(i)) return msg;
 
@@ -213,7 +213,7 @@ export function createDagAnnotatorLayer(
           content: [{ type: "text", text: placeholder }],
         } as unknown as AgentMessage;
       });
-      /* eslint-enable security/detect-object-injection */
+       
       /* eslint-enable @typescript-eslint/no-explicit-any */
 
       return result;

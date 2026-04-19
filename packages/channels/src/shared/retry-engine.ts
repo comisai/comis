@@ -198,7 +198,7 @@ export interface RetryEngine {
 export function createRetryEngine(
   config: RetryConfig,
   eventBus: TypedEventBus,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _logger: { warn: (...args: unknown[]) => void },
   abortSignal?: AbortSignal,
 ): RetryEngine {
@@ -233,9 +233,9 @@ export function createRetryEngine(
           currentText = stripHtmlTags(text);
 
           // Remove parseMode and parse_mode from options
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+           
           const { parseMode: _pm, ...restOptions } = currentOptions ?? {};
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+           
           const { parse_mode: _pm2, ...restExtra } = (restOptions.extra ?? {}) as Record<string, unknown>;
           currentOptions = { ...restOptions, parseMode: undefined, extra: restExtra };
 

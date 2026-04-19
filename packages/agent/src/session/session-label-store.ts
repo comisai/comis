@@ -57,7 +57,7 @@ export function createSessionLabelStore(store: SessionStore): SessionLabelStore 
     removeLabel(key: SessionKey): void {
       const data = store.load(key);
       if (!data) return;
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       const { label: _, ...rest } = data.metadata;
       store.save(key, data.messages, rest);
     },

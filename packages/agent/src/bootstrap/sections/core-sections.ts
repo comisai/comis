@@ -84,7 +84,7 @@ export function buildDateTimeSection(): string[] {
 
 export function buildRuntimeMetadataSection(
   info: RuntimeInfo,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _isMinimal: boolean,
 ): string[] {
   const parts: string[] = [];
@@ -111,7 +111,7 @@ export function buildRuntimeMetadataSection(
 
 export function buildInboundMetadataSection(
   meta: InboundMetadata | undefined,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _isMinimal: boolean,
 ): string[] {
   if (!meta) return [];

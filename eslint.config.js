@@ -1,6 +1,7 @@
 import js from "@eslint/js";
 import security from "eslint-plugin-security";
 import tseslint from "typescript-eslint";
+import globals from "globals";
 
 export default tseslint.config(
   // Global ignores - must be first, standalone object
@@ -31,6 +32,30 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
       ],
+    },
+  },
+
+  // Node build scripts (ESM/CJS) need node globals: process, console, require, etc.
+  {
+    files: [
+      "packages/*/scripts/**/*.js",
+      "scripts/**/*.js",
+      "skills/*/scripts/**/*.js",
+    ],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+
+  // Browser-facing web package uses DOM + browser globals.
+  {
+    files: ["packages/web/src/**/*.ts"],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
     },
   },
 

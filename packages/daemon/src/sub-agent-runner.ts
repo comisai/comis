@@ -502,6 +502,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       if (deps.activeRunRegistry) {
         const handle = deps.activeRunRegistry.get(run.sessionKey);
         if (handle) {
+          // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
           handle.abort().catch(() => { /* best-effort */ });
         }
       }
@@ -523,6 +524,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           task: run.task,
           runtimeMs: runningDurationMs,
           runId,
+        // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
       }
 
@@ -1425,6 +1427,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           task: params.task,
           runtimeMs,
           runId,
+        // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
       }
 

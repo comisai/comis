@@ -332,7 +332,7 @@ export function createDeadContentEvictorLayer(
         // Age check: skip if too recent
         if (entry.toolResultIndex < config.evictionMinAge) continue;
 
-        const msg = messages[entry.index]!; // eslint-disable-line security/detect-object-injection
+        const msg = messages[entry.index]!;  
 
         // Check supersession
         if (entry.supersessionKey) {
@@ -340,7 +340,7 @@ export function createDeadContentEvictorLayer(
           if (mostRecentIdx !== undefined && mostRecentIdx !== entry.index) {
             // This result is superseded by a newer one
             const args = toolCallArgs.get(entry.toolCallId) ?? {};
-            const category = TOOL_CATEGORY[entry.toolName] ?? "other"; // eslint-disable-line security/detect-object-injection
+            const category = TOOL_CATEGORY[entry.toolName] ?? "other";  
             let placeholder: string;
 
             if (FILE_READ_TOOLS.has(entry.toolName)) {

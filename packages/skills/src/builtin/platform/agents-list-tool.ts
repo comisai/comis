@@ -33,9 +33,9 @@ export function createAgentsListTool(rpcCall: RpcCall): AgentTool<typeof AgentsL
     parameters: AgentsListParams,
 
     async execute(
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _toolCallId: string,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _params: Record<string, unknown>,
     ): Promise<AgentToolResult<unknown>> {
       try {

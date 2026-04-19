@@ -82,7 +82,7 @@ export function shouldAutoTts(
 
     default: {
       // Exhaustive check — should never reach here
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       const _exhaustive: never = config.autoMode;
       return { shouldSynthesize: false };
     }

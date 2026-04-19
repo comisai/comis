@@ -224,7 +224,7 @@ function buildAssembledMessages(
   freshTail: ResolvedItem[],
   selected: ResolvedItem[],
 ): AgentMessage[] {
-  /* eslint-disable @typescript-eslint/no-explicit-any */
+   
   const assembled: AgentMessage[] = [];
 
   // First message: recall guidance
@@ -244,7 +244,7 @@ function buildAssembledMessages(
   }
 
   return assembled;
-  /* eslint-enable @typescript-eslint/no-explicit-any */
+   
 }
 
 /**
@@ -254,7 +254,7 @@ function buildAssembledMessages(
  * Messages: reconstruct from CtxMessageRow, preserving tool fields.
  */
 function buildAgentMessage(item: ResolvedItem): AgentMessage {
-  /* eslint-disable @typescript-eslint/no-explicit-any */
+   
   if (item.summaryRow) {
     const wrappedXml = wrapSummaryXml(item.summaryRow);
     return {
@@ -275,7 +275,7 @@ function buildAgentMessage(item: ResolvedItem): AgentMessage {
   if (msg.tool_call_id) result.toolCallId = msg.tool_call_id;
 
   return result as unknown as AgentMessage;
-  /* eslint-enable @typescript-eslint/no-explicit-any */
+   
 }
 
 // ---------------------------------------------------------------------------

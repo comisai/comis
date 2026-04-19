@@ -56,6 +56,7 @@ export function tryInjectSilentFailure(
   logger: Logger,
   context: Record<string, unknown> = {},
 ): SilentFailureInjection | undefined {
+  // eslint-disable-next-line no-restricted-syntax -- ops toggle read before SecretManager is initialized
   const faultFlag = process.env.COMIS_TEST_SILENT_FAIL_FLAG;
   if (!faultFlag) return undefined;
 
@@ -65,6 +66,7 @@ export function tryInjectSilentFailure(
   //   "subagent"          — only sub-agent sessions may fire
   //   "parent"            — only non-sub-agent sessions may fire
   // Sub-agent session keys contain "sub-agent:" (see sub-agent-runner).
+  // eslint-disable-next-line no-restricted-syntax -- ops toggle read before SecretManager is initialized
   const scope = process.env.COMIS_TEST_SILENT_FAIL_SCOPE;
   if (scope === "subagent" || scope === "parent") {
     const sessionKey = typeof context.sessionKey === "string" ? context.sessionKey : "";

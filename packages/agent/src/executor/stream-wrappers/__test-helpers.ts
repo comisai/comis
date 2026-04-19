@@ -15,6 +15,7 @@ export function createMockLogger() {
     fatal: vi.fn(),
     trace: vi.fn(),
     child: vi.fn().mockReturnThis(),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
   } as any;
 }
 
@@ -29,7 +30,9 @@ export function makeAssistantMessage(
   return {
     role: "assistant",
     content,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
     api: "anthropic-messages" as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
     provider: "anthropic" as any,
     model: "claude-sonnet-4-5-20250929",
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },

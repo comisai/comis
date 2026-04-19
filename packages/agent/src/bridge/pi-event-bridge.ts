@@ -396,6 +396,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           // Capture stopReason for output escalation detection
           if (assistantMsg && "stopReason" in assistantMsg) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
             m.lastStopReason = (assistantMsg as any).stopReason as string | undefined;
           }
 
@@ -409,6 +410,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           m.turnToolDurationMs = 0;
 
           // R-04: Extract responseId from assistant message (optional -- not all providers supply it)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
           const responseId = (assistantMsg as any)?.responseId as string | undefined;
 
           if (assistantMsg && "usage" in assistantMsg && assistantMsg.usage) {
@@ -490,6 +492,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // R-08: Extract cacheCreation breakdown (future upstream -- runtime check)
             const rawUsage = usage as unknown as Record<string, unknown>;
             const cacheCreation = rawUsage.cacheCreation && typeof rawUsage.cacheCreation === "object"
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
               ? { shortTtl: (rawUsage.cacheCreation as any).shortTtl ?? 0, longTtl: (rawUsage.cacheCreation as any).longTtl ?? 0 }
               : undefined;
 

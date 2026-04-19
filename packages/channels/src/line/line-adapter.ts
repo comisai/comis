@@ -256,7 +256,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
     async sendMessage(
       chatId: string,
       text: string,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       try {
@@ -293,35 +293,35 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
       }
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async editMessage(_channelId: string, _messageId: string, _text: string): Promise<Result<void, Error>> {
       return err(
         new Error("LINE does not support editing messages. Bots cannot modify sent messages."),
       );
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async reactToMessage(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
       return err(
         new Error("LINE does not support message reactions for bots."),
       );
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async removeReaction(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
       return err(
         new Error("Reactions are not supported on LINE"),
       );
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async deleteMessage(_channelId: string, _messageId: string): Promise<Result<void, Error>> {
       return err(
         new Error("LINE does not support deleting messages for bots."),
       );
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async fetchMessages(_channelId: string, _options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>> {
       return err(
         new Error(
@@ -333,7 +333,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
     async sendAttachment(
       chatId: string,
       attachment: AttachmentPayload,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       return sendAttachmentAsLineMessage(chatId, attachment);

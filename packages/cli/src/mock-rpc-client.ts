@@ -78,7 +78,7 @@ export function createMockRpcClient(): MockRpcClientBuilder {
 
     build(): RpcClient {
       return {
-        call(method: string, _params?: unknown): Promise<unknown> { // eslint-disable-line @typescript-eslint/no-unused-vars
+        call(method: string, _params?: unknown): Promise<unknown> {  
           if (disconnected) {
             return Promise.reject(
               new Error("Connection closed unexpectedly"),

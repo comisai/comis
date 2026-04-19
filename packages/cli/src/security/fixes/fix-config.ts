@@ -27,7 +27,7 @@ import type { RemediationAction } from "../fix-types.js";
  */
 export function createConfigFixes(
   findings: SecurityFinding[],
-  _configPaths: string[], // eslint-disable-line @typescript-eslint/no-unused-vars
+  _configPaths: string[],  
 ): RemediationAction[] {
   const actions: RemediationAction[] = [];
 

@@ -164,7 +164,7 @@ export function createSseEndpoint(deps: SseEndpointDeps): Hono<SseEnv> {
       });
 
       // Keep-alive ping loop
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+       
       while (true) {
         await stream.sleep(KEEPALIVE_MS);
         await stream.writeSSE({

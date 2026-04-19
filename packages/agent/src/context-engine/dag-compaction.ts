@@ -126,7 +126,7 @@ function chunkByTokens<T extends { token_count: number }>(
   if (currentChunk.length > 0) {
     if (currentChunk.length < minPerChunk && chunks.length > 0) {
       // Merge thin final chunk into previous
-      const prev = chunks[chunks.length - 1]; // eslint-disable-line security/detect-object-injection
+      const prev = chunks[chunks.length - 1];  
       prev.push(...currentChunk);
     } else if (currentChunk.length >= minPerChunk || chunks.length === 0) {
       // Only push if it meets minimum or it's the only chunk
@@ -134,7 +134,7 @@ function chunkByTokens<T extends { token_count: number }>(
       chunks.push(currentChunk);
     } else {
       // Less than minPerChunk and we have other chunks -- merge into last
-      const prev = chunks[chunks.length - 1]; // eslint-disable-line security/detect-object-injection
+      const prev = chunks[chunks.length - 1];  
       prev.push(...currentChunk);
     }
   }
@@ -361,7 +361,7 @@ export async function runLeafPass(
         content,
         tokenCount,
         earliestAt: chunk[0].created_at,
-        latestAt: chunk[chunk.length - 1].created_at, // eslint-disable-line security/detect-object-injection
+        latestAt: chunk[chunk.length - 1].created_at,  
         sourceTokenCount: chunk.reduce((sum, m) => sum + m.token_count, 0),
       });
       deps.store.linkSummaryMessages(
@@ -471,7 +471,7 @@ export async function runCondensedPass(
       content,
       tokenCount,
       earliestAt: eligible[0].earliest_at ?? undefined,
-      latestAt: eligible[eligible.length - 1].latest_at ?? undefined, // eslint-disable-line security/detect-object-injection
+      latestAt: eligible[eligible.length - 1].latest_at ?? undefined,  
       sourceTokenCount: eligible.reduce((sum, s) => sum + s.token_count, 0),
     });
     deps.store.linkSummaryParents(

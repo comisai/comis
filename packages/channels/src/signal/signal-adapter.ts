@@ -255,7 +255,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
       return ok(messageId);
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async editMessage(_chatId: string, _messageId: string, _text: string): Promise<Result<void, Error>> {
       return err(
         new Error("Editing messages is not supported on Signal."),
@@ -342,7 +342,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
       return ok(undefined);
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async fetchMessages(_channelId: string, _options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>> {
       return err(
         new Error(
@@ -355,7 +355,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
     async sendAttachment(
       chatId: string,
       attachment: AttachmentPayload,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       // Voice send bookend logging

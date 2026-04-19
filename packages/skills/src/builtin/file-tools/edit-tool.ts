@@ -335,15 +335,19 @@ export function createComisEditTool(
             throw error;
           }
           if (msg.includes("Could not find")) {
+            // eslint-disable-next-line preserve-caught-error -- intentional: original error is contextual, not the thrown symptom
             throw new Error(`[text_not_found] ${msg}`);
           }
           if (msg.includes("occurrences")) {
+            // eslint-disable-next-line preserve-caught-error -- intentional: original error is contextual, not the thrown symptom
             throw new Error(`[duplicate_match] ${msg}`);
           }
           if (msg.includes("overlap")) {
+            // eslint-disable-next-line preserve-caught-error -- intentional: original error is contextual, not the thrown symptom
             throw new Error(`[overlapping_edits] ${msg}`);
           }
           if (msg.includes("No changes")) {
+            // eslint-disable-next-line preserve-caught-error -- intentional: original error is contextual, not the thrown symptom
             throw new Error(`[no_changes] ${msg}`);
           }
           throw error;

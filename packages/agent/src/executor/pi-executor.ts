@@ -662,7 +662,7 @@ export function createPiExecutor(
             isFirstMessageInSession, sm, formattedKeyForGuides, deliveredGuides,
             resolvedModel, modelCompat, agentId, safetyReinforcement, _directives,
           });
-          let {
+          const {
             mergedCustomTools,
           } = toolAssembly;
           const {
@@ -670,7 +670,7 @@ export function createPiExecutor(
             modelTier, discoveryTracker, settingsManager, persistentSettings,
             resourceLoaderOptions, promptResult, cachedSystemTokensEstimate,
           } = toolAssembly;
-          let currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
+          const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
           const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory } = promptResult;
 
           // DAG ingestion hook -- install BEFORE microcompaction
@@ -1251,8 +1251,9 @@ export function createPiExecutor(
           if (deps.backgroundTaskManager && config.backgroundTasks?.enabled !== false) {
             const bgConfig = BackgroundTasksConfigSchema.parse(config.backgroundTasks ?? {});
             for (const tool of mergedCustomTools) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolDefinition variance between pi-coding-agent and local middleware interface
+               
               const wrapped = wrapToolForAutoBackground(
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
                 tool as any,
                 deps.backgroundTaskManager!,
                 bgConfig,

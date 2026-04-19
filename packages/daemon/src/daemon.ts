@@ -103,7 +103,7 @@ const SENSITIVE_EXACT_KEYS = new Set([
  * Preserves operational vars: COMIS_*, PATH, HOME, NODE_ENV, etc.
  */
 function scrubProcessEnv(): void {
-  // eslint-disable-next-line no-restricted-syntax -- direct process.env access required: runs before SecretManager during bootstrap security hardening
+   
   for (const key of Object.keys(process.env)) {
     if (SENSITIVE_EXACT_KEYS.has(key)) {
       // eslint-disable-next-line no-restricted-syntax -- see scrubProcessEnv comment above

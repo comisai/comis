@@ -107,7 +107,7 @@ export function buildMemoryRecallSection(
 
 export function buildWorkspaceSection(
   workspaceDir: string | undefined,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _isMinimal: boolean,
 ): string[] {
   if (!workspaceDir) return [];

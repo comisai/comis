@@ -116,6 +116,7 @@ export async function filterExecutionResponse(
         effectiveMsg.channelId,
         message,
         { replyTo },
+      // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
       ).catch(() => { /* adapter logs internally */ });
 
       return { deliver: false, reason: "resource_abort_empty" };
@@ -133,11 +134,12 @@ export async function filterExecutionResponse(
         errorKind: "dependency" as const,
       }, "Empty response on normal completion — sending fallback acknowledgment");
 
-      // eslint-disable-next-line no-restricted-syntax -- resource abort path; adapter logs internally
+       
       await adapter.sendMessage(
         effectiveMsg.channelId,
         "I completed the requested operations but wasn't able to generate a summary. Please check the results or ask me to continue.",
         { replyTo },
+      // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
       ).catch(() => { /* adapter logs internally */ });
 
       return { deliver: false, reason: "empty_stop_ack" };

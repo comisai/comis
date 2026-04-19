@@ -370,7 +370,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
       }
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async fetchMessages(_channelId: string, _options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>> {
       return err(new Error("Fetching message history is not supported on WhatsApp."));
     },
@@ -378,7 +378,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
     async sendAttachment(
       channelId: string,
       attachment: AttachmentPayload,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       if (!sock || !connected) {

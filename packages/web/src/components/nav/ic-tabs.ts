@@ -110,7 +110,7 @@ export class IcTabs extends LitElement {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   override updated(_changed: Map<string, unknown>): void {
     // Show/hide slotted panels based on activeTab
     this._updatePanelVisibility();

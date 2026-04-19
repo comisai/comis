@@ -130,7 +130,7 @@ function parseScalar(raw: string): unknown {
   return trimmed;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+ 
 function parseLines(lines: string[], startLine: number, _baseIndent: number): ParseResult {
   let lineIdx = startLine;
   while (lineIdx < lines.length && lines[lineIdx].trim() === "") {

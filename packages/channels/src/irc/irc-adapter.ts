@@ -268,7 +268,7 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
     async sendMessage(
       chatId: string,
       text: string,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       try {
@@ -308,36 +308,36 @@ export function createIrcAdapter(deps: IrcAdapterDeps): ChannelPort {
       }
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async editMessage(_channelId: string, _messageId: string, _text: string): Promise<Result<void, Error>> {
       return err(new Error("IRC does not support message editing"));
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async reactToMessage(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
       return err(new Error("IRC does not support reactions"));
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async removeReaction(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
       return err(new Error("Reactions are not supported on IRC"));
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async deleteMessage(_channelId: string, _messageId: string): Promise<Result<void, Error>> {
       return err(new Error("IRC does not support message deletion"));
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async fetchMessages(_channelId: string, _options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>> {
       return err(new Error("IRC does not support fetching message history"));
     },
 
     async sendAttachment(
       channelId: string,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _attachment: AttachmentPayload,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       const attachErr = new Error("IRC does not support attachments (text-only protocol)");

@@ -177,7 +177,7 @@ const ROUTE_ALIASES: ReadonlyArray<{ from: string; to: string }> = [
  */
 export function createRouter(
   onChange: (match: RouteMatch) => void,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _defaultRoute: string = "dashboard",
 ): Router {
   const compiledRoutes = compileRoutes();

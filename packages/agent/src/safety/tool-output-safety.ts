@@ -183,7 +183,7 @@ export function createToolImageSanitizer(opts?: ImageSanitizeOptions): ToolImage
   const quality = opts?.quality ?? 85;
 
   return {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async sanitize(base64Data: string, _mimeType?: string): Promise<Result<SanitizeResult, string>> {
       // Reject empty input
       if (!base64Data || base64Data.length === 0) {

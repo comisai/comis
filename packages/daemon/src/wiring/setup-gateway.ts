@@ -796,7 +796,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
             cost: stats.cost ?? 0,
           };
         },
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- _key required by CommandHandlerDeps interface
+         
         getContextUsage: (_key) => {
           // Context usage requires a live AgentSession which isn't available
           // outside execution. Return undefined -- /status will show "N/A".

@@ -461,6 +461,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
             if (m?.role !== "assistant") break;
             const blocks = Array.isArray(m.content) ? m.content : [];
             const hasVisibleText = blocks.some(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
               (b: any) => b.type === "text" && typeof b.text === "string" && b.text.trim() !== "",
             );
             if (!hasVisibleText) {

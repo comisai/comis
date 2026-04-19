@@ -61,7 +61,7 @@ export function createSlackPlugin(deps: SlackAdapterDeps): ChannelPluginPort {
     capabilities: CAPABILITIES,
     adapter,
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     register(_api: PluginRegistryApi): Result<void, Error> {
       return ok(undefined);
     },

@@ -194,6 +194,7 @@ export async function executeLlm(
         effectiveMsg.channelId,
         "I'm having trouble processing your request right now. Please try again in a moment.",
         { replyTo },
+      // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
       ).catch(() => { /* adapter logs internally */ });
 
       return {

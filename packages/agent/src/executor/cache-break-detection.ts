@@ -800,7 +800,7 @@ export function extractAnthropicPromptState(
     ? (params.system as Array<Record<string, unknown>>)
     : [];
   const systemForHash = system.map((block) => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     const { cache_control: _cc, ...rest } = block;
     return rest;
   });

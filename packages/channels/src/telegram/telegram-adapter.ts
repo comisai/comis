@@ -595,7 +595,7 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
       }
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async fetchMessages(_channelId: string, _options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>> {
       return err(
         new Error(

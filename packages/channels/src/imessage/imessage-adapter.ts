@@ -204,7 +204,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
     async sendMessage(
       chatId: string,
       text: string,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       if (!client) {
@@ -262,14 +262,14 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
       return ok(messageId);
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async editMessage(_channelId: string, _messageId: string, _text: string): Promise<Result<void, Error>> {
       return err(
         new Error("Editing messages is not supported on iMessage."),
       );
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async reactToMessage(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
       return err(
         new Error(
@@ -278,14 +278,14 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
       );
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async removeReaction(_channelId: string, _messageId: string, _emoji: string): Promise<Result<void, Error>> {
       return err(
         new Error("Reactions are not supported on iMessage"),
       );
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async deleteMessage(_channelId: string, _messageId: string): Promise<Result<void, Error>> {
       return err(
         new Error("Deleting messages is not supported on iMessage."),
@@ -331,7 +331,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
     async sendAttachment(
       chatId: string,
       attachment: AttachmentPayload,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       if (!client) {
@@ -399,7 +399,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
 
     async platformAction(
       action: string,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _params: Record<string, unknown>,
     ): Promise<Result<unknown, Error>> {
       // iMessage has limited platform action support via imsg

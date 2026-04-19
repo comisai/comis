@@ -25,8 +25,9 @@ import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mario
  * the lean description overrides tool.description. This enables the dual-summary
  * architecture: TOOL_SUMMARIES in system prompt, LEAN_TOOL_DESCRIPTIONS in API defs.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
+ 
 export function agentToolToToolDefinition(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
   tool: AgentTool<any>,
   resolvedDescriptions?: Record<string, string>,
 ): ToolDefinition {
@@ -50,7 +51,7 @@ export function agentToolToToolDefinition(
       params: Record<string, unknown>,
       signal: AbortSignal | undefined,
       onUpdate: AgentToolUpdateCallback | undefined,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _ctx: ExtensionContext,
     ): Promise<AgentToolResult<unknown>> {
       return tool.execute(toolCallId, params, signal, onUpdate);
@@ -64,8 +65,9 @@ export function agentToolToToolDefinition(
  * When resolvedDescriptions is provided, each tool's description is overridden
  * with the pre-resolved lean description (if an entry exists for that tool name).
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
+ 
 export function agentToolsToToolDefinitions(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
   tools: AgentTool<any>[],
   resolvedDescriptions?: Record<string, string>,
 ): ToolDefinition[] {

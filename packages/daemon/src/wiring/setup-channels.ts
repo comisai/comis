@@ -670,7 +670,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
         return { ok: true as const, value: { buffer: result.value.buffer, mimeType: result.value.mimeType } };
       },
       // /config chat command handling via RPC dispatch
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- _channelType required by ChannelManager callback signature
+       
       handleConfigCommand: deps.rpcCall ? async (args: string[], _channelType: string) => {
         const subcommand = args[0] ?? "show";
         try {
@@ -824,6 +824,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
           destroySession: (key) => {
             const adapter = deps.piSessionAdapters?.get(agentId);
             if (adapter) {
+              // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
               adapter.destroySession(key).catch(() => { /* fire-and-forget session destroy */ });
               return;
             }

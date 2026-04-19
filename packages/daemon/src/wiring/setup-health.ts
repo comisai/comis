@@ -221,7 +221,7 @@ export function setupMonitoring(deps: MonitoringDeps): MonitoringResult {
  * This function exists so that adding a global delivery target
  * in a future phase is a one-line change.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+ 
 function resolveGlobalDeliveryTarget(_config: AppContainer["config"]): DeliveryTarget | undefined {
   return undefined;
 }

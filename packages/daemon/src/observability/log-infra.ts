@@ -89,6 +89,7 @@ export function expandTilde(filePath: string): string {
  * duplicate.
  */
 export function isPm2Managed(): boolean {
+  // eslint-disable-next-line no-restricted-syntax -- ops toggle read before SecretManager is initialized
   return typeof process.env.PM2_HOME === "string" && process.env.PM2_HOME.length > 0;
 }
 

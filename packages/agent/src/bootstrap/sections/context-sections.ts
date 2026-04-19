@@ -129,7 +129,7 @@ const SPECIALIST_AGENTS_MD = `# Platform Instructions (Specialist)
 
 export function buildProjectContextSection(
   files: BootstrapContextFile[],
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _isMinimal: boolean,
   excludeFiles?: Set<string>,
   workspaceProfile?: "full" | "specialist",

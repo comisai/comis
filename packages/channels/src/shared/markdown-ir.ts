@@ -204,7 +204,7 @@ const BLOCKQUOTE_RE = /^>\s?(.*)$/;
  */
 function isListContinuationLine(line: string): boolean {
   // Must be indented by at least 2 spaces (or a tab)
-  if (!/^(?:  |\t)/.test(line)) return false;
+  if (!/^(?: {2}|\t)/.test(line)) return false;
   const trimmed = line.trimStart();
   // Empty indented line is not a continuation
   if (trimmed.length === 0) return false;
@@ -418,7 +418,7 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
       });
       i = first.nextIdx;
 
-      // eslint-disable-next-line no-constant-condition
+       
       while (true) {
         // Try to match consecutive list items
         while (i < lines.length) {
@@ -464,7 +464,7 @@ export function parseMarkdownToIR(markdown: string): MarkdownIR {
       });
       i = first.nextIdx;
 
-      // eslint-disable-next-line no-constant-condition
+       
       while (true) {
         // Try to match consecutive list items
         while (i < lines.length) {

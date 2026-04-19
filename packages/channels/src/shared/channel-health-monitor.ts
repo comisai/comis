@@ -265,6 +265,7 @@ export function createChannelHealthMonitor(
     }
 
     // Fire and forget -- catch errors silently
+    // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
     restartAdapter(channelType).catch(() => {
       // Restart failed -- tracked via restartAttempts
     });

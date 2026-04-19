@@ -48,6 +48,7 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label?: string):
   return Promise.race([promise, timeoutPromise]).finally(() => {
     clearTimeout(timer);
     // Suppress unhandled rejection when the original promise rejects after timeout wins
+    // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
     promise.catch(() => {});
   });
 }

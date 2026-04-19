@@ -131,7 +131,7 @@ export function truncateFileContent(
  */
 export async function loadWorkspaceBootstrapFiles(
   workspaceDir: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   
   _maxChars?: number,
 ): Promise<BootstrapFile[]> {
   const files: BootstrapFile[] = [];

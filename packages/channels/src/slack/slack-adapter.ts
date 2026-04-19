@@ -458,7 +458,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
     async sendAttachment(
       channelId: string,
       attachment: AttachmentPayload,
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       // Voice send bookend logging

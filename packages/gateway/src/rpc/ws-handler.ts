@@ -376,7 +376,7 @@ export function createWsHandler(deps: WsHandlerDeps, rpcContext: RpcContext): WS
       }
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     onClose(evt: CloseEvent, _ws: WSContext) {
       const conn = connections.get(connectionId);
       const connectionDurationMs = conn ? Date.now() - conn.connectedAt : undefined;
@@ -397,7 +397,7 @@ export function createWsHandler(deps: WsHandlerDeps, rpcContext: RpcContext): WS
       );
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     onError(evt: Event, _ws: WSContext) {
       logger.error(
         {

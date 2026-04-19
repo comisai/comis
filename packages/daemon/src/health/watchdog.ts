@@ -30,7 +30,7 @@ let sdNotify: SdNotify | null = null;
 try {
   // Dynamic import of sd-notify. This will fail on macOS since it's a
   // Linux-native C addon. When unavailable, all operations become no-ops.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const mod = await import("sd-notify");
   sdNotify = (mod.default ?? mod) as SdNotify;
 } catch {

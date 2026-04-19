@@ -51,6 +51,7 @@ export function withPromptTimeout<T>(
     timer = setTimeout(() => {
       // abort() may return Promise<void> -- handle both sync throw and async rejection
       try {
+        // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         void Promise.resolve(abort()).catch(() => {});
       } catch {
         /* best-effort -- sync throw from abort is suppressed */
@@ -62,6 +63,7 @@ export function withPromptTimeout<T>(
   return Promise.race([promise, timeoutPromise]).finally(() => {
     clearTimeout(timer);
     // Suppress unhandled rejection when the original promise rejects after timeout wins
+    // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
     promise.catch(() => {});
   });
 }
@@ -106,6 +108,7 @@ export function withResettablePromptTimeout<T>(
       settled = true;
       // abort() fire-and-forget -- same pattern as withPromptTimeout
       try {
+        // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
         void Promise.resolve(abort()).catch(() => {});
       } catch {
         /* best-effort */
@@ -122,6 +125,7 @@ export function withResettablePromptTimeout<T>(
   const racedPromise = Promise.race([promise, timeoutPromise]).finally(() => {
     settled = true;
     clearTimeout(timer);
+    // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
     promise.catch(() => {});
   });
 

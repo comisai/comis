@@ -111,7 +111,7 @@ export function createAcpAgent(deps: AcpServerDeps): {
       };
     },
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     
     async newSession(_params: NewSessionRequest): Promise<NewSessionResponse> {
       const sessionId = crypto.randomUUID();
       sessionMap.create(sessionId);
@@ -147,7 +147,7 @@ export function createAcpAgent(deps: AcpServerDeps): {
     },
 
     async authenticate(
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       _params: AuthenticateRequest,
     ): Promise<AuthenticateResponse | void> {
       // No-op for local agent — no authentication required

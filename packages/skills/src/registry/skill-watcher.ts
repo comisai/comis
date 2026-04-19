@@ -166,7 +166,7 @@ export function createSkillWatcher(options: SkillWatcherOptions): SkillWatcherHa
         ignorePermissionErrors: true,
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       
       parentWatcher.on("addDir", (_createdPath: string) => {
         // Check if any missing discovery path now exists
         const nowExists = missing.some((p) => {

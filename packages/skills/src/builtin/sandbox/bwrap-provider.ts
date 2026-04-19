@@ -174,7 +174,7 @@ export class BwrapProvider implements SandboxProvider {
       NPM_CONFIG_CACHE: path.join(cacheDir, "npm"),
       // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
       PIP_CACHE_DIR: path.join(cacheDir, "pip"),
-      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+       
       XDG_CACHE_HOME: cacheDir,
       // Python: redirect user packages into workspace.
       // PYTHONNOUSERSITE is NOT set — sandbox read paths cover dirs that

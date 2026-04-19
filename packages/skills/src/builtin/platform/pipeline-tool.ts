@@ -588,6 +588,7 @@ export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approv
         return jsonResult(result);
       } catch (err) {
         if (err instanceof Error && err.message.startsWith("[")) throw err;
+        // eslint-disable-next-line preserve-caught-error -- intentional: original error is contextual, not the thrown symptom
         throw new Error(err instanceof Error ? err.message : String(err));
       }
     },
