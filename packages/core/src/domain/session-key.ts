@@ -84,18 +84,38 @@ export function parseFormattedSessionKey(formatted: string): SessionKey | undefi
 
   if (parts.length < 3) return undefined;
 
+  // channelId may itself contain ":" (e.g. sub-agent runner emits
+  // "sub-agent:<uuid>"). formatSessionKey puts channelId in parts[2+] before
+  // any peer/guild/thread markers, so we greedily join consecutive parts into
+  // channelId until we hit a known marker or run out. This makes the format
+  // round-trip-safe when channelId has colons; for simple channelIds (no
+  // colons) the behaviour is identical to the old one-index-takes-all path.
+  let idx = 2;
+  const channelIdParts: string[] = [];
+  while (
+    idx < parts.length &&
+    parts[idx] !== "peer" &&
+    parts[idx] !== "guild" &&
+    parts[idx] !== "thread"
+  ) {
+    channelIdParts.push(parts[idx]!);
+    idx++;
+  }
+  if (channelIdParts.length === 0) return undefined;
+
   const key: SessionKey = {
     tenantId: parts[0]!,
     userId: parts[1]!,
-    channelId: parts[2]!,
+    channelId: channelIdParts.join(":"),
   };
 
   if (agentId !== undefined) {
     key.agentId = agentId;
   }
 
-  // Parse optional peer:, guild:, and thread: segments
-  for (let i = 3; i < parts.length; i++) {
+  // Parse optional peer:, guild:, and thread: segments starting where
+  // channelId ended.
+  for (let i = idx; i < parts.length; i++) {
     if (parts[i] === "peer" && i + 1 < parts.length) {
       key.peerId = parts[++i];
     } else if (parts[i] === "guild" && i + 1 < parts.length) {
