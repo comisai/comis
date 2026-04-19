@@ -625,6 +625,18 @@ const INVISIBLE_CHAR_REGEX =
  * @param command - The raw shell command to sanitize
  * @returns Error message if dangerous characters found, null if clean
  */
+/**
+ * Detect shell patterns where the LLM is trying to write a file
+ * (cat/tee/echo/printf heredoc, or a `>` redirection). Used to swap
+ * the Gate-0 newline-rejection hint toward the `write` tool instead of
+ * `python3 -` with stdin — pointing the LLM at the correct alternative
+ * prevents it from retrying more cat-heredocs (observed NVDA run:
+ * 12 consecutive `[invalid_value]` failures before the exec tool was
+ * circuit-broken).
+ */
+const FILE_WRITE_HEURISTIC =
+  /^\s*(?:cat|tee|echo|printf)\b|>\s*["']?[^|<&\s]+\s*(?:<<|$)/;
+
 export function sanitizeCommandInput(command: string): string | null {
   const match = INVISIBLE_CHAR_REGEX.exec(command);
   if (match) {
@@ -632,7 +644,14 @@ export function sanitizeCommandInput(command: string): string | null {
     const hex = cp.toString(16).toUpperCase().padStart(4, "0");
     let msg = `Command contains invisible/ambiguous character U+${hex} at position ${match.index}. This can bypass security validation. Remove the character and retry.`;
     if (cp === 0x0a) {
-      msg += ` For multi-line scripts, use command='python3 -' (or 'node -', 'bash -') with the 'input' parameter for the script body.`;
+      // Disambiguate: is the LLM writing a file (use `write` tool) or
+      // running a multi-line script (use python3/node/bash with stdin)?
+      // The heuristic fires on the line the newline was rejected on, so
+      // the hint matches the LLM's actual intent.
+      const looksLikeFileWrite = FILE_WRITE_HEURISTIC.test(command);
+      msg += looksLikeFileWrite
+        ? ` To write files, use the 'write' tool (or 'edit' for targeted changes) instead of a shell heredoc in exec.`
+        : ` For multi-line scripts, use command='python3 -' (or 'node -', 'bash -') with the 'input' parameter for the script body.`;
     }
     return msg;
   }

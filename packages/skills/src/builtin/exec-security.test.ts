@@ -33,18 +33,45 @@ describe("sanitizeCommandInput", () => {
     expect(result).toMatch(/U\+0000/);
   });
 
-  it("Test 2: blocks raw newline (U+000A) with input hint", () => {
+  it("Test 2: blocks raw newline (U+000A) with script-style stdin hint for non-file-write commands", () => {
+    // "python3 script.py" doesn't match the file-write heuristic (no cat/tee/echo/printf,
+    // no `>` redirection), so the script-style hint should fire.
     const result = sanitizeCommandInput(
-      "echo hello" + String.fromCharCode(0x0a) + "rm -rf /",
+      "python3 script.py" + String.fromCharCode(0x0a) + "rm -rf /",
     );
     expect(result).toMatch(/U\+000A/);
     expect(result).toMatch(/input/);
+    expect(result).toMatch(/python3 -/);
+    // The write-tool hint must NOT appear for script-style commands.
+    expect(result).not.toMatch(/'write' tool/);
   });
 
   it("Test 2b: newline hint not present for other invisible chars", () => {
     const result = sanitizeCommandInput("rm\x00-rf /");
     expect(result).not.toBeNull();
     expect(result).not.toMatch(/input/);
+  });
+
+  it("Test 2c: redirects LLM to `write` tool when command looks like a file write (cat heredoc)", () => {
+    // `cat > path << 'EOF'\n...\nEOF` is the LLM's natural shell pattern for
+    // writing multi-line files. Gate-0 blocks it for security, but the error
+    // should point to the `write` tool, not `python3 -` (which was the wrong
+    // advice that caused a 12-call exec circuit-break during the NVDA retest).
+    const result = sanitizeCommandInput(
+      "cat > /tmp/foo.md << 'EOF'" + String.fromCharCode(0x0a) + "content" + String.fromCharCode(0x0a) + "EOF",
+    );
+    expect(result).toMatch(/U\+000A/);
+    expect(result).toMatch(/'write' tool/);
+    // Must NOT point at python3 for file-write intent.
+    expect(result).not.toMatch(/python3 -/);
+  });
+
+  it("Test 2d: also redirects to `write` for tee/echo/printf heredocs", () => {
+    for (const prefix of ["tee foo.md << 'EOF'", "echo hi > foo.md", "printf 'x' > foo.md"]) {
+      const result = sanitizeCommandInput(prefix + String.fromCharCode(0x0a) + "rest");
+      expect(result).toMatch(/'write' tool/);
+      expect(result).not.toMatch(/python3 -/);
+    }
   });
 
   it("Test 3: blocks zero-width space (U+200B)", () => {
