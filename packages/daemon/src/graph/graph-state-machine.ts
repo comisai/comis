@@ -61,8 +61,11 @@ export interface GraphStateMachine {
   /** Transition a "running" node to "completed". Returns newly ready node IDs. */
   markNodeCompleted(nodeId: string, output?: string): Result<string[], string>;
 
-  /** Transition a "running" node to "failed". Returns skipped and newly ready node IDs. */
-  markNodeFailed(nodeId: string, error: string): Result<FailureResult, string>;
+  /** Transition a "running" node to "failed". Returns skipped and newly ready node IDs.
+   *  When the node is retry-eligible, the optional priorSessionKey is stashed on
+   *  the node state so the retry spawn can re-use the aborted attempt's session,
+   *  letting Anthropic cache amortize across retries. */
+  markNodeFailed(nodeId: string, error: string, priorSessionKey?: string): Result<FailureResult, string>;
 
   /** Get current state of a specific node. */
   getNodeState(nodeId: string): NodeExecutionState | undefined;
@@ -423,7 +426,7 @@ export function createGraphStateMachine(validated: ValidatedGraph): GraphStateMa
     return ok(newlyReady);
   }
 
-  function markNodeFailed(nodeId: string, error: string): Result<FailureResult, string> {
+  function markNodeFailed(nodeId: string, error: string, priorSessionKey?: string): Result<FailureResult, string> {
     const state = getState(nodeId);
     if (!state) {
       return err(`Node "${nodeId}" not found`);
@@ -443,9 +446,19 @@ export function createGraphStateMachine(validated: ValidatedGraph): GraphStateMa
       state.runId = undefined;          // clear stale runId
       state.startedAt = undefined;      // reset timing for next attempt
       state.completedAt = undefined;
+      // Stash the aborted attempt's sessionKey so the retry spawn can reuse
+      // it. Lets Anthropic cache-read across the failure boundary when the
+      // prior run happened to write a breakpoint before aborting. No-op when
+      // caller can't resolve the sessionKey (stays undefined, regular spawn).
+      if (priorSessionKey && priorSessionKey.length > 0) {
+        state.priorSessionKey = priorSessionKey;
+      }
       // Do NOT cascade -- downstream nodes stay pending/ready
       return ok({ skipped: [], newlyReady: [], retrying: [nodeId] });
     }
+    // Terminal failure path: clear any stale priorSessionKey so stale
+    // references don't survive into graph-completion metadata.
+    state.priorSessionKey = undefined;
 
     // Original path: no retries remaining, proceed with failure
     state.status = "failed";

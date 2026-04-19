@@ -137,6 +137,11 @@ export const NodeExecutionStateSchema = z.strictObject({
   retryAttempt: z.number().int().nonnegative().optional(),
   /** Number of retries still available */
   retriesRemaining: z.number().int().nonnegative().optional(),
+  /** Formatted sessionKey of the most recent aborted attempt. Passed as
+   *  reuseSessionKey on the next retry spawn so the sub-agent can benefit
+   *  from any cache written by the aborted run and avoid sending an entirely
+   *  cold prompt. Cleared when the node reaches a terminal state. */
+  priorSessionKey: z.string().optional(),
 });
 
 export type NodeExecutionState = z.infer<typeof NodeExecutionStateSchema>;

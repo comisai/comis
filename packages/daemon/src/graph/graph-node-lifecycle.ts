@@ -279,6 +279,12 @@ export function spawnNode(
     return;
   }
 
+  // On retry spawn, reuse the aborted attempt's sessionKey so Anthropic cache
+  // can amortize across the failure boundary (priorSessionKey is set by
+  // graph-state-machine markNodeFailed on retry-eligible failures).
+  const nodeStateForRetry = gs.stateMachine.getNodeState(nodeId);
+  const reuseSessionKeyOnRetry = nodeStateForRetry?.priorSessionKey;
+
   // Regular node spawn wrapped in gatedSpawn for global concurrency
   gatedSpawn(state, deps, config, gs, nodeId, () => {
     const runId = deps.subAgentRunner.spawn({
@@ -300,6 +306,7 @@ export function spawnNode(
       // 5m cache instead of 1h because their prefix has no consumers —
       // see resolveGraphCacheRetention() for rationale.
       isLeafNode: !gs.graph.graph.nodes.some((n) => n.dependsOn.includes(nodeId)),
+      ...(reuseSessionKeyOnRetry ? { reuseSessionKey: reuseSessionKeyOnRetry } : {}),
       ...(nodeDiscoveredTools && nodeDiscoveredTools.length > 0 && { discoveredDeferredTools: nodeDiscoveredTools }),
     });
 
@@ -621,7 +628,10 @@ export function handleSubAgentCompleted(
   } else {
     // Original failure path -- no partial completion detected
     const errorText = run?.error ?? "Unknown error";
-    const result = gs.stateMachine.markNodeFailed(nodeId, errorText);
+    // Pass the failed run's sessionKey so retry spawns can reuse it
+    // (see resolveGraphCacheRetention / reuseSessionKey — lets Anthropic cache
+    // amortize across a retry instead of cold-starting on every attempt).
+    const result = gs.stateMachine.markNodeFailed(nodeId, errorText, run?.sessionKey);
     if (!result.ok) {
       deps.logger?.warn(
         { graphId: gs.graphId, nodeId, error: result.error, hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" },
