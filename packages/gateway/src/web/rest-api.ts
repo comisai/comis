@@ -121,6 +121,12 @@ export interface RestApiDeps {
   readonly logger?: { error(obj: Record<string, unknown>, msg: string): void };
   /** Set of agent IDs currently suspended (optional; when absent all agents report "active"). */
   readonly suspendedAgents?: ReadonlySet<string>;
+  /** Daemon fingerprint surfaced on /api/health so clients can confirm which
+   *  daemon they are actually talking to. */
+  readonly fingerprint?: {
+    instanceId: string;
+    startedAt: string;
+  };
 }
 
 /**
@@ -164,9 +170,19 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
   // When corsOrigins is empty: no CORS middleware mounted.
   // Browsers enforce same-origin policy when no Access-Control-Allow-Origin header is present.
 
-  // Health endpoint (no auth required)
+  // Health endpoint (no auth required).
+  // Mirrors /health at the gateway root -- includes the daemon fingerprint
+  // (instanceId, startedAt) when provided so external clients can verify
+  // which daemon they are actually reaching.
   api.get("/health", (c) => {
-    return c.json({ status: "ok", timestamp: new Date().toISOString() });
+    return c.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      ...(deps.fingerprint && {
+        instanceId: deps.fingerprint.instanceId,
+        startedAt: deps.fingerprint.startedAt,
+      }),
+    });
   });
 
   // Token auth middleware for all other routes

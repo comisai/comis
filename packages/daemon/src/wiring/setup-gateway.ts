@@ -357,6 +357,12 @@ export interface GatewayDeps {
   workspaceDirs: Map<string, string>;
   /** Override createGatewayServer from DaemonOverrides pattern. */
   _createGatewayServer: typeof createGatewayServer;
+  /** Daemon instance fingerprint -- passed to /health and /api/health so
+   *  external clients can confirm which daemon they are reaching when
+   *  multiple listeners may be bound to the same local port. */
+  instanceId: string;
+  /** Daemon startup timestamp (ms since epoch) -- surfaced as ISO on /health. */
+  startupStartMs: number;
   /** Per-agent JSONL session adapters for pi-executor /new /reset /status commands. */
   piSessionAdapters?: Map<string, {
     destroySession(key: SessionKey): Promise<void>;
@@ -421,6 +427,8 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     workspaceDirs,
     _createGatewayServer,
     piSessionAdapters,
+    instanceId,
+    startupStartMs,
   } = deps;
 
   // Track in-flight gateway executions for shutdown observability
@@ -853,6 +861,10 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
       rpcAdapterDeps,
       webDistPath,
       suspendedAgents: deps.suspendedAgents,
+    },
+    fingerprint: {
+      instanceId,
+      startedAt: new Date(startupStartMs).toISOString(),
     },
   });
 

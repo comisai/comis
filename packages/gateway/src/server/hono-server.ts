@@ -69,6 +69,13 @@ export interface GatewayServerDeps {
     /** Set of suspended agent IDs for status reporting */
     suspendedAgents?: ReadonlySet<string>;
   };
+  /** Daemon fingerprint surfaced on /health so clients can verify which
+   *  daemon they are actually talking to (defeats local-port-collision
+   *  traffic misrouting). Omit for test harnesses. */
+  readonly fingerprint?: {
+    instanceId: string;
+    startedAt: string;
+  };
 }
 
 /**
@@ -143,9 +150,19 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
     return rateLimiterMw(c, next);
   });
 
-  // Health endpoint — always available
+  // Health endpoint — always available.
+  // Includes daemon fingerprint (instanceId, startedAt) when provided so
+  // external clients can verify which daemon they are actually reaching
+  // when multiple listeners may be bound to the same port.
   app.get("/health", (c) => {
-    return c.json({ status: "ok", timestamp: new Date().toISOString() });
+    return c.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      ...(deps.fingerprint && {
+        instanceId: deps.fingerprint.instanceId,
+        startedAt: deps.fingerprint.startedAt,
+      }),
+    });
   });
 
   // WebSocket route with token auth (rate limiting now handled globally)
@@ -230,6 +247,7 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
       activityBuffer,
       corsOrigins: config.corsOrigins,
       bodyLimitBytes: config.httpBodyLimitBytes,
+      fingerprint: deps.fingerprint,
       suspendedAgents: deps.webDeps.suspendedAgents,
     });
     app.route("/api", restApi);

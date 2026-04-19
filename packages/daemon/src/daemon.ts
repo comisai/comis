@@ -1164,6 +1164,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     _createGatewayServer, piSessionAdapters,
     resolvedTokens: resolvedGatewayTokens,
     suspendedAgents,
+    instanceId, startupStartMs,
   });
 
   // 7.0.1. Wire deferred gateway attachment deps (quick-91)
