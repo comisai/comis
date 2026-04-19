@@ -1842,55 +1842,72 @@ export function createRequestBodyInjector(
           // already covers everything up to that point. Placing a marker there (instead of stripping)
           // lets the server merge with the existing cache entry without creating new writes.
           if (needsCacheBreakpoints && effectiveSkipCacheWrite && Array.isArray(result.messages)) {
-            // Strip system block cache_control markers (shared prefix)
-            if (Array.isArray(result.system)) {
-              for (const block of result.system as Array<Record<string, unknown>>) {
-                delete block.cache_control;
-              }
-            }
-            // Strip tool definition cache_control markers (shared prefix)
-            if (Array.isArray(result.tools)) {
-              for (const tool of result.tools as Array<Record<string, unknown>>) {
-                delete tool.cache_control;
-              }
-            }
-            // Strip all existing message-level cache_control markers
             const msgs = result.messages as Array<Record<string, unknown>>;
+
+            // Count user messages FIRST. Single-turn sub-agents (userCount < 2) have
+            // no second-to-last-user anchor, so the shared-prefix strip+replace logic
+            // cannot do anything useful. If we stripped markers unconditionally, the
+            // request would reach Anthropic with ZERO cache_control anywhere -> 100%
+            // cache miss, full-price input tokens. Bypass here so the SDK's earlier
+            // auto-placed markers (system/tools, and last-user at 5m) remain intact
+            // and the sub-agent can still match the parent's cached prefix.
+            let userCount = 0;
             for (const msg of msgs) {
-              if (Array.isArray(msg.content)) {
-                for (const block of msg.content as Array<Record<string, unknown>>) {
+              if ((msg as Record<string, unknown>).role === "user") userCount++;
+            }
+
+            if (userCount < 2) {
+              logger.debug(
+                { modelId: model.id, sessionKey: config.sessionKey, userCount },
+                "skipCacheWrite bypassed -- single-turn sub-agent keeps standard cache markers",
+              );
+            } else {
+              // Strip system block cache_control markers (shared prefix)
+              if (Array.isArray(result.system)) {
+                for (const block of result.system as Array<Record<string, unknown>>) {
                   delete block.cache_control;
                 }
               }
-            }
-            // Then: place marker on second-to-last user message (shared-prefix point)
-            let userCount = 0;
-            for (let i = msgs.length - 1; i >= 0; i--) {
-              if ((msgs[i] as Record<string, unknown>).role === "user") {
-                userCount++;
-                if (userCount === 2) {
-                  addCacheControlToLastBlock(msgs[i] as Record<string, unknown>, resolvedRetention ?? "long");
-                  break;
+              // Strip tool definition cache_control markers (shared prefix)
+              if (Array.isArray(result.tools)) {
+                for (const tool of result.tools as Array<Record<string, unknown>>) {
+                  delete tool.cache_control;
                 }
               }
-            }
-            // Re-place marker on last user message (volatile per-turn content).
-            // The SDK's auto-placed last-user-message marker was stripped above. Re-placing
-            // with "short" (5m) TTL ensures the last user message (with tool results) gets
-            // cache reads ($0.30/MTok) instead of full-price uncached input ($3/MTok).
-            // Only when userCount >= 2 (single-message case has no shared-prefix benefit).
-            if (userCount >= 2) {
+              // Strip all existing message-level cache_control markers
+              for (const msg of msgs) {
+                if (Array.isArray(msg.content)) {
+                  for (const block of msg.content as Array<Record<string, unknown>>) {
+                    delete block.cache_control;
+                  }
+                }
+              }
+              // Then: place marker on second-to-last user message (shared-prefix point)
+              let seen = 0;
+              for (let i = msgs.length - 1; i >= 0; i--) {
+                if ((msgs[i] as Record<string, unknown>).role === "user") {
+                  seen++;
+                  if (seen === 2) {
+                    addCacheControlToLastBlock(msgs[i] as Record<string, unknown>, resolvedRetention ?? "long");
+                    break;
+                  }
+                }
+              }
+              // Re-place marker on last user message (volatile per-turn content).
+              // The SDK's auto-placed last-user-message marker was stripped above. Re-placing
+              // with "short" (5m) TTL ensures the last user message (with tool results) gets
+              // cache reads ($0.30/MTok) instead of full-price uncached input ($3/MTok).
               for (let i = msgs.length - 1; i >= 0; i--) {
                 if ((msgs[i] as Record<string, unknown>).role === "user") {
                   addCacheControlToLastBlock(msgs[i] as Record<string, unknown>, "short");
                   break;
                 }
               }
+              logger.debug(
+                { modelId: model.id, sessionKey: config.sessionKey, markerPlaced: true, lastUserMarkerPlaced: true },
+                "skipCacheWrite shared-prefix marker placement",
+              );
             }
-            logger.debug(
-              { modelId: model.id, sessionKey: config.sessionKey, markerPlaced: userCount >= 2, lastUserMarkerPlaced: userCount >= 2 },
-              "skipCacheWrite shared-prefix marker placement",
-            );
           }
 
           // Kill switch -- strip ALL cache_control when resolved retention is "none".

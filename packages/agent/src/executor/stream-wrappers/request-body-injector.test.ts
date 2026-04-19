@@ -4460,6 +4460,82 @@ describe("(standalone): skipCacheWrite shared-prefix marker placement", () => {
     // The test verifies no crash and normal behavior
     expect(result.messages).toBeDefined();
   });
+
+  // Regression coverage for Issue #4 (260419-iv4): when skipCacheWrite=true but
+  // the sub-agent has only one user message, the shared-prefix strip+replace
+  // has no anchor to place a replacement marker on. Previously this code path
+  // stripped all cache_control markers unconditionally, leaving the request
+  // with zero caching (100% miss, full-price input). The fix bypasses the
+  // strip when userCount < 2 so the SDK's standard auto-placed markers remain.
+  it("preserves message cache_control when skipCacheWrite=true but only one user message", async () => {
+    const base = createMockStreamFn();
+    const wrapper = createRequestBodyInjector(
+      {
+        getCacheRetention: () => "long",
+        skipCacheWrite: true,
+      },
+      logger,
+    );
+    const wrappedFn = wrapper(base);
+
+    const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" } as any;
+    const context = makeContext([]);
+    wrappedFn(model, context, {});
+
+    const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
+    const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
+
+    const result = await onPayload({
+      system: [{ type: "text", text: "System" }],
+      tools: [],
+      messages: [
+        { role: "user", content: [
+          { type: "text", text: "Solo turn", cache_control: { type: "ephemeral" } },
+        ]},
+      ],
+    }, model);
+
+    const msgs = result.messages as any[];
+    // The single user message's cache_control must survive the bypass branch,
+    // otherwise Anthropic sees an uncached request and pays full-price input.
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].content[0].cache_control).toBeDefined();
+  });
+
+  it("preserves system + tool cache_control when skipCacheWrite=true but only one user message", async () => {
+    const base = createMockStreamFn();
+    const wrapper = createRequestBodyInjector(
+      {
+        getCacheRetention: () => "long",
+        skipCacheWrite: true,
+      },
+      logger,
+    );
+    const wrappedFn = wrapper(base);
+
+    const model = { id: "claude-sonnet-4-5-20250929", provider: "anthropic" } as any;
+    const context = makeContext([]);
+    wrappedFn(model, context, {});
+
+    const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
+    const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
+
+    const result = await onPayload({
+      system: [{ type: "text", text: "System prompt", cache_control: { type: "ephemeral", ttl: "1h" } }],
+      tools: [
+        { name: "grep", description: "search", input_schema: {}, cache_control: { type: "ephemeral", ttl: "1h" } },
+      ],
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Solo turn" }] },
+      ],
+    }, model);
+
+    // System and tool cache_control markers must not be stripped when the
+    // bypass branch is taken. They're the only way the single-turn sub-agent
+    // can still match the parent's cached prefix.
+    expect((result.system as any[])[0].cache_control).toBeDefined();
+    expect((result.tools as any[])[0].cache_control).toBeDefined();
+  });
 });
 
 describe("selective tool-type clearing in microcompact", () => {
