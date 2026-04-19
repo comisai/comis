@@ -2972,6 +2972,14 @@ Description=Comis AI Agent Daemon
 Documentation=https://docs.comis.ai/operations/systemd
 After=network-online.target
 Wants=network-online.target
+# StartLimit: after 3 restarts in 60s, enter 'failed' state instead of the
+# 9+ restart cascade seen in F1 (2026-04-19) when a broken native dep made
+# every boot attempt crash. Paired with the preflight doctor that exits 78
+# on a missing bindings/better-sqlite3 native addon, operators now get a
+# single loud failure + actionable hint instead of silent crash-looping.
+# Clear with: systemctl reset-failed comis
+StartLimitBurst=3
+StartLimitIntervalSec=60
 
 [Service]
 Type=notify
