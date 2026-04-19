@@ -438,7 +438,9 @@ describe("CONFIG-RPC: Comprehensive Config RPC Validation", () => {
         ["gateway", "host"],
         ["gateway", "port"],
         ["browser", "noSandbox"],
-        ["agents", "default.model"],
+        // `agents.*.model` / `agents.*.provider` are now mutable overrides to
+        // allow runtime model switching. `agents.*.budgets` is still immutable.
+        ["agents", "default.budgets"],
         ["daemon", "logging.filePath"],
       ];
       for (const [section, key] of subPaths) {

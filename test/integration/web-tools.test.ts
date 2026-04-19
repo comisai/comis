@@ -33,7 +33,10 @@ function textOf(result: ToolResult): string {
 }
 
 function parseResult(result: ToolResult): Record<string, unknown> {
-  return JSON.parse(textOf(result));
+  // Strip SECURITY NOTICE prefix that may be prepended to tool results.
+  const raw = textOf(result);
+  const jsonStart = raw.indexOf("{");
+  return JSON.parse(jsonStart >= 0 ? raw.slice(jsonStart) : raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -142,15 +145,20 @@ describe("WEB-02: web_search", () => {
   });
 
   it(
-    "returns missing API key error for Brave (default provider)",
+    "returns all_providers_failed when Brave is explicitly selected without API key",
     async () => {
-      const tool = createWebSearchTool();
+      // Default provider is DuckDuckGo (key-free); explicitly request Brave to
+      // exercise the missing-api-key failure path.
+      const tool = createWebSearchTool({ provider: "brave" });
       const result = (await tool.execute("test-search-brave-nokey", {
         query: "test",
       })) as ToolResult;
 
       const parsed = parseResult(result);
-      expect(parsed.error).toBe("missing_brave_api_key");
+      expect(parsed.error).toBe("all_providers_failed");
+      expect(parsed.failures).toEqual(
+        expect.arrayContaining([expect.stringContaining("brave")]),
+      );
     },
     30_000,
   );
@@ -164,7 +172,10 @@ describe("WEB-02: web_search", () => {
       })) as ToolResult;
 
       const parsed = parseResult(result);
-      expect(parsed.error).toBe("missing_perplexity_api_key");
+      expect(parsed.error).toBe("all_providers_failed");
+      expect(parsed.failures).toEqual(
+        expect.arrayContaining([expect.stringContaining("perplexity")]),
+      );
     },
     30_000,
   );
@@ -178,7 +189,10 @@ describe("WEB-02: web_search", () => {
       })) as ToolResult;
 
       const parsed = parseResult(result);
-      expect(parsed.error).toBe("missing_xai_api_key");
+      expect(parsed.error).toBe("all_providers_failed");
+      expect(parsed.failures).toEqual(
+        expect.arrayContaining([expect.stringContaining("grok")]),
+      );
     },
     30_000,
   );

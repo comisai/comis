@@ -6,11 +6,11 @@
  *   - Passes through the same safety pipeline as config.patch (trust, rate limit, restart)
  *   - Non-admin trust level is rejected
  *   - Immutable sections are rejected
- *   - Triggers SIGUSR1 restart after apply
+ *   - Triggers SIGUSR2 restart after apply
  *   - Produces git history entry with "Replaced" metadata
  *
  * Uses a temp config copy, real daemon, and internal rpcCall.
- * Spies on process.kill to no-op SIGUSR1 signals (prevents daemon restart mid-test).
+ * Spies on process.kill to no-op SIGUSR2 signals (prevents daemon restart mid-test).
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
@@ -63,9 +63,9 @@ describe("CONFIG-APPLY-E2E: Config Apply Full Section Replacement", () => {
     const configContent = readFileSync(BASE_CONFIG_PATH, "utf-8");
     writeFileSync(tmpConfigPath, configContent, "utf-8");
 
-    // Spy on process.kill to no-op SIGUSR1 signals (prevents daemon restart mid-test)
+    // Spy on process.kill to no-op SIGUSR2 signals (prevents daemon restart mid-test)
     killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: string | number) => {
-      if (signal === "SIGUSR1") {
+      if (signal === "SIGUSR2") {
         // No-op: suppress restart signal during tests
         return true;
       }
@@ -252,11 +252,11 @@ describe("CONFIG-APPLY-E2E: Config Apply Full Section Replacement", () => {
   );
 
   // -------------------------------------------------------------------------
-  // Test 5: config.apply triggers SIGUSR1 restart
+  // Test 5: config.apply triggers SIGUSR2 restart
   // -------------------------------------------------------------------------
 
   it(
-    "config.apply triggers SIGUSR1 restart",
+    "config.apply triggers SIGUSR2 restart",
     async () => {
       // Clear spy call history
       killSpy.mockClear();
@@ -286,8 +286,8 @@ describe("CONFIG-APPLY-E2E: Config Apply Full Section Replacement", () => {
       // Wait for the 200ms setTimeout + buffer
       await new Promise((r) => setTimeout(r, 400));
 
-      // Assert process.kill was called with SIGUSR1
-      expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+      // Assert process.kill was called with SIGUSR2
+      expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
     },
     30_000,
   );

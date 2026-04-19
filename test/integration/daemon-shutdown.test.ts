@@ -180,11 +180,20 @@ describe("Daemon Shutdown", () => {
     it("DMN-04: shutdown subsystems stop in correct defined order", () => {
       const entries = logCapture.getEntries();
 
+      // Current shutdown order (shutdownOrder in daemon manifest):
+      //   1. gateway
+      //   2. graph-coordinator
+      //   3. sub-agent-runner
+      //   4. lock-cleanup-timer / approval-gate
+      //   ...
+      //   n. memory-database (last)
+      // Gateway stops first to unblock in-flight HTTP/WebSocket I/O before any
+      // in-process components are torn down.
       const result = assertLogSequence(entries, [
         { msg: /Graceful shutdown initiated/ },
+        { msg: "Gateway server stopped" },
         { msg: "Component stopped", component: "sub-agent-runner" },
         { msg: /CronScheduler stopped/ },
-        { msg: "Gateway server stopped" },
         { msg: "Component stopped", component: "memory-database" },
         { msg: "Graceful shutdown complete" },
       ]);

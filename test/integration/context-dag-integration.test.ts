@@ -664,7 +664,7 @@ describe("TEST-15: Metrics Emission in DAG Mode", () => {
     const engine = createDagContextEngine(config, deps);
     await engine.transformContext(messages);
 
-    // Verify all 17 expected fields are present
+    // Verify all expected fields are present
     expect(capturedEvent).toBeDefined();
     expect(typeof capturedEvent!.agentId).toBe("string");
     expect(typeof capturedEvent!.sessionKey).toBe("string");
@@ -679,7 +679,12 @@ describe("TEST-15: Metrics Emission in DAG Mode", () => {
     expect(Array.isArray(capturedEvent!.rereadTools)).toBe(true);
     expect(typeof capturedEvent!.sessionDepth).toBe("number");
     expect(typeof capturedEvent!.sessionToolResults).toBe("number");
-    expect(typeof capturedEvent!.cacheHit).toBe("boolean");
+    // DAG-mode event shape replaces boolean `cacheHit` with three-way
+    // cache token accounting: hit/write/miss. The non-DAG engine uses
+    // `cacheFenceIndex` instead.
+    expect(typeof capturedEvent!.cacheHitTokens).toBe("number");
+    expect(typeof capturedEvent!.cacheWriteTokens).toBe("number");
+    expect(typeof capturedEvent!.cacheMissTokens).toBe("number");
     expect(typeof capturedEvent!.durationMs).toBe("number");
     expect(typeof capturedEvent!.layerCount).toBe("number");
     expect((capturedEvent!.layerCount as number)).toBeGreaterThanOrEqual(1);

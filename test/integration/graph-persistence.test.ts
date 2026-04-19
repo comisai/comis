@@ -69,7 +69,7 @@ const GRAPH_1 = {
   label: "Test Pipeline",
   nodes: [
     {
-      id: "n1",
+      nodeId: "n1",
       task: "Do something",
       dependsOn: [],
       position: { x: 0, y: 0 },
@@ -84,7 +84,7 @@ const GRAPH_1_UPDATED = {
   label: "Updated Pipeline",
   nodes: [
     {
-      id: "n1",
+      nodeId: "n1",
       task: "Do something",
       dependsOn: [],
       position: { x: 0, y: 0 },
@@ -99,13 +99,13 @@ const GRAPH_2 = {
   label: "Second Pipeline",
   nodes: [
     {
-      id: "n1",
+      nodeId: "n1",
       task: "First step",
       dependsOn: [],
       position: { x: 0, y: 0 },
     },
     {
-      id: "n2",
+      nodeId: "n2",
       task: "Second step",
       dependsOn: ["n1"],
       position: { x: 0, y: 100 },
@@ -175,7 +175,7 @@ describe("Graph Persistence: Named Graph RPC Round-Trip", () => {
     const nodes = result.nodes as Array<Record<string, unknown>>;
     expect(Array.isArray(nodes)).toBe(true);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].id).toBe("n1");
+    expect(nodes[0].nodeId).toBe("n1");
 
     // Verify edges round-trip
     const edges = result.edges as unknown[];

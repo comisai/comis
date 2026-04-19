@@ -269,6 +269,9 @@ describe("subagent pipeline integration", () => {
         subagentContext: {
           maxSpawnDepth: 3,
           maxChildrenPerAgent: 3,
+          // Disable queuing so overflow rejects with children_exceeded instead
+          // of being accepted into the queue (default maxQueuedPerAgent is 10).
+          maxQueuedPerAgent: 0,
           maxResultTokens: 4000,
           resultRetentionMs: 86_400_000,
           condensationStrategy: "auto",

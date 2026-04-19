@@ -292,6 +292,7 @@ describe("TEST-09: Session Search Tool Handler E2E", () => {
       query: "DATABASE_URL",
       scope: "all",
       limit: 10,
+      summarize: true,
     });
 
     // Result should be successful (not an error)
@@ -315,6 +316,7 @@ describe("TEST-09: Session Search Tool Handler E2E", () => {
       query: "API_ROUTES",
       scope: "all",
       limit: 10,
+      summarize: true,
     });
 
     const details = result.details as { matches: Array<{ snippet: string }>; total: number };
@@ -347,6 +349,7 @@ describe("TEST-09: Session Search Tool Handler E2E", () => {
       query: "DATABASE_URL",
       scope: "tool",
       limit: 10,
+      summarize: true,
     });
 
     // The toolResult message content contains DATABASE_URL
@@ -503,7 +506,10 @@ describe("TEST-15: Pipeline metrics emission completeness", () => {
     expect(pipelineEvents.length).toBe(1);
     const pe = pipelineEvents[0]!;
 
-    // All 17 required fields must be present with correct types
+    // All required fields must be present with correct types. The old
+    // boolean `cacheHit` has been replaced with numeric `cacheFenceIndex`
+    // (index of the last cache fence; -1 when no fence), and a per-layer
+    // breakdown `layers` was added alongside the aggregate `layerCount`.
     expect(pe).toEqual(
       expect.objectContaining({
         agentId: expect.any(String),
@@ -519,9 +525,10 @@ describe("TEST-15: Pipeline metrics emission completeness", () => {
         rereadTools: expect.any(Array),
         sessionDepth: expect.any(Number),
         sessionToolResults: expect.any(Number),
-        cacheHit: expect.any(Boolean),
+        cacheFenceIndex: expect.any(Number),
         durationMs: expect.any(Number),
         layerCount: expect.any(Number),
+        layers: expect.any(Array),
         timestamp: expect.any(Number),
       }),
     );
@@ -536,7 +543,8 @@ describe("TEST-15: Pipeline metrics emission completeness", () => {
     expect((pe.budgetUtilization as number)).toBeGreaterThanOrEqual(0);
     expect((pe.rereadCount as number)).toBeGreaterThanOrEqual(0);
     expect((pe.sessionDepth as number)).toBeGreaterThanOrEqual(0);
-    expect((pe.cacheHit as boolean)).toBe(false);
+    // -1 when no fence is established (typical for first-turn state)
+    expect((pe.cacheFenceIndex as number)).toBeGreaterThanOrEqual(-1);
     expect((pe.durationMs as number)).toBeGreaterThanOrEqual(0);
     expect((pe.layerCount as number)).toBeGreaterThanOrEqual(1);
     expect((pe.timestamp as number)).toBeGreaterThan(0);

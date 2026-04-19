@@ -47,9 +47,11 @@ describe("Config Schema Validation (119-01)", () => {
   describe("Per-section schema validation", () => {
     const allKeys = Object.keys(AppConfigSchema.shape);
 
-    it("AppConfigSchema has exactly 27 top-level keys", () => {
-      // 4 scalar (tenantId, logLevel, dataDir, agentDir) + 23 object sections = 27
-      expect(allKeys).toHaveLength(27);
+    it("AppConfigSchema has all expected top-level keys", () => {
+      // Snapshot-style guard: bump this count when a new top-level section is
+      // added so the change surfaces in code review. Count reflects all scalars
+      // plus all object sections currently in AppConfigSchema.shape.
+      expect(allKeys).toHaveLength(37);
     });
 
     it("empty config {} produces valid defaults for all sections", () => {

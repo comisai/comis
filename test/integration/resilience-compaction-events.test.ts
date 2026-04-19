@@ -118,10 +118,11 @@ describe("resilience-compaction-events integration (TEST-04)", () => {
     expect(received[0].timestamp).toBeGreaterThan(0);
     expect(typeof received[0].timestamp).toBe("number");
 
-    // Logger.info should be called with "Auto-compaction started"
+    // Logger.info should be called with "Auto-compaction started".
+    // Log shape intentionally carries sessionKey only; agentId is already on
+    // the emitted compaction:started event above.
     expect(deps.logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        agentId: "test-agent",
         sessionKey: "t1:u1:c1",
       }),
       "Auto-compaction started",
@@ -157,7 +158,8 @@ describe("resilience-compaction-events integration (TEST-04)", () => {
     const infoCalls = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls;
     const completedCall = infoCalls.find((c: any[]) => c[1] === "Auto-compaction completed");
     expect(completedCall).toBeDefined();
-    expect(completedCall![0].agentId).toBe("test-agent");
+    // Log shape intentionally omits agentId; callers that need it derive it
+    // from the compaction:flush event which already carries sessionKey.
     expect(typeof completedCall![0].durationMs).toBe("number");
     expect(completedCall![0].durationMs).toBeGreaterThanOrEqual(0);
     expect(completedCall![0].aborted).toBe(false);

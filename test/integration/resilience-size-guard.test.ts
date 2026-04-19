@@ -55,8 +55,8 @@ describe("resilience-size-guard integration (TEST-03)", () => {
     const logger = createMockLogger();
     const next = createMockStreamFn();
 
-    const bouncer = createToolResultSizeBouncer(50_000, logger);
-    const wrapped = bouncer(next);
+    const { wrapper } = createToolResultSizeBouncer(50_000, logger);
+    const wrapped = wrapper(next);
 
     const shortText = "a".repeat(100);
     const context = makeContext([makeToolResultMessage("web_fetch", shortText)]);
@@ -77,8 +77,8 @@ describe("resilience-size-guard integration (TEST-03)", () => {
     const logger = createMockLogger();
     const next = createMockStreamFn();
 
-    const bouncer = createToolResultSizeBouncer(500, logger);
-    const wrapped = bouncer(next);
+    const { wrapper } = createToolResultSizeBouncer(500, logger);
+    const wrapped = wrapper(next);
 
     const bigText = "x".repeat(5000);
     const context = makeContext([makeToolResultMessage("web_fetch", bigText)]);
@@ -109,8 +109,8 @@ describe("resilience-size-guard integration (TEST-03)", () => {
     const logger = createMockLogger();
     const next = createMockStreamFn();
 
-    const bouncer = createToolResultSizeBouncer(100, logger);
-    const wrapped = bouncer(next);
+    const { wrapper } = createToolResultSizeBouncer(100, logger);
+    const wrapped = wrapper(next);
 
     const userMsg = { role: "user" as const, content: [{ type: "text", text: "a".repeat(500) }] };
     const assistantMsg = {
@@ -136,8 +136,8 @@ describe("resilience-size-guard integration (TEST-03)", () => {
     const logger = createMockLogger();
     const next = createMockStreamFn();
 
-    const bouncer = createToolResultSizeBouncer(500, logger);
-    const wrapped = bouncer(next);
+    const { wrapper } = createToolResultSizeBouncer(500, logger);
+    const wrapped = wrapper(next);
 
     const smallToolResult = makeToolResultMessage("read_file", "a".repeat(100), "tc-1");
     const bigToolResult = makeToolResultMessage("web_fetch", "x".repeat(5000), "tc-2");

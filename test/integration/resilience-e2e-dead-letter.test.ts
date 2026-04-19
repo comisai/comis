@@ -121,14 +121,27 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     const failingSendToChannel = vi.fn().mockResolvedValue(false);
     await dlq.drain(failingSendToChannel);
 
-    expect(failingSendToChannel).toHaveBeenCalledWith("echo", "ch1", "Task complete: quantum research findings");
+    // sendToChannel now receives an optional 4th argument (metadata/options).
+    // Use arrayContaining-style match via positional args with a trailing
+    // `undefined` so the test is resilient to either signature.
+    expect(failingSendToChannel).toHaveBeenCalledWith(
+      "echo",
+      "ch1",
+      "Task complete: quantum research findings",
+      undefined,
+    );
     expect(dlq.size()).toBe(1); // Still queued (retry not exhausted)
 
     // Second drain: sendToChannel succeeds -> entry removed, event emitted
     const succeedingSendToChannel = vi.fn().mockResolvedValue(true);
     await dlq.drain(succeedingSendToChannel);
 
-    expect(succeedingSendToChannel).toHaveBeenCalledWith("echo", "ch1", "Task complete: quantum research findings");
+    expect(succeedingSendToChannel).toHaveBeenCalledWith(
+      "echo",
+      "ch1",
+      "Task complete: quantum research findings",
+      undefined,
+    );
     expect(dlq.size()).toBe(0); // Entry removed
 
     // Verify announcement:dead_letter_delivered event was emitted

@@ -48,6 +48,10 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
   // log-verification.test.ts LOG-03: Intentional invalid RPC call to test error logging
   { level: "warn", msg: /RPC call failed: config\.read/ },
 
+  // log-orchestration.test.ts LOG-06: Intentional invalid RPC call that surfaces
+  // at the JSON-RPC method-error level (one layer below the RPC-call failure log).
+  { level: "error", msg: /JSON-RPC method error/ },
+
   // log-verification.test.ts LOG-02: Intentional tool failure to test audit logging
   { msg: /Tool audit: fail-tool failed/ },
 

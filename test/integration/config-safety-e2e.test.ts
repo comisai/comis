@@ -3,7 +3,7 @@
  *
  * Validates the config safety pipeline through the full daemon stack:
  *   E2E-05: Audit event emission on config.patch success
- *   E2E-02: config.patch triggers SIGUSR1 restart (process.kill spy)
+ *   E2E-02: config.patch triggers SIGUSR2 restart (process.kill spy)
  *   E2E-03: Trust escalation enforcement (admin vs user vs missing)
  *   E2E-04: Rate limiting enforces 5-per-minute budget with wait guidance
  *
@@ -11,7 +11,7 @@
  * trust, and rate limit last (exhausts remaining budget).
  *
  * Uses a dedicated config (port 8541, dual tokens) and temp config copy.
- * Spies on process.kill to capture SIGUSR1 calls without killing the process.
+ * Spies on process.kill to capture SIGUSR2 calls without killing the process.
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
@@ -64,12 +64,12 @@ describe("CONFIG-SAFETY-E2E", () => {
     const configContent = readFileSync(BASE_CONFIG_PATH, "utf-8");
     writeFileSync(tmpConfigPath, configContent, "utf-8");
 
-    // Spy on process.kill to intercept SIGUSR1 without actually sending the signal.
+    // Spy on process.kill to intercept SIGUSR2 without actually sending the signal.
     // This lets us observe that config.patch WOULD restart the daemon.
     processKillSpy = vi.spyOn(process, "kill").mockImplementation(
       (pid: number, signal?: string | number): true => {
-        if (signal === "SIGUSR1") {
-          // No-op: prevent actual SIGUSR1 from killing the test process
+        if (signal === "SIGUSR2") {
+          // No-op: prevent actual SIGUSR2 from killing the test process
           return true;
         }
         // For other signals, call original (should not happen in tests)
@@ -154,12 +154,12 @@ describe("CONFIG-SAFETY-E2E", () => {
   });
 
   // =========================================================================
-  // E2E-02: config.patch triggers SIGUSR1 restart
+  // E2E-02: config.patch triggers SIGUSR2 restart
   // =========================================================================
 
-  describe("E2E-02: config.patch triggers SIGUSR1 restart", () => {
+  describe("E2E-02: config.patch triggers SIGUSR2 restart", () => {
     it(
-      "config.patch schedules SIGUSR1 signal to restart daemon",
+      "config.patch schedules SIGUSR2 signal to restart daemon",
       async () => {
         // Clear spy call history
         processKillSpy.mockClear();
@@ -174,8 +174,8 @@ describe("CONFIG-SAFETY-E2E", () => {
         // Wait for the 200ms delayed setTimeout + buffer
         await new Promise((r) => setTimeout(r, 400));
 
-        // Verify process.kill was called with SIGUSR1
-        expect(processKillSpy).toHaveBeenCalledWith(process.pid, "SIGUSR1");
+        // Verify process.kill was called with SIGUSR2
+        expect(processKillSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
 
         // Verify the result indicates restarting
         expect(result.restarting).toBe(true);
