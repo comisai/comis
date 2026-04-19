@@ -11,7 +11,12 @@ import type { AppContainer, SkillsConfig, ApprovalGate, CredentialMappingPort, W
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../rpc/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import { SkillsConfigSchema, sanitizeLogString, tryGetContext, parseFormattedSessionKey, safePath } from "@comis/core";
-import { sessionKeyToPath, WORKSPACE_FILE_NAMES, DEFAULT_TEMPLATES } from "@comis/agent";
+import {
+  sessionKeyToPath,
+  WORKSPACE_FILE_NAMES,
+  DEFAULT_TEMPLATES,
+  registerWorkspaceFilesInTracker,
+} from "@comis/agent";
 import { stat as fsStat } from "node:fs/promises";
 import type { PerAgentConfig } from "@comis/core";
 import type { ImageGenerationPort } from "@comis/core";
@@ -260,6 +265,19 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     const toolGroups = options?.toolGroups;
     const sharedPaths = options?.sharedPaths;
     const fileStateTracker = options?.fileStateTracker ?? createFileStateTracker();
+
+    // Pre-register the agent's own workspace template files in the tracker.
+    // ensureWorkspace() runs at daemon startup (before any session tracker
+    // exists), so files like IDENTITY.md/USER.md/ROLE.md are on disk but
+    // unknown to the per-turn tracker. Without this, the agent's first
+    // `write` to its own workspace hits [not_read] and wastes an LLM turn
+    // pivoting to read->edit. Safety is preserved via the content-hash
+    // staleness check in write-tool.ts (manual edits between registration
+    // and write still surface as [stale_file]).
+    // Only the agent's OWN workspace -- other-agent workspaces visible to
+    // admin agents are covered by agents_manage's onAgentCreated callback.
+    const ownWorkspaceDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
+    await registerWorkspaceFilesInTracker(ownWorkspaceDir, fileStateTracker);
 
     // Enrich sharedPaths for admin-trust agents: grant cross-workspace file access (Quick 165)
     // Default agent (orchestrator) and supervisor-profile agents can access other agent workspaces.

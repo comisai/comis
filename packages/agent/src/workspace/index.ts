@@ -1,8 +1,14 @@
-export { ensureWorkspace, getWorkspaceStatus, WORKSPACE_SUBDIRS } from "./workspace-manager.js";
+export {
+  ensureWorkspace,
+  getWorkspaceStatus,
+  registerWorkspaceFilesInTracker,
+  WORKSPACE_SUBDIRS,
+} from "./workspace-manager.js";
 export type {
   WorkspaceFiles,
   EnsureWorkspaceOptions,
   WorkspaceStatus,
+  WorkspaceSeedTracker,
 } from "./workspace-manager.js";
 export { resolveWorkspaceDir } from "./workspace-resolver.js";
 export { WORKSPACE_FILE_NAMES, DEFAULT_TEMPLATES } from "./templates.js";

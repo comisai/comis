@@ -176,6 +176,48 @@ export async function ensureWorkspace(options: EnsureWorkspaceOptions): Promise<
 }
 
 /**
+ * Register every existing workspace template file in the caller's tracker
+ * with its current on-disk mtime and full content.
+ *
+ * Use case: closes the gap where `ensureWorkspace()` runs at daemon startup
+ * (before any session tracker exists) and seeds the agent's own workspace
+ * files. Every subsequent session's first `write` to those paths would
+ * otherwise hit `[not_read]`. Call this right after the per-turn tracker
+ * is created so the agent's first `write` to its own workspace passes the
+ * read-before-write gate.
+ *
+ * Safety: the read-before-write gate is one of two layers in write-tool.ts.
+ * The other is `tracker.checkStaleness()`, which compares recorded mtime +
+ * content hash against current disk state. Registering with the full content
+ * buffer preserves staleness detection — if the file changed between
+ * registration and write, `[stale_file]` fires. This helper only relaxes
+ * the pre-read requirement, not the stale-content defence.
+ *
+ * Missing/unreadable files are silently skipped — the helper is an
+ * optimization, not a gate.
+ *
+ * @param dir - Absolute workspace directory path.
+ * @param tracker - Tracker to register the files in.
+ */
+export async function registerWorkspaceFilesInTracker(
+  dir: string,
+  tracker: WorkspaceSeedTracker,
+): Promise<void> {
+  for (const name of WORKSPACE_FILE_NAMES) {
+    const filePath = safePath(dir, name);
+    try {
+      const [st, content] = await Promise.all([
+        fs.stat(filePath),
+        fs.readFile(filePath),
+      ]);
+      tracker.recordRead(filePath, st.mtimeMs, 0, undefined, content);
+    } catch {
+      // File missing, unreadable, or racing with another writer -- skip.
+    }
+  }
+}
+
+/**
  * Check the status of a workspace directory.
  *
  * Reports existence, file presence/size, git repo presence,

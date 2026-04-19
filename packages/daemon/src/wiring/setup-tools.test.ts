@@ -151,6 +151,15 @@ vi.mock("@comis/core", () => ({
 
 vi.mock("@comis/agent", () => ({
   sessionKeyToPath: mockSessionKeyToPath,
+  // Consumed by setup-tools at assembleToolsForAgent time to pre-register
+  // the agent's own workspace files in the per-turn tracker. Tests don't
+  // exercise real workspace files, so a no-op stub is sufficient.
+  registerWorkspaceFilesInTracker: vi.fn(async () => {}),
+  // Consumed by the agents_manage onAgentCreated callback for seed-tracker
+  // registration of newly-created agents. Not exercised by these tests but
+  // imported at module load, so they must exist on the mock.
+  WORKSPACE_FILE_NAMES: [] as string[],
+  DEFAULT_TEMPLATES: {} as Record<string, string>,
 }));
 
 // ---------------------------------------------------------------------------

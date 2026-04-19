@@ -4,7 +4,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
 import { WORKSPACE_FILE_NAMES } from "./templates.js";
-import { ensureWorkspace, getWorkspaceStatus, WORKSPACE_SUBDIRS } from "./workspace-manager.js";
+import {
+  ensureWorkspace,
+  getWorkspaceStatus,
+  registerWorkspaceFilesInTracker,
+  WORKSPACE_SUBDIRS,
+} from "./workspace-manager.js";
 import { STATE_FILENAME, readWorkspaceState } from "./workspace-state.js";
 
 describe("workspace-manager", () => {
@@ -279,6 +284,106 @@ describe("workspace-manager", () => {
 
         expect(calls).toEqual([]);
       });
+    });
+  });
+
+  describe("registerWorkspaceFilesInTracker (session-start registration)", () => {
+    it("registers every existing workspace file with its on-disk mtime and content", async () => {
+      const dir = await makeTempDir();
+      // Simulate daemon-startup seeding: files are on disk, no tracker was involved.
+      await ensureWorkspace({ dir });
+
+      // New session starts: fresh tracker must be populated.
+      const calls: Array<{ path: string; mtime: number; sample: Buffer | undefined }> = [];
+      const tracker = {
+        recordRead: (
+          p: string,
+          mtime: number,
+          _offset?: number,
+          _limit?: number,
+          sample?: Buffer,
+        ) => {
+          calls.push({ path: p, mtime, sample });
+        },
+      };
+
+      await registerWorkspaceFilesInTracker(dir, tracker);
+
+      const recordedPaths = calls.map((c) => c.path).sort();
+      const expectedPaths = [...WORKSPACE_FILE_NAMES].map((n) => path.join(dir, n)).sort();
+      expect(recordedPaths).toEqual(expectedPaths);
+
+      // Mtime must match what the file-state-tracker's checkStaleness will
+      // see on the next write call -- otherwise staleness would falsely fire.
+      for (const call of calls) {
+        const diskStat = await fs.stat(call.path);
+        expect(call.mtime).toBe(diskStat.mtimeMs);
+        expect(call.sample).toBeInstanceOf(Buffer);
+        expect(call.sample!.length).toBeGreaterThan(0);
+      }
+    });
+
+    it("preserves content hashes for staleness detection (mtime-preserving edits)", async () => {
+      const dir = await makeTempDir();
+      await ensureWorkspace({ dir });
+
+      // Capture the bytes the helper will hand to recordRead.
+      const captured = new Map<string, Buffer>();
+      const tracker = {
+        recordRead: (p: string, _m: number, _o?: number, _l?: number, sample?: Buffer) => {
+          if (sample) captured.set(p, sample);
+        },
+      };
+
+      await registerWorkspaceFilesInTracker(dir, tracker);
+
+      // Every registered buffer must match the actual file content -- this is
+      // what the content-hash fallback in file-state-tracker uses.
+      for (const [p, buf] of captured) {
+        const disk = await fs.readFile(p);
+        expect(Buffer.compare(buf, disk)).toBe(0);
+      }
+    });
+
+    it("silently skips missing files (empty workspace)", async () => {
+      const dir = await makeTempDir();
+      await fs.mkdir(dir, { recursive: true });
+      // No ensureWorkspace call -- dir exists but no template files.
+
+      const calls: string[] = [];
+      const tracker = { recordRead: (p: string) => calls.push(p) };
+
+      // Must NOT throw; simply registers nothing.
+      await expect(registerWorkspaceFilesInTracker(dir, tracker)).resolves.toBeUndefined();
+      expect(calls).toEqual([]);
+    });
+
+    it("silently skips partially-seeded workspaces (only present files registered)", async () => {
+      const dir = await makeTempDir();
+      await fs.mkdir(dir, { recursive: true });
+      // Only create 2 of the 9 template files.
+      await fs.writeFile(path.join(dir, "IDENTITY.md"), "# ID\n", "utf-8");
+      await fs.writeFile(path.join(dir, "USER.md"), "# User\n", "utf-8");
+
+      const calls: string[] = [];
+      const tracker = { recordRead: (p: string) => calls.push(p) };
+
+      await registerWorkspaceFilesInTracker(dir, tracker);
+
+      expect(calls.sort()).toEqual(
+        [path.join(dir, "IDENTITY.md"), path.join(dir, "USER.md")].sort(),
+      );
+    });
+
+    it("does not throw when directory itself is missing", async () => {
+      const nonexistent = path.join(os.tmpdir(), `comis-ws-does-not-exist-${randomUUID()}`);
+      const calls: string[] = [];
+      const tracker = { recordRead: (p: string) => calls.push(p) };
+
+      await expect(
+        registerWorkspaceFilesInTracker(nonexistent, tracker),
+      ).resolves.toBeUndefined();
+      expect(calls).toEqual([]);
     });
   });
 

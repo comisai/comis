@@ -204,6 +204,7 @@ export type { PromptSkillMatch, CollisionWarning, PromptSkillDirective } from ".
 export {
   ensureWorkspace,
   getWorkspaceStatus,
+  registerWorkspaceFilesInTracker,
   resolveWorkspaceDir,
   WORKSPACE_FILE_NAMES,
   WORKSPACE_SUBDIRS,
@@ -215,6 +216,7 @@ export type {
   EnsureWorkspaceOptions,
   WorkspaceStatus,
   WorkspaceFileName,
+  WorkspaceSeedTracker,
 } from "./workspace/index.js";
 
 // Envelope (message wrapping for LLM context)
