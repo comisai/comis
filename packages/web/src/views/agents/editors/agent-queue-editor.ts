@@ -9,13 +9,12 @@
  * Emits `config-change` CustomEvent with { section: "queue", key, value }.
  * Parent shell handles the RPC call (config.patch).
  */
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import {
   renderNumberField,
   renderSelectField,
   renderCheckbox,
-  getField,
 } from "./editor-helpers.js";
 import type { EditorForm } from "./editor-types.js";
 import "../../../components/form/ic-json-editor.js";

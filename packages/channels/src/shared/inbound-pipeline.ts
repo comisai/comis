@@ -20,10 +20,9 @@ import type { FollowupTrigger } from "@comis/agent";
 import type { PriorityScheduler } from "@comis/agent";
 import type { SessionLabelStore } from "@comis/agent";
 import type { ActiveRunRegistry } from "@comis/agent";
-import type { DmScopeMode } from "@comis/agent";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
-import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, LaneAssignmentConfig, ElevatedReplyConfig, AckReactionConfig } from "@comis/core";
+import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig, AckReactionConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { Result } from "@comis/shared";
 

@@ -159,7 +159,7 @@ export interface PromptRunResult {
 export async function runPrompt(params: RunPromptParams): Promise<PromptRunResult> {
   const {
     msg, session, config, sessionKey, formattedKey, agentId, result,
-    executionOverrides, executionStartMs, effectiveTimeout, executionId,
+    executionStartMs, effectiveTimeout, executionId,
     bridge, dynamicPreamble, deferredContext, inlineMemory, systemPrompt,
     mergedCustomTools, cmdResult, sepEnabled, executionPlanRef,
     _directives, _prevTimestamp, resolvedModel, deps, onResetTimer,
@@ -310,7 +310,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
   let escalationAttempted = false;
   // Tracks whether we already attempted a silent-failure retry cycle
   // to prevent infinite loops (capped at 1 retry).
-  let silentRetryAttempted = false;
+  const silentRetryAttempted = false;
   // Ghost cost from timed-out requests
   let ghostCost: PromptRunResult["ghostCost"];
 
@@ -438,7 +438,6 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
           // the full model retry chain (cache-aware short retry, key rotation,
           // model fallback). Thinking-only messages (encrypted reasoning blocks
           // with no visible text) poison the conversation for the next attempt.
-          silentRetryAttempted = true;
 
           deps.logger.info(
             {
@@ -748,7 +747,6 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
     // Budget-driven continuation loop
     if (budgetTracker) {
       let budgetContinuations = 0;
-      let lastDecisionReason: string = "under_budget";
 
       // Check after initial prompt round
       const initialOutput = bridge.getResult().tokensUsed?.output ?? 0;
@@ -786,7 +784,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
         decision = budgetTracker.check(currentOutput);
       }
 
-      lastDecisionReason = decision.reason;
+      const lastDecisionReason = decision.reason;
 
       // Set finish reason based on tracker stop condition
       if (decision.reason === "budget_reached" || decision.reason === "diminishing_returns" || decision.reason === "max_continuations") {

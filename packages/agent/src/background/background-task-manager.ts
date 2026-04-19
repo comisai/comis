@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { ok, err, suppressError, type Result } from "@comis/shared";
 import type { TypedEventBus } from "@comis/core";
 import { persistTaskSync, recoverTasks, removeTaskFile } from "./background-task-persistence.js";
-import type { BackgroundTask, PersistedTaskState } from "./background-task-types.js";
+import type { BackgroundTask } from "./background-task-types.js";
 
 /** Notification callback fired when background task completes or fails. */
 export type NotifyFn = (opts: {

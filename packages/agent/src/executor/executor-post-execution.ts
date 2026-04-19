@@ -39,7 +39,6 @@ import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { ContextEngine } from "../context-engine/index.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
-import type { ExcludeDeferralResult } from "./tool-deferral.js";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -196,15 +195,15 @@ export function shouldStorePairedMemory(userText: string, agentResponse: string)
 export async function postExecution(params: PostExecutionParams): Promise<void> {
   const {
     result, session, sm, config, msg, sessionKey, formattedKey, agentId,
-    executionStartMs, executionId, executionOverrides,
+    executionStartMs, executionId,
     bridge, unsubscribe,
     contextEngineRef, ceSetup, streamSetup,
     getTruncationSummary, getTurnBudgetSummary,
-    executionPlanRef, sepEnabled, isOnboarding,
+    executionPlanRef, isOnboarding,
     geminiCacheHit, geminiCachedTokens, modelTier,
     deferralResult, mergedCustomTools, deliveredGuides,
     deps, sessionAdapter,
-    executionCacheRetentionClear, adaptiveRetentionClear, executionMinTokensOverrideClear,
+    executionCacheRetentionClear, adaptiveRetentionClear,
   } = params;
 
   unsubscribe();

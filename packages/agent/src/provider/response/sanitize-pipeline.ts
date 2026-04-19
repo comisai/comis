@@ -59,7 +59,7 @@ function stripModelSpecialTokens(text: string): string {
  */
 function stripToolCallMarkers(text: string): string {
   return text.replace(
-    /\[Tool Call:\s*\S+\s*\(ID:\s*[^\)]*\)\]\n?(?:Arguments:\s*```json\n[\s\S]*?```\n?)?/gi,
+    /\[Tool Call:\s*\S+\s*\(ID:\s*[^)]*\)\]\n?(?:Arguments:\s*```json\n[\s\S]*?```\n?)?/gi,
     "",
   );
 }

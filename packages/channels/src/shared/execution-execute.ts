@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { ChannelPort, NormalizedMessage, SessionKey, TypedEventBus, PerChannelStreamingConfig } from "@comis/core";
+import type { ChannelPort, NormalizedMessage, SessionKey, PerChannelStreamingConfig } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin } from "@comis/core";
 import { withTimeout, TimeoutError } from "@comis/shared";
 import type { AgentExecutor } from "@comis/agent";

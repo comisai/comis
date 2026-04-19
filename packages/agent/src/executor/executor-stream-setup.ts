@@ -27,7 +27,6 @@
  */
 
 import {
-  formatSessionKey,
   safePath,
   type SessionKey,
   type PerAgentConfig,
@@ -60,7 +59,6 @@ import {
   getOrCreateSessionLatches,
   clearSessionLatches,
   getCacheBreakDetector,
-  setBreakpointIndex,
   getBreakpointIndex,
   getEvictionCooldown,
 } from "./executor-session-state.js";
@@ -156,7 +154,7 @@ export interface StreamSetupResult {
  */
 export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResult {
   const {
-    config, deps, sessionKey, formattedKey, sm, resolvedModel,
+    config, deps, formattedKey, sm,
     modelTier, executionOverrides, deferralResult, systemPromptBlocks, agentId,
     getAdaptiveRetention, getExecutionCacheRetention, getExecutionMinTokensOverride,
     onBreakpointsPlaced, onGeminiCacheHit,

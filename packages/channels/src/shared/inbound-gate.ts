@@ -18,7 +18,6 @@ import { evaluateAutoReply, isGroupMessage } from "./auto-reply-engine.js";
 import { matchesResetTrigger } from "./inbound-pipeline.js";
 import { deliverToChannel } from "./deliver-to-channel.js";
 import type { SendOverrideStore } from "./send-policy.js";
-import type { GroupHistoryBuffer } from "./group-history-buffer.js";
 
 // ---------------------------------------------------------------------------
 // Deps narrowing

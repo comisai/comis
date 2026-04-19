@@ -16,7 +16,6 @@ import {
   parseFormattedSessionKey,
   safePath,
   tryGetContext,
-  type SessionKey,
 } from "@comis/core";
 import { withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";

@@ -140,7 +140,6 @@ export function createThinkingTagFilter(options?: ThinkingTagFilterOptions): Thi
   let activeTag = "";
   let returnState: State = initialState;
   let returnStateContext: State = initialState; // Tracks parent state when entering buffering
-  let seenFinal = false;
 
   // Code-region tracking
   let inFencedCode = false;
@@ -259,7 +258,6 @@ export function createThinkingTagFilter(options?: ThinkingTagFilterOptions): Thi
               state = "inside_block";
             } else if (result.kind === "final") {
               if (enforceFinalTag) {
-                seenFinal = true;
                 buffer = "";
                 state = "inside_final";
               } else {
@@ -434,7 +432,6 @@ export function createThinkingTagFilter(options?: ThinkingTagFilterOptions): Thi
       activeTag = "";
       returnState = initialState;
       returnStateContext = initialState;
-      seenFinal = false;
       inFencedCode = false;
       inInlineCode = false;
       consecutiveBackticks = 0;

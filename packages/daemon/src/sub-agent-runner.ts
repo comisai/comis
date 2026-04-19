@@ -13,9 +13,7 @@
 import {
   formatSessionKey,
   parseFormattedSessionKey,
-  safePath,
   runWithContext,
-  tryGetContext,
   type SessionKey,
   type TypedEventBus,
   type AgentToAgentConfig,
@@ -24,7 +22,6 @@ import {
 import { suppressError } from "@comis/shared";
 import { sanitizeAssistantResponse } from "@comis/agent";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, writeFile } from "node:fs/promises";
 import type { AnnouncementBatcher } from "./announcement-batcher.js";
 import type { AnnouncementDeadLetterQueue } from "./announcement-dead-letter.js";
 import {
@@ -35,8 +32,6 @@ import {
   validateOutputs,
   sweepResultFiles,
   persistFailureRecord,
-  classifyErrorContext,
-  stripAnnouncementInstruction,
   type AbortClassification,
   type ValidationResult,
 } from "./sub-agent-result-processor.js";

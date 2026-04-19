@@ -10,7 +10,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import type { ApprovalGate } from "@comis/core";
 import { readStringParam, throwToolError } from "./tool-helpers.js";
 import { createAdminManageTool } from "./admin-manage-factory.js";
@@ -41,8 +41,6 @@ const TokensManageToolParams = Type.Object({
     }),
   ),
 });
-
-type TokensManageToolParamsType = Static<typeof TokensManageToolParams>;
 
 const VALID_ACTIONS = ["list", "create", "revoke", "rotate"] as const;
 

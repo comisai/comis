@@ -9,7 +9,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import { readStringParam } from "./tool-helpers.js";
 import { createAdminManageTool } from "./admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
@@ -52,8 +52,6 @@ const HeartbeatManageToolParams = Type.Object({
   alert_cooldown_ms: Type.Optional(Type.Integer({ description: "Minimum ms between alerts" })),
   stale_ms: Type.Optional(Type.Integer({ description: "Max ms before stuck detection triggers" })),
 });
-
-type HeartbeatManageToolParamsType = Static<typeof HeartbeatManageToolParams>;
 
 // ---------------------------------------------------------------------------
 // Factory

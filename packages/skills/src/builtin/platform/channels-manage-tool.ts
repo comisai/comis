@@ -10,7 +10,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import type { ApprovalGate } from "@comis/core";
 import { tryGetContext } from "@comis/core";
 import {
@@ -53,8 +53,6 @@ const ChannelsManageToolParams = Type.Object({
     }),
   ),
 });
-
-type ChannelsManageToolParamsType = Static<typeof ChannelsManageToolParams>;
 
 const VALID_ACTIONS = ["list", "get", "enable", "disable", "restart", "configure"] as const;
 

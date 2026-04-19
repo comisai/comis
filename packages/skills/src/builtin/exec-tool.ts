@@ -172,16 +172,6 @@ export function killTree(pid: number, sandboxed: boolean): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Shell-quote a string for safe embedding in a command passed to `script -c`.
- * Simple tokens (alphanumeric + safe punctuation) pass through unquoted;
- * everything else is single-quoted with internal `'` escaped.
- */
-function shellQuote(s: string): string {
-  if (/^[a-zA-Z0-9_./:=@,+^-]+$/.test(s)) return s;
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
-
-/**
  * Build spawn command arguments, optionally wrapping in the platform sandbox
  * and/or a PTY via `script`.
  *

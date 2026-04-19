@@ -140,10 +140,6 @@ function computeDelay(attempt: number, config: RetryConfig): number {
 // Sleep utility (abort-aware)
 // ---------------------------------------------------------------------------
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /**
  * Abort-aware sleep: resolves after `ms` or immediately when signal fires.
  */

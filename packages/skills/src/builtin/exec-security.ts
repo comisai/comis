@@ -616,6 +616,7 @@ export function validateRedirectTargets(segment: string): string | null {
  * - \u3000: ideographic space
  */
 const INVISIBLE_CHAR_REGEX =
+  // eslint-disable-next-line no-control-regex
   /[\x00-\x08\x0a-\x0c\x0e-\x1f\x7F\u00A0\u00AD\u1680\u200B-\u200F\u2000-\u200A\u2028\u2029\u202F\u205F\u2060\u3000\uFEFF]/;
 
 /**

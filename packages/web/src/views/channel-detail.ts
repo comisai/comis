@@ -6,7 +6,6 @@ import type { DeliveryQueueStatus, PlatformCapabilities } from "../api/types/ind
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
-import { getHealthVisual } from "../utils/health-status.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 
 // Side-effect registrations for sub-components

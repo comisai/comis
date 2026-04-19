@@ -9,7 +9,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import { tryGetContext, isImmutableConfigPath, MUTABLE_CONFIG_OVERRIDES, matchesOverridePattern, getMutableOverridesForSection } from "@comis/core";
 import {
   readStringParam,
@@ -90,8 +90,6 @@ const GatewayToolParams = Type.Object({
     }),
   ),
 });
-
-type GatewayToolParamsType = Static<typeof GatewayToolParams>;
 
 // ---------------------------------------------------------------------------
 // Factory

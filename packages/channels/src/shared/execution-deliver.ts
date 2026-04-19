@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { ChannelPort, NormalizedMessage, SessionKey, PerChannelStreamingConfig } from "@comis/core";
+import type { ChannelPort, NormalizedMessage, PerChannelStreamingConfig } from "@comis/core";
 import { tryGetContext } from "@comis/core";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";

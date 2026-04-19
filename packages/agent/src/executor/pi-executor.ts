@@ -22,7 +22,6 @@
 
 import {
   createAgentSession,
-  SettingsManager,
   DefaultResourceLoader,
 } from "@mariozechner/pi-coding-agent";
 import type {
@@ -89,10 +88,8 @@ import {
   setDeliveredGuides,
   setBreakpointIndex,
   // deleteBreakpointIndex, getBreakpointIndexMapSize moved to executor-post-execution.ts
-  getCacheWarm,
   setCacheWarm,
   clearSessionCacheWarm,
-  getOrCreateSessionLatches,
   clearSessionLatches,
   getCacheBreakDetector,
   setEvictionCooldown,
@@ -113,7 +110,7 @@ import type { ExecutionPlan } from "../planner/types.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
 import { PromptTimeoutError } from "./prompt-timeout.js";
 import { classifyError, classifyPromptTimeout } from "./error-classifier.js";
-import { installDagIngestionHook, validateRoleAttribution, type ContextEngine } from "../context-engine/index.js";
+import { installDagIngestionHook, validateRoleAttribution } from "../context-engine/index.js";
 import type { TokenAnchor } from "../context-engine/types.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { getElapsedSinceLastResponse } from "./ttl-guard.js";
@@ -525,7 +522,6 @@ export function createPiExecutor(
       const configRetention = executionCacheRetention ?? config.cacheRetention;
       if (configRetention && configRetention !== "none") {
         const formattedKeyForRetention = formatSessionKey(sessionKey);
-        const isWarmSession = getCacheWarm(formattedKeyForRetention) === true;
         const isSubAgent = !!executionOverrides?.spawnPacket;
         // + Design 2.2: Sub-agents use static retention. Graph subagents
         // (cacheRetention: "long" from setup-cross-session) get static "long" --
@@ -667,7 +663,7 @@ export function createPiExecutor(
           } = toolAssembly;
           const {
             deferralResult, deferredContext,
-            modelTier, discoveryTracker, settingsManager, persistentSettings,
+            modelTier, discoveryTracker, settingsManager,
             resourceLoaderOptions, promptResult, cachedSystemTokensEstimate,
           } = toolAssembly;
           const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
@@ -1029,16 +1025,12 @@ export function createPiExecutor(
           // Quick 215: Resettable prompt timeout -- tool completions reset the timer
           let currentResetTimer: (() => void) | undefined;
 
-          // Max 1 escalation per execution -- prevent infinite retry loops
-          let escalationAttempted = false;
-
           // API-grounded token anchor -- updated on each turn_end, reset on compaction
           let tokenAnchor: TokenAnchor | null = null;
 
           // Create event bridge
           // Capture for bridge closures (separate scope from wrapper closures above).
           const capturedBridgeRetention = adaptiveRetention;
-          const capturedBridgeCacheRetention = executionCacheRetention;
           const executionId = randomUUID();
           // Budget trajectory warning: shared mutable ref between bridge (writer) and prompt runner (reader)
           const budgetWarningRef = { current: false };
@@ -1293,8 +1285,6 @@ export function createPiExecutor(
               getLastCacheWriteTokens: () => bridge.getResult().tokensUsed?.cacheWrite ?? 0,
               budgetWarningRef,
             });
-            // Capture escalation state for outer scope (used by finally block metadata)
-            escalationAttempted = promptRunResult.escalationAttempted;
             // Aggregate ghost cost from timed-out request into bridge metrics
             if (promptRunResult.ghostCost) {
               bridge.addGhostCost(promptRunResult.ghostCost);

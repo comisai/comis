@@ -28,7 +28,6 @@ import "./editors/agent-log-level-editor.js";
 
 import { BUILTIN_TOOLS } from "./editors/editor-types.js";
 import type { CatalogProvider, FieldChangeDetail } from "./editors/editor-types.js";
-import type { ConfigChangeDetail } from "./editors/agent-queue-editor.js";
 import type { LogLevelChangeDetail } from "./editors/agent-log-level-editor.js";
 
 /** Default form state for a new agent. */

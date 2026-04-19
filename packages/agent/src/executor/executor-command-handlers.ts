@@ -77,7 +77,7 @@ export async function applyCommandDirectives(params: {
   deps: CommandHandlerDeps;
   sessionKey: SessionKey;
 }): Promise<CommandDirectiveResult> {
-  const { directives, session, result, config, deps, sessionKey } = params;
+  const { directives, session, result, config: _config, deps, sessionKey } = params;
 
   if (!directives) {
     return { hasCommandDirective: false };

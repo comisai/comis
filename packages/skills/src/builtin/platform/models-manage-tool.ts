@@ -10,7 +10,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import { readStringParam } from "./tool-helpers.js";
 import { createAdminManageTool } from "./admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
@@ -35,8 +35,6 @@ const ModelsManageToolParams = Type.Object({
     }),
   ),
 });
-
-type ModelsManageToolParamsType = Static<typeof ModelsManageToolParams>;
 
 const VALID_ACTIONS = ["list", "test"] as const;
 

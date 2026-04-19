@@ -42,7 +42,7 @@ import { applyToolDeferral, buildDeferredToolsContext, extractRecentlyUsedToolNa
 import type { DeferralContext, ExcludeDeferralResult } from "./tool-deferral.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
-import { getOrCreateTracker, resetTrackerTimers, DEFAULT_LIFECYCLE_CONFIG } from "./tool-lifecycle.js";
+import { getOrCreateTracker, DEFAULT_LIFECYCLE_CONFIG } from "./tool-lifecycle.js";
 import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";
 import type { ToolLifecycleConfig } from "./tool-lifecycle.js";
 import { createJitGuideWrapper } from "./jit-guide-injector.js";
@@ -166,7 +166,7 @@ export interface ToolAssemblyParams {
 export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAssemblyResult> {
   const {
     config, deps, sessionKey, msg, tools, executionOverrides,
-    isFirstMessageInSession, sm, formattedKeyForGuides, deliveredGuides,
+    isFirstMessageInSession, sm, deliveredGuides,
     resolvedModel, modelCompat, agentId, safetyReinforcement, _directives,
   } = params;
 

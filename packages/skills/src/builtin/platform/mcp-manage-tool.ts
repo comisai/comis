@@ -9,7 +9,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import type { ApprovalGate } from "@comis/core";
 import { readStringParam } from "./tool-helpers.js";
 import { createAdminManageTool } from "./admin-manage-factory.js";
@@ -61,8 +61,6 @@ const McpManageToolParams = Type.Object({
     }),
   ),
 });
-
-type McpManageToolParamsType = Static<typeof McpManageToolParams>;
 
 // ---------------------------------------------------------------------------
 // Factory

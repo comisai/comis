@@ -9,7 +9,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import {
   readStringParam,
   readNumberParam,
@@ -39,8 +39,6 @@ const SessionsSendParams = Type.Object({
     Type.Integer({ description: "Max ping-pong turns 0-5 (for ping-pong mode)" }),
   ),
 });
-
-type SessionsSendParamsType = Static<typeof SessionsSendParams>;
 
 // ── Factory ─────────────────────────────────────────────────────────
 

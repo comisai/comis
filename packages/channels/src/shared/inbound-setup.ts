@@ -98,7 +98,7 @@ export function setupInboundExecution(
   adapter: ChannelPort,
   processedMsg: NormalizedMessage,
   originalMsg: NormalizedMessage,
-  sessionKey: SessionKey,
+  _sessionKey: SessionKey,
 ): SetupResult {
   // -------------------------------------------------------------------
   // ACK REACTION -- fire-and-forget after activation

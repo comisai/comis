@@ -9,7 +9,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import {
   jsonResult,
   readStringParam,
@@ -69,8 +69,6 @@ const SessionsSpawnParams = Type.Object({
     Type.Array(Type.String(), { description: "Domain knowledge entries for the sub-agent" }),
   ),
 });
-
-type SessionsSpawnParamsType = Static<typeof SessionsSpawnParams>;
 
 // ── Factory ─────────────────────────────────────────────────────────
 

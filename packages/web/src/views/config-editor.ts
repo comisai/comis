@@ -65,17 +65,6 @@ const serializeToYaml = serializeYaml;
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-/** Get a nested value from an object by dot-path. */
-function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
-  const parts = path.split(".");
-  let current: unknown = obj;
-  for (const part of parts) {
-    if (current == null || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
-
 /** Set a nested value in an object by dot-path. Returns a new object (shallow clones). */
 function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
   const parts = path.split(".");

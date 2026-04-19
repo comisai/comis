@@ -7,7 +7,7 @@
  * Emits `config-change` CustomEvent with { section: "sendPolicy", key, value }.
  * Parent shell handles the RPC call (config.patch).
  */
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import {
   renderSelectField,

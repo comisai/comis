@@ -10,7 +10,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type } from "@sinclair/typebox";
 import {
   readStringParam,
   readNumberParam,
@@ -121,8 +121,6 @@ const MessageToolParams = Type.Object({
     }),
   ),
 });
-
-type MessageToolParamsType = Static<typeof MessageToolParams>;
 
 // ---------------------------------------------------------------------------
 // Factory

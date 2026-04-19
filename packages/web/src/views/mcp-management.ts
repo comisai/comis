@@ -954,7 +954,6 @@ export class IcMcpManagement extends LitElement {
     const isConnected = server.status === "connected";
     const canReconnect = server.status === "disconnected" || server.status === "error" || server.status === "reconnecting";
     const config = this._mcpConfig.find((c) => c.name === server.name);
-    const isTesting = this._testingServer === server.name;
 
     return html`
       <div class="server-card">

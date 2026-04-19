@@ -17,7 +17,6 @@ import {
   jsonResult,
   throwToolError,
   readEnumParam,
-  readStringParam,
   createTrustGuard,
 } from "./tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";

@@ -42,7 +42,7 @@ export interface OutputCleaner {
  * 256-color, truecolor, DEC private modes, and OSC with ST terminator.
  */
 const ANSI_REGEX =
-  // eslint-disable-next-line security/detect-unsafe-regex
+  // eslint-disable-next-line security/detect-unsafe-regex, no-control-regex
   /[\x1b\x9b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nq-uy=><~]|\x1b\][^\x07]*(?:\x07|\x1b\\)/g;
 
 // ---------------------------------------------------------------------------
@@ -53,6 +53,7 @@ const ANSI_REGEX =
  * Non-printable control characters to strip (binary sanitization).
  * Excludes: \t (0x09), \n (0x0a), \r (0x0d) — handled elsewhere.
  */
+// eslint-disable-next-line no-control-regex
 const CONTROL_CHAR_REGEX = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
 
 // ---------------------------------------------------------------------------

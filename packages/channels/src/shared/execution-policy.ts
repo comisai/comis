@@ -7,17 +7,13 @@
  * @module
  */
 
-import { randomUUID } from "node:crypto";
-import type { ChannelPort, NormalizedMessage, SessionKey, SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin } from "@comis/core";
-import type { AgentExecutor } from "@comis/agent";
-import type { CommandDirectives } from "@comis/agent";
+import type { ChannelPort, NormalizedMessage, SessionKey } from "@comis/core";
+import { formatSessionKey } from "@comis/core";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
 import { isGroupMessage } from "./auto-reply-engine.js";
 import { evaluateSendPolicy, applySessionOverride } from "./send-policy.js";
 import type { SendOverrideStore, SendPolicyContext } from "./send-policy.js";
-import type { ChannelRegistry } from "./channel-registry.js";
 import { REPLY_TO_META_KEY } from "./execution-pipeline.js";
 
 // ---------------------------------------------------------------------------

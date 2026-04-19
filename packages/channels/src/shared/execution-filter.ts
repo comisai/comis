@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { ChannelPort, NormalizedMessage, SessionKey, PerChannelStreamingConfig } from "@comis/core";
+import type { ChannelPort, NormalizedMessage, SessionKey } from "@comis/core";
 import { formatSessionKey } from "@comis/core";
 import { sanitizeAssistantResponse, extractFinalTagContent } from "@comis/agent";
 
