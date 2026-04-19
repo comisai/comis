@@ -1034,6 +1034,33 @@ describe("assembleExecutionPrompt", () => {
       const call = mockAssembleRichSystemPrompt.mock.calls[0][0];
       expect(call.excludeBootstrapFromContext).toBe(true);
     });
+
+    // F3 (2026-04-19): specialist-profile agents are task workers and must never
+    // receive the "greet the user, ask who I am" onboarding script, even when
+    // their workspace is freshly seeded and detectOnboardingState returns true.
+    it("does NOT inject onboarding for workspace.profile='specialist' even when isOnboarding=true", async () => {
+      mockDetectOnboardingState.mockResolvedValue(true);
+      mockReadFile.mockResolvedValue("Bootstrap content that must not leak");
+      const params = makeParams({
+        config: makeConfig({ workspace: { profile: "specialist" } }),
+      });
+      const result = await assembleExecutionPrompt(params);
+
+      expect(result.dynamicPreamble).not.toContain("[ONBOARDING ACTIVE");
+      expect(result.dynamicPreamble).not.toContain("Bootstrap content that must not leak");
+    });
+
+    it("still injects onboarding for workspace.profile='full' (default-agent path preserved)", async () => {
+      mockDetectOnboardingState.mockResolvedValue(true);
+      mockReadFile.mockResolvedValue("First-run greeting");
+      const params = makeParams({
+        config: makeConfig({ workspace: { profile: "full" } }),
+      });
+      const result = await assembleExecutionPrompt(params);
+
+      expect(result.dynamicPreamble).toContain("[ONBOARDING ACTIVE");
+      expect(result.dynamicPreamble).toContain("First-run greeting");
+    });
   });
 
   // -----------------------------------------------------------------

@@ -942,7 +942,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
   }
   // BOOTSTRAP.md onboarding content relocated from system prompt to dynamic preamble.
-  if (isOnboarding) {
+  // Specialist-profile agents (task workers spawned by pipelines, sub-agents, or
+  // graphs) must never receive onboarding: the "greet the user, ask who I am"
+  // script hijacks task execution and wastes ~3 KB of context per turn. See
+  // audit finding F3 (2026-04-19).
+  if (isOnboarding && config.workspace?.profile !== "specialist") {
     try {
       const bootstrapPath = safePath(deps.workspaceDir, "BOOTSTRAP.md");
       const bootstrapContent = await fs.readFile(bootstrapPath, "utf-8");
