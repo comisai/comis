@@ -510,6 +510,7 @@ export function writeRunMetadata(
     let nodesSucceeded = 0;
     let nodesFailed = 0;
     let nodesSkipped = 0;
+    let nodesRetried = 0;
     const nodesMap: Record<string, {
       status: string;
       durationMs: number | null;
@@ -517,6 +518,7 @@ export function writeRunMetadata(
       cacheReadTokens: number | null;
       cacheWriteTokens: number | null;
       cacheEffectiveness: number | null;
+      attemptsUsed: number;
     }> = {};
 
     for (const [nodeId, nState] of snap.nodes) {
@@ -533,6 +535,14 @@ export function writeRunMetadata(
       const cacheWrite = cacheData?.cacheWriteTokens ?? null;
       const cacheable = (cacheRead ?? 0) + (cacheWrite ?? 0);
 
+      // retryAttempt is 0 on first execution, N after the Nth retry. Total
+      // attempts = retryAttempt + 1 so operators can distinguish "landed on
+      // first try" (1) from "succeeded after a silent-LLM-failure retry" (2).
+      // This makes retries visible in _run-metadata.json instead of hiding in
+      // daemon.log.
+      const attemptsUsed = (nState.retryAttempt ?? 0) + 1;
+      if (attemptsUsed > 1) nodesRetried++;
+
       nodesMap[nodeId] = {
         status: nState.status,
         durationMs,
@@ -540,6 +550,7 @@ export function writeRunMetadata(
         cacheReadTokens: cacheRead,
         cacheWriteTokens: cacheWrite,
         cacheEffectiveness: cacheable > 0 ? (cacheRead ?? 0) / cacheable : null,
+        attemptsUsed,
       };
     }
 
@@ -582,6 +593,7 @@ export function writeRunMetadata(
       nodesSucceeded,
       nodesFailed,
       nodesSkipped,
+      nodesRetried,
       totalCostUsd: gs.cumulativeCost > 0 ? gs.cumulativeCost : undefined,
       totalTokens: gs.cumulativeTokens > 0 ? gs.cumulativeTokens : undefined,
       cancelReason: gs.cancelReason,
