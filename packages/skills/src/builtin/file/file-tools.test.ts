@@ -16,26 +16,31 @@ import { createComisFileTools } from "./file-tools.js";
 import { createFileStateTracker } from "./file-state-tracker.js";
 
 /**
- * Check if ripgrep directory search works via async execFile (the codepath
- * used by createComisGrepTool). Some sandboxed environments
- * hang on promisified execFile directory search even though sync works.
+ * Check if ripgrep directory search works the same way createComisGrepTool
+ * invokes it: an explicit search path plus stdio:["ignore",...] so rg does
+ * not block waiting for stdin. Some sandboxed environments hang when rg is
+ * spawned without an explicit path and with the default inherited stdin
+ * pipe — but that shape is not what the real tool uses, so we probe the
+ * real shape here.
  *
- * We probe with a short AbortController timeout. If rg search hangs, the
- * abort fires, the promise rejects, and rgCanSearch stays false.
+ * Short timeout falls through to skip if something truly is wrong with rg.
  */
 const rgCanSearch = await (async () => {
   try {
-    const { promisify } = await import("node:util");
-    const { execFile: ef } = await import("node:child_process");
-    const execFileAsync = promisify(ef);
+    const { spawn } = await import("node:child_process");
     const testDir = execFileSync("mktemp", ["-d"]).toString().trim();
     execFileSync("/bin/sh", ["-c", `echo hello > "${testDir}/probe.txt"`]);
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 2000);
-    await execFileAsync("rg", ["--color", "never", "-e", "hello"], { cwd: testDir, signal: ac.signal });
-    clearTimeout(timer);
+    const ok = await new Promise<boolean>((resolve) => {
+      const child = spawn("rg", ["--color", "never", "-e", "hello", "."], {
+        cwd: testDir,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const timer = setTimeout(() => { child.kill(); resolve(false); }, 2000);
+      child.on("close", (code) => { clearTimeout(timer); resolve(code === 0); });
+      child.on("error", () => { clearTimeout(timer); resolve(false); });
+    });
     execFileSync("rm", ["-rf", testDir]);
-    return true;
+    return ok;
   } catch {
     return false;
   }

@@ -463,14 +463,16 @@ export function createComisGrepTool(
           headLimit, offset,
         });
 
-        // 4. Determine cwd and add path to args if specific path provided
+        // 4. Determine cwd and always pass an explicit search path to rg.
+        // Why: rg falls back to reading stdin when no path is given and stdin
+        // is a pipe (execFile's default), which hangs forever. Always passing
+        // "." (or the resolved searchPath) keeps rg in directory-search mode.
         let cwd: string;
         if (filePath) {
-          // When a specific path is provided, add resolved path to args
-          // and use workspace as cwd
           args.push(searchPath);
           cwd = workspacePath;
         } else {
+          args.push(".");
           cwd = searchPath;
         }
 
