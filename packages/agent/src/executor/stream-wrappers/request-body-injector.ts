@@ -1201,16 +1201,13 @@ export function createRequestBodyInjector(
             reorderContentForStablePrefix(result.messages as Array<Record<string, unknown>>);
           }
 
-          // Sort tools for cache-stable prefix: builtins first, MCP alphabetically
-          if (needsCacheBreakpoints && Array.isArray(result.tools) && result.tools.length > 0) {
-            result.tools = sortToolsForCacheStability(result.tools as Array<Record<string, unknown>>);
-          }
-
           // 2.1: TTL expiry guard for skipCacheWrite -- when the parent's cache write
           // timestamp indicates the shared prefix cache has likely expired (>80% of TTL
           // elapsed), disable skipCacheWrite so the sub-agent creates its own cache entry
           // instead of referencing a stale one. Prevents 100% cache misses on round-2
           // sub-agents where the 5-minute TTL expired between rounds.
+          // Computed early so the W2 guard below can defer to the sub-agent bypass
+          // path (line ~1854) for SDK-placed tool markers.
           let effectiveSkipCacheWrite = config.skipCacheWrite ?? false;
           if (effectiveSkipCacheWrite && config.cacheWriteTimestamp != null) {
             const TTL_MAP: Record<string, number> = { short: 300_000, long: 3_600_000 };
@@ -1224,6 +1221,25 @@ export function createRequestBodyInjector(
                 "TTL likely expired, disabling skipCacheWrite",
               );
             }
+          }
+
+          // pi-ai 0.67.4+ auto-places cache_control on the last tool in
+          // convertTools(). W2 keeps tools at zero breakpoints (cached
+          // implicitly via the cumulative hash at the system breakpoint), so
+          // strip the auto-placed marker before our budget + zone strategy runs.
+          //
+          // Skipped for effectiveSkipCacheWrite=true (sub-agent path): single-turn
+          // sub-agents need SDK-placed markers intact to match the parent's cached
+          // prefix; multi-turn sub-agents strip+re-place at line ~1874 anyway.
+          if (needsCacheBreakpoints && !effectiveSkipCacheWrite && Array.isArray(result.tools)) {
+            for (const tool of result.tools as Array<Record<string, unknown>>) {
+              if (tool.cache_control) delete tool.cache_control;
+            }
+          }
+
+          // Sort tools for cache-stable prefix: builtins first, MCP alphabetically
+          if (needsCacheBreakpoints && Array.isArray(result.tools) && result.tools.length > 0) {
+            result.tools = sortToolsForCacheStability(result.tools as Array<Record<string, unknown>>);
           }
 
           // Rendered tool cache -- ensures byte-identical

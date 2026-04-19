@@ -1950,7 +1950,11 @@ describe("breakpoint cap increase", () => {
   // countCacheBreakpoints: tool-level cache_control (indirect tests)
   // -------------------------------------------------------------------------
 
-  it("counts tool-level cache_control in breakpoint budget", async () => {
+  // W2: Tool breakpoints are always stripped before budget accounting.
+  // pi-ai 0.67.4+ auto-places cache_control on the last tool in convertTools().
+  // These tests verify the W2 guard strips any incoming tool cache_control so
+  // Comis's message-zone strategy keeps all 4 slots available.
+  it("strips externally-placed tool cache_control (W2 guard)", async () => {
     const base = createMockStreamFn();
     const onBreakpointsPlaced = vi.fn();
     const wrapper = createRequestBodyInjector(
@@ -1967,44 +1971,36 @@ describe("breakpoint cap increase", () => {
     const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
 
-    // 10 messages with enough tokens between them for breakpoints
     const msgs: Array<{ role: string; text: string }> = [];
     for (let i = 0; i < 10; i++) {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(300) });
     }
     const payload = makeApiPayload(msgs, 0);
 
-    // Add 2 tools with cache_control markers -- these consume 2 of 4 slots
+    // Simulate pi-ai 0.67.4's auto-placement: last tool has cache_control
     payload.tools = [
-      { name: "bash", cache_control: { type: "ephemeral" } },
+      { name: "bash" },
       { name: "file_read", cache_control: { type: "ephemeral" } },
     ];
 
     const result = await onPayload(payload, model);
 
-    // Count total breakpoints across tools + system + messages
-    let totalBreakpoints = 0;
+    // W2: all tool cache_control markers are stripped
     const tools = result.tools as any[];
-    for (const t of tools) {
-      if (t.cache_control) totalBreakpoints++;
-    }
-    const system = result.system as any[];
-    for (const b of system) {
-      if (b.cache_control) totalBreakpoints++;
-    }
+    expect(tools.filter((t: any) => t.cache_control).length).toBe(0);
+
+    // Stripped markers don't consume budget -- message breakpoints still placed
     const messages = result.messages as any[];
+    let messageBreakpoints = 0;
     for (const m of messages) {
       for (const b of m.content) {
-        if (b.cache_control) totalBreakpoints++;
+        if (b.cache_control) messageBreakpoints++;
       }
     }
-    // 2 tool breakpoints + at most 2 message breakpoints = at most 4
-    expect(totalBreakpoints).toBeLessThanOrEqual(4);
-    // The 2 tool breakpoints are still present
-    expect(tools.filter((t: any) => t.cache_control).length).toBe(2);
+    expect(messageBreakpoints).toBeGreaterThan(0);
   });
 
-  it("does not exceed 4 total breakpoints when tools consume all slots", async () => {
+  it("strips pi-ai 0.67.4 auto-placement even when all tools carry cache_control", async () => {
     const base = createMockStreamFn();
     const onBreakpointsPlaced = vi.fn();
     const wrapper = createRequestBodyInjector(
@@ -2021,14 +2017,13 @@ describe("breakpoint cap increase", () => {
     const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
 
-    // 10 messages with enough tokens
     const msgs: Array<{ role: string; text: string }> = [];
     for (let i = 0; i < 10; i++) {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(300) });
     }
     const payload = makeApiPayload(msgs, 0);
 
-    // Add 4 tools with cache_control -- fills all 4 slots
+    // Adversarial input: every tool has cache_control
     payload.tools = [
       { name: "bash", cache_control: { type: "ephemeral" } },
       { name: "file_read", cache_control: { type: "ephemeral" } },
@@ -2038,18 +2033,21 @@ describe("breakpoint cap increase", () => {
 
     const result = await onPayload(payload, model);
 
-    // Count message-level breakpoints only (should be 0)
-    let messageBreakpoints = 0;
+    // W2: all tool markers stripped regardless of count
+    const tools = result.tools as any[];
+    expect(tools.filter((t: any) => t.cache_control).length).toBe(0);
+
+    // Budget is preserved -- message breakpoints and/or system breakpoints placed
+    const system = result.system as any[];
     const messages = result.messages as any[];
+    const systemBreakpoints = system.filter((b: any) => b.cache_control).length;
+    let messageBreakpoints = 0;
     for (const m of messages) {
       for (const b of m.content) {
         if (b.cache_control) messageBreakpoints++;
       }
     }
-    // All 4 slots consumed by tools -- no message breakpoints placed
-    expect(messageBreakpoints).toBe(0);
-    // Callback should NOT be called (no breakpoints placed)
-    expect(onBreakpointsPlaced).not.toHaveBeenCalled();
+    expect(systemBreakpoints + messageBreakpoints).toBeGreaterThan(0);
   });
 });
 
@@ -2151,7 +2149,7 @@ describe("tool definition caching", () => {
     expect(tools[2].cache_control).toBeUndefined();
   });
 
-  it("does not place duplicate tool breakpoint when one already exists", async () => {
+  it("W2 guard strips incoming tool cache_control in non-sub-agent flow", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector({ getCacheRetention: () => "long" }, logger);
     const wrappedFn = wrapper(base);
@@ -2168,7 +2166,7 @@ describe("tool definition caching", () => {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(300) });
     }
     const payload = makeApiPayload(msgs, 1);
-    // One tool already has cache_control
+    // Simulate pi-ai 0.67.4 placing cache_control on first tool (or any tool)
     payload.tools = [
       { name: "bash", cache_control: { type: "ephemeral" } },
       { name: "file_read", input_schema: {} },
@@ -2177,12 +2175,9 @@ describe("tool definition caching", () => {
 
     const result = await onPayload(payload, model);
 
-    // No additional tool breakpoints should be placed
+    // W2: all tool cache_control stripped in normal (non-skipCacheWrite) flow
     const tools = result.tools as any[];
-    const toolBreakpointCount = tools.filter((t: any) => t.cache_control).length;
-    expect(toolBreakpointCount).toBe(1); // Only the pre-existing one
-    expect(tools[0].cache_control).toBeDefined(); // Original preserved
-    expect(tools[2].cache_control).toBeUndefined(); // Last tool NOT modified
+    expect(tools.filter((t: any) => t.cache_control).length).toBe(0);
   });
 
   it("skips tool caching when no tools in payload", async () => {
@@ -2417,22 +2412,23 @@ describe("lookback window enforcement", () => {
     const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = receivedOptions.onPayload as (p: any, m: any) => Promise<any>;
 
-    // Build a long conversation with 3 tools having cache_control (consuming 3 slots).
-    // Plus 1 system breakpoint = 4 total. No message slots remain.
+    // Build a long conversation with 4 system breakpoints consuming all slots.
+    // (W2 guard strips tool cache_control, so use system blocks to exhaust budget.)
     const msgs: Array<{ role: string; text: string }> = [];
     for (let i = 0; i < 42; i++) {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(300) });
     }
-    const payload = makeApiPayload(msgs, 1);
-    payload.tools = [
-      { name: "bash", cache_control: { type: "ephemeral" } },
-      { name: "file_read", cache_control: { type: "ephemeral" } },
-      { name: "web_fetch", cache_control: { type: "ephemeral" } },
+    const payload = makeApiPayload(msgs, 0);
+    payload.system = [
+      { type: "text", text: "block1", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "block2", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "block3", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "block4", cache_control: { type: "ephemeral" } },
     ];
 
     const result = await onPayload(payload, model);
 
-    // No message breakpoints should be placed (all 4 slots used: 1 system + 3 tool)
+    // No message breakpoints should be placed (all 4 slots used by system blocks)
     let messageBreakpoints = 0;
     const messages = result.messages as any[];
     for (const m of messages) {
@@ -2802,22 +2798,23 @@ describe("breakpoint strategy config", () => {
     const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
     const onPayload = receivedOptions.onPayload as (payload: any, model: any) => Promise<any>;
 
-    // Build payload with system breakpoint + 3 tool breakpoints = 4 total, 0 slots left
+    // Build payload with 4 system breakpoints consuming all slots.
+    // (W2 guard strips tool cache_control, so use system blocks to exhaust budget.)
     const msgs: Array<{ role: string; text: string }> = [];
     for (let i = 0; i < 10; i++) {
       msgs.push({ role: i % 2 === 0 ? "user" : "assistant", text: textForTokens(300) });
     }
 
-    const payload = makeApiPayload(msgs, 1);
-    // Manually add 3 tool breakpoints to consume all 4 slots (1 system + 3 tools = 4)
-    payload.tools = [
-      { name: "t1", cache_control: { type: "ephemeral" } },
-      { name: "t2", cache_control: { type: "ephemeral" } },
-      { name: "t3", cache_control: { type: "ephemeral" } },
+    const payload = makeApiPayload(msgs, 0);
+    payload.system = [
+      { type: "text", text: "block1", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "block2", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "block3", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "block4", cache_control: { type: "ephemeral" } },
     ];
     const result = await onPayload(payload, model);
 
-    // All 4 slots consumed (1 system + 3 tools), 0 message breakpoints should be placed
+    // All 4 slots consumed by system, 0 message breakpoints should be placed
     const msgBps = countMessageBreakpoints(result);
     expect(msgBps).toBe(0);
   });
@@ -6786,6 +6783,7 @@ describe("fence-aware microcompaction", () => {
         { type: "text", text: "System prompt", cache_control: { type: "ephemeral" } },
       ],
       tools: [
+        // Simulate pi-ai 0.67.4 auto-placing cache_control on the last tool
         { name: "bash", input_schema: {}, cache_control: { type: "ephemeral" } },
       ],
       messages: [
@@ -6805,7 +6803,8 @@ describe("fence-aware microcompaction", () => {
     expect(auditPayload).toHaveProperty("systemBreakpoints");
     expect(auditPayload).toHaveProperty("toolBreakpoints");
     expect(auditPayload.systemBreakpoints).toBe(1);
-    expect(auditPayload.toolBreakpoints).toBe(1);
+    // W2 guard strips tool cache_control in non-sub-agent flow -> audit sees 0
+    expect(auditPayload.toolBreakpoints).toBe(0);
   });
 
   // -------------------------------------------------------------------------
