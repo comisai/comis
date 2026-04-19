@@ -46,7 +46,7 @@
     "@comis/scheduler": "workspace:*",
     "@comis/shared": "workspace:*",
     "@comis/skills": "workspace:*",
-    "@mariozechner/pi-ai": "0.65.0",
+    "@mariozechner/pi-ai": "0.67.68",
     "better-sqlite3": "^12.6.2",
     "hono": "^4.12.5",
     "pino": "^10.3.1",
