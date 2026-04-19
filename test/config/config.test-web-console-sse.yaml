@@ -23,6 +23,21 @@ agents:
         enabled: true
         maxConcurrentRuns: 5
         defaultTimezone: UTC
+  sse-multi-agent:
+    name: SSE Multi Agent
+    skills:
+      builtinTools:
+        read: true
+        write: true
+        edit: true
+        grep: true
+        find: true
+        ls: true
+        exec: true
+        process: true
+        webSearch: true
+        webFetch: true
+        browser: false
 gateway:
   enabled: true
   host: 127.0.0.1
