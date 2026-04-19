@@ -80,6 +80,7 @@ import { resetTrackerTimers } from "./tool-lifecycle.js";
 import { applyCommandDirectives } from "./executor-command-handlers.js";
 import { setupContextEngine } from "./executor-context-engine-setup.js";
 import { runPrompt } from "./executor-prompt-runner.js";
+import { tryInjectSilentFailure } from "./fault-injector.js";
 import { postExecution } from "./executor-post-execution.js";
 import { assembleTools } from "./executor-tool-assembly.js";
 import {
@@ -474,6 +475,26 @@ export function createPiExecutor(
           "Circuit breaker open",
         );
         return result;
+      }
+
+      // d'. Test-only silent-LLM-failure fault injection.
+      // Gated by COMIS_TEST_SILENT_FAIL_FLAG env var. Lets operators validate
+      // the FINDING-2 retry/reuseSessionKey path end-to-end without waiting
+      // for real Anthropic instability. Env var is absent in all shipped
+      // configs; see packages/agent/src/executor/fault-injector.ts for the
+      // safety analysis.
+      {
+        const injection = tryInjectSilentFailure(deps.logger, {
+          agentId,
+          sessionKey: formatSessionKey(sessionKey),
+        });
+        if (injection) {
+          result.finishReason = injection.finishReason;
+          result.response = injection.response;
+          result.llmCalls = injection.llmCalls;
+          result.stepsExecuted = injection.stepsExecuted;
+          return result;
+        }
       }
 
       // d. Reset per-execution state
