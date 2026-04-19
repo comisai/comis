@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Value } from "@sinclair/typebox/value";
 import { createAgentsManageTool } from "./agents-manage-tool.js";
 import { runWithContext } from "@comis/core";
 import type { RequestContext, ApprovalGate } from "@comis/core";
@@ -457,6 +458,32 @@ describe("agents_manage tool", () => {
           tool.execute("call-inv", { action: "bogus", agent_id: "bot-1" } as never),
         ),
       ).rejects.toThrow(/\[invalid_value\]/);
+    });
+  });
+
+  // Regression: the `config` parameter schema accepts EITHER an object OR
+  // a JSON string. This stops the TypeBox validator from rejecting the
+  // stringified form the Anthropic LLM sometimes emits for nested free-form
+  // objects, before coerceConfig() in execute() gets a chance to parse it.
+  describe("schema accepts both object and string config", () => {
+    it("parameters TypeBox validates for object config", () => {
+      const tool = createAgentsManageTool(mockRpcCall);
+      const ok = Value.Check(tool.parameters, {
+        action: "create",
+        agent_id: "bot-obj",
+        config: { name: "Object Agent", provider: "anthropic", model: "claude-opus-4-6" },
+      });
+      expect(ok).toBe(true);
+    });
+
+    it("parameters TypeBox validates for stringified config (LLM fallback path)", () => {
+      const tool = createAgentsManageTool(mockRpcCall);
+      const ok = Value.Check(tool.parameters, {
+        action: "create",
+        agent_id: "bot-str",
+        config: '{"name":"Stringified Agent","provider":"anthropic","model":"claude-opus-4-6"}',
+      });
+      expect(ok).toBe(true);
     });
   });
 });

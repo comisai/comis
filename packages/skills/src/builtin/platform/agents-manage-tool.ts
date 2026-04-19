@@ -36,49 +36,62 @@ const AgentsManageToolParams = Type.Object({
     description: "The agent identifier (required for all actions)",
   }),
   config: Type.Optional(
-    Type.Object(
-      {
-        name: Type.Optional(Type.String({ description: "Human-readable agent name" })),
-        model: Type.Optional(Type.String({ description: "LLM model identifier" })),
-        provider: Type.Optional(Type.String({ description: "LLM provider name" })),
-        maxSteps: Type.Optional(Type.Integer({ description: "Maximum execution steps per turn" })),
-        workspace_profile: Type.Optional(
-          Type.Union([Type.Literal("full"), Type.Literal("specialist")], {
-            description:
-              "Workspace profile controlling platform instruction verbosity. " +
-              "Valid values: full (~9K tokens, user-facing agents on channels), " +
-              "specialist (~800 tokens, task workers and fleet sub-agents). " +
-              "Default: full. Can be changed later via update action.",
-          }),
-        ),
-        skills: Type.Optional(
-          Type.Object(
-            {
-              builtinTools: Type.Optional(
-                Type.Object(
-                  {
-                    read: Type.Optional(Type.Boolean({ description: "Enable file reading" })),
-                    write: Type.Optional(Type.Boolean({ description: "Enable file writing" })),
-                    edit: Type.Optional(Type.Boolean({ description: "Enable file editing" })),
-                    grep: Type.Optional(Type.Boolean({ description: "Enable regex search across files" })),
-                    find: Type.Optional(Type.Boolean({ description: "Enable file search by glob pattern" })),
-                    ls: Type.Optional(Type.Boolean({ description: "Enable directory listing" })),
-                    exec: Type.Optional(Type.Boolean({ description: "Enable shell command execution" })),
-                    process: Type.Optional(Type.Boolean({ description: "Enable background process management" })),
-                    webSearch: Type.Optional(Type.Boolean({ description: "Enable web search" })),
-                    webFetch: Type.Optional(Type.Boolean({ description: "Enable URL content fetching" })),
-                    browser: Type.Optional(Type.Boolean({ description: "Enable headless browser control" })),
-                  },
-                  { description: "Built-in tool toggles (true=enabled, false=disabled)" },
-                ),
-              ),
-            },
-            { description: "Skills and tool configuration" },
+    // Accept EITHER a structured object OR a JSON string. Anthropic's LLM
+    // sometimes emits nested free-form objects as stringified JSON; coerceConfig()
+    // below parses the string back to an object at execution time. Keeping the
+    // structured shape as the preferred option preserves schema documentation
+    // for the LLM while the string fallback prevents validation-layer rejection
+    // of the stringified form.
+    Type.Union([
+      Type.Object(
+        {
+          name: Type.Optional(Type.String({ description: "Human-readable agent name" })),
+          model: Type.Optional(Type.String({ description: "LLM model identifier" })),
+          provider: Type.Optional(Type.String({ description: "LLM provider name" })),
+          maxSteps: Type.Optional(Type.Integer({ description: "Maximum execution steps per turn" })),
+          workspace_profile: Type.Optional(
+            Type.Union([Type.Literal("full"), Type.Literal("specialist")], {
+              description:
+                "Workspace profile controlling platform instruction verbosity. " +
+                "Valid values: full (~9K tokens, user-facing agents on channels), " +
+                "specialist (~800 tokens, task workers and fleet sub-agents). " +
+                "Default: full. Can be changed later via update action.",
+            }),
           ),
-        ),
-      },
-      { description: "Agent configuration for create/update actions" },
-    ),
+          skills: Type.Optional(
+            Type.Object(
+              {
+                builtinTools: Type.Optional(
+                  Type.Object(
+                    {
+                      read: Type.Optional(Type.Boolean({ description: "Enable file reading" })),
+                      write: Type.Optional(Type.Boolean({ description: "Enable file writing" })),
+                      edit: Type.Optional(Type.Boolean({ description: "Enable file editing" })),
+                      grep: Type.Optional(Type.Boolean({ description: "Enable regex search across files" })),
+                      find: Type.Optional(Type.Boolean({ description: "Enable file search by glob pattern" })),
+                      ls: Type.Optional(Type.Boolean({ description: "Enable directory listing" })),
+                      exec: Type.Optional(Type.Boolean({ description: "Enable shell command execution" })),
+                      process: Type.Optional(Type.Boolean({ description: "Enable background process management" })),
+                      webSearch: Type.Optional(Type.Boolean({ description: "Enable web search" })),
+                      webFetch: Type.Optional(Type.Boolean({ description: "Enable URL content fetching" })),
+                      browser: Type.Optional(Type.Boolean({ description: "Enable headless browser control" })),
+                    },
+                    { description: "Built-in tool toggles (true=enabled, false=disabled)" },
+                  ),
+                ),
+              },
+              { description: "Skills and tool configuration" },
+            ),
+          ),
+        },
+        { description: "Agent configuration for create/update actions" },
+      ),
+      Type.String({
+        description:
+          "Agent configuration as a JSON string (fallback when the LLM stringifies the object). " +
+          "Will be parsed at execution time. Prefer the object form.",
+      }),
+    ]),
   ),
 });
 
