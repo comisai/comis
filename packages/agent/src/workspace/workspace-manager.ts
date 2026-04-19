@@ -26,6 +26,23 @@ export interface WorkspaceFiles {
   files: Map<WorkspaceFileName, string>; // fileName -> absolutePath
 }
 
+/**
+ * Structural subset of `FileStateTracker` from `@comis/skills`.
+ *
+ * Defined here to avoid an agent→skills dependency (reverses the layer direction).
+ * Any object implementing `recordRead` with this signature satisfies the shape;
+ * the real `FileStateTracker` structurally conforms.
+ */
+export interface WorkspaceSeedTracker {
+  recordRead(
+    path: string,
+    mtime: number,
+    offset?: number,
+    limit?: number,
+    contentSample?: Buffer,
+  ): void;
+}
+
 export interface EnsureWorkspaceOptions {
   /** Absolute path to workspace directory */
   dir: string;
@@ -33,6 +50,17 @@ export interface EnsureWorkspaceOptions {
   ensureBootstrapFiles?: boolean;
   /** Whether to initialize a git repo (default: true) */
   initGit?: boolean;
+  /**
+   * Optional per-session file-state tracker. When provided, each template
+   * file successfully seeded by `writeIfMissing` is registered as "read"
+   * with the correct mtime and known content, so the caller session's
+   * `write` tool can overwrite the seed without tripping the read-before-write
+   * (`[not_read]`) gate.
+   *
+   * Left undefined at daemon startup (no session yet) — the seeded files will
+   * be registered lazily on first read, same as before.
+   */
+  tracker?: WorkspaceSeedTracker;
 }
 
 export interface WorkspaceStatus {
@@ -98,7 +126,7 @@ async function ensureGitRepo(dir: string): Promise<void> {
  * - Optionally initializes a git repo (best-effort)
  */
 export async function ensureWorkspace(options: EnsureWorkspaceOptions): Promise<WorkspaceFiles> {
-  const { dir, ensureBootstrapFiles = true, initGit = true } = options;
+  const { dir, ensureBootstrapFiles = true, initGit = true, tracker } = options;
 
   await fs.mkdir(dir, { recursive: true });
 
@@ -114,10 +142,25 @@ export async function ensureWorkspace(options: EnsureWorkspaceOptions): Promise<
     let bootstrapNewlyWritten = false;
     for (const name of WORKSPACE_FILE_NAMES) {
       const filePath = safePath(dir, name);
-      const written = await writeIfMissing(filePath, DEFAULT_TEMPLATES[name]);
+      const template = DEFAULT_TEMPLATES[name];
+      const written = await writeIfMissing(filePath, template);
       files.set(name, filePath);
       if (name === "BOOTSTRAP.md" && written) {
         bootstrapNewlyWritten = true;
+      }
+      // Register the seeded file in the caller's tracker so its `write` tool
+      // can overwrite the template without hitting the read-before-write gate.
+      // Only register when we actually wrote (new seed) -- pre-existing files
+      // weren't touched here, so their mtime/content is whatever the caller
+      // saw before this call.
+      if (written && tracker) {
+        try {
+          const stat = await fs.stat(filePath);
+          tracker.recordRead(filePath, stat.mtimeMs, 0, undefined, Buffer.from(template, "utf-8"));
+        } catch {
+          // stat failure is non-fatal: skip registration, fall back to
+          // pre-fix behavior (caller will need to read before overwriting).
+        }
       }
     }
     if (bootstrapNewlyWritten) {

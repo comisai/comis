@@ -11,7 +11,8 @@ import type { AppContainer, SkillsConfig, ApprovalGate, CredentialMappingPort, W
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../rpc/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import { SkillsConfigSchema, sanitizeLogString, tryGetContext, parseFormattedSessionKey, safePath } from "@comis/core";
-import { sessionKeyToPath } from "@comis/agent";
+import { sessionKeyToPath, WORKSPACE_FILE_NAMES, DEFAULT_TEMPLATES } from "@comis/agent";
+import { stat as fsStat } from "node:fs/promises";
 import type { PerAgentConfig } from "@comis/core";
 import type { ImageGenerationPort } from "@comis/core";
 import type { SandboxProvider, ExecSandboxConfig, LazyPaths, FileStateTracker } from "@comis/skills";
@@ -326,6 +327,30 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         createAgentsManageTool(agentRpc, approvalGate, {
           onMutationStart: enterConfigMutationFence,
           onMutationEnd: leaveConfigMutationFence,
+          // After agents.create seeds the new workspace's template files
+          // (IDENTITY.md, ROLE.md, etc.) via ensureWorkspace, register those
+          // seeded paths in THIS session's tracker so the caller LLM can
+          // overwrite them via `write` without hitting the [not_read] gate.
+          // Each file path is absolute; the seeded content is deterministic
+          // (DEFAULT_TEMPLATES[name]), so we register the known mtime + content.
+          onAgentCreated: async ({ workspaceDir }) => {
+            if (!workspaceDir) return;
+            for (const name of WORKSPACE_FILE_NAMES) {
+              const filePath = safePath(workspaceDir, name);
+              try {
+                const st = await fsStat(filePath);
+                fileStateTracker.recordRead(
+                  filePath,
+                  st.mtimeMs,
+                  0,
+                  undefined,
+                  Buffer.from(DEFAULT_TEMPLATES[name], "utf-8"),
+                );
+              } catch {
+                /* file absent or stat failed -- skip registration */
+              }
+            }
+          },
         }),
         createObsQueryTool(agentRpc),
         createSessionsManageTool(agentRpc, approvalGate),

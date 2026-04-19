@@ -174,6 +174,83 @@ describe("agents_manage tool", () => {
         _trustLevel: "admin",
       });
     });
+
+    // ---------------------------------------------------------------------
+    // onAgentCreated callback (seed-tracker registration hook)
+    // ---------------------------------------------------------------------
+
+    it("fires onAgentCreated with agentId + workspaceDir after successful create", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "new-bot",
+        created: true,
+        workspaceDir: "/tmp/workspace-new-bot",
+      });
+      const onAgentCreated = vi.fn(async () => {});
+
+      const tool = createAgentsManageTool(mockRpcCall, undefined, { onAgentCreated });
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-c4", { action: "create", agent_id: "new-bot" } as never),
+      );
+
+      expect(onAgentCreated).toHaveBeenCalledTimes(1);
+      expect(onAgentCreated).toHaveBeenCalledWith({
+        agentId: "new-bot",
+        workspaceDir: "/tmp/workspace-new-bot",
+      });
+    });
+
+    it("fires onAgentCreated without workspaceDir when RPC result omits it", async () => {
+      mockRpcCall.mockResolvedValue({ agentId: "new-bot", created: true });
+      const onAgentCreated = vi.fn(async () => {});
+
+      const tool = createAgentsManageTool(mockRpcCall, undefined, { onAgentCreated });
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-c5", { action: "create", agent_id: "new-bot" } as never),
+      );
+
+      expect(onAgentCreated).toHaveBeenCalledTimes(1);
+      expect(onAgentCreated).toHaveBeenCalledWith({ agentId: "new-bot" });
+    });
+
+    it("does NOT fire onAgentCreated when agents.create rejects", async () => {
+      mockRpcCall.mockRejectedValue(new Error("rpc failure"));
+      const onAgentCreated = vi.fn(async () => {});
+
+      const tool = createAgentsManageTool(mockRpcCall, undefined, { onAgentCreated });
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-c6", { action: "create", agent_id: "new-bot" } as never),
+        ),
+      ).rejects.toThrow(/rpc failure/);
+
+      expect(onAgentCreated).not.toHaveBeenCalled();
+    });
+
+    it("swallows callback errors without failing the tool call", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "new-bot",
+        created: true,
+        workspaceDir: "/tmp/workspace-new-bot",
+      });
+      const onAgentCreated = vi.fn(async () => {
+        throw new Error("tracker blew up");
+      });
+
+      const tool = createAgentsManageTool(mockRpcCall, undefined, { onAgentCreated });
+
+      // Must NOT throw -- callback failure is a non-fatal optimization.
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-c7", { action: "create", agent_id: "new-bot" } as never),
+      );
+
+      expect(result.details).toEqual(
+        expect.objectContaining({ agentId: "new-bot", created: true }),
+      );
+      expect(onAgentCreated).toHaveBeenCalledTimes(1);
+    });
   });
 
   // -----------------------------------------------------------------------

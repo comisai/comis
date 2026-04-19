@@ -205,6 +205,81 @@ describe("workspace-manager", () => {
         expect(templateEntries).toHaveLength(0);
       });
     });
+
+    describe("tracker registration (seed-aware FileStateTracker)", () => {
+      it("calls tracker.recordRead for every newly-seeded template file", async () => {
+        const dir = await makeTempDir();
+        const calls: Array<{ path: string; mtime: number; sample: Buffer | undefined }> = [];
+        const tracker = {
+          recordRead: (
+            p: string,
+            mtime: number,
+            _offset?: number,
+            _limit?: number,
+            sample?: Buffer,
+          ) => {
+            calls.push({ path: p, mtime, sample });
+          },
+        };
+
+        await ensureWorkspace({ dir, tracker });
+
+        // One recordRead per template file -- matches WORKSPACE_FILE_NAMES order.
+        const recordedPaths = calls.map((c) => c.path).sort();
+        const expectedPaths = [...WORKSPACE_FILE_NAMES]
+          .map((name) => path.join(dir, name))
+          .sort();
+        expect(recordedPaths).toEqual(expectedPaths);
+
+        // Every call has a positive mtime (seeding happened) and a non-empty buffer.
+        for (const call of calls) {
+          expect(call.mtime).toBeGreaterThan(0);
+          expect(call.sample).toBeInstanceOf(Buffer);
+          expect(call.sample!.length).toBeGreaterThan(0);
+        }
+      });
+
+      it("skips tracker registration for pre-existing files (writeIfMissing returned false)", async () => {
+        const dir = await makeTempDir();
+        await fs.mkdir(dir, { recursive: true });
+        // Pre-create SOUL.md with custom content; ensureWorkspace must NOT
+        // register it in the tracker because it didn't write it.
+        await fs.writeFile(path.join(dir, "SOUL.md"), "# Pre-existing\n", "utf-8");
+
+        const calls: string[] = [];
+        const tracker = {
+          recordRead: (p: string) => {
+            calls.push(p);
+          },
+        };
+
+        await ensureWorkspace({ dir, tracker });
+
+        // SOUL.md should NOT appear in the recorded paths -- only files that
+        // were actually written during this call.
+        const soulPath = path.join(dir, "SOUL.md");
+        expect(calls).not.toContain(soulPath);
+        // But the other 8 template files should have been registered.
+        expect(calls).toHaveLength(WORKSPACE_FILE_NAMES.length - 1);
+      });
+
+      it("does nothing when no tracker is provided (backwards-compatible)", async () => {
+        const dir = await makeTempDir();
+        // No tracker argument -- should not throw, should still create files.
+        const result = await ensureWorkspace({ dir });
+        expect(result.files.size).toBe(WORKSPACE_FILE_NAMES.length);
+      });
+
+      it("does not invoke tracker when ensureBootstrapFiles is false", async () => {
+        const dir = await makeTempDir();
+        const calls: string[] = [];
+        const tracker = { recordRead: (p: string) => calls.push(p) };
+
+        await ensureWorkspace({ dir, ensureBootstrapFiles: false, tracker });
+
+        expect(calls).toEqual([]);
+      });
+    });
   });
 
   describe("getWorkspaceStatus", () => {

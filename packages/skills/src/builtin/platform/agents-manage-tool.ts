@@ -157,6 +157,13 @@ export function createAgentsManageTool(
   callbacks?: {
     onMutationStart?: () => void;
     onMutationEnd?: () => void;
+    /**
+     * Fired after a successful `agents.create` RPC with the new agent's
+     * workspace directory. Lets the caller register seeded template files
+     * in its FileStateTracker so the LLM's `write` tool can overwrite the
+     * seed without hitting the read-before-write (`[not_read]`) gate.
+     */
+    onAgentCreated?: (info: { agentId: string; workspaceDir?: string }) => Promise<void> | void;
   },
 ): AgentTool<typeof AgentsManageToolParams> {
   return createAdminManageTool(
@@ -178,7 +185,23 @@ export function createAgentsManageTool(
           mapWorkspaceProfile(config);
           callbacks?.onMutationStart?.();
           try {
-            return await rpcCall("agents.create", { agentId, config, _trustLevel: ctx.trustLevel });
+            const result = await rpcCall("agents.create", { agentId, config, _trustLevel: ctx.trustLevel });
+            // Best-effort seed registration hook. Fires only on successful
+            // RPC return. Callback failures are swallowed — the agent was
+            // created; tracker registration is an optimization, not a gate.
+            if (callbacks?.onAgentCreated) {
+              try {
+                const workspaceDir = (result as { workspaceDir?: string } | undefined)?.workspaceDir;
+                // agentId is guaranteed non-undefined by readStringParam(required=true) above.
+                const aid = agentId as string;
+                await callbacks.onAgentCreated(
+                  workspaceDir !== undefined ? { agentId: aid, workspaceDir } : { agentId: aid },
+                );
+              } catch {
+                /* non-fatal */
+              }
+            }
+            return result;
           } finally {
             callbacks?.onMutationEnd?.();
           }
