@@ -63,43 +63,53 @@ export function wrapToolResultWithGuide(
   deliveredGuides: Set<string>,
   logger: ComisLogger,
 ): AgentToolResult<unknown> {
-  // Collect guide texts and their type keys for observability
+  // Two-phase design: first decide what WOULD fire without mutating state,
+  // then commit (mark delivered + append) only if the result is non-error.
+  // Rationale: if the first call to a guided tool errors (validation,
+  // approval-required, etc.) and we mutate deliveredGuides here, a later
+  // successful call finds the slot "consumed" and silently skips its guide.
+  // That's invisible and was the root cause of the NVDA team-agent session
+  // never seeing TOOL_GUIDES["agents_manage"]. Mutate only on success.
+
+  // Phase 1 — collect candidate guides (read-only on deliveredGuides)
+  const toolGuide = getToolGuideWithSchema(toolName);
+  const wantsTool = !!toolGuide && !deliveredGuides.has(toolName);
+
+  const sectionGuide = SYSTEM_PROMPT_GUIDES[toolName];
+  const sectionKey = `section:${toolName}`;
+  const wantsSection = !!sectionGuide && !deliveredGuides.has(sectionKey);
+
+  const wantsPrivileged =
+    PRIVILEGED_TOOL_SET.has(toolName) &&
+    !deliveredGuides.has(PRIVILEGED_SECTION_KEY) &&
+    !!SYSTEM_PROMPT_GUIDES["__privileged_tools__"];
+
+  if (!wantsTool && !wantsSection && !wantsPrivileged) return result;
+
+  // Skip on error — but DO NOT consume delivery slots so a retry can fire.
+  // isError is a runtime extension on AgentToolResult (set by MCP bridge,
+  // discovery tools, validation wrappers).
+  if ((result as unknown as Record<string, unknown>).isError) return result;
+
+  // Phase 2 — commit: mark delivered, build guide texts, append.
   const guideTexts: string[] = [];
   const guideTypes: string[] = [];
 
-  // 1. TOOL_GUIDES: per-tool operational guide
-  const toolGuide = getToolGuideWithSchema(toolName);
-  if (toolGuide && !deliveredGuides.has(toolName)) {
+  if (wantsTool) {
     deliveredGuides.add(toolName);
     guideTexts.push(toolGuide);
     guideTypes.push(`tool:${toolName}`);
   }
-
-  // 2. SYSTEM_PROMPT_GUIDES: deferred section by tool name
-  const sectionGuide = SYSTEM_PROMPT_GUIDES[toolName];
-  const sectionKey = `section:${toolName}`;
-  if (sectionGuide && !deliveredGuides.has(sectionKey)) {
+  if (wantsSection) {
     deliveredGuides.add(sectionKey);
     guideTexts.push(sectionGuide);
     guideTypes.push(sectionKey);
   }
-
-  // 3. SYSTEM_PROMPT_GUIDES: privileged tools sentinel
-  if (PRIVILEGED_TOOL_SET.has(toolName) && !deliveredGuides.has(PRIVILEGED_SECTION_KEY)) {
-    const privilegedGuide = SYSTEM_PROMPT_GUIDES["__privileged_tools__"];
-    if (privilegedGuide) {
-      deliveredGuides.add(PRIVILEGED_SECTION_KEY);
-      guideTexts.push(privilegedGuide);
-      guideTypes.push(PRIVILEGED_SECTION_KEY);
-    }
+  if (wantsPrivileged) {
+    deliveredGuides.add(PRIVILEGED_SECTION_KEY);
+    guideTexts.push(SYSTEM_PROMPT_GUIDES["__privileged_tools__"]!);
+    guideTypes.push(PRIVILEGED_SECTION_KEY);
   }
-
-  // Nothing to inject
-  if (guideTexts.length === 0) return result;
-
-  // Skip injection on error results (still marked delivered above).
-  // isError is a runtime extension -- not in AgentToolResult type.
-  if ((result as unknown as Record<string, unknown>).isError) return result;
 
   // Log guide injection with guide type classification
   const combinedSize = guideTexts.reduce((sum, t) => sum + t.length, 0);

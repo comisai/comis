@@ -77,7 +77,14 @@ describe("wrapToolResultWithGuide", () => {
     expect(logger.info).not.toHaveBeenCalled();
   });
 
-  it("marks tool as delivered even on error results", () => {
+  it("does NOT mark tool as delivered on error results (so a retry can still fire)", () => {
+    // Previously this function consumed the delivery slot even on error,
+    // which silently swallowed guides for any tool whose first call failed
+    // (validation errors, approval-required, etc.). The NVDA team-agent
+    // session hit this: first agents_manage call validation-errored on a
+    // stringified config, consumed the slot, subsequent successful creates
+    // never got the Workspace Customization Guide. Fix: leave deliveredGuides
+    // untouched on error so the next call has another chance.
     const logger = createMockLogger();
     const delivered = new Set<string>();
     const result = makeToolResult("Agent creation failed", true);
@@ -87,8 +94,8 @@ describe("wrapToolResultWithGuide", () => {
     // No guide injected on error
     expect(wrapped.content).toHaveLength(1);
     expect((wrapped.content[0] as { text: string }).text).toBe("Agent creation failed");
-    // But tool is marked as delivered
-    expect(delivered.has("agents_manage")).toBe(true);
+    // Tool NOT marked as delivered -- a subsequent successful call can still fire.
+    expect(delivered.has("agents_manage")).toBe(false);
     // No INFO log on skipped injection
     expect(logger.info).not.toHaveBeenCalled();
   });
@@ -493,7 +500,125 @@ describe("wrapToolResultWithGuide -- output schema injection", () => {
 
     // No guide injected on error
     expect(wrapped.content).toHaveLength(1);
-    // But tool is marked as delivered
-    expect(delivered.has("memory_search")).toBe(true);
+    // Tool NOT marked as delivered -- preserves the slot for a retry.
+    expect(delivered.has("memory_search")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression coverage for the two bugs identified by the NVDA team-agent run
+// (COMIS-JIT-GUIDE-DEFERRED-TOOLS-BUG.md).
+// ---------------------------------------------------------------------------
+
+describe("regression: isError does not consume the delivery slot", () => {
+  it("first call errored -> retry fires the tool guide", () => {
+    const logger = createMockLogger();
+    const delivered = new Set<string>();
+
+    // Attempt 1: validation error (e.g. stringified config rejected).
+    const firstTry = wrapToolResultWithGuide(
+      "agents_manage",
+      makeToolResult("validation error", true),
+      delivered,
+      logger,
+    );
+    expect(firstTry.content).toHaveLength(1);                       // no guide appended
+    expect(delivered.has("agents_manage")).toBe(false);             // slot preserved
+    expect(logger.info).not.toHaveBeenCalled();
+
+    // Attempt 2: same tool succeeds -> guide fires now.
+    const secondTry = wrapToolResultWithGuide(
+      "agents_manage",
+      makeToolResult("Agent created"),
+      delivered,
+      logger,
+    );
+    expect(secondTry.content).toHaveLength(2);
+    expect((secondTry.content[1] as { text: string }).text).toContain("Workspace Customization Guide");
+    expect(delivered.has("agents_manage")).toBe(true);
+    expect(logger.info).toHaveBeenCalledOnce();
+  });
+
+  it("successful call stays one-shot (second success does not re-fire)", () => {
+    const logger = createMockLogger();
+    const delivered = new Set<string>();
+
+    const first = wrapToolResultWithGuide(
+      "agents_manage",
+      makeToolResult("Agent created"),
+      delivered,
+      logger,
+    );
+    expect(first.content).toHaveLength(2);
+    expect(logger.info).toHaveBeenCalledOnce();
+
+    const second = wrapToolResultWithGuide(
+      "agents_manage",
+      makeToolResult("Another agent created"),
+      delivered,
+      logger,
+    );
+    expect(second.content).toHaveLength(1);                         // no re-inject
+    expect(logger.info).toHaveBeenCalledOnce();                     // still only the first
+  });
+
+  it("SYSTEM_PROMPT_GUIDES section key is also preserved across errors", () => {
+    // sessions_spawn has a section guide (Task Delegation). Section keys are
+    // tracked independently but must follow the same isError rules.
+    const logger = createMockLogger();
+    const delivered = new Set<string>();
+
+    // Error on first call must not consume section:sessions_spawn.
+    wrapToolResultWithGuide(
+      "sessions_spawn",
+      makeToolResult("approval required", true),
+      delivered,
+      logger,
+    );
+    expect(delivered.has("section:sessions_spawn")).toBe(false);
+
+    // Success -> both the tool guide AND the section guide fire.
+    const ok = wrapToolResultWithGuide(
+      "sessions_spawn",
+      makeToolResult("spawn started"),
+      delivered,
+      logger,
+    );
+    expect(ok.content).toHaveLength(2);
+    // sessions_spawn has both TOOL_GUIDES entry + SYSTEM_PROMPT_GUIDES entry;
+    // both slots should now be committed.
+    expect(delivered.has("sessions_spawn")).toBe(true);
+    expect(delivered.has("section:sessions_spawn")).toBe(true);
+  });
+});
+
+describe("regression: mid-turn discovered tool path (Bug 1)", () => {
+  // This mirrors pi-executor.ts's mid-turn tool injection: when discover_tools
+  // returns a new tool, pi-executor pushes it into the live contextTools array
+  // and must route its execute() result through wrapToolResultWithGuide so the
+  // guide fires on first use. The call shape here is the exact one that
+  // pi-executor uses post-fix.
+  it("simulated mid-turn injection wires the guide correctly", async () => {
+    const logger = createMockLogger();
+    const delivered = new Set<string>();
+
+    // The `original` is the bare deferred tool's AgentTool; we wrap its
+    // execute() through wrapToolResultWithGuide, exactly like pi-executor does.
+    const original = {
+      execute: async () => makeToolResult("Agent created"),
+    };
+    const executeWithGuide = async () => {
+      const res = await original.execute();
+      return wrapToolResultWithGuide("agents_manage", res, delivered, logger);
+    };
+
+    const out1 = await executeWithGuide();
+    expect(out1.content).toHaveLength(2);                           // guide fired
+    expect((out1.content[1] as { text: string }).text).toContain("Workspace Customization Guide");
+    expect(delivered.has("agents_manage")).toBe(true);
+
+    // Same tool called again inside the mid-turn agentic loop -> one-shot.
+    const out2 = await executeWithGuide();
+    expect(out2.content).toHaveLength(1);
   });
 });

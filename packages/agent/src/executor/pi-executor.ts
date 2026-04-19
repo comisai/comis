@@ -81,6 +81,7 @@ import { applyCommandDirectives } from "./executor-command-handlers.js";
 import { setupContextEngine } from "./executor-context-engine-setup.js";
 import { runPrompt } from "./executor-prompt-runner.js";
 import { tryInjectSilentFailure } from "./fault-injector.js";
+import { wrapToolResultWithGuide } from "./jit-guide-injector.js";
 import { postExecution } from "./executor-post-execution.js";
 import { assembleTools } from "./executor-tool-assembly.js";
 import {
@@ -786,14 +787,31 @@ export function createPiExecutor(
               // Create AgentTool-compatible wrapper and push into the live array.
               // The agentic loop's currentContext.tools is this same array reference,
               // so pushed tools are immediately findable by agent-loop.js prepareToolCall().
+              //
+              // IMPORTANT: the execute() closure routes the result through
+              // wrapToolResultWithGuide so deferred tools (agents_manage,
+              // sessions_spawn, MCP tools, ...) receive their TOOL_GUIDES entry
+              // on first successful call. The session-start createJitGuideWrapper
+              // only wrapped tools present then; without this, discovered tools
+              // silently skipped their guides. Uses the same deliveredGuides Set
+              // as the session-start wrapper so the "once per session" contract
+              // holds whether the tool arrives initially or via discover_tools.
               const original = entry.original;
               contextTools.push({
                 name: original.name,
                 label: (original as unknown as Record<string, unknown>).label as string | undefined,
                 description: original.description,
                 parameters: original.parameters,
-                execute: (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: unknown) =>
-                  original.execute(toolCallId, params as Record<string, unknown>, signal, onUpdate as Parameters<typeof original.execute>[3], undefined as unknown as Parameters<typeof original.execute>[4]),
+                execute: async (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: unknown) => {
+                  const res = await original.execute(
+                    toolCallId,
+                    params as Record<string, unknown>,
+                    signal,
+                    onUpdate as Parameters<typeof original.execute>[3],
+                    undefined as unknown as Parameters<typeof original.execute>[4],
+                  );
+                  return wrapToolResultWithGuide(original.name, res, deliveredGuides, deps.logger);
+                },
               } as unknown as (typeof contextTools)[0]);
               injectedCount++;
             }
