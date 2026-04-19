@@ -47,14 +47,27 @@ export interface CrossSessionResult {
 
 /**
  * Resolve cache retention for a graph sub-agent.
- * Always returns "long" (1h TTL). Depth-aware "short" for root nodes was tried
- * but caused regressions: final pipeline nodes running 10-15 min after
- * root nodes got 0 cache reads because the shared prefix expired. The 1h write
- * premium ($2.25/MTok extra for Sonnet) is far cheaper than the cache misses it prevents.
+ *
+ * Default "long" (1h TTL) — depth-aware "short" for root nodes was tried and
+ * caused regressions: final pipeline nodes running 10-15 min after root nodes
+ * got 0 cache reads because the shared prefix expired. The 1h write premium
+ * is far cheaper than the cache misses it prevents.
+ *
+ * Exception: **leaf nodes** (no downstream dependents) use "short". Their
+ * cache prefix has no consumers — no later node will read from it — so the
+ * 1h write premium is pure waste. Observed in NVDA trade-desk pipeline: the
+ * head-trader node wrote 16,663 1h tokens (~$0.17) that were never reused
+ * because the pipeline ends at that node.
+ *
  * @param _graphNodeDepth unused — kept for interface stability
- * @returns "long" always
+ * @param isLeafNode true when no other graph node depends on this one
+ * @returns "short" for leaf nodes, "long" otherwise
  */
-export function resolveGraphCacheRetention(_graphNodeDepth: number | undefined): "short" | "long" {
+export function resolveGraphCacheRetention(
+  _graphNodeDepth: number | undefined,
+  isLeafNode?: boolean,
+): "short" | "long" {
+  if (isLeafNode === true) return "short";
   return "long";
 }
 
@@ -257,6 +270,10 @@ export function setupCrossSession(deps: {
 
     // Read graphNodeDepth from session metadata for depth-aware cache retention
     const graphNodeDepth = typeof meta.graphNodeDepth === "number" ? meta.graphNodeDepth : undefined;
+    // Leaf nodes (no downstream dependents) use "short" cache retention — see
+    // resolveGraphCacheRetention docstring. Propagated from the graph spawn
+    // site, set on first session creation; reuse paths inherit the metadata.
+    const isLeafNode = meta.isLeafNode === true;
 
     // Read subAgentMcpTools config for MCP tool inheritance policy
     const mcpPolicy = container.config.security.agentToAgent.subAgentMcpTools;
@@ -524,7 +541,7 @@ export function setupCrossSession(deps: {
     //   - Downstream nodes (depth >= 1): "long" -- may be consumed by further waves
     // Non-graph sub-agents always get "short".
     const subAgentCacheRetention = graphSharedDir
-      ? resolveGraphCacheRetention(graphNodeDepth)
+      ? resolveGraphCacheRetention(graphNodeDepth, isLeafNode)
       : "short" as const;
 
     // R-11: Session adapter for sub-agents.
@@ -574,7 +591,7 @@ export function setupCrossSession(deps: {
       cacheRetention: isReuseSession
         ? "long" as const
         : (graphSharedDir
-          ? resolveGraphCacheRetention(graphOverrides?.graphNodeDepth)
+          ? resolveGraphCacheRetention(graphOverrides?.graphNodeDepth, isLeafNode)
           : (subagentResolution?.cacheRetention ?? subAgentCacheRetention)),
       ephemeralSessionAdapter,
       skipRag: !!graphSharedDir,

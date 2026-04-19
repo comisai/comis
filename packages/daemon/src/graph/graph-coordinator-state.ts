@@ -139,6 +139,9 @@ export interface GraphCoordinatorDeps {
       discoveredDeferredTools?: string[];
       /** Graph node depth: 0 = root (dependsOn=[]), 1+ = downstream. */
       graphNodeDepth?: number;
+      /** True when this graph node is a leaf (no other node depends on it).
+       *  Leaf nodes use "short" cache retention — their prefix has no consumers. */
+      isLeafNode?: boolean;
     }): string;
     killRun(runId: string): { killed: boolean; error?: string };
     getRunStatus(runId: string): { status: string; result?: { response: string }; error?: string; sessionKey?: string } | undefined;

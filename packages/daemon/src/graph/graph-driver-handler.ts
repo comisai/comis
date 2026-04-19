@@ -613,6 +613,10 @@ export function executeDriverAction(
           nodeId,
           graphToolNames: gs.graphToolNames,  // Propagate tool superset for driver spawns
           reuseSessionKey: effectiveReuseKey,  // Undefined on first spawn, populated on subsequent rounds
+          // Propagate leaf-node signal to the driver's inner sub-agents too —
+          // e.g. the final round of a debate on a leaf node should not pay the
+          // 1h cache premium since nothing reads the prefix afterwards.
+          isLeafNode: !gs.graph.graph.nodes.some((n) => n.dependsOn.includes(nodeId)),
           ...(discoveredDeferredTools.length > 0 && { discoveredDeferredTools }),
         });
         ds.currentRunId = runId;

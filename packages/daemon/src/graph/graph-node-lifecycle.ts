@@ -296,6 +296,10 @@ export function spawnNode(
       // Root nodes (dependsOn=[]) = 0, downstream nodes = 1+.
       // Used for depth-aware cache retention in setup-cross-session.
       graphNodeDepth: node.dependsOn.length === 0 ? 0 : 1,
+      // Leaf: no other graph node depends on this one. Leaf nodes write
+      // 5m cache instead of 1h because their prefix has no consumers —
+      // see resolveGraphCacheRetention() for rationale.
+      isLeafNode: !gs.graph.graph.nodes.some((n) => n.dependsOn.includes(nodeId)),
       ...(nodeDiscoveredTools && nodeDiscoveredTools.length > 0 && { discoveredDeferredTools: nodeDiscoveredTools }),
     });
 

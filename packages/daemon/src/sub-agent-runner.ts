@@ -289,6 +289,10 @@ export interface SpawnParams {
   /** Graph node depth: 0 = root node (dependsOn=[]), 1+ = downstream.
    *  Used for depth-aware cache retention in setup-cross-session. */
   graphNodeDepth?: number;
+  /** True when this graph node is a leaf (no other node depends on it).
+   *  Leaf nodes use "short" (5m) cache retention instead of the 1h default
+   *  because their cache prefix has no downstream consumers. */
+  isLeafNode?: boolean;
 }
 
 // Re-export extracted result processor types and functions for backward compatibility
@@ -796,6 +800,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           discoveredDeferredTools: params.discoveredDeferredTools ?? [],
           graphToolNames: params.graphToolNames ?? [],
           graphNodeDepth: params.graphNodeDepth,
+          isLeafNode: params.isLeafNode ?? false,
         });
       } else {
         formattedKey = params.reuseSessionKey;
@@ -828,6 +833,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         discoveredDeferredTools: params.discoveredDeferredTools ?? [],
         graphToolNames: params.graphToolNames ?? [],
         graphNodeDepth: params.graphNodeDepth,
+        isLeafNode: params.isLeafNode ?? false,
       });
     }
 
