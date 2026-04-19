@@ -8,7 +8,7 @@ import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";
 import type { ShutdownHandle } from "./process/graceful-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
-import { main, type DaemonOverrides, hardenDataDirPermissions } from "./daemon.js";
+import { main, type DaemonOverrides, hardenDataDirPermissions, runPreflightDoctor } from "./daemon.js";
 import type { MediaResult } from "./wiring/setup-media.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -619,5 +619,96 @@ describe("hardenDataDirPermissions", () => {
       expect(c.oldMode).toBe(0o644);
       expect(c.newMode).toBe(0o600);
     }
+  });
+});
+
+describe("runPreflightDoctor", () => {
+  type FakeDbCtor = new (path: string) => { prepare(sql: string): { get(): unknown }; close(): void };
+
+  const okLoader: () => Promise<FakeDbCtor> = async () => {
+    class OkDb {
+      constructor(_path: string) {}
+      prepare(_sql: string) { return { get: () => ({ ok: 1 }) }; }
+      close(): void {}
+    }
+    return OkDb as unknown as FakeDbCtor;
+  };
+
+  it("passes silently when better-sqlite3 loads and returns a row", async () => {
+    const exitFn = vi.fn();
+    const writes: string[] = [];
+    await runPreflightDoctor(exitFn, {
+      stderrWrite: (s) => writes.push(s),
+      loadBetterSqlite3: okLoader,
+    });
+    expect(exitFn).not.toHaveBeenCalled();
+    expect(writes).toEqual([]);
+  });
+
+  it("emits FATAL JSON and exits 78 when Database constructor throws (bindings missing)", async () => {
+    const exitFn = vi.fn();
+    const writes: string[] = [];
+    const brokenLoader: () => Promise<FakeDbCtor> = async () => {
+      class BrokenDb {
+        constructor(_path: string) { throw new Error("Cannot find module 'bindings'"); }
+        prepare(_sql: string) { return { get: () => null }; }
+        close(): void {}
+      }
+      return BrokenDb as unknown as FakeDbCtor;
+    };
+    await runPreflightDoctor(exitFn, {
+      stderrWrite: (s) => writes.push(s),
+      loadBetterSqlite3: brokenLoader,
+    });
+    expect(exitFn).toHaveBeenCalledExactlyOnceWith(78);
+    expect(writes).toHaveLength(1);
+    const record = JSON.parse(writes[0]!.trim());
+    expect(record.level).toBe(60);
+    expect(record.module).toBe("preflight");
+    expect(record.errorKind).toBe("dependency");
+    expect(record.err).toContain("Cannot find module 'bindings'");
+    expect(record.hint).toMatch(/npm rebuild better-sqlite3/);
+    expect(record.msg).toContain("Preflight check failed");
+  });
+
+  it("fails when the sentinel query returns null", async () => {
+    const exitFn = vi.fn();
+    const writes: string[] = [];
+    const nullRowLoader: () => Promise<FakeDbCtor> = async () => {
+      class NullDb {
+        constructor(_path: string) {}
+        prepare(_sql: string) { return { get: () => null }; }
+        close(): void {}
+      }
+      return NullDb as unknown as FakeDbCtor;
+    };
+    await runPreflightDoctor(exitFn, {
+      stderrWrite: (s) => writes.push(s),
+      loadBetterSqlite3: nullRowLoader,
+    });
+    expect(exitFn).toHaveBeenCalledExactlyOnceWith(78);
+    expect(writes).toHaveLength(1);
+    const record = JSON.parse(writes[0]!.trim());
+    expect(record.err).toContain("no row from sentinel query");
+  });
+
+  it("closes the probe database even if the sentinel query throws", async () => {
+    const exitFn = vi.fn();
+    const writes: string[] = [];
+    let closed = false;
+    const throwingQueryLoader: () => Promise<FakeDbCtor> = async () => {
+      class ThrowDb {
+        constructor(_path: string) {}
+        prepare(_sql: string) { return { get: () => { throw new Error("sqlite runtime error"); } }; }
+        close(): void { closed = true; }
+      }
+      return ThrowDb as unknown as FakeDbCtor;
+    };
+    await runPreflightDoctor(exitFn, {
+      stderrWrite: (s) => writes.push(s),
+      loadBetterSqlite3: throwingQueryLoader,
+    });
+    expect(closed).toBe(true);
+    expect(exitFn).toHaveBeenCalledExactlyOnceWith(78);
   });
 });

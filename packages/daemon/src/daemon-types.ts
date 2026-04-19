@@ -114,4 +114,6 @@ export interface DaemonOverrides {
   setupMedia?: typeof setupMedia;
   /** Override process.exit for testing. */
   exit?: (code: number) => void;
+  /** Override native-dep preflight check for tests that don't need the probe. */
+  preflightDoctor?: (exitFn: (code: number) => void) => Promise<void>;
 }

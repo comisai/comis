@@ -169,6 +169,59 @@ export function hardenDataDirPermissions(dataDir: string): PermissionCorrection[
   return corrections;
 }
 
+// ---------------------------------------------------------------------------
+// Preflight native-dep doctor
+// ---------------------------------------------------------------------------
+
+interface PreflightProbeDatabase {
+  prepare(sql: string): { get(): unknown };
+  close(): void;
+}
+type PreflightDatabaseCtor = new (path: string) => PreflightProbeDatabase;
+
+/**
+ * Probe better-sqlite3 before any subsystem init. A missing transitive
+ * `bindings` folder (known failure mode from partial npm upgrades) makes
+ * better-sqlite3 throw at first require, which otherwise surfaces as an
+ * opaque mid-boot crash and a systemd restart loop. Here we catch it up
+ * front and exit 78 (EX_CONFIG) with an actionable hint, so operators can
+ * repair instead of chasing a cascading failure.
+ */
+export async function runPreflightDoctor(
+  exitFn: (code: number) => void,
+  opts: {
+    stderrWrite?: (s: string) => void;
+    loadBetterSqlite3?: () => Promise<PreflightDatabaseCtor>;
+  } = {},
+): Promise<void> {
+  const write = opts.stderrWrite ?? ((s: string) => { process.stderr.write(s); });
+  const load = opts.loadBetterSqlite3
+    ?? (async () => (await import("better-sqlite3")).default as unknown as PreflightDatabaseCtor);
+  try {
+    const Database = await load();
+    const db = new Database(":memory:");
+    try {
+      const row = db.prepare("select 1 as ok").get();
+      if (!row) throw new Error("better-sqlite3 returned no row from sentinel query");
+    } finally {
+      db.close();
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    write(JSON.stringify({
+      level: 60,
+      time: new Date().toISOString(),
+      name: "comis-daemon",
+      module: "preflight",
+      errorKind: "dependency",
+      err: message,
+      hint: "Native module 'better-sqlite3' failed to load. Try: npm rebuild better-sqlite3 (or re-run install.sh). If this persists, reinstall comisai from a fresh tarball.",
+      msg: "Preflight check failed: better-sqlite3 unavailable",
+    }) + "\n");
+    exitFn(78);
+  }
+}
+
 /** Main daemon entry point. Wires all subsystem modules and returns DaemonInstance. */
 export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInstance> {
   const startupStartMs = Date.now();
@@ -186,6 +239,12 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   const _createGatewayServer = overrides.createGatewayServer ?? createGatewayServer;
   const _setupMedia = overrides.setupMedia ?? setupMedia;
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
+  const _preflightDoctor = overrides.preflightDoctor ?? ((fn) => runPreflightDoctor(fn));
+
+  // Preflight: probe native deps before any subsystem init so a missing
+  // better-sqlite3 'bindings' module fails fast with a clear repair hint
+  // instead of cascading into a systemd restart loop.
+  await _preflightDoctor(exitFn);
 
   // 0. Load secrets from .env
   const envPath = safePath(safePath(os.homedir(), ".comis"), ".env");

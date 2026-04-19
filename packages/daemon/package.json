@@ -58,6 +58,7 @@
     "sd-notify": "^2.8.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0"
   }
