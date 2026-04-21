@@ -53,7 +53,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # --- default variant ---
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         id: build-default
         with:
           context: .
@@ -65,7 +65,7 @@ jobs:
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
 
       # --- slim variant (reuses cached build stage from default) ---
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         id: build-slim
         with:
           context: .
@@ -227,7 +227,7 @@ jobs:
             type=semver,pattern={{version}}
             type=sha,prefix=
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.web
