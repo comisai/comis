@@ -1,0 +1,245 @@
+---
+title: "WebSocket Protocol Reference"
+description: "WebSocket connection protocol, authentication, heartbeat, and error handling"
+icon: "plug"
+---
+
+Complete reference for the Comis WebSocket protocol. The gateway exposes a WebSocket endpoint at `/ws` for JSON-RPC 2.0 communication. This is the primary transport for the CLI and web dashboard.
+
+## Connection
+
+Connect to the WebSocket endpoint with authentication to establish a JSON-RPC session.
+
+| Property | Value |
+|----------|-------|
+| **Endpoint** | `GET /ws` (upgrades to WebSocket) |
+| **Authentication** | Bearer token via `Authorization` header or `?token=` query parameter |
+| **Protocol** | JSON-RPC 2.0 over text WebSocket frames |
+
+### Connection Examples
+
+<CodeGroup>
+```bash wscat
+# Using wscat with Authorization header
+wscat -c ws://localhost:4766/ws -H "Authorization: Bearer your-token"
+```
+```bash websocat
+# Using websocat with query param
+websocat ws://localhost:4766/ws?token=your-token
+```
+```bash curl
+# Using curl (WebSocket upgrade)
+curl --include \
+  --no-buffer \
+  --header "Connection: Upgrade" \
+  --header "Upgrade: websocket" \
+  --header "Authorization: Bearer your-token" \
+  http://localhost:4766/ws
+```
+</CodeGroup>
+
+If authentication fails, the server accepts the WebSocket upgrade but immediately closes the connection with close code `4001` (Unauthorized).
+
+## Protocol
+
+All communication uses **JSON-RPC 2.0** over text WebSocket frames. Binary frames are not supported and will receive a parse error response.
+
+### Request/Response Exchange
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "system.ping",
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "pong": true,
+    "ts": 1773313498000
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+Every request must include:
+- `"jsonrpc": "2.0"` -- protocol version (required)
+- `"method"` -- the method name in `namespace.method` format
+- `"id"` -- a unique request identifier (integer or string)
+- `"params"` -- method parameters (optional, defaults to `{}`)
+
+The server responds with the same `id` to correlate request and response. Notifications (requests without `id`) do not receive a response.
+
+## Batch Requests
+
+Send an array of JSON-RPC requests to execute multiple methods in a single message. Responses are returned as an array in the same order.
+
+<CodeGroup>
+```json Request
+[
+  {"jsonrpc": "2.0", "method": "system.ping", "id": 1},
+  {"jsonrpc": "2.0", "method": "gateway.status", "id": 2}
+]
+```
+```json Response
+[
+  {"jsonrpc": "2.0", "result": {"pong": true, "ts": 1773313498000}, "id": 1},
+  {"jsonrpc": "2.0", "result": {"pid": 12345, "uptime": 3600.5}, "id": 2}
+]
+```
+</CodeGroup>
+
+The maximum batch size is configurable via `gateway.maxBatchSize`. Exceeding the limit returns a `-32600` error.
+
+## Heartbeat
+
+The server sends periodic heartbeat notifications to all connected clients. Heartbeats are JSON-RPC notifications (no `id` field) and do not require a response.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "heartbeat",
+  "params": {
+    "ts": 1773313498000
+  }
+}
+```
+
+| Property | Value |
+|----------|-------|
+| **Interval** | Configurable via `gateway.wsHeartbeatMs`. Set to `0` to disable. |
+| **Format** | JSON-RPC notification with `method: "heartbeat"` and `params.ts` (epoch milliseconds). |
+| **Client behavior** | Clients should not respond to heartbeats. They are notifications, not requests. |
+
+Heartbeats serve as a keep-alive mechanism, preventing proxy timeouts and allowing clients to detect stale connections.
+
+## Rate Limiting
+
+Each WebSocket connection has an independent sliding-window rate limiter that tracks message frequency.
+
+| Property | Value |
+|----------|-------|
+| **Algorithm** | Sliding window counter |
+| **Max messages** | Configurable via `gateway.wsMessageRateLimit.maxMessages` |
+| **Window** | Configurable via `gateway.wsMessageRateLimit.windowMs` |
+| **Error code** | `-32000` (rate limit exceeded) |
+
+When the rate limit is exceeded, the server responds with an error and discards the message:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32000,
+    "message": "Message rate limit exceeded"
+  },
+  "id": null
+}
+```
+
+The rate limit resets as messages age out of the sliding window. No backoff or retry-after header is provided -- clients should reduce their message frequency.
+
+## Message Size Limit
+
+Messages exceeding the configured maximum size are rejected before parsing.
+
+| Property | Value |
+|----------|-------|
+| **Maximum size** | Configurable via `gateway.wsMaxMessageBytes` (character count before JSON.parse) |
+| **Error code** | `-32600` (invalid request) |
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32600,
+    "message": "Message size 2048576 bytes exceeds maximum of 1048576"
+  },
+  "id": null
+}
+```
+
+## Error Codes
+
+JSON-RPC error codes returned by the WebSocket handler.
+
+| Code | Meaning | When |
+|------|---------|------|
+| `-32700` | Parse error | Invalid JSON or binary WebSocket frame |
+| `-32600` | Invalid request | Batch size exceeded or message too large |
+| `-32603` | Internal error | Insufficient scope for method or handler error |
+| `-32000` | Rate limit exceeded | Too many messages in the sliding window |
+
+All error responses follow the JSON-RPC 2.0 error format:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32603,
+    "message": "Insufficient scope: requires 'admin'"
+  },
+  "id": 1
+}
+```
+
+## Close Codes
+
+WebSocket close codes used by the Comis gateway.
+
+| Code | Meaning | Description |
+|------|---------|-------------|
+| `1000` | Normal closure | Clean disconnect initiated by client or server |
+| `1001` | Going away | Server shutting down gracefully |
+| `4001` | Unauthorized | Invalid or missing authentication token |
+| `1006` | Abnormal closure | Network error or unexpected disconnect (no close frame received) |
+
+The server sends close code `1001` with reason `"Server shutting down"` during graceful shutdown, giving clients time to reconnect after restart.
+
+## Server Notifications
+
+The server can push unsolicited notifications to connected clients. Notifications are JSON-RPC messages without an `id` field -- clients must not send a response.
+
+### Targeted Notifications
+
+The server can send notifications to a specific client (identified by `clientId` from the token configuration):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session.completed",
+  "params": {
+    "sessionKey": "sub-agent-task-1",
+    "result": "Task completed successfully"
+  }
+}
+```
+
+### Broadcast Notifications
+
+Some notifications (such as sub-agent completion announcements) are broadcast to all connected clients when the target client cannot be determined.
+
+<Tip>
+Clients should handle unknown notification methods gracefully by ignoring them. New notification types may be added in future versions.
+</Tip>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="JSON-RPC Methods" icon="code" href="/reference/json-rpc">
+    All available JSON-RPC methods with parameters and examples
+  </Card>
+  <Card title="HTTP Gateway" icon="globe" href="/reference/http-gateway">
+    HTTP endpoint reference and authentication
+  </Card>
+  <Card title="Rate Limiting" icon="gauge" href="/reference/rate-limiting">
+    Rate limiting configuration and behavior
+  </Card>
+  <Card title="Config YAML" icon="file-code" href="/reference/config-yaml">
+    Gateway configuration options
+  </Card>
+</CardGroup>

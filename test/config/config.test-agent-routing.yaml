@@ -1,0 +1,120 @@
+# Comis Test Configuration (Agent Routing)
+# Port 8512 -- agent routing integration tests
+# 3 agents with different names to verify per-agent dispatch
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  router-alpha:
+    name: "RouterAlpha"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    skills:
+      toolPolicy:
+        profile: "minimal"
+        allow: []
+        deny: []
+  router-beta:
+    name: "RouterBeta"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    skills:
+      toolPolicy:
+        profile: "minimal"
+        allow: []
+        deny: []
+  router-gamma:
+    name: "RouterGamma"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    skills:
+      toolPolicy:
+        profile: "minimal"
+        allow: []
+        deny: []
+
+routing:
+  defaultAgentId: "router-alpha"
+  bindings:
+    - channelType: "discord"
+      agentId: "router-beta"
+    - peerId: "vip-user"
+      agentId: "router-gamma"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8512
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-integration-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-agent-routing.db"
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

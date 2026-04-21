@@ -1,0 +1,88 @@
+# Token Resolution Integration Test (TEST-02)
+#
+# Validates the three-tier token resolution chain:
+#   1. Config secret (explicit, >= 32 chars) -> use directly
+#   2. Env/SecretManager lookup -> use if found
+#   3. Auto-generate -> ephemeral token + WARN log
+#
+# The first token (auth-token) has an explicit secret for daemon harness auth.
+# The second token (auto-gen-token) has NO secret field, triggering auto-generation.
+#
+# Uses port 8561 to avoid conflicts when running in parallel via vitest pool: "forks".
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "TestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8561
+  tokens:
+    # Token 1: explicit secret (auth-token MUST be first for daemon harness authToken extraction)
+    - id: "auth-token"
+      secret: "test-token-resolution-auth-key-integration-01"
+      scopes: ["rpc", "ws", "admin"]
+    # Token 2: NO secret field -> triggers env lookup then auto-generation + WARN log
+    - id: "auto-gen-token"
+      scopes: ["rpc", "ws"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-token-resolution.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

@@ -1,0 +1,133 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Comis",
+  "description": "Documentation for Comis -- Open-source AI agent fleet for messaging apps",
+  "colors": {
+    "primary": "#4F46E5",
+    "light": "#A78BFA",
+    "dark": "#3730A3"
+  },
+  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "appearance": { "default": "system" },
+  "styling": {
+    "eyebrows": "breadcrumbs",
+    "codeblocks": {
+      "themes": { "light": "github-light", "dark": "github-dark" }
+    }
+  },
+  "search": { "prompt": "Search Comis docs..." },
+  "navbar": {
+    "links": [{ "label": "GitHub", "href": "https://github.com/comisai/comis" }]
+  },
+  "footer": {
+    "socials": { "github": "https://github.com/comisai/comis" }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Get Started",
+        "groups": [
+          { "group": "Welcome", "pages": ["get-started/index", "get-started/quickstart", "get-started/use-cases"] },
+          { "group": "Concepts", "pages": ["get-started/how-it-works", "get-started/security", "get-started/glossary"] }
+        ]
+      },
+      {
+        "tab": "Installation",
+        "groups": [
+          { "group": "Setup", "pages": ["installation/index", "installation/requirements", "installation/install-linux", "installation/install-vps", "installation/install-docker", "installation/configuration", "installation/verify"] }
+        ]
+      },
+      {
+        "tab": "Channels",
+        "groups": [
+          { "group": "Overview", "pages": ["channels/index"] },
+          { "group": "Adapters", "pages": ["channels/discord", "channels/telegram", "channels/slack", "channels/whatsapp", "channels/signal", "channels/imessage", "channels/line", "channels/irc", "channels/email"] },
+          { "group": "Infrastructure", "pages": ["channels/delivery"] }
+        ]
+      },
+      {
+        "tab": "Agents",
+        "groups": [
+          { "group": "Core", "pages": ["agents/index", "agents/lifecycle", "agents/identity", "agents/routing", "agents/slash-commands"] },
+          { "group": "Conversations", "pages": ["agents/sessions", "agents/subagent-lifecycle", "agents/compaction", "agents/rag", "agents/queue"] },
+          { "group": "Orchestration", "pages": ["agents/execution-graphs"] },
+          { "group": "Memory", "pages": ["agents/memory", "agents/search", "agents/embeddings"] },
+          { "group": "Advanced", "pages": ["agents/models", "agents/safety", "agents/resilience"] }
+        ]
+      },
+      {
+        "tab": "Skills",
+        "groups": [
+          { "group": "Overview", "pages": ["skills/index", "skills/built-in-tools", "skills/platform-tools"] },
+          { "group": "Custom Skills", "pages": ["skills/prompt-skills", "skills/examples"] },
+          { "group": "Building", "pages": ["skills/manifest", "skills/security-scanning", "skills/tool-policy"] },
+          { "group": "Integrations", "pages": ["skills/mcp"] }
+        ]
+      },
+      {
+        "tab": "Agent Tools",
+        "groups": [
+          { "group": "Overview", "pages": ["agent-tools/index"] },
+          { "group": "Tool Guides", "pages": ["agent-tools/scheduling", "agent-tools/messaging", "agent-tools/sessions", "agent-tools/pipelines", "agent-tools/media", "agent-tools/infrastructure", "agent-tools/browser", "agent-tools/web-tools"] },
+          { "group": "Platform Actions", "pages": ["agent-tools/platform-actions"] }
+        ]
+      },
+      {
+        "tab": "Media & Voice",
+        "groups": [
+          { "group": "Overview", "pages": ["media/index"] },
+          { "group": "Capabilities", "pages": ["media/vision", "media/voice", "media/documents", "media/links", "media/rich-messages"] }
+        ]
+      },
+      {
+        "tab": "Web Dashboard",
+        "groups": [
+          { "group": "Overview", "pages": ["web-dashboard/index"] },
+          { "group": "Views", "pages": ["web-dashboard/chat", "web-dashboard/agents-view", "web-dashboard/workspace-view", "web-dashboard/channels-view", "web-dashboard/memory-view", "web-dashboard/sessions-view", "web-dashboard/scheduler-view", "web-dashboard/message-center", "web-dashboard/subagents", "web-dashboard/mcp-management", "web-dashboard/media"] },
+          { "group": "Advanced", "pages": ["web-dashboard/observability", "web-dashboard/security-view", "web-dashboard/config-editor", "web-dashboard/pipelines"] }
+        ]
+      },
+      {
+        "tab": "Operations",
+        "groups": [
+          { "group": "Management", "pages": ["operations/index", "operations/daemon", "operations/logging", "operations/monitoring", "operations/observability", "operations/scheduler", "operations/web-ui"] },
+          { "group": "Deployment", "pages": ["operations/systemd", "operations/docker", "operations/pm2", "operations/reverse-proxy"] },
+          { "group": "Help", "pages": ["operations/troubleshooting", "operations/faq"] }
+        ]
+      },
+      {
+        "tab": "Security",
+        "groups": [
+          { "group": "Overview", "pages": ["security/index", "security/defense-in-depth"] },
+          { "group": "Features", "pages": ["security/secrets", "security/approvals", "security/audit", "security/sandbox", "security/exec-sandbox", "security/hardening"] }
+        ]
+      },
+      {
+        "tab": "Developer Guide",
+        "groups": [
+          { "group": "Architecture", "pages": ["developer-guide/index", "developer-guide/architecture", "developer-guide/packages", "developer-guide/event-bus", "architecture/delivery-pipeline"] },
+          { "group": "Extending", "pages": ["developer-guide/custom-adapters", "developer-guide/plugins", "developer-guide/custom-skills", "developer-guide/pipelines", "developer-guide/contributing"] }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          { "group": "CLI", "pages": ["reference/cli"] },
+          { "group": "Configuration", "pages": ["reference/config-yaml", "reference/environment-variables", "reference/hot-reload", "reference/secret-manager", "configuration/delivery-queue"] },
+          { "group": "Security", "pages": ["reference/security-model", "reference/sandbox", "reference/safe-path", "reference/action-classifier", "reference/tool-security", "reference/node-permissions"] },
+          { "group": "Gateway", "pages": ["reference/http-gateway", "reference/json-rpc", "reference/websocket", "reference/openai-api", "reference/webhooks", "reference/rate-limiting"] }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        { "anchor": "GitHub", "href": "https://github.com/comisai/comis", "icon": "github" }
+      ]
+    }
+  }
+}

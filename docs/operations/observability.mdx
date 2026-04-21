@@ -1,0 +1,471 @@
+---
+title: "Observability"
+description: "Token tracking, cost estimation, latency, and delivery tracing"
+icon: "chart-line"
+---
+
+Observability tells you how much your agents are doing, how much it costs, and
+how fast they respond. Think of it as the business intelligence layer for your
+AI operations -- it answers questions like "which agent costs the most?" and
+"are my messages getting delivered?"
+
+<Info>
+This page explains the underlying tracking systems. To view this data visually
+in your browser, see the
+[Web Dashboard Observability](/web-dashboard/observability) page.
+</Info>
+
+## What Gets Tracked
+
+Comis tracks six categories of operational data automatically. You do not need
+to configure anything -- tracking starts as soon as the daemon is running.
+
+### Token Tracking
+
+Every time an agent calls an AI provider, Comis counts the input tokens (what
+was sent to the model) and output tokens (what the model returned). Tokens are
+tracked per agent, per model, and per execution.
+
+**Why this matters:** Tokens directly translate to cost. Understanding your token
+usage patterns helps you optimize prompts, choose the right models, and set
+appropriate [budget limits](/agents/safety).
+
+### Billing Estimation
+
+Comis converts token counts into estimated dollar costs using known provider
+pricing. This gives you a running total of how much each agent session costs
+without needing to check your provider dashboard.
+
+<Info>
+Billing estimates are based on published provider pricing at the time of each
+request. They are approximations, not exact billing -- your actual invoice from
+Anthropic, OpenAI, or Google may differ slightly due to rounding, pricing
+changes, or promotional credits.
+</Info>
+
+### Cache Savings Tracking
+
+Comis tracks prompt caching savings per provider. When the AI provider supports
+prompt caching (Anthropic, OpenAI, Google), cached tokens cost significantly
+less than regular input tokens -- anywhere from 50% to 90% less depending on
+the provider.
+
+The `savedVsUncached` metric shows net savings per execution: a positive value
+means caching saved money, while a negative value means the cache write
+investment has not yet paid off (typically on the first turn of a session only).
+
+Embedding cache hits further reduce costs by avoiding API calls entirely. When
+persistent L2 caching is enabled, embeddings are computed once and reused
+indefinitely -- even across daemon restarts.
+
+<Info>
+See [Compaction](/agents/compaction) for per-provider cache pricing
+details and the `savedVsUncached` formula.
+</Info>
+
+### Latency Recording
+
+Every agent execution is timed from start to finish. The latency recorder breaks
+down the total time into components:
+
+- **LLM call time** -- how long the AI provider took to generate a response
+- **Tool execution time** -- how long each tool call took (bash commands, file
+  operations, web requests)
+- **Total execution time** -- the full duration including routing, context
+  retrieval, and response delivery
+
+This helps you identify bottlenecks. If an agent is slow, you can see whether
+the delay is in the AI provider, in tool execution, or somewhere else.
+
+### Diagnostic Collection
+
+The daemon collects system-level metrics at regular intervals (every 30 seconds
+by default):
+
+- **Event loop delay** -- how responsive the Node.js process is
+- **Memory usage** -- heap size and resident set size
+- **CPU usage** -- process-level CPU utilization
+
+These metrics are used by the [watchdog](/operations/daemon#watchdog) to
+determine if the daemon is healthy, and they appear on the health endpoint at
+`/health`.
+
+### Channel Activity Tracking
+
+Comis tracks message flow per channel:
+
+- **Message counts** -- how many messages were sent and received on each platform
+- **Delivery success rate** -- what percentage of outgoing messages were
+  confirmed by the platform
+- **Error rates** -- how often deliveries fail, broken down by error type
+
+This is useful for understanding which platforms are most active and whether
+any channels are experiencing reliability issues.
+
+### Delivery Tracing
+
+Delivery tracing follows each outgoing message through the entire delivery
+pipeline: from when your agent sends it, through any formatting and chunking,
+to when the platform confirms receipt.
+
+**When to use this:** If a user reports "my message did not arrive," delivery
+tracing shows you exactly where the message got stuck -- whether it failed
+during formatting, hit a rate limit, or was rejected by the platform.
+
+### Context Engine Metrics
+
+The context engine tracks per-turn statistics about how your agent's conversation
+is managed:
+
+- **Tokens loaded and masked** -- How many tokens were in the conversation and
+  how many were reduced by observation masking
+- **Compaction events** -- When LLM summarization is triggered and how many
+  messages were compacted
+- **Budget utilization** -- What percentage of the context window is in use
+  after all layers have run
+- **Cache performance** -- Cache hit, write, and miss rates for the AI
+  provider's prompt cache
+
+These metrics help you understand how efficiently your agent manages long
+conversations. High masking rates indicate the context engine is actively
+saving tokens, while frequent compaction events may suggest conversations are
+running unusually long.
+
+### Gemini Cache Infrastructure
+
+Comis supports Gemini explicit CachedContent caching for Google AI Studio
+models. When enabled, Comis creates server-side cached content that provides a
+**guaranteed 90% discount** on cached input tokens. Unlike Anthropic's
+automatic prompt caching (which is implicit and best-effort), Gemini caching
+is explicit -- Comis manages the full lifecycle of CachedContent resources
+through the Google AI SDK.
+
+#### Configuration
+
+Gemini caching is configured per-agent under the `geminiCache` key:
+
+```yaml
+agents:
+  my-agent:
+    geminiCache:
+      enabled: false        # default: false
+      maxActiveCaches: 20   # default: 20, must be positive integer
+```
+
+<Tip>
+The `geminiCache` setting is completely separate from Anthropic's
+`cacheRetention` setting (`none` / `short` / `long`). They control different
+provider caching mechanisms. Gemini TTL is hardcoded at 3600 seconds (1 hour)
+and is not configurable per-agent.
+</Tip>
+
+See the [config reference](/reference/config-yaml) for the full `geminiCache`
+schema.
+
+#### Lifecycle Operations
+
+| Operation | Trigger | Description |
+|-----------|---------|-------------|
+| **Create** | First Gemini API call with sufficient tokens | Creates CachedContent via Google AI SDK. Content hash (SHA-256) from systemInstruction + tools + toolConfig. DisplayName: `comis:{agentId}:{sessionKey}:{hashPrefix8}`. TTL: 3600s. |
+| **Reuse** | Subsequent API call with matching content hash | Returns existing cache entry from in-memory map. No API call needed. |
+| **Invalidate** | Content hash mismatch (tools or system prompt changed) | Deletes old CachedContent via API, removes from map, falls through to Create. |
+| **Dedup** | Concurrent API calls for same session | Second call awaits the first's pending Promise. Prevents duplicate CachedContent creation. |
+| **Refresh** | Cache hit when elapsed > 50% of TTL (30 minutes) | Updates TTL via API. Failure is non-fatal (WARN log, cache still usable until server-side expiry). |
+| **Eviction** | Active cache count >= maxActiveCaches (default 20) | Evicts oldest cache entry for the agent. LRU strategy. |
+| **Session Dispose** | `session:expired` event | Fire-and-forget deletion of session's cached content. |
+| **Shutdown Dispose** | Daemon graceful shutdown | Deletes all active CachedContent entries via `Promise.allSettled`. |
+| **Orphan Cleanup** | Daemon startup | Lists all `comis:*` caches from previous runs, deletes them. |
+
+#### Minimum Cacheable Token Thresholds
+
+| Model Family | Min Tokens |
+|-------------|-----------|
+| Gemini Flash (2.5, 3) | 1,024 |
+| Gemini Flash (2.0) | 2,048 |
+| Gemini Pro (2.5, 3) | 4,096 |
+| Default (unrecognized) | 2,048 |
+
+<Info>
+Requests below the minimum token threshold silently fall through to uncached
+API calls. No error is raised.
+</Info>
+
+#### Provider Guard
+
+Gemini caching has a three-layer activation guard:
+
+1. **Provider family check** -- must be a Google provider family. No-op for
+   Anthropic, OpenAI, xAI, or any non-Google provider.
+2. **Per-agent config** -- `geminiCache.enabled` must be `true` in the agent's
+   configuration.
+3. **Google AI Studio only** -- only Google AI Studio supports the Caches API.
+   Vertex AI does not support this API, so Gemini caching is disabled for
+   Vertex AI providers.
+
+#### Injection Mechanics
+
+When a cache hit occurs, Comis performs atomic field stripping on the API
+request body: `systemInstruction`, `tools`, and `toolConfig` are removed from
+the request because they are already stored server-side in the CachedContent
+resource. This prevents double-billing -- without stripping, the provider
+would charge for both the cached content and the duplicate fields in the
+request.
+
+<Warning>
+Anthropic's `requestBodyInjector` (cache_control breakpoints) and Google's
+`geminiCacheInjector` (CachedContent) are mutually exclusive at runtime via
+provider family guards. Both exist in the stream wrapper chain but only
+activate for their respective provider. You never need to worry about
+conflicts between the two systems.
+</Warning>
+
+### Cache Observability Metrics
+
+Comis emits 8 cache observability metrics (OBSV-CACHE) covering breakpoint
+budget auditing, placement results, cache fence warnings, per-execution hit
+rates, cache break enrichment, session savings, and thinking block impact on
+cache fences. These metrics provide visibility into prompt cache behavior
+across all providers.
+
+#### OBSV-CACHE-01: Breakpoint Budget Audit
+
+- **Level:** INFO
+- **Fires:** Every Anthropic API call (pre-message-placement)
+- **Log message:** `"OBSV-CACHE-01: Breakpoint budget audit (pre-message-placement)"`
+- **Payload:**
+  - `existingCount` -- total `cache_control` markers before placement
+  - `slotsAvailable` -- remaining slots (4 - existingCount)
+  - `systemBreakpoints` -- count on system blocks
+  - `toolBreakpoints` -- count on tool blocks
+  - `modelId` -- the model being called
+
+#### OBSV-CACHE-02: Breakpoint Placement Result
+
+- **Level:** DEBUG
+- **Fires:** After message breakpoint placement when placed > 0
+- **Log message:** `"OBSV-CACHE-02: Message breakpoints placed"`
+- **Payload:**
+  - `placed` -- number of breakpoints placed in this call
+  - `existingCount` -- pre-existing breakpoints
+  - `totalBreakpoints` -- existingCount + placed
+  - `minTokens` -- minimum token gap for placement
+  - `modelId` -- the model being called
+  - `strategy` -- breakpoint strategy: `"single"`, `"multi-zone"`, or `"auto"`
+
+#### OBSV-CACHE-03: Breakpoint Placement Skipped
+
+<Info>
+The `OBSV-CACHE-03` tag does not appear as a literal string in source code.
+Its designed behavior is covered by two implementations:
+
+1. **Threshold skip** (DEBUG) -- logged as `"Cache breakpoints skipped: token
+   gaps below minTokens threshold"` when `placed=0` and messages >= 4.
+2. **Budget exhausted** (WARN) -- logged when `slotsAvailable <= 0` and
+   messages >= 20. This is the W7 warning indicating all 4 breakpoint slots
+   are consumed.
+</Info>
+
+#### OBSV-CACHE-04: Cache Fence Unset Warning
+
+- **Level:** WARN
+- **Fires:** When no `cache_control` marker is found on ANY message in a conversation with >= 10 messages
+- **Log message:** `"OBSV-CACHE-04: Cache fence unset in mature session"`
+- **Payload:**
+  - `messageCount` -- total messages in the conversation
+  - `modelId` -- the model being called
+  - `hint` -- `"No cache breakpoint found on any message..."`
+  - `errorKind` -- `"performance"`
+
+#### OBSV-CACHE-05: Per-Execution Cache Hit Rate
+
+- **Level:** INFO (added to existing "Execution complete" log -- zero new log lines)
+- **Fires:** After every agent execution completes
+- **Formula:** `cacheHitRate = round(cacheRead / (cacheRead + input) * 100)` -- 0 when no cache reads
+- **Payload:**
+  - `cacheHitRate` -- percentage 0-100
+
+#### OBSV-CACHE-06: Cache Break Enrichment
+
+- **Level:** N/A (enriches existing `observability:cache_break` event payload and diff JSON files)
+- **Fires:** When a cache break is detected
+- **Payload:**
+  - `breakpointBudget.total` -- total `cache_control` markers
+  - `breakpointBudget.system` -- breakpoints on system blocks
+  - `breakpointBudget.tool` -- breakpoints on tool blocks
+  - `breakpointBudget.message` -- breakpoints on message blocks
+  - `breakpointBudget.sdkAuto` -- breakpoints placed by SDK automatically
+
+#### OBSV-CACHE-07: Session Cache Savings Rate
+
+- **Level:** INFO (added to existing "Execution complete" log -- zero new log lines)
+- **Fires:** After every agent execution completes
+- **Formula:** `sessionCacheSavingsRate = round(sessionCacheSavedUsd / (sessionCostUsd + sessionCacheSavedUsd) * 100)` -- 0 when no savings
+- **Payload:**
+  - `sessionCacheSavingsRate` -- percentage 0-100
+
+<Info>
+The original design specified a full session-end summary. The implementation
+is a per-execution cumulative savings rate added to the existing "Execution
+complete" log line.
+</Info>
+
+#### OBSV-CACHE-08: Thinking Block Cleaner Cache Fence Impact
+
+- **Level:** DEBUG (reported via callback, logged in context engine)
+- **Fires:** When thinking blocks are removed AND a cache fence is active (`cacheFenceIndex >= 0`)
+- **Payload:**
+  - `blocksRemoved` -- number of thinking blocks removed
+  - `cacheFenceIndex` -- index of the cache fence (only when fence active)
+  - `messagesProtected` -- `cacheFenceIndex + 1` (messages before the fence)
+  - `totalMessages` -- total messages in the conversation
+
+#### Event Bus Events
+
+The following events are emitted on the TypedEventBus for cache observability:
+
+**`observability:cache_break`** -- emitted when a cache break is detected.
+
+```typescript
+{
+  provider: string;
+  reason: string;  // CacheBreakReason value
+  tokenDrop: number;
+  tokenDropRelative: number;
+  previousCacheRead: number;
+  currentCacheRead: number;
+  callCount: number;
+  changes: {
+    systemChanged: boolean;
+    toolsChanged: boolean;
+    metadataChanged: boolean;
+    modelChanged: boolean;
+    retentionChanged: boolean;
+    addedTools: string[];
+    removedTools: string[];
+    changedSchemaTools: string[];
+    headersChanged: boolean;
+    extraBodyChanged: boolean;
+  };
+  toolsChanged: string[];
+  ttlCategory: string | undefined;
+  agentId: string;
+  sessionKey: string;
+  timestamp: number;
+  toolsAdded?: string[];
+  toolsRemoved?: string[];
+  toolsSchemaChanged?: string[];
+  systemCharDelta?: number;
+  model?: string;
+  effortValue?: string;
+}
+```
+
+**CacheBreakReason** is a union of 14 values indicating why the cache broke:
+
+| Reason | Description |
+|--------|-------------|
+| `model_changed` | LLM model was switched |
+| `system_changed` | System prompt content changed |
+| `tools_changed` | Tool definitions were added, removed, or modified |
+| `retention_changed` | Cache retention setting changed |
+| `cache_metadata_changed` | Cache metadata (non-content) changed |
+| `headers_changed` | HTTP headers changed |
+| `extra_body_changed` | Extra body parameters changed |
+| `effort_changed` | Thinking effort level changed |
+| `cache_control_changed` | Cache control breakpoints changed |
+| `lookback_window_exceeded` | Detection lookback window exceeded |
+| `ttl_expiry` | Cache TTL expired (general) |
+| `ttl_expiry_long` | Long-retention TTL expired |
+| `ttl_expiry_short` | Short-retention TTL expired |
+| `likely_server_eviction` | Provider likely evicted cache server-side |
+| `server_eviction` | Confirmed server-side cache eviction |
+
+**`cache:graph_prefix_written`** -- emitted when a graph node writes to the
+prompt cache.
+
+```typescript
+{
+  graphId: string;
+  nodeId: string;
+  cacheWriteTokens: number;
+  timestamp: number;
+}
+```
+
+## How It Works
+
+All tracking happens automatically in the background. There is no configuration
+required and no performance impact you would notice -- the tracking is lightweight
+and runs alongside normal message processing.
+
+The data is collected in memory and made available through two interfaces:
+
+- **Web dashboard** -- visual charts and tables at
+  [localhost:4766](/web-dashboard/observability)
+- **RPC API** -- programmatic access via the JSON-RPC gateway for integration
+  with external monitoring tools
+
+<Tip>
+Observability data resets when the daemon restarts. For persistent cost tracking
+across restarts, check the web dashboard's billing view, which shows
+session-level data stored in the database.
+</Tip>
+
+## Using Observability Data
+
+Here are some practical questions observability data helps you answer:
+
+**"Which agent costs the most?"**
+
+Check token tracking sorted by agent. The billing estimator shows estimated
+costs per agent per session. If one agent is significantly more expensive than
+others, consider whether it needs a less expensive model or whether its system
+prompt can be shortened.
+
+**"Are messages getting delivered?"**
+
+Check delivery tracing for failed deliveries. The channel activity tracker shows
+success rates per platform. If a specific channel has a low delivery rate, the
+delivery trace for individual messages shows where failures occur.
+
+**"Why is my agent slow?"**
+
+Check latency recording for a breakdown of time spent. Common causes of slow
+responses:
+
+- **High LLM call time** -- the AI provider is slow (try a different model or
+  check provider status pages)
+- **High tool execution time** -- a specific tool is taking too long (check
+  network connectivity for web tools, or command timeout for bash tools)
+- **High total time with low component times** -- the delay is in context
+  retrieval or message routing (check memory database performance)
+
+**"Is the daemon healthy?"**
+
+Check diagnostic collection. Event loop delays above 500ms indicate the daemon
+is under stress. High memory usage might mean you need to restart the daemon or
+increase available memory.
+
+## Observability vs. Web Dashboard
+
+This page explains **what is tracked and why**. The
+[Web Dashboard Observability](/web-dashboard/observability) page shows you
+**how to view this data in the browser** -- the charts, tables, and filters
+available in the dashboard UI.
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="heart-pulse" href="/operations/monitoring">
+    System health checks and threshold alerts.
+  </Card>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    The process that collects all observability data.
+  </Card>
+  <Card title="Web Dashboard Observability" icon="chart-line" href="/web-dashboard/observability">
+    View observability data visually in your browser.
+  </Card>
+  <Card title="Agent Safety" icon="shield" href="/agents/safety">
+    Budget limits, token caps, and cost controls.
+  </Card>
+</CardGroup>

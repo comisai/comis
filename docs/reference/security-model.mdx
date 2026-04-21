@@ -1,0 +1,737 @@
+---
+title: "Security Model"
+description: "Complete technical reference for all security mechanisms, thresholds, patterns, and configuration"
+icon: "shield-halved"
+---
+
+This page is the exhaustive technical reference for every security mechanism in
+Comis, organized by processing stage. Each section documents the exact rules,
+thresholds, pattern weights, and default values as implemented in the source
+code.
+
+For a user-friendly overview of how these layers work together, see
+[Defense in Depth](/security/defense-in-depth).
+
+---
+
+## Input Layer
+
+The input layer validates and scans incoming messages before they reach the
+agent. It runs four mechanisms in sequence: structural validation, jailbreak
+detection, injection rate limiting, and external content wrapping.
+
+### Input Validation
+
+Structural validation catches malformed and adversarial payloads before any
+semantic analysis. Pure function with no side effects.
+
+**Checks performed:**
+
+| Check | Threshold | Detection |
+|-------|-----------|-----------|
+| Message length | 100,000 characters max | Messages exceeding limit flagged as `length_exceeded` |
+| Null bytes | Any `\0` character | Detected, sanitized (removed), flagged as `null_bytes_detected` |
+| Whitespace ratio | Above 70% | Ratio of whitespace to total characters, flagged as `whitespace_ratio` |
+| Character repetition | 50+ consecutive identical characters | Regex `(.)\1{49,}`, flagged as `excessive_repetition` |
+
+The validation result contains:
+- `valid`: `true` if no structural issues found
+- `reasons`: Array of human-readable reason codes
+- `sanitized`: Copy of input with null bytes removed (original preserved for audit)
+
+<Info>
+Source: `validateInput()` in `packages/core/src/security/input-validator.ts`
+</Info>
+
+### Input Guard (Jailbreak Detection)
+
+The Input Guard performs semantic jailbreak detection using weighted compound
+phrase patterns, typoglycemia detection, and code block exclusion. It scores
+input text on a 0.0-1.0 scale.
+
+#### Pattern Categories and Weights
+
+Each category groups related regex patterns. If any pattern in a category
+matches, the category weight is added once (boolean per category -- multiple
+matches within the same category do not multiply the weight).
+
+| Category | Weight | Patterns Detected |
+|----------|--------|-------------------|
+| `ignore_instructions` | 0.6 | "Ignore previous instructions", "ignore all instructions" |
+| `disregard_previous` | 0.5 | "Disregard previous", "disregard your instructions" |
+| `forget_instructions` | 0.5 | "Forget everything", "forget your instructions" |
+| `role_assumption` | 0.4 | "You are now [role]", "you are now a/an" |
+| `new_instructions` | 0.5 | "New instructions", "new instructions:" |
+| `important_override` | 0.5 | "Important: override" and variants |
+| `override_safety` | 0.6 | "Override safety" and variants |
+| `act_as_role` | 0.4 | "Act as [role]" pattern |
+| `context_reset` | 0.4 | Context reset manipulation |
+| `rule_replacement` | 0.4 | Rule replacement attempts |
+| `system_markers` | 0.3 | `<system>` tags, `[system]` brackets, system command markers |
+| `special_tokens` | 0.3 | Special token delimiters (`<\|...\|>` patterns) |
+| `role_markers` | 0.2 | Role boundary markers, assistant role markers |
+
+#### Risk Levels and Thresholds
+
+| Risk Level | Score Range | Action |
+|------------|-------------|--------|
+| Low | Below 0.4 | `pass` -- no action taken |
+| Medium | 0.4 to below 0.7 | `reinforce` -- system prompt reinforcement injected |
+| High | 0.7 and above | `warn` (default) or `block` (if configured) |
+
+#### Typoglycemia Detection
+
+The guard detects scrambled-middle variants of 8 key jailbreak terms. Each
+match adds **0.3** to the score. A word is a typoglycemia variant if it has the
+same length, same first and last characters, same sorted middle characters, but
+is not an exact match.
+
+| Term | Example Variant |
+|------|----------------|
+| `ignore` | `ignroe` |
+| `previous` | `preivous` |
+| `instructions` | `insrtuctinos` |
+| `system` | `sysetm` |
+| `bypass` | `byapss` |
+| `override` | `ovrreide` |
+| `forget` | `froget` |
+| `delete` | `dleete` |
+
+#### Code Block Exclusion
+
+Content inside fenced code blocks (triple backticks) and inline code (single
+backticks) is stripped before pattern matching. This minimizes false positives
+on technical content that legitimately discusses prompt injection or system
+commands.
+
+#### InputGuardConfig Interface
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mediumThreshold` | `number` | `0.4` | Score threshold for medium risk |
+| `highThreshold` | `number` | `0.7` | Score threshold for high risk |
+| `action` | `"warn"` \| `"block"` | `"warn"` | Action for high-risk detections |
+
+<Info>
+Source: `createInputGuard()` and `PATTERN_WEIGHTS` in `packages/core/src/security/input-guard.ts`
+</Info>
+
+### Injection Rate Limiter
+
+Tracks repeated high-score injection detections per user with a sliding window
+approach. Each user is tracked independently by `tenantId:userId` key.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `windowMs` | `300000` (5 min) | Time window for counting detections |
+| `warnThreshold` | `3` | Detection count that triggers warn level |
+| `auditThreshold` | `5` | Detection count that triggers audit level |
+| `entryTtlMs` | `300000` (5 min) | TTL for inactive entries |
+| `maxEntries` | `10000` | Maximum tracked users (prevents memory leaks) |
+
+**Threshold behavior:**
+
+| Count | Level | Event |
+|-------|-------|-------|
+| Below 3 | `none` | No action |
+| 3 (exactly) | `warn` | `thresholdCrossed: true` on the 3rd detection |
+| 4 | `warn` | `thresholdCrossed: false` (already warned) |
+| 5 (exactly) | `audit` | `thresholdCrossed: true` on the 5th detection |
+| Above 5 | `audit` | `thresholdCrossed: false` (already audited) |
+
+When `maxEntries` is reached, the oldest entry (by most recent timestamp) is
+evicted. Timers use `unref()` for clean daemon shutdown.
+
+<Info>
+Source: `createInjectionRateLimiter()` in `packages/core/src/security/injection-rate-limiter.ts`
+</Info>
+
+### External Content Wrapping
+
+External content from untrusted sources (emails, webhooks, APIs, web tools) is
+wrapped with random delimiters and security warnings before passing to the LLM.
+
+**Delimiter generation:** Each session gets a deterministic random delimiter
+from `AsyncLocalStorage` context (or a fresh 24-hex-character delimiter from
+`randomBytes(12)`). The wrapping format is:
+
+```
+<<<UNTRUSTED_{delimiter}>>>
+Source: Email
+From: sender@example.com
+Subject: Help request
+---
+[content here]
+<<<END_UNTRUSTED_{delimiter}>>>
+```
+
+**Source types:** `email`, `webhook`, `api`, `channel_metadata`, `web_search`,
+`web_fetch`, `document`, `unknown`.
+
+**Marker sanitization:** If the content itself contains delimiter patterns
+(static `<<<EXTERNAL_UNTRUSTED_CONTENT>>>` or dynamic `<<<UNTRUSTED_hex>>>`),
+they are replaced with `[[MARKER_SANITIZED]]` before wrapping. This also
+handles fullwidth Unicode equivalents to prevent bypass via character
+substitution.
+
+**Suspicious pattern detection:** Content is scanned against 16 injection
+patterns from `injection-patterns.ts`. When patterns are found, an
+`onSuspiciousContent` callback fires with the source, matched patterns, content
+length, and sender.
+
+<Info>
+Source: `wrapExternalContent()` in `packages/core/src/security/external-content.ts`
+</Info>
+
+---
+
+## Skill Layer
+
+The skill layer scans and sanitizes prompt skill content at load time, before
+it can influence agent behavior.
+
+### Content Scanner
+
+Scans skill body content for dangerous patterns across 6 categories. Pure
+function with no side effects -- callers handle audit events and blocking
+decisions.
+
+| Category | Rules | Severity | Description |
+|----------|-------|----------|-------------|
+| `exec_injection` | 4 rules | CRITICAL | Subshell injection `$(cmd)`, backtick injection, `eval()`, pipe to shell |
+| `env_harvesting` | 3 rules | WARN | `printenv`, `/proc/self/environ`, env dump piped to encoding/exfiltration |
+| `crypto_mining` | 3 rules | CRITICAL/WARN | `stratum://` protocol, known miner binaries (CRITICAL); pool domains (WARN) |
+| `network_exfiltration` | 3 rules | WARN/CRITICAL | `curl \| bash` (WARN), `wget -O-` (WARN); reverse shell patterns (CRITICAL) |
+| `obfuscated_encoding` | 3 rules | WARN/CRITICAL | Long base64 80+ chars (WARN), long hex 20+ sequences (WARN); base64 decode piped (CRITICAL) |
+| `xml_breakout` | 2 rules | CRITICAL | Closing skill XML tags, system-level message tags (breakout attempts) |
+
+**Total: 18 scan rules** across 6 categories.
+
+<Info>
+Source: `scanSkillContent()` and `CONTENT_SCAN_RULES` in `packages/skills/src/prompt/content-scanner.ts`
+</Info>
+
+### Sanitization Pipeline
+
+Skill body content passes through a 4-step pipeline before reaching the system
+prompt:
+
+| Step | Operation | Purpose |
+|------|-----------|---------|
+| 1 | Strip HTML comments | Remove `<!-- hidden content -->` that could contain injection |
+| 2 | NFKC normalization | Decompose fullwidth/ligature characters to canonical form |
+| 3 | Strip invisible characters | Remove zero-width characters including Unicode tag block bypass |
+| 4 | Enforce size limit | Truncate to `maxBodyLength` with `[TRUNCATED]` marker |
+
+Size enforcement applies to the **final** sanitized output, not the raw input.
+This prevents unnecessary truncation when HTML comments inflate the raw size.
+
+<Info>
+Source: `sanitizeSkillBody()` in `packages/skills/src/prompt/sanitizer.ts`
+</Info>
+
+---
+
+## Execution Layer
+
+The execution layer classifies actions, enforces approval gates, prevents SSRF,
+and validates file paths before any side effects occur.
+
+### Action Classifier
+
+Every action in the system is classified by risk level. Unknown actions default
+to `"destructive"` (fail-closed principle).
+
+| Classification | Description | Example Actions |
+|----------------|-------------|-----------------|
+| `read` | No side effects, safe to auto-approve | `file.read`, `memory.search`, `config.read` |
+| `mutate` | Modifiable side effects, logged | `file.write`, `memory.store`, `message.send` |
+| `destructive` | Irreversible or high-risk, may require confirmation | `file.delete`, `memory.clear`, `system.shutdown` |
+
+The registry contains 100+ registered actions organized by category. After
+bootstrap, the registry is locked via `lockRegistry()` to prevent runtime
+classification downgrades by malicious plugins.
+
+For the complete action registry, see [Action Classifier](/reference/action-classifier).
+
+<Info>
+Source: `classifyAction()` and `ACTION_REGISTRY` in `packages/core/src/security/action-classifier.ts`
+</Info>
+
+### Approval Gate
+
+The approval system controls whether agent-initiated actions proceed
+automatically, require human confirmation, or are denied.
+
+**Three modes:**
+
+| Mode | Behavior |
+|------|----------|
+| `auto` | Action proceeds without human confirmation |
+| `require` | Action pauses until human approves or denies |
+| `deny` | Action is rejected immediately |
+
+**Configuration layers:** Comis has two distinct configuration sections that
+interact:
+
+1. **`security.actionConfirmation`** -- Quick toggle for destructive/sensitive action confirmation
+2. **`approvals`** -- Full rule-based approval workflow with pattern matching
+
+The `approvals` system evaluates rules in order (first match wins). Each rule
+matches action types by pattern and specifies a mode, timeout, and minimum
+trust level.
+
+**Approval rule fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `actionPattern` | `string` | _(required)_ | Pattern matching action types |
+| `mode` | `"auto"` \| `"require"` \| `"deny"` | `"auto"` | Approval behavior |
+| `timeoutMs` | `number` | `300000` (5 min) | Timeout for human approval (0 = no timeout) |
+| `minTrustLevel` | `"untrusted"` \| `"basic"` \| `"verified"` \| `"admin"` | `"verified"` | Trust level required to auto-approve |
+
+<Info>
+Source: `ApprovalRuleSchema` and `ApprovalsConfigSchema` in `packages/core/src/config/schema-approvals.ts`
+</Info>
+
+### SSRF Guard
+
+Validates URLs before any outbound HTTP request to prevent Server-Side Request
+Forgery. Uses DNS-pinned validation: the URL is resolved to an IP address and
+checked against blocked ranges before the actual fetch.
+
+**Blocked IP ranges:**
+
+| Range | Description |
+|-------|-------------|
+| `private` | RFC 1918 addresses (10.x, 172.16-31.x, 192.168.x) |
+| `loopback` | 127.0.0.0/8 and ::1 |
+| `linkLocal` | 169.254.0.0/16 and fe80::/10 |
+| `uniqueLocal` | fc00::/7 (IPv6 private) |
+| `unspecified` | 0.0.0.0 and :: |
+| `reserved` | IANA reserved ranges |
+
+**Cloud metadata IPs (explicitly blocked):**
+
+| IP | Service |
+|----|---------|
+| `169.254.169.254` | AWS, GCP, Azure instance metadata |
+| `169.254.170.2` | AWS ECS task metadata |
+| `100.100.100.200` | Alibaba Cloud metadata |
+
+**Protocol check:** Only `http:` and `https:` protocols are allowed.
+
+**Validation sequence:**
+1. Parse URL (reject invalid)
+2. Check protocol (reject non-HTTP/HTTPS)
+3. DNS resolution (reject unresolvable hostnames)
+4. Cloud metadata IP check (reject explicit metadata IPs)
+5. IP range classification (reject private/loopback/link-local/reserved)
+
+<Info>
+Source: `validateUrl()`, `BLOCKED_RANGES`, and `CLOUD_METADATA_IPS` in `packages/core/src/security/ssrf-guard.ts`
+</Info>
+
+### Safe Path
+
+Validates file paths to prevent directory traversal attacks. Returns a resolved,
+validated absolute path that is guaranteed to stay within the base directory.
+
+**Attack vectors defended:**
+
+| Vector | Defense |
+|--------|---------|
+| Basic traversal (`../`) | Path resolution + prefix check |
+| URL-encoded traversal (`%2e%2e%2f`) | `decodeURIComponent` before resolution |
+| Prefix attacks (`/uploads` vs `/uploads-evil`) | Trailing separator in prefix check |
+| Null byte injection | Explicit `\0` check in all segments |
+| Symlink escapes | Walk each path component, check `lstat` for symlinks resolving outside base |
+
+For the complete safe path API, see [Safe Path](/reference/safe-path).
+
+<Info>
+Source: `safePath()` in `packages/core/src/security/safe-path.ts`
+</Info>
+
+---
+
+## Output Layer
+
+The output layer scans agent responses before they reach the user, catching
+leaked secrets, canary tokens, and prompt extraction attempts.
+
+### Output Guard
+
+Scans LLM responses for secret patterns, canary token leakage, and prompt
+extraction attempts. Critical findings are blocked and redacted; warning-level
+findings are reported but not redacted.
+
+#### Secret Patterns
+
+**13 critical patterns** (blocked and redacted):
+
+| Pattern Name | Description | Redaction |
+|-------------|-------------|-----------|
+| `aws_key` | AWS access key IDs (`AKIA...`) | `[REDACTED:aws_key]` |
+| `hex_secret_32` | 32+ character hex secrets | `[REDACTED:hex_secret_32]` |
+| `base64_secret` | Base64-encoded secrets | `[REDACTED:base64_secret]` |
+| `private_key_header` | `-----BEGIN ... PRIVATE KEY-----` | `[REDACTED:private_key_header]` |
+| `github_token` | GitHub tokens (`ghp_`, `gho_`, etc.) | `[REDACTED:github_token]` |
+| `slack_token` | Slack tokens (`xapp-`, etc.) | `[REDACTED:slack_token]` |
+| `anthropic_key` | Anthropic API keys (`sk-ant-`) | `[REDACTED:anthropic_key]` |
+| `openai_project_key` | OpenAI project keys (`sk-proj-`) | `[REDACTED:openai_project_key]` |
+| `telegram_bot_token` | Telegram bot tokens (`digits:alphanumeric`) | `[REDACTED:telegram_bot_token]` |
+| `discord_bot_token` | Discord bot tokens (dot-separated segments) | `[REDACTED:discord_bot_token]` |
+| `google_api_key` | Google API keys (`AIzaSy...`) | `[REDACTED:google_api_key]` |
+| `db_connection_string` | Database connection strings (`postgres://`, etc.) | `[REDACTED:db_connection_string]` |
+| `generic_api_key` | Generic API key assignments | `[REDACTED:generic_api_key]` |
+
+**2 warning patterns** (detected but not redacted):
+
+| Pattern Name | Description |
+|-------------|-------------|
+| `bearer_token` | Bearer token patterns |
+| `jwt_token` | JWT tokens (three dot-separated base64url segments) |
+
+#### Prompt Extraction Patterns
+
+**2 patterns** (warning severity, detect-only):
+
+| Pattern Name | Description |
+|-------------|-------------|
+| `system_prompt_label` | Labels like "System prompt:", "My instructions:" |
+| `instructions_label` | Labels indicating system instruction disclosure |
+
+#### Canary Token Check
+
+If a `canaryToken` is provided in the scan context and found in the response,
+it is redacted as `[REDACTED:canary]` with `critical` severity. This indicates
+the agent leaked its canary token, suggesting prompt extraction succeeded.
+
+#### Redaction Format
+
+Critical findings are redacted in the `sanitized` output using the pattern:
+
+```
+[REDACTED:{pattern_name}]
+```
+
+For example, an AWS key becomes `[REDACTED:aws_key]`.
+
+<Info>
+Source: `createOutputGuard()`, `SECRET_PATTERNS`, and `PROMPT_EXTRACTION_PATTERNS_LOCAL` in `packages/core/src/security/output-guard.ts`
+</Info>
+
+### Canary Tokens
+
+Canary tokens are injected into system prompts to detect prompt extraction
+attacks. If the token appears in the agent's output, it means the system prompt
+was leaked.
+
+**Generation:** HMAC-SHA256 of `"canary:{sessionKey}"` using a configured
+secret. The first 16 hex characters are used, prefixed with `CTKN_`.
+
+```
+CTKN_a1b2c3d4e5f67890
+```
+
+**Properties:**
+- **Deterministic per session:** Same session key and secret always produce the same canary
+- **Format:** `CTKN_` prefix followed by 16 hex characters
+- **Detection:** The output guard checks if the canary token appears anywhere in the response
+
+<Info>
+Source: `generateCanaryToken()` and `detectCanaryLeakage()` in `packages/core/src/security/canary-token.ts`
+</Info>
+
+### Log Sanitizer
+
+Defense-in-depth regex-based credential scrubbing for log strings. This is a
+second line of defense after Pino's structured field redaction -- it catches
+credentials embedded in free-text log messages.
+
+**16 credential patterns** processed in order (more specific patterns first):
+
+| Pattern | Replacement | Description |
+|---------|-------------|-------------|
+| Anthropic API keys | `sk-ant-[REDACTED]` | `sk-ant-...` keys |
+| OpenAI project keys | `sk-proj-[REDACTED]` | `sk-proj-...` keys |
+| Generic `sk-` keys | `sk-[REDACTED]` | Any `sk-` prefixed key (20+ chars) |
+| Bearer tokens | `Bearer [REDACTED]` | Bearer token in text |
+| Telegram bot tokens | `[REDACTED_BOT_TOKEN]` | `digits:alphanumeric` format |
+| AWS access keys | `AKIA[REDACTED]` | `AKIA` followed by 16 chars |
+| AWS secret keys | `$1[REDACTED_AWS_SECRET]` | 40-char base64-like after common prefixes |
+| Stripe keys | `sk_[REDACTED]` | `sk_live_` or `sk_test_` keys |
+| Google API keys | `AIza[REDACTED]` | `AIzaSy...` keys |
+| Slack app tokens | `xapp-[REDACTED]` | `xapp-` prefixed tokens |
+| SendGrid keys | `SG.[REDACTED]` | `SG.` prefixed keys |
+| JWTs | `[REDACTED_JWT]` | Three dot-separated base64url segments |
+| DB connection strings | `[REDACTED_CONN_STRING]` | `postgres://`, `mysql://`, etc. |
+| URL passwords | `://$1:[REDACTED]@` | Passwords in URL credentials |
+| Discord bot tokens | `[REDACTED_DISCORD_TOKEN]` | Dot-separated token segments |
+| Hex secrets | `[REDACTED_HEX]` | 40+ character hex strings |
+| GitHub tokens | `gh[REDACTED]` | `ghp_`, `gho_`, etc. (36+ chars) |
+
+**Size limit:** Inputs exceeding 1 MB are returned as-is to prevent ReDoS on
+oversized strings.
+
+<Info>
+Source: `sanitizeLogString()` and `CREDENTIAL_PATTERNS` in `packages/core/src/security/log-sanitizer.ts`
+</Info>
+
+---
+
+## Data Layer
+
+The data layer protects stored data through memory write validation, encrypted
+secrets storage, and configuration redaction.
+
+### Memory Write Validator
+
+Pre-storage security scan for memory content. Prevents memory poisoning attacks
+where adversaries store prompt injection payloads for later retrieval via RAG.
+
+| Classification | Trigger | Storage Behavior |
+|----------------|---------|-----------------|
+| `CLEAN` | No suspicious patterns detected | Stored normally |
+| `WARN` | Jailbreak/role patterns detected (from injection-patterns.ts) | Trust downgraded to `"external"` |
+| `CRITICAL` | Dangerous command patterns detected (`exec`, `elevated: true`, `rm -rf`, `delete all`) | Storage blocked entirely |
+
+The validator uses the same `detectSuspiciousPatterns()` function from
+`external-content.ts` for pattern detection. Critical patterns are a subset:
+execution-oriented patterns that are dangerous when stored for later RAG
+retrieval.
+
+<Info>
+Source: `validateMemoryWrite()` in `packages/core/src/security/memory-write-validator.ts`
+</Info>
+
+### Encrypted Secrets Store
+
+Secrets are encrypted using AES-256-GCM with HKDF-SHA256 key derivation. Each
+encryption operation generates unique cryptographic material.
+
+**Algorithm chain:**
+1. Generate 32-byte random salt
+2. Derive encryption key via HKDF-SHA256 from master key + salt
+3. Generate 12-byte random IV (AES-GCM standard nonce)
+4. Encrypt with AES-256-GCM
+5. Output: ciphertext, IV, 16-byte authentication tag, salt
+
+**EncryptedSecret fields:**
+
+| Field | Type | Size | Description |
+|-------|------|------|-------------|
+| `ciphertext` | `Buffer` | Variable | AES-256-GCM encrypted data |
+| `iv` | `Buffer` | 12 bytes | Initialization vector (AES-GCM standard nonce) |
+| `authTag` | `Buffer` | 16 bytes | GCM authentication tag |
+| `salt` | `Buffer` | 32 bytes | Random salt for HKDF key derivation |
+
+**Master key requirements:** At least 32 bytes, provided as hex (64+ chars) or
+base64 (44+ chars). Only the first 32 bytes are used.
+
+<Info>
+Source: `createSecretsCrypto()` and `EncryptedSecret` in `packages/core/src/security/secret-crypto.ts`
+</Info>
+
+### Config Redaction
+
+Before config objects are exposed via RPC (`config.read`), secret-bearing
+fields are replaced with `"[REDACTED]"`.
+
+**Secret field pattern (case-insensitive):**
+
+```
+/^(.*token|.*secret|.*password|.*apiKey|.*api_key|.*credential|.*private_key|botToken|appSecret|hmacSecret|webhookSecret)$/i
+```
+
+The redaction function:
+1. Deep-clones the config via `structuredClone` (input is never mutated)
+2. Walks all nested objects recursively
+3. Replaces string values whose keys match `SECRET_FIELD_PATTERN` with `"[REDACTED]"`
+
+<Info>
+Source: `redactConfigSecrets()` and `SECRET_FIELD_PATTERN` in `packages/core/src/security/config-redaction.ts`
+</Info>
+
+---
+
+## Audit
+
+The audit subsystem produces structured security events and deduplicates rapid
+detections.
+
+### Audit Event Schema
+
+Every significant action produces an audit event validated against
+`AuditEventSchema`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | `string` (UUID v4) | Auto | Unique event identifier |
+| `timestamp` | `string` (ISO 8601) | Auto | When the event occurred |
+| `tenantId` | `string` | Yes | Tenant identifier for multi-tenant isolation |
+| `agentId` | `string` | Yes | Agent that performed the action |
+| `userId` | `string` | Yes | User who triggered the action |
+| `actionType` | `string` | Yes | Action identifier (e.g., `"file.delete"`) |
+| `classification` | `"read"` \| `"mutate"` \| `"destructive"` | Yes | Risk classification |
+| `outcome` | `"success"` \| `"failure"` \| `"denied"` | Yes | Action result |
+| `metadata` | `Record<string, unknown>` | No | Arbitrary event metadata (default: `{}`) |
+| `traceId` | `string` | No | Distributed tracing identifier |
+| `duration` | `number` | No | Action duration in milliseconds |
+
+<Info>
+Source: `AuditEventSchema` and `createAuditEvent()` in `packages/core/src/security/audit.ts`
+</Info>
+
+### Audit Aggregator
+
+Deduplicates rapid security events within configurable time windows, emitting
+summary events instead of flooding the event bus.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `windowMs` | `60000` (60 seconds) | Deduplication window per event source |
+| `maxPatternsPerSummary` | `10` | Maximum representative patterns in summary |
+
+**Behavior:**
+
+- Events are bucketed by source type (`user_input`, `tool_output`,
+  `external_content`, `memory_write`)
+- First event in a window creates a new bucket with a `setTimeout` timer
+- Subsequent events in the same window increment the count and add patterns
+- When the timer fires, a summary `security:injection_detected` event is
+  emitted with the accumulated count and unique patterns
+- Timers use `unref()` for clean daemon shutdown
+- `flush()` emits all pending summaries immediately
+- `destroy()` clears all timers without emitting
+
+<Info>
+Source: `createAuditAggregator()` in `packages/core/src/security/audit-aggregator.ts`
+</Info>
+
+---
+
+## Configuration Reference
+
+### SecurityConfigSchema
+
+Top-level `security` configuration.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `security.logRedaction` | `boolean` | `true` | Enable structured log redaction of sensitive fields |
+| `security.auditLog` | `boolean` | `true` | Enable audit event logging |
+| `security.permission` | `PermissionConfig` | _(see below)_ | Node.js permission model settings |
+| `security.actionConfirmation` | `ActionConfirmationConfig` | _(see below)_ | Action confirmation requirements |
+| `security.agentToAgent` | `AgentToAgentConfig` | _(see below)_ | Agent-to-agent messaging policy |
+| `security.secrets` | `SecretsConfig` | _(see below)_ | Encrypted secrets store configuration |
+
+#### PermissionConfig
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `permission.enableNodePermissions` | `boolean` | `false` | Enable Node.js `--permission` flag enforcement |
+| `permission.allowedFsPaths` | `string[]` | `[]` | Allowed filesystem read/write paths |
+| `permission.allowedNetHosts` | `string[]` | `[]` | Allowed network hosts for outbound connections |
+
+#### ActionConfirmationConfig
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `actionConfirmation.requireForDestructive` | `boolean` | `true` | Require confirmation for destructive actions |
+| `actionConfirmation.requireForSensitive` | `boolean` | `false` | Require confirmation for sensitive actions |
+| `actionConfirmation.autoApprove` | `string[]` | `[]` | Actions that bypass confirmation |
+
+#### AgentToAgentConfig
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `agentToAgent.enabled` | `boolean` | `true` | Enable cross-agent session messaging |
+| `agentToAgent.maxPingPongTurns` | `number` | `3` | Maximum reply-back loop turns (0-5) |
+| `agentToAgent.allowAgents` | `string[]` | `[]` | Allowed agent IDs for sub-agent spawning (empty = allow all) |
+| `agentToAgent.subAgentRetentionMs` | `number` | `3600000` (1 hour) | Retention period for completed sub-agent sessions |
+| `agentToAgent.waitTimeoutMs` | `number` | `60000` (60s) | Default timeout for wait mode |
+| `agentToAgent.subAgentMaxSteps` | `number` | `50` | Default max steps for sub-agent execution |
+| `agentToAgent.subAgentToolGroups` | `string[]` | `["coding"]` | Default tool profile groups for sub-agents |
+| `agentToAgent.subAgentMcpTools` | `"inherit"` \| `"none"` | `"inherit"` | MCP tool inheritance policy for sub-agents |
+
+<Info>
+Source: `SecurityConfigSchema`, `PermissionConfigSchema`, `ActionConfirmationConfigSchema`, `AgentToAgentConfigSchema` in `packages/core/src/config/schema-security.ts`
+</Info>
+
+### ApprovalsConfigSchema
+
+Top-level `approvals` configuration.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `approvals.enabled` | `boolean` | `false` | Enable the approval workflow |
+| `approvals.defaultMode` | `"auto"` \| `"require"` \| `"deny"` | `"auto"` | Default mode for unmatched actions |
+| `approvals.rules` | `ApprovalRule[]` | `[]` | Ordered list of approval rules (first match wins) |
+| `approvals.defaultTimeoutMs` | `number` | `300000` (5 min) | Default approval request timeout |
+
+<Warning>
+If `approvals.enabled` is `false` but `approvals.rules` has entries, the rules
+are not evaluated. Comis logs a configuration warning in this case.
+</Warning>
+
+<Info>
+Source: `ApprovalsConfigSchema` and `checkApprovalsConfig()` in `packages/core/src/config/schema-approvals.ts`
+</Info>
+
+### SecretsConfigSchema
+
+Global encrypted secrets store under `security.secrets`.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `secrets.enabled` | `boolean` | `false` | Enable encrypted secrets store |
+| `secrets.dbPath` | `string` | `"secrets.db"` | Path to secrets database relative to data directory |
+
+<Info>
+Source: `SecretsConfigSchema` in `packages/core/src/config/schema-secrets.ts`
+</Info>
+
+### AgentSecretsConfigSchema
+
+Per-agent secret access control (configured per agent, not globally).
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `secrets.allow` | `string[]` | `[]` | Glob patterns for allowed secret names (empty = unrestricted) |
+
+<Info>
+Source: `AgentSecretsConfigSchema` in `packages/core/src/config/schema-secrets.ts`
+</Info>
+
+---
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Action Classifier" icon="tags" href="/reference/action-classifier">
+    Complete action registry with all 100+ classifications
+  </Card>
+  <Card title="Tool Security" icon="screwdriver-wrench" href="/reference/tool-security">
+    Tool policy profiles and content scanning
+  </Card>
+  <Card title="Safe Path" icon="folder-tree" href="/reference/safe-path">
+    Path traversal prevention API
+  </Card>
+  <Card title="Sandbox" icon="box" href="/reference/sandbox">
+    Execution environment isolation
+  </Card>
+  <Card title="Secret Manager" icon="key" href="/reference/secret-manager">
+    Encrypted secrets store operations
+  </Card>
+  <Card title="Node Permissions" icon="lock" href="/reference/node-permissions">
+    Node.js permission model integration
+  </Card>
+  <Card title="Defense in Depth" icon="shield" href="/security/defense-in-depth">
+    User-friendly security overview
+  </Card>
+  <Card title="Hardening" icon="shield-check" href="/security/hardening">
+    Production hardening checklist
+  </Card>
+</CardGroup>

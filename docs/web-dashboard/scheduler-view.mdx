@@ -1,0 +1,99 @@
+---
+title: "Scheduler View"
+description: "Manage automated tasks, cron jobs, and heartbeat monitoring"
+icon: "clock"
+---
+
+The Scheduler view lets you set up recurring tasks that run automatically on a schedule. You can create and manage cron jobs, monitor their execution history, and check the health of your agents through heartbeat monitoring.
+
+## What You See
+
+The Scheduler view is organized into three tabs:
+
+### Cron Jobs Tab
+
+The main tab displays a list of all your scheduled jobs. Each row shows:
+
+- **Job name** -- a descriptive name you gave the job.
+- **Agent** -- which agent runs the job.
+- **Schedule** -- the cron expression or interval in human-readable form (for example, "Every 1h" or a cron pattern).
+- **Status** -- a colored indicator showing whether the job is active (green), inactive (gray), or has errors (red). If a job has consecutive errors, the count is shown next to the status.
+- **Last Run** -- when the job last executed, shown as a relative time (for example, "3 minutes ago").
+- **Next Run** -- when the job will run next (shown only for enabled jobs).
+- **Delete** -- a button to remove the job.
+
+Click any job row to open the editor panel where you can modify the job's settings.
+
+Below the job list, a **Recent Executions** section shows the execution history for your jobs. Each entry displays the timestamp, job name, whether it succeeded or failed, and the duration.
+
+### Heartbeat Tab
+
+The Heartbeat tab shows per-agent health monitoring cards. Each card displays:
+
+- **Agent name** -- which agent is being monitored.
+- **Enabled/disabled** status indicator.
+- **Interval** -- how often heartbeat checks run for this agent.
+- **Last run** -- when the last heartbeat check occurred.
+- **Next due** -- when the next check is scheduled.
+- **Consecutive errors** -- how many checks have failed in a row.
+
+Below the agent cards, two sections show recent activity:
+
+- **Recent Alerts** -- heartbeat alerts that were raised, with the agent name, classification (transient or permanent), reason, and timestamp.
+- **Recent Deliveries** -- heartbeat delivery records showing the agent, channel, outcome (delivered, skipped, or failed), and duration.
+
+A toggle at the top lets you enable or disable heartbeat monitoring globally.
+
+### Extracted Tasks Tab
+
+The Extracted Tasks tab shows tasks that your agents have identified from conversations. Each task displays a title, priority level (high, medium, or low), and current status (pending, completed, or dismissed). You can mark tasks as complete or dismiss them using the action buttons.
+
+## Managing Jobs
+
+<Steps>
+  <Step title="Create a new job">
+    Click the **+ New Job** button at the top of the Cron Jobs tab. A form overlay appears where you can enter the job name, select an agent, set the schedule (cron expression or interval), and write the message the agent should process. Click **Save** when you are done.
+  </Step>
+  <Step title="Edit an existing job">
+    Click any job row in the list. The editor overlay opens with the current settings. Modify the fields you want to change and click **Save**.
+  </Step>
+  <Step title="Delete a job">
+    Click the **Delete** button on the right side of any job row. The job is removed immediately.
+  </Step>
+</Steps>
+
+<Tip>
+**Common cron expressions:**
+
+- `0 * * * *` -- every hour, on the hour
+- `0 9 * * *` -- every day at 9:00 AM
+- `0 0 * * 1` -- every Monday at midnight
+- `*/15 * * * *` -- every 15 minutes
+- `0 9,17 * * *` -- twice a day, at 9:00 AM and 5:00 PM
+
+You can also use interval-based schedules (like "every 30 minutes") instead of cron expressions. See the [scheduling documentation](/agent-tools/scheduling) for full details.
+</Tip>
+
+## Checking Execution History
+
+Switch to the **Cron Jobs** tab and scroll down to the **Recent Executions** section. Each execution record shows:
+
+- **Timestamp** -- when the job ran.
+- **Job name** -- which job was executed.
+- **Result** -- green for success, red for failure.
+- **Duration** -- how long the execution took.
+
+Look for red failure indicators to spot jobs that are not running correctly. If a job fails repeatedly, check the consecutive error count in the job list above.
+
+<Info>
+**Consecutive errors:** If a job fails multiple times in a row, the error count appears next to the job's status indicator in the Cron Jobs list. This helps you quickly identify jobs that need attention -- whether they need to be reconfigured, or temporarily disabled while you investigate the issue.
+</Info>
+
+<CardGroup cols={2}>
+  <Card title="Scheduling Tools" icon="clock" href="/agent-tools/scheduling">
+    Learn how to configure automated tasks and cron expressions.
+  </Card>
+  <Card title="Agents View" icon="robot" href="/web-dashboard/agents-view">
+    View, configure, and manage your AI agents.
+  </Card>
+</CardGroup>

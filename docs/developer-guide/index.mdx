@@ -1,0 +1,109 @@
+---
+title: "Developer Guide"
+description: "Extend Comis with custom adapters, plugins, skills, and execution pipelines"
+icon: "code"
+---
+
+Comis is a TypeScript monorepo built on hexagonal architecture -- core domain logic at the center, with port interfaces defining boundaries and adapter packages implementing platform-specific behavior. Every function returns `Result<T, E>` instead of throwing exceptions, and security rules are enforced at lint time via ESLint.
+
+This guide covers everything you need to extend Comis: building custom channel adapters, writing lifecycle plugins, creating advanced skills, and orchestrating multi-agent pipelines.
+
+## What You Can Build
+
+### Custom Channel Adapters
+
+Connect Comis to any chat platform by implementing the `ChannelPort` interface. Comis ships with 10 adapters (Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Echo, Email) and you can add more without modifying core code.
+
+Each adapter handles platform-specific messaging, media, reactions, and threading while presenting a unified interface to the rest of the system. The `EchoChannelAdapter` serves as the simplest reference implementation -- an in-memory adapter with zero external dependencies.
+
+### Lifecycle Plugins
+
+Hook into 13 lifecycle points to modify behavior, add audit logging, block actions, or inject context. The plugin system provides 5 modifying hooks (where your handler can alter data flowing through the pipeline) and 8 void hooks (where you observe events without modifying them).
+
+Beyond lifecycle hooks, plugins can register custom tools that agents can call, add HTTP routes to the gateway, and define custom configuration schema sections. This makes the plugin system the primary extension mechanism for cross-cutting concerns like audit logging, webhook forwarding, or custom authorization.
+
+### Custom Skills
+
+Create prompt-based skills with SKILL.md manifests or connect external MCP servers. Skills extend what agents can do -- from answering domain-specific questions to executing multi-step workflows.
+
+Prompt skills are Markdown files with YAML frontmatter defining the skill's name, permissions, allowed tools, and input schema. The body contains the prompt template with variable placeholders. For more advanced integrations, MCP (Model Context Protocol) servers expose tools and resources to agents over a standardized protocol.
+
+### Execution Pipelines
+
+Orchestrate multi-agent workflows as directed acyclic graphs (DAGs). Define nodes with dependencies, input passing, and barrier modes for parallel agent coordination.
+
+Each node in the graph runs an agent with a specific task. Nodes can depend on other nodes, receive output from upstream nodes as input variables, and run in parallel when their dependencies are satisfied. The graph coordinator manages node scheduling, timeout enforcement, and aggregate result collection.
+
+## Architecture at a Glance
+
+All domain logic lives in `@comis/core`. Port interfaces define boundaries -- what the system needs. Adapter packages implement those boundaries -- how it's done. The composition root in `core/src/bootstrap.ts` wires everything together at startup, returning an `AppContainer` with the fully configured event bus, plugin registry, and hook runner.
+
+Every function returns `Result<T, E>` -- no thrown exceptions. This pattern is enforced by ESLint and used across all 13 packages. Core utilities like `ok()`, `err()`, `tryCatch()`, and `fromPromise()` from `@comis/shared` make error handling explicit, typed, and composable.
+
+```typescript
+import { ok, err, type Result } from "@comis/shared";
+
+async function fetchData(id: string): Promise<Result<Data, Error>> {
+  if (!id) return err(new Error("ID required"));
+  return ok(await loadFromDb(id));
+}
+```
+
+The codebase spans 13 packages, ~1185 source files, and ~944 test files. There are 19 port interfaces, 160 typed events across 4 domain subsystems, and 13 lifecycle hooks for plugin integration.
+
+## Key Patterns
+
+A few patterns appear throughout the codebase and are important to understand before diving in:
+
+- **`Result<T, E>`** -- Every function returns a `Result` discriminated union instead of throwing exceptions. Use `ok()` for success and `err()` for failure. This pattern is ESLint-enforced.
+- **Factory functions** -- Prefer `createXxx()` factory functions returning typed interfaces over direct class instantiation (e.g., `createCircuitBreaker()` returns `CircuitBreaker`).
+- **`TypedEventBus`** -- The inter-module communication layer. Packages subscribe to typed events instead of importing each other directly. The `EventMap` interface provides compile-time safety for all 160 events.
+- **`AsyncLocalStorage`** -- Request-scoped context is available via `runWithContext()` and `getContext()` in `core/src/context/`, providing trace IDs and agent context without passing them through every function call.
+
+## Prerequisites
+
+Before extending Comis, you should be comfortable with:
+
+- **TypeScript** -- strict mode, generics, discriminated unions, and ES modules
+- **Node.js >= 22** -- the runtime target for all packages
+- **pnpm** -- the package manager used for the monorepo workspace
+
+Set up the development environment with:
+
+```bash
+pnpm install          # Install dependencies (native: better-sqlite3, sharp)
+pnpm build            # Build all packages
+pnpm test             # Run all unit tests
+pnpm lint:security    # ESLint with security rules
+```
+
+The primary validation command before any commit is `pnpm build && pnpm test && pnpm lint:security`.
+
+## Getting Started
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="hexagon" href="/developer-guide/architecture">
+    Hexagonal pattern, ports, adapters, and the composition root
+  </Card>
+  <Card title="Packages" icon="cubes" href="/developer-guide/packages">
+    All 13 packages with roles and dependency graph
+  </Card>
+  <Card title="Event Bus" icon="tower-broadcast" href="/developer-guide/event-bus">
+    160 typed events across 4 domain subsystems
+  </Card>
+  <Card title="Custom Adapters" icon="plug" href="/developer-guide/custom-adapters">
+    Step-by-step channel adapter tutorial
+  </Card>
+  <Card title="Plugins" icon="puzzle-piece" href="/developer-guide/plugins">
+    13 lifecycle hooks and 3 extension registrations
+  </Card>
+  <Card title="Custom Skills" icon="wand-magic-sparkles" href="/developer-guide/custom-skills">
+    Advanced skill development beyond prompt skills
+  </Card>
+  <Card title="Pipelines" icon="diagram-project" href="/developer-guide/pipelines">
+    Multi-agent execution graphs (DAGs)
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/developer-guide/contributing">
+    Setup, coding standards, and PR process
+  </Card>
+</CardGroup>

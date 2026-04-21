@@ -1,0 +1,57 @@
+{
+  "name": "@comis/cli",
+  "private": true,
+  "version": "1.0.12",
+  "author": "Moshe Anconina",
+  "license": "Apache-2.0",
+  "description": "Command-line interface for the Comis AI agent platform",
+  "keywords": ["comis", "ai", "agent", "cli", "chatbot", "discord", "telegram", "slack"],
+  "engines": { "node": ">=22" },
+  "files": ["dist"],
+  "bin": {
+    "comis": "./dist/cli.js"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comisai/comis.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/comisai/comis#readme",
+  "bugs": {
+    "url": "https://github.com/comisai/comis/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli.js": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clack/core": "^1.1.0",
+    "@clack/prompts": "^1.1.0",
+    "@comis/agent": "workspace:*",
+    "@comis/core": "workspace:*",
+    "@comis/memory": "workspace:*",
+    "@comis/shared": "workspace:*",
+    "chalk": "^5.6.2",
+    "cli-table3": "^0.6.5",
+    "commander": "^14.0.0",
+    "ora": "^9.0.0",
+    "ws": "^8.19.0",
+    "yaml": "^2.8.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}

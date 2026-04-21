@@ -1,0 +1,206 @@
+---
+title: "Safe Path"
+description: "Path traversal prevention reference with 5 attack vector defenses"
+icon: "folder-closed"
+---
+
+The `safePath()` function prevents path traversal attacks by validating that resolved paths remain within a trusted base directory. It is always active with no configuration toggle -- every file system operation that accepts user-controlled path segments must use this function.
+
+Path traversal is consistently ranked in the OWASP Top 10. The `safePath()` function is the single chokepoint for all file system path validation in the system. By centralizing this check, every file operation benefits from the same 5-layer defense without needing per-callsite validation logic.
+
+<Info>
+  **Source:** `packages/core/src/security/safe-path.ts` -- defensive path resolution with 5 attack vector mitigations.
+</Info>
+
+## API
+
+### safePath
+
+```typescript
+function safePath(base: string, ...segments: string[]): string
+```
+
+Safely resolve a path within a base directory, preventing traversal attacks. The `base` parameter must be an absolute path to the trusted directory. The `segments` are path components to join under base.
+
+**Returns:** The resolved, validated absolute path.
+
+**Throws:** `PathTraversalError` if the resolved path escapes the base directory.
+
+### PathTraversalError
+
+```typescript
+class PathTraversalError extends Error {
+  readonly name: "PathTraversalError";
+  readonly base: string;      // The trusted base directory
+  readonly attempted: string;  // The path that was attempted
+}
+```
+
+Error thrown when a traversal attempt is detected. Includes both the base directory and the attempted path for diagnostics and audit logging.
+
+## Attack Vectors and Defenses
+
+The function defends against five categories of path traversal attacks:
+
+### 1. Basic Traversal (`../` sequences)
+
+**Attack:** Using `../` sequences to navigate above the base directory.
+
+```typescript
+// Blocked: "../../../etc/passwd" resolves outside base
+safePath("/data/uploads", "../../../etc/passwd");
+// throws PathTraversalError
+```
+
+**Defense:** `path.resolve()` canonicalizes the path, then a prefix check verifies the resolved path starts with `base + path.sep` (or equals base exactly).
+
+### 2. URL-Encoded Traversal (`%2e%2e%2f`)
+
+**Attack:** Using URL-encoded characters to bypass naive string checks.
+
+```typescript
+// Blocked: "%2e%2e%2f" decodes to "../"
+safePath("/data/uploads", "%2e%2e%2fetc%2fpasswd");
+// throws PathTraversalError
+```
+
+**Defense:** All segments are decoded with `decodeURIComponent()` before resolution. If decoding fails (malformed percent encoding), the raw segment is used instead.
+
+### 3. Prefix Attacks (`/uploads` vs `/uploads-evil`)
+
+**Attack:** Exploiting simple `startsWith()` checks where `/data/uploads-evil` starts with `/data/uploads`.
+
+```typescript
+// Without trailing separator guard, this could pass a naive check
+// safePath correctly blocks it
+safePath("/data/uploads", "../../uploads-evil/file");
+// throws PathTraversalError
+```
+
+**Defense:** The base directory is normalized with a trailing path separator before the prefix check. The resolved path must either equal `base` exactly or start with `base + path.sep`. This prevents `/data/uploads-evil` from matching `/data/uploads`.
+
+### 4. Null Byte Injection
+
+**Attack:** Inserting null bytes to truncate the path at the OS level while passing application-level checks.
+
+```typescript
+// Blocked: null byte in segment
+safePath("/data/uploads", "file.txt\0.jpg");
+// throws PathTraversalError
+```
+
+**Defense:** Every segment is checked for null bytes (`\0`) before any path resolution. If a null byte is found, `PathTraversalError` is thrown immediately.
+
+### 5. Symlink Escapes
+
+**Attack:** Creating a symlink inside the base directory that points to a location outside it.
+
+```typescript
+// If /data/uploads/link -> /etc/, this would escape:
+safePath("/data/uploads", "link/passwd");
+// throws PathTraversalError (symlink target checked)
+```
+
+**Defense:** After path resolution passes, each intermediate path component is checked with `lstatSync()`. If a component is a symbolic link, `realpathSync()` resolves its target and verifies the target remains within the base directory. If the symlink target escapes the base, `PathTraversalError` is thrown.
+
+<Note>
+  If an intermediate path component does not exist yet, the symlink check is skipped for that component. This is safe because non-existent paths cannot be symlinks.
+</Note>
+
+## Usage Patterns
+
+### Safe Usage
+
+```typescript
+import { safePath } from "@comis/core";
+
+// Resolve a user-provided filename within the uploads directory
+const filePath = safePath("/data/uploads", userFilename);
+// filePath is guaranteed to be under /data/uploads/
+
+// Multiple segments are joined safely
+const nested = safePath("/data/uploads", "images", "2026", userFilename);
+```
+
+### Error Handling
+
+```typescript
+import { safePath, PathTraversalError } from "@comis/core";
+
+try {
+  const resolved = safePath(baseDir, userInput);
+  // Use resolved path safely
+} catch (error) {
+  if (error instanceof PathTraversalError) {
+    // Log the traversal attempt for security audit
+    logger.warn({
+      base: error.base,
+      attempted: error.attempted,
+    }, "Path traversal blocked");
+  }
+}
+```
+
+### Blocked Attempts
+
+The following path segments are all blocked when the base is `/data/uploads`:
+
+```typescript
+// All of these throw PathTraversalError:
+safePath("/data/uploads", "../../../etc/passwd");
+safePath("/data/uploads", "%2e%2e/%2e%2e/etc/passwd");
+safePath("/data/uploads", "file\0.txt");
+safePath("/data/uploads", "../../uploads-evil/payload");
+// If /data/uploads/symlink -> /etc/
+safePath("/data/uploads", "symlink/shadow");
+```
+
+## Integration Points
+
+`safePath()` is used throughout the codebase wherever file system operations accept user-controlled path segments:
+
+| Component | Usage |
+|-----------|-------|
+| File tools (`file.read`, `file.write`) | Validate agent-provided file paths within workspace |
+| Memory file store | Validate attachment paths within data directory |
+| Skill discovery | Validate skill file paths within discovery directories |
+| Media processing | Validate temp file paths within media temp directory |
+| Config file loading | Validate config file paths against allowed directories |
+| Exec tool CWD | Validate explicit `cwd` parameter within workspace |
+
+<Note>
+  `safePath()` validates file tool parameters (paths passed to `read`, `write`, etc.) but cannot protect arbitrary commands passed to the `exec` tool. For example, `exec cat /etc/passwd` bypasses `safePath()` entirely because the path is inside a shell command string, not a tool parameter. The [Exec Sandbox](/security/exec-sandbox) provides OS-level filesystem isolation to close this gap.
+</Note>
+
+## Defense Summary
+
+| Attack Vector | Defense Mechanism | Throws |
+|--------------|-------------------|--------|
+| `../` traversal | `path.resolve()` + prefix check | `PathTraversalError` |
+| `%2e%2e%2f` encoded | `decodeURIComponent()` before resolve | `PathTraversalError` |
+| `/uploads-evil` prefix | Trailing separator guard (`base + path.sep`) | `PathTraversalError` |
+| Null byte `\0` | Segment scan before any resolution | `PathTraversalError` |
+| Symlink escape | `lstatSync` + `realpathSync` walk | `PathTraversalError` |
+
+## Design Notes
+
+- **No configuration:** `safePath()` is always active and cannot be disabled. There is no config toggle.
+- **Synchronous:** The function is synchronous (`lstatSync`, `realpathSync`) because path validation must complete before any file I/O operation.
+- **Pure validation:** The function only validates paths -- it does not create files or directories.
+- **Base must be absolute:** The `base` parameter should always be an absolute path. Relative base paths would make the security guarantee dependent on the current working directory.
+- **Base equals resolved:** When no segments are provided (or segments resolve to base itself), the base path is returned unchanged. This is safe because the base is a trusted directory.
+- **Non-existent intermediate paths:** If an intermediate component does not exist on disk, the symlink check is skipped for that component. This is safe because you cannot create a symlink at a path that does not exist.
+- **Re-thrown errors:** If a `PathTraversalError` is thrown during symlink checking (e.g., the symlink target escapes base), it is re-thrown. All other file system errors (e.g., permission denied) are silently ignored since they indicate the path does not need symlink validation.
+- **Thread safety:** The function uses synchronous file system calls (`lstatSync`, `realpathSync`) which are safe in Node.js single-threaded event loop. No race conditions between validation and usage when called immediately before file operations.
+
+<CardGroup cols={2}>
+  <Card title="Security Model" icon="shield" href="/security">
+    Defense-in-depth security architecture
+  </Card>
+  <Card title="Tool Security" icon="shield-check" href="/reference/tool-security">
+    SSRF guard, tool policies, content scanner
+  </Card>
+  <Card title="Sandbox" icon="box" href="/reference/sandbox">
+    Skill sandboxing implementation
+  </Card>
+</CardGroup>

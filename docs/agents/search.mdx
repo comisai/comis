@@ -1,0 +1,98 @@
+---
+title: "Search"
+description: "How your agent finds relevant memories"
+icon: "magnifying-glass"
+---
+
+When your agent needs to recall something, Comis searches through its memory
+using two complementary approaches: text matching and meaning matching.
+Together, these give your agent the best chance of finding relevant information.
+
+## How search works
+
+Comis uses two search methods and combines their results:
+
+**Text matching** -- Comis looks for memories that contain the same words as
+the search query. This is fast and precise for exact topics. If you ask about
+"project deadlines," text matching finds memories that literally contain the
+words "project" and "deadlines."
+
+**Meaning matching** -- Comis compares the *meaning* of your query against
+stored memories, finding related information even if the exact words are
+different. If you ask about "project deadlines," meaning matching might also
+find a memory about "task due dates" because the meaning is similar. This uses
+[embeddings](/agents/embeddings) to understand meaning.
+
+**Combined results** -- Both sets of results are merged. Duplicates are removed,
+and the most relevant results are ranked to the top. This combination means
+your agent benefits from both precise word matching and flexible meaning
+matching.
+
+## When search is used
+
+Memory search happens automatically in two situations:
+
+1. **During memory recall (RAG)** -- Before every agent response, Comis
+   searches for relevant memories and includes them in the agent's context.
+   See [Memory Recall (RAG)](/agents/rag) for how this works.
+
+2. **Through memory tools** -- Your agent can explicitly search its memory as
+   part of its reasoning process. For example, if you ask "what did we decide
+   about the logo?" the agent might search its memory for previous discussions
+   about logos.
+
+## Search quality
+
+The quality of search results depends on which search methods are available:
+
+- **Both methods active** (recommended) -- The best results come from combining
+  text matching and meaning matching. This is the default when embeddings are
+  configured.
+- **Text matching only** -- If embeddings are not available, search still works
+  but only finds memories with matching words. A search for "pasta recipe"
+  would not find a memory about "how to cook spaghetti" because the words are
+  different even though the meaning is the same.
+
+For the best search experience, make sure [embeddings](/agents/embeddings) are
+set up. The default `auto` provider handles this automatically.
+
+<Note>
+  If the meaning-matching system is not available (embeddings not configured),
+  Comis falls back to text matching only. Search still works -- it is just less
+  flexible at finding related information when different words are used.
+</Note>
+
+## Relevance scoring
+
+Each search result gets a relevance score between 0 and 1. Higher scores mean
+a closer match to your query. The [RAG configuration](/agents/rag) lets you
+set a minimum score threshold (`minScore`, default 0.1) so only sufficiently
+relevant memories are included.
+
+You generally do not need to adjust the scoring -- the defaults work well for
+most use cases. If your agent is recalling too many irrelevant memories,
+increase `minScore`. If it is missing important context, lower it.
+
+## Configuration
+
+Search does not have its own configuration section. Search behavior is
+controlled through:
+
+- **[Memory](/agents/memory)** -- Where memories are stored and how they are
+  organized.
+- **[RAG](/agents/rag)** -- How many results to include, minimum relevance
+  score, and trust level filtering.
+- **[Embeddings](/agents/embeddings)** -- Whether meaning matching is available
+  and which provider powers it.
+
+<CardGroup cols={2}>
+  <Card title="Memory" icon="database" href="/agents/memory">
+    The different types of memories your agent stores.
+  </Card>
+  <Card title="Embeddings" icon="microchip" href="/agents/embeddings">
+    Setting up meaning-based search for better results.
+  </Card>
+  <Card title="Memory Recall (RAG)" icon="brain" href="/agents/rag">
+    How recalled memories are used in agent responses.
+  </Card>
+</CardGroup>

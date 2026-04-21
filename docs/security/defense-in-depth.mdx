@@ -1,0 +1,369 @@
+---
+title: "Defense in Depth"
+description: "How 18+ security layers work together to protect your agents and data"
+icon: "shield-halved"
+---
+
+Defense in depth means no single security measure is expected to catch
+everything. Instead, Comis layers multiple protections at every stage of
+message processing. If a manipulation attempt slips past input validation, the
+jailbreak detector catches it. If a secret leaks into an agent's response, the
+output guard redacts it before it reaches the user. This page catalogs every
+security layer and explains what it does, why it matters, and whether you need
+to configure it.
+
+## How the Layers Work Together
+
+Every message passes through five security checkpoints as it moves through
+Comis. Each checkpoint has its own set of protections, and the layers at each
+checkpoint work independently. This means a failure in one layer does not
+compromise the others.
+
+1. **When a message arrives** -- Input is validated, scanned for manipulation,
+   and rate-limited before your agent ever sees it
+2. **When skills load** -- Skill content is scanned for threats and sanitized
+   before it can influence your agent
+3. **When the agent acts** -- Actions are classified, restricted by tool
+   policy, and may require your approval
+4. **When a response is sent** -- Output is scanned for leaked secrets and
+   canary token extraction before the user sees it
+5. **When data is stored** -- Memory writes are validated, secrets are
+   encrypted, and config is redacted
+
+<Info>
+Most of these layers are automatic. The sections below tell you which ones need
+configuration.
+</Info>
+
+## Security Layers
+
+### When a Message Arrives
+
+The first checkpoint protects against malicious or malformed input. These
+layers run before your agent processes the message.
+
+<AccordionGroup>
+  <Accordion title="Input Validation" icon="filter">
+    **What it does:** Checks every incoming message for structural problems --
+    excessive length (over 100,000 characters), null bytes, abnormal whitespace
+    ratios, and repetitive content.
+
+    **Why it matters:** Prevents malformed messages from reaching your agent and
+    consuming resources.
+
+    **Do I need to configure it?** No. Always active with no configuration
+    needed. Messages that fail validation are rejected before reaching your
+    agent.
+  </Accordion>
+
+  <Accordion title="Jailbreak Detection" icon="user-secret">
+    **What it does:** Scans messages for manipulation attempts across 17 pattern
+    categories, including "ignore previous instructions" style attacks and
+    creative misspellings of security-sensitive terms (known as typoglycemia
+    detection).
+
+    **Why it matters:** Catches attempts to trick your agent into ignoring its
+    safety instructions. Even sophisticated multi-step manipulation attempts are
+    detected.
+
+    **Do I need to configure it?** No. Active by default in "warn" mode -- it
+    reinforces agent instructions when suspicious patterns are detected without
+    blocking messages outright.
+  </Accordion>
+
+  <Accordion title="Injection Rate Limiting" icon="gauge">
+    **What it does:** Tracks repeated suspicious messages from the same user.
+    After 3 flagged messages in 5 minutes, escalates to warnings. After 5,
+    triggers an audit event.
+
+    **Why it matters:** Detects persistent manipulation attempts that might
+    individually score below the detection threshold. A single suspicious
+    message might not trigger action, but a pattern of them does.
+
+    **Do I need to configure it?** No. Always active with sensible defaults.
+  </Accordion>
+
+  <Accordion title="External Content Wrapping" icon="shield">
+    **What it does:** When your agent fetches web pages, reads emails, or
+    processes webhook content, that external content is wrapped in security
+    boundaries with unique random delimiters. This prevents injected
+    instructions in fetched content from being treated as real user messages.
+
+    **Why it matters:** A common attack is embedding hidden instructions in web
+    pages that your agent might fetch. Content wrapping neutralizes this.
+
+    **Do I need to configure it?** No. Automatically applied to all external
+    content sources.
+  </Accordion>
+</AccordionGroup>
+
+### When Skills Load
+
+Custom skills can contain anything -- including dangerous instructions. These
+layers ensure that skill content is safe before your agent uses it.
+
+<AccordionGroup>
+  <Accordion title="Content Scanning" icon="magnifying-glass">
+    **What it does:** Scans custom skill content for 6 threat categories:
+    command execution, environment variable harvesting, cryptocurrency mining,
+    network exfiltration, obfuscated encoding, and XML injection.
+
+    **Why it matters:** Prevents malicious or compromised skills from running
+    dangerous operations. Skills that contain critical threats are blocked from
+    loading entirely.
+
+    **Do I need to configure it?** Enabled by default. You can adjust the
+    scanning behavior if needed. See
+    [Security Scanning](/skills/security-scanning) for the full scanner
+    documentation and configuration options.
+
+    Default: `skills.contentScanning.enabled: true`,
+    `skills.contentScanning.blockOnCritical: true`
+  </Accordion>
+
+  <Accordion title="Sanitization Pipeline" icon="broom">
+    **What it does:** A 4-step pipeline that cleans all skill content: strips
+    HTML comments, normalizes Unicode (NFKC), removes invisible characters, and
+    enforces a 20,000-character size limit.
+
+    **Why it matters:** Removes hidden content that scanners might miss, like
+    invisible Unicode characters or HTML comment injections.
+
+    **Do I need to configure it?** No. Always active for all skills. See
+    [Security Scanning](/skills/security-scanning) for details.
+  </Accordion>
+</AccordionGroup>
+
+### When the Agent Acts
+
+Once your agent decides to take an action, these layers control what it is
+allowed to do and how much it can spend. This is where tool restrictions,
+action classifications, human approval, and network safety come into play.
+This checkpoint has the most layers because agent actions carry the highest
+risk.
+
+<AccordionGroup>
+  <Accordion title="Tool Policy" icon="toolbox">
+    **What it does:** Controls which tools each agent can access. Five built-in
+    profiles (minimal, coding, messaging, supervisor, full) plus custom
+    allow/deny lists.
+
+    **Why it matters:** Limits what agents can do based on their role. A
+    customer-support agent does not need file system access. A monitoring agent
+    does not need to send messages.
+
+    **Do I need to configure it?** Default profile is `full` (unrestricted).
+    For production, restrict each agent to the minimum set of tools it needs.
+    See [Tool Policy](/skills/tool-policy) to restrict access.
+  </Accordion>
+
+  <Accordion title="Action Classification" icon="tag">
+    **What it does:** Every agent action is classified as read (safe), mutate
+    (modifying), or destructive (irreversible). Over 100 actions are registered
+    with specific classifications. Unknown actions default to "destructive"
+    (fail-closed).
+
+    **Why it matters:** Enables confirmation requirements and approval workflows
+    based on action severity.
+
+    **Do I need to configure it?** Yes -- you can control which classifications
+    require confirmation. See [Approvals](/security/approvals).
+
+    Default: `security.actionConfirmation.requireForDestructive: true`,
+    `security.actionConfirmation.requireForSensitive: false`
+  </Accordion>
+
+  <Accordion title="Approval Gate" icon="clipboard-check">
+    **What it does:** Pauses agent execution when a privileged action is
+    attempted, waits for human approval (via dashboard or API), and auto-denies
+    if the timeout expires.
+
+    **Why it matters:** Gives you a human-in-the-loop checkpoint for high-risk
+    operations like file deletion or configuration changes.
+
+    **Do I need to configure it?** Yes -- disabled by default. See
+    [Approvals](/security/approvals).
+
+    Default: `approvals.enabled: false`
+  </Accordion>
+
+  <Accordion title="Budget Protection" icon="wallet">
+    **What it does:** Tracks API spending per execution and per day. Circuit
+    breaker pauses agents that exceed error thresholds.
+
+    **Why it matters:** Prevents runaway costs from infinite loops or
+    malfunctioning agents. The circuit breaker automatically pauses agents that
+    hit repeated errors.
+
+    **Do I need to configure it?** Enabled by default with sensible limits. You
+    can adjust the budget amounts and circuit breaker thresholds per agent. See
+    [Safety](/agents/safety) for budget and circuit breaker configuration.
+  </Accordion>
+
+  <Accordion title="SSRF Protection" icon="globe">
+    **What it does:** Validates every outbound URL before fetching. Blocks
+    private IP addresses (10.x, 192.168.x, 127.x), loopback addresses,
+    link-local addresses, and cloud metadata endpoints (169.254.169.254).
+
+    **Why it matters:** Prevents attackers from tricking your agent into
+    accessing internal services or cloud credentials. This is a critical
+    protection for any agent that can fetch URLs.
+
+    **Do I need to configure it?** No. Always active for all web-facing tools.
+    URLs are validated at the DNS level before any connection is made.
+  </Accordion>
+
+  <Accordion title="Safe Path" icon="folder-tree">
+    **What it does:** Validates all file paths to prevent directory traversal
+    attacks (../), URL-encoded traversal, null byte injection, and symlink
+    escapes.
+
+    **Why it matters:** Prevents agents from accessing files outside their
+    allowed directories.
+
+    **Do I need to configure it?** No. Always active for all file operations.
+    Paths are validated before any read or write occurs.
+  </Accordion>
+
+  <Accordion title="Exec Sandbox" icon="box">
+    **What it does:** Wraps every `exec` tool command in an OS-level
+    filesystem sandbox (bubblewrap on Linux, sandbox-exec on macOS).
+    The sandboxed process can only see the agent's workspace, the graph
+    shared directory, and system binaries -- everything else on the host
+    filesystem is invisible.
+
+    **Why it matters:** File tools (read, write, edit) are protected by
+    Safe Path validation, but the exec tool spawns a full shell that can
+    access any path. Without the sandbox, an agent could bypass file tool
+    restrictions by running `exec cat /path/to/secret` instead of using
+    the `read` tool. The OS sandbox closes this gap at the kernel level.
+
+    **Do I need to configure it?** Enabled by default. On Linux, install
+    bubblewrap (`apt install bubblewrap`). On macOS, `sandbox-exec` is
+    built in. Set `execSandbox.enabled: "never"` to disable (not
+    recommended). See [Exec Sandbox](/security/exec-sandbox).
+  </Accordion>
+</AccordionGroup>
+
+### When a Response Is Sent
+
+Before any message reaches the user, these layers perform a final safety check.
+They are your last line of defense against leaked secrets and prompt extraction.
+
+<AccordionGroup>
+  <Accordion title="Output Guard" icon="eye">
+    **What it does:** Scans every agent response for 15 secret patterns (AWS
+    keys, API tokens, private keys, JWTs, and more) plus prompt extraction
+    patterns. Detected secrets are replaced with `[REDACTED]` before the
+    message reaches the user.
+
+    **Why it matters:** Even if your agent accidentally includes a secret in its
+    response, users never see it.
+
+    **Do I need to configure it?** No. Always active. Redaction happens
+    automatically before the message leaves Comis.
+  </Accordion>
+
+  <Accordion title="Canary Tokens" icon="bird">
+    **What it does:** Embeds a unique cryptographic token in each agent's system
+    prompt. If this token appears in an agent's output, it means the system
+    prompt was extracted -- a prompt injection attack.
+
+    **Why it matters:** Detects prompt extraction attacks that other layers
+    might miss.
+
+    **Do I need to configure it?** No. Automatic and invisible. Each agent gets
+    its own unique canary token.
+  </Accordion>
+
+  <Accordion title="Log Sanitization" icon="eraser">
+    **What it does:** Scrubs 18 credential patterns from all log output. Works
+    alongside structured log redaction as an additional defense-in-depth layer.
+
+    **Why it matters:** Prevents accidental credential exposure in log files,
+    which are often shared with team members for debugging or sent to log
+    aggregation services.
+
+    **Do I need to configure it?** Enabled by default. Toggle with
+    `security.logRedaction: true` (default).
+  </Accordion>
+</AccordionGroup>
+
+### When Data Is Stored
+
+The final checkpoint protects data at rest. These layers ensure that stored
+memories, secrets, and configuration values cannot be compromised even if
+someone gains access to your server's file system.
+
+<AccordionGroup>
+  <Accordion title="Memory Write Validation" icon="database">
+    **What it does:** Scans content before it is saved to agent memory.
+    Classifies writes as CLEAN, WARN, or CRITICAL based on injection pattern
+    analysis.
+
+    **Why it matters:** Prevents "memory poisoning" where an attacker stores
+    malicious instructions that are later retrieved via search and executed as
+    if they were trusted knowledge.
+
+    **Do I need to configure it?** No. Always active for all memory write
+    operations.
+  </Accordion>
+
+  <Accordion title="Encrypted Secrets" icon="lock">
+    **What it does:** Stores your API keys and passwords with AES-256-GCM
+    encryption and HKDF-SHA256 key derivation. Even if someone accesses your
+    files, they cannot read secrets without the master key.
+
+    **Why it matters:** Protects credentials at rest. Essential for any
+    production deployment where server files could potentially be accessed by
+    unauthorized parties.
+
+    **Do I need to configure it?** Yes -- disabled by default because it
+    requires a master key. See [Secrets](/security/secrets) to set up the
+    encrypted store.
+
+    Default: `security.secrets.enabled: false`
+  </Accordion>
+
+  <Accordion title="Config Redaction" icon="eye-slash">
+    **What it does:** When config is read via the API or dashboard,
+    secret-bearing fields are automatically replaced with `[REDACTED]`.
+
+    **Why it matters:** Prevents credential exposure through the management API
+    or dashboard views.
+
+    **Do I need to configure it?** No. Always active for config read operations.
+    Both the HTTP API and the web dashboard use this redaction layer.
+  </Accordion>
+</AccordionGroup>
+
+## Putting It All Together
+
+With 18+ layers working across 5 checkpoints, the security model ensures that
+threats are caught at multiple stages. Even in the worst case -- where several
+layers fail simultaneously -- the remaining layers still provide meaningful
+protection.
+
+Most of the layers listed above are automatic and require no configuration.
+The ones that do need setup -- encrypted secrets, approval workflows, and tool
+policy -- are covered in their own dedicated guides. You can verify that all
+layers are properly configured by running `comis doctor`, which checks your
+installation against recommended security practices. See
+[Hardening](/security/hardening) for the full walkthrough.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Security Overview" icon="shield-check" href="/security">
+    Back to security overview
+  </Card>
+  <Card title="Secrets" icon="key" href="/security/secrets">
+    Set up the encrypted secrets store
+  </Card>
+  <Card title="Approvals" icon="clipboard-check" href="/security/approvals">
+    Configure human-in-the-loop approval
+  </Card>
+  <Card title="Hardening" icon="lock" href="/security/hardening">
+    Follow the hardening checklist
+  </Card>
+</CardGroup>

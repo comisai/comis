@@ -1,0 +1,343 @@
+---
+title: "Configuration Guide"
+description: "Set up your config.yaml with required settings, channels, and customization"
+icon: "gear"
+---
+
+Comis uses a single YAML file for configuration. If you used the setup wizard
+(`comis init`), it already created a working config. This guide explains what is
+in that file and how to customize it.
+
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+## Where config lives
+
+| Setting | Value |
+|---------|-------|
+| Default path | `~/.comis/config.yaml` |
+| Custom path | Set `COMIS_CONFIG_PATHS=/path/to/config.yaml` |
+| Multiple files | Comma-separated paths -- later files override earlier ones |
+| Reload | Config is loaded once at startup. Restart the daemon to pick up changes. |
+
+<Info>
+When you set `COMIS_CONFIG_PATHS`, Comis reads config from that path instead of
+the default. You can point to multiple files:
+
+```bash
+COMIS_CONFIG_PATHS="/etc/comis/base.yaml,/etc/comis/overrides.yaml"
+```
+
+Later files override values from earlier ones.
+</Info>
+
+## Minimal working config
+
+This is the absolute minimum YAML that produces a working agent:
+
+```yaml
+agents:
+  default:
+    name: "Atlas"
+    provider: "anthropic"
+    model: "claude-sonnet-4-5-20250929"
+```
+
+<Info>
+Everything else has sensible defaults. The gateway starts automatically on port
+4766, logging is set to `info` level, and memory uses a local SQLite database.
+The API key is read from the `.env` file in your data directory -- see
+[Secrets and API Keys](#secrets-and-api-keys) below.
+</Info>
+
+## Required: Agent configuration
+
+<Warning>
+**Required:** You must configure at least one agent with a name, provider, and model.
+</Warning>
+
+Every agent needs three fields:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `name` | Display name for the agent | `"Atlas"` |
+| `provider` | AI provider identifier | `"anthropic"` |
+| `model` | Model to use (provider-specific) | `"claude-sonnet-4-5-20250929"` |
+
+<Tabs>
+  <Tab title="Anthropic">
+    ```yaml
+    agents:
+      default:
+        name: "Atlas"
+        provider: "anthropic"
+        model: "claude-sonnet-4-5-20250929"
+    ```
+
+    Set `ANTHROPIC_API_KEY` in your `.env` file.
+  </Tab>
+  <Tab title="OpenAI">
+    ```yaml
+    agents:
+      default:
+        name: "Atlas"
+        provider: "openai"
+        model: "gpt-4o"
+    ```
+
+    Set `OPENAI_API_KEY` in your `.env` file.
+  </Tab>
+  <Tab title="Google">
+    ```yaml
+    agents:
+      default:
+        name: "Atlas"
+        provider: "google"
+        model: "gemini-2.0-flash"
+    ```
+
+    Set `GOOGLE_API_KEY` in your `.env` file.
+  </Tab>
+  <Tab title="Ollama (local)">
+    ```yaml
+    agents:
+      default:
+        name: "Atlas"
+        provider: "ollama"
+        model: "llama3"
+    ```
+
+    No API key needed. Make sure Ollama is running locally on its default port.
+  </Tab>
+</Tabs>
+
+<SecretWarning />
+
+## Recommended: Gateway
+
+<Tip>
+The gateway enables the web dashboard and API access. It is enabled by default,
+but you can customize its settings.
+</Tip>
+
+```yaml
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 4766
+  tokens:
+    - id: "default"
+      secret: "${COMIS_GATEWAY_TOKEN}"
+      scopes: ["*"]
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `true` | Enable or disable the gateway server |
+| `host` | `"127.0.0.1"` | Bind address. Use `"0.0.0.0"` for external access or Docker. |
+| `port` | `4766` | Port for the web dashboard and API |
+| `tokens` | `[]` | Bearer tokens for API authentication (optional but recommended) |
+
+<Info>
+The `tokens` section is optional. Without it, the gateway accepts unauthenticated
+requests on localhost. Add a token when you expose the gateway to a network.
+</Info>
+
+## Recommended: Channels
+
+<Tip>
+Channels connect your agent to messaging platforms like Telegram, Discord, and Slack.
+</Tip>
+
+Here is an example with Telegram -- the simplest channel to configure:
+
+```yaml
+channels:
+  telegram:
+    enabled: true
+    botToken: "${TELEGRAM_BOT_TOKEN}"
+```
+
+Set `TELEGRAM_BOT_TOKEN` in your `.env` file with the token from
+[@BotFather](https://t.me/BotFather).
+
+<Info>
+Each platform has different settings. See the [Channels](/channels/index) section
+for step-by-step setup guides for all supported platforms.
+</Info>
+
+## Optional: Common settings
+
+<Info>
+These settings have sensible defaults. Change them only when you need to.
+</Info>
+
+```yaml
+logLevel: "info"
+dataDir: "~/.comis"
+tenantId: "default"
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `logLevel` | `"info"` | Log verbosity. Options: `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`, `"fatal"` |
+| `dataDir` | `"~/.comis"` | Base directory for databases, logs, and models |
+| `tenantId` | `"default"` | Isolates data between environments. Change when running multiple instances. |
+
+## Secrets and API keys
+
+Comis resolves `${VAR_NAME}` references in config values from environment
+variables or from the `.env` file in your data directory (`~/.comis/.env` by
+default).
+
+The setup wizard generates config with `${VAR}` references and puts the actual
+values in `.env`. Here is a typical `.env` file:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+TELEGRAM_BOT_TOKEN=123456:ABC...
+COMIS_GATEWAY_TOKEN=your-gateway-secret-at-least-32-characters-long
+```
+
+Each provider has a standard environment variable name:
+
+| Provider | Environment Variable |
+|----------|---------------------|
+| Anthropic | `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Google | `GOOGLE_API_KEY` |
+| Groq | `GROQ_API_KEY` |
+| Mistral | `MISTRAL_API_KEY` |
+| DeepSeek | `DEEPSEEK_API_KEY` |
+| xAI | `XAI_API_KEY` |
+| Together AI | `TOGETHER_API_KEY` |
+| Cerebras | `CEREBRAS_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| Ollama | Not needed |
+
+For encrypted secret storage, run `comis secrets init` to set up the secrets
+vault. See [Secrets Management](/security/secrets) for details.
+
+<SecretWarning />
+
+## $include directive
+
+Split your config into multiple files for organization:
+
+```yaml
+channels:
+  $include: channels.yaml
+```
+
+The included file path is relative to the file that contains the `$include`
+directive. This is useful for separating channel credentials from the main
+config or sharing a base config across environments.
+
+## Validate your config
+
+Check your config file for syntax errors and missing fields:
+
+```bash
+comis config validate
+```
+
+Expected output for a valid config:
+
+```
+Configuration is valid
+```
+
+If there are errors, you will see the specific field and issue:
+
+```
+Configuration error:
+  agents.default.provider: Expected string, received number
+```
+
+To see the fully resolved config with all defaults filled in:
+
+```bash
+comis config show
+```
+
+## Context engine
+
+The context engine manages what your agent sees each turn. It has two operating
+modes: pipeline (default) and DAG. Most users do not need to change any context
+engine settings -- the defaults work well.
+
+<Tabs>
+  <Tab title="Pipeline mode (default)">
+    ```yaml title="~/.comis/config.yaml"
+    agents:
+      default:
+        contextEngine:
+          enabled: true
+          # version: "pipeline"  # This is the default
+          thinkingKeepTurns: 10
+          historyTurns: 15
+          observationKeepWindow: 25
+          observationTriggerChars: 120000
+          compactionCooldownTurns: 5
+          compactionModel: "anthropic:claude-haiku-4-5-20250929"
+    ```
+  </Tab>
+  <Tab title="DAG mode">
+    ```yaml title="~/.comis/config.yaml"
+    agents:
+      default:
+        contextEngine:
+          version: "dag"
+          freshTailTurns: 8
+          contextThreshold: 0.75
+          maxRecallsPerDay: 10
+          compactionModel: "anthropic:claude-haiku-4-5-20250929"
+          # leafMinFanout: 8        # Min messages per leaf summary
+          # condensedMinFanout: 4   # Min leaves per condensed summary
+          # leafTargetTokens: 1200  # Target size for leaf summaries
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+  DAG mode preserves your full conversation history and gives your agent recall
+  tools (`ctx_search`, `ctx_inspect`, `ctx_recall`) to find anything from past
+  conversations. Pipeline mode is simpler and lighter-weight. Start with pipeline
+  (the default) and switch to DAG when you need long-term conversation recall.
+</Tip>
+
+<Note>
+  Switching from pipeline to DAG mode mid-session is supported. On the next turn,
+  Comis automatically imports existing conversation history into the DAG. See
+  [Compaction](/agents/compaction) for details.
+</Note>
+
+See [Config Reference](/reference/config-yaml) for the complete list of all 27
+context engine fields.
+
+## Advanced configuration
+
+The config schema supports 37 top-level sections. This guide covered the
+essential ones. The remaining sections control memory, security, routing,
+scheduling, monitoring, plugins, and more.
+
+<Info>
+For the complete reference of all configuration sections, see
+[Config YAML Reference](/reference/config-yaml).
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Verify Installation" icon="circle-check" href="/installation/verify">
+    Run diagnostic commands to confirm everything is working.
+  </Card>
+  <Card title="Connect a Channel" icon="messages" href="/channels/index">
+    Step-by-step guides for Telegram, Discord, Slack, and more.
+  </Card>
+  <Card title="Security" icon="shield-check" href="/get-started/security">
+    Understand the security protections built into Comis.
+  </Card>
+  <Card title="Config Reference" icon="book" href="/reference/config-yaml">
+    Complete reference for all 34 configuration sections.
+  </Card>
+</CardGroup>

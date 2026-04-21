@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          PREV_TAG=$(git tag --sort=-v:refname | grep -A1 "^${TAG}$" | tail -1)
+          if [ "$PREV_TAG" = "$TAG" ] || [ -z "$PREV_TAG" ]; then
+            echo "body=Initial release." >> "$GITHUB_OUTPUT"
+          else
+            NOTES=$(git log --pretty=format:"- %s" "${PREV_TAG}..${TAG}" | head -50)
+            {
+              echo "body<<RELEASE_EOF"
+              echo "## Changes since ${PREV_TAG}"
+              echo ""
+              echo "$NOTES"
+              echo ""
+              echo "**Full changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
+              echo "RELEASE_EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.notes.outputs.body }}
+          generate_release_notes: false

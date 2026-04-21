@@ -1,0 +1,223 @@
+---
+title: "MCP Integration"
+description: "Connect external tools to your agents using the Model Context Protocol"
+icon: "plug"
+---
+
+MCP (Model Context Protocol) lets you connect external tool servers to your Comis agents. Instead of building tools from scratch, you can plug in existing MCP servers that provide database access, third-party APIs, or specialized capabilities. Your agents discover and use these tools just like built-in ones.
+
+## How MCP Works
+
+MCP is an open protocol that standardizes how AI agents communicate with tool servers. Here is how it fits into Comis:
+
+- **MCP servers** are programs that provide tools your agents can call. There are hundreds of open-source MCP servers available for databases, APIs, file systems, and more.
+- **Comis connects** to MCP servers using one of three transport methods: **stdio** (for local servers running on the same machine), **SSE** (for legacy remote servers using Server-Sent Events), or **HTTP** (for remote servers using Streamable HTTP).
+- **Tool namespacing** prevents name collisions. Tools from MCP servers appear as `mcp:serverName/toolName` -- so a tool called `query` from a server called `my-database` becomes `mcp:my-database/query`.
+- **Auto-discovery** means you do not have to list every tool manually. When Comis connects to an MCP server, it automatically discovers all available tools using the MCP SDK.
+
+## Setting Up an MCP Server
+
+<Steps>
+  <Step title="Add the server to your config">
+    Open your [configuration file](/reference/config-yaml) and add an entry under `integrations.mcp.servers`:
+
+    ```yaml
+    integrations:
+      mcp:
+        servers:
+          my-database:
+            transport: stdio
+            command: npx
+            args: ["-y", "@modelcontextprotocol/server-sqlite"]
+            env:
+              DB_PATH: "/path/to/database.db"
+            enabled: true
+    ```
+
+    Each server needs a unique name (here: `my-database`). The `transport` field selects one of three protocols: `stdio` (local process), `sse` (legacy remote), or `http` (Streamable HTTP remote). The `command` and `args` fields are used only for stdio transport.
+  </Step>
+
+  <Step title="Restart Comis">
+    Comis connects to MCP servers at startup, so you need to restart after changing the configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Comis will launch the MCP server process and discover its tools automatically. Check the logs for a message confirming the connection.
+  </Step>
+
+  <Step title="Verify the connection">
+    Your agent can use the `mcp_manage` tool to check that the server is connected and its tools are available:
+
+    ```
+    mcp_manage action: list
+    mcp_manage action: status server: my-database
+    ```
+
+    The `list` action shows all configured MCP servers and their connection status. The `status` action shows detailed information for a specific server, including the tools it provides.
+  </Step>
+</Steps>
+
+## Transport Types
+
+Comis supports three ways to connect to MCP servers:
+
+### stdio (Local Process)
+
+The stdio transport runs the MCP server as a local subprocess on the same machine as Comis. Comis starts the process and communicates with it through standard input/output.
+
+**Best for:** npm-packaged MCP servers, local tools, development setups.
+
+```yaml
+my-server:
+  transport: stdio
+  command: npx
+  args: ["-y", "@some/mcp-server"]
+  env:
+    SOME_CONFIG: "value"
+  enabled: true
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `transport` | Yes | Must be `stdio` |
+| `command` | Yes | The command to run (e.g., `npx`, `node`, `python`) |
+| `args` | No | Command-line arguments as an array |
+| `env` | No | Environment variables passed to the subprocess |
+| `cwd` | No | Working directory for the subprocess (overrides default workspace CWD) |
+| `maxConcurrency` | No | Maximum concurrent tool calls to this server (default: 1 for stdio) |
+| `enabled` | No | Whether to connect on startup (default: `true`) |
+
+### SSE (Legacy Remote Server)
+
+The SSE transport connects to a remote MCP server using Server-Sent Events for server-to-client streaming. This is the legacy remote transport from earlier versions of the MCP specification. The server must already be running and accessible at the given URL.
+
+**Best for:** older MCP servers that only support the SSE protocol.
+
+```yaml
+my-sse-server:
+  transport: sse
+  url: "http://localhost:3000/sse"
+  headers:
+    Authorization: "Bearer {{secret:sse-token}}"
+  enabled: true
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `transport` | Yes | Must be `sse` |
+| `url` | Yes | The full URL of the remote MCP SSE endpoint |
+| `headers` | No | Custom HTTP headers sent with requests (e.g., authentication) |
+| `maxConcurrency` | No | Maximum concurrent tool calls to this server (default: 4 for remote) |
+| `enabled` | No | Whether to connect on startup (default: `true`) |
+
+### HTTP (Streamable HTTP Remote Server)
+
+The HTTP transport connects to a remote MCP server using Streamable HTTP, the current standard for remote MCP communication. The server must already be running and accessible at the given URL.
+
+**Best for:** modern MCP servers, shared servers, cloud-hosted tools, servers running on other machines.
+
+```yaml
+my-remote:
+  transport: http
+  url: "https://mcp.example.com/mcp"
+  headers:
+    Authorization: "Bearer {{secret:api-token}}"
+  enabled: true
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `transport` | Yes | Must be `http` |
+| `url` | Yes | The full URL of the remote MCP server |
+| `headers` | No | Custom HTTP headers sent with requests (e.g., authentication) |
+| `maxConcurrency` | No | Maximum concurrent tool calls to this server (default: 4 for remote) |
+| `enabled` | No | Whether to connect on startup (default: `true`) |
+
+## Using Secrets in MCP Config
+
+If your MCP server needs API keys or other sensitive values, use the `{{secret:name}}` syntax instead of putting secrets directly in the config file:
+
+```yaml
+integrations:
+  mcp:
+    servers:
+      my-api:
+        transport: stdio
+        command: npx
+        args: ["-y", "@some/api-server"]
+        env:
+          API_KEY: "{{secret:my-api-key}}"
+```
+
+The `{{secret:my-api-key}}` placeholder is replaced at runtime with the value stored in the Comis secret manager. See [Secrets Management](/security/secrets) for how to store and manage your secrets.
+
+## Managing MCP Connections
+
+The `mcp_manage` tool lets your agents (and you, through the dashboard) check and control MCP server connections at runtime:
+
+| Action | Description |
+|--------|-------------|
+| `list` | Show all configured MCP servers and their connection status |
+| `status` | Check the connection health and available tools for a specific server |
+| `connect` | Manually connect to a server that is configured but not yet connected |
+| `disconnect` | Disconnect from a running server (its tools become unavailable) |
+| `reconnect` | Disconnect and reconnect to a server (useful after server-side changes) |
+
+<Info>
+These actions are also available through the `skills_manage` supervisor tool and the web dashboard. You do not need to use the agent to manage MCP connections.
+</Info>
+
+## Health Monitoring
+
+Comis periodically checks the health of connected MCP servers. If a server becomes unreachable:
+
+- Its tools are **temporarily removed** from the agent's available tool list
+- The agent **continues working** with all other tools -- a single failed MCP server does not affect the rest of the system
+- Comis **retries the connection** automatically at the configured health check interval
+- When the server comes back online, its tools are **automatically restored**
+
+This means your agents are resilient to MCP server outages. If a database MCP server goes down, the agent loses database tools but keeps everything else.
+
+## Multiple MCP Servers
+
+You can connect as many MCP servers as you need. Each server gets its own namespace, so tools from different servers never conflict:
+
+```yaml
+integrations:
+  mcp:
+    servers:
+      sqlite-db:
+        transport: stdio
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-sqlite"]
+        env:
+          DB_PATH: "/data/app.db"
+      github:
+        transport: stdio
+        command: npx
+        args: ["-y", "@modelcontextprotocol/server-github"]
+        env:
+          GITHUB_TOKEN: "{{secret:github-token}}"
+      analytics:
+        transport: http
+        url: "https://analytics.internal/mcp"
+```
+
+Your agent would see tools like `mcp:sqlite-db/query`, `mcp:github/list_repos`, and `mcp:analytics/run_report` -- each clearly indicating which server provides it.
+
+<CardGroup cols={2}>
+  <Card title="Skills Overview" icon="wand-magic-sparkles" href="/skills/index">
+    Understanding the three types of skills
+  </Card>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">
+    Control which tools your agents can use
+  </Card>
+  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
+    Full configuration reference including MCP settings
+  </Card>
+  <Card title="Secrets Management" icon="key" href="/security/secrets">
+    Securely store API keys for MCP servers
+  </Card>
+</CardGroup>

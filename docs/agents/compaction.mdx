@@ -1,0 +1,304 @@
+---
+title: "Compaction"
+description: "How Comis automatically manages conversation length"
+icon: "compress"
+---
+
+As conversations grow longer, they eventually become too large for your agent to
+handle efficiently. Comis offers two context engine modes to manage long
+conversations: the default **pipeline** mode processes every conversation through
+eight steps before each AI call, while the opt-in **DAG** mode preserves your
+full conversation history in a lossless directed acyclic graph with recall tools.
+The result: your agent never runs out of room to think.
+
+## How the context engine works
+
+Every time your agent is about to call the AI provider, the context engine
+reviews the full conversation and prepares it so that the most relevant content
+fits within the model's context window. Think of it like an editor preparing a
+manuscript -- the editor removes rough drafts, trims to the most relevant
+chapters, masks old footnotes, summarizes if the manuscript is still too long,
+and restores key references at the end. All of this happens automatically in the
+background, and you do not need to configure or monitor it.
+
+## The eight steps (pipeline mode)
+
+Here is what happens during each step, in order:
+
+### 1. Clearing scratch paper
+
+The AI's internal reasoning notes (called "thinking blocks") accumulate over a
+long conversation. This step removes thinking blocks from older messages,
+keeping only the last 10 turns of reasoning by default. Your agent's actual
+responses are never affected -- only the behind-the-scenes notes are cleared.
+
+### 2. Stripping reasoning tags
+
+Some AI providers wrap their reasoning in XML-style tags (e.g., `<thinking>` blocks). This step strips those tags from the conversation so they do not accumulate and waste context space. Unlike step 1 which removes entire thinking blocks from older messages, this step removes the tag markup itself while preserving any meaningful content outside the tags. It runs on every turn regardless of model settings.
+
+### 3. Keeping recent messages
+
+Your most recent messages are always kept in full. By default, the last 15 user
+turns are retained (you can set different limits per channel type -- for example,
+fewer turns in a busy group chat). Older messages are still stored on disk and
+in long-term memory; they are simply not sent to the AI each time.
+
+### 4. Removing superseded content
+
+The dead content evictor scans for tool results that have been superseded by
+later calls. It replaces them with compact placeholder text, keeping the
+conversation lean without losing track of what happened. Specifically, it
+removes:
+
+- **Re-read files** -- When the same file path is read again, earlier reads are
+  replaced (e.g., `[file_read result for src/app.ts superseded by later read -- use session_search to recover]`).
+- **Re-run commands** -- When the same command is executed again, earlier results
+  are replaced.
+- **Re-fetched URLs** -- When the same URL is fetched again, earlier results are
+  replaced.
+- **Old images** -- Earlier `image_analyze` calls are replaced when newer ones
+  exist.
+- **Stale errors** -- Tool errors older than `evictionMinAge` turns (default 15)
+  are removed.
+
+This step runs after history windowing and before observation masking. It never
+mutates the original conversation array -- it produces a new, cleaned copy.
+
+<Note>
+  Even after eviction, the original content is still on disk. You can recover it
+  using the `session_search` tool to find the full text of any superseded result.
+</Note>
+
+### 5. Masking old tool results
+
+When your agent uses tools (web searches, file reads, command outputs), the
+results can be large. This step replaces old tool results -- beyond the last 25
+tool uses -- with lightweight placeholders. It only activates when the
+conversation exceeds 120,000 characters, so shorter conversations are never
+affected. Certain important tools (memory lookups, file reads, and session search
+results) are never masked.
+
+### 6. Saving large results to disk
+
+At write time, unusually large tool results are saved to disk and replaced with
+compact references in the conversation. Your agent can still access the full
+content through file reads if needed, but the conversation stays lean.
+
+### 7. Summarizing as a last resort
+
+If the conversation still exceeds 85% of the context window after all the
+previous steps, the AI summarizes older messages. This step has a three-level
+fallback:
+
+- **Full summary** -- A structured summary preserving key details and decisions.
+- **Simplified summary** -- If the full summary fails, a best-effort summary
+  that excludes oversized content.
+- **Count-only note** -- If all else fails, a simple note recording how many
+  messages were condensed (guaranteed to succeed).
+
+A cooldown prevents this from re-triggering too frequently (default: 5 turns
+between summaries).
+
+### 8. Restoring critical context
+
+After summarization, the context engine restores critical context that your
+agent needs to continue working:
+
+- Your agent's instructions (from AGENTS.md) are re-injected.
+- Recently accessed files are restored so the agent remembers what it was
+  working on.
+- A resume instruction helps the agent pick up exactly where it left off.
+
+## What gets preserved
+
+Throughout this process, Comis ensures that your agent never loses anything
+important:
+
+- **Key facts** -- Important details like names, dates, preferences, and
+  decisions are saved as semantic memories before any summarization.
+- **Conversation summary** -- A condensed version of the conversation is
+  preserved, like a set of meeting notes.
+- **Recent messages** -- Your most recent messages are always kept intact so
+  the agent has full context for what you are currently discussing.
+- **Full tool results on disk** -- Thanks to the disk-saving step, large tool
+  results are always recoverable from disk, even when they are replaced by
+  compact references in the conversation.
+
+After any summarization, your agent's critical instructions are re-injected
+into the context so it never forgets who it is or how it should behave.
+
+<Note>
+  The context engine does not delete anything from your session storage. It
+  optimizes what gets sent to the AI each turn. You can always review the full
+  conversation history through the web dashboard.
+</Note>
+
+## Advanced compaction strategies
+
+Beyond the eight pipeline steps, Comis includes three additional strategies that improve compaction quality and cache efficiency.
+
+### Middle-out compaction
+
+When the LLM compaction layer (step 7) needs to summarize older messages, it does not simply summarize everything and keep the tail. Instead, it preserves a configurable number of user-turn cycles at the head of the conversation (the "prefix anchor", default 2 turns) to maintain prompt cache stability. This creates a three-zone layout:
+
+1. **Preserved head** -- The first few turns stay untouched, keeping the cache prefix valid
+2. **Compaction summary** -- Middle content is summarized by the compaction model
+3. **Preserved tail** -- Recent turns (from the history window) remain in full
+
+This approach prevents cache breaks when new turns are added, saving significant costs on long conversations. Configure with `contextEngine.compactionPrefixAnchorTurns` (default 2, range 0-10).
+
+### Adaptive cache retention
+
+Session-level adaptive TTL that optimizes cache slot usage. New sessions start with a short cache TTL (5 minutes). As the session proves active with more turns, the TTL automatically promotes to a longer duration (1 hour). This saves costs on cold-start conversations -- abandoned sessions do not waste expensive long-TTL cache slots.
+
+Controlled by the `adaptiveCacheRetention` boolean on agent config (default: true).
+
+### Microcompaction guard
+
+A write-time guard that intercepts oversized tool results before they are saved to the session transcript. Per-tool inline thresholds ensure that no single tool result bloats the conversation:
+
+- **Default tools**: 8,000 characters
+- **MCP tools**: 15,000 characters
+- **file_read**: 15,000 characters
+- **Hard cap**: 100,000 characters (truncated)
+
+Oversized results are saved to disk as JSON files with compact inline references in the conversation. This is different from step 5 (masking old tool results), which operates at read time -- the microcompaction guard operates at write time, preventing large results from ever entering the conversation file.
+
+## DAG mode
+
+### What is DAG mode
+
+DAG mode is an alternative context engine that stores every message and tool
+result in a directed acyclic graph (DAG). Instead of discarding old content, the
+DAG compresses it into hierarchical summaries. Your agent can recall any past
+content through search and inspection tools -- nothing is ever truly lost.
+
+DAG mode is opt-in. Set `contextEngine.version: "dag"` in your config to enable
+it. See [Switching modes](#switching-modes) below.
+
+### How DAG compaction works
+
+When the conversation tokens exceed the context threshold (default 75% of the
+model's token budget), the DAG engine compresses older content:
+
+1. **Leaf summaries** -- Groups of raw messages are summarized into concise leaf
+   summaries. Each leaf summary covers a chunk of conversation.
+2. **Condensed summaries** -- When enough leaf summaries accumulate, they are
+   merged into higher-level condensed summaries that cover broader spans of
+   conversation.
+
+A three-tier escalation ensures summaries always fit within their target size:
+
+- **Normal** -- Structured summary with key details preserved.
+- **Aggressive** -- Compact summary that prioritizes brevity.
+- **Truncation** -- Cuts at the nearest sentence boundary (guaranteed to fit).
+
+The most recent turns (the "fresh tail", default 8 turns) are always protected
+from compaction, ensuring your agent has full, uncompressed access to the latest
+exchanges.
+
+### Recall tools
+
+DAG mode replaces the pipeline's `session_search` tool with three recall tools:
+
+- **`ctx_search`** -- Full-text or regex search across all messages and
+  summaries in the DAG.
+- **`ctx_inspect`** -- View the full content of a specific summary or stored
+  file.
+- **`ctx_recall`** -- Spawn a recall sub-agent to find and expand information
+  from compressed summaries.
+
+See [Built-in Tools](/skills/built-in-tools) and
+[Platform Tools](/skills/platform-tools) for full tool reference documentation.
+
+### Switching modes
+
+Set `contextEngine.version: "dag"` in your config to switch to DAG mode:
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    contextEngine:
+      version: "dag"
+```
+
+When switching from pipeline to DAG, existing JSONL conversation history is
+automatically reconciled into the DAG on the next turn. No manual migration is
+required.
+
+## Configuration
+
+All context engine settings live under `agents.*.contextEngine` in your config
+file. The defaults work well for most setups -- you typically do not need to
+change anything.
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `contextEngine.enabled` | boolean | `true` | Master toggle for the context engine |
+| `contextEngine.version` | string | `"pipeline"` | Context engine mode: `"pipeline"` (default) or `"dag"` |
+| `contextEngine.thinkingKeepTurns` | number | `10` | Recent turns that keep AI reasoning notes (1-50) |
+| `contextEngine.compactionModel` | string | `"anthropic:claude-haiku-4-5-20250929"` | Model used for summarization |
+| `contextEngine.evictionMinAge` | number | `15` | Minimum turn age before stale errors are evicted (3-50) |
+| `contextEngine.historyTurns` | number | `15` | Recent user turns to keep in full (3-100) |
+| `contextEngine.historyTurnOverrides` | record | -- | Per-channel turn limits (e.g., `{ dm: 10, group: 5 }`) |
+| `contextEngine.observationKeepWindow` | number | `25` | Recent tool uses that keep full results (1-50) |
+| `contextEngine.observationTriggerChars` | number | `120000` | Character threshold before old tool results are masked (50K-1M) |
+| `contextEngine.compactionCooldownTurns` | number | `5` | Turns to wait before re-triggering summarization (1-50) |
+| `contextEngine.compactionPrefixAnchorTurns` | number | `2` | User turns preserved at head for cache prefix stability (0-10) |
+| `contextEngine.outputEscalation.enabled` | boolean | `true` | Allow escalating output token budget when compaction occurs |
+| `contextEngine.outputEscalation.escalatedMaxTokens` | number | `32768` | Maximum output tokens after escalation (4096-128000) |
+| `contextEngine.observationDeactivationChars` | number | `80000` | Character threshold to deactivate observation masking (20K-500K) |
+| `contextEngine.ephemeralKeepWindow` | number | `10` | Recent ephemeral tool results to preserve from masking (1-50) |
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    contextEngine:
+      enabled: true
+      # version: "dag"  # Uncomment to enable DAG mode
+      thinkingKeepTurns: 10
+      historyTurns: 15
+      historyTurnOverrides:
+        dm: 10
+        group: 5
+      observationKeepWindow: 25
+      observationTriggerChars: 120000
+      compactionCooldownTurns: 5
+      compactionPrefixAnchorTurns: 2  # Turns preserved at head for cache prefix stability
+      compactionModel: "anthropic:claude-haiku-4-5-20250929"
+```
+
+<Note>
+  For DAG mode configuration fields (compaction thresholds, summary tokens,
+  recall limits), see the [Config Reference](/reference/config-yaml).
+</Note>
+
+See the [Config Reference](/reference/config-yaml) for the full list of options
+and validation rules.
+
+<Tip>
+  You can trigger compaction manually with the `/compact` command. This is
+  useful if your conversation feels sluggish and you want to free up space
+  without waiting for the automatic threshold.
+</Tip>
+
+<Note>
+  The `session.compaction` settings (softThresholdRatio, hardThresholdRatio,
+  etc.) control the **memory flush** -- extracting facts and summaries into
+  long-term storage before the context engine summarizes older messages. These
+  settings are separate from the context engine configuration above. See
+  [Sessions](/agents/sessions) and the
+  [Config Reference](/reference/config-yaml) for details.
+</Note>
+
+<CardGroup cols={3}>
+  <Card title="Sessions" icon="comments" href="/agents/sessions">
+    How conversations are created and managed.
+  </Card>
+  <Card title="Memory" icon="database" href="/agents/memory">
+    Where compaction summaries are stored for long-term recall.
+  </Card>
+  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
+    Full configuration reference for all context engine options.
+  </Card>
+</CardGroup>

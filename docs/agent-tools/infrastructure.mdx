@@ -1,0 +1,266 @@
+---
+title: "Infrastructure"
+description: "Configuration management, gateway control, and supervisor administration tools"
+icon: "server"
+---
+
+The infrastructure tools let agents manage the Comis system itself. The `gateway` tool provides configuration and gateway control, while supervisor tools handle fleet-wide administration -- managing agents, sessions, memory, channels, tokens, models, skills, and MCP connections.
+
+## gateway -- Configuration and Control
+
+The `gateway` tool is the Swiss Army knife for system management, with 10 actions covering configuration, restarts, and environment variables.
+
+### Gateway Actions
+
+<AccordionGroup>
+  <Accordion title="read -- Read configuration values" icon="book-open">
+    Read the current value of any configuration setting.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"read"` |
+    | `section` | string | No | Config section name to read (e.g., `"agents"`, `"channels"`, `"memory"`). Omit to read the entire config. |
+
+    Returns the current in-memory value for the specified section. Useful for checking settings before making changes.
+  </Accordion>
+
+  <Accordion title="patch -- Update a configuration value" icon="pen">
+    Update a single configuration value in memory. The change does not take effect until you call `apply`.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"patch"` |
+    | `section` | string | Yes | Config section name (e.g., `"agents"`, `"channels"`, `"security"`) |
+    | `key` | string | Yes | Dot-notation key within section (e.g., `"maxSteps"`, `"budget.maxTokens"`) |
+    | `value` | any | Yes | The new value to set (string, number, boolean, object, or array) |
+
+    <Note>
+    Changes from `patch` are held in memory only. Call `apply` to write them to disk and reload the configuration. Immutable security-sensitive config paths are rejected before confirmation.
+    </Note>
+  </Accordion>
+
+  <Accordion title="apply -- Save and reload configuration" icon="check">
+    Replace an entire config section atomically, writing changes to disk and triggering a restart.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"apply"` |
+    | `section` | string | Yes | Config section to replace |
+    | `value` | any | Yes | The complete new section value |
+
+    This is a destructive action that requires user confirmation via the `_confirmed` parameter. After calling `apply`, the daemon restarts and new settings are active immediately.
+  </Accordion>
+
+  <Accordion title="restart -- Restart the daemon" icon="rotate">
+    Restart the Comis daemon process. Use this after significant configuration changes that require a full restart.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"restart"` |
+
+    The daemon shuts down gracefully and restarts. Connected channels will briefly disconnect and reconnect. This is a destructive action requiring user confirmation.
+  </Accordion>
+
+  <Accordion title="schema -- View configuration schema" icon="sitemap">
+    View the JSON Schema for a specific config section, showing available options, types, and defaults.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"schema"` |
+    | `section` | string | No | Config section to inspect (omit for the full config schema) |
+  </Accordion>
+
+  <Accordion title="status -- Check system health" icon="heart-pulse">
+    Check the health status of the daemon and gateway, including uptime, connected channels, and resource usage.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"status"` |
+  </Accordion>
+
+  <Accordion title="history -- View recent config changes" icon="clock-rotate-left">
+    View a log of recent configuration changes, showing what was changed, when, and by whom.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"history"` |
+    | `section` | string | No | Filter history to a specific config section |
+    | `limit` | number | No | Maximum number of entries to return (default: 10) |
+  </Accordion>
+
+  <Accordion title="diff -- Compare config versions" icon="code-compare">
+    Compare the current in-memory configuration against a previous version. Useful for reviewing changes before calling `apply`.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"diff"` |
+    | `sha` | string | No | Git commit SHA to compare against. Omit to compare against the version saved on disk. |
+  </Accordion>
+
+  <Accordion title="rollback -- Revert to a previous config" icon="rotate-left">
+    Revert the configuration to a previous version from the change history.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"rollback"` |
+    | `sha` | string | Yes | The git commit SHA to revert to (visible in the `history` output) |
+
+    This is a destructive action requiring user confirmation. Triggers a daemon restart after rollback.
+  </Accordion>
+
+  <Accordion title="env_set -- Set an environment variable" icon="key">
+    Store a secret or environment variable in the daemon's encrypted secret store. After storing, reference the secret in config YAML as `${VAR_NAME}`.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"env_set"` |
+    | `env_key` | string | Yes | Environment variable / secret name (uppercase, e.g., `OPENAI_API_KEY`) |
+    | `env_value` | string | Yes | Secret value to store. Write-only: cannot be read back. |
+
+    <Warning>
+    Setting environment variables requires security approval and user confirmation. The stored value is write-only and cannot be retrieved. Reference it in config as `${VAR_NAME}` (e.g., `GEMINI_API_KEY: ${GEMINI_API_KEY}`). Never write raw API keys into config files.
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+## Supervisor Tools
+
+Supervisor tools are admin-level capabilities for managing the entire Comis installation. They require the `supervisor` tool policy profile or an explicit `allow` list in your agent's configuration.
+
+<Warning>
+Supervisor tools can make significant changes to your system. They are intended for administration agents with elevated privileges, not regular conversation agents.
+</Warning>
+
+| Tool | Actions | What It Manages |
+|------|---------|-----------------|
+| `agents_manage` | create, get, update, delete, suspend, resume | Agent fleet -- create new agents, modify settings, suspend or resume them |
+| `obs_query` | diagnostics, billing, delivery, channels | Observability -- system diagnostics, cost tracking, and delivery metrics |
+| `sessions_manage` | delete, reset, export, compact | Session lifecycle -- clean up, export, and compact conversation data |
+| `memory_manage` | stats, browse, delete, flush, export | Memory lifecycle -- view stats, browse entries, and clean up memory |
+| `channels_manage` | list, get, enable, disable, restart, configure | Channel adapters -- manage connected chat platforms |
+| `tokens_manage` | list, create, revoke, rotate | Gateway tokens -- manage API authentication tokens |
+| `models_manage` | list, test | Model catalog -- view available models and test connections |
+| `skills_manage` | list, import, delete | Skill lifecycle -- manage custom skills |
+| `mcp_manage` | list, status, connect, disconnect, reconnect | MCP connections -- manage external tool servers |
+
+### Supervisor Tool Details
+
+<AccordionGroup>
+  <Accordion title="agents_manage -- Agent fleet management" icon="users-gear">
+    Create, configure, suspend, and remove agents in your Comis installation. Each action targets a specific agent by ID. Create and delete operations take effect immediately without a daemon restart -- the new agent is routable within seconds. Update operations still require a daemon restart to apply configuration changes.
+
+    **Actions:**
+    - **create** -- Create a new agent with a specified configuration
+    - **get** -- Retrieve an agent's current settings
+    - **update** -- Modify an agent's configuration (model, provider, system prompt, etc.)
+    - **delete** -- Permanently remove an agent
+    - **suspend** -- Temporarily disable an agent (stops responding to messages)
+    - **resume** -- Re-enable a suspended agent
+
+    <Tip>When creating a new agent, customize its workspace files after creation -- write ROLE.md for role-specific behavior, TOOLS.md for environment details, and IDENTITY.md for the agent's name and character. AGENTS.md and SOUL.md are read-only platform files.</Tip>
+  </Accordion>
+
+  <Accordion title="obs_query -- Observability and metrics" icon="chart-line">
+    Query system diagnostics, cost tracking, message delivery metrics, and channel health.
+
+    **Actions:**
+    - **diagnostics** -- System health overview (memory usage, uptime, error rates)
+    - **billing** -- AI provider cost tracking and budget usage
+    - **delivery** -- Message delivery success rates and latency
+    - **channels** -- Per-channel health and connection status
+  </Accordion>
+
+  <Accordion title="sessions_manage -- Session lifecycle" icon="comments">
+    Manage conversation sessions across all agents and channels.
+
+    **Actions:**
+    - **delete** -- Permanently remove a session and its history
+    - **reset** -- Clear a session's conversation history while keeping the session active
+    - **export** -- Export a session's conversation data
+    - **compact** -- Compress a session's history to reduce storage
+  </Accordion>
+
+  <Accordion title="memory_manage -- Memory lifecycle" icon="brain">
+    Manage the agent memory system, including stored knowledge and conversation summaries.
+
+    **Actions:**
+    - **stats** -- View memory usage statistics (entry count, storage size, index health)
+    - **browse** -- Browse stored memory entries with filters
+    - **delete** -- Remove specific memory entries
+    - **flush** -- Clear all memory for an agent
+    - **export** -- Export memory entries for backup or analysis
+  </Accordion>
+
+  <Accordion title="channels_manage -- Channel adapter management" icon="plug">
+    Control the chat platform connections (Discord, Telegram, Slack, etc.).
+
+    **Actions:**
+    - **list** -- List all configured channels and their status
+    - **get** -- Get detailed information about a specific channel
+    - **enable** -- Enable a disabled channel
+    - **disable** -- Disable a channel without removing its configuration
+    - **restart** -- Restart a channel's connection
+    - **configure** -- Update a channel's configuration
+  </Accordion>
+
+  <Accordion title="tokens_manage -- Gateway token management" icon="key">
+    Manage the API tokens used to authenticate with the Comis gateway.
+
+    **Actions:**
+    - **list** -- List all active tokens
+    - **create** -- Generate a new authentication token
+    - **revoke** -- Revoke an existing token
+    - **rotate** -- Replace a token with a new one (revokes the old token and creates a new one)
+  </Accordion>
+
+  <Accordion title="models_manage -- Model catalog" icon="microchip">
+    Query and test the AI models available to your Comis installation.
+
+    **Actions:**
+    - **list** -- List all configured models with their providers and capabilities
+    - **test** -- Test a model connection by sending a simple prompt
+  </Accordion>
+
+  <Accordion title="skills_manage -- Skill lifecycle" icon="wand-magic-sparkles">
+    Manage custom skills with per-agent scope control.
+
+    **Actions:**
+    - **list** -- List all discovered skills with their status and metadata
+    - **import** -- Import a skill from a file or URL
+    - **delete** -- Remove a custom skill
+
+    All mutation actions (import, delete) accept an optional **scope** parameter:
+    - `"local"` (default) -- operates on the calling agent's workspace skills directory
+    - `"shared"` -- operates on the global skills directory (default agent only)
+
+    The scope defaults to `"local"`, so an agent's skill mutations are isolated to its own workspace unless explicitly targeting the shared directory.
+  </Accordion>
+
+  <Accordion title="mcp_manage -- MCP server management" icon="network-wired">
+    Manage connections to external Model Context Protocol (MCP) servers that provide additional tools.
+
+    **Actions:**
+    - **list** -- List all configured MCP servers
+    - **status** -- Check the connection status of MCP servers
+    - **connect** -- Establish a connection to an MCP server
+    - **disconnect** -- Disconnect from an MCP server
+    - **reconnect** -- Restart the connection to an MCP server
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
+    Complete configuration reference for all settings
+  </Card>
+  <Card title="Security Approvals" icon="check-double" href="/security/approvals">
+    How the approval workflow protects sensitive operations
+  </Card>
+  <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
+    See all available agent tools
+  </Card>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">
+    Control which tools your agents can use
+  </Card>
+</CardGroup>

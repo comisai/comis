@@ -1,0 +1,208 @@
+---
+title: "Skill Manifest"
+description: "Complete reference for the SKILL.md file format and all available fields"
+icon: "file-code"
+---
+
+Every custom skill starts with a SKILL.md file. This file has two parts: a YAML frontmatter header (between `---` markers) that describes the skill, and a Markdown body that contains the instructions or code. This page documents every field available in the frontmatter.
+
+## Required Fields
+
+Every manifest must include these two fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique skill name. Lowercase letters, numbers, and hyphens only. 1-64 characters. |
+| `description` | string | Human-readable description shown to users and agents. 1-1024 characters. |
+
+Here is a minimal SKILL.md that only uses the required fields:
+
+```yaml
+---
+name: my-skill
+description: "A brief description of what this skill does"
+---
+Your instructions here...
+```
+
+That is all you need to create a valid skill. Everything below is optional.
+
+## Optional Fields
+
+These fields give you more control over how the skill behaves:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `type` | string | `"prompt"` | Always "prompt" for Markdown instruction skills. |
+| `version` | string | -- | Semver version string (e.g., "1.0.0"). Useful for tracking changes to your skill over time. |
+| `license` | string | -- | SPDX license identifier (e.g., "MIT", "Apache-2.0"). Declares the license for shared skills. |
+| `userInvocable` | boolean | `true` | Whether users can invoke this skill with `/skill:name` in chat. Set to `false` for background-only skills. |
+| `disableModelInvocation` | boolean | `false` | When `true`, the agent cannot select this skill on its own -- it must be invoked explicitly by a user or another skill. |
+| `allowedTools` | string[] | `[]` | Tools the agent can use while this skill is active. An empty list means no tool restriction is applied. |
+| `argumentHint` | string | -- | Hint text shown to users when invoking the skill (e.g., "[name] [language]"). |
+| `inputSchema` | object | -- | A JSON Schema that validates the input parameters passed to this skill. Useful for skills that expect structured input. |
+| `metadata` | object | -- | Arbitrary key-value pairs for your own use. Comis does not interpret these -- they are available for custom tooling or organizational tags. |
+
+### Example with Optional Fields
+
+```yaml
+---
+name: translate
+description: "Translate text between languages"
+version: "1.2.0"
+license: "MIT"
+userInvocable: true
+argumentHint: "[text] [target-language]"
+allowedTools:
+  - web_fetch
+metadata:
+  category: "utilities"
+  author: "team"
+---
+Translate the following text to {target-language}:
+
+{text}
+```
+
+## Permissions
+
+The `permissions` block declares what system resources this skill needs access to. By default, skills have no access to the filesystem, network, or environment variables. Each permission you add opens a specific door.
+
+| Permission | Type | Description |
+|------------|------|-------------|
+| `permissions.fsRead` | string[] | Filesystem paths the skill can read. Supports glob patterns (e.g., `./data/*.csv`). |
+| `permissions.fsWrite` | string[] | Filesystem paths the skill can write to. |
+| `permissions.net` | string[] | Network domains the skill can access (e.g., `api.example.com`). |
+| `permissions.env` | string[] | Environment variables the skill can read (e.g., `API_KEY`). |
+
+```yaml
+permissions:
+  fsRead: ["./data/*.csv", "./config/"]
+  fsWrite: ["./output/"]
+  net: ["api.example.com", "cdn.example.com"]
+  env: ["API_KEY", "DATABASE_URL"]
+```
+
+<Tip>
+Only grant the permissions your skill actually needs. Start with none and add them one at a time as required. This follows the **principle of least privilege** -- the less access a skill has, the less damage a bug or malicious skill can cause.
+</Tip>
+
+## Comis Namespace
+
+The `comis:` block contains fields specific to the Comis platform. These control runtime requirements and platform-level behavior.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `comis.os` | string[] | Target operating systems (e.g., `["linux", "darwin"]`). The skill will only load on matching systems. |
+| `comis.requires.bins` | string[] | Required binary executables that must be available on the system (e.g., `["git", "ffmpeg"]`). The skill will not load if any are missing. |
+| `comis.requires.env` | string[] | Required environment variables. The skill will not load if any are unset. |
+| `comis.skill-key` | string | Override the auto-generated skill slug. By default, the slug is derived from the `name` field. |
+| `comis.primary-env` | string | Display and grouping hint for the primary runtime environment. Used for organizational purposes in the dashboard. |
+| `comis.command-dispatch` | string | Metadata tag for command routing. Used by advanced automation to direct invocations to specific handlers. |
+
+```yaml
+comis:
+  os: ["linux"]
+  requires:
+    bins: ["ffmpeg", "git"]
+    env: ["OPENAI_API_KEY"]
+  skill-key: "video-processor"
+```
+
+<Info>
+The `comis.requires` fields are checked at startup using the **runtime eligibility** system. If a required binary or environment variable is missing, the skill is skipped with a warning -- it does not crash the system. You can disable this check with `skills.runtimeEligibility.enabled: false` in your config, but that is not recommended.
+</Info>
+
+## Input Schema
+
+For skills that expect structured input, you can define a JSON Schema in the `inputSchema` field. This validates the parameters before the skill runs.
+
+```yaml
+---
+name: generate-report
+description: "Generate a formatted report from data"
+inputSchema:
+  type: object
+  properties:
+    format:
+      type: string
+      enum: ["pdf", "html", "markdown"]
+    title:
+      type: string
+  required: ["format"]
+---
+Generate a {format} report titled "{title}" from the provided data.
+```
+
+If someone invokes this skill without specifying a `format`, the validation will reject the request before the skill runs.
+
+## Complete Example
+
+Here is a full SKILL.md using fields from every section:
+
+```yaml
+---
+name: daily-report
+description: "Generate a daily activity report from project logs"
+type: prompt
+version: "2.1.0"
+license: "MIT"
+userInvocable: true
+disableModelInvocation: false
+argumentHint: "[project-name]"
+allowedTools:
+  - read
+  - web_fetch
+permissions:
+  fsRead: ["./logs/*.log", "./config/projects.yaml"]
+  fsWrite: ["./reports/"]
+  net: ["api.github.com"]
+  env: ["GITHUB_TOKEN"]
+inputSchema:
+  type: object
+  properties:
+    project-name:
+      type: string
+  required: ["project-name"]
+metadata:
+  category: "reporting"
+  team: "ops"
+comis:
+  os: ["linux", "darwin"]
+  requires:
+    bins: ["git"]
+    env: ["GITHUB_TOKEN"]
+  skill-key: "daily-report"
+  primary-env: "node"
+---
+You are a reporting assistant. Read the project logs for {project-name}
+and generate a concise daily activity summary.
+
+Include:
+- Commits pushed today
+- Issues opened or closed
+- Pull requests merged
+
+Format the output as a Markdown document suitable for posting in a team channel.
+```
+
+## Template Substitution
+
+Prompt skill bodies support placeholder syntax for dynamic content:
+
+- **Named placeholders:** `{placeholder}` -- mapped by name from the input parameters
+- **Positional arguments:** `$1`, `$2` (1-indexed), `$@` or `$ARGUMENTS` (all arguments), `${@:N}` (arguments from position N onwards)
+
+Named placeholders are recommended for clarity. Positional arguments are available for quick one-off skills.
+
+<CardGroup cols={2}>
+  <Card title="Prompt Skills" icon="file-lines" href="/skills/prompt-skills">
+    Step-by-step guide to creating your first prompt skill
+  </Card>
+  <Card title="Security Scanning" icon="shield-check" href="/skills/security-scanning">
+    What Comis checks before loading your skill
+  </Card>
+  <Card title="Examples" icon="lightbulb" href="/skills/examples">
+    Complete skill examples with walkthroughs
+  </Card>
+</CardGroup>

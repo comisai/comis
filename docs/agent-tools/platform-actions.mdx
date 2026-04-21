@@ -1,0 +1,573 @@
+---
+title: "Platform Actions"
+description: "Discord, Telegram, Slack, and WhatsApp moderation and management actions"
+icon: "gavel"
+---
+
+Platform action tools give agents moderation and management capabilities specific to each chat platform. Each platform has its own tool (`discord_action`, `telegram_action`, `slack_action`, `whatsapp_action`) with actions tailored to that platform's features.
+
+## Quick Reference
+
+| Platform | Tool Name | Actions |
+|----------|-----------|---------|
+| Discord | `discord_action` | 19 actions |
+| Telegram | `telegram_action` | 12 actions |
+| Slack | `slack_action` | 12 actions |
+| WhatsApp | `whatsapp_action` | 11 actions |
+
+All platform action tools follow the same pattern: call the tool with an `action` parameter specifying what to do, plus any additional parameters that action requires.
+
+## Discord Actions
+
+The `discord_action` tool provides 19 actions for managing Discord servers, channels, threads, roles, and member moderation.
+
+<AccordionGroup>
+  <Accordion title="pin -- Pin a message" icon="thumbtack">
+    Pin a message to the current channel so it appears in the pinned messages list.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"pin"` |
+    | `message_id` | string | Yes | The ID of the message to pin |
+  </Accordion>
+
+  <Accordion title="unpin -- Unpin a message" icon="thumbtack">
+    Remove a message from the pinned messages list.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"unpin"` |
+    | `message_id` | string | Yes | The ID of the message to unpin |
+  </Accordion>
+
+  <Accordion title="kick -- Kick a member" icon="right-from-bracket">
+    Remove a member from the server. They can rejoin with a new invite.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"kick"` |
+    | `user_id` | string | Yes | The Discord user ID to kick |
+    | `reason` | string | No | Reason for the kick (shown in audit log) |
+  </Accordion>
+
+  <Accordion title="ban -- Ban a member" icon="ban">
+    Ban a member from the server. They cannot rejoin until unbanned.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"ban"` |
+    | `user_id` | string | Yes | The Discord user ID to ban |
+    | `reason` | string | No | Reason for the ban (shown in audit log) |
+    | `delete_message_days` | number | No | Number of days of message history to delete from the banned user (0-7) |
+  </Accordion>
+
+  <Accordion title="unban -- Unban a member" icon="unlock">
+    Remove a ban, allowing the user to rejoin the server.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"unban"` |
+    | `user_id` | string | Yes | The Discord user ID to unban |
+  </Accordion>
+
+  <Accordion title="role_add -- Add a role to a member" icon="user-plus">
+    Assign a role to a server member.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"role_add"` |
+    | `user_id` | string | Yes | The Discord user ID |
+    | `role_id` | string | Yes | The role ID to assign |
+  </Accordion>
+
+  <Accordion title="role_remove -- Remove a role from a member" icon="user-minus">
+    Remove a role from a server member.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"role_remove"` |
+    | `user_id` | string | Yes | The Discord user ID |
+    | `role_id` | string | Yes | The role ID to remove |
+  </Accordion>
+
+  <Accordion title="set_topic -- Set channel topic" icon="heading">
+    Update the topic text displayed at the top of a channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"set_topic"` |
+    | `topic` | string | Yes | The new channel topic text |
+  </Accordion>
+
+  <Accordion title="set_slowmode -- Set slowmode delay" icon="clock">
+    Set the slowmode interval for the channel. When enabled, members can only send one message per interval.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"set_slowmode"` |
+    | `seconds` | number | Yes | Slowmode interval in seconds (0 to disable) |
+  </Accordion>
+
+  <Accordion title="guild_info -- Get server information" icon="circle-info">
+    Retrieve information about the current Discord server, including name, member count, channels, and roles.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"guild_info"` |
+  </Accordion>
+
+  <Accordion title="channel_info -- Get channel information" icon="circle-info">
+    Retrieve information about the current channel, including name, topic, type, and permissions.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"channel_info"` |
+  </Accordion>
+
+  <Accordion title="threadCreate -- Create a thread" icon="message">
+    Create a new thread in the current channel. Optionally create it from an existing message.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"threadCreate"` |
+    | `name` | string | Yes | The thread name |
+    | `message_id` | string | No | Message ID to create the thread from (creates a thread attached to that message) |
+    | `auto_archive_duration` | number | No | Auto-archive duration in minutes (60, 1440, 4320, or 10080) |
+  </Accordion>
+
+  <Accordion title="threadList -- List threads" icon="list">
+    List all threads in the current channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"threadList"` |
+  </Accordion>
+
+  <Accordion title="threadReply -- Reply in a thread" icon="reply">
+    Send a message to a specific thread.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"threadReply"` |
+    | `thread_id` | string | Yes | The thread ID to reply in |
+    | `text` | string | Yes | The message text to send |
+  </Accordion>
+
+  <Accordion title="channelCreate -- Create a channel" icon="plus">
+    Create a new channel in the server.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"channelCreate"` |
+    | `name` | string | Yes | The channel name |
+    | `type` | string | Yes | Channel type: `"text"`, `"voice"`, `"category"`, `"announcement"`, `"forum"`, or `"stage"` |
+    | `parent_id` | string | No | Parent category ID to create the channel under |
+    | `position` | number | No | Position of the channel in the channel list |
+  </Accordion>
+
+  <Accordion title="channelEdit -- Edit channel settings" icon="pen">
+    Modify the settings of an existing channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"channelEdit"` |
+    | `name` | string | No | New channel name |
+    | `topic` | string | No | New channel topic |
+  </Accordion>
+
+  <Accordion title="channelDelete -- Delete a channel" icon="trash">
+    Delete the current channel. This action is irreversible.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"channelDelete"` |
+
+    <Warning>
+    Channel deletion is permanent. All messages and history in the channel will be lost.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="channelMove -- Move channel to a category" icon="arrows-up-down">
+    Move a channel to a different category in the server.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"channelMove"` |
+    | `category_id` | string | Yes | The category ID to move the channel to |
+  </Accordion>
+
+  <Accordion title="setPresence -- Set bot presence" icon="circle-dot">
+    Update the bot's online status and activity message.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"setPresence"` |
+    | `status_text` | string | Yes | Bot status text displayed under the bot's name |
+    | `activity_type` | string | No | Activity type: `"playing"`, `"watching"`, `"listening"`, or `"competing"` |
+  </Accordion>
+</AccordionGroup>
+
+## Telegram Actions
+
+The `telegram_action` tool provides 12 actions for managing Telegram groups and channels.
+
+<AccordionGroup>
+  <Accordion title="pin -- Pin a message" icon="thumbtack">
+    Pin a message in the chat so it appears at the top.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"pin"` |
+    | `message_id` | string | Yes | The message ID to pin |
+  </Accordion>
+
+  <Accordion title="unpin -- Unpin a message" icon="thumbtack">
+    Remove a pinned message.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"unpin"` |
+    | `message_id` | string | Yes | The message ID to unpin |
+  </Accordion>
+
+  <Accordion title="poll -- Create a poll" icon="square-poll-vertical">
+    Create a poll in the chat for members to vote on.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"poll"` |
+    | `question` | string | Yes | The poll question |
+    | `options` | array | Yes | Array of answer options (strings) |
+  </Accordion>
+
+  <Accordion title="sticker -- Send a sticker" icon="note-sticky">
+    Send a sticker to the chat.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"sticker"` |
+    | `sticker_id` | string | Yes | The sticker file ID |
+  </Accordion>
+
+  <Accordion title="chat_info -- Get chat information" icon="circle-info">
+    Retrieve information about the current chat, including name, type, and member count.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"chat_info"` |
+  </Accordion>
+
+  <Accordion title="member_count -- Get member count" icon="users">
+    Get the number of members in the current chat.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"member_count"` |
+  </Accordion>
+
+  <Accordion title="get_admins -- List administrators" icon="user-shield">
+    List all administrators in the current chat with their permissions.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"get_admins"` |
+  </Accordion>
+
+  <Accordion title="set_title -- Set chat title" icon="heading">
+    Change the title of the group or channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"set_title"` |
+    | `title` | string | Yes | The new chat title |
+  </Accordion>
+
+  <Accordion title="set_description -- Set chat description" icon="align-left">
+    Update the description of the group or channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"set_description"` |
+    | `description` | string | Yes | The new chat description |
+  </Accordion>
+
+  <Accordion title="ban -- Ban a user" icon="ban">
+    Ban a user from the chat. They cannot rejoin until unbanned.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"ban"` |
+    | `user_id` | string | Yes | The Telegram user ID to ban |
+  </Accordion>
+
+  <Accordion title="unban -- Unban a user" icon="unlock">
+    Remove a ban, allowing the user to rejoin the chat.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"unban"` |
+    | `user_id` | string | Yes | The Telegram user ID to unban |
+  </Accordion>
+
+  <Accordion title="promote -- Promote to admin" icon="arrow-up">
+    Promote a user to administrator with specified permissions.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"promote"` |
+    | `user_id` | string | Yes | The Telegram user ID to promote |
+    | `rights` | object | No | Admin rights object specifying permissions to grant (if omitted, grants default admin permissions) |
+  </Accordion>
+
+</AccordionGroup>
+
+## Slack Actions
+
+The `slack_action` tool provides 12 actions for managing Slack workspaces and channels.
+
+<AccordionGroup>
+  <Accordion title="pin -- Pin a message" icon="thumbtack">
+    Pin a message in the channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"pin"` |
+    | `message_id` | string | Yes | The message timestamp (Slack's message ID) |
+  </Accordion>
+
+  <Accordion title="unpin -- Unpin a message" icon="thumbtack">
+    Remove a pinned message.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"unpin"` |
+    | `message_id` | string | Yes | The message timestamp to unpin |
+  </Accordion>
+
+  <Accordion title="set_topic -- Set channel topic" icon="heading">
+    Update the channel topic displayed at the top of the channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"set_topic"` |
+    | `topic` | string | Yes | The new channel topic |
+  </Accordion>
+
+  <Accordion title="set_purpose -- Set channel purpose" icon="bullseye">
+    Update the channel's purpose description.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"set_purpose"` |
+    | `purpose` | string | Yes | The new channel purpose |
+  </Accordion>
+
+  <Accordion title="archive -- Archive a channel" icon="box-archive">
+    Archive a channel. Archived channels are read-only and hidden from the channel list.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"archive"` |
+  </Accordion>
+
+  <Accordion title="unarchive -- Unarchive a channel" icon="box-open">
+    Restore an archived channel to active status.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"unarchive"` |
+  </Accordion>
+
+  <Accordion title="create_channel -- Create a channel" icon="plus">
+    Create a new Slack channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"create_channel"` |
+    | `name` | string | Yes | The channel name (lowercase, no spaces) |
+    | `is_private` | boolean | No | Whether the channel is private (defaults to public) |
+  </Accordion>
+
+  <Accordion title="invite -- Invite users to channel" icon="user-plus">
+    Invite one or more users to join the current channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"invite"` |
+    | `user_ids` | array | Yes | Array of Slack user IDs to invite |
+  </Accordion>
+
+  <Accordion title="kick -- Remove a user from channel" icon="user-minus">
+    Remove a user from the current channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"kick"` |
+    | `user_id` | string | Yes | The Slack user ID to remove |
+  </Accordion>
+
+  <Accordion title="channel_info -- Get channel information" icon="circle-info">
+    Retrieve detailed information about the current channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"channel_info"` |
+  </Accordion>
+
+  <Accordion title="members_list -- List channel members" icon="users">
+    List all members of the current channel.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"members_list"` |
+    | `limit` | number | No | Maximum number of members to return |
+  </Accordion>
+
+  <Accordion title="bookmark_add -- Add a bookmark" icon="bookmark">
+    Add a bookmark link to the channel's bookmarks bar.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"bookmark_add"` |
+    | `title` | string | Yes | The bookmark display name |
+    | `link` | string | Yes | The URL to bookmark |
+  </Accordion>
+</AccordionGroup>
+
+## WhatsApp Actions
+
+The `whatsapp_action` tool provides 11 actions for managing WhatsApp groups.
+
+<AccordionGroup>
+  <Accordion title="group_info -- Get group information" icon="circle-info">
+    Retrieve information about the current WhatsApp group, including name, description, and participants.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"group_info"` |
+  </Accordion>
+
+  <Accordion title="group_update_subject -- Change group name" icon="heading">
+    Update the group name (subject).
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"group_update_subject"` |
+    | `subject` | string | Yes | The new group name |
+  </Accordion>
+
+  <Accordion title="group_update_description -- Change group description" icon="align-left">
+    Update the group description text.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"group_update_description"` |
+    | `description` | string | Yes | The new group description |
+  </Accordion>
+
+  <Accordion title="group_participants_add -- Add participants" icon="user-plus">
+    Add new members to the group.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"group_participants_add"` |
+    | `participant_jids` | array | Yes | Array of participant JIDs to add (e.g., `["1234567890@s.whatsapp.net"]`) |
+  </Accordion>
+
+  <Accordion title="group_participants_remove -- Remove participants" icon="user-minus">
+    Remove members from the group.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"group_participants_remove"` |
+    | `participant_jids` | array | Yes | Array of participant JIDs to remove |
+  </Accordion>
+
+  <Accordion title="group_promote -- Promote to admin" icon="arrow-up">
+    Promote participants to group admin status.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"group_promote"` |
+    | `participant_jids` | array | Yes | Array of participant JIDs to promote |
+  </Accordion>
+
+  <Accordion title="group_demote -- Demote from admin" icon="arrow-down">
+    Revoke admin status from participants, returning them to regular member status.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"group_demote"` |
+    | `participant_jids` | array | Yes | Array of participant JIDs to demote |
+  </Accordion>
+
+  <Accordion title="group_settings -- Update group settings" icon="gear">
+    Change group-wide settings that control who can send messages and edit group info.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"group_settings"` |
+    | `setting` | string | Yes | One of: `"announcement"` (only admins can send messages), `"not_announcement"` (everyone can send), `"locked"` (only admins can edit group info), `"unlocked"` (everyone can edit) |
+  </Accordion>
+
+  <Accordion title="group_invite_code -- Get invite link" icon="link">
+    Retrieve the group's invite link that can be shared to add new members.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"group_invite_code"` |
+  </Accordion>
+
+  <Accordion title="profile_status -- Update bot profile status" icon="comment-dots">
+    Update the bot's WhatsApp profile status message.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"profile_status"` |
+    | `status_text` | string | Yes | The new profile status text |
+  </Accordion>
+
+  <Accordion title="group_leave -- Leave a group" icon="right-from-bracket">
+    Have the bot leave the current group. This action is irreversible -- the bot must be re-invited to rejoin.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"group_leave"` |
+
+    <Warning>
+    Leaving a group is permanent. The bot must be added back by a group admin to rejoin.
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+## Permissions and Trust
+
+Platform actions require appropriate bot permissions on each platform. For example:
+
+- **Discord** -- Kick and ban require the bot to have the "Kick Members" and "Ban Members" permissions in the server settings. Role management requires "Manage Roles."
+- **Telegram** -- Ban, promote, and group management actions require the bot to be an administrator with the relevant permissions.
+- **Slack** -- Channel management actions require appropriate bot scopes (like `channels:manage`, `chat:write`) configured in the Slack app settings.
+- **WhatsApp** -- Group management actions require the bot to be a group admin.
+
+Platform actions are part of the `group:platform_actions` tool group and can be restricted through [Tool Policy](/skills/tool-policy). By default, they are available in the `full` profile but not in restricted profiles like `minimal` or `coding`.
+
+<Info>
+If a platform action fails with a permissions error, check that your bot has the required permissions on that platform. The error message will typically indicate which permission is missing.
+</Info>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Discord Setup" icon="comment" href="/channels/discord">
+    Set up and configure your Discord bot
+  </Card>
+  <Card title="Telegram Setup" icon="paper-plane" href="/channels/telegram">
+    Set up and configure your Telegram bot
+  </Card>
+  <Card title="Slack Setup" icon="hashtag" href="/channels/slack">
+    Set up and configure your Slack bot
+  </Card>
+  <Card title="WhatsApp Setup" icon="phone" href="/channels/whatsapp">
+    Set up and configure your WhatsApp connection
+  </Card>
+</CardGroup>

@@ -1,0 +1,124 @@
+---
+title: "Routing"
+description: "How Comis decides which agent handles each message"
+icon: "route"
+---
+
+When you run multiple agents, Comis needs to decide which one should respond to
+each message. Routing rules let you assign agents based on the chat platform,
+channel, or even specific users.
+
+## How routing works
+
+When a message arrives, Comis checks your routing rules from most specific to
+least specific. The first matching rule wins. If nothing matches, the default
+agent handles it.
+
+Each rule is called a *binding*. A binding says: "When a message matches these
+conditions, send it to this agent." You can match on any combination of
+platform type, channel, server, or user.
+
+## Specificity
+
+More specific rules always win over general ones. Comis assigns a weight to
+each type of match condition, and rules with higher total weight take priority:
+
+| Match condition | Weight | Example |
+|-----------------|--------|---------|
+| Specific user | Highest | "Messages from user 12345 go to the VIP agent" |
+| Specific channel | High | "Messages in #support go to the support agent" |
+| Server or guild | Medium | "All messages in the Marketing server go to the marketing agent" |
+| Platform type | Low | "All Telegram messages go to the Telegram agent" |
+
+When two rules have the same total weight, the one listed first in your
+configuration wins. This means the order of your bindings matters for
+equal-specificity rules.
+
+For example, a binding that matches a specific user on a specific channel
+(weight: highest + high) always beats a binding that just matches a platform
+type (weight: low), regardless of order.
+
+## Configuration
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `routing.defaultAgentId` | string | `"default"` | Which agent handles messages that do not match any binding |
+| `routing.bindings[].channelType` | string | -- | Match by platform (`telegram`, `discord`, `slack`, `whatsapp`, `signal`, `imessage`, `irc`, `line`) |
+| `routing.bindings[].channelId` | string | -- | Match by specific channel identifier |
+| `routing.bindings[].peerId` | string | -- | Match by specific user identifier |
+| `routing.bindings[].guildId` | string | -- | Match by server or guild identifier |
+| `routing.bindings[].agentId` | string | *(required)* | Which agent to assign when this binding matches |
+
+```yaml title="~/.comis/config.yaml"
+routing:
+  defaultAgentId: default
+  bindings:
+    # All Telegram messages go to the personal agent
+    - channelType: telegram
+      agentId: personal
+
+    # Messages in a specific Discord channel go to the support agent
+    - channelType: discord
+      channelId: "1234567890"
+      agentId: support
+
+    # Messages from a specific user always go to the VIP agent
+    - peerId: "user-9876"
+      agentId: vip
+```
+
+In this example, a message from `user-9876` in any channel will always go to
+the VIP agent (highest specificity). A message in Discord channel `1234567890`
+from anyone else goes to the support agent. Any other Telegram message goes to
+the personal agent. Everything else goes to the default agent.
+
+<Tip>
+  You do not need routing rules if you only run one agent. The default agent
+  handles everything automatically.
+</Tip>
+
+## Multiple agents setup
+
+To use routing, you first need to define multiple agents in your configuration.
+Each agent gets its own identity, model, and settings:
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    name: Atlas
+    model: claude-sonnet-4-5-20250929
+    provider: anthropic
+
+  support:
+    name: Helper
+    model: gpt-4o
+    provider: openai
+    workspacePath: ~/.comis/workspaces/support
+
+  personal:
+    name: Buddy
+    model: claude-sonnet-4-5-20250929
+    provider: anthropic
+    workspacePath: ~/.comis/workspaces/personal
+
+routing:
+  defaultAgentId: default
+  bindings:
+    - channelType: telegram
+      agentId: personal
+    - channelType: discord
+      channelId: "1234567890"
+      agentId: support
+```
+
+Each agent can have its own workspace folder with separate identity files,
+giving it a unique personality and set of instructions.
+
+<CardGroup cols={2}>
+  <Card title="Identity" icon="id-card" href="/agents/identity">
+    The workspace files that shape each agent's personality.
+  </Card>
+  <Card title="Slash Commands" icon="terminal" href="/agents/slash-commands">
+    Commands you can type to control your agent.
+  </Card>
+</CardGroup>

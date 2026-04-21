@@ -1,0 +1,77 @@
+# Comis Test Configuration (Custom Adapter Wiring Tests)
+#
+# Variant for Phase 124 custom adapter integration E2E tests:
+# - Port 8504 (unique, no collisions with other test suites)
+# - Separate memory database (test-memory-124-custom-adapter.db)
+# - RAG disabled (no embeddings needed)
+# - Cron disabled (not testing scheduler)
+# - All monitoring disabled
+
+tenantId: "test"
+logLevel: "warn"
+dataDir: ""
+
+agents:
+  default:
+    name: "CustomAdapterWiringTestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8504
+  tokens:
+    - id: "test-custom-adapter-token"
+      secret: "test-custom-adapter-secret-key-ab"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-124-custom-adapter.db"
+
+security:
+  agentToAgent:
+    enabled: false
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

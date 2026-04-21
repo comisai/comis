@@ -1,0 +1,180 @@
+---
+title: "Environment Variables"
+description: "Complete reference for all Comis environment variables"
+icon: "key"
+---
+
+Complete reference for environment variables recognized by Comis. These variables configure operational behavior of the daemon and CLI. They are separate from config YAML settings, though some overlap -- environment variables override config values where applicable.
+
+## Comis Variables
+
+### `COMIS_CONFIG_PATHS`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon, CLI |
+| **Format** | Colon-separated file paths |
+| **Default** | `~/.comis/config.yaml:~/.comis/config.local.yaml` |
+
+Specifies which YAML configuration files to load. Files are loaded in order and deep-merged, with later files overriding earlier ones. Non-existent files are silently skipped. The daemon reads this variable at startup to locate config files. The CLI uses it in `config validate` and `pm2 setup` commands.
+
+```bash
+export COMIS_CONFIG_PATHS="$HOME/.comis/config.yaml:$HOME/.comis/config.local.yaml"
+```
+
+### `COMIS_DATA_DIR`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon |
+| **Format** | Absolute directory path |
+| **Default** | `~/.comis` |
+
+Overrides the base data directory where Comis stores its databases, logs, and runtime files. When set, the daemon uses this path instead of the default `~/.comis` directory. This is useful for containerized deployments or when running multiple instances.
+
+```bash
+export COMIS_DATA_DIR="/var/lib/comis"
+```
+
+### `COMIS_GATEWAY_URL`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | CLI |
+| **Format** | WebSocket URL |
+| **Default** | Resolved from `~/.comis/config.yaml` gateway section, or `ws://localhost:4766/ws` |
+
+Overrides the WebSocket URL the CLI uses to connect to the daemon gateway. The CLI normally reads the gateway host and port from the config file on disk, but this variable takes precedence when set.
+
+```bash
+export COMIS_GATEWAY_URL="ws://192.168.1.100:4766/ws"
+```
+
+### `COMIS_GATEWAY_TOKEN`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | CLI |
+| **Format** | String (bearer token) |
+| **Default** | Resolved from first token secret in `~/.comis/config.yaml` |
+
+Overrides the bearer token the CLI sends when connecting to the daemon gateway. The CLI normally extracts the first token secret from the gateway config file, but this variable takes precedence.
+
+```bash
+export COMIS_GATEWAY_TOKEN="my-secret-token"
+```
+
+### `COMIS_GATEWAY_PASSWORD`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Config substitution |
+| **Format** | String |
+| **Default** | (none) |
+
+Gateway password for password-based authentication. Set during `comis init` when the gateway auth mode is `password`. Referenced in the config file via `${COMIS_GATEWAY_PASSWORD}` substitution. Stored in `~/.comis/.env` alongside other managed credentials.
+
+```bash
+# Typically set automatically by comis init, not manually
+export COMIS_GATEWAY_PASSWORD="my-gateway-password"
+```
+
+### `COMIS_INSECURE`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | CLI |
+| **Format** | `1` to enable, unset to disable |
+| **Default** | (unset) |
+
+When set to `1`, allows the CLI to send bearer tokens over unencrypted WebSocket connections to non-localhost hosts. Without this variable, the CLI refuses to send credentials over cleartext connections to remote hosts as a security measure.
+
+<Warning>Setting this variable bypasses transport security checks. Use only for development or when TLS termination happens at a reverse proxy. Never use in production without a TLS layer.</Warning>
+
+```bash
+export COMIS_INSECURE=1
+```
+
+### `COMIS_LOG_PATH`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | CLI (`daemon logs` command) |
+| **Format** | Absolute file path |
+| **Default** | `~/.comis/logs/daemon.log` |
+
+Overrides the log file path that the `comis daemon logs` command reads from when systemd is not available. The daemon itself always writes logs to its standard output (redirected to the log file during direct-mode startup).
+
+```bash
+export COMIS_LOG_PATH="/var/log/comis/daemon.log"
+```
+
+## Secret Variables
+
+### `SECRETS_MASTER_KEY`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon, CLI |
+| **Format** | 64-character hex string or base64-encoded 32 bytes |
+| **Default** | (none -- loaded from `~/.comis/.env`) |
+
+The AES-256-GCM master encryption key used to encrypt and decrypt secrets stored in `secrets.db`. Generate with `comis secrets init`. The daemon and CLI both resolve this key in the same order: first from the environment, then from `~/.comis/.env`.
+
+<Warning>This key protects all stored API keys and credentials. If lost, encrypted secrets cannot be recovered. Back up this key securely.</Warning>
+
+```bash
+# Generate and save to .env file (recommended)
+comis secrets init --write
+
+# Or set manually in environment
+export SECRETS_MASTER_KEY="a1b2c3d4e5f6..."
+```
+
+## Standard Variables
+
+### `NODE_ENV`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Node.js runtime |
+| **Format** | `development`, `production`, `test` |
+| **Default** | (unset) |
+
+Standard Node.js environment variable. Affects behavior of some dependencies and may influence logging verbosity. Comis does not require this variable to be set.
+
+```bash
+export NODE_ENV=production
+```
+
+## Config Variable Substitution
+
+Config YAML files support `${VAR_NAME}` substitution for referencing environment variables and stored secrets. Any variable accessible via the SecretManager (including environment variables and values stored with `comis secrets set`) can be referenced this way.
+
+```yaml
+gateway:
+  tokens:
+    - id: default
+      secret: "${COMIS_GATEWAY_TOKEN}"
+```
+
+Use `$${VAR_NAME}` (double dollar sign) to produce a literal `${VAR_NAME}` in the output without substitution. The `$include` directive enables composing config from multiple files.
+
+<Info>The `COMIS_*` prefix is reserved for operational variables. During `comis secrets import`, variables starting with `COMIS_` are skipped (treated as infrastructure, not secrets).</Info>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Config YAML" icon="file-code" href="/reference/config-yaml">
+    Full configuration file reference
+  </Card>
+  <Card title="Secret Manager" icon="lock" href="/reference/secret-manager">
+    Encrypted secret storage
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/reference/cli">
+    Command-line interface reference
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Initial setup and configuration
+  </Card>
+</CardGroup>

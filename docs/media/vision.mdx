@@ -1,0 +1,301 @@
+---
+title: "Vision"
+description: "How your agent sees and understands images and videos"
+icon: "eye"
+---
+
+When someone sends an image to your agent, Comis can analyze it using vision
+AI. Your agent sees the image content directly -- it can describe what is in
+the photo, read text from screenshots, identify objects, and answer questions
+about what it sees. For videos, Comis uses Google Gemini to describe the
+content. You can choose from three providers and control where vision is
+active to manage costs.
+
+## How Vision Works
+
+Vision in Comis has two distinct paths: automatic and on-demand.
+Understanding the difference helps you configure vision for your specific
+needs and explains why your agent sometimes sees images without explicitly
+calling a tool.
+
+### Automatic (Vision-Direct)
+
+When your vision provider supports it (all three do), images are sent
+directly to the AI model as part of the conversation. Your agent sees the
+image the same way you would see a photo in a chat -- it is part of the
+context. This is the fastest and most natural path. No separate tool call is
+needed.
+
+When a user sends an image, Comis passes it through to the AI model along
+with the message text. The model can see the image and respond to it
+naturally, just like a person would. For example, if someone sends a photo of
+a product and asks "What is wrong with this?", the agent sees both the
+question and the image together.
+
+### On-Demand (Tool-Based)
+
+Your agent can also explicitly call the `image_analyze` tool to analyze a
+specific image. This is useful when:
+
+- The agent wants to ask a specific question about an image (for example,
+  "What text is written on the sign in this photo?")
+- The agent needs to analyze an image from a URL that was not part of the
+  original message
+- The agent wants to re-analyze an image that was already processed
+  automatically, perhaps with a more targeted question
+- Automatic vision is disabled but the agent still needs to understand an
+  image
+
+For videos, the agent uses the `describe_video` tool. See the
+[Video Analysis](#video-analysis) section below for details.
+
+<Info>
+Most of the time, the automatic path handles everything. Your agent sees
+images naturally as part of the conversation. The on-demand tools are there
+for when the agent needs to do more detailed or targeted analysis.
+</Info>
+
+## Providers
+
+Comis supports three vision providers. Each can analyze images, and Google
+Gemini can also analyze videos. You can configure multiple providers -- Comis
+tries them in order and uses the first one that has a valid API key.
+
+| Provider | Default Model | Capabilities | API Key |
+|----------|--------------|-------------|---------|
+| OpenAI | gpt-4o | Image analysis | `OPENAI_API_KEY` |
+| Anthropic | claude-sonnet-4-5-20250929 | Image analysis | `ANTHROPIC_API_KEY` |
+| Google (Gemini) | gemini-2.5-flash | Image + video analysis | `GOOGLE_API_KEY` |
+
+<AccordionGroup>
+  <Accordion title="OpenAI">
+    Uses GPT-4o for image analysis. This is the first provider tried by
+    default for images. Requires an OpenAI API key set as
+    `OPENAI_API_KEY` in your environment or secrets.
+
+    Good general-purpose vision for describing images, reading text in
+    screenshots, identifying objects, and answering questions about what is in
+    a photo. GPT-4o handles most common vision tasks well and is a solid
+    default choice.
+  </Accordion>
+  <Accordion title="Anthropic">
+    Uses Claude Sonnet 4.5 for image analysis. Second in the default provider
+    order for images. Requires an Anthropic API key set as
+    `ANTHROPIC_API_KEY` in your environment or secrets.
+
+    Strong at detailed image description and visual reasoning. Particularly
+    good when the agent needs to analyze complex scenes, compare elements
+    within an image, or provide nuanced descriptions of what it sees.
+  </Accordion>
+  <Accordion title="Google (Gemini)">
+    Uses Gemini 2.5 Flash for image and video analysis. Third in the default
+    provider order for images, but the **only** provider for video analysis.
+    Requires a Google API key set as `GOOGLE_API_KEY` in your environment or
+    secrets.
+
+    If you want your agent to understand video content, you need this
+    provider configured. Gemini handles both images and videos, making it a
+    versatile choice if you want a single provider for all visual content.
+  </Accordion>
+</AccordionGroup>
+
+Comis tries providers in order (OpenAI first, then Anthropic, then Google)
+and uses the first one that has a valid API key configured. You can change
+this order or set a specific default provider using the `providers` and
+`defaultProvider` configuration options.
+
+If a provider fails (network error, API rate limit, invalid key), Comis does
+not automatically fall back to the next provider for the automatic
+vision-direct path. The error is logged and the agent continues without the
+image analysis. For on-demand tool calls, the agent sees the error and can
+decide what to do next.
+
+## Video Analysis
+
+Video analysis is available through Google Gemini only. When someone sends a
+video, your agent can use the `describe_video` tool to get a text description
+of what happens in the video. This is useful for understanding video content
+without watching the entire clip.
+
+### How It Works
+
+When someone sends a video, the agent can call the `describe_video` tool to
+understand what is in the video. Gemini analyzes the entire clip and returns a
+text description covering what is shown -- actions, people, objects, text
+overlays, and other visual elements.
+
+This is particularly useful for understanding short video clips, screen
+recordings, product demos, or any visual content that the agent cannot see
+through static image analysis alone.
+
+### Limits
+
+Video analysis has the following size and time limits to prevent excessive
+resource usage:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Max file size (raw) | 50 MB | Maximum video file size |
+| Max file size (base64) | 70 MB | Maximum base64-encoded video size |
+| API timeout | 2 minutes | Maximum time for the video API call |
+| Max description length | 500 characters | Maximum length of the generated description |
+
+<Warning>
+Video analysis requires the Google (Gemini) provider. If you only have
+OpenAI or Anthropic configured, video description will not be available.
+</Warning>
+
+## Scope Rules (Cost Control)
+
+Vision API calls cost money. Each image analyzed counts as a vision API
+request to your provider. If your agent is in many group chats where users
+share images frequently, processing every image in every chat can get
+expensive quickly. Scope rules let you control where automatic vision is
+active so you can manage costs effectively.
+
+### How Scope Rules Work
+
+Scope rules are a list of rules that Comis checks in order. The first rule
+that matches the incoming message determines whether vision is allowed or
+denied. If no rule matches, the `defaultScopeAction` applies (default:
+`allow`).
+
+### Example
+
+Here is a configuration that allows vision in Telegram direct messages but
+blocks it in Telegram groups, while allowing it everywhere on Discord:
+
+```yaml
+integrations:
+  media:
+    vision:
+      scopeRules:
+        - channelType: telegram
+          chatType: private
+          action: allow        # Allow vision in Telegram DMs
+        - channelType: telegram
+          chatType: group
+          action: deny         # Block vision in Telegram groups
+        - channelType: discord
+          action: allow        # Allow vision everywhere on Discord
+      defaultScopeAction: deny   # Deny everywhere else
+```
+
+### Available Rule Fields
+
+Each scope rule can use the following fields to match messages:
+
+| Field | Description | Example Values |
+|-------|-------------|----------------|
+| `channelType` | Platform name | `telegram`, `discord`, `slack`, `whatsapp`, `signal` |
+| `chatType` | Type of chat | `private`, `group` |
+| `keyPrefix` | Match by API key prefix (for multi-tenant setups) | Any string prefix |
+| `action` | What to do when the rule matches | `allow` or `deny` |
+
+Rules are matched in order -- the first rule where all specified fields match
+the incoming message wins. Fields you do not specify in a rule are treated as
+wildcards (they match everything).
+
+For example, a rule with only `channelType: discord` matches all Discord
+messages regardless of chat type. A rule with both `channelType: telegram`
+and `chatType: private` only matches Telegram direct messages.
+
+<Warning>
+Without scope rules, vision processes every image in every channel where your
+agent is active. If your agent is in busy group chats, set up scope rules to
+control costs.
+</Warning>
+
+## Image Processing
+
+Behind the scenes, Comis handles several image processing tasks automatically
+to ensure images work well with all vision providers:
+
+- **Size limits:** Images larger than 20 MB are rejected to prevent excessive
+  memory usage.
+- **Automatic resizing:** Large images are automatically resized to fit
+  provider limits. For example, Anthropic requires images to be no larger
+  than 1568 pixels on the longest side, so Comis scales them down
+  automatically.
+- **EXIF rotation:** Photos from phones often have EXIF orientation data that
+  can cause them to display sideways or upside down. Comis reads this data
+  and rotates the image correctly before sending it to the vision provider.
+- **Compression:** Very large images are compressed iteratively to stay under
+  5 MB, starting with high quality and reducing gradually until the file
+  size is acceptable.
+- **Format handling:** PNG images with transparency are preserved as PNG.
+  Other images are converted to JPEG for smaller file sizes.
+- **Safety checks:** Extremely large images (over 268 million pixels) are
+  rejected to protect against decompression attacks that could consume
+  excessive memory.
+
+You do not need to configure any of this -- it happens automatically whenever
+an image is processed. The only setting you can adjust is the maximum file
+size (via `imageMaxFileSizeMb`), which defaults to 20 MB.
+
+## Configuration
+
+Here is the complete configuration reference for vision. All settings live
+under `integrations.media.vision` in your `config.yaml`:
+
+```yaml
+integrations:
+  media:
+    vision:
+      enabled: true                      # Enable vision (default: true)
+      providers:                         # Provider order (default: all three)
+        - openai
+        - anthropic
+        - google
+      defaultProvider: openai            # Override auto-selection
+      imageMaxFileSizeMb: 20            # Max image file size in MB
+      videoMaxRawBytes: 50000000        # Max video size: 50 MB
+      videoMaxBase64Bytes: 70000000     # Max base64 video size: 70 MB
+      videoTimeoutMs: 120000            # Video API timeout: 2 minutes
+      videoMaxDescriptionChars: 500     # Max video description length
+      scopeRules: []                    # Vision scope rules (see above)
+      defaultScopeAction: allow         # Action when no scope rule matches
+```
+
+### Minimal Setup
+
+If you just want vision working with the simplest configuration, you only
+need an API key for one of the three providers. Set the environment variable
+and vision works automatically:
+
+```bash
+# Pick one (or more) of these:
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+export GOOGLE_API_KEY="AI..."
+```
+
+With vision enabled (the default), Comis automatically detects which provider
+keys are available and uses the first one in the priority order. No
+additional configuration is required beyond the API key.
+
+<Tip>
+You do not need all three providers configured. A single API key for any one
+of the three providers is enough to get image vision working. Add more
+providers later if you want specific capabilities like video analysis (which
+requires Google Gemini).
+</Tip>
+
+## Related
+
+Explore other media capabilities and tool references:
+
+<CardGroup cols={2}>
+  <Card title="Voice" icon="microphone" href="/media/voice">
+    Speech-to-text and text-to-speech
+  </Card>
+  <Card title="Documents" icon="file-lines" href="/media/documents">
+    PDF OCR uses vision AI
+  </Card>
+  <Card title="Media Tools" icon="toolbox" href="/agent-tools/media">
+    `image_analyze` and `describe_video` tool reference
+  </Card>
+  <Card title="Media Overview" icon="photo-film" href="/media">
+    Back to media overview
+  </Card>
+</CardGroup>

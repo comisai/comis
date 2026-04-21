@@ -1,0 +1,105 @@
+---
+title: "Message Queue"
+description: "How Comis handles multiple messages and ensures orderly processing"
+icon: "bars-staggered"
+---
+
+When messages arrive faster than your agent can respond, Comis queues them up
+and processes them in order. DMs get priority, and if the queue gets too full,
+overflow rules kick in automatically.
+
+## How the queue works
+
+Messages are processed one at a time per conversation. This means your agent
+finishes responding to one message before moving on to the next in the same
+conversation. However, multiple conversations can run at the same time (up to
+`maxConcurrentSessions`, which defaults to 10).
+
+DMs typically get higher priority than group messages, so direct questions are
+answered first even when the agent is busy with group conversations.
+
+## Debouncing
+
+Sometimes users send several short messages in quick succession instead of one
+longer message. The debounce feature waits a short time after the last message
+before processing, so your agent sees the complete thought instead of
+responding to each fragment separately.
+
+By default, debouncing is disabled (`windowMs: 0`). If your users often send
+rapid-fire messages, set a short debounce window (like 1000-2000 milliseconds)
+to combine them automatically.
+
+## Queue modes
+
+When a new message arrives while your agent is still processing a previous one,
+the queue mode determines what happens:
+
+**steer+followup** (default) -- The agent sees the new message immediately and
+adjusts its current response. If the agent finishes before the new message
+needs a separate response, it can do a follow-up action. This is the most
+responsive mode.
+
+**steer** -- The agent sees new messages that arrive mid-response and can
+adjust, but does not perform follow-up actions afterward.
+
+**followup** -- New messages wait in the queue. After the agent finishes its
+current response, it processes the next message as a separate follow-up.
+
+**collect** -- Messages that arrive close together are batched into a single
+request. Useful when users tend to send multiple short messages in quick
+succession instead of one longer message.
+
+## When the queue is full
+
+If too many messages pile up for a single conversation, the overflow policy
+determines what happens:
+
+**drop-new** (default) -- The newest message is dropped and the sender gets a
+notification that the agent is busy. Existing queued messages are preserved.
+
+**drop-old** -- The oldest queued message is removed to make room for the new
+one. Good when the latest message is more important than earlier ones.
+
+**summarize** -- Older queued messages are summarized into one combined message,
+making room for the new one without losing the gist of what was said.
+
+## Configuration
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `queue.enabled` | boolean | `true` | Enable message queuing |
+| `queue.maxConcurrentSessions` | number | `10` | Maximum conversations processed at the same time |
+| `queue.defaultMode` | string | `"steer+followup"` | How new messages are handled during active processing |
+| `queue.defaultOverflow.maxDepth` | number | `20` | Maximum queued messages per conversation before overflow |
+| `queue.defaultOverflow.policy` | string | `"drop-new"` | What to do when the queue is full |
+| `queue.debounce.windowMs` | number | `0` | Debounce window in milliseconds (0 = disabled) |
+
+```yaml title="~/.comis/config.yaml"
+queue:
+  enabled: true
+  maxConcurrentSessions: 10
+  defaultMode: "steer+followup"
+  defaultOverflow:
+    maxDepth: 20
+    policy: "drop-new"
+  debounce:
+    windowMs: 0
+```
+
+<Tip>
+  Most users do not need to change queue settings. The defaults handle common
+  chat patterns well. Adjust only if your agent is overwhelmed by high message
+  volume or if you want different behavior for batched messages.
+</Tip>
+
+For the full list of queue configuration options including per-channel overrides,
+see [Configuration Reference](/reference/config-yaml).
+
+<CardGroup cols={2}>
+  <Card title="Sessions" icon="comments" href="/agents/sessions">
+    How conversations are created and managed.
+  </Card>
+  <Card title="Routing" icon="route" href="/agents/routing">
+    How messages are directed to the right agent.
+  </Card>
+</CardGroup>

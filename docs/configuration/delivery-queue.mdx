@@ -1,0 +1,120 @@
+---
+title: "Delivery Queue"
+description: "Crash-safe outbound message persistence and recovery"
+icon: "database"
+---
+
+The delivery queue adds crash-safe persistence to outbound messages. Every
+message is written to a SQLite-backed queue before the platform send attempt.
+If the daemon crashes or restarts mid-delivery, pending messages are
+automatically re-delivered on the next startup.
+
+When disabled, Comis uses a no-op adapter and messages are sent directly
+without persistence (fire-and-forget, the pre-Phase 499 behavior).
+
+## Configuration
+
+All delivery queue settings live under the `deliveryQueue` key in your YAML
+config file. Every field has a sensible default, so an empty section enables
+the queue with production-ready settings.
+
+```yaml
+deliveryQueue:
+  enabled: true
+  maxQueueDepth: 10000
+  defaultMaxAttempts: 5
+  defaultExpireMs: 3600000
+  drainOnStartup: true
+  drainBudgetMs: 60000
+  pruneIntervalMs: 300000
+```
+
+## Fields
+
+<ResponseField name="enabled" type="boolean" default="true">
+  Enable or disable the delivery queue. When disabled, a no-op adapter is used
+  and messages are sent without persistence. Useful for development or when
+  persistence overhead is not wanted.
+</ResponseField>
+
+<ResponseField name="maxQueueDepth" type="number" default="10000">
+  Maximum number of entries allowed in the queue. Enqueue is rejected when this
+  limit is reached, preventing unbounded growth. In practice this limit should
+  rarely be hit -- it exists as a safety valve.
+</ResponseField>
+
+<ResponseField name="defaultMaxAttempts" type="number" default="5">
+  Maximum number of delivery attempts before an entry is marked as permanently
+  failed. Each attempt uses the backoff schedule (5s, 25s, 2m, 10m, 10m cap)
+  to space retries.
+</ResponseField>
+
+<ResponseField name="defaultExpireMs" type="number" default="3600000">
+  Time-to-live for queue entries in milliseconds (default: 1 hour). Entries
+  older than this are pruned automatically. This limits the duplicate delivery
+  window after a crash -- stale messages are dropped rather than re-sent.
+</ResponseField>
+
+<ResponseField name="drainOnStartup" type="boolean" default="true">
+  Whether to re-deliver pending entries when the daemon starts. This is the
+  core crash-recovery mechanism: entries that were enqueued but not yet acked
+  are retried on the next startup.
+</ResponseField>
+
+<ResponseField name="drainBudgetMs" type="number" default="60000">
+  Wall-clock budget for the startup drain cycle in milliseconds (default: 60
+  seconds). If draining takes longer than this, remaining entries are left
+  for future drain cycles. Prevents blocking daemon startup.
+</ResponseField>
+
+<ResponseField name="pruneIntervalMs" type="number" default="300000">
+  Interval for periodic cleanup of expired entries in milliseconds (default: 5
+  minutes). The prune timer runs on an unref'd interval so it does not prevent
+  process exit.
+</ResponseField>
+
+## Delivery semantics
+
+The delivery queue provides **at-least-once** delivery. Every message is
+persisted before the send attempt and only removed after platform confirmation.
+This means:
+
+- If the daemon crashes between enqueue and ack, the message is re-delivered on
+  restart (no message loss).
+- If the daemon crashes after the platform accepted the message but before
+  acking the queue entry, the message may be delivered twice. The `defaultExpireMs`
+  TTL limits the window for duplicates.
+- Platform-level deduplication (where available) further reduces duplicate
+  impact.
+
+## Monitoring
+
+Queue lifecycle events are emitted on the typed event bus and logged with
+structured fields. Key log lines to monitor:
+
+| Event | Level | What it means |
+|-------|-------|---------------|
+| `Message enqueued for delivery` | INFO | Message entered the queue |
+| `Message delivered and acked` | INFO | Platform confirmed delivery |
+| `Message delivery failed, scheduled for retry` | WARN | Transient failure, will retry |
+| `Message delivery permanently failed` | WARN | Non-retriable error (chat not found, bot blocked) |
+| `Delivery queue startup drain complete` | INFO | Startup drain finished |
+
+Key fields to watch in your log aggregator:
+
+- **`durationMs`** on acked events: delivery latency per message.
+- **`entriesAttempted` / `entriesDelivered`** on drain events: crash recovery volume.
+- **`errorKind`**: `transient` (retry scheduled) vs `permanent` (message dropped).
+
+## Disabling the queue
+
+To revert to fire-and-forget delivery (no persistence), set `enabled: false`:
+
+```yaml
+deliveryQueue:
+  enabled: false
+```
+
+When disabled, a no-op adapter is injected and all delivery proceeds directly
+through the platform adapter without any SQLite writes. This is backward-compatible
+with the pre-Phase 499 behavior.

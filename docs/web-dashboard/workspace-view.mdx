@@ -1,0 +1,184 @@
+---
+title: "Workspace View"
+description: "Browse and edit agent workspace files, manage git history from the web dashboard"
+icon: "folder-open"
+---
+
+The Workspace view lets you browse, edit, and manage an agent's workspace files and git history -- all from the web console.
+
+## What You See
+
+The Workspace view has a status bar at the top and two tabs -- **Files** and **Git** -- that organize the workspace into file management and version control.
+
+**Status bar** at the top of the page shows the workspace directory path (for example, `~/.comis/agents/{agentId}/workspace`), a git repo status tag indicating whether a git repository has been initialized, and a bootstrap status tag showing whether the workspace has been bootstrapped with template files.
+
+**Tab bar** below the status bar lets you switch between the **Files** tab and the **Git** tab.
+
+### Files Tab
+
+The Files tab is split into two panels.
+
+**Left panel** -- The file tree sidebar lists all workspace files in two sections:
+
+- **Template Files** -- The 9 core workspace files that shape your agent's personality and behavior: `SOUL.md`, `IDENTITY.md`, `USER.md`, `AGENTS.md`, `ROLE.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, and `BOOT.md`. Each file shows a presence dot indicating whether it exists in the workspace.
+- **Directories** -- The 6 standard subdirectories for organizing agent content: `projects`, `scripts`, `documents`, `media`, `data`, and `output`.
+
+**Right panel** -- When you select a file, an editor appears with:
+
+- A filename header showing the current file name
+- An unsaved-changes indicator (a dot next to the filename) when you have modified content that has not been saved
+- A textarea where you edit the file content
+- An action bar at the bottom with three buttons: **Save** (writes your changes), **Reset to Default** (restores a template file to its original content), and **Delete** (removes the file)
+
+When you select a directory instead of a file, a table appears showing the directory contents with four columns:
+
+| Column | What It Shows |
+|--------|--------------|
+| **Name** | The file or subdirectory name |
+| **Type** | Whether the entry is a file or directory |
+| **Size** | The file size in bytes |
+| **Modified** | When the entry was last changed |
+
+### Git Tab
+
+The Git tab provides version control for your workspace files. It has four sections:
+
+**Status section** -- Shows the current branch name, the number of changed files, and a list of each changed file. Every file has a status badge indicating its state:
+
+- **M** -- Modified (changed since last commit)
+- **A** -- Added (new file staged for commit)
+- **D** -- Deleted (removed since last commit)
+- **??** -- Untracked (new file not yet tracked by git)
+
+Each modified or deleted file has a **Restore** button that discards your changes and reverts the file to its last committed version.
+
+**Diff viewer** -- Click a changed file to see its diff. The viewer uses color-coded display: additions appear in green, deletions appear in red, and hunk headers appear in cyan.
+
+**Commit form** -- A message input field and a **Commit** button. Enter a description of your changes and click **Commit** to create a new git commit.
+
+**Recent Commits** -- A list of previous commits, each showing a 7-character SHA hash, the commit message, and the relative time since the commit was made.
+
+## Common Tasks
+
+### Editing a Workspace File
+
+<Steps>
+  <Step title="Navigate to the workspace">
+    Go to **Agents** in the sidebar, click the agent you want to edit, then click the **Workspace** button in the agent detail header.
+  </Step>
+  <Step title="Select a file">
+    In the file tree on the left, click the file you want to edit. The file content loads in the editor on the right.
+  </Step>
+  <Step title="Make your changes">
+    Edit the content in the textarea. An unsaved-changes dot appears next to the filename to remind you that changes have not been saved.
+  </Step>
+  <Step title="Save">
+    Click **Save** in the action bar. The unsaved-changes indicator disappears once the file is written.
+  </Step>
+</Steps>
+
+### Resetting a File to Default
+
+<Steps>
+  <Step title="Select a template file">
+    Click one of the 9 template files in the file tree (`SOUL.md`, `IDENTITY.md`, `USER.md`, `AGENTS.md`, `ROLE.md`, `TOOLS.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, or `BOOT.md`).
+  </Step>
+  <Step title="Click Reset to Default">
+    Click **Reset to Default** in the action bar. A confirmation dialog appears.
+  </Step>
+  <Step title="Confirm">
+    Confirm the reset. The file content is replaced with the original template content.
+  </Step>
+</Steps>
+
+<Info>
+**Reset to Default** only works for the 9 template files. Custom files you create do not have a default to reset to.
+</Info>
+
+### Deleting a File
+
+<Steps>
+  <Step title="Select the file">
+    Click the file you want to delete in the file tree.
+  </Step>
+  <Step title="Click Delete">
+    Click **Delete** in the action bar. A confirmation dialog appears.
+  </Step>
+  <Step title="Confirm deletion">
+    Confirm in the dialog to permanently remove the file from the workspace.
+  </Step>
+</Steps>
+
+<Info>
+Template files cannot be deleted. If you want to remove a template file's content, use **Reset to Default** instead.
+</Info>
+
+### Committing Changes
+
+<Steps>
+  <Step title="Switch to the Git tab">
+    Click the **Git** tab in the tab bar.
+  </Step>
+  <Step title="Review changed files">
+    Check the status section for a list of all changed files and their status badges. Click any file to view its diff.
+  </Step>
+  <Step title="Enter a commit message">
+    Type a description of your changes in the commit message input field.
+  </Step>
+  <Step title="Commit">
+    Click **Commit** to create a new git commit with all your changes.
+  </Step>
+</Steps>
+
+### Viewing a Diff
+
+<Steps>
+  <Step title="Open the Git tab">
+    Click the **Git** tab in the tab bar.
+  </Step>
+  <Step title="Click a changed file">
+    In the status section, click any file with a status badge to load its diff in the diff viewer. Additions are shown in green, deletions in red, and hunk headers in cyan.
+  </Step>
+</Steps>
+
+### Restoring a File
+
+<Steps>
+  <Step title="Open the Git tab">
+    Click the **Git** tab in the tab bar.
+  </Step>
+  <Step title="Click Restore">
+    Next to a modified or deleted file in the status list, click the **Restore** button to discard your changes and revert the file to its last committed version.
+  </Step>
+</Steps>
+
+<Info>
+Untracked files (status **??**) cannot be restored because no committed version exists to revert to.
+</Info>
+
+## Security and Limits
+
+<Info>
+The workspace enforces several safety measures:
+
+- **Path traversal protection** -- Files cannot escape the workspace directory. Any attempt to access paths outside the workspace is blocked.
+- **1 MB read limit** -- Individual file reads are capped at 1 MB.
+- **512 KB write limit** -- Individual file writes are capped at 512 KB.
+- **512 KB diff cap** -- Git diffs are truncated at 512 KB.
+- **500-character commit message limit** -- Commit messages longer than 500 characters are rejected.
+- **Stale git lock cleanup** -- Stale `.git/index.lock` files are automatically cleaned up to prevent git operations from hanging.
+</Info>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Identity" icon="id-card" href="/agents/identity">
+    How workspace files shape your agent's personality.
+  </Card>
+  <Card title="Agents View" icon="robot" href="/web-dashboard/agents-view">
+    Navigate to the Workspace view from an agent's detail page.
+  </Card>
+  <Card title="JSON-RPC Methods" icon="code" href="/reference/json-rpc">
+    Workspace RPC methods for programmatic access.
+  </Card>
+</CardGroup>

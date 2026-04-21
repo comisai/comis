@@ -1,0 +1,89 @@
+# Comis Test Configuration -- Config Safety E2E Tests
+#
+# Dedicated config for config-safety-e2e.test.ts validating:
+#   E2E-02: config.patch triggers SIGUSR1 restart
+#   E2E-03: Trust escalation enforcement (admin vs user tokens)
+#   E2E-04: Rate limiting (5 patches per minute)
+#   E2E-05: Audit event emission on config.patch
+#
+# Two tokens for trust escalation testing:
+#   1. admin-token: has "admin" scope -- can modify config
+#   2. user-token:  NO "admin" scope  -- should be rejected
+#
+# Uses port 8541 to avoid conflicts with other test suites.
+
+tenantId: "config-e2e-safety-test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "TestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8541
+  tokens:
+    - id: "admin-token"
+      secret: "admin-secret-key-for-config-e2e-safety"
+      scopes: ["rpc", "ws", "admin"]
+    - id: "user-token"
+      secret: "user-secret-key-for-config-e2e-safety"
+      scopes: ["rpc", "ws"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 3
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-config-e2e-safety.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

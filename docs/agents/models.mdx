@@ -1,0 +1,212 @@
+---
+title: "Models"
+description: "Configuring AI providers, model selection, and automatic failover"
+icon: "microchip-ai"
+---
+
+Comis works with multiple AI providers -- Anthropic (Claude), OpenAI (GPT),
+Google (Gemini), local models via Ollama, and more. You can set a default model
+for all agents, override it per agent, and configure automatic failover so your
+agents keep working even if one provider goes down.
+
+## Choosing a model
+
+You set a default AI model globally, and every agent uses that model unless you
+override it. The default is Claude Sonnet from Anthropic, but you can switch to
+any supported provider at any time.
+
+You can also create **model aliases** -- friendly shorthand names that map to
+specific provider and model combinations. Instead of typing a long model ID
+every time, you can just use a name like `claude` or `gpt4`.
+
+## Three levels of configuration
+
+Comis gives you three levels of control over which model your agents use.
+Each level overrides the one above it:
+
+### Level 1: Global defaults
+
+Set the default model and provider for all agents. This is the simplest way to
+get started -- configure it once and every agent uses it.
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `models.defaultModel` | string | `""` (falls back to `claude-sonnet-4-5-20250929`) | Default model for all agents |
+| `models.defaultProvider` | string | `""` (falls back to `anthropic`) | Default provider for all agents |
+| `models.aliases` | array | `[]` | Friendly names for model/provider pairs |
+| `models.scanOnStartup` | boolean | `false` | Scan providers for available models on startup |
+
+```yaml title="~/.comis/config.yaml"
+models:
+  defaultModel: "claude-sonnet-4-5-20250929"
+  defaultProvider: "anthropic"
+  aliases:
+    - alias: "claude"
+      provider: "anthropic"
+      modelId: "claude-sonnet-4-5-20250929"
+    - alias: "gpt4"
+      provider: "openai"
+      modelId: "gpt-4o"
+    - alias: "gemini"
+      provider: "google"
+      modelId: "gemini-2.0-flash"
+```
+
+With aliases configured, you can reference models by their short name anywhere
+in the configuration. For example, setting an agent's model to `claude` would
+use `anthropic/claude-sonnet-4-5-20250929`.
+
+### Level 2: Per-agent override
+
+Override the global default for specific agents. This is useful when different
+agents have different needs -- your main conversational agent might use Claude,
+while a code-focused agent uses GPT-4o.
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `agents.*.model` | string | `"default"` | Model for this agent (or `"default"` to use global) |
+| `agents.*.provider` | string | `"default"` | Provider for this agent (or `"default"` to use global) |
+
+```yaml title="~/.comis/config.yaml"
+models:
+  defaultModel: "claude-sonnet-4-5-20250929"
+  defaultProvider: "anthropic"
+
+agents:
+  default:
+    model: "default"        # Uses the global default (Claude Sonnet)
+    provider: "default"
+
+  code-helper:
+    model: "gpt-4o"         # This agent uses GPT-4o instead
+    provider: "openai"
+
+  quick-lookup:
+    model: "gemini-2.0-flash"  # This agent uses Gemini Flash for speed
+    provider: "google"
+```
+
+### Level 3: Per-task routes
+
+For advanced use cases, you can route specific tasks to different models. For
+example, use a cheaper model for summarization and your primary model for
+everything else.
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    model: "claude-sonnet-4-5-20250929"
+    provider: "anthropic"
+    modelRoutes:
+      summarization: "gemini-2.0-flash"
+      classification: "gpt-4o-mini"
+```
+
+Task routes are optional and most users do not need them. They are available for
+specific optimization scenarios where different tasks benefit from different
+models.
+
+## Automatic failover
+
+What happens when your AI provider goes down or returns errors? Comis can
+automatically try backup models so your agents keep working.
+
+### Fallback models
+
+You can specify an ordered list of backup models. If the primary model fails,
+Comis tries the next one in the list, and so on until one succeeds or all
+options are exhausted.
+
+### Auth profiles
+
+You can configure multiple API keys per provider. Comis rotates between them
+automatically, which is useful for:
+
+- **Rate limit management** -- If one key hits its rate limit, Comis switches
+  to another.
+- **Redundancy** -- If one key is revoked or expired, others keep working.
+
+Comis supports three key selection strategies that it manages internally:
+explicit ordering, round-robin rotation, and last-known-good preference.
+
+### Cooldown behavior
+
+After a model fails, Comis waits before trying it again. The wait time
+increases with each failure using exponential backoff:
+
+- First failure: 1 minute cooldown
+- Second failure: 5 minutes
+- Third failure: 25 minutes
+- Maximum: 1 hour cap
+
+This prevents your agent from hammering a broken provider and racking up
+error counts.
+
+### Failover configuration
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `modelFailover.fallbackModels` | array | `[]` | Ordered list of backup models to try |
+| `modelFailover.authProfiles` | array | `[]` | API key profiles for rotation |
+| `modelFailover.allowedModels` | array | `[]` | Model allowlist (empty = allow all) |
+| `modelFailover.maxAttempts` | number | `6` | Maximum total attempts across all models and keys |
+| `modelFailover.cooldownInitialMs` | number | `60000` | Initial cooldown after failure (1 minute) |
+| `modelFailover.cooldownMultiplier` | number | `5` | Cooldown multiplier for exponential backoff |
+| `modelFailover.cooldownCapMs` | number | `3600000` | Maximum cooldown duration (1 hour) |
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    model: "claude-sonnet-4-5-20250929"
+    provider: "anthropic"
+
+    modelFailover:
+      fallbackModels:
+        - provider: "openai"
+          modelId: "gpt-4o"
+        - provider: "google"
+          modelId: "gemini-2.0-flash"
+
+      authProfiles:
+        - keyName: "ANTHROPIC_API_KEY"
+          provider: "anthropic"
+        - keyName: "ANTHROPIC_API_KEY_2"
+          provider: "anthropic"
+        - keyName: "OPENAI_API_KEY"
+          provider: "openai"
+
+      maxAttempts: 6
+      cooldownInitialMs: 60000
+      cooldownMultiplier: 5
+      cooldownCapMs: 3600000
+```
+
+In this example, if the primary Claude model fails, Comis tries GPT-4o next,
+then Gemini Flash. It also has two Anthropic API keys and rotates between them
+if one hits a rate limit.
+
+## Key rotation
+
+You can configure multiple API keys per provider to spread usage across
+accounts or handle key expiration gracefully. When a key hits a rate limit or
+returns an authentication error, Comis automatically switches to the next
+available key.
+
+Keys are managed through the [Secret Manager](/reference/secret-manager). Each
+`authProfile` entry maps a secret name to a provider, and Comis handles the
+rotation logic automatically.
+
+<Tip>
+  Start with a single model and no failover. Add fallback models and key
+  rotation only when you need higher availability or are hitting rate limits
+  regularly.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Safety" icon="shield-check" href="/agents/safety">
+    Budget protection, circuit breakers, and cost controls.
+  </Card>
+  <Card title="Routing" icon="route" href="/agents/routing">
+    How messages are directed to specific agents.
+  </Card>
+</CardGroup>

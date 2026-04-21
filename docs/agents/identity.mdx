@@ -1,0 +1,331 @@
+---
+title: "Identity"
+description: "How workspace files shape your agent's personality and behavior"
+icon: "id-card"
+---
+
+Your agent's personality comes from a set of Markdown files called the
+*workspace*. These files tell your agent who it is, what it knows about you,
+and how it should behave.
+
+## The workspace
+
+A workspace is simply a folder of `.md` files that Comis reads when your agent
+starts a new conversation. You write these files in plain Markdown -- no
+special syntax required. Each file serves a different purpose, and together
+they form your agent's complete identity.
+
+You can edit workspace files at any time. Your agent will pick up the changes
+the next time it starts a new session. Your agent can also update these files
+on its own -- for example, it might add notes to USER.md as it learns more
+about you. You can also manage workspace files through the [Workspace Manager](/web-dashboard/workspace-view) in the web console -- browse, edit, reset, and delete files without direct filesystem access.
+
+## Workspace files
+
+There are 9 workspace files. You do not need to use all of them -- start with
+SOUL.md and IDENTITY.md, then add others as needed.
+
+### SOUL.md -- Who your agent is
+
+This is your agent's character sheet. It defines personality, values,
+boundaries, and general vibe. Everything about *how* your agent communicates
+lives here.
+
+**What to put in it:** Personality traits, communication style, things your
+agent should care about, boundaries it should respect, and any rules about
+how it interacts with the world.
+
+**Example:**
+
+```markdown title="SOUL.md"
+# Who You Are
+
+## Core Truths
+
+Be genuinely helpful, not performatively helpful. Skip the "Great question!"
+and just help. Actions speak louder than filler words.
+
+Have opinions. You're allowed to disagree, prefer things, find stuff amusing
+or boring.
+
+## Boundaries
+
+- Private things stay private. Period.
+- When in doubt, ask before acting externally.
+
+## Vibe
+
+Concise when needed, thorough when it matters. Not a corporate drone.
+Not a sycophant. Just good.
+```
+
+<Info>
+  SOUL.md is **read-only** for agents. Your agent can read its personality but
+  cannot overwrite the file. You can still edit it manually or through the
+  [Workspace Manager](/web-dashboard/workspace-view).
+</Info>
+
+### IDENTITY.md -- The basics
+
+The basics: what your agent calls itself. Name, creature type, vibe word,
+signature emoji, and avatar URL. This is typically filled in during the first
+conversation when your agent is getting to know you.
+
+**What to put in it:** Your agent's chosen name, what kind of entity it
+considers itself, its communication style in one word, and a signature emoji.
+
+**Example:**
+
+```markdown title="IDENTITY.md"
+- **Name:** Atlas
+- **Creature:** AI familiar
+- **Vibe:** Calm
+- **Emoji:** 🌍
+- **Avatar:** avatars/atlas.png
+```
+
+### USER.md -- About you
+
+Helps your agent personalize responses. This file stores information about
+you -- your name, preferences, timezone, and anything else that helps your
+agent be more helpful.
+
+**What to put in it:** Your name, how you like to be addressed, pronouns,
+timezone, preferred language, and any personal context.
+
+**Example:**
+
+```markdown title="USER.md"
+- **Name:** Alex
+- **What to call them:** Alex
+- **Pronouns:** they/them
+- **Timezone:** America/New_York
+- **Preferred language:** English
+- **Notes:** Works on open-source projects, prefers concise answers
+```
+
+### AGENTS.md -- The operating manual
+
+The instruction manual for how your agent should work. This is the largest
+workspace file -- it covers workspace conventions, memory usage, safety rules,
+tool categories, group chat behavior, heartbeat instructions, and more.
+
+**What to put in it:** Rules for how the agent should operate, which tools to
+prioritize, how to behave in group chats, memory management guidelines, and
+any conventions specific to your setup.
+
+**Example (abbreviated):**
+
+```markdown title="AGENTS.md"
+# Your Workspace
+
+## Every Session
+
+1. Read SOUL.md -- this is who you are
+2. Read USER.md -- this is who you're helping
+3. Read IDENTITY.md -- your name, creature, vibe, emoji
+
+## Safety
+
+- Don't exfiltrate private data. Ever.
+- Don't run destructive commands without asking.
+- When in doubt, ask.
+
+## Group Chats
+
+Know when to speak and when to stay silent. Quality > quantity.
+```
+
+<Info>
+  AGENTS.md is **read-only** for agents -- they can read it but cannot modify it.
+  This protects platform-wide instructions from being accidentally overwritten.
+  To customize agent behavior, use [ROLE.md](#rolemd----your-agents-role) instead.
+</Info>
+
+### ROLE.md -- Your agent's role
+
+The primary customization file for defining what your agent does and how it
+operates. When creating purpose-built agents (like sub-agents for specific
+tasks), this is the file to write. It separates role-specific behavior from
+platform-wide instructions in AGENTS.md.
+
+**What to put in it:** Your agent's purpose, behavioral guidelines, domain
+conventions, output format expectations, and any role-specific rules.
+
+**Example:**
+
+```markdown title="ROLE.md"
+# Technical Analyst
+
+## Purpose
+
+Analyze market data and produce concise risk assessments.
+
+## Behavioral Guidelines
+
+- Lead with data, not opinions
+- Always cite the time range of analysis
+- Flag uncertainty explicitly
+
+## Output Format
+
+- Use bullet points for findings
+- End with a confidence score (low/medium/high)
+```
+
+### TOOLS.md -- Environment-specific details
+
+Environment-specific details your agent needs. While skills define *how* tools
+work, this file records *your* specifics -- camera names, SSH hosts, voice
+preferences, device nicknames, and anything unique to your setup.
+
+**What to put in it:** Local device names, server addresses, preferred voice
+settings, and any environment-specific information your agent needs to do its
+job.
+
+**Example:**
+
+```markdown title="TOOLS.md"
+### Cameras
+
+- living-room -- Main area, 180 degree wide angle
+- front-door -- Entrance, motion-triggered
+
+### SSH
+
+- home-server -- 192.168.1.100, user: admin
+
+### TTS
+
+- Preferred voice: "Nova" (warm, slightly British)
+- Default speaker: Kitchen HomePod
+```
+
+### HEARTBEAT.md -- Proactive checklist
+
+What your agent checks on its own schedule. When Comis sends a periodic
+heartbeat poll to your agent, it reads this file to decide what to do. Leave
+it empty to skip heartbeat processing entirely.
+
+**What to put in it:** A short checklist of things to check periodically --
+email, calendar, weather, project status, or anything your agent should
+monitor.
+
+**Example:**
+
+```markdown title="HEARTBEAT.md"
+## Periodic Checks
+
+- [ ] Check email for urgent messages
+- [ ] Review calendar for events in the next 24 hours
+- [ ] Check weather if outdoor plans are likely
+```
+
+### BOOTSTRAP.md -- First-run conversation
+
+A one-time setup conversation. This file guides your agent through its first
+interaction with you -- picking a name, figuring out its personality, learning
+about you. Once onboarding is complete, the agent deletes this file. It is not
+used again.
+
+**What to put in it:** Conversation prompts for the agent's first session --
+questions to ask you, things to figure out together, and files to update
+afterward.
+
+**Example (abbreviated):**
+
+```markdown title="BOOTSTRAP.md"
+# Hello, World
+
+You just woke up. Time to figure out who you are.
+
+Start with something like: "Hey. I just came online. Who am I? Who are you?"
+
+Then figure out together:
+1. Your name
+2. Your nature -- what kind of creature are you?
+3. Your vibe -- formal? casual? snarky? warm?
+4. Your emoji -- everyone needs a signature
+
+When you're done, delete this file.
+```
+
+### BOOT.md -- Session startup instructions
+
+What your agent does every time it wakes up. These instructions run once at the
+start of each new session -- not on every message, just the first one. Leave it
+empty or comment-only to skip (zero API cost).
+
+**What to put in it:** Actions for the agent to take at the start of each
+session -- checking for pending tasks, sending a status message, or resuming
+interrupted work.
+
+**Example:**
+
+```markdown title="BOOT.md"
+# Session Startup
+
+- Check HEARTBEAT.md for pending tasks
+- Review any unfinished work from recent sessions
+```
+
+## How identity loads
+
+When a session starts, Comis reads all workspace files and includes them in
+your agent's context. The agent sees the full content of each file as part of
+its instructions, which is how it knows who it is and how to behave.
+
+The bootstrap configuration controls how much workspace content is included:
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `bootstrap.maxChars` | number | `20000` | Maximum characters of workspace content to include per file |
+| `bootstrap.promptMode` | string | `"full"` | How much context to include: `full` (all sections), `minimal` (reduced for sub-agents), or `none` (identity only) |
+| `bootstrap.groupChatFiltering` | boolean | `true` | When enabled, USER.md is excluded in group chats to protect your personal information |
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    bootstrap:
+      maxChars: 20000
+      promptMode: full
+      groupChatFiltering: true
+```
+
+<Tip>
+  You do not need to configure bootstrap settings for most setups. The defaults
+  work well -- your agent gets the full workspace context in direct messages
+  and automatically hides your personal info in group chats.
+</Tip>
+
+### Workspace profiles
+
+Agents can be configured with a workspace profile that controls how much
+platform instruction content they receive:
+
+| Profile | Description | Token cost |
+|---------|-------------|------------|
+| `full` (default) | All platform instructions from AGENTS.md (~287 lines) | ~9K tokens |
+| `specialist` | Minimal safety and workspace reference only | ~800 tokens |
+
+Use `specialist` for purpose-built sub-agents that perform focused tasks.
+Use `full` for primary agents and any agent that interacts directly with users.
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  my-analyst:
+    workspace:
+      profile: specialist
+```
+
+<CardGroup cols={2}>
+  <Card title="Agent Lifecycle" icon="arrows-spin" href="/agents/lifecycle">
+    See how workspace files fit into the message processing pipeline.
+  </Card>
+  <Card title="Routing" icon="route" href="/agents/routing">
+    How Comis decides which agent handles each message.
+  </Card>
+  <Card title="Workspace Manager" icon="folder-open" href="/web-dashboard/workspace-view">
+    Edit workspace files from the web console.
+  </Card>
+</CardGroup>

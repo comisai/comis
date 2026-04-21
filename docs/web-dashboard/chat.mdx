@@ -1,0 +1,107 @@
+---
+title: "Chat Console"
+description: "Have real-time conversations with your AI agents through the web browser"
+icon: "message"
+---
+
+The Chat Console lets you talk to your agents directly from the browser. You can start new conversations, review past sessions, and watch your agents think and respond in real time.
+
+## What You See
+
+The Chat Console is split into two main areas side by side.
+
+### Session Sidebar
+
+On the left, the session sidebar lists all of your conversations. Each session shows the session key, the agent and channel it belongs to, and the last time it was active.
+
+At the top of the sidebar you will find:
+
+- A **search bar** to filter sessions by name or keyword
+- **Filter dropdowns** for agent and channel type, so you can narrow down to specific conversations
+- A **New Session** button to start a fresh conversation
+
+Click any session in the list to load its conversation in the message area.
+
+### Message Area
+
+On the right, the message area shows the full conversation history for the selected session. Messages are displayed as bubbles with different styles depending on who sent them:
+
+- **Your messages** appear on the right side
+- **Agent responses** appear on the left side with support for formatted text, lists, code blocks, and other rich content
+- **System messages** appear centered with a distinct style
+- **Error messages** are highlighted in red so they stand out
+
+At the top of the message area, a header bar shows the session key, the agent handling the conversation, and the channel type.
+
+### Tool Call Cards
+
+When your agent uses tools behind the scenes -- like searching the web, reading a file, or running a command -- the Chat Console shows expandable cards in the conversation. Each card displays:
+
+- The tool name
+- The input parameters the agent sent to the tool
+- The output the tool returned
+- Whether the tool call succeeded or encountered an error
+
+Click a tool call card to expand it and see the full details. These cards help you understand exactly what your agent did to arrive at its answer.
+
+### Message Input
+
+At the bottom of the screen, a text input lets you type messages to your agent. The input area automatically grows as you type longer messages.
+
+## Starting a Conversation
+
+<Steps>
+  <Step title="Click New Session">
+    Click the **New Session** button at the top of the session sidebar.
+  </Step>
+  <Step title="Select an agent">
+    Choose which agent you want to talk to from the dropdown menu.
+  </Step>
+  <Step title="Choose a channel type">
+    Select a channel type for the conversation. This determines which channel context the agent uses.
+  </Step>
+  <Step title="Enter a session key">
+    Type a session key to identify this conversation, or leave the default value. The session key helps you find this conversation later.
+  </Step>
+  <Step title="Send your first message">
+    Type your message in the input area at the bottom and press **Enter** to send it.
+  </Step>
+</Steps>
+
+## During a Conversation
+
+Once you send a message, the agent starts working on a response. Here is what to expect:
+
+- **Live streaming** -- The agent's response appears word by word as it is generated, so you do not have to wait for the entire reply before you start reading.
+- **Formatted responses** -- Agent messages render with full formatting support including bold text, bullet lists, code blocks, and links.
+- **Tool activity** -- If the agent calls tools during its response, you will see tool call cards appear in the conversation stream. These show what the agent is doing behind the scenes.
+- **Errors** -- If something goes wrong during the response, an error message appears in red with details about what happened.
+
+<Tip>
+**Keyboard shortcuts:**
+- Press **Enter** to send your message
+- Press **Shift + Enter** to insert a new line without sending
+- Use the scroll-to-bottom button that appears when you scroll up in a long conversation
+
+You can also type **slash commands** in the message input for quick actions like `/new` (start a new session), `/reset` (reset the current session), `/export` (download the session), `/switch` (change agent), and `/help` (see all commands).
+</Tip>
+
+## Attachments and Voice
+
+The Chat Console supports file attachments and voice recordings alongside text messages:
+
+- **File attachments** -- Click the attachment button to attach images, audio files, or documents to your message. You can attach up to 5 files at a time, each up to 10 MB.
+- **Voice recording** -- Use the microphone button to record a voice message up to 2 minutes long. The recording is sent to your agent for transcription and processing.
+
+Attachment previews appear above the message input before you send, so you can review and remove files before they go out.
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Sessions View" icon="clock-rotate-left" href="/web-dashboard/sessions-view">
+    Browse all sessions with filtering, bulk actions, and detailed statistics.
+  </Card>
+  <Card title="Agents View" icon="robot" href="/web-dashboard/agents-view">
+    View and manage the agents you are chatting with.
+  </Card>
+</CardGroup>

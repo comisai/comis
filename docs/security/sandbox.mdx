@@ -1,0 +1,151 @@
+---
+title: "Skill Sandboxing"
+description: "How Comis isolates skills to prevent malicious or compromised code from causing harm"
+icon: "box"
+---
+
+When you add custom skills to your agents -- prompt templates, MCP integrations, or third-party tools -- Comis runs them through multiple layers of protection. Before a skill loads, its content is scanned for threats. Before it executes, dangerous patterns are sanitized. During execution, tool access is restricted to only what the skill needs. This multi-layer approach means even a compromised skill cannot harm your system.
+
+## What the Sandbox Protects Against
+
+The sandboxing system is designed to catch a range of threats:
+
+- **Malicious skills** -- A skill that tries to execute system commands, read environment variables, or exfiltrate data
+- **Compromised dependencies** -- An MCP server or external tool that has been tampered with
+- **Resource abuse** -- A skill that consumes excessive memory, CPU, or network bandwidth
+- **Data exfiltration** -- A skill that tries to send your data to external servers
+- **Prompt injection via skills** -- A skill that contains hidden instructions to override agent behavior
+
+Even if you trust your skill sources today, the sandbox ensures that a future compromise -- whether from a supply chain attack or accidental misconfiguration -- does not put your system at risk.
+
+## How the Sandbox Works
+
+The sandboxing process is automatic. When an agent loads a skill, Comis runs it through a pipeline of checks before the skill can execute. You do not need to invoke the sandbox manually -- it is always active for all skills.
+
+The key principle is defense in depth: each layer catches a different type of threat, so a skill must pass all of them to execute. A threat that slips past one layer is caught by the next.
+
+## The Four Layers of Sandboxing
+
+Skills pass through four layers of protection before and during execution. Each layer catches a different category of threat.
+
+<Steps>
+  <Step title="Content Scanning">
+    Before a skill is loaded, Comis scans its content for six threat categories:
+
+    - **Command execution** -- Shell commands, eval calls, subprocess invocations
+    - **Environment harvesting** -- Attempts to read API keys from environment variables
+    - **Cryptocurrency mining** -- Crypto mining scripts or wallet addresses
+    - **Network exfiltration** -- Suspicious outbound network requests
+    - **Obfuscated encoding** -- Base64-encoded payloads and other encoding tricks
+    - **XML injection** -- XML entity attacks and breakout attempts
+
+    Critical threats block the skill from loading entirely, while lower-severity findings generate warnings.
+
+    For the full list of scanned patterns and configuration options, see [Security Scanning](/skills/security-scanning).
+  </Step>
+
+  <Step title="Sanitization">
+    All skill content passes through a four-step sanitization pipeline:
+
+    1. **HTML comment stripping** -- Removes hidden instructions embedded in HTML comments
+    2. **Unicode normalization (NFKC)** -- Converts visually similar characters to their canonical forms
+    3. **Invisible character removal** -- Strips zero-width characters and other invisible Unicode
+    4. **Size enforcement** -- Rejects content exceeding the 20,000 character limit
+
+    This catches threats that content scanning might miss -- for example, instructions hidden using zero-width characters or encoded in unusual Unicode forms.
+
+    For sanitization details, see [Security Scanning](/skills/security-scanning).
+  </Step>
+
+  <Step title="Tool Policy">
+    Each agent has a tool policy that controls which tools skills can access. Five built-in profiles give you a starting point:
+
+    - **minimal** -- Basic file operations only
+    - **coding** -- Development tools (read, write, edit, execute)
+    - **messaging** -- Communication tools only
+    - **supervisor** -- Fleet management and administration
+    - **full** -- All tools, no restrictions (this is the default)
+
+    You can further customize with allow and deny lists. A skill cannot use a tool that the agent's policy does not permit, regardless of what the skill requests.
+
+    For profile configuration and custom rules, see [Tool Policy](/skills/tool-policy).
+  </Step>
+
+  <Step title="Execution Constraints">
+    During execution, additional safety limits apply:
+
+    - **Budget caps** prevent runaway API costs by limiting tokens per execution
+    - **Circuit breakers** pause agents with high error rates to prevent cascading failures
+    - **Step limits** cap the number of tool calls per execution
+
+    These constraints ensure that even if a skill passes all other checks, it cannot consume unlimited resources.
+
+    For budget and circuit breaker configuration, see [Safety](/agents/safety).
+  </Step>
+</Steps>
+
+## What Happens When a Threat Is Found
+
+The response depends on the severity of the finding:
+
+- **Critical threat** -- The skill is blocked from loading. An audit event is recorded. The agent continues without the compromised skill.
+- **Warning** -- The skill loads with a warning logged. The audit trail records the concern for your review.
+- **Clean** -- The skill passes all checks and loads normally.
+
+Comis errs on the side of caution. If a pattern looks suspicious, it is flagged even if it might be benign. You can review flagged skills and adjust content scanning settings if needed.
+
+All findings -- whether critical, warning, or clean -- are recorded as audit events. You can view them in the [Security dashboard](/web-dashboard/security-view) or in your log files. This gives you a complete record of every skill that has been checked and what was found.
+
+<Info>
+If a legitimate skill is incorrectly flagged as a threat, you can adjust the content scanning configuration to allow specific patterns. See [Security Scanning](/skills/security-scanning) for details.
+</Info>
+
+## Configuration
+
+The most relevant sandbox settings are shown below. Detailed configuration lives on the linked pages.
+
+```yaml title="~/.comis/config.yaml"
+skills:
+  contentScanning:
+    enabled: true             # Scan skill content for threats (default: true)
+    blockOnCritical: true     # Block skills with critical findings (default: true)
+```
+
+| Setting | Default | Details |
+|---------|---------|---------|
+| `skills.contentScanning.enabled` | `true` | [Security Scanning](/skills/security-scanning) |
+| `skills.contentScanning.blockOnCritical` | `true` | [Security Scanning](/skills/security-scanning) |
+| `skills.toolPolicy.profile` | `full` | [Tool Policy](/skills/tool-policy) |
+
+<Tip>
+For production deployments, pair content scanning with a restrictive tool policy profile. Content scanning catches malicious patterns at load time, while tool policy limits what a skill can do at runtime.
+</Tip>
+
+## MCP Server Sandboxing
+
+MCP (Model Context Protocol) integrations connect your agents to external tools and data sources. Because MCP servers run as separate processes, they receive the same sandboxing treatment as other skills:
+
+- **Content scanning** applies to the MCP server manifest and tool descriptions
+- **Tool policy** controls which MCP tools your agents can use
+- **Execution constraints** apply to MCP tool calls just like built-in tool calls
+
+If an MCP server exposes a tool that your agent's policy does not allow, the tool is silently unavailable. The agent cannot discover or use it.
+
+For MCP integration details, see [MCP](/skills/mcp).
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Security Scanning" icon="magnifying-glass" href="/skills/security-scanning">
+    Detailed content scanner documentation
+  </Card>
+  <Card title="Tool Policy" icon="toolbox" href="/skills/tool-policy">
+    Configure per-agent tool restrictions
+  </Card>
+  <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
+    How sandboxing fits into the security layers
+  </Card>
+  <Card title="Sandbox Reference" icon="file-code" href="/reference/sandbox">
+    Technical sandbox reference
+  </Card>
+</CardGroup>

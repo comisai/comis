@@ -1,0 +1,156 @@
+---
+title: "Links"
+description: "How your agent understands web pages shared in messages"
+icon: "link"
+---
+
+When someone shares a URL in a message, Comis can automatically fetch the web page
+and extract its readable content. Your agent then sees both the original message
+and a summary of what the linked page says. This gives your agent context about
+shared links without the user having to copy-paste the page content.
+
+## How Link Understanding Works
+
+<Steps>
+  <Step title="URLs are detected">
+    Comis scans incoming messages for URLs. Standard web links starting with
+    `http://` or `https://` are recognized. Up to 3 links per message are
+    processed by default (configurable).
+  </Step>
+
+  <Step title="Pages are fetched safely">
+    Each URL is fetched with SSRF protection -- Comis will not fetch internal or
+    private network addresses. A readable extraction pulls the main content from
+    the page, stripping navigation menus, advertisements, sidebars, and scripts.
+    The result is clean, readable text.
+  </Step>
+
+  <Step title="Content is injected">
+    The extracted text (up to 5,000 characters per link) is added to the message
+    context so your agent can reference it. Your agent sees the user's original
+    message plus the content of each linked page.
+  </Step>
+</Steps>
+
+<Warning>
+Link understanding is **disabled by default**. You need to explicitly enable it in
+your configuration before it will process any URLs.
+</Warning>
+
+## When to Enable Link Understanding
+
+Link understanding is most useful when your users regularly share web content and
+expect the agent to discuss it. Common scenarios include:
+
+- **News and research groups** -- Users share articles and want the agent to
+  summarize or comment on the content.
+- **Support channels** -- Users share documentation links and the agent needs to
+  reference the linked page to answer questions.
+- **Content review** -- Users share blog posts, product pages, or forum threads
+  for the agent to analyze.
+
+If your agent rarely needs to understand web pages, you can leave link
+understanding disabled to avoid unnecessary network requests.
+
+## Security
+
+Link fetching includes built-in SSRF (Server-Side Request Forgery) protection.
+SSRF is an attack where a malicious user tricks a server into fetching internal
+resources that should not be accessible from outside. Comis prevents this by
+refusing to fetch URLs that point to:
+
+- Private IP addresses (`10.x.x.x`, `192.168.x.x`, `127.x.x.x`)
+- Internal network hostnames
+- Non-HTTP/HTTPS protocols
+
+This prevents malicious users from tricking your agent into accessing internal
+services on your network. For more information on Comis security layers, see
+[Defense in Depth](/security/defense-in-depth).
+
+<Info>
+The SSRF protection runs automatically on every URL before any content is fetched.
+You do not need to configure or maintain a blocklist -- Comis handles it for you.
+</Info>
+
+## What the Agent Sees
+
+When link understanding is enabled and a user sends a message containing a URL,
+your agent receives the original message text plus the extracted page content.
+The content is formatted as readable text with the page title, so the agent knows
+which link each block of content came from.
+
+If a page cannot be fetched (timeout, 404 error, blocked by the site), Comis
+silently skips it. The agent still sees the original message with the URL -- it
+just does not get the extracted content for that link.
+
+## Limits
+
+These limits control how much content is fetched and how long Comis waits for
+each page to respond.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxLinks` | 3 | Maximum URLs processed per message |
+| `fetchTimeoutMs` | 10,000 ms | Timeout per URL fetch |
+| `maxContentChars` | 5,000 | Maximum characters extracted per link |
+
+If a message contains more URLs than `maxLinks`, only the first URLs (in order
+of appearance) are processed. The rest are ignored.
+
+If a page's readable content exceeds `maxContentChars`, the text is truncated.
+This keeps the agent's context window from being overwhelmed by very long pages.
+
+## Configuration
+
+```yaml
+integrations:
+  media:
+    linkUnderstanding:
+      enabled: false                    # Must be explicitly enabled
+      maxLinks: 3                       # Max URLs per message
+      fetchTimeoutMs: 10000             # Timeout per fetch (10 sec)
+      maxContentChars: 5000             # Max chars per link
+      userAgentString: "Comis/1.0 (Link Understanding)"  # Outbound User-Agent
+```
+
+To enable link understanding, set `enabled: true`:
+
+```yaml
+integrations:
+  media:
+    linkUnderstanding:
+      enabled: true
+```
+
+All other settings are optional and have sensible defaults.
+
+<Tip>
+Start with the defaults and only adjust limits if you find that extracted content
+is being cut off or fetches are timing out on slower sites. Increasing
+`maxContentChars` gives the agent more page content to work with but uses more
+of the agent's context window.
+</Tip>
+
+## What Happens When Disabled
+
+When link understanding is disabled (the default), URLs in messages are passed
+through to the agent as plain text. The agent sees the URL but does not know
+what the page contains. Users would need to copy-paste the relevant content
+from the page if they want the agent to discuss it.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Media Overview" icon="photo-film" href="/media/index">
+    Back to media overview
+  </Card>
+  <Card title="Security" icon="shield" href="/security/defense-in-depth">
+    SSRF protection and other security layers
+  </Card>
+  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
+    Full configuration reference
+  </Card>
+  <Card title="Vision" icon="eye" href="/media/vision">
+    Image and video analysis
+  </Card>
+</CardGroup>

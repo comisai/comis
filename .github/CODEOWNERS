@@ -1,0 +1,6 @@
+# Default — all PRs require maintainer review
+* @anconina
+
+# Security-critical paths
+packages/core/src/security/ @anconina
+packages/gateway/ @anconina

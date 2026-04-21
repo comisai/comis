@@ -1,0 +1,150 @@
+---
+title: "How Comis Keeps You Safe"
+description: "An overview of the security protections built into Comis"
+icon: "shield-check"
+---
+
+Comis is built with security at every level. From the moment a message arrives
+to the moment a response is sent, multiple layers of protection work together
+to keep your agents safe, your data private, and your systems secure. Most of
+these protections work automatically -- you benefit from them without
+configuring anything. This page introduces the security model, explains what
+happens behind the scenes, and points you to the detailed guides for each
+security feature.
+
+## Security Philosophy
+
+Comis follows three core principles that shape every security decision in the
+platform. Understanding these principles helps you make sense of how the
+various security features work together and why they are designed the way they
+are.
+
+### Defense in Depth
+
+No single layer is expected to catch everything. Multiple overlapping
+protections mean that if one layer misses something, the next layer catches it.
+Your messages pass through input validation, jailbreak detection, output
+scanning, and more -- each layer operating independently. Think of it like a
+castle with walls, a moat, guards, and locked doors -- no single protection is
+the only thing keeping you safe. For the full catalog of every security layer
+and how they connect, see [Defense in Depth](/security/defense-in-depth).
+
+### Secure by Default
+
+Comis ships with sensible security defaults. Audit logging is on, destructive
+action confirmation is required, log redaction prevents credential leaks, and
+content scanning blocks dangerous skills. You do not need to be a security
+expert to run a safe setup. The majority of protections listed below are active
+the moment you start Comis -- no configuration file edits required.
+
+### Fail Closed
+
+When something unexpected happens, Comis errs on the side of caution. Unknown
+actions are treated as destructive. Unrecognized content patterns trigger
+warnings. Timeouts result in denial, not approval. If Comis is unsure whether
+something is safe, it assumes it is not. This means new tools and new action
+types are restricted by default until you explicitly allow them.
+
+## What Works Automatically
+
+These protections are active out of the box with zero configuration. They
+protect you from the moment you start Comis. You do not need to enable them,
+configure them, or even know they exist -- they just work.
+
+- **Input validation** catches malformed or oversized messages before they
+  reach your agent
+- **Jailbreak detection** scans for manipulation attempts like "ignore previous
+  instructions" attacks
+- **Injection rate limiting** detects persistent manipulation attempts from the
+  same user over time
+- **External content wrapping** isolates fetched web pages and emails so hidden
+  instructions cannot hijack your agent
+- **Content scanning** checks custom skill content for dangerous patterns before
+  loading
+- **Output scanning** checks every response for leaked secrets and redacts them
+  before they reach the user
+- **Canary tokens** detect prompt extraction attacks by embedding invisible
+  trackers in system prompts
+- **SSRF protection** blocks requests to internal networks and cloud metadata
+  endpoints
+- **Path traversal prevention** blocks file system escape attempts
+- **Memory write validation** prevents memory poisoning by scanning content
+  before storage
+- **Log sanitization** scrubs credentials from log output
+- **Config redaction** hides secrets from API responses and dashboard views
+
+<Info>
+All of the above are active with zero configuration. They protect you from the
+moment you start Comis.
+</Info>
+
+## What You Configure
+
+While automatic protections handle most threats, a few security features need
+setup or explicit enablement to match your specific deployment requirements.
+These are optional but recommended for production environments.
+
+- **Encrypted secrets store** -- Protect your API keys with AES-256 encryption
+  at rest. See [Secrets](/security/secrets).
+- **Approval workflow** -- Require human approval before agents perform
+  destructive actions. See [Approvals](/security/approvals).
+- **Tool policy** -- Restrict which tools each agent can use based on its role.
+  See [Tool Policy](/skills/tool-policy).
+- **Hardening checklist** -- Tighten file permissions, gateway security, and
+  more for production deployments. See [Hardening](/security/hardening).
+- **Audit logging** -- Already enabled by default, but review what is captured
+  and how to access it. See [Audit](/security/audit).
+
+<Tip>
+If you are just getting started, you do not need to configure any of these
+right away. The automatic protections provide strong baseline security. Come
+back to this section when you are ready to prepare for production.
+</Tip>
+
+## Quick Security Check
+
+Not sure how your installation stacks up? Comis includes a built-in security
+audit that checks your configuration against recommended practices.
+
+```bash
+comis doctor
+```
+
+The audit examines file permissions, secret storage, gateway settings, audit
+logging, and more across 13 check categories -- then tells you exactly what to
+fix and how to fix it. See [Hardening](/security/hardening) for the full
+checklist and walkthrough.
+
+## Explore Security
+
+<CardGroup cols={2}>
+  <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
+    All 18+ security layers explained
+  </Card>
+  <Card title="Secrets" icon="key" href="/security/secrets">
+    Managing API keys and passwords safely
+  </Card>
+  <Card title="Approvals" icon="clipboard-check" href="/security/approvals">
+    Human-in-the-loop action approval
+  </Card>
+  <Card title="Audit" icon="scroll" href="/security/audit">
+    Audit logging and compliance
+  </Card>
+  <Card title="Sandbox" icon="box" href="/security/sandbox">
+    How skills run in a controlled environment
+  </Card>
+  <Card title="Hardening" icon="lock" href="/security/hardening">
+    Security hardening checklist
+  </Card>
+</CardGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Security Quick Overview" icon="bolt" href="/get-started/security">
+    The 2-minute security overview
+  </Card>
+  <Card title="Agent Safety" icon="helmet-safety" href="/agents/safety">
+    Budget limits and circuit breaker
+  </Card>
+</CardGroup>

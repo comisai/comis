@@ -1,0 +1,1880 @@
+---
+title: "Config YAML Reference"
+description: "Complete reference for all configuration options with types, defaults, and validation rules"
+icon: "file-code"
+---
+
+Comis uses a single `config.yaml` file (or multiple layered files) to configure every aspect of the system. The configuration contains 37 top-level sections with 54+ nested schemas defining agent behavior, channel adapters, security policies, gateway settings, and more. All schemas use Zod strict validation -- unknown keys are rejected at startup.
+
+Config files are specified via the `COMIS_CONFIG_PATHS` environment variable (comma-separated). See the [Configuration Guide](/installation/configuration) for a step-by-step setup walkthrough.
+
+## Config Loading
+
+Comis loads configuration through a layered resolution process:
+
+1. **Defaults** -- Every schema field has a sensible default. An empty config file produces a valid configuration.
+2. **YAML files** -- Files listed in `COMIS_CONFIG_PATHS` are merged in order (later files override earlier ones).
+3. **Environment overrides** -- Env vars override YAML values at runtime.
+
+### Special Directives
+
+| Directive | Description | Example |
+|-----------|-------------|---------|
+| `$include` | Reference another YAML file for modular composition (max 10 levels deep) | `$include: ./channels.yaml` |
+| `${VAR_NAME}` | Substitute an environment variable or stored secret via SecretManager | `token: "${TELEGRAM_BOT_TOKEN}"` |
+| `$${VAR_NAME}` | Escape syntax -- produces literal `${VAR_NAME}` in the output | `example: "$${NOT_SUBSTITUTED}"` |
+| `$VAR_NAME` | Bare reference -- auto-corrected to `${VAR_NAME}` with a warning | `token: $MY_TOKEN` (corrected) |
+
+<Warning>
+  Strict validation (`z.strictObject`) means any unrecognized key in your config file causes a startup error. Check key names carefully against this reference.
+</Warning>
+
+### Minimal Example
+
+```yaml
+# ~/.comis/config.yaml
+tenantId: my-project
+logLevel: info
+
+agents:
+  assistant:
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+
+channels:
+  telegram:
+    enabled: true
+    token: "${TELEGRAM_BOT_TOKEN}"
+
+gateway:
+  enabled: true
+  port: 4766
+  tokens:
+    - id: default
+      secret: "${COMIS_GATEWAY_TOKEN}"
+      scopes: ["*"]
+```
+
+## Quick Reference
+
+All 37 top-level configuration sections at a glance:
+
+| Section | Type | Description |
+|---------|------|-------------|
+| `tenantId` | `string` | Tenant identifier for multi-tenancy |
+| `logLevel` | `enum` | Global log level (trace/debug/info/warn/error/fatal) |
+| `dataDir` | `string` | Base data directory for persistent storage |
+| `agentDir` | `string` | SDK agent directory for persistent settings |
+| `agents` | `Record<string, PerAgentConfig>` | Multi-agent configuration map |
+| `channels` | `ChannelConfig` | Channel adapter configuration |
+| `memory` | `MemoryConfig` | Memory system configuration |
+| `security` | `SecurityConfig` | Security, audit, and secrets configuration |
+| `routing` | `RoutingConfig` | Multi-agent routing dispatch |
+| `daemon` | `DaemonConfig` | Daemon process, logging, and watchdog |
+| `scheduler` | `SchedulerConfig` | Cron, heartbeat, and task automation |
+| `gateway` | `GatewayConfig` | HTTPS server, tokens, TLS, rate limiting |
+| `integrations` | `IntegrationsConfig` | External services (MCP, search, media) |
+| `monitoring` | `MonitoringConfig` | System health monitoring |
+| `observability` | `ObservabilityConfig` | Observability persistence (retention, snapshots) |
+| `plugins` | `PluginsConfig` | Plugin system configuration |
+| `queue` | `QueueConfig` | Command queue and concurrency control |
+| `streaming` | `StreamingConfig` | Block streaming and delivery |
+| `autoReplyEngine` | `AutoReplyEngineConfig` | Agent activation for inbound messages |
+| `sendPolicy` | `SendPolicyConfig` | Outbound message gating rules |
+| `embedding` | `EmbeddingConfig` | Embedding provider (local GGUF or OpenAI) |
+| `envelope` | `EnvelopeConfig` | Message metadata enrichment |
+| `browser` | `BrowserConfig` | Browser automation (CDP, headless Chrome) |
+| `models` | `ModelsConfig` | Model catalog and alias configuration |
+| `providers` | `ProvidersConfig` | LLM provider entries (API keys, endpoints) |
+| `messages` | `MessagesConfig` | Messaging UX (splitting, typing, receipts) |
+| `approvals` | `ApprovalsConfig` | Action approval workflow |
+| `webhooks` | `WebhooksConfig` | Webhook subsystem (path routing, HMAC) |
+| `lifecycleReactions` | `LifecycleReactionsConfig` | Processing phase emoji reactions |
+| `responsePrefix` | `ResponsePrefixConfig` | Response prefix/suffix template |
+| `deliveryQueue` | `DeliveryQueueConfig` | Crash-safe outbound delivery queue |
+| `deliveryMirror` | `DeliveryMirrorConfig` | Session delivery mirroring and deduplication |
+| `deliveryTiming` | `DeliveryTimingConfig` | Inter-block delivery pacing |
+| `coalescer` | `CoalescerConfig` | Block coalescer for streaming |
+| `senderTrustDisplay` | `SenderTrustDisplayConfig` | Sender identity display in envelope |
+| `documentation` | `DocumentationConfig` | Documentation links for system prompt |
+| `telegramFileRefGuard` | `TelegramFileRefGuardConfig` | Telegram file reference guard |
+
+## Core Settings
+
+<AccordionGroup>
+
+<Accordion title="tenantId, logLevel, dataDir, agentDir">
+
+Scalar fields at the root of the configuration.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `tenantId` | `string` | `"default"` | Tenant identifier for SaaS multi-tenancy. Used to scope memory and sessions. |
+| `logLevel` | `enum` | `"info"` | Global log level. Values: `trace`, `debug`, `info`, `warn`, `error`, `fatal`. |
+| `dataDir` | `string` | `""` (resolves to `~/.comis`) | Base data directory for all persistent storage. Empty string resolves to `~/.comis`. |
+| `agentDir` | `string` | `"~/.pi/agent"` | SDK agent directory for persistent settings. |
+
+```yaml
+tenantId: my-project
+logLevel: info
+dataDir: /opt/comis/data
+agentDir: ~/.pi/agent
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## Agents
+
+<AccordionGroup>
+
+<Accordion title="agents">
+
+Multi-agent configuration map. Each key is an agent ID, and the value is a `PerAgentConfig` object that extends `AgentConfig` with skills, scheduler, session, concurrency, and broadcast settings.
+
+**Type:** `Record<string, PerAgentConfig>`
+
+**Default:** `{ default: PerAgentConfig.parse({}) }` (one default agent with all defaults)
+
+#### AgentConfig Fields
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | `string` | `"Comis"` | Display name for the agent |
+| `model` | `string` | `"default"` | LLM model identifier. `"default"` resolves via `models.defaultModel`. |
+| `provider` | `string` | `"default"` | LLM provider. `"default"` resolves via `models.defaultProvider`. |
+| `maxSteps` | `number` | `150` | Maximum reasoning steps per execution |
+| `thinkingLevel` | `enum` | _(unset)_ | SDK thinking level override: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` |
+| `maxTokens` | `number` | _(unset)_ | SDK max tokens override |
+| `temperature` | `number` | _(unset)_ | SDK temperature override (0-2) |
+| `cacheRetention` | `enum` | `"long"` | Anthropic prompt cache retention: `none`, `short`, `long` |
+| `maxContextChars` | `number` | `100000` | Maximum total characters for context window (~25k tokens) |
+| `maxToolResultChars` | `number` | `50000` | Maximum characters per tool result before truncation |
+| `preserveRecent` | `number` | `4` | Minimum recent messages to always preserve during compaction |
+| `workspacePath` | `string` | _(unset)_ | Path to agent workspace directory containing identity files |
+| `reactionLevel` | `enum` | _(unset)_ | Reaction frequency: `minimal` (1 per 5-10 exchanges) or `extensive` (react freely) |
+| `enforceFinalTag` | `boolean` | `false` | When enabled, only content inside `<final>` blocks reaches users. Suppresses all content outside final tags on both streaming and non-streaming paths. |
+| `fastMode` | `boolean` | `false` | Enables fast mode for the LLM provider (provider-specific behavior). |
+| `storeCompletions` | `boolean` | `false` | When enabled, sends `store: true` to OpenAI-compatible providers for completion storage. |
+
+#### Budget (agents.*.budgets)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `perExecution` | `number` | `2000000` | Max tokens per single execution |
+| `perHour` | `number` | `10000000` | Max tokens per hour (rolling window) |
+| `perDay` | `number` | `100000000` | Max tokens per day (rolling window) |
+
+#### Circuit Breaker (agents.*.circuitBreaker)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `failureThreshold` | `number` | `5` | Consecutive failures before opening circuit |
+| `resetTimeoutMs` | `number` | `60000` | Milliseconds before attempting recovery |
+| `halfOpenTimeoutMs` | `number` | `30000` | Milliseconds for half-open probe timeout |
+
+#### Model Routes (agents.*.modelRoutes)
+
+Extensible key-value map of task type to model identifier. Any string key maps to a model ID string.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `default` | `string` | _(unset)_ | Default model for unrouted tasks (falls back to `agent.model`) |
+| _(any key)_ | `string` | -- | Custom route name to model ID |
+
+#### Model Failover (agents.*.modelFailover)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `fallbackModels` | `FallbackModel[]` | `[]` | Ordered fallback models (provider + modelId pairs) |
+| `authProfiles` | `AuthProfile[]` | `[]` | Per-provider API key profiles for auth rotation |
+| `allowedModels` | `string[]` | `[]` | Model allowlist (empty = allow all) |
+| `maxAttempts` | `number` | `6` | Maximum total attempts across all models/keys |
+| `cooldownInitialMs` | `number` | `60000` | Initial cooldown duration in ms |
+| `cooldownMultiplier` | `number` | `5` | Exponential cooldown multiplier |
+| `cooldownCapMs` | `number` | `3600000` | Maximum cooldown duration in ms (1 hour) |
+
+#### SDK Retry (agents.*.sdkRetry)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable SDK-native retry with exponential backoff |
+| `maxRetries` | `number` | `5` | Maximum retry attempts for transient errors |
+| `baseDelayMs` | `number` | `4000` | Base delay in ms before first retry (doubles each attempt) |
+| `maxDelayMs` | `number` | `60000` | Maximum delay cap in ms between retries |
+
+#### Prompt Timeout (agents.*.promptTimeout)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `promptTimeoutMs` | `number` | `180000` | Wall-clock timeout for primary prompt calls (3 minutes). Covers the full SDK call lifecycle including internal retries and streaming. |
+| `retryPromptTimeoutMs` | `number` | `60000` | Wall-clock timeout for retry and fallback prompt calls (1 minute). Used during auth rotation and model fallback attempts. |
+
+See [Resilience](/agents/resilience) for how prompt timeouts fit into the full resilience stack.
+
+#### RAG (agents.*.rag)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable automatic memory retrieval before LLM calls |
+| `maxResults` | `number` | `5` | Maximum memory results to retrieve |
+| `maxContextChars` | `number` | `4000` | Maximum characters of memory context injected |
+| `minScore` | `number` | `0.1` | Minimum RRF score threshold (0-1) |
+| `includeTrustLevels` | `string[]` | `["system", "learned"]` | Trust levels to include in retrieval |
+
+#### Bootstrap (agents.*.bootstrap)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxChars` | `number` | `20000` | Per-file character limit for workspace files injected into system prompt |
+| `promptMode` | `enum` | `"full"` | Verbosity: `full`, `minimal` (sub-agents), `none` (identity only) |
+| `groupChatFiltering` | `boolean` | `true` | Exclude USER.md from bootstrap in group chats (privacy) |
+
+#### Workspace (agents.*.workspace)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `profile` | `enum` | `"full"` | Workspace profile: `full` (all platform instructions, ~9K tokens) or `specialist` (minimal safety + workspace reference, ~800 tokens). Use `specialist` for purpose-built sub-agents. |
+
+#### Concurrency (agents.*.concurrency)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxConcurrentRuns` | `number` | `4` | Maximum concurrent agent runs |
+| `maxQueuedPerSession` | `number` | `50` | Maximum queued messages per session before overflow |
+
+#### Broadcast Groups (agents.*.broadcastGroups)
+
+Array of broadcast group objects for simultaneous multi-channel message delivery.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `id` | `string` | _(required)_ | Unique group identifier |
+| `name` | `string` | `""` | Human-readable group name |
+| `targets` | `BroadcastTarget[]` | `[]` | Channel targets (channelType, channelId, chatId) |
+| `enabled` | `boolean` | `true` | Whether this broadcast group is active |
+
+#### Elevated Reply (agents.*.elevatedReply)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable trust-based model/prompt routing |
+| `trustModelRoutes` | `Record<string, string>` | `{}` | Map of trust level to model route name |
+| `trustPromptOverrides` | `Record<string, string>` | `{}` | Map of trust level to system prompt override |
+| `defaultTrustLevel` | `string` | `"external"` | Default trust level for unknown senders |
+| `senderTrustMap` | `Record<string, string>` | `{}` | Per-sender trust level overrides |
+
+#### Tracing (agents.*.tracing)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable per-LLM-call JSONL trace files |
+| `outputDir` | `string` | `"~/.comis/traces"` | Output directory for JSONL trace files |
+
+#### Gemini Cache (agents.*.geminiCache)
+
+Per-agent configuration for Gemini explicit CachedContent caching. When enabled, Comis creates server-side cached content on Google AI Studio for guaranteed 90% discount on cached input tokens.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable Gemini explicit CachedContent caching. Only activates for Google AI Studio providers (not Vertex AI). |
+| `maxActiveCaches` | `number` | `20` | Maximum active cached contents per agent. Must be a positive integer. Oldest entries are evicted (LRU) when this limit is reached. |
+
+<Info>
+  Gemini cache TTL is hardcoded at 3600 seconds (1 hour) and is not configurable per-agent. Caches are automatically refreshed when more than 50% of the TTL has elapsed. This setting is independent of the Anthropic `cacheRetention` field -- they control different provider caching mechanisms.
+</Info>
+
+#### Context Guard (agents.*.contextGuard)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable context window guard checks |
+| `warnPercent` | `number` | `80` | Warn when context usage reaches this percent (0-100) |
+| `blockPercent` | `number` | `95` | Block execution when context usage reaches this percent (0-100) |
+
+#### Context Engine (agents.*.contextEngine)
+
+Context engine configuration. Controls the system that manages what your agent sees each turn. Supports two operating modes: **pipeline** (default, the 8-step system) and **dag** (opt-in, lossless DAG with recall tools). See [Compaction](/agents/compaction) for a user-friendly explanation.
+
+**Core fields**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Master toggle for the context engine |
+| `version` | `string` | `"pipeline"` | Operating mode: `"pipeline"` (default) or `"dag"` (lossless DAG with recall tools) |
+
+**Shared fields** (both modes)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `thinkingKeepTurns` | `number` | `10` | Recent assistant turns that retain thinking blocks (1-50) |
+| `compactionModel` | `string` | `"anthropic:claude-haiku-4-5-20250929"` | Model used for summarization. Override with a cheaper or faster model if needed. |
+| `evictionMinAge` | `number` | `15` | Minimum turn age before stale errors are evicted by the dead content evictor (3-50) |
+
+**Pipeline mode fields** (`version: "pipeline"`)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `historyTurns` | `number` | `15` | Recent user turns to keep in context (3-100) |
+| `historyTurnOverrides` | `Record<string, number>` | -- | Per-channel-type turn count overrides (e.g., `{ dm: 10, group: 5 }`) |
+| `observationKeepWindow` | `number` | `25` | Recent tool uses that retain full results (1-50) |
+| `observationTriggerChars` | `number` | `120000` | Character threshold before observation masking activates (50K-1M) |
+| `compactionCooldownTurns` | `number` | `5` | Turns to wait before re-triggering LLM compaction (1-50) |
+| `compactionPrefixAnchorTurns` | `number` | `2` | User turns preserved at conversation head for cache prefix stability (0-10) |
+| `outputEscalation.enabled` | `boolean` | `true` | Allow escalating output token budget when context is compacted |
+| `outputEscalation.escalatedMaxTokens` | `number` | `32768` | Maximum output tokens after escalation (4096-128000) |
+| `observationDeactivationChars` | `number` | `80000` | Character threshold to deactivate observation masking entirely (20K-500K) |
+| `ephemeralKeepWindow` | `number` | `10` | Recent ephemeral tool results to keep unmasked (1-50) |
+
+**DAG mode fields** (`version: "dag"`)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `freshTailTurns` | `number` | `8` | Recent user-assistant turn cycles protected from compaction (1-50) |
+| `contextThreshold` | `number` | `0.75` | Budget utilization ratio that triggers compaction (0.1-0.95) |
+| `leafMinFanout` | `number` | `8` | Minimum raw messages before creating a leaf summary (2-20) |
+| `condensedMinFanout` | `number` | `4` | Minimum leaf summaries before creating a condensed summary (2-20) |
+| `condensedMinFanoutHard` | `number` | `2` | Absolute minimum fanout for condensed summaries under pressure (2-10) |
+| `incrementalMaxDepth` | `number` | `0` | Maximum DAG depth for incremental compaction. -1 disables depth limit. (-1 to 10) |
+| `leafChunkTokens` | `number` | `20000` | Maximum source tokens per leaf summary chunk (1K-100K) |
+| `leafTargetTokens` | `number` | `1200` | Target token count for each leaf summary output (96-5K) |
+| `condensedTargetTokens` | `number` | `2000` | Target token count for each condensed summary output (256-10K) |
+| `maxExpandTokens` | `number` | `4000` | Maximum tokens a recall sub-agent can read per expansion (500-50K) |
+| `maxRecallsPerDay` | `number` | `10` | Daily limit on recall sub-agent spawns per agent (1-100) |
+| `recallTimeoutMs` | `number` | `120000` | Timeout for recall sub-agent execution in milliseconds (10K-600K) |
+| `largeFileTokenThreshold` | `number` | `25000` | File token count above which content is stored as a large file reference (1K-200K) |
+| `annotationKeepWindow` | `number` | `15` | Recent tool results protected from annotation replacement in DAG assembly (1-50) |
+| `annotationTriggerChars` | `number` | `200000` | Character threshold before old tool results are annotated with placeholders (10K-1M) |
+| `summaryModel` | `string` | -- | Optional model override for DAG summarization (falls back to `compactionModel`) |
+| `summaryProvider` | `string` | -- | Optional provider override for DAG summarization |
+
+<Note>
+  DAG mode fields are validated by Zod even when `version` is `"pipeline"`. This means you can pre-configure DAG settings before switching modes -- invalid values will be caught at startup regardless of the active mode.
+</Note>
+
+#### Source Gate (agents.*.sourceGate)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxResponseBytes` | `number` | `2000000` | Default byte cap for HTTP responses |
+| `stripHiddenHtml` | `boolean` | `true` | Whether to strip hidden HTML before extraction |
+
+#### Skills (agents.*.skills)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `discoveryPaths` | `string[]` | `["./skills"]` | Directories to scan for SKILL.md files. For named agents, Comis automatically prepends the agent's workspace skills directory (`~/.comis/workspace-{agentId}/skills/`) at startup -- you do not need to include it here. |
+| `watchEnabled` | `boolean` | `true` | Enable file watching for automatic skill reload |
+| `watchDebounceMs` | `number` | `400` | Debounce interval in ms (100-5000) |
+
+**Built-in Tools (agents.*.skills.builtinTools)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `read` | `boolean` | `true` | Read file contents |
+| `write` | `boolean` | `true` | Write or overwrite files |
+| `edit` | `boolean` | `true` | Surgical search-and-replace on files |
+| `grep` | `boolean` | `true` | Regex search across files (requires `rg`) |
+| `find` | `boolean` | `true` | Find files by glob pattern (requires `fd`) |
+| `ls` | `boolean` | `true` | List directory contents |
+| `exec` | `boolean` | `true` | Shell command execution |
+| `process` | `boolean` | `true` | Background process management |
+| `webSearch` | `boolean` | `true` | Web search API integration |
+| `webFetch` | `boolean` | `true` | URL content fetching |
+| `browser` | `boolean` | `true` | Headless browser control |
+
+**Tool Policy (agents.*.skills.toolPolicy)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `profile` | `enum` | `"full"` | Baseline tool set: `minimal`, `coding`, `messaging`, `supervisor`, `full` |
+| `allow` | `string[]` | `[]` | Additional tools to allow beyond the profile |
+| `deny` | `string[]` | `[]` | Tools to deny even if in the profile |
+
+**Prompt Skills (agents.*.skills.promptSkills)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxBodyLength` | `number` | `20000` | Maximum skill body length in characters |
+| `enableDynamicContext` | `boolean` | `false` | Enable shell command execution in skill bodies |
+| `maxAutoInject` | `number` | `3` | Maximum prompt skills auto-injected per request (0-20) |
+| `allowedSkills` | `string[]` | `[]` | Skill names allowed (empty = allow all) |
+| `deniedSkills` | `string[]` | `[]` | Skill names denied (applied after allowedSkills) |
+
+**Runtime Eligibility (agents.*.skills.runtimeEligibility)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable runtime eligibility filtering based on OS, binary, and env var prerequisites |
+
+**Content Scanning (agents.*.skills.contentScanning)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable content scanning at skill load time |
+| `blockOnCritical` | `boolean` | `true` | Block skill loading when CRITICAL findings are present |
+
+**Exec Sandbox (agents.*.skills.execSandbox)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `enum` | `"always"` | OS-level sandbox for exec commands: `"always"` (sandbox active, graceful fallback if binary unavailable) or `"never"` (sandbox disabled) |
+| `readOnlyAllowPaths` | `string[]` | `[]` | Additional filesystem paths exposed read-only inside the sandbox (e.g., `/opt/data`) |
+
+#### Secrets (agents.*.secrets)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `allow` | `string[]` | `[]` | Glob patterns for allowed secret names. Empty = unrestricted access. |
+
+#### Session (agents.*.session)
+
+Optional session configuration containing reset policy, DM scope, pruning, and compaction.
+
+**Reset Policy (agents.*.session.resetPolicy)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `mode` | `enum` | `"none"` | Reset mode: `daily`, `idle`, `hybrid`, `none` |
+| `dailyResetHour` | `number` | `4` | Hour of day for daily reset (0-23) |
+| `dailyResetTimezone` | `string` | `""` | IANA timezone (empty = system local) |
+| `idleTimeoutMs` | `number` | `14400000` | Idle timeout in ms (default 4 hours) |
+| `sweepIntervalMs` | `number` | `300000` | How often to check sessions (default 5 min) |
+| `resetTriggers` | `string[]` | `[]` | Phrases that trigger immediate session reset |
+| `perType.dm` | `ResetPolicyOverride` | _(unset)_ | DM-specific override (mode, dailyResetHour, timezone, idleTimeoutMs) |
+| `perType.group` | `ResetPolicyOverride` | _(unset)_ | Group-specific override |
+| `perType.thread` | `ResetPolicyOverride` | _(unset)_ | Thread-specific override |
+
+**DM Scope (agents.*.session.dmScope)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `mode` | `enum` | `"per-channel-peer"` | Isolation: `main`, `per-peer`, `per-channel-peer`, `per-account-channel-peer` |
+| `agentPrefix` | `boolean` | `false` | Prepend `agent:<agentId>:` to session keys |
+| `threadIsolation` | `boolean` | `false` | Append `:thread:<threadId>` to session keys |
+
+**Pruning (agents.*.session.pruning)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable session pruning of oversized tool results |
+| `softTrimThresholdChars` | `number` | `8000` | Chars above which tool results are soft-trimmed |
+| `hardClearThresholdChars` | `number` | `30000` | Chars above which tool results are hard-cleared |
+| `preserveHeadChars` | `number` | `500` | Characters to preserve at the start of soft-trimmed result |
+| `preserveTailChars` | `number` | `500` | Characters to preserve at the end of soft-trimmed result |
+| `pruneableTools` | `string[]` | `[]` | Tools eligible for pruning (empty = all) |
+| `protectedTools` | `string[]` | `[]` | Tools never pruned (takes precedence) |
+| `protectImageBlocks` | `boolean` | `true` | Protect tool results containing image content blocks |
+| `preserveRecentCount` | `number` | `6` | Recent messages exempt from pruning |
+
+**Compaction (agents.*.session.compaction)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `softThresholdRatio` | `number` | `0.75` | Context fraction at which soft flush triggers (0-1) |
+| `hardThresholdRatio` | `number` | `0.90` | Context fraction at which hard compaction triggers (0-1) |
+| `flushModel` | `string` | _(unset)_ | Model for memory extraction during flush |
+| `chunkMaxChars` | `number` | `50000` | Max characters per summarization chunk |
+| `chunkOverlapMessages` | `number` | `2` | Overlap messages between chunks |
+| `chunkMergeSummaries` | `boolean` | `true` | Whether to merge chunk summaries via LLM |
+| `reserveTokens` | `number` | `16384` | Tokens reserved for summary during auto-compaction |
+| `keepRecentTokens` | `number` | `32768` | Recent message tokens to keep after auto-compaction |
+| `postCompactionSections` | `string[]` | `["Session Startup", "Red Lines"]` | AGENTS.md sections to re-inject after compaction (from read-only AGENTS.md) |
+
+#### Scheduler (agents.*.scheduler)
+
+**Cron (agents.*.scheduler.cron)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable cron job scheduling |
+| `maxConcurrentRuns` | `number` | `3` | Maximum concurrent cron job runs |
+| `defaultTimezone` | `string` | `""` | Default timezone (empty = UTC) |
+| `maxJobs` | `number` | `100` | Maximum cron jobs (0 = unlimited) |
+
+**Heartbeat (agents.*.scheduler.heartbeat)**
+
+All fields are optional and inherit from the global `scheduler.heartbeat` when omitted.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | _(inherit)_ | Override heartbeat enabled state |
+| `intervalMs` | `number` | _(inherit)_ | Override heartbeat interval in ms |
+| `showOk` | `boolean` | _(inherit)_ | Override show OK status |
+| `showAlerts` | `boolean` | _(inherit)_ | Override show alerts |
+| `target` | `HeartbeatTarget` | _(unset)_ | Delivery target channel (channelType, channelId, chatId, isDm) |
+| `prompt` | `string` | _(unset)_ | Custom heartbeat prompt |
+| `model` | `string` | _(unset)_ | Model override for heartbeat LLM calls |
+| `session` | `string` | _(unset)_ | Session key for heartbeat isolation |
+| `allowDm` | `boolean` | _(inherit)_ | Allow heartbeat in DM conversations |
+| `lightContext` | `boolean` | _(unset)_ | Include ONLY HEARTBEAT.md in bootstrap context |
+| `ackMaxChars` | `number` | _(unset)_ | Max chars for soft acknowledgment threshold |
+| `responsePrefix` | `string` | _(unset)_ | Prefix to strip from LLM responses before delivery |
+| `skipHeartbeatOnlyDelivery` | `boolean` | _(unset)_ | Suppress delivery of HEARTBEAT_OK-only responses |
+| `alertThreshold` | `number` | _(inherit)_ | Consecutive failure threshold for alerting |
+| `alertCooldownMs` | `number` | _(inherit)_ | Alert cooldown period in ms |
+| `staleMs` | `number` | _(inherit)_ | Stuck detection timeout in ms |
+
+```yaml
+agents:
+  assistant:
+    name: "My Assistant"
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+    maxSteps: 30
+    budgets:
+      perExecution: 1000000
+      perHour: 5000000
+    rag:
+      enabled: true
+      maxResults: 10
+    skills:
+      toolPolicy:
+        profile: coding
+        allow: ["memory_search"]
+    session:
+      resetPolicy:
+        mode: hybrid
+        idleTimeoutMs: 7200000
+```
+
+<Info>See [Agent Identity](/agents/identity) and [Agent Lifecycle](/agents/lifecycle) for how these settings affect agent behavior.</Info>
+
+</Accordion>
+
+</AccordionGroup>
+
+## Channels
+
+<AccordionGroup>
+
+<Accordion title="channels">
+
+Channel adapter configuration. Each key is a channel platform name.
+
+**Type:** `ChannelConfig` (strict object with per-platform entries)
+
+#### Base Channel Entry (shared by all channels)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Whether this channel is active |
+| `apiKey` | `string \| SecretRef` | _(unset)_ | API key for the channel service |
+| `botToken` | `string \| SecretRef` | _(unset)_ | Bot token for the channel service |
+| `webhookUrl` | `string (URL)` | _(unset)_ | Webhook URL for receiving events |
+| `allowFrom` | `string[]` | `[]` | Allowed sender IDs (empty = allow all) |
+| `mediaProcessing` | `MediaProcessing` | _(all true)_ | Per-channel media processing overrides |
+
+**Media Processing (channels.*.mediaProcessing)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `transcribeAudio` | `boolean` | `true` | Enable voice transcription (STT) |
+| `analyzeImages` | `boolean` | `true` | Enable image analysis (Vision) |
+| `describeVideos` | `boolean` | `true` | Enable video description |
+| `extractDocuments` | `boolean` | `true` | Enable document text extraction |
+| `understandLinks` | `boolean` | `true` | Enable link content fetching |
+
+#### Ack Reactions (channels.*.ackReaction -- global schema)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Send ack reaction when processing starts |
+| `emoji` | `string` | `"eyes"` | Emoji to react with (Unicode or platform-specific) |
+
+#### Platform-Specific Fields
+
+**Slack (channels.slack)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `appToken` | `string \| SecretRef` | _(unset)_ | App-level token for Socket Mode (`xapp-...`) |
+| `signingSecret` | `string \| SecretRef` | _(unset)_ | Signing secret for HTTP request verification |
+| `mode` | `enum` | _(unset)_ | Connection mode: `socket` or `http` |
+
+**WhatsApp (channels.whatsapp)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `authDir` | `string` | _(unset)_ | Directory for multi-device auth state files |
+| `printQR` | `boolean` | _(unset)_ | Print QR code to terminal for pairing |
+
+**Signal (channels.signal)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `baseUrl` | `string` | `"http://127.0.0.1:8080"` | signal-cli REST API base URL |
+| `account` | `string` | _(unset)_ | Phone number registered with Signal |
+| `cliPath` | `string` | _(unset)_ | Path to signal-cli binary for auto-spawn |
+
+**iMessage (channels.imessage)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `binaryPath` | `string` | _(unset)_ | Path to imsg binary |
+| `account` | `string` | _(unset)_ | Apple ID for iMessage account |
+
+**LINE (channels.line)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `channelSecret` | `string \| SecretRef` | _(unset)_ | Channel secret for webhook signature verification |
+| `webhookPath` | `string` | `"/webhooks/line"` | Webhook path for LINE events |
+
+**IRC (channels.irc)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `host` | `string` | _(unset)_ | IRC server hostname |
+| `port` | `number` | _(unset)_ | IRC server port |
+| `nick` | `string` | _(unset)_ | Bot nickname |
+| `tls` | `boolean` | `true` | Whether to use TLS |
+| `channels` | `string[]` | _(unset)_ | Channels to auto-join on connect |
+| `nickservPassword` | `string \| SecretRef` | _(unset)_ | NickServ password for identification |
+
+```yaml
+channels:
+  telegram:
+    enabled: true
+    botToken: "${TELEGRAM_BOT_TOKEN}"
+    allowFrom: ["123456789"]
+    mediaProcessing:
+      transcribeAudio: true
+      analyzeImages: true
+  discord:
+    enabled: true
+    botToken: "${DISCORD_BOT_TOKEN}"
+  slack:
+    enabled: true
+    botToken: "${SLACK_BOT_TOKEN}"
+    appToken: "${SLACK_APP_TOKEN}"
+    mode: socket
+```
+
+<Info>See the [Channels](/channels/index) section for platform-specific setup guides.</Info>
+
+</Accordion>
+
+</AccordionGroup>
+
+## Memory & Search
+
+<AccordionGroup>
+
+<Accordion title="memory">
+
+SQLite-backed memory system configuration.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `dbPath` | `string` | `"memory.db"` | Path to SQLite database file (relative to dataDir) |
+| `walMode` | `boolean` | `true` | Enable WAL mode for concurrent reads |
+| `embeddingModel` | `string` | `"text-embedding-3-small"` | Embedding model identifier |
+| `embeddingDimensions` | `number` | `1536` | Embedding vector dimensions |
+
+**Compaction (memory.compaction)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Whether automatic compaction is enabled |
+| `threshold` | `number` | `1000` | Minimum entries before compaction triggers |
+| `targetSize` | `number` | `500` | Maximum entries after compaction |
+
+**Retention (memory.retention)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxAgeDays` | `number` | `0` | Maximum age in days (0 = no limit) |
+| `maxEntries` | `number` | `0` | Maximum total entries (0 = no limit) |
+
+<Info>See [Memory](/agents/memory) and [Search](/agents/search) for how these settings affect agent memory behavior.</Info>
+
+</Accordion>
+
+<Accordion title="embedding">
+
+Embedding provider configuration for vector search. Supports local GGUF models via node-llama-cpp or remote OpenAI.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable embedding generation. When false, only FTS5 search is used. |
+| `provider` | `enum` | `"auto"` | Provider preference: `auto` (tries local then remote), `local`, `openai` |
+| `autoReindex` | `boolean` | `true` | Auto-reindex when provider model changes |
+
+**Local (embedding.local)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `modelUri` | `string` | `"hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf"` | HuggingFace model URI or path to local GGUF file |
+| `modelsDir` | `string` | `"models"` | Directory to store downloaded models |
+| `gpu` | `enum` | `"auto"` | GPU acceleration: `auto`, `metal`, `cuda`, `vulkan`, `false` |
+| `contextSize` | `number` | `2048` | Context size for embedding model (tokens). nomic-embed-text-v1.5 trains on 2048; extending to 8192 requires YaRN RoPE scaling not available in node-llama-cpp. |
+
+**OpenAI (embedding.openai)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `model` | `string` | `"text-embedding-3-small"` | OpenAI embedding model |
+| `dimensions` | `number` | `1536` | Vector dimensions (must match model output) |
+
+**Cache (embedding.cache)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxEntries` | `number` | `10000` | Maximum cached embeddings in L1 in-memory cache (0 = disabled) |
+| `persistent` | `boolean` | `false` | Enable persistent L2 SQLite cache |
+| `persistentMaxEntries` | `number` | `50000` | Maximum entries in L2 persistent cache |
+| `ttlMs` | `number` | _(none)_ | TTL in milliseconds for cache entries. When unset, LRU eviction only. |
+| `pruneIntervalMs` | `number` | `300000` | Prune check interval in milliseconds (5 min) |
+
+**Batch (embedding.batch)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `batchSize` | `number` | `100` | Texts per batch call |
+| `indexOnStartup` | `boolean` | `true` | Index unembedded memories on startup |
+
+<Info>See [Embeddings](/agents/embeddings) for a guide on choosing between local and remote embedding providers.</Info>
+
+</Accordion>
+
+</AccordionGroup>
+
+## Gateway & API
+
+<AccordionGroup>
+
+<Accordion title="gateway">
+
+Hono HTTPS server for JSON-RPC, WebSocket, and REST API access.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable the gateway server |
+| `host` | `string` | `"127.0.0.1"` | Host to bind (use `"0.0.0.0"` for external access) |
+| `port` | `number` | `4766` | Port to listen on (1-65535) |
+| `maxBatchSize` | `number` | `50` | Maximum JSON-RPC batch size |
+| `wsHeartbeatMs` | `number` | `30000` | WebSocket heartbeat interval in ms |
+| `corsOrigins` | `string[]` | `[]` | CORS allowed origins (empty = same-origin only) |
+| `allowInsecureHttp` | `boolean` | `false` | Suppress insecure-HTTP warning |
+| `trustedProxies` | `string[]` | `[]` | Trusted proxy IPs for X-Forwarded-For |
+| `httpBodyLimitBytes` | `number` | `1048576` | Max HTTP request body size (1MB) |
+| `wsMaxMessageBytes` | `number` | `1048576` | Max WebSocket message size (1MB) |
+
+**TLS (gateway.tls)** -- optional, enables mTLS when provided
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `certPath` | `string` | _(required)_ | Path to server TLS certificate (PEM) |
+| `keyPath` | `string` | _(required)_ | Path to server TLS private key (PEM) |
+| `caPath` | `string` | _(required)_ | Path to CA certificate for client verification (PEM) |
+| `requireClientCert` | `boolean` | `true` | Require client certificates for mTLS |
+
+**Tokens (gateway.tokens)** -- array of bearer token entries
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `id` | `string` | _(required)_ | Unique token identifier |
+| `secret` | `string \| SecretRef` | _(unset)_ | Secret value (min 32 chars; auto-generated if omitted) |
+| `scopes` | `string[]` | `[]` | Allowed scopes (e.g., `["rpc", "ws", "admin"]`) |
+
+**Rate Limit (gateway.rateLimit)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `windowMs` | `number` | `60000` | Time window in ms |
+| `maxRequests` | `number` | `100` | Maximum requests per window |
+
+**WebSocket Message Rate Limit (gateway.wsMessageRateLimit)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxMessages` | `number` | `60` | Maximum messages per window |
+| `windowMs` | `number` | `60000` | Time window in ms |
+
+```yaml
+gateway:
+  enabled: true
+  host: "0.0.0.0"
+  port: 4766
+  tokens:
+    - id: admin
+      secret: "${COMIS_GATEWAY_TOKEN}"
+      scopes: ["*"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 200
+```
+
+<Info>See [HTTP Gateway](/reference/http-gateway) and [WebSocket](/reference/websocket) for API usage details.</Info>
+
+</Accordion>
+
+<Accordion title="webhooks">
+
+Webhook subsystem for receiving external events (GitHub, Gmail, custom services).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable the webhook subsystem |
+| `path` | `string` | `"/hooks"` | Base path for webhook endpoints |
+| `token` | `string \| SecretRef` | _(unset)_ | Bearer token for authentication (min 32 chars) |
+| `maxBodyBytes` | `number` | `262144` | Max request body size (256KB) |
+| `presets` | `string[]` | `[]` | Preset mapping names (e.g., `["gmail", "github"]`) |
+| `mappings` | `WebhookMapping[]` | `[]` | Custom webhook mappings |
+
+**Webhook Mapping (webhooks.mappings[])**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `id` | `string` | _(unset)_ | Unique mapping identifier |
+| `match.path` | `string` | _(unset)_ | URL path to match |
+| `match.source` | `string` | _(unset)_ | Source identifier to match |
+| `action` | `enum` | `"agent"` | Action: `wake` (trigger heartbeat) or `agent` (invoke agent) |
+| `wakeMode` | `enum` | `"now"` | Wake timing: `now` or `next-heartbeat` |
+| `name` | `string` | _(unset)_ | Human-readable mapping name |
+| `agentId` | `string` | _(unset)_ | Target agent ID |
+| `sessionKey` | `string` | _(unset)_ | Session key template (supports `{{expr}}`) |
+| `messageTemplate` | `string` | _(unset)_ | Message template (supports `{{expr}}`) |
+| `deliver` | `boolean` | _(unset)_ | Whether to deliver to a channel |
+| `channel` | `string` | _(unset)_ | Target channel for delivery |
+| `to` | `string` | _(unset)_ | Target recipient for delivery |
+| `model` | `string` | _(unset)_ | Model override for agent execution |
+| `timeoutSeconds` | `number` | _(unset)_ | Timeout in seconds for agent execution |
+
+<Info>See [Webhooks](/reference/webhooks) for webhook configuration patterns and payload formats.</Info>
+
+</Accordion>
+
+</AccordionGroup>
+
+## Routing & Sessions
+
+<AccordionGroup>
+
+<Accordion title="routing">
+
+Multi-agent routing dispatch. Bindings are evaluated in order (first match wins).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `defaultAgentId` | `string` | `"default"` | Agent ID when no binding matches |
+| `bindings` | `RoutingBinding[]` | `[]` | Ordered list of routing bindings |
+
+**Routing Binding (routing.bindings[])**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `channelType` | `string` | _(unset)_ | Channel type to match (e.g., `"telegram"`) |
+| `channelId` | `string` | _(unset)_ | Channel identifier to match |
+| `peerId` | `string` | _(unset)_ | Peer (user) identifier to match |
+| `guildId` | `string` | _(unset)_ | Guild (server/group) identifier to match |
+| `agentId` | `string` | _(required)_ | Agent ID to route to |
+
+```yaml
+routing:
+  defaultAgentId: general
+  bindings:
+    - channelType: telegram
+      peerId: "123456789"
+      agentId: personal
+    - channelType: discord
+      guildId: "987654321"
+      agentId: community
+```
+
+<Info>See [Routing](/agents/routing) for detailed routing patterns and specificity rules.</Info>
+
+</Accordion>
+
+<Accordion title="queue">
+
+Command queue for session serialization and concurrency control.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable the command queue |
+| `maxConcurrentSessions` | `number` | `10` | Max concurrent agent executions globally |
+| `cleanupIdleMs` | `number` | `600000` | Idle lane garbage collection interval (10 min) |
+| `defaultMode` | `enum` | `"steer+followup"` | Default queue mode: `followup`, `collect`, `steer`, `steer+followup` |
+| `defaultDebounceMs` | `number` | `0` | Default debounce delay in ms |
+| `priorityEnabled` | `boolean` | `false` | Enable priority lane scheduling |
+
+**Default Overflow (queue.defaultOverflow)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxDepth` | `number` | `20` | Max queued messages per session |
+| `policy` | `enum` | `"drop-new"` | Overflow policy: `drop-old`, `drop-new`, `summarize` |
+
+**Per-Channel Override (queue.perChannel.{channelType})**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `mode` | `enum` | `"steer+followup"` | Queue mode for this channel |
+| `overflow` | `OverflowConfig` | _(inherit defaults)_ | Overflow settings |
+| `debounceMs` | `number` | `0` | Debounce delay in ms |
+
+**Debounce Buffer (queue.debounce)**
+
+Ingress-layer message coalescing before queue entry.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `windowMs` | `number` | `0` | Debounce window in ms (0 = disabled) |
+| `maxBufferedMessages` | `number` | `10` | Max messages to buffer per session |
+| `firstMessageImmediate` | `boolean` | `true` | First message triggers immediately |
+
+**Follow-up (queue.followup)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxFollowupRuns` | `number` | `3` | Max follow-up runs in a single chain |
+| `followupOnCompaction` | `boolean` | `true` | Trigger follow-up on compaction flush |
+
+**Priority Lanes (queue.priorityLanes)**
+
+Array of lane definitions. Default: `[{name: "high", concurrency: 3, priority: 2}, {name: "normal", concurrency: 5, priority: 1}, {name: "low", concurrency: 2, priority: 0}]`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | `string` | _(required)_ | Lane name (e.g., `"high"`, `"normal"`, `"low"`) |
+| `concurrency` | `number` | `3` | Concurrency limit for this lane |
+| `priority` | `number` | `0` | Scheduling priority (higher = higher priority) |
+| `agingPromotionMs` | `number` | `30000` | Age threshold in ms for promotion events (0 = disabled) |
+
+**Lane Assignment (queue.laneAssignment)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `defaultLane` | `string` | `"normal"` | Default lane for unmatched messages |
+| `dmLane` | `string` | `"high"` | Lane for DM messages |
+| `mentionLane` | `string` | `"normal"` | Lane for group mentions |
+| `followupLane` | `string` | `"normal"` | Lane for follow-up messages |
+| `scheduledLane` | `string` | `"low"` | Lane for scheduled/background tasks |
+
+<Info>See [Queue](/agents/queue) for queue behavior and session serialization details.</Info>
+
+</Accordion>
+
+</AccordionGroup>
+
+## Security
+
+<AccordionGroup>
+
+<Accordion title="security">
+
+Security configuration for log redaction, audit logging, permissions, action confirmation, agent-to-agent messaging, and encrypted secrets.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `logRedaction` | `boolean` | `true` | Enable structured log redaction of sensitive fields |
+| `auditLog` | `boolean` | `true` | Enable audit event logging |
+
+**Permission (security.permission)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enableNodePermissions` | `boolean` | `false` | Enable Node.js `--permission` flag enforcement |
+| `allowedFsPaths` | `string[]` | `[]` | Allowed filesystem read/write paths |
+| `allowedNetHosts` | `string[]` | `[]` | Allowed network hosts for outbound connections |
+
+**Action Confirmation (security.actionConfirmation)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `requireForDestructive` | `boolean` | `true` | Require confirmation for destructive actions |
+| `requireForSensitive` | `boolean` | `false` | Require confirmation for sensitive actions |
+| `autoApprove` | `string[]` | `[]` | Actions that bypass confirmation |
+
+**Agent-to-Agent (security.agentToAgent)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable cross-agent session messaging |
+| `maxPingPongTurns` | `number` | `3` | Max reply-back loop turns (0-5) |
+| `allowAgents` | `string[]` | `[]` | Allowed agent IDs for sub-agents (empty = all) |
+| `subAgentRetentionMs` | `number` | `3600000` | Retention for completed sub-agent sessions (1 hour) |
+| `waitTimeoutMs` | `number` | `60000` | Default timeout for wait mode (60 seconds) |
+| `subAgentMaxSteps` | `number` | `50` | Default max steps for sub-agent execution |
+| `subAgentToolGroups` | `enum[]` | `["coding"]` | Default tool profile groups: `minimal`, `coding`, `messaging`, `supervisor`, `full` |
+| `subAgentMcpTools` | `enum` | `"inherit"` | MCP tool inheritance: `inherit` or `none` |
+
+**Subagent Context (security.agentToAgent.subagentContext)**
+
+Controls how sub-agent sessions receive context, condense results, and manage their lifecycle. All fields have sensible defaults -- you only need to configure values you want to change. See [Subagent Context Lifecycle](/agents/subagent-lifecycle) for a full explanation.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxSpawnDepth` | `number` | `3` | Maximum spawn chain depth (1-10). A depth of 3 means parent -> child -> grandchild. |
+| `maxChildrenPerAgent` | `number` | `5` | Maximum concurrent active children per parent agent (1-20). Graph pipeline nodes bypass this limit. |
+| `maxResultTokens` | `number` | `4000` | Token threshold for condensation (100-100,000). Results under this pass through unchanged. |
+| `resultRetentionMs` | `number` | `86400000` | How long full result files are kept on disk before auto-sweep (default 24 hours). |
+| `condensationStrategy` | `enum` | `"auto"` | When to condense: `auto` (based on token count), `always` (force condensation), `never` (always passthrough). |
+| `includeParentHistory` | `enum` | `"none"` | Parent context mode: `none` (no parent context), `summary` (condensed parent conversation summary). |
+| `objectiveReinforcement` | `boolean` | `true` | Inject the sub-agent's objective after compaction so it survives context trimming. |
+| `artifactPassthrough` | `boolean` | `true` | Pass artifact file references from the spawn call to the sub-agent's context. |
+| `autoCompactThreshold` | `number` | `0.95` | Context fill ratio (0.5-1.0) for triggering auto-compaction. This field is present in the schema but its runtime effect on the context engine compaction trigger is being refined in a future release. |
+| `maxRunTimeoutMs` | `number` | `600000` | Maximum wall-clock time for a sub-agent run before watchdog force-fail (10 minutes). Hard ceiling regardless of step count. |
+| `perStepTimeoutMs` | `number` | `60000` | Per-step time budget for dynamic watchdog calculation (1 minute). Dynamic timeout = min(max_steps x perStepTimeoutMs, maxRunTimeoutMs). |
+| `errorPreservation` | `boolean` | `true` | Preserve error details in condensed results instead of summarizing them away. |
+| `narrativeCasting` | `boolean` | `true` | Format sub-agent results with tagged prefixes and metadata for the parent agent. |
+| `resultTagPrefix` | `string` | `"Subagent Result"` | Tag prefix used in narrative casting (1-100 characters). Appears as `[{prefix}: {label}]`. |
+| `parentSummaryMaxTokens` | `number` | `1000` | Token limit for the parent context summary when `includeParentHistory` is `"summary"` (100-10,000). |
+
+**Secrets (security.secrets)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable encrypted secrets store |
+| `dbPath` | `string` | `"secrets.db"` | Path to secrets database relative to dataDir |
+
+<Info>See [Security](/security/index) for a comprehensive overview of the security model.</Info>
+
+</Accordion>
+
+<Accordion title="approvals">
+
+Action approval workflow. Rules are evaluated in order (first match wins).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable the approval workflow |
+| `defaultMode` | `enum` | `"auto"` | Default mode for unmatched actions: `auto`, `require`, `deny` |
+| `rules` | `ApprovalRule[]` | `[]` | Ordered approval rules |
+| `defaultTimeoutMs` | `number` | `300000` | Approval request timeout in ms (5 min) |
+| `denialCacheTtlMs` | `number` | `60000` | How long denied actions are cached before re-prompting (ms). Set to 0 to disable denial caching. |
+| `batchApprovalTtlMs` | `number` | `30000` | How long approved actions are cached for automatic re-approval in batch operations (ms). Set to 0 to disable batch approval caching. |
+
+<Info>Batch approval caching (`batchApprovalTtlMs`) allows sequential identical tool calls to auto-approve within the TTL window, reducing approval fatigue during batch operations. The cache persists across daemon restarts.</Info>
+
+**Approval Rule (approvals.rules[])**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `actionPattern` | `string` | _(required)_ | Pattern matching action types |
+| `mode` | `enum` | `"auto"` | Approval mode: `auto`, `require`, `deny` |
+| `timeoutMs` | `number` | `300000` | Timeout for human approval (0 = no timeout) |
+| `minTrustLevel` | `enum` | `"verified"` | Trust level for auto-approve: `untrusted`, `basic`, `verified`, `admin` |
+
+<Info>See [Approvals](/security/approvals) for approval workflow configuration patterns.</Info>
+
+</Accordion>
+
+</AccordionGroup>
+
+## Daemon & Scheduler
+
+<AccordionGroup>
+
+<Accordion title="daemon">
+
+Daemon process configuration for watchdog, shutdown, metrics, logging, and config change webhooks.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `watchdogIntervalMs` | `number` | `30000` | Watchdog interval in ms (0 to disable) |
+| `shutdownTimeoutMs` | `number` | `30000` | Graceful shutdown timeout in ms |
+| `metricsIntervalMs` | `number` | `30000` | Process metrics collection interval in ms |
+| `eventLoopDelayThresholdMs` | `number` | `500` | Event loop delay threshold -- skip watchdog if exceeded |
+| `logLevels` | `Record<string, LogLevel>` | `{}` | Per-module log level overrides |
+
+**Logging (daemon.logging)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `filePath` | `string` | `"~/.comis/logs/daemon.log"` | Path to the active log file |
+| `maxSize` | `string` | `"10m"` | Max file size before rotation (k/m/g suffixes) |
+| `maxFiles` | `number` | `5` | Number of rotated files to keep (0-100) |
+| `compress` | `boolean` | `false` | Compress rotated files |
+
+**Tracing Defaults (daemon.logging.tracing)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `outputDir` | `string` | `"~/.comis/traces"` | Default output directory for JSONL traces |
+| `maxSize` | `string` | `"5m"` | Max trace file size before rotation (k/m/g suffixes) |
+| `maxFiles` | `number` | `3` | Rotated trace files to keep per session (0-100) |
+
+**Config Webhook (daemon.configWebhook)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `url` | `string (URL)` | _(unset)_ | Webhook URL for config change notifications |
+| `timeoutMs` | `number` | `5000` | Delivery timeout in ms |
+| `secret` | `string \| SecretRef` | _(unset)_ | Shared secret for HMAC-SHA256 signature |
+
+<Info>See [Daemon](/operations/daemon) for daemon management and [Logging](/operations/logging) for log configuration details.</Info>
+
+</Accordion>
+
+<Accordion title="scheduler">
+
+Proactive automation configuration for cron scheduling, heartbeat monitoring, quiet hours, execution safety, and task extraction.
+
+**Cron (scheduler.cron)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable cron job scheduling |
+| `storeDir` | `string` | `"./data/scheduler"` | Directory for cron job state persistence |
+| `maxConcurrentRuns` | `number` | `3` | Max concurrent cron job runs |
+| `defaultTimezone` | `string` | `""` | Default timezone (empty = UTC) |
+| `maxJobs` | `number` | `100` | Max cron jobs (0 = unlimited) |
+
+**Heartbeat (scheduler.heartbeat)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable periodic heartbeat checks |
+| `intervalMs` | `number` | `300000` | Heartbeat interval in ms (5 min) |
+| `showOk` | `boolean` | `false` | Show OK status in heartbeat output |
+| `showAlerts` | `boolean` | `true` | Show alerts in heartbeat output |
+| `alertThreshold` | `number` | `2` | Consecutive failures before alerting |
+| `alertCooldownMs` | `number` | `300000` | Minimum ms between alerts for same source (5 min) |
+| `staleMs` | `number` | `120000` | Max ms before stuck detection (2 min) |
+
+**Quiet Hours (scheduler.quietHours)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable quiet hours |
+| `start` | `string` | `"22:00"` | Start time (HH:MM format) |
+| `end` | `string` | `"07:00"` | End time (HH:MM format) |
+| `timezone` | `string` | `""` | Timezone (empty = system local) |
+| `criticalBypass` | `boolean` | `true` | Allow critical items to bypass quiet hours |
+
+**Execution (scheduler.execution)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `lockDir` | `string` | `"./data/scheduler/locks"` | Directory for execution lock files |
+| `staleMs` | `number` | `600000` | Lock stale timeout in ms (10 min) |
+| `updateMs` | `number` | `30000` | Lock update interval in ms |
+| `logDir` | `string` | `"./data/scheduler/logs"` | Directory for execution log files |
+| `maxLogBytes` | `number` | `2000000` | Max log file size in bytes |
+| `keepLines` | `number` | `2000` | Max lines in ring-buffer log |
+
+**Tasks (scheduler.tasks)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable task extraction from conversations |
+| `confidenceThreshold` | `number` | `0.8` | Minimum confidence threshold (0-1) |
+| `storeDir` | `string` | `"./data/scheduler/tasks"` | Directory for task state persistence |
+
+<Info>See [Scheduler](/operations/scheduler) for scheduling configuration and [Monitoring](/operations/monitoring) for heartbeat setup.</Info>
+
+</Accordion>
+
+<Accordion title="monitoring">
+
+System health monitoring with sub-monitors for disk, resources, systemd, security updates, and git repos.
+
+**Disk (monitoring.disk)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable disk space monitoring |
+| `paths` | `string[]` | `["/"]` | Filesystem paths to monitor |
+| `thresholdPercent` | `number` | `90` | Alert threshold percentage (0-100) |
+
+**Resources (monitoring.resources)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable CPU/memory monitoring |
+| `cpuThresholdPercent` | `number` | `85` | CPU alert threshold (0-100) |
+| `memoryThresholdPercent` | `number` | `90` | Memory alert threshold (0-100) |
+
+**Systemd (monitoring.systemd)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable systemd service monitoring |
+| `services` | `string[]` | `[]` | Specific services to monitor (empty = all failed) |
+
+**Security Updates (monitoring.securityUpdates)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable security update monitoring |
+| `securityOnly` | `boolean` | `true` | Only check security updates (not all) |
+
+**Git (monitoring.git)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable git repository monitoring |
+| `repositories` | `string[]` | `[]` | Absolute paths to git repositories |
+| `checkRemote` | `boolean` | `true` | Check remote for unpushed commits |
+
+<Info>See [Monitoring](/operations/monitoring) for monitoring setup and alert configuration.</Info>
+
+</Accordion>
+
+</AccordionGroup>
+
+## Integrations
+
+<AccordionGroup>
+
+<Accordion title="integrations">
+
+External service integrations for search, MCP servers, media processing, and auto-reply rules.
+
+**Brave Search (integrations.braveSearch)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `apiKey` | `string \| SecretRef` | _(unset)_ | Brave Search API key (disabled without it) |
+| `maxResultsDefault` | `number` | `5` | Default number of results |
+| `cacheTtlMs` | `number` | `3600000` | Cache TTL in ms (1 hour) |
+| `rateLimitRps` | `number` | `1` | Rate limit in requests per second |
+
+**MCP (integrations.mcp)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `callToolTimeoutMs` | `number` | `120000` | Default timeout for MCP tool calls in ms |
+| `servers` | `McpServerEntry[]` | `[]` | List of MCP servers |
+
+**MCP Server Entry (integrations.mcp.servers[])**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | `string` | _(required)_ | Unique server name |
+| `transport` | `enum` | _(required)_ | Transport: `stdio` or `sse` |
+| `command` | `string` | _(unset)_ | Command for stdio transport |
+| `args` | `string[]` | _(unset)_ | Arguments for stdio command |
+| `url` | `string (URL)` | _(unset)_ | URL for SSE transport |
+| `env` | `Record<string, string>` | _(unset)_ | Environment variables for stdio process |
+| `enabled` | `boolean` | `true` | Whether this server is enabled |
+
+**Media (integrations.media)** -- contains nested sub-schemas for all media processing:
+
+**Transcription (integrations.media.transcription)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `provider` | `enum` | `"openai"` | STT provider: `openai`, `groq`, `deepgram` |
+| `model` | `string` | _(unset)_ | Provider-specific model ID |
+| `maxFileSizeMb` | `number` | `25` | Max file size in MB |
+| `timeoutMs` | `number` | `60000` | API request timeout in ms |
+| `language` | `string` | _(unset)_ | BCP-47 language hint (auto-detect if omitted) |
+| `autoTranscribe` | `boolean` | `true` | Auto-transcribe voice messages in pipeline |
+| `preflight` | `boolean` | `true` | Enable preflight STT for mention detection |
+| `fallbackProviders` | `enum[]` | `[]` | Ordered fallback providers |
+
+**TTS (integrations.media.tts)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `provider` | `enum` | `"openai"` | TTS provider: `openai`, `elevenlabs`, `edge` |
+| `voice` | `string` | `"alloy"` | Voice identifier |
+| `format` | `string` | `"opus"` | Output audio format |
+| `model` | `string` | _(unset)_ | Provider-specific model ID |
+| `autoMode` | `enum` | `"off"` | Auto mode: `off`, `always`, `inbound`, `tagged` |
+| `maxTextLength` | `number` | `4096` | Max text length for synthesis |
+| `tagPattern` | `string` | `"\\[\\[tts(?::.*?)?\\]\\]"` | Regex pattern for TTS-tagged responses |
+
+**TTS Output Formats (integrations.media.tts.outputFormats)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `telegram` | `string` | `"opus"` | Telegram format |
+| `discord` | `string` | `"mp3"` | Discord format |
+| `whatsapp` | `string` | `"mp3"` | WhatsApp format |
+| `slack` | `string` | `"mp3"` | Slack format |
+| `default` | `string` | `"mp3"` | Default format |
+
+**ElevenLabs Settings (integrations.media.tts.elevenlabsSettings)** -- optional
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `stability` | `number` | _(unset)_ | Voice stability (0-1) |
+| `similarityBoost` | `number` | _(unset)_ | Similarity boost (0-1) |
+| `style` | `number` | _(unset)_ | Style exaggeration (0-1) |
+| `useSpeakerBoost` | `boolean` | _(unset)_ | Enable speaker boost |
+| `speed` | `number` | _(unset)_ | Playback speed multiplier |
+| `seed` | `number` | _(unset)_ | Random seed for reproducible output |
+| `applyTextNormalization` | `enum` | `"auto"` | Text normalization: `auto`, `on`, `off` |
+
+**Image Analysis (integrations.media.imageAnalysis)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxFileSizeMb` | `number` | `20` | Max image file size in MB |
+
+**Vision (integrations.media.vision)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable vision analysis |
+| `providers` | `enum[]` | `["openai", "anthropic", "google"]` | Ordered vision providers |
+| `defaultProvider` | `string` | _(unset)_ | Preferred default provider |
+| `videoMaxBase64Bytes` | `number` | `70000000` | Max base64 video size (70MB) |
+| `videoMaxRawBytes` | `number` | `50000000` | Max raw video file size (50MB) |
+| `videoTimeoutMs` | `number` | `120000` | Video description timeout in ms |
+| `videoMaxDescriptionChars` | `number` | `500` | Max chars for video description |
+| `imageMaxFileSizeMb` | `number` | `20` | Max image file size in MB |
+| `scopeRules` | `VisionScopeRule[]` | `[]` | Scope rules (first match wins) |
+| `defaultScopeAction` | `enum` | `"allow"` | Default when no rule matches: `allow` or `deny` |
+
+**Vision Scope Rule (integrations.media.vision.scopeRules[])**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `channel` | `string` | _(unset)_ | Channel type to match |
+| `chatType` | `string` | _(unset)_ | Chat type to match |
+| `keyPrefix` | `string` | _(unset)_ | Session key prefix to match |
+| `action` | `enum` | _(required)_ | Action: `allow` or `deny` |
+
+**Link Understanding (integrations.media.linkUnderstanding)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable automatic link understanding |
+| `maxLinks` | `number` | `3` | Max links to process per message |
+| `fetchTimeoutMs` | `number` | `10000` | Timeout for each URL fetch in ms |
+| `maxContentChars` | `number` | `5000` | Max extracted content per link |
+| `userAgentString` | `string` | `"Comis/1.0 (Link Understanding)"` | User-Agent for outbound requests |
+
+**Media Infrastructure (integrations.media.infrastructure)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxRemoteFetchBytes` | `number` | `26214400` | Max remote media fetch size (25MB) |
+| `concurrencyLimit` | `number` | `3` | Max concurrent media operations |
+| `tempFileTtlMs` | `number` | `1800000` | Temp file TTL in ms (30 min) |
+| `tempCleanupIntervalMs` | `number` | `300000` | Cleanup interval in ms (5 min) |
+
+**Document Extraction (integrations.media.documentExtraction)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable document extraction |
+| `allowedMimes` | `string[]` | _(13 MIME types)_ | Allowed MIME types for extraction |
+| `maxBytes` | `number` | `10485760` | Max file size (10MB) |
+| `maxChars` | `number` | `200000` | Max extracted text chars |
+| `maxTotalChars` | `number` | `500000` | Max total chars across all attachments |
+| `maxPages` | `number` | `20` | Max pages from paginated documents |
+| `timeoutMs` | `number` | `30000` | Extraction timeout in ms |
+| `pdfImageFallback` | `boolean` | `false` | Use OCR for PDFs with little text |
+| `pdfImageFallbackThreshold` | `number` | `50` | Min chars per page to trigger fallback (0 = always) |
+
+**Media Persistence (integrations.media.persistence)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable automatic media file persistence |
+| `maxStorageMb` | `number` | `1024` | Soft limit for workspace media storage (1GB) |
+| `maxFileBytes` | `number` | `52428800` | Max individual file size (50MB) |
+
+**Auto-Reply (integrations.autoReply)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable pattern-based auto-reply rules |
+| `rules` | `AutoReplyRule[]` | `[]` | List of auto-reply rules |
+
+**Auto-Reply Rule (integrations.autoReply.rules[])**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `id` | `string` | _(required)_ | Unique rule identifier |
+| `pattern` | `string` | _(required)_ | Regex pattern to match messages |
+| `template` | `string` | _(required)_ | Response template (supports `{{match}}`) |
+| `channels` | `string[]` | _(unset)_ | Channel filter (omit for all channels) |
+| `priority` | `number` | `0` | Rule ordering priority (higher = first) |
+
+<Info>See [MCP](/skills/mcp) for MCP server configuration and [Voice](/media/voice) for STT/TTS setup.</Info>
+
+</Accordion>
+
+<Accordion title="browser">
+
+Browser automation via Chrome DevTools Protocol (CDP).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable browser automation |
+| `chromePath` | `string` | _(unset)_ | Path to Chrome/Chromium binary (auto-detected) |
+| `cdpPort` | `number` | `9222` | CDP debug port (1-65535) |
+| `defaultProfile` | `string` | `"default"` | Named browser profile directory |
+| `headless` | `boolean` | `true` | Run in headless mode |
+| `noSandbox` | `boolean` | `false` | Disable Chrome sandbox (security-sensitive) |
+| `screenshotMaxSide` | `number` | `2000` | Max screenshot dimension in pixels |
+| `screenshotQuality` | `number` | `80` | JPEG quality (1-100) |
+| `snapshotMaxChars` | `number` | `120000` | Max chars for DOM snapshot |
+| `timeoutMs` | `number` | `30000` | Page load timeout in ms |
+| `baseCdpPort` | `number` | `18800` | Base CDP port for profile allocation |
+| `maxProfiles` | `number` | `10` | Max concurrent named profiles (1-50) |
+| `profilesDir` | `string` | _(unset)_ | Override directory for profile data |
+| `downloadsDir` | `string` | _(unset)_ | Directory for tracked downloads |
+| `downloadTimeoutMs` | `number` | `120000` | Max download wait time in ms |
+
+**Viewport (browser.viewport)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `width` | `number` | `1280` | Viewport width in pixels |
+| `height` | `number` | `720` | Viewport height in pixels |
+
+<Info>See [Browser](/agent-tools/browser) for browser tool usage and configuration.</Info>
+
+</Accordion>
+
+<Accordion title="plugins">
+
+Plugin system configuration.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Global plugin system toggle |
+| `plugins` | `Record<string, PluginEntry>` | `{}` | Per-plugin configuration keyed by plugin ID |
+
+**Plugin Entry (plugins.plugins.{id})**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Whether this plugin is active |
+| `priority` | `number` | `0` | Hook execution priority (-100 to 100, higher runs first) |
+| `config` | `Record<string, unknown>` | `{}` | Plugin-specific configuration (opaque) |
+
+<Info>See [Plugins](/developer-guide/plugins) for the plugin system and hook reference.</Info>
+
+</Accordion>
+
+</AccordionGroup>
+
+## Streaming & Messaging
+
+<AccordionGroup>
+
+<Accordion title="streaming">
+
+Block-based response delivery across all channels.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Global enable/disable for block streaming |
+| `defaultChunkMode` | `enum` | `"paragraph"` | Default chunk mode: `paragraph`, `newline`, `sentence`, `length` |
+| `defaultTypingMode` | `enum` | `"thinking"` | Default typing mode: `never`, `instant`, `thinking`, `message` |
+| `defaultTypingRefreshMs` | `number` | `6000` | Typing indicator refresh interval in ms |
+| `defaultTableMode` | `enum` | `"code"` | Table conversion mode: `code`, `bullets`, `off` |
+| `defaultUseMarkdownIR` | `boolean` | `true` | Enable Markdown IR pipeline for format-aware chunking |
+
+**Per-Channel Override (streaming.perChannel.{channelType})**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable streaming for this channel |
+| `chunkMode` | `enum` | `"paragraph"` | Chunk mode |
+| `chunkMaxChars` | `number` | _(unset)_ | Max chars per block (falls back to platform limit) |
+| `chunkMinChars` | `number` | `100` | Min chars before allowing split |
+| `typingMode` | `enum` | `"thinking"` | Typing indicator mode |
+| `typingRefreshMs` | `number` | `6000` | Typing refresh interval in ms. Per-platform defaults are applied automatically (Telegram 4s, Discord 8s, etc.) -- this field overrides the automatic default |
+| `typingCircuitBreakerThreshold` | `number` | `3` | Consecutive typing failures before circuit breaker permanently stops indicator |
+| `typingTtlMs` | `number` | `60000` | Maximum typing indicator duration in ms before auto-stop (refreshes on content signals) |
+| `useMarkdownIR` | `boolean` | `true` | Use Markdown IR pipeline |
+| `tableMode` | `enum` | `"code"` | Table conversion mode |
+
+Each per-channel entry also includes nested `deliveryTiming` and `coalescer` overrides with the same schema as the top-level versions.
+
+<Info>See [Delivery](/channels/delivery) for block streaming behavior and platform-specific delivery.</Info>
+
+</Accordion>
+
+<Accordion title="autoReplyEngine">
+
+Controls whether the agent pipeline activates for inbound messages. Separate from the pattern-based auto-reply rules in `integrations.autoReply`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable the auto-reply engine |
+| `groupActivation` | `enum` | `"mention-gated"` | Group chat mode: `always`, `mention-gated`, `custom` |
+| `customPatterns` | `string[]` | `[]` | Custom regex patterns for `custom` mode |
+| `historyInjection` | `boolean` | `true` | Inject non-trigger group messages as context |
+| `maxHistoryInjections` | `number` | `50` | Max history-injected messages per session |
+| `maxGroupHistoryMessages` | `number` | `20` | Max group history messages stored per session |
+
+</Accordion>
+
+<Accordion title="sendPolicy">
+
+Outbound message gating rules. Rules evaluated in order; first match wins.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable send policy enforcement |
+| `defaultAction` | `enum` | `"allow"` | Default action: `allow` or `deny` |
+| `rules` | `SendPolicyRule[]` | `[]` | Ordered list of rules |
+
+**Send Policy Rule (sendPolicy.rules[])**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `channelId` | `string` | _(unset)_ | Channel ID to match |
+| `chatType` | `string` | _(unset)_ | Chat type: `dm`, `group`, `thread`, `channel`, `forum` |
+| `channelType` | `string` | _(unset)_ | Channel type: `telegram`, `discord`, `slack`, `whatsapp` |
+| `action` | `enum` | `"allow"` | Action: `allow` or `deny` |
+| `description` | `string` | _(unset)_ | Human-readable description |
+
+</Accordion>
+
+<Accordion title="envelope">
+
+Message envelope enrichment for inbound messages before they reach the LLM.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `timezoneMode` | `string` | `"utc"` | Timezone: `utc`, `local`, or IANA timezone string |
+| `timeFormat` | `enum` | `"12h"` | Time display: `12h` or `24h` |
+| `showElapsed` | `boolean` | `true` | Show elapsed time since previous message |
+| `showProvider` | `boolean` | `true` | Show platform prefix (e.g., `[telegram]`) |
+| `elapsedMaxMs` | `number` | `86400000` | Max elapsed time to display (24 hours) |
+
+</Accordion>
+
+<Accordion title="messages">
+
+Messaging UX configuration for outbound message formatting.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `maxOutboundLength` | `number` | `0` | Max outbound message length (0 = no limit) |
+| `splitLongMessages` | `boolean` | `true` | Split long messages into parts |
+| `splitMaxChars` | `number` | `4000` | Character limit per split part |
+| `splitSeparator` | `string` | `"\n\n"` | Separator between split parts |
+| `showTypingIndicator` | `boolean` | `true` | Show typing indicator during processing |
+| `systemMessagePrefix` | `string` | `"[System] "` | Prefix for system messages |
+| `readReceipts` | `boolean` | `false` | Enable read receipts |
+
+</Accordion>
+
+<Accordion title="models">
+
+Model catalog and alias configuration for model discovery and friendly names.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `scanOnStartup` | `boolean` | `false` | Enable automatic model scanning |
+| `scanTimeoutMs` | `number` | `30000` | Scan timeout in ms |
+| `aliases` | `ModelAlias[]` | `[]` | Friendly model aliases |
+| `defaultModel` | `string` | `""` | Default model ID (falls back to `claude-sonnet-4-5-20250929`) |
+| `defaultProvider` | `string` | `""` | Default provider (falls back to `anthropic`) |
+
+**Model Alias (models.aliases[])**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `alias` | `string` | _(required)_ | Short alias name |
+| `provider` | `string` | _(required)_ | Provider identifier |
+| `modelId` | `string` | _(required)_ | Full model identifier at the provider |
+
+```yaml
+models:
+  defaultModel: claude-sonnet-4-5-20250929
+  defaultProvider: anthropic
+  aliases:
+    - alias: gpt4
+      provider: openai
+      modelId: gpt-4o
+```
+
+</Accordion>
+
+<Accordion title="providers">
+
+LLM provider configuration. API keys are referenced by SecretManager key name, never stored in plaintext.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `entries` | `Record<string, ProviderEntry>` | `{}` | Named provider configurations |
+
+**Provider Entry (providers.entries.{name})**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `type` | `string` | _(required)_ | Provider type (e.g., `"anthropic"`, `"openai"`, `"ollama"`) |
+| `name` | `string` | `""` | Display name |
+| `baseUrl` | `string` | `""` | API base URL override |
+| `apiKeyName` | `string` | `""` | SecretManager key name for API key |
+| `enabled` | `boolean` | `true` | Whether this provider is enabled |
+| `timeoutMs` | `number` | `120000` | Request timeout in ms |
+| `maxRetries` | `number` | `2` | Max retries for transient errors |
+| `headers` | `Record<string, string>` | `{}` | Custom headers for API requests |
+| `capabilities` | `ProviderCapabilities` | _(auto-detected)_ | Provider-level behavioral overrides. Usually auto-detected from provider type; manual config overrides auto-detection. See sub-schema below. |
+| `models` | `UserModel[]` | `[]` | User-defined model entries for this provider. Allows registering custom/fine-tuned models with capability metadata. See sub-schema below. |
+
+**ProviderCapabilities (providers.entries.{name}.capabilities)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `providerFamily` | `enum` | `"default"` | Provider family for response handling: `default`, `openai`, `anthropic`, `google` |
+| `dropThinkingBlockModelHints` | `string[]` | `[]` | Model ID substrings that trigger thinking block suppression |
+| `transcriptToolCallIdMode` | `enum` | `"default"` | Tool call ID format: `default` (pass-through) or `strict9` (truncate to 9 chars for providers with ID length limits) |
+| `transcriptToolCallIdModelHints` | `string[]` | `[]` | Model ID substrings that trigger strict9 tool call ID mode |
+
+**UserModel (providers.entries.{name}.models[])**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `id` | `string` | _(required)_ | Model identifier (e.g., `"my-finetuned-model"`) |
+| `name` | `string` | _(unset)_ | Display name for the model |
+| `reasoning` | `boolean` | `false` | Whether this model supports extended thinking |
+| `contextWindow` | `number` | _(unset)_ | Context window size in tokens |
+| `maxTokens` | `number` | _(unset)_ | Maximum output tokens |
+| `input` | `string[]` | `["text"]` | Supported input modalities: `"text"`, `"image"` |
+| `cost` | `ModelCost` | _(unset)_ | Token cost rates for budget tracking. See sub-schema below. |
+| `comisCompat` | `ModelCompatConfig` | _(unset)_ | Comis-specific compatibility flags. See sub-schema below. |
+| `sdkCompat` | `Record<string, unknown>` | _(unset)_ | Pass-through SDK compatibility overrides (provider-specific) |
+
+**ModelCompatConfig (providers.entries.{name}.models[].comisCompat)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `supportsTools` | `boolean` | _(unset)_ | Whether this model supports tool/function calling |
+| `toolSchemaProfile` | `enum` | _(unset)_ | Tool schema normalization profile: `"default"` or `"xai"` (strips constraint keywords) |
+| `toolCallArgumentsEncoding` | `enum` | _(unset)_ | How tool call arguments are encoded: `"json"` or `"html-entities"` (auto-decoded) |
+| `nativeWebSearchTool` | `boolean` | _(unset)_ | Whether this model uses native web search (filters out Comis web-fetch tool) |
+
+**ModelCost (providers.entries.{name}.models[].cost)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `input` | `number` | _(unset)_ | Cost per input token (for budget tracking) |
+| `output` | `number` | _(unset)_ | Cost per output token |
+| `cacheRead` | `number` | _(unset)_ | Cost per cache-read token (Anthropic prompt caching) |
+| `cacheWrite` | `number` | _(unset)_ | Cost per cache-write token |
+
+```yaml
+providers:
+  entries:
+    ollama:
+      type: ollama
+      name: "Local Ollama"
+      baseUrl: "http://localhost:11434"
+      enabled: true
+    xai:
+      type: xai
+      apiKeyName: XAI_API_KEY
+      capabilities:
+        transcriptToolCallIdMode: strict9
+      models:
+        - id: grok-3
+          reasoning: true
+          comisCompat:
+            toolSchemaProfile: xai
+            toolCallArgumentsEncoding: html-entities
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## UX Features
+
+<AccordionGroup>
+
+<Accordion title="lifecycleReactions">
+
+Processing phase emoji reactions. When enabled, the agent reacts to messages with emoji reflecting current phase (thinking, tool use, generating, done, error).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable lifecycle reactions globally |
+| `emojiTier` | `enum` | `"unicode"` | Emoji set: `unicode`, `platform`, `custom` |
+
+**Timing (lifecycleReactions.timing)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `debounceMs` | `number` | `700` | Debounce before committing a phase transition |
+| `holdDoneMs` | `number` | `3000` | How long to hold done emoji |
+| `holdErrorMs` | `number` | `5000` | How long to hold error emoji |
+| `stallSoftMs` | `number` | `15000` | Soft stall warning threshold in ms |
+| `stallHardMs` | `number` | `30000` | Hard stall warning threshold in ms |
+
+**Per-Channel (lifecycleReactions.perChannel.{channelType})**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | _(unset)_ | Override enabled state |
+| `emojiTier` | `enum` | _(unset)_ | Override emoji tier |
+
+</Accordion>
+
+<Accordion title="responsePrefix">
+
+Response prefix/suffix template injected into agent replies.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `template` | `string` | `""` | Template string (empty = disabled). Supports variables like `{agent.emoji}`, `{model\|short}`. |
+| `position` | `enum` | `"prepend"` | Insert position: `prepend` or `append` |
+
+</Accordion>
+
+<Accordion title="deliveryTiming">
+
+Inter-block delivery pacing to simulate natural typing rhythm.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `mode` | `enum` | `"natural"` | Mode: `off`, `natural`, `custom`, `adaptive` |
+| `minMs` | `number` | `800` | Minimum delay in ms between blocks |
+| `maxMs` | `number` | `2500` | Maximum delay in ms between blocks |
+| `jitterMs` | `number` | `200` | Random jitter in ms |
+| `firstBlockDelayMs` | `number` | `0` | Extra delay before first block |
+
+</Accordion>
+
+<Accordion title="coalescer">
+
+Block coalescer that accumulates small streaming blocks before delivery.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `minChars` | `number` | `0` | Blocks below this are always coalesced |
+| `maxChars` | `number` | `500` | Flush threshold |
+| `idleMs` | `number` | `1500` | Idle timeout in ms before flushing |
+| `codeBlockPolicy` | `enum` | `"standalone"` | Code block handling: `standalone` or `coalesce` |
+| `adaptiveIdle` | `boolean` | `false` | Adapt timeout to accumulated block length |
+
+</Accordion>
+
+<Accordion title="senderTrustDisplay">
+
+Controls how sender identity is surfaced to the LLM in the message envelope.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Include sender identity in envelope |
+| `displayMode` | `enum` | `"hash"` | Mode: `raw` (platform ID), `hash` (HMAC prefix), `alias` (operator name) |
+| `hashPrefix` | `number` | `8` | Hex characters from HMAC digest (4-16) |
+| `hashSecretRef` | `string` | `""` | SecretManager key for HMAC secret |
+| `aliases` | `Record<string, string>` | `{}` | Sender ID to alias mapping |
+
+</Accordion>
+
+<Accordion title="documentation">
+
+Documentation links injected into the system prompt so the agent can reference them.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable documentation link injection |
+| `localDocsPath` | `string` | `""` | Filesystem path to local docs |
+| `publicDocsUrl` | `string` | `""` | Public documentation URL |
+| `sourceUrl` | `string` | `""` | Source code repository URL |
+| `communityUrl` | `string` | `""` | Community or support URL |
+| `skillsMarketplaceUrl` | `string` | `""` | Skills marketplace URL |
+| `mcpRegistryUrl` | `string` | `""` | MCP server registry URL |
+| `customLinks` | `DocumentationLink[]` | `[]` | Additional custom links (label + url) |
+
+</Accordion>
+
+<Accordion title="telegramFileRefGuard">
+
+Detects hallucinated file paths in responses destined for Telegram (where file:// links are meaningless).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable file reference guard |
+| `additionalExtensions` | `string[]` | `[]` | Extra file extensions to detect |
+| `excludedExtensions` | `string[]` | `[]` | Extensions to exclude from detection |
+
+</Accordion>
+
+<Accordion title="deliveryQueue">
+
+Crash-safe outbound delivery queue. Messages are persisted to SQLite before delivery attempts, surviving daemon restarts.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable the delivery queue. When false, messages bypass persistence. |
+| `maxQueueDepth` | `number` | `10000` | Maximum entries allowed in the queue. Enqueue rejects when full. |
+| `defaultMaxAttempts` | `number` | `5` | Maximum delivery attempts before marking as failed. |
+| `defaultExpireMs` | `number` | `3600000` | Time-to-live in ms before an entry expires (1 hour). |
+| `drainOnStartup` | `boolean` | `true` | Drain pending entries on daemon startup (crash recovery). |
+| `drainBudgetMs` | `number` | `60000` | Maximum time in ms for startup drain before continuing. |
+| `pruneIntervalMs` | `number` | `300000` | Interval in ms between prune sweeps for expired entries. |
+
+```yaml
+deliveryQueue:
+  enabled: true
+  maxQueueDepth: 10000
+  defaultMaxAttempts: 5
+  defaultExpireMs: 3600000
+  drainOnStartup: true
+  drainBudgetMs: 60000
+  pruneIntervalMs: 300000
+```
+
+</Accordion>
+
+<Accordion title="deliveryMirror">
+
+Session delivery mirroring for deduplication. Records delivered messages so they can be injected into agent context, preventing repeated deliveries.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Enable the delivery mirror. When false, no entries are recorded. |
+| `retentionMs` | `number` | `86400000` | Maximum age in ms before mirror entries are pruned (24 hours). |
+| `pruneIntervalMs` | `number` | `300000` | Interval in ms between prune sweeps (5 minutes). |
+| `maxEntriesPerInjection` | `number` | `10` | Maximum mirror entries injected per prompt turn. |
+| `maxCharsPerInjection` | `number` | `4000` | Maximum total characters of mirror text injected per turn. |
+
+```yaml
+deliveryMirror:
+  enabled: true
+  retentionMs: 86400000
+  pruneIntervalMs: 300000
+  maxEntriesPerInjection: 10
+  maxCharsPerInjection: 4000
+```
+
+</Accordion>
+
+<Accordion title="observability">
+
+Observability persistence layer. Stores channel health snapshots, execution metrics, and system telemetry in SQLite for historical analysis and dashboards.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `persistence.enabled` | `boolean` | `true` | Enable observability persistence. |
+| `persistence.retentionDays` | `number` | `30` | Days to retain data before pruning (1-365). |
+| `persistence.snapshotIntervalMs` | `number` | `300000` | Interval in ms between channel health snapshots (min 60000). |
+
+```yaml
+observability:
+  persistence:
+    enabled: true
+    retentionDays: 30
+    snapshotIntervalMs: 300000
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="key" href="/reference/environment-variables">
+    Environment variable reference
+  </Card>
+  <Card title="Hot Reload" icon="rotate" href="/reference/hot-reload">
+    Configuration hot reload behavior
+  </Card>
+  <Card title="Secret Manager" icon="lock" href="/reference/secret-manager">
+    Encrypted secret storage and ${`VAR`} substitution
+  </Card>
+  <Card title="Configuration Guide" icon="sliders" href="/installation/configuration">
+    Step-by-step configuration walkthrough
+  </Card>
+</CardGroup>

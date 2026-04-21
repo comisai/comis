@@ -1,0 +1,207 @@
+---
+title: "Discord"
+description: "Connect Comis to Discord with step-by-step setup"
+icon: "discord"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+Connect your Comis agent to Discord servers and DMs. Discord supports threads,
+reactions, embeds, buttons, file attachments up to 25 MB, and live-streaming
+responses that update in real time as your agent thinks.
+
+## Prerequisites
+
+<Prereqs />
+
+- A Discord account
+- Permission to create a bot in the target server (Manage Server or Administrator)
+
+<Warning>
+Discord requires the **Message Content** privileged intent to be enabled in the
+Developer Portal. Without it, your bot will connect successfully but receive
+**empty messages** in server channels. Step 2 below shows you exactly where to
+enable this.
+</Warning>
+
+## Setup
+
+<Steps>
+  <Step title="Create a Discord application">
+    Go to the [Discord Developer Portal](https://discord.com/developers/applications)
+    and sign in with your Discord account.
+
+    Click **New Application** in the top right, give it a name (this will be your
+    bot's display name), and click **Create**.
+
+    In the left sidebar, click **Bot** to open the bot settings page.
+  </Step>
+
+  <Step title="Enable required intents">
+    On the Bot settings page, scroll down to **Privileged Gateway Intents**.
+
+    Enable **Message Content Intent**. This is critical -- without it, your bot
+    receives empty messages in server channels and cannot respond to anything.
+
+    Optionally enable **Server Members Intent** if your agent needs to look up
+    member information (names, roles, join dates).
+
+    Click **Save Changes** at the bottom of the page.
+  </Step>
+
+  <Step title="Copy the bot token">
+    On the same Bot page, find the **Token** section near the top.
+
+    Click **Reset Token** (or **Copy** if the token is already visible). Discord
+    will show the token exactly once -- copy it immediately and store it somewhere
+    safe. If you lose it, you will need to reset it again.
+
+    This token is your bot's password. Anyone who has it can control your bot.
+  </Step>
+
+  <Step title="Invite the bot to your server">
+    In the left sidebar, go to **OAuth2** and then **URL Generator**.
+
+    Under **Scopes**, check the `bot` checkbox.
+
+    Under **Bot Permissions**, select:
+    - Send Messages
+    - Read Message History
+    - Add Reactions
+    - Use Slash Commands
+    - Attach Files
+    - Manage Messages (required for editing responses during streaming)
+
+    Copy the generated URL at the bottom of the page and open it in your browser.
+    Select the server you want to add the bot to and click **Authorize**.
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the Discord channel to your Comis configuration file (`~/.comis/config.yaml`):
+
+    ```yaml
+    channels:
+      discord:
+        enabled: true
+        botToken: "${DISCORD_BOT_TOKEN}"
+    ```
+
+    Set the `DISCORD_BOT_TOKEN` environment variable in your `~/.comis/.env` file:
+
+    ```bash
+    DISCORD_BOT_TOKEN=your-token-from-step-3
+    ```
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check the logs for a successful connection:
+
+    ```bash
+    comis daemon logs
+    ```
+
+    Look for a line containing **"Discord adapter connected"** or
+    **"channel-discord activated"**. If you see this, your bot is online and ready.
+
+    Go to your Discord server -- the bot should appear in the member list with a
+    green "Online" status. Send it a message to confirm it responds.
+  </Step>
+</Steps>
+
+## Configuration
+
+These options go under `channels.discord` in your `config.yaml`:
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Turns on the Discord adapter |
+| `botToken` | string / SecretRef | (required) | Bot authentication token from the Developer Portal |
+| `allowFrom` | string[] | `[]` (all) | Restrict to specific Discord user IDs. Empty means all users can talk to the bot. |
+| `mediaProcessing.transcribeAudio` | boolean | `true` | Transcribe voice messages to text before passing to the agent |
+| `mediaProcessing.analyzeImages` | boolean | `true` | Describe images sent to the bot using AI vision |
+| `mediaProcessing.describeVideos` | boolean | `true` | Extract descriptions from video content |
+| `mediaProcessing.extractDocuments` | boolean | `true` | Extract text from PDFs, DOCX, and other documents |
+| `mediaProcessing.understandLinks` | boolean | `true` | Fetch and summarize URLs included in messages |
+
+## What your agent can do
+
+Once connected to Discord, your agent can:
+
+- Send, edit, and delete messages in any channel it has access to
+- React to messages with emoji
+- Reply in threads (native Discord threads)
+- Send files and images (up to 25 MB per attachment)
+- Create interactive buttons for user choices
+- Send rich embeds and cards with formatted content
+- Stream responses with live editing (updates every 500 ms)
+- Read message history for conversation context
+- Participate in forum channels
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 2,000 characters | Automatically splits long responses into multiple messages at paragraph boundaries |
+| Attachment size | 25 MB | Files over 25 MB are rejected with a user-friendly error message |
+| Embeds per message | 10 | Multiple embeds are batched to stay within the platform limit |
+| Rate limits | 5 messages per 5 seconds per channel | Comis throttles delivery and retries with exponential backoff if rate-limited |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Bot connects but ignores messages">
+    **What happened:** The Message Content privileged intent is not enabled in the
+    Discord Developer Portal.
+
+    **How to fix it:** Go to the
+    [Discord Developer Portal](https://discord.com/developers/applications), select
+    your application, click **Bot** in the sidebar, scroll to **Privileged Gateway
+    Intents**, and enable **Message Content Intent**. Save your changes and restart
+    the Comis daemon.
+  </Accordion>
+
+  <Accordion title="Bot is offline in the member list">
+    **What happened:** The bot token is invalid, expired, or was reset without
+    updating the Comis configuration.
+
+    **How to fix it:** Go to the
+    [Discord Developer Portal](https://discord.com/developers/applications), select
+    your application, click **Bot**, and click **Reset Token**. Copy the new token,
+    update it in your `~/.comis/.env` file, and restart the daemon.
+  </Accordion>
+
+  <Accordion title="Messages are not sent to some channels">
+    **What happened:** The bot does not have the required permissions in that
+    specific channel. Discord allows per-channel permission overrides that can
+    block the bot even if it has server-wide permissions.
+
+    **How to fix it:** In Discord, right-click the channel, select **Edit Channel**,
+    go to **Permissions**, and make sure your bot's role has **Send Messages** and
+    **View Channel** permissions. Also check that no permission override is
+    explicitly denying these permissions.
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 9 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>
