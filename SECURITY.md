@@ -6,7 +6,7 @@ Comis is a security-first platform. Security is built into the architecture at e
 
 | Version | Supported |
 |---------|-----------|
-| 0.0.x   | Yes (in development) |
+| 1.0.x   | Yes       |
 
 ## Reporting a Vulnerability
 

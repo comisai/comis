@@ -20,6 +20,13 @@ updates:
     ignore:
       - dependency-name: "@comis/*"
 
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
