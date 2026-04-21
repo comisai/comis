@@ -1,0 +1,201 @@
+---
+title: "Approvals"
+description: "How to require human approval before agents perform high-risk actions"
+icon: "clipboard-check"
+---
+
+Some actions are too important to let an AI decide alone. Comis lets you
+require human approval before agents perform destructive or sensitive
+operations. When an agent tries to delete a file, modify a configuration, or
+take another high-risk action, execution pauses until you approve or deny the
+request.
+
+## How It Works
+
+Here is what happens when an agent triggers the approval workflow:
+
+<Steps>
+  <Step title="Agent wants to perform an action">
+    Your agent decides it needs to take an action -- for example, deleting a
+    file, sending a mass message, or modifying a configuration setting.
+  </Step>
+
+  <Step title="Comis classifies the action">
+    Every action is automatically classified as read (safe), mutate
+    (modifying), or destructive (irreversible). Over 100 actions have specific
+    classifications built in. Any action that is not registered defaults to
+    "destructive" -- Comis fails closed.
+  </Step>
+
+  <Step title="Confirmation is checked">
+    If the action's classification requires confirmation (destructive actions
+    do by default), the request enters the approval workflow. The confirmation
+    policy determines which classifications require human approval.
+  </Step>
+
+  <Step title="Execution pauses">
+    The agent stops and waits. You see the pending request in the
+    [Security dashboard](/web-dashboard/security-view) or receive a
+    notification with the action details, the requesting agent, and the reason
+    for the action.
+  </Step>
+
+  <Step title="You decide">
+    Approve the action to let it proceed, or deny it to block it. If you do
+    not respond within the timeout period (default: 5 minutes), the action is
+    automatically denied. This ensures that unanswered requests never hang
+    indefinitely.
+  </Step>
+</Steps>
+
+## Two Systems Working Together
+
+Comis has two related but distinct configuration areas for action control.
+Understanding the difference prevents confusion when setting up your approval
+workflow.
+
+<Warning>
+These two systems work together but are configured separately. Make sure you
+understand both before making changes.
+</Warning>
+
+### Action Confirmation (the Policy Layer)
+
+Action confirmation determines **which** actions need confirmation based on
+their classification. This is the policy layer -- it decides what triggers the
+approval process.
+
+```yaml title="~/.comis/config.yaml"
+security:
+  actionConfirmation:
+    requireForDestructive: true   # Require confirmation for destructive actions (default: true)
+    requireForSensitive: false    # Require for sensitive/mutate actions (default: false)
+    autoApprove:                  # Actions to auto-approve (bypass confirmation)
+      - "message.send"            # Example: let agents send messages freely
+```
+
+By default, destructive actions require confirmation (`requireForDestructive:
+true`) but sensitive/mutate actions do not (`requireForSensitive: false`). You
+can adjust this to match your risk tolerance.
+
+The `autoApprove` list lets you exempt specific actions from confirmation even
+if their classification would normally require it. This is useful for actions
+that are technically destructive but routine in your workflow.
+
+### Approval Workflow (the Execution Layer)
+
+The approval workflow controls **how** the approval process works -- including
+rules, timeouts, and trust levels. This is the execution layer that handles
+the actual approval requests.
+
+```yaml title="~/.comis/config.yaml"
+approvals:
+  enabled: false                  # Enable the approval workflow (default: false)
+  defaultMode: auto               # Default mode: auto | require | deny
+  defaultTimeoutMs: 300000        # Timeout: 5 minutes (auto-deny)
+  rules:
+    - actionPattern: "file.delete"
+      mode: require               # Always require human approval
+      timeoutMs: 300000
+      minTrustLevel: verified
+```
+
+Action confirmation decides **what** needs approval. The approval workflow
+decides **how** that approval happens. Both work together -- enable action
+confirmation to flag which actions need it, then configure the approval
+workflow to handle the requests.
+
+## Action Classifications
+
+Every action in Comis is classified into one of three levels. This
+classification drives the entire confirmation and approval system.
+
+| Classification | Meaning | Examples |
+|----------------|---------|----------|
+| Read | Safe, no side effects | Viewing files, reading memory, checking status |
+| Mutate | Modifies something, reversible | Sending messages, writing files, updating settings |
+| Destructive | Irreversible or high-impact | Deleting files, dropping data, bulk operations |
+
+Unknown actions that are not registered default to destructive -- Comis fails
+closed. This means new tools and custom actions are automatically treated as
+high-risk until they are explicitly classified.
+
+<Tip>
+For the complete list of all registered actions and their classifications, see
+[Action Classifier Reference](/reference/action-classifier) (coming in the
+Reference section).
+</Tip>
+
+## Approval Modes
+
+The approval workflow supports three modes that control how requests are
+handled.
+
+- **auto** (default) -- The system decides based on action classification and
+  confirmation settings. Most actions proceed automatically; only flagged
+  actions pause for approval. This is the recommended mode for most setups.
+
+- **require** -- Always require human approval regardless of classification.
+  Use this for high-security environments where every action must be reviewed.
+
+- **deny** -- Always deny the action. Useful for permanently blocking certain
+  operations that should never be allowed, such as file deletion in a
+  read-only deployment.
+
+You can set a default mode for all actions and then override it for specific
+action patterns using rules:
+
+```yaml title="~/.comis/config.yaml"
+approvals:
+  enabled: true
+  defaultMode: auto               # Most actions use auto mode
+  rules:
+    - actionPattern: "file.delete"
+      mode: require               # But file deletion always needs approval
+    - actionPattern: "config.*"
+      mode: require               # And config changes need approval too
+```
+
+## Using the Dashboard
+
+Pending approvals appear in the [Security dashboard](/web-dashboard/security-view).
+You can see the action details, the requesting agent, and the context for the
+request. Approve or deny with a single click.
+
+The dashboard shows a real-time list of all pending approval requests across
+all your agents, with the most recent requests at the top. Expired requests
+(those that timed out) are marked as auto-denied.
+
+## Configuration Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `security.actionConfirmation.requireForDestructive` | `true` | Require confirmation for destructive actions |
+| `security.actionConfirmation.requireForSensitive` | `false` | Require confirmation for sensitive/mutate actions |
+| `security.actionConfirmation.autoApprove` | `[]` | Actions that bypass confirmation |
+| `approvals.enabled` | `false` | Enable the approval workflow |
+| `approvals.defaultMode` | `auto` | Default approval mode (auto, require, deny) |
+| `approvals.defaultTimeoutMs` | `300000` | Timeout in milliseconds (5 minutes, auto-deny) |
+
+<Info>
+The `approvals.enabled` default is `false`. You need to explicitly enable the
+approval workflow to start receiving approval requests. Without it, action
+confirmation still classifies actions, but no human-in-the-loop step occurs.
+</Info>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
+    How approvals fit into the security layers
+  </Card>
+  <Card title="Hardening" icon="lock" href="/security/hardening">
+    Complete security hardening checklist
+  </Card>
+  <Card title="Security Dashboard" icon="desktop" href="/web-dashboard/security-view">
+    Manage approvals in the web UI
+  </Card>
+  <Card title="Action Classifier Reference" icon="file-code" href="/reference/action-classifier">
+    Complete action registry
+  </Card>
+</CardGroup>

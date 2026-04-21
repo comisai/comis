@@ -1,0 +1,156 @@
+# =============================================================================
+# Comis Docker Compose — Production Configuration
+# =============================================================================
+# Usage:
+#   cp .env.docker.example .env
+#   # Edit .env with your configuration
+#   docker compose up -d
+#
+# Services:
+#   comis-daemon  — Core daemon (gateway, channels, agents, memory)
+#   comis-web     — Web dashboard SPA (optional)
+#   comis-cli     — Interactive CLI (one-shot, optional)
+# =============================================================================
+
+name: comis
+
+services:
+  # ---------------------------------------------------------------------------
+  # Core Daemon — Gateway + Channels + Agents + Memory
+  # ---------------------------------------------------------------------------
+  comis-daemon:
+    image: ${COMIS_IMAGE:-comis:local}
+    container_name: comis-daemon
+    init: true
+    restart: unless-stopped
+
+    ports:
+      - "${COMIS_GATEWAY_HOST:-127.0.0.1}:${COMIS_GATEWAY_PORT:-4766}:4766"
+
+    volumes:
+      # Persistent data: SQLite DBs, logs, traces, secrets
+      - ${COMIS_DATA_DIR:-~/.comis}:/data
+
+      # Config files (read-only mount recommended)
+      - ${COMIS_CONFIG_DIR:-~/.comis}:/etc/comis:ro
+
+      # Optional: mount .env for secret injection
+      - ${COMIS_ENV_FILE:-~/.comis/.env}:/data/.env:ro
+
+    environment:
+      # Core configuration
+      - NODE_ENV=production
+      - COMIS_DATA_DIR=/data
+      - COMIS_CONFIG_PATHS=/etc/comis/config.yaml
+
+      # Gateway binding — MUST be 0.0.0.0 inside container
+      # for Docker port mapping to work
+      - COMIS_GATEWAY_HOST=0.0.0.0
+      - COMIS_GATEWAY_PORT=4766
+
+      # Secrets — injected via env vars or .env file mount
+      - SECRETS_MASTER_KEY=${SECRETS_MASTER_KEY:-}
+
+      # LLM Provider Keys (pass-through from host .env)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+
+      # Channel Tokens (pass-through from host .env)
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+
+      # Gateway Auth
+      - COMIS_GATEWAY_TOKEN=${COMIS_GATEWAY_TOKEN:-}
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:4766/health"]
+      interval: 60s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+    # Resource limits (adjust per deployment)
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+        reservations:
+          memory: 256m
+          cpus: "0.5"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ---------------------------------------------------------------------------
+  # Web Dashboard — Lit SPA served via Nginx (optional)
+  # ---------------------------------------------------------------------------
+  comis-web:
+    image: ${COMIS_WEB_IMAGE:-comis-web:local}
+    container_name: comis-web
+    restart: unless-stopped
+    profiles:
+      - web  # Only starts with: docker compose --profile web up
+
+    ports:
+      - "${COMIS_WEB_HOST:-127.0.0.1}:${COMIS_WEB_PORT:-8080}:8080"
+
+    depends_on:
+      comis-daemon:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.5"
+
+  # ---------------------------------------------------------------------------
+  # CLI — Interactive administration (one-shot)
+  # ---------------------------------------------------------------------------
+  comis-cli:
+    image: ${COMIS_IMAGE:-comis:local}
+    container_name: comis-cli
+    profiles:
+      - cli  # Only starts with: docker compose --profile cli run ...
+
+    # Share daemon's loopback so CLI can reach 127.0.0.1:4766
+    network_mode: "service:comis-daemon"
+
+    volumes:
+      - ${COMIS_DATA_DIR:-~/.comis}:/data
+      - ${COMIS_CONFIG_DIR:-~/.comis}:/etc/comis:ro
+
+    environment:
+      - NODE_ENV=production
+      - COMIS_DATA_DIR=/data
+      - COMIS_CONFIG_PATHS=/etc/comis/config.yaml
+      - COMIS_GATEWAY_TOKEN=${COMIS_GATEWAY_TOKEN:-}
+
+    # Interactive mode
+    stdin_open: true
+    tty: true
+
+    entrypoint: ["node", "packages/cli/dist/cli.js"]
+
+    depends_on:
+      comis-daemon:
+        condition: service_healthy
+
+    # Security hardening for CLI
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN

@@ -1,0 +1,60 @@
+# Comis Test Configuration — WS Protocol + mDNS Discovery Tests
+#
+# Uses port 8491 to avoid conflicts with other test suites.
+# Short wsHeartbeatMs (3000) for fast heartbeat detection tests.
+# maxBatchSize: 10 for batch RPC tests.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "TestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8491
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-ws-discovery"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 10
+  wsHeartbeatMs: 3000
+
+memory:
+  dbPath: "test-memory-ws-discovery.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

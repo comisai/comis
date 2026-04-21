@@ -1,0 +1,327 @@
+---
+title: "Tool Security"
+description: "SSRF guard, tool policy profiles, content scanning, sanitization pipeline, and audit wrapper reference"
+icon: "shield-check"
+---
+
+Tool security encompasses four subsystems that protect against malicious input from external sources: SSRF prevention for outbound HTTP, tool policy enforcement for access control, content scanning for skill body inspection, and sanitization for hidden content defense.
+
+## SSRF Guard
+
+The SSRF guard prevents server-side request forgery by validating every outbound URL before any HTTP request is made. The `validateUrl()` function performs DNS-pinned validation: it resolves the hostname, then checks the resolved IP against blocked ranges.
+
+<Info>
+  **Source:** `packages/core/src/security/ssrf-guard.ts` -- FNDTN-01 requirement: every web-facing tool must pass through `validateUrl()` before fetch.
+</Info>
+
+### Validation Steps
+
+`validateUrl()` performs 5 checks in order:
+
+| Step | Check | Behavior on Failure |
+|------|-------|-------------------|
+| 1 | URL parsing | Returns `err("Invalid URL: ...")` |
+| 2 | Protocol check | Returns `err("Blocked protocol: ...")` |
+| 3 | DNS resolution | Returns `err()` with DNS error |
+| 4 | Cloud metadata IP blocklist | Returns `err("Blocked: resolved IP ... is a cloud metadata service address")` |
+| 5 | IP range classification | Returns `err("Blocked: resolved IP ... is in {range} range")` |
+
+The function returns `Result<ValidatedUrl, Error>` where `ValidatedUrl` contains `hostname`, `ip` (resolved address), and `url` (parsed URL object).
+
+### Allowed Protocols
+
+Only two protocols are permitted:
+
+- `http:`
+- `https:`
+
+All other protocols (e.g., `file:`, `ftp:`, `gopher:`) are rejected.
+
+### Blocked IP Ranges
+
+Six IP range categories are blocked using `ipaddr.js` range classification:
+
+| Range Name | IPv4 | IPv6 | Purpose |
+|-----------|------|------|---------|
+| `loopback` | `127.0.0.0/8` | `::1` | Localhost access |
+| `linkLocal` | `169.254.0.0/16` | `fe80::/10` | Link-local addresses |
+| `private` | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | -- | RFC 1918 private networks |
+| `uniqueLocal` | -- | `fc00::/7` | IPv6 private addresses |
+| `unspecified` | `0.0.0.0` | `::` | Unspecified address |
+| `reserved` | IANA reserved ranges | IANA reserved ranges | Future-allocated blocks |
+
+### Cloud Metadata IPs
+
+Three explicit cloud metadata service IPs are blocked regardless of their range classification:
+
+| IP | Cloud Provider |
+|----|---------------|
+| `169.254.169.254` | AWS, GCP, Azure instance metadata |
+| `169.254.170.2` | AWS ECS task metadata |
+| `100.100.100.200` | Alibaba Cloud metadata |
+
+### DNS Resolution
+
+The SSRF guard resolves hostnames before checking IPs. This prevents DNS rebinding attacks where a hostname initially resolves to a safe IP but later resolves to a blocked one. IPv6 literal hostnames (bracketed like `[::1]`) have brackets stripped before DNS lookup.
+
+### ValidatedUrl Interface
+
+On successful validation, `validateUrl()` returns a `ValidatedUrl` object:
+
+```typescript
+interface ValidatedUrl {
+  hostname: string;  // Original hostname from the URL
+  ip: string;        // DNS-resolved IP address
+  url: URL;          // Parsed URL object
+}
+```
+
+The caller uses the resolved `ip` for the actual HTTP request, ensuring the fetched IP matches the validated one (DNS pinning).
+
+### Usage Example
+
+```typescript
+import { validateUrl } from "@comis/core";
+
+const result = await validateUrl("https://api.example.com/data");
+if (!result.ok) {
+  // URL is blocked -- do not fetch
+  logger.warn({ err: result.error }, "SSRF validation failed");
+  return;
+}
+
+// Safe to fetch -- use result.value.url
+const response = await fetch(result.value.url.toString());
+```
+
+## Tool Policy
+
+Tool policies control which tools are available to an agent. Policies use named profiles as a baseline, with allow/deny overrides for fine-grained control.
+
+<Info>
+  **Source:** `packages/skills/src/policy/tool-policy.ts` -- config-driven tool filtering with group expansion.
+</Info>
+
+### Built-in Profiles
+
+Five built-in profiles define baseline tool sets:
+
+| Profile | Tools Included |
+|---------|---------------|
+| `minimal` | `exec`, `read`, `write` |
+| `coding` | `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process` |
+| `messaging` | `message`, `session_status` |
+| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage` |
+| `full` | All tools (empty array = unrestricted) |
+
+### Tool Groups
+
+Groups provide convenient bulk operations using `group:xxx` syntax in allow/deny arrays:
+
+| Group | Tools |
+|-------|-------|
+| `group:coding` | `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process` |
+| `group:web` | `web_fetch`, `web_search`, `browser` |
+| `group:browser` | `browser` |
+| `group:memory` | `memory_search`, `memory_get`, `memory_store` |
+| `group:scheduling` | `cron` |
+| `group:messaging` | `message` |
+| `group:sessions` | `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`, `subagents`, `agents_list`, `pipeline` |
+| `group:platform_actions` | `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` |
+| `group:supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage` |
+
+### Resolution Precedence
+
+Tool policy resolution follows a strict order:
+
+1. **Profile baseline** -- start with the profile's tool set
+2. **Allow additions** -- add explicitly allowed tools and expand group references
+3. **Deny removals** -- remove denied tools (deny always takes precedence)
+
+Per-skill tool restrictions from skill manifests provide an additional layer of filtering applied after the agent-level policy.
+
+For user-facing configuration guide, see [Tool Policy](/skills/tool-policy).
+
+## Content Scanner
+
+The content scanner inspects skill body content at load time for dangerous patterns across six categories. It is a pure function with no side effects -- callers handle audit emission and blocking decisions.
+
+<Info>
+  **Source:** `packages/skills/src/prompt/content-scanner.ts` -- iterates `CONTENT_SCAN_RULES` array against content, producing `ContentScanResult`.
+</Info>
+
+### Scan Categories
+
+<AccordionGroup>
+  <Accordion title="exec_injection (CRITICAL)">
+    Targets injection syntax operators combined with dangerous binaries, not mere mentions of command names.
+
+    | Pattern ID | Description |
+    |-----------|-------------|
+    | `EXEC_SUBSHELL` | Subshell command injection: `$(command)` with dangerous binary |
+    | `EXEC_BACKTICK` | Backtick command injection with dangerous binary |
+    | `EXEC_EVAL` | `eval()` with string argument |
+    | `EXEC_PIPE_BASH` | Pipe to shell interpreter |
+  </Accordion>
+
+  <Accordion title="env_harvesting (WARN)">
+    Targets mass-dump patterns, not individual `$VAR` references which are common in documentation.
+
+    | Pattern ID | Description |
+    |-----------|-------------|
+    | `ENV_PRINTENV` | `printenv` command dumps all environment variables |
+    | `ENV_PROC_ENVIRON` | Direct read of process environment via `/proc` |
+    | `ENV_MASS_DUMP` | Environment dump piped to exfiltration or encoding |
+  </Accordion>
+
+  <Accordion title="crypto_mining (CRITICAL/WARN)">
+    Very low false-positive risk -- these terms rarely appear in legitimate skill instructions.
+
+    | Pattern ID | Severity | Description |
+    |-----------|----------|-------------|
+    | `CRYPTO_STRATUM` | CRITICAL | Mining pool protocol (`stratum://`) |
+    | `CRYPTO_MINER_BINARY` | CRITICAL | Known cryptocurrency miner binary |
+    | `CRYPTO_POOL_DOMAIN` | WARN | Mining pool domain pattern |
+  </Accordion>
+
+  <Accordion title="network_exfiltration (WARN/CRITICAL)">
+    Focuses on piped execution rather than standalone URL references.
+
+    | Pattern ID | Severity | Description |
+    |-----------|----------|-------------|
+    | `NET_CURL_PIPE` | WARN | curl output piped to interpreter |
+    | `NET_WGET_EXEC` | WARN | wget output to stdout piped elsewhere |
+    | `NET_REVERSE_SHELL` | CRITICAL | Reverse shell pattern |
+  </Accordion>
+
+  <Accordion title="obfuscated_encoding (WARN/CRITICAL)">
+    Only flags long encoded blocks or decode-and-execute chains, not short base64 examples.
+
+    | Pattern ID | Severity | Description |
+    |-----------|----------|-------------|
+    | `OBF_BASE64_LONG` | WARN | Long base64-encoded string (80+ chars) |
+    | `OBF_HEX_LONG` | WARN | Long hex-escaped string (20+ sequences) |
+    | `OBF_BASE64_DECODE_PIPE` | CRITICAL | base64 decode piped to another command |
+  </Accordion>
+
+  <Accordion title="xml_breakout (CRITICAL)">
+    Detects attempts to escape skill XML structure and inject system-level instructions.
+
+    | Pattern ID | Description |
+    |-----------|-------------|
+    | `XML_SKILL_CLOSE` | Closing tag for skill XML structure (breakout attempt) |
+    | `XML_SYSTEM_TAG` | System-level message tag (breakout attempt) |
+  </Accordion>
+</AccordionGroup>
+
+### Severity Levels
+
+- **CRITICAL**: Patterns that indicate active exploitation attempts (exec injection, reverse shells, crypto mining, base64 decode piping, XML breakout)
+- **WARN**: Patterns that are suspicious but may have legitimate uses (environment harvesting, curl piping, long encoded strings, mining pool domains)
+
+### Scan Result
+
+The `scanSkillContent()` function returns a `ContentScanResult`:
+
+```typescript
+interface ContentScanResult {
+  clean: boolean;       // true if no patterns matched
+  findings: ContentScanFinding[];
+}
+
+interface ContentScanFinding {
+  ruleId: string;       // e.g., "EXEC_SUBSHELL"
+  category: ScanCategory;
+  severity: "CRITICAL" | "WARN";
+  description: string;
+  matchedText: string;  // truncated to 100 chars
+  position: number;     // character offset in content
+}
+```
+
+For user-facing guide, see [Security Scanning](/skills/security-scanning).
+
+## Sanitization Pipeline
+
+The sanitization pipeline processes skill body content through four ordered steps before it reaches the system prompt.
+
+<Info>
+  **Source:** `packages/skills/src/prompt/sanitizer.ts` -- pure functions, no side effects. Audit metadata returned for caller to emit events.
+</Info>
+
+### Pipeline Steps
+
+<Steps>
+  <Step title="Strip HTML Comments">
+    Removes all `&lt;!-- ... --&gt;` sequences using non-greedy regex to handle multiple separate comments correctly. Returns the count of comments removed for audit logging.
+  </Step>
+
+  <Step title="NFKC Normalization">
+    Applies Unicode NFKC normalization (compatibility decomposition + canonical composition). This decomposes fullwidth characters and ligatures into their standard equivalents, preventing homoglyph-based obfuscation.
+  </Step>
+
+  <Step title="Strip Invisible Characters">
+    Removes zero-width and invisible characters that could hide malicious content:
+    - Zero-width joiner (U+200D)
+    - Zero-width non-joiner (U+200C)
+    - Zero-width space (U+200B)
+    - Soft hyphen (U+00AD)
+    - Left-to-right mark (U+200E)
+    - Right-to-left mark (U+200F)
+    - Unicode tag block characters (U+E0000-U+E007F)
+  </Step>
+
+  <Step title="Size Limit Enforcement">
+    Truncates the final sanitized output at `maxBodyLength` characters (default: 20,000). Size enforcement applies to the output after all other sanitization steps, preventing unnecessary truncation when HTML comments inflate raw size. Appends `[TRUNCATED]` marker when truncation occurs.
+  </Step>
+</Steps>
+
+### Sanitization Result
+
+```typescript
+interface SanitizeResult {
+  body: string;                  // Final sanitized content
+  htmlCommentsStripped: number;  // Count for audit
+  truncated: boolean;            // Whether size limit was hit
+  tagBlockDetected: boolean;     // Unicode tag block bypass detected
+}
+```
+
+## Audit Wrapper
+
+Tool executions generate audit events through the `TypedEventBus`. Each tool call emits an `audit:event` with the action type, classification (from the [Action Classifier](/reference/action-classifier)), outcome, and timing metadata. This provides a complete audit trail of all agent actions.
+
+The audit event structure:
+
+```typescript
+{
+  timestamp: number;
+  agentId: string;
+  tenantId: string;
+  actionType: string;        // e.g., "file.write", "web.fetch"
+  classification: string;    // "read" | "mutate" | "destructive"
+  outcome: "success" | "failure";
+  metadata: {
+    durationMs: number;
+    toolName?: string;
+    // Additional context per tool
+  };
+}
+```
+
+Every tool execution -- whether built-in, prompt skill, or MCP -- generates an audit event. The `classification` field comes from the [Action Classifier](/reference/action-classifier) registry. Failed executions still emit audit events with `outcome: "failure"` and the error message in metadata.
+
+<CardGroup cols={2}>
+  <Card title="Action Classifier" icon="tags" href="/reference/action-classifier">
+    Complete registry of action classifications
+  </Card>
+  <Card title="Security Model" icon="shield" href="/security">
+    Defense-in-depth security architecture
+  </Card>
+  <Card title="Sandbox" icon="box" href="/reference/sandbox">
+    Skill sandboxing implementation
+  </Card>
+  <Card title="Tool Policy Guide" icon="sliders" href="/skills/tool-policy">
+    User-facing tool policy configuration
+  </Card>
+</CardGroup>

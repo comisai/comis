@@ -1,0 +1,36 @@
+# =============================================================================
+# Development Overrides
+# Activated automatically when docker-compose.override.yml exists
+# =============================================================================
+
+services:
+  comis-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        COMIS_VARIANT: default  # Full image with debugging tools
+
+    # Bind to all interfaces for development access
+    ports:
+      - "0.0.0.0:4766:4766"
+
+    environment:
+      - NODE_ENV=development
+
+    # Mount source for hot-reload (requires rebuild)
+    volumes:
+      - .:/app/src:ro
+      - ${COMIS_DATA_DIR:-~/.comis}:/data
+
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "4.0"
+
+  comis-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    profiles: []  # Always start in dev

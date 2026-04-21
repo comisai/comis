@@ -1,0 +1,279 @@
+---
+title: "Email"
+description: "Connect Comis to Email with step-by-step IMAP/SMTP setup"
+icon: "envelope"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+Connect your Comis agent to an email inbox. Comis monitors incoming messages via
+IMAP and replies via SMTP. Supports password and OAuth2 authentication, RFC 5322
+reply-chain threading, sender allowlists, and file attachments up to 100,000
+characters per message.
+
+## Prerequisites
+
+<Prereqs />
+
+- An email account with IMAP and SMTP access enabled
+- For Gmail: an App Password (2FA required) or OAuth2 credentials
+- For self-hosted: IMAP and SMTP server addresses and credentials
+
+<Note>
+Email uses IMAP to receive messages and SMTP to send replies. Your email provider
+must allow IMAP access. Gmail users should use App Passwords or configure OAuth2
+-- regular account passwords will not work if 2FA is enabled.
+</Note>
+
+## Setup
+
+<Steps>
+  <Step title="Enable IMAP access">
+    **Gmail:** Go to Settings > See all settings > Forwarding and POP/IMAP >
+    Enable IMAP. Click **Save Changes**.
+
+    **Outlook:** IMAP is enabled by default for most Outlook and Microsoft 365
+    accounts. No action needed.
+
+    **Self-hosted:** Check your mail server configuration to ensure IMAP is
+    enabled and accessible on port 993 (TLS) or 143 (STARTTLS).
+  </Step>
+
+  <Step title="Get your credentials">
+    **For password authentication:**
+
+    - **Gmail:** Go to your Google Account > Security > App passwords. Generate a
+      new app password for "Mail" and copy it. You must have 2FA enabled on your
+      Google account to use App Passwords.
+    - **Outlook:** Go to Account Settings > App passwords and generate one.
+    - **Self-hosted:** Use your existing email password or create a dedicated
+      application password.
+
+    **For OAuth2 authentication:**
+
+    - Create an OAuth2 client in Google Cloud Console (Gmail) or Azure AD
+      (Outlook).
+    - Note the client ID and client secret.
+    - Generate a refresh token using the OAuth2 authorization flow for your
+      provider.
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the Email channel to your Comis configuration file (`~/.comis/config.yaml`):
+
+    ```yaml
+    channels:
+      email:
+        enabled: true
+        address: "bot@example.com"
+        imapHost: "imap.example.com"
+        smtpHost: "smtp.example.com"
+        botToken: "${EMAIL_PASSWORD}"
+        allowMode: "allowlist"
+        allowFrom:
+          - "user@example.com"
+    ```
+
+    Set the `EMAIL_PASSWORD` environment variable in your `~/.comis/.env` file:
+
+    ```bash
+    EMAIL_PASSWORD=your-email-password-or-app-password
+    ```
+
+    <SecretWarning />
+
+    <Tabs>
+      <Tab title="Password Auth">
+        The configuration above uses password authentication. The `botToken` field
+        holds your email password or App Password. This is the simplest setup and
+        works with most email providers.
+      </Tab>
+      <Tab title="OAuth2 Auth">
+        For OAuth2 authentication (recommended for Gmail), use this configuration
+        instead:
+
+        ```yaml
+        channels:
+          email:
+            enabled: true
+            address: "bot@gmail.com"
+            imapHost: "imap.gmail.com"
+            smtpHost: "smtp.gmail.com"
+            authType: "oauth2"
+            clientId: "${EMAIL_OAUTH_CLIENT_ID}"
+            clientSecret: "${EMAIL_OAUTH_CLIENT_SECRET}"
+            refreshToken: "${EMAIL_REFRESH_TOKEN}"
+            allowMode: "open"
+        ```
+
+        Set the environment variables in your `~/.comis/.env` file:
+
+        ```bash
+        EMAIL_OAUTH_CLIENT_ID=your-oauth-client-id
+        EMAIL_OAUTH_CLIENT_SECRET=your-oauth-client-secret
+        EMAIL_REFRESH_TOKEN=your-oauth-refresh-token
+        ```
+      </Tab>
+    </Tabs>
+
+    <Warning>
+    The config key is `botToken` (shared across all channel types) but for Email
+    this is your email password or App Password, not a bot token. Use the
+    `EMAIL_PASSWORD` environment variable to avoid confusion.
+    </Warning>
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check the logs for a successful connection:
+
+    ```bash
+    comis daemon logs
+    ```
+
+    Look for a line containing **"Email adapter started"** or
+    **"channel-email activated"**. If you see this, the adapter is running and
+    monitoring your inbox.
+
+    Send a test email from an allowed sender to confirm the bot receives and
+    replies to it.
+  </Step>
+</Steps>
+
+## Configuration
+
+These options go under `channels.email` in your `config.yaml`:
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Turns on the Email adapter |
+| `address` | string | (required) | Email address to monitor and send from |
+| `imapHost` | string | (required) | IMAP server hostname (e.g. `imap.gmail.com`) |
+| `imapPort` | number | `993` | IMAP server port |
+| `smtpHost` | string | (required) | SMTP server hostname (e.g. `smtp.gmail.com`) |
+| `smtpPort` | number | `587` | SMTP server port |
+| `secure` | boolean | `true` | Use TLS for IMAP/SMTP connections |
+| `authType` | `"password"` / `"oauth2"` | `"password"` | Authentication method |
+| `botToken` | string / SecretRef | (optional) | Email password or App Password (env: `EMAIL_PASSWORD`) |
+| `clientId` | string / SecretRef | (optional) | OAuth2 client ID (required when `authType: "oauth2"`) |
+| `clientSecret` | string / SecretRef | (optional) | OAuth2 client secret (required when `authType: "oauth2"`) |
+| `refreshToken` | string / SecretRef | (optional) | OAuth2 refresh token (required when `authType: "oauth2"`) |
+| `allowMode` | `"allowlist"` / `"open"` | `"allowlist"` | Sender filtering mode. `allowlist` blocks all senders not in `allowFrom`. `open` accepts all senders. |
+| `allowFrom` | string[] | `[]` | Email addresses allowed to send messages to the bot (only used when `allowMode: "allowlist"`) |
+| `pollingIntervalMs` | number | `60000` | Fallback polling interval in milliseconds when IMAP IDLE is not supported |
+| `mediaProcessing.transcribeAudio` | boolean | `true` | Transcribe audio attachments to text |
+| `mediaProcessing.analyzeImages` | boolean | `true` | Describe image attachments using AI vision |
+| `mediaProcessing.describeVideos` | boolean | `true` | Extract descriptions from video attachments |
+| `mediaProcessing.extractDocuments` | boolean | `true` | Extract text from PDF, DOCX, and other document attachments |
+| `mediaProcessing.understandLinks` | boolean | `true` | Fetch and summarize URLs included in messages |
+
+## What your agent can do
+
+Once connected to Email, your agent can:
+
+- Send and receive email messages
+- Maintain conversation threads via RFC 5322 reply headers (In-Reply-To, References)
+- Receive and process file attachments
+- Send HTML-formatted responses
+- Filter senders via allowlist or open mode
+
+Email does **not** support reactions, editing or deleting sent messages, fetching
+message history, streaming (live-updating responses), buttons, cards/embeds, or
+mentions.
+
+## How Email works
+
+Email is the only dual-protocol adapter in Comis -- it uses IMAP to receive
+messages and SMTP to send replies.
+
+**Receiving messages (IMAP):** Comis connects to your IMAP server and uses IMAP
+IDLE (RFC 2177) for near-instant inbox monitoring. The IDLE connection restarts
+every 25 minutes per the RFC specification. If your IMAP server does not support
+IDLE, Comis falls back to polling at the interval configured by
+`pollingIntervalMs` (default: 60 seconds).
+
+**Sending replies (SMTP):** All outbound messages are sent via SMTP with proper
+reply-chain headers (`In-Reply-To`, `References`) to maintain conversation
+threading in the recipient's email client. Every outbound message includes an
+`Auto-Submitted: auto-generated` header to prevent mail loops with other
+automated systems.
+
+**Automated sender detection:** Comis automatically skips messages from automated
+senders to avoid reply loops. The following patterns are detected and filtered:
+
+- Addresses starting with `noreply@` or `mailer-daemon@`
+- Messages with an `Auto-Submitted` header (any value except "no")
+- Messages with `Precedence` set to `bulk`, `junk`, or `list`
+- Messages containing `List-Unsubscribe` or `X-Auto-Response-Suppress` headers
+
+**Credential validation:** At startup, the Email adapter validates your
+credentials by testing the IMAP connection before committing to the full
+lifecycle. If authentication fails, the adapter reports the error and does not
+start, preventing silent failures.
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 100,000 characters | Automatically splits long responses into multiple emails at paragraph boundaries |
+| Attachment size | No platform limit | Limited by your email provider's attachment size limit (typically 25 MB for Gmail) |
+| Polling interval | 60 seconds (default) | Configurable via `pollingIntervalMs`; IMAP IDLE provides near-instant delivery when supported |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Authentication fails at startup">
+    Credential validation runs at startup. Check that IMAP is enabled on your
+    email provider, the password or App Password is correct, and if using Gmail
+    with 2FA, you are using an App Password (not your regular password). For
+    OAuth2, verify that the client ID, client secret, and refresh token are all
+    valid and the refresh token has not expired.
+  </Accordion>
+
+  <Accordion title="Messages arrive but bot does not reply">
+    Check your SMTP settings. The SMTP host and port must match your provider
+    (`smtp.gmail.com:587` for Gmail, `smtp.office365.com:587` for Outlook).
+
+    Also verify `allowMode` and `allowFrom` -- in `"allowlist"` mode (the
+    default), only senders listed in `allowFrom` will trigger responses. If
+    `allowFrom` is empty and `allowMode` is `"allowlist"`, no messages will be
+    processed.
+  </Accordion>
+
+  <Accordion title="Bot replies to automated emails">
+    Comis filters most automated senders automatically (`noreply@`,
+    `mailer-daemon@`, messages with bulk/junk precedence, and messages with
+    `Auto-Submitted` headers). If you are still seeing replies to automated mail,
+    check the sender headers for unusual patterns and consider using
+    `allowMode: "allowlist"` to restrict to known senders.
+  </Accordion>
+
+  <Accordion title="Long delay before messages appear">
+    If your IMAP server does not support IDLE, Comis falls back to polling at the
+    interval set by `pollingIntervalMs` (default 60 seconds). Reduce this value
+    for faster delivery, but be mindful of your provider's rate limits. Most
+    major providers (Gmail, Outlook, Yahoo) support IMAP IDLE, so check your
+    server's IDLE support if you experience delays.
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 9 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>

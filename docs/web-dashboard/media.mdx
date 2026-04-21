@@ -1,0 +1,95 @@
+---
+title: "Media"
+description: "Test media processing capabilities and configure media providers"
+icon: "photo-film"
+---
+
+The Media section provides two views: a **test playground** for verifying media processing capabilities, and a **configuration panel** for reviewing and managing media provider settings. Together, they let you confirm that vision, speech, documents, and other media features are working correctly before relying on them in production.
+
+## Routes
+
+- `/media` -- opens the Media Test playground
+- `/media/config` -- opens the Media Configuration panel
+
+## What You See
+
+The Media section is split into two views accessible from the sidebar under a single "Media" item.
+
+### Media Test Playground
+
+The test view has six tabs, one for each media processing capability:
+
+| Tab | What It Tests |
+|-----|-------------|
+| **STT** | Speech-to-Text -- upload an audio file (up to 25 MB) and get a transcription with provider info |
+| **TTS** | Text-to-Speech -- enter text, synthesize speech, and play the audio in your browser |
+| **Vision** | Image analysis -- upload an image (up to 20 MB) and get a description or analysis from the vision provider |
+| **Document** | Document extraction -- upload a PDF, CSV, or other document (up to 50 MB) and get the extracted text content |
+| **Video** | Video analysis -- upload a video file (up to 50 MB) and get a description or analysis |
+| **Link** | Link enrichment -- enter a URL and get the extracted content, title, and metadata |
+
+### How Testing Works
+
+Each tab follows the same pattern:
+
+1. Select or upload the input (file upload or text/URL input)
+2. Click the test button
+3. View the result, which includes the processing output and provider information
+
+The view checks media provider availability on load and shows which providers are configured and ready. If a provider is not available, the corresponding tab will indicate that the capability is not configured.
+
+### Provider Info
+
+At the top of the test view, a summary shows which media providers are currently configured. This is fetched from the `media.providers` RPC endpoint and shows the active provider for each capability (e.g., OpenAI for STT, ElevenLabs for TTS).
+
+### Media Configuration
+
+The configuration panel (at `/media/config`) shows provider status and current settings for all five media subsystems:
+
+| Subsystem | What It Configures |
+|-----------|-------------------|
+| **STT** | Speech-to-Text provider (OpenAI, Groq, Deepgram), model selection, language |
+| **TTS** | Text-to-Speech provider (OpenAI, ElevenLabs, Edge TTS), voice selection, speed |
+| **Vision** | Vision analysis provider, model, max tokens for descriptions |
+| **Document Extraction** | PDF and document processing settings |
+| **Link Understanding** | Web content extraction and readability settings |
+
+Each subsystem is displayed as a card with:
+
+- **Status indicator** -- whether the provider is configured and operational
+- **Current settings** -- the active provider, model, and key configuration values
+- **Edit link** -- a "Edit in Config Editor" link that navigates to the relevant config section for detailed editing
+
+## Common Tasks
+
+<Steps>
+  <Step title="Verify STT is working">
+    Go to `/media`, select the STT tab, upload an audio file, and click Test. The transcription should appear with the provider name.
+  </Step>
+  <Step title="Test TTS synthesis">
+    Go to `/media`, select the TTS tab, enter some text, and click Synthesize. An audio player should appear letting you play the generated speech.
+  </Step>
+  <Step title="Check media provider configuration">
+    Go to `/media/config` to see all five media subsystems with their status and settings. Use the "Edit in Config Editor" links to change providers.
+  </Step>
+  <Step title="Test vision analysis">
+    Go to `/media`, select the Vision tab, upload an image, and click Analyze. The analysis result shows what the vision model detected in the image.
+  </Step>
+</Steps>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Media & Voice Overview" icon="microphone" href="/media/index">
+    Full documentation for all media capabilities.
+  </Card>
+  <Card title="Vision" icon="eye" href="/media/vision">
+    Detailed vision processing documentation.
+  </Card>
+  <Card title="Voice" icon="volume-high" href="/media/voice">
+    Speech-to-text and text-to-speech documentation.
+  </Card>
+  <Card title="Config Editor" icon="gear" href="/web-dashboard/config-editor">
+    Edit media provider configuration in the YAML editor.
+  </Card>
+</CardGroup>

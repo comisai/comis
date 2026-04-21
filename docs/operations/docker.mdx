@@ -1,0 +1,343 @@
+---
+title: "Docker"
+description: "Running Comis in a Docker container for production"
+icon: "docker"
+---
+
+Docker packages Comis and all its dependencies into a single container, making
+deployment consistent across any server. This page covers the production setup --
+for a quick start, see the [Installation Docker page](/installation/install-docker).
+
+<Info>
+The [Installation Docker page](/installation/install-docker) covers basic container
+setup using the `docker-setup.sh` script. This page focuses on production hardening:
+multi-stage builds, health checks, security, volume management, and the full
+service architecture.
+</Info>
+
+## Production Dockerfile
+
+The repository includes a 4-stage `Dockerfile` that produces a minimal production
+image. Source code, build tools, and development dependencies are discarded after
+compilation.
+
+### Build architecture
+
+**Stage 1 -- build:** Starts from `node:22-bookworm` with corepack/pnpm enabled.
+Copies dependency manifests first for layer caching, installs dependencies with
+a BuildKit cache mount on the pnpm store, compiles all packages with `pnpm build`,
+then prunes devDependencies and removes `.d.ts`, `.map`, and `.tsbuildinfo` files.
+
+**Stage 2 -- runtime-assets:** Copies the built output from Stage 1 and strips
+remaining source files (`src/`, `test/`, `tsconfig*.json`, `vitest.config.*`)
+so only `dist/` and `node_modules` remain.
+
+**Stage 3 -- base variant selection:** Two base image options are defined:
+- `base-default` -- full `node:22-bookworm` (includes debugging tools)
+- `base-slim` -- minimal `node:22-bookworm-slim`
+
+The `COMIS_VARIANT` build arg selects which base to use (default: `slim`).
+
+**Stage 4 -- final:** Installs runtime dependencies (`procps`, `curl`,
+`ca-certificates`, `dumb-init`, `git`), creates a non-root `comis` user
+(UID/GID 1000), copies from runtime-assets, creates a `comis` CLI symlink at
+`/usr/local/bin/comis`, and configures dumb-init as PID 1. Exposes port 4766
+with a health check (60s interval, 10s timeout, 30s start period, 3 retries).
+
+### Build args
+
+```dockerfile
+ARG COMIS_NODE_BOOKWORM_IMAGE="node:22-bookworm@sha256:..."
+ARG COMIS_NODE_BOOKWORM_SLIM_IMAGE="node:22-bookworm-slim@sha256:..."
+ARG COMIS_VARIANT="slim"
+ARG COMIS_DOCKER_APT_PACKAGES=""
+```
+
+- **Digest pinning** -- the base image ARGs accept `@sha256:` digests for
+  reproducible builds. Replace the placeholder digests with actual values from
+  `docker inspect --format='{{.RepoDigests}}' node:22-bookworm`.
+- **Variant selection** -- set `COMIS_VARIANT=default` for the full image with
+  debugging tools, or leave as `slim` for production.
+- **Custom packages** -- set `COMIS_DOCKER_APT_PACKAGES` to install additional
+  system packages into the final image.
+
+<Tip>
+The multi-stage build keeps the final image small. Only compiled JavaScript,
+production dependencies, and minimal system tools are included. The full
+`Dockerfile` is in the repository root.
+</Tip>
+
+## Docker Compose
+
+The `docker-compose.yml` in the repository root defines three services with
+a profile-based activation model.
+
+### Services
+
+**comis-daemon** (always runs):
+- Gateway port binding via `COMIS_GATEWAY_HOST` and `COMIS_GATEWAY_PORT` env vars
+  (default: `127.0.0.1:4766`)
+- Volumes for `/data` (persistent data) and `/etc/comis` (config, read-only)
+- Environment variable pass-through for secrets, provider keys, and channel tokens
+- Health check: `curl -sf http://127.0.0.1:4766/health` (60s interval, 10s
+  timeout, 30s start period, 3 retries)
+- Resource limits: 2G memory / 2 CPU (limit), 256M / 0.5 CPU (reservation)
+- JSON log rotation: 50MB max size, 5 files
+
+**comis-web** (profile: `web`):
+- Nginx-served Lit SPA dashboard on port 8080
+- Built from `Dockerfile.web` (see [Web dashboard](#web-dashboard) below)
+- Depends on a healthy `comis-daemon`
+- Health check via `wget` on port 8080
+
+**comis-cli** (profile: `cli`):
+- Shares the daemon's network namespace (`network_mode: service:comis-daemon`)
+  so it reaches the gateway at `127.0.0.1:4766`
+- Interactive mode (stdin/tty enabled) for one-shot commands
+- Security hardened: `no-new-privileges`, drops `NET_RAW` and `NET_ADMIN` capabilities
+
+### Using profiles
+
+```bash
+# Start only the daemon (default)
+docker compose up -d
+
+# Start daemon + web dashboard
+docker compose --profile web up -d
+
+# Run a CLI command against the running daemon
+docker compose --profile cli run --rm comis-cli status
+docker compose --profile cli run --rm comis-cli agent list
+```
+
+### Build and run
+
+```bash
+# Build and start (first time or after code changes)
+docker compose up -d --build
+
+# Build web dashboard image (if using web profile)
+docker compose --profile web build
+docker compose --profile web up -d
+```
+
+### View logs
+
+```bash
+docker compose logs -f comis-daemon
+```
+
+Look for the `"Comis daemon started"` message confirming the daemon is running.
+
+### Stop services
+
+```bash
+# Stop daemon
+docker compose down
+
+# Stop web dashboard
+docker compose --profile web down
+```
+
+## Volume management
+
+The daemon uses two mount points inside the container:
+
+| Container path | Purpose | Default host path |
+|---------------|---------|-------------------|
+| `/data` | SQLite databases, logs, traces, secrets, `.env` | `~/.comis` |
+| `/etc/comis` | Configuration files (read-only mount) | `~/.comis` |
+
+### Files in `/data`
+
+| File | What it contains |
+|------|-----------------|
+| `memory.db` | Agent conversations and memory (SQLite database) |
+| `daemon.log` | Log files (if file logging is enabled) |
+| `secrets.db` | Encrypted secrets store |
+| `traces/` | Execution traces |
+| `.env` | Runtime environment (token, network settings) |
+
+<Warning>
+If you do not mount a volume for `/data`, you will **lose all agent memory and
+configuration** when the container restarts. The Compose file mounts
+`COMIS_DATA_DIR` (default `~/.comis`) to `/data` to ensure persistence.
+</Warning>
+
+### Backup
+
+```bash
+docker compose stop comis-daemon
+docker cp comis-daemon:/data ./comis-backup
+docker compose start comis-daemon
+```
+
+## Health checks
+
+The `HEALTHCHECK` directive in the Dockerfile sends a request to the
+`GET /health` endpoint. Configuration:
+
+| Parameter | Value |
+|-----------|-------|
+| Interval | 60s |
+| Timeout | 10s |
+| Start period | 30s |
+| Retries | 3 |
+
+The endpoint returns:
+
+```json
+{ "status": "ok", "timestamp": "2026-03-15T10:00:00.000Z" }
+```
+
+Docker uses the health check to determine container status:
+
+| Status | What it means |
+|--------|-------------|
+| `healthy` | The daemon is running and the gateway is responding |
+| `unhealthy` | Three consecutive health checks failed |
+| `starting` | Within the 30s start period; failures are not counted |
+
+You can see the health status in `docker ps` output:
+
+```bash
+docker ps
+```
+
+```
+CONTAINER ID   IMAGE        STATUS                   PORTS
+abc123         comis:local  Up 5 minutes (healthy)   127.0.0.1:4766->4766/tcp
+```
+
+With `restart: unless-stopped` in Compose, Docker automatically restarts the
+container if it exits.
+
+## Security
+
+The production setup includes several hardening measures:
+
+- **Non-root user** -- the container runs as the `comis` user (UID/GID 1000),
+  not as root
+- **dumb-init** -- proper PID 1 signal handling prevents zombie processes and
+  ensures clean shutdowns
+- **Digest-pinned base images** -- ARGs at the top of the Dockerfile accept
+  `@sha256:` digests for reproducible, tamper-evident builds
+- **UID/GID 1000** -- predictable file ownership on host-mounted volumes
+- **Read-only config mount** -- `/etc/comis` is mounted with `:ro` so the
+  container cannot modify configuration files
+- **Minimal base image** -- `node:22-bookworm-slim` has fewer packages and a
+  smaller attack surface than the full image
+- **No unnecessary ports** -- only port 4766 is exposed
+- **Resource limits** -- memory and CPU limits prevent runaway processes (2G/2CPU
+  limit, 256M/0.5CPU reservation)
+- **JSON log rotation** -- daemon logs rotate at 50MB with 5 files retained,
+  preventing disk exhaustion
+- **CLI hardening** -- the CLI service sets `security_opt: no-new-privileges`
+  and drops `NET_RAW` and `NET_ADMIN` capabilities
+
+### Environment file
+
+Copy `.env.docker.example` from the repository root as your starting point:
+
+```bash
+cp .env.docker.example .env
+```
+
+This template includes all configurable variables: image selection, data/config
+paths, network binding, gateway token, secrets master key, LLM provider keys,
+and channel tokens. See the comments in `.env.docker.example` for details.
+
+<Tip>
+Pass API keys via environment variables (using `.env` or docker compose environment
+section), not in the config file mounted into the container. Environment variables
+are not written to the image layers.
+</Tip>
+
+## Development overrides
+
+The repository includes a `docker-compose.override.yml` that Docker Compose
+activates automatically when the file exists alongside `docker-compose.yml`.
+
+Development overrides change the following:
+
+| Setting | Production | Development |
+|---------|-----------|-------------|
+| Image variant | `slim` (bookworm-slim) | `default` (full bookworm with debugging tools) |
+| Port binding | `127.0.0.1:4766` | `0.0.0.0:4766` (all interfaces) |
+| NODE_ENV | `production` | `development` |
+| Resource limits | 2G / 2 CPU | 4G / 4 CPU |
+| Web dashboard | Requires `--profile web` | Starts automatically (no profile needed) |
+
+To use production settings without overrides, either rename or remove
+`docker-compose.override.yml`:
+
+```bash
+mv docker-compose.override.yml docker-compose.override.yml.bak
+```
+
+## Web dashboard
+
+The web dashboard is built from `Dockerfile.web` -- a 2-stage build:
+
+1. **Build stage** -- `node:22-bookworm-slim`, installs the `@comis/web` package
+   and its dependencies, runs `pnpm build` to produce the Lit SPA
+2. **Serve stage** -- `nginx:alpine`, copies the built SPA into the Nginx html
+   directory with a custom config from `docker/nginx.conf`
+
+### Nginx configuration
+
+The `docker/nginx.conf` provides:
+
+- **SPA fallback** -- all routes serve `index.html` via `try_files`
+- **API reverse proxy** -- `/api/` requests are proxied to `comis-daemon:4766`
+  with HTTP/1.1 upgrade support
+- **WebSocket proxy** -- `/ws` is proxied to the daemon's WebSocket endpoint
+  with an 86400s (24h) read timeout
+- **Static asset caching** -- JS, CSS, images, and fonts get 30-day cache
+  headers with `Cache-Control: public, immutable`
+
+The dashboard runs on port 8080 with a health check via `wget`.
+
+## CI/CD
+
+The repository includes `.github/workflows/docker-release.yml` for automated
+Docker image builds. This workflow triggers on releases and handles building and
+publishing the image. See the workflow file for configuration details.
+
+## Updating
+
+To update Comis to a new version:
+
+```bash
+# Pull latest code
+git pull
+
+# Rebuild and restart
+docker compose up -d --build
+```
+
+If using the web dashboard:
+
+```bash
+docker compose --profile web up -d --build
+```
+
+The mounted `/data` volume preserves your data across rebuilds. Only the
+application code is replaced.
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Install with Docker" icon="docker" href="/installation/install-docker">
+    Quick-start Docker setup for getting started.
+  </Card>
+  <Card title="Reverse Proxy" icon="shield-halved" href="/operations/reverse-proxy">
+    Put Comis behind Nginx or Caddy for TLS and custom domains.
+  </Card>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    How the daemon starts, runs, and shuts down.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Solutions to common issues.
+  </Card>
+</CardGroup>

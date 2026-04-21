@@ -1,0 +1,171 @@
+# Comis
+
+> Open-source AI agent fleet that lives in your messaging apps
+
+[Comis Documentation](https://docs.comis.ai): Comis is a security-first AI agent assistant platform connecting AI agents to real-time chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo with hexagonal architecture, built-in memory, tool use, and multi-agent orchestration.
+
+## Get Started
+
+- [Welcome to Comis](https://docs.comis.ai/get-started): Open-source AI agent fleet that lives in your messaging apps
+- [Quickstart](https://docs.comis.ai/get-started/quickstart): Get your first Comis agent running in under 5 minutes
+- [Use Cases](https://docs.comis.ai/get-started/use-cases): Real-world scenarios showing what you can build with Comis
+- [How It Works](https://docs.comis.ai/get-started/how-it-works): A plain-language guide to how Comis processes messages and connects your agents
+- [How Comis Keeps You Safe](https://docs.comis.ai/get-started/security): An overview of Comis security protections in plain language
+- [Glossary](https://docs.comis.ai/get-started/glossary): Definitions for every technical term used in the Comis documentation
+
+## Installation
+
+- [Installation](https://docs.comis.ai/installation): Choose your setup method and install Comis
+- [Requirements](https://docs.comis.ai/installation/requirements): Hardware, software, and account prerequisites for running Comis
+- [Install on Linux](https://docs.comis.ai/installation/install-linux): Step-by-step installation guide for Ubuntu, Fedora, and Arch Linux
+- [Install with Docker](https://docs.comis.ai/installation/install-docker): Run Comis in a Docker container with Docker Compose
+- [Configuration Guide](https://docs.comis.ai/installation/configuration): Set up your config.yaml with required settings, channels, and customization
+- [Verify Your Installation](https://docs.comis.ai/installation/verify): Confirm that Comis is installed correctly and running as expected
+
+## Channels
+
+- [Channels](https://docs.comis.ai/channels): Connect Comis to Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, and Email
+  - [Discord](https://docs.comis.ai/channels/discord): Connect Comis to Discord with step-by-step setup
+  - [Telegram](https://docs.comis.ai/channels/telegram): Connect Comis to Telegram with step-by-step setup
+  - [Slack](https://docs.comis.ai/channels/slack): Connect Comis to Slack with step-by-step setup
+  - [WhatsApp](https://docs.comis.ai/channels/whatsapp): Connect Comis to WhatsApp with step-by-step setup
+  - [Signal](https://docs.comis.ai/channels/signal): Connect Comis to Signal with step-by-step setup
+  - [iMessage](https://docs.comis.ai/channels/imessage): Connect Comis to iMessage on macOS
+  - [LINE](https://docs.comis.ai/channels/line): Connect Comis to LINE with step-by-step setup
+  - [IRC](https://docs.comis.ai/channels/irc): Connect Comis to IRC with step-by-step setup
+  - [Email](https://docs.comis.ai/channels/email): Connect Comis to Email with step-by-step IMAP/SMTP setup
+- [Delivery Infrastructure](https://docs.comis.ai/channels/delivery): How Comis delivers messages: streaming, typing indicators, retry logic, and block pacing
+
+## Agents
+
+- [Agents](https://docs.comis.ai/agents): What agents are and how they work inside Comis
+- [Agent Lifecycle](https://docs.comis.ai/agents/lifecycle): How your agent processes messages from arrival to response
+- [Identity](https://docs.comis.ai/agents/identity): How workspace files shape your agent's personality and behavior
+- [Routing](https://docs.comis.ai/agents/routing): How Comis decides which agent handles each message
+- [Slash Commands](https://docs.comis.ai/agents/slash-commands): All the commands you can type to control your agent
+- [Sessions](https://docs.comis.ai/agents/sessions): How Comis manages conversations between you and your agent
+- [Subagent Context Lifecycle](https://docs.comis.ai/agents/subagent-lifecycle): How Comis prepares, runs, and captures results from sub-agent sessions
+- [Compaction](https://docs.comis.ai/agents/compaction): How Comis automatically manages conversation length
+- [Memory Recall (RAG)](https://docs.comis.ai/agents/rag): How your agent remembers past conversations when answering new questions
+- [Message Queue](https://docs.comis.ai/agents/queue): How Comis handles multiple messages and ensures orderly processing
+- [Execution Graphs](https://docs.comis.ai/agents/execution-graphs): Multi-agent DAG orchestration -- define, execute, and monitor workflows. 7 built-in node types: agent, debate, vote, refine, collaborate, approval-gate, map-reduce
+- [Memory](https://docs.comis.ai/agents/memory): How your agent stores and organizes long-term knowledge
+- [Search](https://docs.comis.ai/agents/search): How your agent finds relevant memories
+- [Embeddings](https://docs.comis.ai/agents/embeddings): Setting up meaning-based memory search
+- [Models](https://docs.comis.ai/agents/models): Configuring AI providers, model selection, and automatic failover
+- [Safety](https://docs.comis.ai/agents/safety): How Comis protects you from unexpected costs and runaway agents
+- [Resilience](https://docs.comis.ai/agents/resilience): How Comis prevents silent failures from provider outages, hung prompts, and stuck sub-agents
+
+## Skills
+
+- [Skills Overview](https://docs.comis.ai/skills): Understand the types of skills and tools your Comis agents can use
+- [Built-in Tools](https://docs.comis.ai/skills/built-in-tools): Every built-in tool your Comis agents can use for files, shell commands, web access, and browser automation
+- [Platform Tools](https://docs.comis.ai/skills/platform-tools): Overview of all Comis-specific tools agents can use for messaging, scheduling, and administration
+- [Prompt Skills](https://docs.comis.ai/skills/prompt-skills): Create custom Markdown instruction files that teach your agents new behaviors
+- [Skill Examples](https://docs.comis.ai/skills/examples): Complete skill walkthroughs you can follow step by step
+- [Skill Manifest](https://docs.comis.ai/skills/manifest): Complete reference for the SKILL.md file format and all available fields
+- [Security Scanning](https://docs.comis.ai/skills/security-scanning): What Comis checks for when loading custom skills
+- [Tool Policy](https://docs.comis.ai/skills/tool-policy): Control which tools your agents can use with profiles, groups, and allow/deny lists
+- [MCP Integration](https://docs.comis.ai/skills/mcp): Connect external tools to your agents using the Model Context Protocol
+
+## Agent Tools
+
+- [Agent Tools Overview](https://docs.comis.ai/agent-tools): Master reference for every tool your Comis agents can use
+  - [Scheduling](https://docs.comis.ai/agent-tools/scheduling): Create scheduled jobs and manage agent heartbeat timing
+  - [Messaging](https://docs.comis.ai/agent-tools/messaging): Send, reply, react, edit, and delete messages across channels
+  - [Sessions](https://docs.comis.ai/agent-tools/sessions): Manage conversations, spawn sub-agents, run pipelines, and search memory
+  - [Pipelines](https://docs.comis.ai/agent-tools/pipelines): The pipeline tool for defining, executing, and managing multi-agent execution graphs
+  - [Media](https://docs.comis.ai/agent-tools/media): Image analysis, text-to-speech, audio transcription, video description, and document extraction
+  - [Infrastructure](https://docs.comis.ai/agent-tools/infrastructure): Configuration management, gateway control, and supervisor administration tools
+  - [Browser](https://docs.comis.ai/agent-tools/browser): Headless browser automation with 16 actions for navigation, interaction, and screenshots
+  - [Web Tools](https://docs.comis.ai/agent-tools/web-tools): Web search with 8 providers and web page content fetching
+  - [Platform Actions](https://docs.comis.ai/agent-tools/platform-actions): Discord, Telegram, Slack, and WhatsApp moderation and management actions
+
+## Media & Voice
+
+- [Media & Voice](https://docs.comis.ai/media): How your agent handles images, voice messages, documents, links, and interactive messages
+  - [Vision](https://docs.comis.ai/media/vision): How your agent sees and understands images and videos
+  - [Voice](https://docs.comis.ai/media/voice): Speech-to-text transcription and text-to-speech auto-reply for voice messages
+  - [Documents](https://docs.comis.ai/media/documents): How your agent reads PDFs, spreadsheets, code files, and other documents
+  - [Links](https://docs.comis.ai/media/links): How your agent understands web pages shared in messages
+  - [Rich Messages](https://docs.comis.ai/media/rich-messages): Buttons, cards, embeds, and polls across Discord, Telegram, Slack, LINE, and more
+
+## Web Dashboard
+
+- [Web Dashboard](https://docs.comis.ai/web-dashboard): Manage your Comis agents, channels, and settings from the browser
+  - [Chat Console](https://docs.comis.ai/web-dashboard/chat): Have real-time conversations with your AI agents through the web browser
+  - [Agents View](https://docs.comis.ai/web-dashboard/agents-view): View and manage your AI agents from the web dashboard
+  - [Workspace View](https://docs.comis.ai/web-dashboard/workspace-view): Browse and edit agent workspace files and git history from the web dashboard
+  - [Channels View](https://docs.comis.ai/web-dashboard/channels-view): Monitor and manage your messaging platform connections from the web dashboard
+  - [Memory View](https://docs.comis.ai/web-dashboard/memory-view): Browse, search, and manage your agents' stored knowledge
+  - [Sessions View](https://docs.comis.ai/web-dashboard/sessions-view): View and manage conversation sessions across all your agents
+  - [Scheduler View](https://docs.comis.ai/web-dashboard/scheduler-view): Manage automated tasks, cron jobs, and heartbeat monitoring
+  - [Message Center](https://docs.comis.ai/web-dashboard/message-center): Browse, send, and manage messages across all connected channels
+  - [Sub-Agents](https://docs.comis.ai/web-dashboard/subagents): Monitor spawned sub-agent tasks, outputs, costs, and lineage
+  - [MCP Servers](https://docs.comis.ai/web-dashboard/mcp-management): Manage Model Context Protocol server connections, tools, and health
+  - [Media](https://docs.comis.ai/web-dashboard/media): Test media processing capabilities and configure media providers
+  - [Observability](https://docs.comis.ai/web-dashboard/observability): Monitor your agents' activity, costs, and message delivery from a single view
+  - [Security](https://docs.comis.ai/web-dashboard/security-view): Manage security settings, audit logs, and approval gates from the dashboard
+  - [Config Editor](https://docs.comis.ai/web-dashboard/config-editor): View and edit your Comis configuration from the browser
+  - [Pipelines](https://docs.comis.ai/web-dashboard/pipelines): Build and monitor multi-agent workflows visually
+
+## Operations
+
+- [Operations](https://docs.comis.ai/operations): Running, monitoring, and maintaining your Comis installation
+- [Daemon](https://docs.comis.ai/operations/daemon): How the Comis daemon starts, runs, and shuts down
+- [Logging](https://docs.comis.ai/operations/logging): Understanding and viewing Comis logs
+- [Monitoring](https://docs.comis.ai/operations/monitoring): Health monitoring and system alerts
+- [Observability](https://docs.comis.ai/operations/observability): Token tracking, cost estimation, latency, and delivery tracing
+- [Scheduler](https://docs.comis.ai/operations/scheduler): Cron jobs, heartbeat monitoring, and task extraction
+- [Web UI](https://docs.comis.ai/operations/web-ui): Setting up the Comis web dashboard
+- [systemd](https://docs.comis.ai/operations/systemd): Running Comis as a systemd service on Linux
+- [Docker](https://docs.comis.ai/operations/docker): Running Comis in a Docker container for production
+- [pm2](https://docs.comis.ai/operations/pm2): Running Comis with the pm2 process manager
+- [Reverse Proxy](https://docs.comis.ai/operations/reverse-proxy): Putting Comis behind Nginx or Caddy for TLS and domain access
+- [Troubleshooting](https://docs.comis.ai/operations/troubleshooting): Solutions to common Comis issues
+- [FAQ](https://docs.comis.ai/operations/faq): Frequently asked questions about Comis
+
+## Security
+
+- [How Comis Keeps You Safe](https://docs.comis.ai/security): An overview of the security protections built into Comis
+- [Defense in Depth](https://docs.comis.ai/security/defense-in-depth): How 18+ security layers work together to protect your agents and data
+- [Secrets](https://docs.comis.ai/security/secrets): How to manage API keys and passwords safely in Comis
+- [Approvals](https://docs.comis.ai/security/approvals): How to require human approval before agents perform high-risk actions
+- [Audit Logging](https://docs.comis.ai/security/audit): How Comis records security-relevant events for monitoring and compliance
+- [Skill Sandboxing](https://docs.comis.ai/security/sandbox): How Comis isolates skills to prevent malicious or compromised code from causing harm
+- [Exec Sandbox](https://docs.comis.ai/security/exec-sandbox): OS-level filesystem isolation for the exec tool using bubblewrap (Linux) and sandbox-exec (macOS)
+- [Hardening](https://docs.comis.ai/security/hardening): A step-by-step checklist to maximize the security of your Comis installation
+
+## Developer Guide
+
+- [Developer Guide](https://docs.comis.ai/developer-guide): Extend Comis with custom adapters, plugins, skills, and execution pipelines
+- [Architecture](https://docs.comis.ai/developer-guide/architecture): Hexagonal architecture, ports, adapters, and the composition root
+- [Packages](https://docs.comis.ai/developer-guide/packages): All 13 packages with roles, key exports, and dependency relationships
+- [Event Bus](https://docs.comis.ai/developer-guide/event-bus): 160 typed events across 4 domain subsystems for cross-module communication
+- [Delivery Pipeline](https://docs.comis.ai/architecture/delivery-pipeline): How outbound messages flow from agent response through crash-safe persistence to channel delivery
+- [Custom Adapters](https://docs.comis.ai/developer-guide/custom-adapters): Build a channel adapter from the ChannelPort interface to a working platform integration
+- [Plugins](https://docs.comis.ai/developer-guide/plugins): 11 lifecycle hooks and 3 extension registrations for customizing Comis behavior
+- [Custom Skills](https://docs.comis.ai/developer-guide/custom-skills): Advanced skill development with SkillPort, manifests, content scanning, and MCP integration
+- [Pipelines](https://docs.comis.ai/developer-guide/pipelines): Multi-agent execution graphs with DAG validation, dependency resolution, and parallel coordination
+- [Contributing](https://docs.comis.ai/developer-guide/contributing): Development setup, coding standards, testing conventions, and PR process
+
+## Reference
+
+- [CLI Reference](https://docs.comis.ai/reference/cli): Complete reference for all 17 command groups, subcommands, and flags
+- [Config YAML Reference](https://docs.comis.ai/reference/config-yaml): Complete reference for all configuration options with types, defaults, and validation rules
+- [Environment Variables](https://docs.comis.ai/reference/environment-variables): Complete reference for all Comis environment variables
+- [Hot Reload](https://docs.comis.ai/reference/hot-reload): Config and skill hot reload mechanism reference covering SIGUSR1 restart and chokidar file watching
+- [Secret Manager](https://docs.comis.ai/reference/secret-manager): Secret management system technical reference covering SecretManager interface, encryption, scoping, and audit
+- [Delivery Queue](https://docs.comis.ai/configuration/delivery-queue): Crash-safe outbound message persistence, recovery, and delivery queue configuration reference
+- [Security Model](https://docs.comis.ai/reference/security-model): Complete technical reference for all security mechanisms, thresholds, patterns, and configuration
+- [Sandbox](https://docs.comis.ai/reference/sandbox): Skill sandboxing implementation reference covering content scanning, sanitization, tool policy, and execution limits
+- [Safe Path](https://docs.comis.ai/reference/safe-path): Path traversal prevention reference with 5 attack vector defenses
+- [Action Classifier](https://docs.comis.ai/reference/action-classifier): Complete registry of action classifications for security audit logging and confirmation gates
+- [Tool Security](https://docs.comis.ai/reference/tool-security): SSRF guard, tool policy profiles, content scanning, sanitization pipeline, and audit wrapper reference
+- [Node Permissions](https://docs.comis.ai/reference/node-permissions): Node.js permission model integration reference for child process sandboxing
+- [HTTP Gateway Reference](https://docs.comis.ai/reference/http-gateway): Complete reference for all HTTP endpoints, authentication, and rate limiting
+- [JSON-RPC Methods Reference](https://docs.comis.ai/reference/json-rpc): Complete reference for all JSON-RPC methods across 30 namespaces
+- [WebSocket Protocol Reference](https://docs.comis.ai/reference/websocket): WebSocket connection protocol, authentication, heartbeat, and error handling
+- [OpenAI-Compatible API](https://docs.comis.ai/reference/openai-api): Complete request/response schema reference for /v1/chat/completions, /v1/models, and /v1/embeddings
+- [Webhooks](https://docs.comis.ai/reference/webhooks): Path-routed webhook ingestion with HMAC verification, template engine, and configurable presets
+- [Rate Limiting](https://docs.comis.ai/reference/rate-limiting): Multi-layer rate limiting reference covering HTTP, WebSocket, config patch, and injection detection layers

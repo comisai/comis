@@ -1,0 +1,108 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+import Base from "../../layouts/Base.astro";
+import Footer from "../../components/Footer.astro";
+
+const title = "Blog - Comis Engineering";
+const description = "Technical deep dives, architecture decisions, and lessons learned building Comis - the open-source AI agent platform.";
+
+// Add new posts here - newest first
+const posts = [
+  {
+    slug: "cache-optimization-journey",
+    title: "How I Cut Our Multi-Agent Pipeline Cost by 64% with Cache Forensics",
+    description: "The story of debugging Anthropic's prompt cache behavior in production, discovering three root causes, building a cache fence system, and uncovering a TTL monotonicity violation - ultimately achieving 81% cost reduction.",
+    date: "April 11, 2026",
+    author: "Moshe Anconina",
+    readTime: "12 min",
+    tag: "Engineering",
+    image: "/images/blog-cache-fence-hero.png",
+  },
+  {
+    slug: "why-ai-agent-security-is-hard",
+    title: "Why AI Agent Security Is Hard (And What We Built to Solve It)",
+    description: "Most AI frameworks bolt security on after launch. Comis was designed around a different question: what happens when an AI agent has real power and someone tries to abuse it? 22 defense layers later, here's what I learned.",
+    date: "April 10, 2026",
+    author: "Moshe Anconina",
+    readTime: "14 min",
+    tag: "Security",
+    image: "/images/blog-security-hero.png",
+  },
+  {
+    slug: "anatomy-of-a-context-engine",
+    title: "Anatomy of a Context Engine: 8 Layers That Keep AI Agents Affordable",
+    description: "How Comis processes every conversation through an 8-layer pipeline that strips thinking traces, evicts dead content, masks old observations, and compresses entire conversations - keeping costs predictable at any scale.",
+    date: "April 9, 2026",
+    author: "Moshe Anconina",
+    readTime: "15 min",
+    tag: "Engineering",
+    image: "/images/blog-context-hero.png",
+  },
+];
+---
+
+<Base title={title} description={description}>
+  <main>
+    <!-- Hero -->
+    <section class="relative overflow-hidden px-6 pt-32 pb-16 md:pt-40 md:pb-20">
+      <div class="absolute inset-0 pointer-events-none">
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-teal/5 rounded-full blur-[120px]"></div>
+      </div>
+
+      <div class="relative max-w-3xl mx-auto text-center">
+        <a href="/" class="inline-flex items-center gap-1 text-sm text-muted hover:text-teal transition-colors mb-8">
+          &larr; Back to Home
+        </a>
+        <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.1] text-white">
+          Blog
+        </h1>
+        <p class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed">
+          Technical deep dives, architecture decisions, and lessons learned building Comis.
+        </p>
+      </div>
+    </section>
+
+    <!-- Posts -->
+    <section class="px-6 pb-24">
+      <div class="max-w-4xl mx-auto">
+        <div class="space-y-8">
+          {posts.map((post) => (
+            <a href={`/blog/${post.slug}`} class="group block bg-navy-light/80 border border-white/5 hover:border-teal/20 rounded-2xl overflow-hidden transition-all duration-200">
+              <div class="md:flex">
+                {post.image && (
+                  <div class="md:w-80 shrink-0">
+                    <img
+                      src={post.image}
+                      alt={post.title}
+                      class="w-full h-48 md:h-full object-cover group-hover:opacity-90 transition-opacity"
+                      loading="lazy"
+                    />
+                  </div>
+                )}
+                <div class="p-6 md:p-8 flex flex-col justify-center">
+                  <div class="flex items-center gap-3 text-xs text-muted mb-3">
+                    <span class="text-teal font-medium">{post.tag}</span>
+                    <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+                    <span>{post.date}</span>
+                    <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+                    <span>{post.readTime} read</span>
+                  </div>
+                  <h2 class="text-xl md:text-2xl font-bold text-white group-hover:text-teal transition-colors mb-3 leading-tight">
+                    {post.title}
+                  </h2>
+                  <p class="text-muted text-sm leading-relaxed mb-4">
+                    {post.description}
+                  </p>
+                  <div class="flex items-center gap-2 text-sm">
+                    <span class="text-muted-light">{post.author}</span>
+                  </div>
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Base>

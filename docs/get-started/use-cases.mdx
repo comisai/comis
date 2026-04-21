@@ -1,0 +1,114 @@
+---
+title: "Use Cases"
+description: "Real-world scenarios showing what you can build with Comis"
+icon: "lightbulb"
+---
+
+Comis is flexible enough to power many different kinds of AI agents. Here are some real-world scenarios to inspire your setup -- each one maps to specific Comis features you can configure today.
+
+## Community Moderator Bot
+
+**Who uses this:** Discord and Telegram community managers who need an always-on presence in their server or group.
+
+**What they build:** An agent that answers frequently asked questions, welcomes new members, and helps enforce community rules. The agent watches group conversations and responds when mentioned by name, keeping the community active even when moderators are offline.
+
+**Comis features used:**
+
+- [Auto-reply](/agents/index) in mention-gated mode so the agent only speaks when addressed
+- [Prompt skills](/skills/prompt-skills) loaded with your FAQ content and community rules
+- [Discord](/channels/discord) or [Telegram](/channels/telegram) channel adapter for platform integration
+- [Memory](/agents/memory) so the agent learns and recalls community context over time
+
+**Getting started:** Connect one channel, then add prompt skills containing your FAQ and community guidelines. The agent will use this knowledge when responding to questions.
+
+## Customer Support Agent
+
+**Who uses this:** Small business owners who want to provide fast, consistent answers to customer questions.
+
+**What they build:** An agent in WhatsApp or Slack that handles customer inquiries using company knowledge. It retrieves relevant information from your product documentation and FAQ before answering, and escalates sensitive requests to a human.
+
+**Comis features used:**
+
+- [RAG memory](/agents/rag) for retrieving answers from your knowledge base
+- [Session management](/agents/sessions) to maintain separate conversations per customer
+- [WhatsApp](/channels/whatsapp) or [Slack](/channels/slack) channel adapter
+- [Approval gates](/security/approvals) for human review before taking sensitive actions like processing refunds
+
+**Getting started:** Load your FAQ and product documentation into memory, then enable per-peer sessions so each customer gets their own conversation thread.
+
+## Personal AI Assistant
+
+**Who uses this:** Power users who want an AI assistant available in their personal messaging apps.
+
+**What they build:** A private agent in iMessage or Signal that helps with scheduling, web research, reminders, and daily tasks. It feels like having a personal assistant you can text anytime.
+
+**Comis features used:**
+
+- [Scheduling](/agent-tools/scheduling) for cron jobs, reminders, and recurring tasks
+- [Web search](/agent-tools/web-tools) with access to 8 search providers for research
+- [Browser automation](/agent-tools/browser) for fetching and summarizing web pages
+- [iMessage](/channels/imessage) or [Signal](/channels/signal) for private, encrypted messaging
+
+**Getting started:** Enable the scheduling and web search tools in your tool policy, then connect your preferred messaging platform.
+
+## Team Workflow Automation
+
+**Who uses this:** Engineering and operations teams who want AI to handle multi-step processes.
+
+**What they build:** A multi-agent fleet where specialized agents -- an analyst, a writer, an operations bot -- collaborate through execution graphs. Declarative DAG workflows with parallel execution, barrier modes, and shared data folders let each agent handle its area of expertise while the graph coordinator manages scheduling and result forwarding.
+
+**Comis features used:**
+
+- [Execution graphs](/agents/execution-graphs) for defining multi-step DAG workflows with parallel execution and barrier modes
+- [Multi-agent routing](/agents/routing) to assign different agents to different channels
+- [Sub-agent delegation](/agent-tools/sessions) for spawning child agents to handle subtasks
+- [Slash commands](/agents/slash-commands) for triggering workflows from chat
+
+**Getting started:** Define routing rules to assign agents to channels, then build execution graphs that chain multiple steps together. Use the [visual graph builder](/web-dashboard/pipelines) in the web dashboard to design and test workflows interactively.
+
+## Content Creation Pipeline
+
+**Who uses this:** Content teams and creators who want to automate research and drafting.
+
+**What they build:** Agents that research topics using web search, draft content based on a style guide stored in memory, and publish on a schedule using cron jobs. The pipeline runs daily without manual intervention.
+
+**Comis features used:**
+
+- [Cron scheduling](/agent-tools/scheduling) for triggering content runs on a recurring schedule
+- [Web search](/agent-tools/web-tools) for researching topics and gathering source material
+- [Memory](/agents/memory) for storing your style guide, brand voice, and past content
+- [Cross-channel messaging](/agent-tools/messaging) for posting content to multiple platforms
+
+**Getting started:** Use cron to trigger daily content runs, and store your style guide as prompt skills so the agent writes in your brand voice.
+
+## DevOps Incident Responder
+
+**Who uses this:** On-call engineers who need fast alerting and diagnostic capabilities.
+
+**What they build:** An agent in Discord that monitors systems via periodic health checks, alerts the team when something goes wrong, and can run diagnostic commands through connected tool servers.
+
+**Comis features used:**
+
+- [Heartbeat monitoring](/agent-tools/scheduling) for periodic health checks on your infrastructure
+- [MCP integration](/skills/mcp) to connect external monitoring and diagnostic tool servers
+- [Infrastructure tools](/agent-tools/infrastructure) for configuration and gateway control
+- [Discord](/channels/discord) for team notifications and interactive troubleshooting
+
+**Getting started:** Configure heartbeat sources for your infrastructure endpoints, then connect MCP servers for your monitoring stack.
+
+## Ready to Build?
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/get-started/quickstart">
+    Get running in 5 minutes
+  </Card>
+  <Card title="Channels" icon="messages" href="/channels/index">
+    Connect your messaging platform
+  </Card>
+  <Card title="Skills" icon="puzzle-piece" href="/skills/index">
+    Add capabilities to your agents
+  </Card>
+  <Card title="Glossary" icon="book" href="/get-started/glossary">
+    Look up any term
+  </Card>
+</CardGroup>

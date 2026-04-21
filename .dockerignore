@@ -1,0 +1,55 @@
+# =============================================================================
+# .dockerignore — Keep build context small
+# =============================================================================
+
+# Version control
+.git
+.gitignore
+
+# Build artifacts (rebuilt in container)
+packages/*/dist/
+packages/*/*.tsbuildinfo
+node_modules/
+
+# IDE & editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+test/
+packages/*/src/**/*.test.ts
+coverage/
+.nyc_output/
+
+# Planning & documentation
+.planning/
+*.md
+!package.json
+
+# Marketing website (not containerized)
+website/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files (secrets — NEVER include in image)
+.env
+.env.*
+!.env.docker.example
+
+# Docker files (prevent recursive context)
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# CI/CD
+.github/
+
+# Logs & data
+*.log
+*.db
+traces/

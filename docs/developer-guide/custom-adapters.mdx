@@ -1,0 +1,393 @@
+---
+title: "Custom Adapters"
+description: "Build a channel adapter from the ChannelPort interface to a working platform integration"
+icon: "plug"
+---
+
+Channel adapters connect Comis to chat platforms. Each adapter implements the `ChannelPort` interface from `@comis/core`, which defines messaging operations (send, receive, edit, delete, react). This guide walks you through building a complete adapter, using the `EchoChannelAdapter` as a reference implementation.
+
+## ChannelPort Interface
+
+The `ChannelPort` interface defines the contract that every channel adapter must implement. It covers the full messaging lifecycle: connecting, receiving messages, sending responses, and disconnecting.
+
+```typescript
+import type { Result } from "@comis/shared";
+import type {
+  NormalizedMessage,
+  SendMessageOptions,
+  AttachmentPayload,
+  FetchMessagesOptions,
+  FetchedMessage,
+} from "@comis/core";
+import type { ChannelStatus } from "@comis/core";
+
+export interface ChannelPort {
+  /** Unique identifier for this adapter instance (e.g., "telegram-bot-123") */
+  readonly channelId: string;
+  /** Channel type this adapter handles (e.g., "telegram", "discord") */
+  readonly channelType: string;
+
+  // Lifecycle
+  start(): Promise<Result<void, Error>>;
+  stop(): Promise<Result<void, Error>>;
+
+  // Messaging
+  sendMessage(channelId: string, text: string, options?: SendMessageOptions): Promise<Result<string, Error>>;
+  editMessage(channelId: string, messageId: string, text: string): Promise<Result<void, Error>>;
+  reactToMessage(channelId: string, messageId: string, emoji: string): Promise<Result<void, Error>>;
+  removeReaction(channelId: string, messageId: string, emoji: string): Promise<Result<void, Error>>;
+  deleteMessage(channelId: string, messageId: string): Promise<Result<void, Error>>;
+  fetchMessages(channelId: string, options?: FetchMessagesOptions): Promise<Result<FetchedMessage[], Error>>;
+  sendAttachment(channelId: string, attachment: AttachmentPayload, options?: SendMessageOptions): Promise<Result<string, Error>>;
+
+  // Handler
+  onMessage(handler: (msg: NormalizedMessage) => void): void;
+
+  // Extension
+  platformAction(action: string, params: Record<string, unknown>): Promise<Result<unknown, Error>>;
+  getStatus?(): ChannelStatus;
+}
+```
+
+<Info>
+You do not need to implement every method fully. Methods like `editMessage`, `reactToMessage`, `fetchMessages`, and `platformAction` can return `err(new Error("Not supported"))` if your platform does not support them. The system uses `ChannelCapability` metadata to know which features are available.
+</Info>
+
+## File Structure
+
+The canonical file structure for a channel adapter follows this layout:
+
+```
+packages/channels/src/<platform>/
+  <platform>-adapter.ts            # Implements ChannelPort
+  message-mapper.ts                # Normalizes platform messages to NormalizedMessage
+  media-handler.ts                 # Platform-specific attachment handling
+  credential-validator.ts          # Validates platform API credentials
+  <platform>-resolver.ts           # Implements MediaResolverPort (optional)
+  voice-sender.ts                  # Platform-specific voice sending (optional)
+  <platform>-plugin.ts             # Implements ChannelPluginPort
+```
+
+Not every file is required. At minimum you need the adapter (implements `ChannelPort`) and the plugin wrapper (implements `ChannelPluginPort`).
+
+## Tutorial: Building a Minimal Adapter
+
+<Steps>
+
+<Step title="Implement ChannelPort">
+
+Create the adapter class that implements the `ChannelPort` interface. The `EchoChannelAdapter` at `packages/channels/src/echo/echo-adapter.ts` (251 lines) is the simplest real example to reference.
+
+```typescript
+// packages/channels/src/myplatform/myplatform-adapter.ts
+import { ok, err, type Result } from "@comis/shared";
+import type {
+  ChannelPort,
+  MessageHandler,
+  NormalizedMessage,
+  SendMessageOptions,
+  AttachmentPayload,
+  FetchMessagesOptions,
+  FetchedMessage,
+} from "@comis/core";
+
+export class MyPlatformAdapter implements ChannelPort {
+  readonly channelId: string;
+  readonly channelType = "myplatform";
+  private messageHandler?: MessageHandler;
+
+  constructor(config: { channelId: string; apiKey: string }) {
+    this.channelId = config.channelId;
+  }
+
+  async start(): Promise<Result<void, Error>> {
+    // Connect to your platform's API or WebSocket
+    return ok(undefined);
+  }
+
+  async stop(): Promise<Result<void, Error>> {
+    // Disconnect and clean up resources
+    return ok(undefined);
+  }
+
+  async sendMessage(
+    channelId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<Result<string, Error>> {
+    // Send via your platform's API, return the message ID
+    try {
+      const messageId = await this.platformSend(channelId, text);
+      return ok(messageId);
+    } catch (e) {
+      return err(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
+  async editMessage(
+    channelId: string,
+    messageId: string,
+    text: string,
+  ): Promise<Result<void, Error>> {
+    return err(new Error("Not supported"));
+  }
+
+  async reactToMessage(
+    channelId: string,
+    messageId: string,
+    emoji: string,
+  ): Promise<Result<void, Error>> {
+    return err(new Error("Not supported"));
+  }
+
+  async removeReaction(
+    channelId: string,
+    messageId: string,
+    emoji: string,
+  ): Promise<Result<void, Error>> {
+    return err(new Error("Not supported"));
+  }
+
+  async deleteMessage(
+    channelId: string,
+    messageId: string,
+  ): Promise<Result<void, Error>> {
+    return err(new Error("Not supported"));
+  }
+
+  async fetchMessages(
+    channelId: string,
+    options?: FetchMessagesOptions,
+  ): Promise<Result<FetchedMessage[], Error>> {
+    return err(new Error("Not supported"));
+  }
+
+  async sendAttachment(
+    channelId: string,
+    attachment: AttachmentPayload,
+    options?: SendMessageOptions,
+  ): Promise<Result<string, Error>> {
+    return err(new Error("Not supported"));
+  }
+
+  async platformAction(
+    action: string,
+    params: Record<string, unknown>,
+  ): Promise<Result<unknown, Error>> {
+    return err(new Error(`Unsupported action: ${action} on myplatform`));
+  }
+
+  onMessage(handler: MessageHandler): void {
+    this.messageHandler = handler;
+  }
+
+  // Call this when your platform receives a message
+  private handleIncomingMessage(platformMsg: unknown): void {
+    if (!this.messageHandler) return;
+
+    const normalized: NormalizedMessage = this.normalizeMessage(platformMsg);
+    this.messageHandler(normalized);
+  }
+}
+```
+
+</Step>
+
+<Step title="Normalize incoming messages">
+
+When your platform receives a message, convert it to a `NormalizedMessage` before passing it to the handler. This is the standard message format that all of Comis understands.
+
+Key fields of `NormalizedMessage`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Platform message ID |
+| `text` | `string` | Message text content |
+| `channelId` | `string` | Channel or chat ID |
+| `senderId` | `string` | User who sent the message |
+| `senderName` | `string` | Display name of the sender |
+| `timestamp` | `number` | When the message was sent (epoch ms) |
+| `attachments` | `MessageAttachment[]` | Array of file/media attachments |
+| `isGroup` | `boolean` | Whether this is a group chat |
+| `replyTo` | `object` | Message being replied to (optional) |
+
+Create a `message-mapper.ts` file to keep the normalization logic separate from the adapter:
+
+```typescript
+// packages/channels/src/myplatform/message-mapper.ts
+import type { NormalizedMessage } from "@comis/core";
+
+export function mapToNormalized(platformMsg: PlatformMessage): NormalizedMessage {
+  return {
+    id: platformMsg.messageId,
+    text: platformMsg.body ?? "",
+    channelId: platformMsg.chatId,
+    senderId: platformMsg.authorId,
+    senderName: platformMsg.authorName ?? "Unknown",
+    timestamp: platformMsg.createdAt,
+    attachments: [],
+    isGroup: platformMsg.isGroupChat,
+  };
+}
+```
+
+</Step>
+
+<Step title="Define ChannelCapability metadata">
+
+The `ChannelCapability` schema describes what your adapter supports. The system uses this metadata for feature negotiation -- for example, deciding whether to attempt streaming or threading on your channel.
+
+```typescript
+import type { ChannelCapability } from "@comis/core";
+
+const capabilities: ChannelCapability = {
+  chatTypes: ["dm", "group"],
+  features: {
+    reactions: true,
+    editMessages: false,
+    deleteMessages: false,
+    fetchHistory: false,
+    attachments: true,
+    threads: false,
+    mentions: true,
+    formatting: ["markdown"],
+    buttons: false,
+    cards: false,
+    effects: false,
+  },
+  limits: {
+    maxMessageChars: 4096,
+  },
+  streaming: {
+    supported: true,
+    throttleMs: 300,
+    method: "edit",
+  },
+  threading: {
+    supported: false,
+    threadType: "none",
+  },
+};
+```
+
+Set each feature flag honestly. The system trusts your declared capabilities to decide how to deliver messages. For example, if `streaming.supported` is `false`, Comis will send complete messages instead of streaming edits.
+
+</Step>
+
+<Step title="Create the ChannelPluginPort wrapper">
+
+Wrap your adapter in a `ChannelPluginPort` for registration with the plugin system. The plugin provides metadata (ID, name, capabilities) and lifecycle hooks (activate, deactivate).
+
+Reference `packages/channels/src/echo/echo-plugin.ts` for the simplest real example:
+
+```typescript
+// packages/channels/src/myplatform/myplatform-plugin.ts
+import { ok, type Result } from "@comis/shared";
+import type { ChannelCapability, ChannelPluginPort, PluginRegistryApi } from "@comis/core";
+import { MyPlatformAdapter } from "./myplatform-adapter.js";
+
+export interface MyPlatformConfig {
+  channelId: string;
+  apiKey: string;
+}
+
+export function createMyPlatformPlugin(config: MyPlatformConfig): ChannelPluginPort {
+  const adapter = new MyPlatformAdapter(config);
+
+  return {
+    id: "channel-myplatform",
+    name: "MyPlatform Channel",
+    version: "1.0.3",
+    channelType: "myplatform",
+    capabilities,
+    adapter,
+
+    register(registry: PluginRegistryApi): Result<void, Error> {
+      // Register hooks if needed (e.g., before_send, after_tool_call)
+      return ok(undefined);
+    },
+
+    async activate(): Promise<Result<void, Error>> {
+      return adapter.start();
+    },
+
+    async deactivate(): Promise<Result<void, Error>> {
+      return adapter.stop();
+    },
+  };
+}
+```
+
+</Step>
+
+<Step title="Register and test">
+
+The plugin is registered through the `PluginRegistry` during bootstrap. The channel registry validates your declared capabilities against the `ChannelCapabilitySchema` at registration time.
+
+For testing, use the co-located test pattern. Create `myplatform-adapter.test.ts` alongside the adapter and test:
+
+- **Lifecycle:** `start()` returns `ok`, `stop()` returns `ok`
+- **Message sending:** `sendMessage()` returns a message ID
+- **Message receiving:** Call `onMessage()` handler with a normalized message and verify it processes correctly
+- **Unsupported operations:** Methods that return `err()` do so with descriptive messages
+
+```typescript
+// packages/channels/src/myplatform/myplatform-adapter.test.ts
+import { describe, it, expect } from "vitest";
+import { MyPlatformAdapter } from "./myplatform-adapter.js";
+
+describe("MyPlatformAdapter", () => {
+  it("starts and stops cleanly", async () => {
+    const adapter = new MyPlatformAdapter({ channelId: "test", apiKey: "key" });
+    const startResult = await adapter.start();
+    expect(startResult.ok).toBe(true);
+
+    const stopResult = await adapter.stop();
+    expect(stopResult.ok).toBe(true);
+  });
+});
+```
+
+</Step>
+
+</Steps>
+
+## Reference: EchoChannelAdapter
+
+The `EchoChannelAdapter` is the canonical reference implementation. It is an in-memory adapter with no external dependencies, used extensively in integration tests. Located at `packages/channels/src/echo/echo-adapter.ts` (251 lines).
+
+The Echo adapter implements every `ChannelPort` method by storing data in memory maps. It also provides test helper methods like `injectMessage()` (simulates incoming messages) and `getSentMessages()` (retrieves sent messages for assertions).
+
+Study this adapter to see every `ChannelPort` method implemented correctly with the `Result` pattern.
+
+## Reference: Real Adapters
+
+For more complex adapter implementations, reference these production adapters:
+
+- **Telegram** -- The most complete adapter with 8 files. Webhook and polling modes, rich reactions, voice messages, platform actions (pin, kick, poll, ban). Located at `packages/channels/src/telegram/`.
+- **Discord** -- Rich feature support including buttons, embeds, reactions, threads, and guild management. Located at `packages/channels/src/discord/`.
+- **Slack** -- Block Kit integration with both Socket Mode and HTTP mode. Located at `packages/channels/src/slack/`.
+
+Each production adapter follows the same file structure pattern, with additional files for media handling, credential validation, and platform-specific message mapping.
+
+## Related
+
+<CardGroup cols={2}>
+
+<Card title="Architecture" icon="hexagon" href="/developer-guide/architecture">
+  Port interfaces and hexagonal pattern
+</Card>
+
+<Card title="Plugins" icon="puzzle-piece" href="/developer-guide/plugins">
+  General plugin system (hooks, tools, routes)
+</Card>
+
+<Card title="Event Bus" icon="tower-broadcast" href="/developer-guide/event-bus">
+  Channel events your adapter should emit
+</Card>
+
+<Card title="Channels Overview" icon="comments" href="/channels/index">
+  User-facing channel documentation
+</Card>
+
+</CardGroup>

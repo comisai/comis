@@ -1,0 +1,102 @@
+---
+title: "How Comis Keeps You Safe"
+description: "An overview of Comis security protections in plain language"
+icon: "shield-check"
+---
+
+Comis is designed with security as a priority. Every message, every tool call, and every stored piece of data is protected by multiple layers of defense -- most of which work automatically without any configuration.
+
+## Security at a Glance
+
+Comis uses a **defense-in-depth** approach to security. That means multiple independent protections work together, so if one layer ever fails, the others still keep you safe. Think of it like a castle with walls, a moat, guards, and locked doors -- no single protection is the only thing standing between you and a threat.
+
+<AccordionGroup>
+  <Accordion title="Encrypted Secrets" icon="lock">
+    **What it does:** Stores your API keys and passwords with AES-256 encryption so they never appear in plain text on disk.
+
+    **Why it matters:** If someone gains access to your config files, they still cannot read your secrets without the encryption key.
+
+    **Do I need to configure it?** Yes -- run the setup wizard to initialize your secrets vault. See [Secrets Management](/security/secrets) for details.
+  </Accordion>
+
+  <Accordion title="Injection Defense" icon="shield">
+    **What it does:** Scans incoming messages for attempts to trick your agent into ignoring its instructions. This includes detecting hidden commands, role-switching attacks, and other manipulation techniques.
+
+    **Why it matters:** Bad actors can craft messages designed to hijack your agent -- making it reveal private data or behave in unintended ways. Injection defense catches these attempts before they reach your agent.
+
+    **Do I need to configure it?** No -- it is on by default. No action needed.
+  </Accordion>
+
+  <Accordion title="Budget Protection" icon="wallet">
+    **What it does:** Sets spending limits per conversation and per day so your agent cannot run up unexpected costs with AI provider API calls.
+
+    **Why it matters:** AI API calls cost money. Without budget limits, a runaway conversation or a malicious user could drain your account. Budget protection is your financial safety net.
+
+    **Do I need to configure it?** Yes -- set your preferred limits in the agent configuration. See [Agent Safety](/agents/safety) for details.
+  </Accordion>
+
+  <Accordion title="Approval Gates" icon="check-to-slot">
+    **What it does:** Requires your sign-off before agents take high-impact actions like deleting files, sending messages to other channels, or modifying system configuration.
+
+    **Why it matters:** Some actions are too important to let an AI decide alone. Approval gates give you a human-in-the-loop for anything you consider high-risk.
+
+    **Do I need to configure it?** No -- approval gates are on by default for destructive actions. See [Approvals](/security/approvals) to customize which actions require approval.
+  </Accordion>
+
+  <Accordion title="Network Protection" icon="globe-shield">
+    **What it does:** Prevents your agents from accessing internal network resources or private servers when fetching web content. This blocks a class of attacks known as Server-Side Request Forgery, where a crafted message tricks the system into reaching your internal infrastructure.
+
+    **Why it matters:** If your agent can fetch URLs, an attacker might try to make it access internal services (like databases or admin panels) that should never be reachable from the outside.
+
+    **Do I need to configure it?** No -- it is on by default. No action needed.
+  </Accordion>
+
+  <Accordion title="Audit Logging" icon="clipboard-list">
+    **What it does:** Records every security-relevant action in structured logs -- including tool calls, approval decisions, secret access, and configuration changes.
+
+    **Why it matters:** You can review exactly what your agents did and when, providing accountability and making troubleshooting straightforward.
+
+    **Do I need to configure it?** No -- audit logging is on by default. See [Audit](/security/audit) to learn how to review your logs.
+  </Accordion>
+
+  <Accordion title="Canary Tokens" icon="bird">
+    **What it does:** Embeds invisible tracking markers in your agent's instructions. If an attacker tries to extract the system prompt, the canary triggers an alert so you know an attempt was made.
+
+    **Why it matters:** System prompt extraction is a common attack against AI agents. Canary tokens turn a silent theft into a detectable event.
+
+    **Do I need to configure it?** No -- canary tokens are inserted automatically. No action needed.
+  </Accordion>
+
+  <Accordion title="Output Scanning" icon="magnifying-glass">
+    **What it does:** Checks every agent response for accidentally leaked secrets or sensitive data before the message is sent to the chat.
+
+    **Why it matters:** Even if something goes wrong internally, your API keys, passwords, and other sensitive data will not reach the conversation. Output scanning is your last line of defense.
+
+    **Do I need to configure it?** No -- it is on by default. No action needed.
+  </Accordion>
+
+  <Accordion title="Memory Protection" icon="brain">
+    **What it does:** Validates and sanitizes everything written to your agent's long-term memory, assigning trust levels based on the source. System-provided knowledge is trusted more than user-provided messages.
+
+    **Why it matters:** An attacker could try to poison your agent's knowledge by crafting messages designed to be remembered and later recalled as facts. Memory protection prevents this by tagging and validating every memory entry.
+
+    **Do I need to configure it?** No -- memory protection is automatic. Trust levels are assigned by source.
+  </Accordion>
+</AccordionGroup>
+
+## Want the Full Picture?
+
+<CardGroup cols={2}>
+  <Card title="Defense in Depth" icon="layer-group" href="/security/defense-in-depth">
+    All 15+ security layers explained in detail
+  </Card>
+  <Card title="Secrets Management" icon="key" href="/security/secrets">
+    Managing your API keys and passwords safely
+  </Card>
+  <Card title="Hardening Guide" icon="lock" href="/security/hardening">
+    Maximize your security posture
+  </Card>
+  <Card title="Security Reference" icon="book" href="/reference/security-model">
+    Technical security documentation
+  </Card>
+</CardGroup>

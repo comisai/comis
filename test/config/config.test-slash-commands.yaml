@@ -1,0 +1,64 @@
+# Comis Slash Command E2E Test Configuration
+#
+# Port 8515 -- unique to slash command E2E tests.
+# Tests the full daemon pipeline with real LLM providers.
+# Requires ANTHROPIC_API_KEY or OPENAI_API_KEY in ~/.comis/.env.
+# Lower maxSteps (5) since command tests don't need tool loops.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "SlashBot"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    skills:
+      toolPolicy:
+        profile: "minimal"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8515
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-slash-commands"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+memory:
+  dbPath: "test-memory-slash-commands.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

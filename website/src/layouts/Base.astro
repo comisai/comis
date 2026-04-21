@@ -1,0 +1,113 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+import Nav from "../components/Nav.astro";
+
+interface Props {
+  title?: string;
+  description?: string;
+  ogTitle?: string;
+  ogDescription?: string;
+}
+
+const {
+  title = "Comis - Friendly by nature. Powerful by design.",
+  description = "The open-source AI assistant you can actually trust. Lives in your messaging apps, with persistent memory, 50+ tools, and security engineered in from day one.",
+  ogTitle,
+  ogDescription,
+} = Astro.props;
+
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+const resolvedOgTitle = ogTitle || title;
+const resolvedOgDescription = ogDescription || description;
+const isHome = Astro.url.pathname === "/";
+
+const breadcrumbSegments = Astro.url.pathname
+  .split("/")
+  .filter(Boolean)
+  .map((seg) => seg.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#0F172A" />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalURL.href} />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={resolvedOgTitle} />
+    <meta property="og:description" content={resolvedOgDescription} />
+    <meta property="og:image" content="https://comis.ai/images/comis-social-card.png" />
+    <meta property="og:url" content={canonicalURL.href} />
+    <meta property="og:site_name" content="Comis" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@comis_ai" />
+    <meta name="twitter:title" content={resolvedOgTitle} />
+    <meta name="twitter:description" content={resolvedOgDescription} />
+    <meta name="twitter:image" content="https://comis.ai/images/comis-social-card.png" />
+
+    <!-- Structured Data -->
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Comis",
+      "url": "https://comis.ai",
+      "logo": "https://comis.ai/images/comis-logo.png",
+      "description": "Open-source AI assistant platform for messaging apps with persistent memory, 50+ tools, and security-first architecture.",
+      "sameAs": [
+        "https://github.com/comisai/comis",
+        "https://twitter.com/comis_ai",
+        "https://discord.gg/comis"
+      ]
+    })} />
+    {isHome && (
+      <script type="application/ld+json" set:html={JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Comis",
+        "url": "https://comis.ai",
+        "description": "The open-source AI assistant you can actually trust."
+      })} />
+    )}
+    {!isHome && breadcrumbSegments.length > 0 && (
+      <script type="application/ld+json" set:html={JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://comis.ai/" },
+          ...breadcrumbSegments.map((name, i) => ({
+            "@type": "ListItem",
+            "position": i + 2,
+            "name": name,
+            "item": `https://comis.ai/${Astro.url.pathname.split("/").filter(Boolean).slice(0, i + 1).join("/")}/`
+          }))
+        ]
+      })} />
+    )}
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  </head>
+  <body class="min-h-screen">
+    <Nav />
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  @import "../styles/global.css";
+</style>

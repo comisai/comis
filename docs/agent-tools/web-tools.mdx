@@ -1,0 +1,201 @@
+---
+title: "Web Tools"
+description: "Web search with 8 providers and web page content fetching"
+icon: "globe"
+---
+
+The web tools give your agents access to the internet. `web_search` queries search engines (with 8 provider options), and `web_fetch` retrieves and reads web page content. Both tools include security protections against accessing internal networks.
+
+Web tools are among the most commonly used agent capabilities. They let your agent look up current information, read documentation, check prices, verify facts, and stay informed about topics that go beyond its training data.
+
+Both tools are enabled by default in the `full` tool policy profile.
+
+## web_search -- Multi-Provider Web Search
+
+The `web_search` tool queries a search engine and returns results. Comis supports 8 search providers -- you can configure one or more as a fallback chain.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | The search query |
+| `provider` | string | No | Specific provider to use (defaults to the first available in your configuration) |
+
+## Search Providers
+
+Comis supports 8 search providers. Each has different strengths, and some require API keys while others are free.
+
+| Provider | API Key Required | Description |
+|----------|-----------------|-------------|
+| `brave` | Yes | Brave Search API -- fast, privacy-focused |
+| `perplexity` | Yes | Perplexity AI via OpenRouter -- AI-enhanced results |
+| `grok` | Yes | xAI Responses API -- Grok-powered search |
+| `duckduckgo` | No | DuckDuckGo -- no API key needed, uses HTML scraping |
+| `searxng` | No | SearXNG -- self-hosted meta-search engine |
+| `tavily` | Yes | Tavily -- AI-optimized search API |
+| `exa` | Yes | Exa -- neural search for precise results |
+| `jina` | Yes | Jina Reader Search -- content-aware search |
+
+### Provider Details
+
+<AccordionGroup>
+  <Accordion title="Brave Search" icon="shield">
+    Fast, privacy-focused search powered by Brave's independent search index.
+
+    **API key:** Required. Set `BRAVE_API_KEY` in your environment.
+
+    **Best for:** General-purpose searching with strong privacy. A good default choice for most setups.
+
+    **How to get a key:** Sign up at [brave.com/search/api](https://brave.com/search/api) for a free tier with 2,000 queries per month.
+  </Accordion>
+
+  <Accordion title="Perplexity" icon="brain">
+    AI-enhanced search results delivered through OpenRouter. Returns synthesized answers alongside traditional search results.
+
+    **API key:** Required. Set `OPENROUTER_API_KEY` in your environment.
+
+    **Best for:** Questions that benefit from AI synthesis, such as "explain the differences between X and Y" or "what are the pros and cons of Z."
+  </Accordion>
+
+  <Accordion title="Grok" icon="bolt">
+    Powered by xAI's Grok model via the Responses API. Provides real-time search with AI-generated summaries.
+
+    **API key:** Required. Set `XAI_API_KEY` in your environment.
+
+    **Best for:** Real-time information and current events. Grok's training data is frequently updated.
+  </Accordion>
+
+  <Accordion title="DuckDuckGo" icon="duck">
+    Free search with no API key required. Uses HTML scraping to retrieve results from DuckDuckGo.
+
+    **API key:** Not required.
+
+    **Best for:** A zero-configuration fallback. Works immediately without any setup. Results may be less structured than API-based providers.
+
+    <Note>
+    DuckDuckGo uses HTML scraping rather than an official API, so result formatting may vary. It is a reliable fallback when API-based providers are unavailable.
+    </Note>
+  </Accordion>
+
+  <Accordion title="SearXNG" icon="magnifying-glass">
+    A self-hosted meta-search engine that aggregates results from multiple search engines. You run your own SearXNG instance.
+
+    **API key:** Not required, but you need a running SearXNG instance. Set `SEARXNG_URL` to point to your instance (e.g., `http://localhost:8888`).
+
+    **Best for:** Privacy-conscious setups where you want full control over the search infrastructure. SearXNG queries multiple engines (Google, Bing, DuckDuckGo, etc.) on your behalf without sending your data to third parties.
+  </Accordion>
+
+  <Accordion title="Tavily" icon="crosshairs">
+    Purpose-built search API designed for AI agents. Returns clean, structured results optimized for LLM consumption.
+
+    **API key:** Required. Set `TAVILY_API_KEY` in your environment.
+
+    **Best for:** Agents that need well-structured search results. Tavily is specifically designed for AI-agent use cases and returns content pre-formatted for LLM processing.
+  </Accordion>
+
+  <Accordion title="Exa" icon="atom">
+    Neural search engine that understands meaning, not just keywords. Finds results based on semantic similarity to your query.
+
+    **API key:** Required. Set `EXA_API_KEY` in your environment.
+
+    **Best for:** Research-style queries where you need precise, relevant results. Exa excels at finding specific technical content, academic papers, and niche topics.
+  </Accordion>
+
+  <Accordion title="Jina" icon="book-open">
+    Content-aware search and reading service. Retrieves search results with extracted, readable content.
+
+    **API key:** Required. Set `JINA_API_KEY` in your environment.
+
+    **Best for:** Queries where you need the full content of search results, not just titles and snippets. Jina extracts and returns the readable text from each result page.
+  </Accordion>
+</AccordionGroup>
+
+## Configuring Search Providers
+
+Configure your preferred search providers in `config.yaml`. Providers are tried in order -- if the first one fails, the next is attempted automatically.
+
+```yaml
+skills:
+  builtinTools:
+    webSearch:
+      providers:
+        - brave
+        - duckduckgo   # Free fallback if Brave fails
+```
+
+You can list as many providers as you like. The agent uses the first available provider by default, or you can specify a provider in the tool call.
+
+### Environment Variables Reference
+
+| Provider | Environment Variable |
+|----------|---------------------|
+| Brave | `BRAVE_API_KEY` |
+| Perplexity | `OPENROUTER_API_KEY` |
+| Grok | `XAI_API_KEY` |
+| DuckDuckGo | *(none required)* |
+| SearXNG | `SEARXNG_URL` |
+| Tavily | `TAVILY_API_KEY` |
+| Exa | `EXA_API_KEY` |
+| Jina | `JINA_API_KEY` |
+
+<Tip>
+A good starter configuration is `brave` as the primary provider (fast and reliable) with `duckduckgo` as a free fallback that requires no API key.
+</Tip>
+
+## web_fetch -- Page Content Fetching
+
+The `web_fetch` tool retrieves content from a URL and extracts the readable text using Readability -- the same technology behind browser reader modes. This strips away navigation, ads, and other clutter, leaving just the main content.
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | string | Yes | The URL to fetch |
+
+### How It Works
+
+1. The URL is validated against SSRF (Server-Side Request Forgery) rules
+2. The page content is downloaded
+3. Readability extracts the main article or content area
+4. The clean text is returned to the agent
+
+### Important Notes
+
+- **SSRF protection** -- `web_fetch` cannot access internal network addresses (localhost, private IPs like `10.x.x.x` or `192.168.x.x`, or cloud metadata endpoints like `169.254.169.254`). This prevents attacks where a crafted URL tricks the tool into reaching your internal services.
+- **Content truncation** -- Very large pages are truncated to prevent overwhelming the agent's context window. The tool returns the most important content within the size limit.
+- **Clean output** -- The Readability extraction removes navigation menus, sidebars, ads, and other non-content elements. The result is clean, readable text similar to what you see in a browser's "Reader Mode."
+
+<Warning>
+`web_fetch` retrieves content from the open internet. Be cautious about fetching URLs provided by untrusted users, as the content could contain misleading or harmful information. SSRF protection prevents access to internal resources, but the fetched content itself is not sanitized for truthfulness.
+</Warning>
+
+## web_search vs. web_fetch
+
+These two tools complement each other:
+
+| Use Case | Tool | Why |
+|----------|------|-----|
+| Find information about a topic | `web_search` | Returns multiple search results with titles and snippets |
+| Read a specific web page | `web_fetch` | Downloads and extracts the full content of a single URL |
+| Research a question | Both | Search first to find relevant pages, then fetch the most promising results for detailed reading |
+
+Agents often use both tools together: `web_search` to find relevant URLs, then `web_fetch` to read the full content of the best results.
+
+For pages that require JavaScript rendering or interactive navigation (single-page apps, sites behind login screens), use the [Browser](/agent-tools/browser) tool instead -- it provides a full headless browser.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Browser" icon="window-maximize" href="/agent-tools/browser">
+    Full browser automation for interactive web tasks
+  </Card>
+  <Card title="Built-in Tools" icon="wrench" href="/skills/built-in-tools">
+    All built-in tools including web tools
+  </Card>
+  <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
+    See all available agent tools
+  </Card>
+  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
+    Search provider and web tool configuration options
+  </Card>
+</CardGroup>

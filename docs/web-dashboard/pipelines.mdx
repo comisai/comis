@@ -1,0 +1,267 @@
+---
+title: "Pipelines"
+description: "Build and monitor multi-agent workflows visually"
+icon: "diagram-project"
+---
+
+Pipelines let you connect multiple agents into automated workflows -- one agent's output feeds into the next, creating chains of intelligent processing. Click **Pipelines** in the sidebar to get started.
+
+<Warning>
+The Pipeline Builder requires a desktop browser. On mobile devices, you can view pipeline lists and monitor running pipelines, but you cannot use the visual editor.
+</Warning>
+
+## What You See
+
+The Pipelines area has three sub-views: a list of all your pipelines, a visual builder for creating and editing them, and a monitor for watching them run.
+
+### Pipeline List
+
+The Pipeline List is a searchable table of all your pipelines. Each row shows:
+
+- **Status dot** -- a colored indicator showing the pipeline's state:
+  - Gray = draft (not yet run)
+  - Cyan = currently running
+  - Green = completed successfully
+  - Red = failed
+  - Orange = cancelled
+- **Name** -- the pipeline's label
+- **Node count** -- how many steps the pipeline contains
+- **Last executed** -- when the pipeline was last run
+- **Actions** -- buttons to Edit, Run, Clone, or Delete the pipeline
+
+At the top, a **New Pipeline** button starts the creation process. A search bar lets you filter pipelines by name. Column headers are clickable to sort the list.
+
+### Pipeline Builder
+
+The Pipeline Builder is a visual editor where you design workflows using boxes and arrows. Each box represents a step (an agent performing a task), and arrows show the flow between steps.
+
+The builder includes:
+
+- **Toolbar** -- buttons across the top for common actions: add a new node, delete selected items, toggle snap-to-grid alignment, auto-arrange the layout, validate the pipeline, save your work, and run the pipeline
+- **Canvas** -- the main workspace where you see your pipeline as a diagram. You can drag boxes to rearrange them, drag arrows between boxes to create connections, and pan or zoom to navigate larger pipelines
+- **Node editor panel** -- when you click a box on the canvas, a configuration panel appears on the side where you can set the node type (regular, debate, vote, refine, collaborate, approval-gate, or map-reduce), configure type-specific settings, assign an agent, write the task prompt, and choose failure behavior
+- **Template picker** -- when creating a new pipeline, a dialog offers pre-built workflow templates to start from. Templates give you a working pattern that you can customize
+- **Variable prompt** -- if your pipeline uses placeholders (like a recipient name or topic), a dialog asks you to fill them in before running
+- **Validation overlay** -- after clicking Validate, any errors or warnings appear as badges on the affected nodes so you can fix issues before running
+
+### Pipeline Monitor
+
+The Pipeline Monitor is a read-only view that shows a running pipeline's progress in real time:
+
+- **Color-coded nodes** -- each box on the canvas changes color as execution progresses:
+  - Green = completed successfully
+  - Cyan = currently running
+  - Gray = waiting to start
+  - Red = failed
+- **Status bar** -- at the top, showing the overall pipeline status and counts of completed, running, pending, and failed nodes
+- **Node detail panel** -- click any box on the canvas to see its output text, any error messages, and how long it took to run
+- **Execution timeline** -- a horizontal bar chart at the bottom showing when each step started and finished, like a project timeline. This helps you understand the overall timing and find bottlenecks
+- **Minimap** -- a small overview in the corner for navigating large pipelines. Drag within the minimap to move the main view
+- **Cancel button** -- stops the pipeline execution. Running steps will be terminated
+
+## Building a Pipeline
+
+<Steps>
+  <Step title="Start a new pipeline">
+    Click **New Pipeline** from the list view, or open an existing pipeline and click Edit. For a new pipeline, the template picker appears -- choose a template to start from a pre-built pattern, or dismiss it to start with a blank canvas.
+  </Step>
+  <Step title="Add nodes to the canvas">
+    Use the toolbar's add button or press the **N** key to place a new step on the canvas. Each node is a box representing one agent task.
+  </Step>
+  <Step title="Connect nodes with arrows">
+    Drag from one box's output port to another box's input port to create a connection. The arrow shows that the first step must complete before the second one begins.
+  </Step>
+  <Step title="Configure each node">
+    Click a box on the canvas to open the node editor panel. Choose a node type from the type picker (leave as "Regular" for single-agent tasks, or select a type like "Debate" or "Vote" for multi-agent patterns). Configure the type-specific settings, select which agent should handle the step, write the task prompt, and set failure behavior (stop the whole pipeline, skip and continue, or retry).
+  </Step>
+  <Step title="Validate the pipeline">
+    Click **Validate** in the toolbar. The validator checks for common mistakes like disconnected nodes, missing agent assignments, invalid type configurations, or circular dependencies. Any issues appear as badges on the affected nodes.
+  </Step>
+  <Step title="Save and run">
+    Click **Save** to store the pipeline, then click **Run**. If the pipeline uses variables, a dialog will ask you to fill them in. The view automatically switches to the Monitor so you can watch the execution.
+  </Step>
+</Steps>
+
+## Monitoring a Running Pipeline
+
+<Steps>
+  <Step title="Open the running pipeline">
+    From the Pipeline List, click a pipeline with a cyan (running) status dot. The Monitor view opens automatically.
+  </Step>
+  <Step title="Watch nodes complete">
+    As each step finishes, its box on the canvas turns green. The status bar at the top updates with running counts.
+  </Step>
+  <Step title="Inspect a node's results">
+    Click any box on the canvas to open the detail panel. For completed nodes, you can see the full output text. For failed nodes, the error message explains what went wrong.
+  </Step>
+  <Step title="Check the timeline">
+    The execution timeline at the bottom shows a horizontal bar for each step, indicating when it started and finished. This helps you spot slow steps or understand parallel execution.
+  </Step>
+  <Step title="Cancel if needed">
+    Click the **Cancel** button in the status bar if you need to stop the pipeline. A confirmation dialog will appear before the cancellation takes effect.
+  </Step>
+</Steps>
+
+<Tip>
+Start with a template to learn the pattern. Templates give you a working pipeline with properly connected nodes that you can study and customize for your own use case.
+</Tip>
+
+<Tip>
+Always validate before running. The validator catches common mistakes like disconnected nodes, missing agent assignments, or circular connections that would cause the pipeline to fail.
+</Tip>
+
+## Node Types
+
+When configuring a node in the editor panel, the **Type** dropdown lets you choose what kind of operation the node performs. Each type changes the configuration fields shown below the dropdown. Typed nodes display a badge next to the agent ID on the canvas (for example, "Debate" or "Vote") so you can identify node types at a glance.
+
+The following types are available:
+
+### Agent
+
+Run a single sub-agent with explicit driver configuration. Selecting **Agent** shows fields for:
+
+- **Agent** -- the agent ID to run this node (required)
+- **Model** -- optional model override for this node
+- **Max steps** -- optional limit on agentic steps
+
+<Tip>
+A node without a type set runs as a regular single-agent task using the caller's agent by default. Use the explicit Agent type when you want to override the model or step limit through the driver system.
+</Tip>
+
+### Debate
+
+Multi-round adversarial debate between agents. Selecting **Debate** shows fields for:
+
+- **Agents** -- multi-select list of agent IDs to participate (minimum 2)
+- **Rounds** -- number of debate rounds (1-5, defaults to 2)
+- **Synthesizer** -- optional agent that writes a final synthesis after all rounds
+
+### Vote
+
+Parallel independent voting by multiple agents. Selecting **Vote** shows fields for:
+
+- **Voters** -- multi-select list of agent IDs to vote (minimum 2)
+- **Prompt suffix** -- optional text appended to each voter's prompt
+- **Verdict format** -- optional format hint for voter responses (e.g., "YES or NO with justification")
+
+### Refine
+
+Sequential refinement chain through reviewers. Selecting **Refine** shows fields for:
+
+- **Reviewers** -- ordered list of agent IDs (minimum 2). Each reviewer receives the output of the previous reviewer and improves upon it.
+
+### Collaborate
+
+Sequential multi-perspective collaboration. Selecting **Collaborate** shows fields for:
+
+- **Agents** -- ordered list of agent IDs to contribute (minimum 2). Each agent builds on the accumulated work from prior agents.
+- **Rounds** -- number of collaboration rounds (1-3, defaults to 1)
+
+### Approval Gate
+
+Human approval checkpoint with timeout. Selecting **Approval Gate** shows fields for:
+
+- **Message** -- optional prompt sent to the chat channel asking for approval
+- **Timeout (minutes)** -- how long to wait for a response (1-1440 minutes, defaults to 60)
+
+The pipeline pauses at this node and sends the message to the originating chat channel. A human must reply with APPROVE or DENY to continue.
+
+### Map-Reduce
+
+Parallel map tasks then single reduce. Selecting **Map-Reduce** shows fields for:
+
+- **Mappers** -- list of mapper entries, each with an agent ID and optional task suffix (minimum 2). All mappers run in parallel.
+- **Reducer** -- the agent ID that receives all mapper outputs and produces a single combined result
+- **Reducer prompt** -- optional instructions for the reducer agent
+
+## Template Gallery
+
+When creating a new pipeline, a template picker dialog offers pre-built workflow patterns. Each template creates a working pipeline with properly connected nodes that you can customize. Templates are a fast way to set up common patterns without building from scratch.
+
+The available templates are:
+
+| Template | Pattern | Nodes | Description |
+|----------|---------|-------|-------------|
+| **Linear Chain** | Sequential | 3 | Each step depends on the previous one |
+| **Fan-out Fan-in** | Parallel + merge | 4 | Parallel workers with a single merge point |
+| **Parallel Tracks** | Side-by-side | 4 | Two independent streams running side by side |
+| **Independent Workers** | Unconnected | 3 | Unconnected nodes that run in parallel |
+| **Diamond** | Fork + converge | 4 | Fork into two paths, then converge at the end |
+| **Debate Pipeline** | Typed (debate) | 3 | Research, multi-agent debate, then synthesize conclusions |
+| **Vote Pipeline** | Typed (vote) | 3 | Research a topic, have multiple agents vote, then summarize results |
+| **Refine Chain** | Typed (refine) | 3 | Draft content, refine through sequential reviewers, then publish |
+| **Map-Reduce** | Typed (map-reduce) | 3 | Split work across parallel mappers, then reduce into a single output |
+| **Approval Gate** | Typed (approval-gate) | 3 | Prepare an action, wait for human approval, then execute |
+| **Blank Canvas** | Empty | 0 | Start from scratch with an empty graph |
+
+### Variable Prompts
+
+Templates and saved pipelines can include variables written as `${VARIABLE_NAME}` in task text. When you run a pipeline that uses variables, a dialog appears asking you to fill in each value before execution begins. For example, a template with `${TOPIC}` in the task text will prompt you to enter the topic before running.
+
+<Tip>
+Start with one of the typed templates (Debate, Vote, Refine, Map-Reduce, or Approval Gate) to learn how node types work. Each template gives you a three-step pattern -- setup, typed operation, and output -- that you can extend for your own use case.
+</Tip>
+
+## Pipeline History
+
+Route: `/pipelines/history`
+
+The Pipeline History view shows a sortable grid-table of all past pipeline executions stored on disk. This is your record of every pipeline run, whether it completed successfully, failed, or was cancelled.
+
+### History List
+
+Each row in the history table shows:
+
+| Column | What It Shows |
+|--------|--------------|
+| **Status dot** | Colored indicator: green (completed) or red (failed) |
+| **Name** | The pipeline's label |
+| **Node count** | How many steps the pipeline contained |
+| **Date** | When the pipeline was last executed (shown as relative time) |
+| **Actions** | View (opens detail) and Delete (with confirmation) |
+
+The table supports column sorting by clicking headers -- sort by name, status, node count, or date. A breadcrumb trail at the top provides navigation back to the Pipeline List.
+
+You can access Pipeline History from the Pipeline List by clicking the "History" link, or by navigating directly to `/pipelines/history`.
+
+### Pipeline History Detail
+
+Route: `/pipelines/history/:graphId`
+
+Click any row in the history list to open the detail view for that specific run. The detail page shows:
+
+- **Metadata header** -- pipeline name, overall status with colored dot, completion time, and node count
+- **Node accordion** -- each pipeline node is shown as an expandable section. Click to reveal:
+  - The node's output text, rendered as markdown with syntax highlighting for code blocks
+  - Status indicator (completed or failed)
+  - Any error messages for failed nodes
+  - Expandable artifacts section if the node produced additional outputs
+- **Breadcrumb navigation** -- Pipelines > History > [pipeline name] for easy navigation
+- **Delete action** -- remove the historical run record (with confirmation dialog)
+
+### History vs Live Monitor
+
+The Pipeline History Detail is a **read-only historical view** of a completed execution. It differs from the live Pipeline Monitor in several ways:
+
+| Aspect | Live Monitor | History Detail |
+|--------|-------------|---------------|
+| **Data source** | Real-time SSE events | Stored run records on disk |
+| **Updates** | Nodes change color as they execute | Static snapshot of final state |
+| **Canvas** | Interactive graph visualization | Node accordion list (no canvas) |
+| **Timeline** | Live execution timeline | Not shown (historical view) |
+| **Actions** | Cancel running pipeline | Delete historical record |
+| **Node output** | Live streaming text | Markdown-rendered final output |
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Pipeline Tool Reference" icon="diagram-project" href="/agent-tools/pipelines">
+    YAML parameter reference with per-type configuration examples.
+  </Card>
+  <Card title="Agents View" icon="robot" href="/web-dashboard/agents-view">
+    View and manage the agents that power your pipeline steps.
+  </Card>
+  <Card title="Developer Guide: Pipelines" icon="code" href="/developer-guide/pipelines">
+    Technical reference for building and extending pipelines programmatically.
+  </Card>
+</CardGroup>

@@ -1,0 +1,163 @@
+---
+title: "iMessage"
+description: "Connect Comis to iMessage on macOS"
+icon: "apple"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+Connect your Comis agent to iMessage for private and group chats on macOS.
+Supports file attachments up to 16 MB and can fetch conversation history.
+iMessage integration requires macOS and the `imsg` command-line tool.
+
+## Prerequisites
+
+<Prereqs />
+
+- macOS with iMessage configured and signed in
+- The `imsg` binary installed (see Step 1)
+
+<Warning>
+iMessage is available on **macOS only**. It will not work on Linux, Windows, or
+Docker containers. Your Mac must have iMessage signed in with an Apple ID.
+</Warning>
+
+## Setup
+
+<Steps>
+  <Step title="Install the imsg binary">
+    Download or build the `imsg` CLI tool for macOS. Place it in a known path
+    (for example, `/usr/local/bin/imsg`).
+
+    Verify the installation:
+
+    ```bash
+    /usr/local/bin/imsg --version
+    ```
+
+    If the command prints a version number, the binary is ready.
+  </Step>
+
+  <Step title="Verify iMessage is working">
+    Open Messages.app on your Mac and confirm you can send and receive messages.
+    The `imsg` tool hooks into the local Messages database, so iMessage must be
+    fully signed in and functional before Comis can use it.
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the iMessage channel to your Comis configuration file
+    (`~/.comis/config.yaml`):
+
+    ```yaml
+    channels:
+      imessage:
+        enabled: true
+        binaryPath: "/usr/local/bin/imsg"
+        account: "your@apple.id"
+    ```
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check the logs for a successful connection:
+
+    ```bash
+    comis daemon logs
+    ```
+
+    Look for a line containing **"iMessage adapter started"** or
+    **"channel-imessage activated"**. Send an iMessage to the configured Apple
+    ID to confirm the bot responds.
+  </Step>
+</Steps>
+
+## Configuration
+
+These options go under `channels.imessage` in your `config.yaml`:
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Turns on the iMessage adapter |
+| `binaryPath` | string | `"imsg"` | Path to the `imsg` binary on your Mac |
+| `account` | string | (optional) | Apple ID or phone number for iMessage |
+| `allowFrom` | string[] | `[]` (all) | Restrict to specific sender IDs. Empty means all contacts can talk to the bot. |
+| `mediaProcessing.transcribeAudio` | boolean | `true` | Transcribe voice messages to text before passing to the agent |
+| `mediaProcessing.analyzeImages` | boolean | `true` | Describe images sent to the bot using AI vision |
+| `mediaProcessing.describeVideos` | boolean | `true` | Extract descriptions from video content |
+| `mediaProcessing.extractDocuments` | boolean | `true` | Extract text from PDFs, DOCX, and other documents |
+| `mediaProcessing.understandLinks` | boolean | `true` | Fetch and summarize URLs included in messages |
+
+## What your agent can do
+
+Once connected to iMessage, your agent can:
+
+- Send and receive plain text messages in private and group chats
+- Fetch conversation history from the local Messages database
+- Send file attachments up to 16 MB
+
+iMessage does **not** support reactions, editing or deleting sent messages,
+threads, buttons, cards or embeds, streaming (live-updating responses),
+rich text formatting, or mentions.
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 20,000 characters | Automatically splits long responses into multiple messages at paragraph boundaries |
+| Attachment size | 16 MB | Files over 16 MB are rejected with a user-friendly error message |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="imsg binary not found">
+    **What happened:** Comis cannot find the `imsg` binary at the configured
+    path.
+
+    **How to fix it:** Check that `binaryPath` in your config points to the
+    correct location. Verify the binary exists with `ls /usr/local/bin/imsg`
+    or update the path to wherever you installed it.
+  </Accordion>
+
+  <Accordion title="Permission denied accessing Messages database">
+    **What happened:** macOS is blocking access to the Messages database because
+    the terminal or Comis process does not have Full Disk Access.
+
+    **How to fix it:** Go to **System Settings** (or System Preferences on older
+    macOS) then **Privacy & Security** then **Full Disk Access**. Add your terminal
+    application (Terminal, iTerm, etc.) or the Node.js binary that runs Comis.
+    Restart the daemon after granting access.
+  </Accordion>
+
+  <Accordion title="No messages received">
+    **What happened:** The iMessage adapter started but incoming messages are not
+    reaching the bot.
+
+    **How to fix it:** Verify that iMessage is signed in and working in
+    Messages.app first. Try sending a message from Messages.app to confirm the
+    account is active. Also check that the `account` field in your config matches
+    the Apple ID you are signed in with.
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 9 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>

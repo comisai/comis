@@ -1,0 +1,64 @@
+# Comis Link Understanding Test Configuration
+#
+# Phase 113: Tool Provider Integration Tests
+# Port 8485 (unique -- avoids conflicts with ports 4766-8484)
+# Link understanding enabled for link.process RPC testing
+# No LLM API key required -- link understanding pipeline does not call LLM
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  default:
+    name: "TestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8485
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-integration-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+memory:
+  dbPath: "test-memory-tool-link.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk: { enabled: false }
+  resources: { enabled: false }
+  systemd: { enabled: false }
+  securityUpdates: { enabled: false }
+  git: { enabled: false }
+
+integrations:
+  media:
+    linkUnderstanding:
+      enabled: true
+      maxLinks: 3
+      fetchTimeoutMs: 15000
+      maxContentChars: 5000

@@ -1,0 +1,810 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+import Base from "../../layouts/Base.astro";
+import Footer from "../../components/Footer.astro";
+
+const title = "How I Cut Our Multi-Agent Pipeline Cost by 64% with Cache Forensics";
+const description = "The story of debugging Anthropic's prompt cache behavior in production, discovering three root causes, building a cache fence system, auditing every token to find five more issues, and then uncovering a TTL monotonicity violation that made our entire adaptive retention system silently non-functional.";
+const publishDate = "April 11, 2026";
+---
+
+<Base title={title} description={description}>
+  <main>
+    <!-- Hero -->
+    <section class="relative overflow-hidden px-6 pt-32 pb-8 md:pt-40 md:pb-12">
+      <div class="absolute inset-0 pointer-events-none">
+        <div class="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-teal/5 rounded-full blur-[150px]"></div>
+      </div>
+
+      <div class="relative max-w-3xl mx-auto">
+        <a href="/blog" class="inline-flex items-center gap-1 text-sm text-muted hover:text-teal transition-colors mb-8">
+          &larr; All Posts
+        </a>
+        <div class="flex items-center gap-3 text-sm text-muted mb-6">
+          <span>By <span class="text-white">Moshe Anconina</span></span>
+          <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+          <span>{publishDate}</span>
+          <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+          <span>22 min read</span>
+          <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+          <span class="text-teal">Engineering</span>
+        </div>
+        <h1 class="text-3xl md:text-5xl font-extrabold tracking-tight leading-[1.15] text-white mb-6">
+          How I cut our multi-agent pipeline cost by 64% with cache forensics
+        </h1>
+        <p class="text-lg md:text-xl text-muted leading-relaxed">
+          I was staring at the Anthropic dashboard. Our 8-agent TradingAgents pipeline was running on Claude Opus 4.6 - and the cache read/write ratio was <span class="text-coral font-semibold">1.19x</span>. That meant we were paying nearly as much to <em>write</em> to the cache as we were saving from <em>reading</em> it. Something was very wrong.
+        </p>
+      </div>
+    </section>
+
+    <!-- Hero image -->
+    <section class="px-6 pb-12">
+      <div class="max-w-4xl mx-auto">
+        <img
+          src="/images/blog-cache-fence-hero.png"
+          alt="Cache fence protecting data blocks from invalidation"
+          class="w-full rounded-2xl border border-white/5"
+          loading="eager"
+        />
+      </div>
+    </section>
+
+    <!-- Article body -->
+    <article class="px-6 pb-24">
+      <div class="max-w-3xl mx-auto">
+
+        <!-- The Setup -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The setup: 8 agents, $22.51 per run</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Comis runs multi-agent pipelines where multiple AI agents collaborate on complex tasks. Our <strong class="text-white">TradingAgents</strong> pipeline is a good example: 4 specialist analysts (fundamentals, sentiment, news, technical) run in parallel, feed into a bull-bear debate, then a trader makes a call, risk management reviews it, and a portfolio manager gives the final verdict.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            That's 8 agents, each making 2-7 LLM calls, all running on Claude Opus 4.6. Without any caching, 4 million prompt tokens at $5/MTok input rate = <strong class="text-coral">$22.51 per run</strong>. We run this pipeline multiple times per day.
+          </p>
+
+          <img
+            src="/images/blog-cache-pipeline.png"
+            alt="8-agent pipeline with staggered spawning"
+            class="w-full rounded-xl border border-white/5 my-8"
+            loading="lazy"
+          />
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Anthropic's prompt caching is supposed to fix this. You pay a premium to <em>write</em> content to the cache ($6.25-10/MTok), but subsequent <em>reads</em> are dirt cheap ($0.50/MTok) - that's <strong class="text-teal">10-20x cheaper</strong>. The theory is beautiful: write the system prompt once, read it on every subsequent call.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The reality was uglier. Our dashboard was showing a 1.19x read/write ratio. We were barely breaking even on the cache.
+          </p>
+        </div>
+
+        <!-- The Investigation -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Down the rabbit hole</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            I started where any good debugging session starts: the logs. Comis has structured Pino logging throughout the pipeline, so I could trace exactly what was happening on each LLM call.
+          </p>
+
+          <div class="bg-navy-light/80 border border-white/5 rounded-xl p-6 my-8 font-mono text-sm overflow-x-auto">
+            <p class="text-muted text-xs mb-3 uppercase tracking-widest">Parent session - turn by turn</p>
+            <pre class="text-muted-light whitespace-pre"><span class="text-muted">Turn 1:</span> read=<span class="text-muted">     0</span> write=<span class="text-coral">65,318</span> ratio=<span class="text-coral">0.0x</span>  <span class="text-muted">(cold start, expected)</span>
+<span class="text-muted">Turn 2:</span> read=<span class="text-teal">92,232</span> write=<span class="text-muted">43,268</span> ratio=<span class="text-muted">2.1x</span>  <span class="text-muted">(decent)</span>
+<span class="text-muted">Turn 3:</span> read=<span class="text-coral">53,828</span> write=<span class="text-coral">85,352</span> ratio=<span class="text-coral">0.6x</span>  <span class="text-coral font-bold">&larr; disaster</span></pre>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Turn 3 was the killer. <strong class="text-coral">85,352 tokens of cache writes</strong> - that's more than the entire prompt. The cache was being completely destroyed and rebuilt. But why?
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            I dug into the context engine pipeline logs. And there it was:
+          </p>
+
+          <div class="bg-navy-light/80 border border-coral/15 rounded-xl p-6 my-8 font-mono text-sm">
+            <pre class="text-muted-light whitespace-pre">Context engine pipeline complete:
+  <span class="text-white">tokensMasked: <span class="text-coral font-bold">36,173</span></span>
+  thinkingBlocksRemoved: 6
+  cacheFenceIndex: <span class="text-coral">N/A</span></pre>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            <strong class="text-white">36,173 tokens were being masked</strong> by the observation masker. And <code class="text-coral text-sm">cacheFenceIndex: N/A</code> - there was no fence protecting the cached prefix.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Here's what was happening: the context engine has 8 layers that process messages before each LLM call. Four of those layers <em>modify</em> message content - stripping thinking blocks, stripping inline reasoning tags, evicting dead content, masking old tool results. When they modify messages that are part of the cached prefix, Anthropic's KV cache is invalidated. The entire prefix has to be re-cached. That's the 85K write.
+          </p>
+        </div>
+
+        <!-- The Aha Moment -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The "aha" moment: three bugs, not one</h2>
+
+          <img
+            src="/images/blog-cache-before-after.png"
+            alt="Before and after cache optimization"
+            class="w-full rounded-xl border border-white/5 my-8"
+            loading="lazy"
+          />
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            What started as "the cache isn't working" turned into discovering three separate bugs, each building on the last. I think that's what makes this story interesting - the fix wasn't obvious, and each layer of the onion revealed a deeper problem.
+          </p>
+
+          <!-- Bug 1 -->
+          <div class="bg-navy-light/80 border-l-4 border-teal rounded-r-xl p-6 my-8">
+            <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-2">Bug #1</p>
+            <h3 class="text-xl font-bold text-white mb-3">The fence didn't persist across executions</h3>
+            <p class="text-muted-light text-sm leading-relaxed">
+              I had just built Phase 524 - cache fence infrastructure. The context engine tracked a <code class="text-teal">cacheFenceIndex</code> so layers would skip messages in the cached region. The <code class="text-teal">onBreakpointsPlaced</code> callback correctly set it after each LLM call. But the context engine was <strong class="text-white">created fresh on every <code>execute()</code> call</strong>. The fence was always <code>-1</code> (no protection) on the first LLM call of each execution. The fix was trivial once I saw it: a module-level <code>Map&lt;string, number&gt;</code> keyed by session key, persisting the breakpoint index across executions.
+            </p>
+          </div>
+
+          <!-- Bug 2 -->
+          <div class="bg-navy-light/80 border-l-4 border-teal rounded-r-xl p-6 my-8">
+            <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-2">Bug #2</p>
+            <h3 class="text-xl font-bold text-white mb-3">Sub-agents never got breakpoints</h3>
+            <p class="text-muted-light text-sm leading-relaxed">
+              After fixing bug #1, I ran the pipeline again. The parent session improved from <span class="text-coral">0.6x</span> to <span class="text-teal">2.3x</span>. But sub-agents were still at <span class="text-muted">3.0x</span>. Checking the logs: <strong class="text-white">zero breakpoints placed</strong> on sub-agent sessions. The <code>placeCacheBreakpoints()</code> function requires 4,096 tokens between breakpoint candidates. Sub-agent sessions are small - they never hit that threshold. I added a configurable <code>minTokensOverride</code> that pi-executor sets to 512 for sub-agents. Sub-agent ratio jumped to <span class="text-teal">4.7x</span>.
+            </p>
+          </div>
+
+          <!-- Bug 3 -->
+          <div class="bg-navy-light/80 border-l-4 border-coral rounded-r-xl p-6 my-8">
+            <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-2">Bug #3 - The sneaky one</p>
+            <h3 class="text-xl font-bold text-white mb-3">Index space mismatch after history trimming</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-4">
+              This one took me the longest to find. The fence was being set (I added diagnostic logs to prove it), the Map was persisting correctly, but the context engine still showed <code class="text-coral">fence=-1</code> on every turn.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-4">
+              The breakpoint callback reports indices from <code>params.messages</code> - the <strong class="text-white">post-context-engine output</strong> (64 messages after history-window trimming). But the fence is applied to the <strong class="text-white">pre-trimming array</strong> (163 messages). The history window was trimming <strong class="text-white">99 messages from the front</strong>. So:
+            </p>
+            <div class="bg-navy rounded-lg p-4 font-mono text-sm my-4">
+              <pre class="text-muted-light whitespace-pre"><span class="text-muted">Stored:</span>  fence = <span class="text-teal">52</span> <span class="text-muted">(post-CE space)</span>
+<span class="text-muted">Trimmed:</span> 99 messages removed from front
+<span class="text-muted">Adjusted:</span> max(-1, 52 - 99) = <span class="text-coral">-1</span> <span class="text-coral">&larr; fence obliterated!</span></pre>
+            </div>
+            <p class="text-muted-light text-sm leading-relaxed">
+              The fix: add a <code class="text-teal">lastTrimOffset</code> field to the context engine. When the callback fires with <code>idx=52</code>, translate it to pre-CE space: <code>52 + 116 = 168</code>. Next turn, after trimming 118 messages: <code>max(-1, 168 - 118) = 50</code>. <strong class="text-teal">The math works.</strong>
+            </p>
+          </div>
+        </div>
+
+        <!-- The Results -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The results</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-8">
+            Three fixes, shipped as quick tasks (220, 221, 222) over the course of one evening. Each one testable independently, each one with measurable impact on the next pipeline run.
+          </p>
+
+          <!-- Results table -->
+          <div class="overflow-x-auto mb-8">
+            <table class="w-full text-left">
+              <thead>
+                <tr class="border-b border-white/10">
+                  <th scope="col" class="py-3 pr-4 text-sm font-medium text-muted">Metric</th>
+                  <th scope="col" class="py-3 px-4 text-sm font-medium text-coral">Before</th>
+                  <th scope="col" class="py-3 pl-4 text-sm font-medium text-teal">After</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["Cache read/write ratio", "1.19x", "2.90x"],
+                  ["Tokens served from cache", "53.7%", "72.5%"],
+                  ["Parent post-pipeline ratio", "0.6x", "2.3x"],
+                  ["Sub-agent ratio", "3.0x", "4.7x"],
+                  ["Re-cache rate (invalidation)", "Unknown", "7% (93% cold-start only)"],
+                  ["Pipeline cost (8 agents, Opus)", "$22.51*", "$12.48"],
+                  ["Daily cost (Apr 10)", "-", "$12.48 total"],
+                ].map(([metric, before, after]) => (
+                  <tr class="border-b border-white/5">
+                    <td class="py-3 pr-4 text-sm text-white">{metric}</td>
+                    <td class="py-3 px-4 text-sm text-coral font-mono">{before}</td>
+                    <td class="py-3 pl-4 text-sm text-teal font-mono font-semibold">{after}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p class="text-muted text-xs mt-2">*Without any caching (all tokens at input rate)</p>
+          </div>
+
+          <!-- Cost breakdown -->
+          <div class="bg-navy-light/80 border border-teal/20 rounded-2xl p-8 my-8">
+            <p class="text-xs font-mono text-muted mb-4 uppercase tracking-widest">Production data - April 10, 2026</p>
+            <div class="grid md:grid-cols-2 gap-6">
+              <div>
+                <p class="text-muted text-sm mb-2">Cost breakdown</p>
+                <div class="space-y-2">
+                  {[
+                    ["1h cache writes", "$5.55", "44%", "coral"],
+                    ["5m cache writes", "$2.96", "24%", "coral"],
+                    ["Output tokens", "$2.48", "20%", "muted"],
+                    ["Cache reads", "$1.49", "12%", "teal"],
+                  ].map(([label, cost, pct, color]) => (
+                    <div class="flex items-center gap-3">
+                      <div class={`w-3 h-3 rounded-sm ${color === "teal" ? "bg-teal" : color === "coral" ? "bg-coral" : "bg-muted"}`}></div>
+                      <span class="text-muted-light text-sm flex-1">{label}</span>
+                      <span class="text-white font-mono text-sm">{cost}</span>
+                      <span class="text-muted text-xs w-10 text-right">{pct}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div class="flex flex-col justify-center">
+                <p class="text-5xl font-bold text-white font-mono">$12.48</p>
+                <p class="text-muted text-sm mt-2">Total for 4.1M tokens across multiple pipeline runs</p>
+                <p class="text-teal text-sm mt-1">2.98M tokens served from cache at $0.50/MTok</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- What I learned -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">What I learned</h2>
+
+          <div class="space-y-6 mb-8">
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">1. Cache invalidation is invisible</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                The Anthropic API doesn't tell you <em>why</em> a cache miss happened. You see the write cost on your dashboard, but not which byte changed in the prefix. The only way to debug this is to log what your system sends to the API and trace what changed between calls. That's why I added <code class="text-teal">cacheFenceIndex</code> to every context engine log line - you can't fix what you can't see.
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">2. Index spaces will betray you</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                The most insidious bug was the index space mismatch. The breakpoint callback reports indices in one coordinate system (post-trimming), but the fence operates in another (pre-trimming). I spent hours staring at logs where "the seed shows 50 but the fence is -1" before realizing the two arrays were completely different sizes. If your pipeline transforms the message array between measuring and applying, you need a translation layer.
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">3. Multi-agent pipelines need explicit cache coordination</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                Each sub-agent gets its own session, its own context engine, its own cache. Without staggering, 4 agents in the same wave all write the identical system prompt simultaneously - paying the write cost 4 times for the same content. A simple 2.5-second stagger between spawns lets the first agent populate the shared cache prefix. The others read it at 10x lower cost.
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">4. Match TTL to the content's lifetime, not the session's</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                Sub-agents typically complete in 80-200s, well within the 5m TTL window ($6.25/MTok vs $10/MTok for 1h). But the parent agent needs its cache to survive 6-7 minute pipeline gaps - so it must use 1h. The key insight: <strong class="text-white">cache refreshes don't change the TTL</strong>. Content written at 5m stays 5m forever, regardless of what subsequent requests specify. Choose the right TTL on the first write, because you won't get a second chance.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- The Architecture -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The architecture in a nutshell</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-8">
+            If you're building multi-agent systems on top of Anthropic's API, here's the cache architecture that emerged from this debugging session:
+          </p>
+
+          <!-- Architecture SVG -->
+          <div class="bg-navy-light/80 border border-white/5 rounded-2xl p-8 my-8 overflow-x-auto">
+            <svg viewBox="0 0 700 380" class="w-full max-w-2xl mx-auto" xmlns="http://www.w3.org/2000/svg">
+              <!-- Title -->
+              <text x="350" y="20" text-anchor="middle" fill="#94A3B8" font-size="11" font-family="JetBrains Mono, monospace" text-transform="uppercase" letter-spacing="2">Cache fence feedback loop</text>
+
+              <!-- Step 1: LLM Call -->
+              <rect x="50" y="40" width="180" height="50" rx="8" fill="#06B6D4" fill-opacity="0.1" stroke="#06B6D4" stroke-opacity="0.4" stroke-width="1.5"/>
+              <text x="140" y="62" text-anchor="middle" fill="#06B6D4" font-size="12" font-family="Inter, sans-serif" font-weight="600">LLM Call</text>
+              <text x="140" y="78" text-anchor="middle" fill="#94A3B8" font-size="9" font-family="JetBrains Mono, monospace">breakpoints placed</text>
+
+              <!-- Arrow 1 -->
+              <line x1="230" y1="65" x2="280" y2="65" stroke="#334155" stroke-width="1.5"/>
+              <polygon points="286,65 280,60 280,70" fill="#334155"/>
+
+              <!-- Step 2: Callback -->
+              <rect x="290" y="40" width="180" height="50" rx="8" fill="#FF6B4A" fill-opacity="0.08" stroke="#FF6B4A" stroke-opacity="0.3" stroke-width="1.5"/>
+              <text x="380" y="62" text-anchor="middle" fill="#FF6B4A" font-size="12" font-family="Inter, sans-serif" font-weight="600">onBreakpointsPlaced</text>
+              <text x="380" y="78" text-anchor="middle" fill="#94A3B8" font-size="9" font-family="JetBrains Mono, monospace">idx=52 (post-CE)</text>
+
+              <!-- Arrow 2 -->
+              <line x1="470" y1="65" x2="520" y2="65" stroke="#334155" stroke-width="1.5"/>
+              <polygon points="526,65 520,60 520,70" fill="#334155"/>
+
+              <!-- Step 3: Translate -->
+              <rect x="530" y="40" width="140" height="50" rx="8" fill="#06B6D4" fill-opacity="0.1" stroke="#06B6D4" stroke-opacity="0.4" stroke-width="1.5"/>
+              <text x="600" y="60" text-anchor="middle" fill="#06B6D4" font-size="11" font-family="Inter, sans-serif" font-weight="600">+ trimOffset</text>
+              <text x="600" y="78" text-anchor="middle" fill="#06B6D4" font-size="10" font-family="JetBrains Mono, monospace">52+116 = 168</text>
+
+              <!-- Arrow down from translate -->
+              <line x1="600" y1="90" x2="600" y2="130" stroke="#334155" stroke-width="1.5"/>
+              <polygon points="600,136 595,130 605,130" fill="#334155"/>
+
+              <!-- Step 4: Persist -->
+              <rect x="500" y="140" width="200" height="50" rx="8" fill="#1E293B" stroke="#334155" stroke-width="1.5"/>
+              <text x="600" y="162" text-anchor="middle" fill="#CBD5E1" font-size="12" font-family="Inter, sans-serif" font-weight="600">Session Map</text>
+              <text x="600" y="178" text-anchor="middle" fill="#06B6D4" font-size="10" font-family="JetBrains Mono, monospace">store(key, 168)</text>
+
+              <!-- Arrow left from persist -->
+              <line x1="500" y1="165" x2="240" y2="165" stroke="#06B6D4" stroke-width="1.5" stroke-dasharray="6 3" stroke-opacity="0.5"/>
+              <polygon points="234,165 240,160 240,170" fill="#06B6D4" fill-opacity="0.5"/>
+              <text x="370" y="155" text-anchor="middle" fill="#06B6D4" font-size="9" font-family="JetBrains Mono, monospace" fill-opacity="0.7">persists across execute() calls</text>
+
+              <!-- Step 5: Next turn seed -->
+              <rect x="50" y="140" width="180" height="50" rx="8" fill="#06B6D4" fill-opacity="0.1" stroke="#06B6D4" stroke-opacity="0.4" stroke-width="1.5"/>
+              <text x="140" y="162" text-anchor="middle" fill="#06B6D4" font-size="12" font-family="Inter, sans-serif" font-weight="600">Seed: fence=168</text>
+              <text x="140" y="178" text-anchor="middle" fill="#94A3B8" font-size="9" font-family="JetBrains Mono, monospace">next execution reads Map</text>
+
+              <!-- Arrow down from seed -->
+              <line x1="140" y1="190" x2="140" y2="230" stroke="#334155" stroke-width="1.5"/>
+              <polygon points="140,236 135,230 145,230" fill="#334155"/>
+
+              <!-- Step 6: History window -->
+              <rect x="50" y="240" width="250" height="50" rx="8" fill="#1E293B" stroke="#FF6B4A" stroke-opacity="0.2" stroke-width="1.5"/>
+              <text x="175" y="262" text-anchor="middle" fill="#CBD5E1" font-size="12" font-family="Inter, sans-serif" font-weight="600">History Window trims 118 msgs</text>
+              <text x="175" y="278" text-anchor="middle" fill="#94A3B8" font-size="9" font-family="JetBrains Mono, monospace">max(-1, 168-118) = 50</text>
+
+              <!-- Arrow right from history -->
+              <line x1="300" y1="265" x2="370" y2="265" stroke="#334155" stroke-width="1.5"/>
+              <polygon points="376,265 370,260 370,270" fill="#334155"/>
+
+              <!-- Step 7: Protected layers -->
+              <rect x="380" y="240" width="280" height="50" rx="8" fill="#06B6D4" fill-opacity="0.15" stroke="#06B6D4" stroke-opacity="0.4" stroke-width="1.5"/>
+              <text x="520" y="262" text-anchor="middle" fill="#06B6D4" font-size="12" font-family="Inter, sans-serif" font-weight="600">Layers skip msgs 0..50</text>
+              <text x="520" y="278" text-anchor="middle" fill="#06B6D4" font-size="10" font-family="JetBrains Mono, monospace">Cache prefix preserved</text>
+
+              <!-- Result callout -->
+              <rect x="380" y="310" width="280" height="40" rx="6" fill="#06B6D4" fill-opacity="0.08"/>
+              <text x="520" y="330" text-anchor="middle" fill="#06B6D4" font-size="10" font-family="JetBrains Mono, monospace">think=0 masked=0 fence=50</text>
+              <text x="520" y="344" text-anchor="middle" fill="#06B6D4" font-size="9" font-family="JetBrains Mono, monospace" fill-opacity="0.7">No cache invalidation</text>
+
+              <!-- Arrow from layers to result -->
+              <line x1="520" y1="290" x2="520" y2="306" stroke="#06B6D4" stroke-opacity="0.3" stroke-width="1"/>
+              <polygon points="520,310 516,306 524,306" fill="#06B6D4" fill-opacity="0.3"/>
+            </svg>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The key insight: cache optimization in multi-agent systems isn't just about <em>placing</em> breakpoints. It's about <strong class="text-white">protecting the prefix from your own processing pipeline</strong>. Every framework that processes messages before sending them to the API has this same problem - they just don't know it yet.
+          </p>
+        </div>
+
+        <!-- Closing Part 1 -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Ship, measure, iterate</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The whole debugging session - from "why is the cache ratio 1.19x" to three shipped fixes with production validation - took one evening. Each fix was a focused quick task with atomic commits, diagnostic logs added before the fix and cleaned up after. The observability logs I added during debugging became the permanent monitoring system.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            If you're running multi-agent pipelines on Anthropic's API and your cache ratio is below 2x, there's a good chance your context processing is silently invalidating the cache. Add <code class="text-teal">cacheFenceIndex</code> to your logs. You might be surprised what you find.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            I thought I was done. I was wrong.
+          </p>
+        </div>
+
+        <!-- Act 2: The Full Audit -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Three days later: the full forensic audit</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The cache fence fixes brought our ratio from 1.19x to 2.90x. Decent. But I had a nagging feeling there was more to find. So on April 10th I did something I probably should have done from the start: I audited <strong class="text-white">every single token</strong>.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            I pulled the full daemon log (945 lines of structured JSON), all 13 workspace session JSONL files, all 12 sub-agent result JSONs, the graph run metadata, and cross-referenced everything against the Anthropic dashboard's hour-level token breakdown. Token by token.
+          </p>
+
+          <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 my-8 font-mono text-sm">
+            <p class="text-muted text-xs mb-3 uppercase tracking-widest">Anthropic dashboard vs Comis logs</p>
+            <pre class="text-muted-light whitespace-pre"><span class="text-muted">Input:</span>            <span class="text-teal">72</span> vs <span class="text-teal">72</span>       <span class="text-teal">exact match</span>
+<span class="text-muted">Output:</span>        <span class="text-teal">24,867</span> vs <span class="text-teal">24,867</span>   <span class="text-teal">exact match</span>
+<span class="text-muted">Cache write 1h:</span> <span class="text-white">86,993</span>              <span class="text-muted">(38% of writes)</span>
+<span class="text-muted">Cache write 5m:</span><span class="text-white">141,861</span>              <span class="text-muted">(62% of writes)</span>
+<span class="text-muted">Cache read:</span>    <span class="text-teal">742,514</span> vs <span class="text-teal">742,514</span> <span class="text-teal">exact match</span>
+<span class="text-muted">Total:</span>        <span class="text-white">996,307</span> vs <span class="text-white">996,307</span>  <span class="text-teal">zero delta</span></pre>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Token accounting: perfect. Zero leaks. But that dashboard tooltip revealed something I didn't have in my logs: <strong class="text-white">the per-TTL breakdown of cache writes</strong>. Anthropic was showing me exactly which tokens used 5-minute TTL vs 1-hour TTL. And that cracked open five more issues.
+          </p>
+        </div>
+
+        <!-- Five new issues -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Five issues hiding behind "it works"</h2>
+
+          <!-- Issue: Timing Bug -->
+          <div class="bg-navy-light/80 border-l-4 border-coral rounded-r-xl p-6 my-8">
+            <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-2">Issue #1 - Critical</p>
+            <h3 class="text-xl font-bold text-white mb-3">The observability system was lying to me</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-4">
+              Every single <code class="text-coral">context:pipeline</code> event - all 42 of them across the session - reported <code class="text-coral">cacheHitTokens: 0, cacheWriteTokens: 0</code>. The dashboard was permanently stuck on "Cache MISS." For a system that was clearly caching (the Anthropic dashboard proved it), the observability was completely blind.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed">
+              <strong class="text-white">Root cause:</strong> Classic timing bug. The context engine emits its pipeline event <em>before</em> the LLM call. Cache metrics are only available <em>after</em> the API response. By the time the executor populates <code>lastMetrics.cacheHitTokens</code>, the event with zeros has already been emitted and stored. Fix: emit a supplementary <code class="text-teal">context:pipeline:cache</code> event post-LLM and merge it in the collector.
+            </p>
+          </div>
+
+          <!-- Issue: Cold Start -->
+          <div class="bg-navy-light/80 border-l-4 border-coral rounded-r-xl p-6 my-8">
+            <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-2">Issue #2 - The cold-start dilemma</p>
+            <h3 class="text-xl font-bold text-white mb-3">5m cold start saves money now, costs more later</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-4">
+              First API call after startup: <code class="text-coral">cacheRead: 0, cacheWrite: 30,182, cacheSaved: -$0.151</code>. That's right - <strong class="text-coral">negative savings</strong>. We were writing 30K tokens at the 1h rate ($10/MTok) on a cold cache.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-4">
+              The initial fix: adaptive retention that starts "short" (5m, $6.25/MTok) and escalates to "long" (1h) after cache reads confirm utilization. This dropped the cold-start penalty from $0.15 to $0.04. Sounds great.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-4">
+              <strong class="text-coral">But we discovered later that this was wrong.</strong> Anthropic's cache refreshes (reads) reset the timer but <strong class="text-white">don't change the TTL duration</strong>. Content written at 5m stays at 5m forever, even if subsequent requests specify 1h. When our 8-agent pipeline ran for 6+ minutes, the 5m-cached system prompt expired and had to be completely re-written - costing $0.19 each time.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed">
+              <strong class="text-white">The real fix:</strong> use 1h cold-start for the parent agent (which needs cache to survive pipeline gaps), and mixed 5m/1h for sub-agents (shared prefix inherits the first writer's TTL). The 1h write premium ($0.11 extra) is paid once and prevents all subsequent re-writes. For sub-agents, 5m is perfect - they share the cache via staggered spawns and finish well within the TTL.
+            </p>
+          </div>
+
+          <!-- Issue: Concurrent Eviction -->
+          <div class="bg-navy-light/80 border-l-4 border-coral rounded-r-xl p-6 my-8">
+            <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-2">Issue #3 - The ghost evictions</p>
+            <h3 class="text-xl font-bold text-white mb-3">Concurrent sub-agents were evicting each other's cache</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-4">
+              Two sub-agents suddenly got <strong class="text-coral">zero cache reads</strong> mid-session - despite being well within the 5-minute TTL. Both re-wrote ~25K tokens. Extra cost: $0.29. At the exact same timestamp, 3 other sub-agents were making concurrent API calls, likely causing server-side cache pressure at Anthropic.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed">
+              Our 2.5s stagger wasn't enough. The first agent's cache writes hadn't propagated before the second started. Fix: increase to 4s stagger and batch spawns in pairs instead of all-at-once.
+            </p>
+          </div>
+
+          <!-- Issue: Cost Miscalculation -->
+          <div class="bg-navy-light/80 border-l-4 border-teal rounded-r-xl p-6 my-8">
+            <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-2">Issue #4 - The pricing revelation</p>
+            <h3 class="text-xl font-bold text-white mb-3">The Anthropic dashboard knows your TTL split. Your code doesn't.</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-4">
+              The dashboard showed: <strong class="text-white">86,993 tokens at 1h ($10/MTok)</strong> and <strong class="text-white">141,861 tokens at 5m ($6.25/MTok)</strong>. But our cost calculation was using a single rate per execution - "long" for the main agent, "short" for sub-agents. A single API call can have breakpoints at <em>different</em> TTLs (tool definition at 1h, SDK auto-breakpoint at 5m), but we were treating all writes with one rate.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed">
+              Error: 3.3% overcounting on writes. Not huge, but it compounds. The interesting part: the code already had extraction logic for per-TTL data (<code class="text-teal">rawUsage.cacheCreation</code>), waiting for the SDK to surface it. Since the dashboard has it, the API likely does too - just not in streaming responses yet.
+            </p>
+          </div>
+
+          <!-- Issue: First Batch -->
+          <div class="bg-navy-light/80 border-l-4 border-teal rounded-r-xl p-6 my-8">
+            <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-2">Issue #5 - The batch gap</p>
+            <h3 class="text-xl font-bold text-white mb-3">First 4 sub-agents: 63.8% cache hit. Last 4: 89.6%.</h3>
+            <p class="text-muted-light text-sm leading-relaxed">
+              The first batch of concurrent sub-agents averaged <span class="text-coral">63.8%</span> cache effectiveness. Later sequential agents hit <span class="text-teal">89.6%</span>. That's because the first batch all started before anyone's cache writes had propagated. Each one paid the full write cost independently instead of sharing the prefix. Combined with the stagger fix above, this represents <strong class="text-white">$0.39/session</strong> in avoidable costs.
+            </p>
+          </div>
+        </div>
+
+        <!-- Break-Even Analysis -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The pricing math nobody talks about</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The audit led me to build a break-even model for Anthropic's cache. Here's the thing most people miss: <strong class="text-white">1-hour cache writes are significantly harder to justify than 5-minute ones</strong>.
+          </p>
+
+          <div class="overflow-x-auto mb-8">
+            <table class="w-full text-left">
+              <thead>
+                <tr class="border-b border-white/10">
+                  <th scope="col" class="py-3 pr-4 text-sm font-medium text-muted">TTL</th>
+                  <th scope="col" class="py-3 px-4 text-sm font-medium text-muted">Write Premium</th>
+                  <th scope="col" class="py-3 px-4 text-sm font-medium text-muted">Read Discount</th>
+                  <th scope="col" class="py-3 pl-4 text-sm font-medium text-teal">Break-Even</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["5 min", "+$1.25/MTok", "-$4.50/MTok", "28% read-back"],
+                  ["1 hour", "+$5.00/MTok", "-$4.50/MTok", "111% read-back"],
+                ].map(([ttl, premium, discount, breakeven]) => (
+                  <tr class="border-b border-white/5">
+                    <td class="py-3 pr-4 text-sm text-white font-mono">{ttl}</td>
+                    <td class="py-3 px-4 text-sm text-coral font-mono">{premium}</td>
+                    <td class="py-3 px-4 text-sm text-teal font-mono">{discount}</td>
+                    <td class="py-3 pl-4 text-sm text-white font-semibold">{breakeven}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            5m writes pay for themselves if you read just <strong class="text-teal">28%</strong> of what you wrote. That happens on the very next API call. But 1h writes need you to read <strong class="text-coral">more tokens than you wrote</strong> - which only happens for content that's read dozens of times (like tool definitions across a 42-call pipeline).
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            This is why the adaptive strategy works: start "short" for everything, then promote to "long" only for content you've <em>proven</em> gets high read-back. In our pipeline, tool definitions get read 40+ times (18.9x ROI on 1h writes). Conversation content gets read 1-3 times (net negative on 1h, break-even on 5m).
+          </p>
+        </div>
+
+        <!-- Updated Results -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The full picture: 42 API calls, 996K tokens, $2.75</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-8">
+            Here's what the full audit revealed across the complete TradingAgents session - 12 sub-agents analyzing MSFT, 42 API calls total:
+          </p>
+
+          <div class="overflow-x-auto mb-8">
+            <table class="w-full text-left text-sm">
+              <thead>
+                <tr class="border-b border-white/10">
+                  <th scope="col" class="py-2 pr-3 text-xs font-medium text-muted">Agent</th>
+                  <th scope="col" class="py-2 px-2 text-xs font-medium text-muted text-right">Calls</th>
+                  <th scope="col" class="py-2 px-2 text-xs font-medium text-teal text-right">Cache Read</th>
+                  <th scope="col" class="py-2 px-2 text-xs font-medium text-coral text-right">Cache Write</th>
+                  <th scope="col" class="py-2 px-2 text-xs font-medium text-muted text-right">Hit Rate</th>
+                  <th scope="col" class="py-2 pl-2 text-xs font-medium text-muted text-right">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["Main (3 executions)", "6", "261K", "102K", "72.0%", "$0.49"],
+                  ["Fundamental analyst", "3", "38K", "23K", "62.4%", "$0.23"],
+                  ["Sentiment analyst", "4", "63K", "25K", "71.3%", "$0.25"],
+                  ["Technical analyst", "4", "50K", "29K", "63.4%", "$0.27"],
+                  ["News analyst", "4", "55K", "40K", "57.9%", "$0.34"],
+                  ["Debate (5 rounds)", "10", "177K", "50K", "78.1%", "$0.60"],
+                  ["Trader", "2", "33K", "7K", "82.5%", "$0.10"],
+                  ["Risk management", "5", "87K", "9K", "90.2%", "$0.16"],
+                  ["Portfolio manager", "4", "72K", "9K", "88.9%", "$0.13"],
+                ].map(([agent, calls, read, write, rate, cost]) => (
+                  <tr class="border-b border-white/5">
+                    <td class="py-2 pr-3 text-white">{agent}</td>
+                    <td class="py-2 px-2 text-muted-light font-mono text-right">{calls}</td>
+                    <td class="py-2 px-2 text-teal font-mono text-right">{read}</td>
+                    <td class="py-2 px-2 text-coral font-mono text-right">{write}</td>
+                    <td class="py-2 px-2 text-muted-light font-mono text-right">{rate}</td>
+                    <td class="py-2 pl-2 text-white font-mono text-right">{cost}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr class="border-t border-white/10">
+                  <td class="py-2 pr-3 text-white font-semibold">Total</td>
+                  <td class="py-2 px-2 text-white font-mono font-semibold text-right">42</td>
+                  <td class="py-2 px-2 text-teal font-mono font-semibold text-right">742K</td>
+                  <td class="py-2 px-2 text-coral font-mono font-semibold text-right">229K</td>
+                  <td class="py-2 px-2 text-white font-mono font-semibold text-right">74.8%</td>
+                  <td class="py-2 pl-2 text-white font-mono font-semibold text-right">$2.75</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <!-- Updated cost breakdown -->
+          <div class="bg-navy-light/80 border border-teal/20 rounded-2xl p-8 my-8">
+            <p class="text-xs font-mono text-muted mb-4 uppercase tracking-widest">Cross-validated against Anthropic dashboard - April 11, 2026</p>
+            <div class="grid md:grid-cols-2 gap-6">
+              <div>
+                <p class="text-muted text-sm mb-2">Actual cost breakdown (996K tokens)</p>
+                <div class="space-y-2">
+                  {[
+                    ["1h cache writes (38%)", "$0.87", "32%", "coral"],
+                    ["5m cache writes (62%)", "$0.89", "32%", "coral"],
+                    ["Output tokens", "$0.62", "23%", "muted"],
+                    ["Cache reads", "$0.37", "13%", "teal"],
+                    ["Non-cached input", "$0.00", "0%", "muted"],
+                  ].map(([label, cost, pct, color]) => (
+                    <div class="flex items-center gap-3">
+                      <div class={`w-3 h-3 rounded-sm ${color === "teal" ? "bg-teal" : color === "coral" ? "bg-coral" : "bg-muted"}`}></div>
+                      <span class="text-muted-light text-sm flex-1">{label}</span>
+                      <span class="text-white font-mono text-sm">{cost}</span>
+                      <span class="text-muted text-xs w-10 text-right">{pct}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div class="flex flex-col justify-center">
+                <p class="text-5xl font-bold text-white font-mono">$2.75</p>
+                <p class="text-muted text-sm mt-2">Pre-fix cost for 996K tokens (vs $5.48 uncached)</p>
+                <p class="text-teal text-sm mt-1">Cache saved $2.73 (49.8% reduction)</p>
+                <p class="text-teal text-xs mt-3 font-semibold">After all fixes (steady state): $1.96 (64% reduction)</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- What I Really Learned -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">What I actually learned (the sequel)</h2>
+
+          <div class="space-y-6 mb-8">
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">5. Your observability about caching can be wrong about caching</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                For three days I had metrics dashboards showing "Cache MISS" on every single pipeline event. The pipeline was caching fine - the observability was broken by a timing bug. If your monitoring says caching isn't working, verify against Anthropic's own dashboard before you start "fixing" the caching.
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">6. The initial write determines the TTL forever</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                We thought adaptive retention (start 5m, escalate to 1h) was clever - and it was, until we discovered cache refreshes don't upgrade TTL. The system prompt written at 5m on turn 1 was stuck at 5m even though subsequent turns requested 1h. After a 6-minute pipeline gap, the cache expired and we paid $0.19 for a complete re-write. The fix: parent agents use 1h from the very first call. The $0.11 premium is paid once and eliminates all gap-related re-writes. Sub-agents use mixed TTLs - the shared prefix block inherits 1h from the first writer, while conversation-specific content uses 5m.
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">7. Anthropic's cache can evict under concurrent load</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                Even within the 5-minute TTL, two of our sub-agents lost their cache during a burst of concurrent API calls. The cache isn't just about TTL - there's server-side pressure. If you're spawning 4+ agents simultaneously against the same API key, stagger them enough for the first one's writes to propagate. Our 2.5s stagger wasn't enough; 4s fixed it.
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">8. Cross-validate with the Anthropic dashboard</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                The dashboard tooltip shows the per-TTL cache write breakdown that your API responses don't (at least not in streaming mode). Our logs reported $2.56 total cost; Anthropic said $2.75. That 6.9% gap was the CACHE-21 workaround approximation error. The dashboard is truth. Your cost calculation is an estimate. Check them against each other.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Act 3: The Monotonicity Revelation -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The plot twist: a 5-line fix worth more than all the others combined</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            A day after the full audit, I deployed all the fixes: adaptive retention, stagger increase, timing patches, breakpoint threshold tuning. I ran the pipeline and checked the Anthropic dashboard:
+          </p>
+
+          <div class="bg-navy-light/80 border border-coral/20 rounded-xl p-6 my-8 font-mono text-sm">
+            <p class="text-muted text-xs mb-3 uppercase tracking-widest">April 11 08:00 UTC - Post-fix pipeline</p>
+            <pre class="text-muted-light whitespace-pre"><span class="text-teal">Prompt caching write (1h):</span>  <span class="text-teal font-bold">28,220</span>  <span class="text-teal">&larr; first time EVER</span>
+<span class="text-muted">Prompt caching write (5m):</span> 163,089
+<span class="text-muted">Prompt caching read:</span>       790,336
+<span class="text-muted">Total:</span>               1,003,941</pre>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            For the first time in the project's history, <strong class="text-teal">1-hour cache writes appeared</strong>. Before this fix, every single cache write across hundreds of pipeline runs had been at 5m. The "long" retention we'd been setting on tool breakpoints for weeks was being silently ignored.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Here's what I found: <strong class="text-white">Anthropic's API requires cache breakpoint TTLs to be monotonically non-increasing across the request payload.</strong> The order is: <code class="text-teal text-sm">system &rarr; tools &rarr; messages</code>. Our SDK sets <code class="text-sm">system: {'{'}type: "ephemeral"{'}'}</code> (5m). After adaptive escalation, our code sets <code class="text-sm">tools: {'{'}type: "ephemeral", ttl: "1h"{'}'}</code>. That creates:
+          </p>
+
+          <div class="bg-navy-light/80 border border-coral/15 rounded-xl p-6 my-8 font-mono text-sm">
+            <pre class="text-muted-light whitespace-pre"><span class="text-muted">system</span>(<span class="text-coral">5m</span>) &rarr; <span class="text-muted">tools</span>(<span class="text-coral">1h</span>) &rarr; <span class="text-muted">messages</span>(<span class="text-muted">5m</span>)
+        <span class="text-coral font-bold">^^^^</span>
+        <span class="text-coral">VIOLATION: 5m &lt; 1h is an increase</span></pre>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The API silently downgrades the tool breakpoint to 5m. Our entire adaptive retention system - the escalation, the model tracking, the session-scoped warm state - was doing nothing at the API level. Every cache entry was 5m.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The fix: in our <code class="text-teal text-sm">onPayload</code> hook, when tool retention is "long", also upgrade the system blocks' <code class="text-teal text-sm">cache_control</code> TTL to match:
+          </p>
+
+          <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-6 my-8 font-mono text-sm">
+            <pre class="text-muted-light whitespace-pre" set:html={`<span class="text-muted">// 5 lines that unlocked the entire 1h cache feature</span>
+<span class="text-white">if</span> (resolvedRetention === <span class="text-teal">"long"</span> && Array.isArray(params.system)) {
+  <span class="text-white">for</span> (<span class="text-white">const</span> block <span class="text-white">of</span> params.system) {
+    <span class="text-white">if</span> (block.cache_control) {
+      block.cache_control = { type: <span class="text-teal">"ephemeral"</span>, ttl: <span class="text-teal">"1h"</span> };
+    }
+  }
+}`} />
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Now: <code class="text-teal text-sm">system(1h) &rarr; tools(1h) &rarr; messages(5m)</code>. Monotonically non-increasing. The API honors the 1h TTL. Cache survives 6-minute pipeline gaps.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            But then the second discovery: <strong class="text-white">cache refreshes don't change the TTL of existing entries</strong>. Content written at 5m stays at 5m even if subsequent requests send <code class="text-sm">ttl: "1h"</code>. The 1h only applies to the initial write. So the parent agent's cold start had to use 1h from the very first call - not 5m with a later escalation. One more line change: parent agents start at <code class="text-teal text-sm">configRetention</code> ("long") instead of "short". Sub-agents use mixed 5m/1h - the shared prefix inherits 1h from the first writer via CCPAT-03.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The result on the next pipeline run:
+          </p>
+
+          <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 my-8 font-mono text-sm">
+            <p class="text-muted text-xs mb-3 uppercase tracking-widest">April 11 09:00 UTC - Steady state</p>
+            <pre class="text-muted-light whitespace-pre"><span class="text-muted">Prompt caching write (1h):</span>       <span class="text-teal font-bold">0</span>  <span class="text-teal">&larr; previous run's 1h cache reused!</span>
+<span class="text-muted">Prompt caching write (5m):</span> 154,796
+<span class="text-muted">Prompt caching read:</span>       768,362
+<span class="text-muted">Total:</span>                     947,721
+<span class="text-muted">Cost/MTok:</span>                   <span class="text-teal font-bold">$2.07</span>  <span class="text-muted">(vs $2.33 baseline)</span></pre>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Zero 1h writes. The previous run's 1h cache survived 11 minutes between runs and got reused entirely. The parent agent's first call cost <strong class="text-teal">$0.03</strong> instead of <strong class="text-coral">$0.19</strong>. The post-pipeline execution - which previously re-wrote 42K tokens due to 5m cache expiry - now read 103K tokens from the surviving cache and only wrote 12K of genuinely new content.
+          </p>
+        </div>
+
+        <!-- Closing -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The cache optimization never ends</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The first round (cache fence, sub-agent breakpoints, index translation) took one evening and cut costs 44%. The full audit three days later found five more issues. And the day after that, the TTL monotonicity discovery - 5 lines of code that unlocked the entire 1h cache feature for the first time. Together: <strong class="text-teal">64% cost reduction</strong> from $5.48 to $1.96 per pipeline run at steady state.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The lesson isn't "we found 10 cache bugs." It's that <strong class="text-white">prompt caching in multi-agent systems is a continuous optimization problem</strong>, not a feature you turn on and forget. The API gives you the primitives. Your SDK adds its own cache markers. Your code adds more. And the API has silent constraints (like TTL monotonicity) that can make all of it do nothing. The only way to know is to audit every token - and then check the dashboard to see if the API actually did what you asked.
+          </p>
+
+          <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mt-12 mb-8">
+            <p class="text-white font-semibold mb-2">Want to see the full implementation?</p>
+            <p class="text-muted text-sm leading-relaxed">
+              Comis is open source. The cache fence system lives in <code class="text-teal text-xs">packages/agent/src/context-engine/</code> and <code class="text-teal text-xs">packages/agent/src/executor/pi-executor.ts</code>. The adaptive retention module is in <code class="text-teal text-xs">packages/agent/src/executor/adaptive-cache-retention.ts</code>. The TTL monotonicity fix is in <code class="text-teal text-xs">packages/agent/src/executor/stream-wrappers.ts</code> (search for <code class="text-teal text-xs">CACHE-23</code>). The stagger logic is in <code class="text-teal text-xs">packages/daemon/src/graph/graph-coordinator.ts</code>. See the <a href="/context-management" class="text-teal hover:text-teal-dark underline">full context management docs</a> for the complete picture.
+            </p>
+          </div>
+
+          <!-- Update note - April 2026 -->
+          <div class="bg-teal/5 border border-teal/20 rounded-xl p-6 mt-12 mb-8">
+            <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-3">Update - April 2026</p>
+            <p class="text-muted-light text-base leading-relaxed mb-4">
+              The cache infrastructure continued to improve after this post was published. With the v65 prompt cache infrastructure work (cache break detection and attribution, Gemini explicit caching, sub-agent prefix sharing via CCPAT-03, and context engine resilience improvements), production numbers on the same Claude Opus 4.6 model now show:
+            </p>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <div class="text-center">
+                <p class="text-2xl font-bold text-teal font-mono">16.9x</p>
+                <p class="text-muted text-xs mt-1">Read/write ratio</p>
+              </div>
+              <div class="text-center">
+                <p class="text-2xl font-bold text-teal font-mono">94%</p>
+                <p class="text-muted text-xs mt-1">Cache hit rate</p>
+              </div>
+              <div class="text-center">
+                <p class="text-2xl font-bold text-teal font-mono">81%</p>
+                <p class="text-muted text-xs mt-1">Cost reduction</p>
+              </div>
+              <div class="text-center">
+                <p class="text-2xl font-bold text-teal font-mono">$2.11</p>
+                <p class="text-muted text-xs mt-1">8-agent pipeline</p>
+              </div>
+            </div>
+            <p class="text-muted text-sm leading-relaxed">
+              An 8-agent NVDA trading pipeline (4 parallel analysts, bull-bear debate, trader, risk assessment, final report) processed 788K tokens across 30 API calls with 70% graph-level cache effectiveness. The 4-second spawn stagger enabled shared prefix reuse across all sub-agents. Cache break detection correctly attributed two breaks to skill hot-loading during the session, with full recovery within 1-2 turns. See the <a href="/context-management" class="text-teal hover:text-teal-dark underline">updated context management docs</a> for the full picture.
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </article>
+
+    <!-- Post navigation -->
+    <section class="px-6 py-12 border-t border-white/5">
+      <div class="max-w-3xl mx-auto flex items-center justify-between">
+        <div></div>
+        <a href="/blog" class="inline-flex items-center gap-2 text-sm text-muted hover:text-teal transition-colors">
+          All Posts &rarr;
+        </a>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Run agents at scale without the bill shock.
+        </h2>
+        <p class="text-muted text-lg mb-10">
+          25 cost optimization mechanisms. 8-layer context engine. Cache fence system. Adaptive retention. TTL monotonicity fix. All open source.
+        </p>
+        <div class="flex flex-wrap gap-4 justify-center">
+          <a href="/context-management" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
+            Full Technical Docs
+          </a>
+          <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Base>

@@ -1,0 +1,54 @@
+# PI Defense Input Pipeline E2E Tests
+#
+# Uses port 8610 to avoid conflicts. Echo provider for deterministic responses.
+# Tests: InputValidator, InputSecurityGuard, OutputGuard in running daemon.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  default:
+    name: "PIDefenseTestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+
+memory:
+  dbPath: "test-memory-pi-defense-input.db"
+  walMode: true
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8610
+  tokens:
+    - id: test-token
+      secret: pi-defense-test-secret-token-abc123
+      scopes: ["rpc", "ws", "admin", "sse"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

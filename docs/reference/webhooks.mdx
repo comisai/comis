@@ -1,0 +1,391 @@
+---
+title: "Webhooks"
+description: "Path-routed webhook ingestion with HMAC verification, template engine, and configurable presets"
+icon: "webhook"
+---
+
+The webhook subsystem receives events from external services and routes them to
+agents or triggers daemon heartbeats. Comis provides two webhook endpoint types:
+a **strict endpoint** with required HMAC verification and a fixed payload schema,
+and **mapped endpoints** with path-based routing and a template engine for
+transforming arbitrary payloads into agent messages.
+
+## Configuration
+
+### Top-Level Webhooks Config
+
+Configure the webhook subsystem under the `webhooks` key in your config file.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `webhooks.enabled` | `boolean` | `false` | Enable the webhook subsystem |
+| `webhooks.path` | `string` | `"/hooks"` | Base path for webhook endpoints |
+| `webhooks.token` | `string \| SecretRef` | -- | Bearer token for webhook authentication (min 32 chars) |
+| `webhooks.maxBodyBytes` | `number` | `262144` (256 KB) | Maximum request body size in bytes |
+| `webhooks.presets` | `string[]` | `[]` | Preset mapping names to load (e.g., `["gmail", "github"]`) |
+| `webhooks.mappings` | `WebhookMapping[]` | `[]` | Custom webhook mapping configurations |
+
+<Info>
+Source: `WebhooksConfigSchema` in `packages/core/src/config/schema-webhooks.ts`
+</Info>
+
+### Webhook Mapping Config
+
+Each entry in `webhooks.mappings[]` defines a routing rule.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `id` | `string` | -- | Unique identifier for this mapping |
+| `match` | `MatchConfig` | -- | Match conditions (path and/or source) |
+| `action` | `"wake"` \| `"agent"` | `"agent"` | Action to take when matched |
+| `wakeMode` | `"now"` \| `"next-heartbeat"` | `"now"` | Wake timing (only for `action: "wake"`) |
+| `name` | `string` | -- | Human-readable name |
+| `agentId` | `string` | -- | Target agent ID for agent actions |
+| `sessionKey` | `string` | -- | Session key template (supports `{{expr}}` placeholders) |
+| `messageTemplate` | `string` | -- | Message template for agent actions (supports `{{expr}}` placeholders) |
+| `textTemplate` | `string` | -- | Alternative plain text template |
+| `deliver` | `boolean` | -- | Whether to deliver the message to a channel |
+| `channel` | `string` | -- | Target channel for delivery |
+| `to` | `string` | -- | Target recipient for delivery |
+| `model` | `string` | -- | Model override for agent execution |
+| `timeoutSeconds` | `number` | -- | Timeout in seconds for agent execution (positive integer) |
+
+<Info>
+Source: `WebhookMappingConfigSchema` in `packages/core/src/config/schema-webhooks.ts`
+</Info>
+
+### Match Conditions
+
+The `match` object controls which incoming requests hit this mapping.
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `match.path` | `string` | URL path segment to match (normalized: leading/trailing slashes stripped, case-insensitive) |
+| `match.source` | `string` | Source identifier to match (from payload or header) |
+
+If both `path` and `source` are provided, both must match (AND logic). If
+neither is provided, the mapping matches all requests (catch-all).
+
+<Info>
+Source: `WebhookMappingMatchSchema` in `packages/core/src/config/schema-webhooks.ts`
+</Info>
+
+---
+
+## Strict Webhook Endpoint
+
+### Route
+
+`POST /hooks/webhook`
+
+The strict endpoint requires HMAC signature verification and validates the
+request body against a fixed schema. Use this when you control the sending
+service and can format payloads to the expected structure.
+
+### Request
+
+The request body must conform to `WebhookPayloadSchema`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `event` | `string` | Yes | Event type (e.g., `"deployment.completed"`, `"alert.fired"`) |
+| `source` | `string` | Yes | Source system identifier |
+| `data` | `Record<string, unknown>` | Yes | Arbitrary event data object |
+| `timestamp` | `string` | No | ISO 8601 timestamp |
+
+```json title="POST /hooks/webhook"
+{
+  "event": "deployment.completed",
+  "source": "ci-system",
+  "data": {
+    "environment": "production",
+    "version": "1.2.3"
+  },
+  "timestamp": "2026-03-12T10:30:00Z"
+}
+```
+
+HMAC verification is required. The request must include a signature header
+(see [HMAC Verification](#hmac-verification) below).
+
+### Responses
+
+| Status | Body | Cause |
+|--------|------|-------|
+| `200` | `{ "received": true }` | Webhook processed successfully |
+| `401` | `{ "error": "Missing webhook signature" }` | Missing or invalid HMAC signature |
+| `400` | `{ "error": "Invalid JSON body" }` | Request body is not valid JSON |
+| `422` | `{ "error": "Validation failed", "issues": [...] }` | Payload does not match schema |
+| `500` | `{ "error": "Internal error" }` | Handler threw an error |
+
+<Info>
+Source: `createWebhookEndpoint()` in `packages/gateway/src/webhook/webhook-endpoint.ts`
+</Info>
+
+---
+
+## Mapped Webhook Endpoint
+
+### Route
+
+`POST /hooks/:path`
+
+The mapped endpoint accepts any JSON payload and routes it to the first matching
+webhook mapping's action handler. HMAC verification is optional (applied only
+when `webhooks.token` is configured).
+
+### Path Routing
+
+Incoming request paths are matched against the `match.path` field of each
+mapping in order. The first matching mapping wins.
+
+**Normalization:** Both the request path and the mapping path are normalized by
+stripping leading/trailing slashes and converting to lowercase.
+
+```
+Request: POST /hooks/Gmail/   -> normalized: "gmail"
+Mapping: match.path: "gmail"  -> normalized: "gmail"
+Result:  MATCH
+```
+
+**Match resolution logic:**
+
+1. If a mapping has no `match` conditions, it matches all requests (catch-all)
+2. If `match.path` is set, the normalized request path must equal it
+3. If `match.source` is set, the `source` field from the payload must equal it
+4. If both are set, both must match (AND logic)
+5. First match wins -- mappings are evaluated in array order
+
+### Actions
+
+**`"agent"` (default):** Renders the `messageTemplate` and `sessionKey`
+templates using the [template engine](#template-engine), then invokes the agent
+with the rendered message and session key.
+
+**`"wake"`:** Triggers a daemon heartbeat. The `wakeMode` controls timing:
+- `"now"` (default): Fire the heartbeat immediately
+- `"next-heartbeat"`: Wait for the next scheduled heartbeat cycle
+
+### Responses
+
+| Status | Body | Cause |
+|--------|------|-------|
+| `200` | `{ "received": true, "mapping": "mapping-id" }` | Mapping matched and action executed |
+| `401` | `{ "error": "..." }` | Invalid HMAC signature (when token configured) |
+| `400` | `{ "error": "Invalid JSON body" }` | Request body is not valid JSON |
+| `400` | `{ "error": "Request body exceeds maximum size" }` | Body exceeds `maxBodyBytes` |
+| `404` | `{ "error": "No matching webhook mapping" }` | No mapping matched the request path |
+| `500` | `{ "error": "Internal error" }` | Handler threw an error |
+
+<Info>
+Source: `createMappedWebhookEndpoint()` in `packages/gateway/src/webhook/webhook-endpoint.ts`
+</Info>
+
+---
+
+## HMAC Verification
+
+Webhook signatures are verified using HMAC with constant-time comparison to
+prevent timing attacks.
+
+### Configuration
+
+The HMAC middleware accepts the following configuration:
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `secret` | `string` | _(required)_ | Shared secret for HMAC computation |
+| `headerName` | `string` | `"x-webhook-signature"` | HTTP header containing the signature |
+| `algorithm` | `"sha256"` \| `"sha384"` \| `"sha512"` | `"sha256"` | HMAC hash algorithm |
+| `timestampHeaderName` | `string` | `"x-webhook-timestamp"` | HTTP header containing the Unix timestamp |
+| `maxAgeSec` | `number` | `300` (5 minutes) | Maximum age in seconds for timestamp freshness |
+| `requireTimestamp` | `boolean` | `false` | Reject requests without a timestamp header |
+
+<Info>
+Source: `HmacMiddlewareConfig` in `packages/gateway/src/webhook/hmac-verifier.ts`
+</Info>
+
+### Signature Computation
+
+The sender computes the signature as a hex-encoded HMAC of the raw request body:
+
+```python title="Signature generation (Python example)"
+import hmac, hashlib
+
+signature = hmac.new(
+    key=shared_secret.encode(),
+    msg=request_body.encode(),
+    digestmod=hashlib.sha256
+).hexdigest()
+```
+
+```bash title="Signature generation (bash)"
+echo -n "$REQUEST_BODY" | openssl dgst -sha256 -hmac "$SHARED_SECRET" | awk '{print $2}'
+```
+
+### Verification Process
+
+1. Read the signature from the configured header (default: `x-webhook-signature`)
+2. If no signature header is present, return `401`
+3. Compute the expected HMAC of the raw request body using the shared secret
+4. Compare using `crypto.timingSafeEqual` (constant-time to prevent timing attacks)
+5. If lengths differ, reject immediately (lengths cannot match for valid signatures)
+6. If signatures do not match, return `401`
+
+### Timestamp Freshness
+
+If a timestamp header is present (default: `x-webhook-timestamp`):
+
+1. Parse the header value as a Unix timestamp (seconds)
+2. Compare against the current time
+3. If the absolute difference exceeds `maxAgeSec` (default: 300 seconds), return `401`
+
+If `requireTimestamp` is `true`, requests without a timestamp header are rejected
+with `401`. When `false` (default), missing timestamps are allowed -- the HMAC
+signature alone provides tamper protection.
+
+<Info>
+Source: `verifyHmacSignature()` and `createHmacMiddleware()` in `packages/gateway/src/webhook/hmac-verifier.ts`
+</Info>
+
+---
+
+## Template Engine
+
+Mapped webhook endpoints use a template engine to transform incoming payloads
+into agent messages and session keys. Templates use `{{expression}}` syntax.
+
+### Expression Types
+
+| Expression | Resolves To | Example |
+|------------|-------------|---------|
+| `{{payload.field}}` | Dot-path into the JSON payload | `{{payload.action}}` |
+| `{{payload.field.nested}}` | Nested object traversal | `{{payload.repository.full_name}}` |
+| `{{payload.items[0].name}}` | Array index notation | `{{payload.messages[0].from}}` |
+| `{{headers.x-header}}` | HTTP request header (lowercased keys) | `{{headers.x-github-event}}` |
+| `{{query.key}}` | URL query parameter | `{{query.format}}` |
+| `{{path}}` | URL path segment (after webhook base path) | `github` |
+| `{{now}}` | Current ISO 8601 timestamp | `2026-03-12T10:30:00.000Z` |
+
+Expressions without a recognized prefix (`payload.`, `headers.`, `query.`) are
+resolved against the payload object. This means `{{repository.full_name}}` is
+equivalent to `{{payload.repository.full_name}}`.
+
+### Context Object
+
+The template engine receives a context object with the following properties:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `payload` | `unknown` | Parsed JSON body from the webhook request |
+| `headers` | `Record<string, string>` | HTTP request headers (lowercased keys) |
+| `query` | `Record<string, string>` | URL query parameters |
+| `path` | `string` | URL path segment after the webhook base path |
+| `now` | `string` | Current ISO 8601 timestamp |
+
+### Unresolved Expressions
+
+Expressions that cannot be resolved (missing fields, null values) are replaced
+with an empty string. No error is thrown for unresolved expressions.
+
+```
+Template: "Event from {{payload.sender.name}}"
+Payload:  { "sender": {} }
+Result:   "Event from "
+```
+
+<Info>
+Source: `resolveTemplateExpr()` and `renderTemplate()` in `packages/gateway/src/webhook/webhook-mapping.ts`
+</Info>
+
+---
+
+## Presets
+
+Comis includes built-in webhook mapping presets for common services. Enable
+presets in your config:
+
+```yaml
+webhooks:
+  enabled: true
+  presets: ["gmail", "github"]
+```
+
+Unknown preset names are silently ignored.
+
+### Gmail Preset
+
+| Field | Value |
+|-------|-------|
+| `id` | `"gmail"` |
+| `match.path` | `"gmail"` |
+| `action` | `"agent"` |
+| `wakeMode` | `"now"` |
+| `sessionKey` | `"hook:gmail:{{payload.messages[0].id}}"` |
+| `messageTemplate` | `"New email from {{payload.messages[0].from}}\nSubject: {{payload.messages[0].subject}}\n{{payload.messages[0].snippet}}\n{{payload.messages[0].body}}"` |
+
+Receives Gmail push notifications and routes them as agent messages. The session
+key uses the first message ID for deduplication.
+
+### GitHub Preset
+
+| Field | Value |
+|-------|-------|
+| `id` | `"github"` |
+| `match.path` | `"github"` |
+| `action` | `"agent"` |
+| `wakeMode` | `"now"` |
+| `sessionKey` | `"hook:github:{{headers.x-github-delivery}}"` |
+| `messageTemplate` | `"GitHub {{headers.x-github-event}}: {{payload.repository.full_name}}\n{{payload.action}} by {{payload.sender.login}}"` |
+
+Receives GitHub webhook events and routes them as agent messages. The session
+key uses the delivery ID from the `x-github-delivery` header for deduplication.
+
+<Info>
+Source: `GMAIL_PRESET` and `GITHUB_PRESET` in `packages/gateway/src/webhook/webhook-presets.ts`
+</Info>
+
+---
+
+## Example Configuration
+
+```yaml title="Full webhook config example"
+webhooks:
+  enabled: true
+  path: "/hooks"
+  token: "a-shared-secret-token-at-least-32-characters"
+  maxBodyBytes: 262144
+  presets: ["gmail", "github"]
+  mappings:
+    - id: "ci-deploy"
+      match:
+        path: "deploy"
+        source: "jenkins"
+      action: "agent"
+      sessionKey: "hook:ci:{{payload.build_id}}"
+      messageTemplate: "Deployment {{payload.status}}: {{payload.project}} v{{payload.version}}"
+    - id: "monitoring-wake"
+      match:
+        path: "alert"
+      action: "wake"
+      wakeMode: "now"
+```
+
+---
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Security Model" icon="shield-halved" href="/reference/security-model">
+    HMAC verification and security architecture
+  </Card>
+  <Card title="HTTP Gateway" icon="globe" href="/reference/http-gateway">
+    Full gateway endpoint reference
+  </Card>
+  <Card title="Hot Reload" icon="rotate" href="/reference/hot-reload">
+    Config reloading and skill discovery
+  </Card>
+  <Card title="Defense in Depth" icon="shield" href="/security/defense-in-depth">
+    User-friendly security overview
+  </Card>
+</CardGroup>

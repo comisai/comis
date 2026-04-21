@@ -1,0 +1,105 @@
+# Comis Test Configuration: Agent Queue E2E Tests
+#
+# Port 8510 -- unique to agent queue E2E tests (Phase 132 Plan 01)
+# Tests CommandQueue session serialization (AGT-01/02), stale lock recovery
+# (AGT-03), graceful session deletion (AGT-04), agent identity persistence
+# (AGT-05), memory WAL concurrency (AGT-06/07), RAG memory retrieval (AGT-08),
+# maxSteps enforcement (TOOL-03), and budget pre-check (TOOL-04).
+# Circuit breaker lifecycle (TOOL-04/05/06) tested via direct import (no daemon).
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  default:
+    name: "QueueTestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 3
+      resetTimeoutMs: 2000
+      halfOpenTimeoutMs: 1000
+    rag:
+      enabled: false
+
+  budget-limited:
+    name: "BudgetLimitedAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 1
+    budgets:
+      perExecution: 100
+      perHour: 1000
+      perDay: 5000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+
+  step-limited:
+    name: "StepLimitedAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 1
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+
+queue:
+  enabled: true
+  maxConcurrentSessions: 5
+  defaultMode: followup
+  defaultOverflow:
+    maxDepth: 20
+    policy: drop-new
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8510
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-agent-queue-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+memory:
+  dbPath: "test-memory-agent-queue.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

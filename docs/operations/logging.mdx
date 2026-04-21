@@ -1,0 +1,379 @@
+---
+title: "Logging"
+description: "Understanding and viewing Comis logs"
+icon: "file-lines"
+---
+
+Comis writes detailed logs about everything it does -- they are your primary tool
+for understanding what is happening and diagnosing problems. Every message processed,
+every agent execution, every health check, and every error is recorded.
+
+## Where Logs Go
+
+Comis writes logs to two places simultaneously:
+
+- **Log file**: `~/.comis/logs/daemon.log` -- A structured JSON file that is automatically
+  rotated when it gets too large (10 MB by default). The daemon keeps up to 5
+  rotated copies before deleting the oldest.
+- **Console output**: The same log data is also written to standard output. This is
+  what you see when using `pm2 logs` or `journalctl`.
+
+<Info>
+Logs are in JSON format for machine readability. Each log line is a JSON object
+with fields like `level`, `msg`, `module`, and timestamps. You typically view them
+through pm2 or journalctl, which display them line by line.
+</Info>
+
+## Log Levels
+
+Comis uses Pino's standard log levels plus a custom `audit` level. From most
+severe to least:
+
+| Level | Pino Value | What It Means | Example |
+|---|---|---|---|
+| **fatal** | 60 | Unrecoverable process failure, imminent exit. The daemon is about to crash. | `"msg": "FATAL: Bootstrap failed"` |
+| **error** | 50 | Something broke and needs attention. Always includes `hint` and `errorKind` fields. | `"msg": "Channel connection failed"` with `"hint": "Check bot token"`, `"errorKind": "auth"` |
+| **warn** | 40 | Something is degraded but still working. Also includes `hint` and `errorKind` fields. | `"msg": "Gateway token auto-generated (ephemeral)"` with `"errorKind": "config"` |
+| **audit** | 35 | Compliance and security operational events. Custom level between warn and info. | `"msg": "Secret accessed"` with `"agentId": "assistant"` |
+| **info** | 30 | Normal operation boundary events. Startup, shutdown, request completed. This is the default level. Budget: 2-5 lines per request. | `"msg": "Comis daemon started"` |
+| **debug** | 20 | Detailed internal operations. Individual LLM calls, tool executions, intermediate steps. Unbounded output. | `"msg": "Tool execution complete"` with `"toolName": "bash"` |
+| **trace** | 10 | Most granular diagnostic level. Available but not used in the codebase by default. | (no standard examples -- enable for deep protocol debugging) |
+
+<Info>
+  The `silent` value is also accepted in configuration to disable all logging
+  for a module. It is not a severity level -- it simply suppresses output.
+</Info>
+
+<Tip>
+Start with INFO (the default). Only switch to DEBUG when troubleshooting a specific
+problem -- DEBUG produces significantly more output. Use TRACE only for deep protocol
+debugging. The FATAL and AUDIT levels are used by the system automatically -- you
+typically do not set them as module log levels.
+</Tip>
+
+## Viewing Logs
+
+<Tabs>
+  <Tab title="pm2">
+    **View the last 50 lines (snapshot):**
+
+    ```bash
+    pm2 logs comis --lines 50 --nostream
+    ```
+
+    **Follow logs in real time (press Ctrl+C to stop):**
+
+    ```bash
+    pm2 logs comis
+    ```
+
+    pm2 keeps its own log files at `~/.pm2/logs/`. The `--lines` flag shows recent
+    lines from those files, and omitting `--nostream` follows them live.
+  </Tab>
+  <Tab title="systemd">
+    **View the last 50 lines (snapshot):**
+
+    ```bash
+    journalctl -u comis -n 50 --no-pager
+    ```
+
+    **Follow logs in real time (press Ctrl+C to stop):**
+
+    ```bash
+    journalctl -u comis -f
+    ```
+
+    journalctl reads from the system journal, which captures everything the daemon
+    writes to standard output and standard error.
+  </Tab>
+  <Tab title="Log file">
+    **View the last 50 lines of the log file:**
+
+    ```bash
+    tail -n 50 ~/.comis/logs/daemon.log
+    ```
+
+    **Follow the log file in real time (press Ctrl+C to stop):**
+
+    ```bash
+    tail -f ~/.comis/logs/daemon.log
+    ```
+
+    This reads directly from the daemon's log file. Since it is JSON, each line is
+    a complete log entry.
+  </Tab>
+</Tabs>
+
+## Changing Log Levels
+
+### Per-Module Overrides
+
+Comis is organized into modules (daemon, agent, channels, scheduler, etc.), and you
+can set a different log level for each one. This is useful when you want to debug a
+specific part of the system without being overwhelmed by output from everything else.
+
+Add a `logLevels` section under `daemon` in your configuration:
+
+```yaml
+# config.yaml
+daemon:
+  logLevels:
+    daemon: "info"       # daemon lifecycle events
+    agent: "debug"       # detailed agent execution (LLM calls, tool runs)
+    channels: "warn"     # only show channel problems
+    scheduler: "info"    # scheduled task events
+    skills: "info"       # tool and skill processing
+    memory: "info"       # database and embedding operations
+    gateway: "info"      # HTTP/WebSocket server events
+```
+
+Each module only logs messages at or above its configured level. In the example
+above, the `agent` module logs everything including DEBUG messages, while the
+`channels` module only logs warnings and errors.
+
+<Tip>
+The most common use case is setting `agent: "debug"` to see exactly what your agent
+is doing during a conversation -- which tools it calls, how long each LLM request
+takes, and what context it retrieves from memory.
+</Tip>
+
+### Runtime Level Changes
+
+You can change log levels without restarting the daemon by using the
+`daemon.setLogLevel` RPC command. This is useful for temporarily enabling DEBUG
+logging to investigate an issue, then switching back to INFO when you are done.
+
+```bash
+# Enable debug logging for the agent module
+curl -X POST http://localhost:4766/rpc \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{"method":"daemon.setLogLevel","params":{"module":"agent","level":"debug"}}'
+```
+
+Runtime level changes take effect immediately and persist until the daemon restarts,
+at which point the levels revert to whatever is in your configuration file.
+
+## Error Classification
+
+Every ERROR and WARN log entry includes two mandatory fields that help you
+quickly understand and act on problems:
+
+- **`hint`** -- A human-readable string explaining what to do about the error
+- **`errorKind`** -- A classification tag from a fixed set of 9 categories
+
+### ErrorKind Values
+
+| Kind | Description | Typical Action |
+|------|-------------|----------------|
+| `config` | Configuration parsing, missing keys, schema violations | Check config.yaml against the [Config Reference](/reference/config-yaml) |
+| `network` | TCP/HTTP failures, DNS resolution, connection resets | Check network connectivity and firewall rules |
+| `auth` | Authentication or authorization failures (401/403, bad token) | Verify API keys and tokens in SecretManager |
+| `validation` | Input validation failures (bad request body, invalid params) | Check the request payload format |
+| `timeout` | Operation exceeded deadline (LLM call, HTTP request, DB query) | Increase timeout or check provider status |
+| `resource` | Resource exhaustion (OOM, disk full, file descriptor limit) | Free resources or increase limits |
+| `dependency` | External service unavailable (LLM provider, embedding API) | Check provider status pages and retry |
+| `internal` | Unexpected internal errors (assertion failures, logic bugs) | Report as a bug with the full log entry |
+| `platform` | Chat platform API errors (Discord, Telegram, Slack rate limits) | Check platform status and rate limit headers |
+
+<Tip>
+Filter logs by `errorKind` to quickly find related problems. For example, to see
+all authentication errors: `grep '"errorKind":"auth"' ~/.comis/logs/daemon.log`
+</Tip>
+
+## Field Dictionary
+
+Every log entry is a JSON object. Beyond the standard Pino fields (`level`, `time`,
+`msg`, `pid`, `hostname`), Comis uses 48 canonical fields organized by category.
+These are the fields you will see when reading JSON log output.
+
+### Core Identity
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `agentId` | string | Agent-scoped operations |
+| `traceId` | string | Auto-injected via AsyncLocalStorage on every request |
+| `channelType` | string | Channel adapter logs (e.g., "telegram", "discord") |
+| `module` | string | Always -- set via `logLevelManager.getLogger("module")` |
+
+### Timing
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `durationMs` | number | Any timed operation (LLM calls, tool execution, startup) |
+| `startupDurationMs` | number | Daemon startup complete log |
+| `shutdownDurationMs` | number | Daemon shutdown complete log |
+| `connectionDurationMs` | number | WebSocket connection lifetime (on close) |
+
+### Operation
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `toolName` | string | Tool/skill execution logs |
+| `method` | string | RPC/HTTP method name |
+| `requestId` | string | Per-HTTP-request correlation ID |
+
+### Error
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `err` | object | Error objects. **Use `err`, not `error`** -- matches Pino serializer. |
+| `hint` | string | Required on ERROR and WARN. Actionable guidance for the operator. |
+| `errorKind` | ErrorKind | Required on ERROR and WARN. One of 9 classification values. |
+
+### Token and Cost
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `tokensIn` | number | After LLM call -- input token count |
+| `tokensOut` | number | After LLM call -- output token count |
+| `tokensTotal` | number | After LLM call -- total token count |
+| `cacheReadTokens` | number | After LLM call -- tokens served from prompt cache |
+| `cacheCreationTokens` | number | After LLM call -- tokens written to prompt cache |
+| `estimatedCostUsd` | number | After LLM call -- estimated cost in USD |
+
+### Pipeline
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `step` | string | Pipeline step name during multi-step processing |
+| `reason` | string | Why an action was taken (e.g., compaction trigger reason) |
+| `inputLen` | number | Input length for processing steps |
+| `outputLen` | number | Output length for processing steps |
+| `itemCount` | number | Count of items processed |
+| `success` | boolean | Whether a processing step succeeded |
+
+### WebSocket
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `activeConnections` | number | WebSocket connection events |
+| `closeCode` | number | WebSocket close events |
+| `closeReason` | string | WebSocket close events |
+| `closeType` | string | WebSocket close classification |
+| `connectionId` | string | WebSocket connection identifier |
+| `clientId` | string | WebSocket client identifier |
+
+### Message
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `messageTruncated` | boolean | When a message was truncated before delivery |
+| `messageLen` | number | Length of incoming message |
+| `responseLen` | number | Length of outgoing response |
+
+### Agent Execution
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `llmCalls` | number | Execution complete summary -- total LLM API calls |
+| `toolCalls` | number | Execution complete summary -- total tool invocations |
+| `prunedMessages` | number | After context compaction -- messages removed |
+| `sessionMessageCount` | number | Current session message total |
+| `stopReason` | string | Why execution ended (e.g., "end_turn", "max_tokens", "tool_use") |
+
+### System
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `instanceId` | string | Daemon instance identifier (unique per process) |
+| `configName` | string | Config file being loaded |
+| `shutdownOrder` | number | Component shutdown sequence number |
+
+### Truncation Flags
+
+| Field | Type | When Present |
+|-------|------|-------------|
+| `paramsTruncated` | boolean | When RPC parameters were truncated in log output |
+| `queryTruncated` | boolean | When a database query was truncated in log output |
+
+## Security
+
+Comis automatically redacts sensitive information from log output. API keys, tokens,
+passwords, and other credentials are replaced with `[REDACTED]` before being written
+to the log file or console.
+
+The redaction engine covers 18 field name patterns at 4 nesting depths (top-level
+through 3 levels of nesting):
+
+| Redacted Fields |
+|----------------|
+| `apiKey`, `token`, `password`, `secret` |
+| `authorization`, `accessToken`, `refreshToken`, `botToken` |
+| `privateKey`, `credential`, `credentials`, `key` |
+| `passphrase`, `connectionString`, `accessKey` |
+| `cookie`, `webhookSecret` |
+
+Nested paths are also redacted: `config.telegram.botToken`, `*.*.apiKey`, etc.,
+up to 4 levels deep (`*.*.*.*`).
+
+<Info>
+You do not need to worry about sensitive data in logs. Comis automatically detects
+and hides API keys, tokens, and passwords using a compiled redaction engine. The
+redaction rules are compiled once at startup for zero runtime overhead.
+</Info>
+
+## Log Rotation
+
+When the log file reaches its size limit, the daemon automatically rotates it. The
+current file is renamed (e.g., `daemon.log.1`), and a new empty `daemon.log` starts
+receiving new entries. Old rotated files are deleted when the count exceeds the
+configured maximum.
+
+You can customize the rotation behavior in your configuration:
+
+```yaml
+# config.yaml
+daemon:
+  logging:
+    filePath: "~/.comis/logs/daemon.log"   # where to write the active log file
+    maxSize: "10m"                     # rotate when file reaches 10 MB
+    maxFiles: 5                        # keep up to 5 rotated copies
+```
+
+| Setting | Default | What It Controls |
+|---|---|---|
+| `filePath` | `~/.comis/logs/daemon.log` | Path to the active log file. Supports `~` expansion. |
+| `maxSize` | `10m` | Maximum file size before rotation. Supports `k`, `m`, `g` suffixes. |
+| `maxFiles` | 5 | Number of rotated files to keep. Older files are deleted. |
+
+<Info>
+The default settings (10 MB per file, 5 rotated copies) mean your logs will use at
+most about 60 MB of disk space. Adjust `maxSize` and `maxFiles` if you need to keep
+more or less history.
+</Info>
+
+## Trace Files
+
+In addition to the main log file, Comis can write per-agent JSONL trace files that
+capture detailed execution data. These are useful for debugging specific agent
+conversations.
+
+```yaml
+# config.yaml
+daemon:
+  logging:
+    tracing:
+      outputDir: "~/.comis/traces"   # directory for trace files
+      maxSize: "5m"                   # rotate trace files at 5 MB
+      maxFiles: 3                     # keep 3 rotated trace files per session
+```
+
+Trace files are created automatically when an agent processes messages. They contain
+the full execution timeline: prompts sent, responses received, tools called, and
+timing data.
+
+<CardGroup cols={2}>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    How the daemon starts, runs, and shuts down.
+  </Card>
+  <Card title="Monitoring" icon="heart-pulse" href="/operations/monitoring">
+    Health checks that watch your system's vital signs.
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/operations/observability">
+    Token tracking, cost estimation, and performance data.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Common problems and how to solve them.
+  </Card>
+</CardGroup>

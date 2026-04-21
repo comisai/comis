@@ -1,0 +1,541 @@
+---
+title: "Plugins"
+description: "13 lifecycle hooks and 3 extension registrations for customizing Comis behavior"
+icon: "puzzle-piece"
+---
+
+Plugins extend Comis by hooking into lifecycle events, registering custom tools, adding HTTP routes, and defining config schemas. Every plugin implements the `PluginPort` interface and uses the `PluginRegistryApi` to register its capabilities. The hook system runs at 13 lifecycle points -- 5 modifying hooks (can change behavior) and 8 void hooks (observe only).
+
+## PluginPort Interface
+
+A plugin is any object that satisfies the `PluginPort` interface. The registry calls `register()` once during bootstrap, passing a `PluginRegistryApi` facade scoped to the plugin's ID.
+
+```typescript
+import type { PluginPort, PluginRegistryApi } from "@comis/core";
+import type { Result } from "@comis/shared";
+
+export interface PluginPort {
+  readonly id: string;
+  readonly name: string;
+  readonly version?: string;
+  register(registry: PluginRegistryApi): Result<void, Error>;
+  activate?(): Promise<Result<void, Error>>;
+  deactivate?(): Promise<Result<void, Error>>;
+}
+```
+
+- **`id`** -- Unique identifier for the plugin (e.g., `"audit-logger"`, `"webhook-forwarder"`)
+- **`name`** -- Human-readable name displayed in diagnostics
+- **`register()`** -- Called once during plugin loading. Use the `registry` parameter to register hooks, tools, routes, and config schemas. Must be synchronous.
+- **`activate()`** -- Optional async initialization (connect to external services, warm caches)
+- **`deactivate()`** -- Optional async cleanup (close connections, flush buffers)
+
+## Registration Methods
+
+The `PluginRegistryApi` exposes four methods for extending Comis. Each method is called within `register()` and takes effect immediately.
+
+### registerHook
+
+```typescript
+registry.registerHook(hookName, handler, options?);
+```
+
+Subscribe to one of the 13 lifecycle hooks. The `hookName` must be a valid hook name from the `HookName` type. Options include `priority` (number, default `0`, higher runs first, range `-100` to `100`).
+
+### registerTool
+
+```typescript
+import type { PluginToolDefinition } from "@comis/core";
+
+registry.registerTool({
+  name: "my_custom_tool",
+  description: "Does something useful",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Search query" },
+    },
+    required: ["query"],
+  },
+  execute: async (params) => {
+    // Perform the tool action
+    return { result: "success" };
+  },
+});
+```
+
+Register a custom tool that agents can invoke. The tool definition includes a name, description, JSON Schema parameters object, and an async `execute` function. Plugin-provided tools appear alongside built-in tools and skill-provided tools -- agents see them identically.
+
+### registerHttpRoute
+
+```typescript
+import type { PluginHttpRoute } from "@comis/core";
+
+registry.registerHttpRoute({
+  method: "GET",
+  path: "/api/my-plugin/status",
+  handler: async (req) => {
+    return { status: "ok", timestamp: Date.now() };
+  },
+});
+```
+
+Add a custom HTTP route to the gateway. The route definition includes the HTTP method (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`), path (must start with `/`), and an async handler function.
+
+### registerConfigSchema
+
+```typescript
+import { z } from "zod";
+
+registry.registerConfigSchema("myPlugin", z.object({
+  apiKey: z.string(),
+  maxRetries: z.number().int().positive().default(3),
+  enabled: z.boolean().default(true),
+}));
+```
+
+Register a plugin-specific configuration section with a Zod schema. The section name becomes a key in the config YAML file, and the schema validates values at load time.
+
+## Lifecycle Hooks
+
+The hook system is the primary extension mechanism for customizing Comis behavior. All 13 hooks are organized into five domains: Agent, Tool, Compaction, Delivery, Session, and Gateway.
+
+| Hook | Type | When It Runs | Can Modify |
+|------|------|-------------|------------|
+| `before_agent_start` | Modifying | Before agent processes a message | `systemPrompt`, `prependContext` |
+| `before_tool_call` | Modifying | Before a tool executes | `params`, `block` (boolean), `blockReason` |
+| `tool_result_persist` | Modifying (SYNC) | When tool result is saved to session transcript | `result` |
+| `before_compaction` | Modifying | Before session compaction runs | `cancel` (boolean), `cancelReason` |
+| `before_delivery` | Modifying | Before a message is delivered to a channel | `text`, `cancel` (boolean), `cancelReason`, `metadata` |
+| `agent_end` | Void | After agent finishes processing | -- |
+| `after_tool_call` | Void | After a tool completes | -- |
+| `after_compaction` | Void | After session compaction completes | -- |
+| `after_delivery` | Void | After a message is delivered to a channel | -- |
+| `session_start` | Void | When a new session begins | -- |
+| `session_end` | Void | When a session ends | -- |
+| `gateway_start` | Void | When the HTTP gateway starts | -- |
+| `gateway_stop` | Void | When the HTTP gateway stops | -- |
+
+### Modifying Hooks
+
+Modifying hooks run sequentially in priority order (higher priority first). Each handler can return an object with fields to modify. Results are merged using last-writer-wins for each field -- if two hooks both set `systemPrompt`, the higher-priority hook's value is used.
+
+Return values are validated against Zod schemas before merging. Invalid returns are logged and ignored, protecting the system from malformed hook output.
+
+### Void Hooks
+
+Void hooks run in parallel (fire-and-forget). Handlers observe events but cannot change them. Errors in void hooks are caught and logged without affecting the system.
+
+### Priority Ordering
+
+Higher priority numbers run first (range `-100` to `100`, default `0`). For example, a hook with priority `10` runs before a hook with priority `0`. This applies to modifying hooks where execution order determines which values take precedence.
+
+<Warning>
+`tool_result_persist` handlers MUST be synchronous. This hook runs in a synchronous code path (session transcript append). If you return a Promise, it will cause undefined behavior. All other hooks can be async.
+</Warning>
+
+## Hook Details
+
+<AccordionGroup>
+
+<Accordion title="before_agent_start">
+
+Fires before an agent processes a message. Use this to inject context, modify the system prompt, or add preamble text.
+
+**Event payload:**
+- `systemPrompt` (string) -- The current system prompt
+- `messages` (unknown[]) -- Message history
+
+**Context:**
+- `agentId` (string) -- The agent processing the message
+- `sessionKey` (SessionKey) -- Current session identifier
+- `workspaceDir` (string) -- Workspace directory path
+- `isFirstMessageInSession` (boolean) -- Whether this is the first user message
+
+**Return (optional):**
+- `systemPrompt` (string) -- Override the system prompt
+- `prependContext` (string) -- Text prepended to the agent's context
+
+```typescript
+import type { PluginPort, PluginRegistryApi } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
+
+registry.registerHook("before_agent_start", (event, ctx) => {
+  if (ctx.isFirstMessageInSession) {
+    return { prependContext: "Welcome! This is a new session." };
+  }
+});
+```
+
+</Accordion>
+
+<Accordion title="before_tool_call">
+
+Fires before a tool executes. Use this to modify parameters, block dangerous tools, or enforce security policies.
+
+**Event payload:**
+- `toolName` (string) -- Name of the tool being called
+- `params` (Record&lt;string, unknown&gt;) -- Tool parameters
+
+**Context:**
+- `agentId` (string) -- The agent calling the tool
+- `sessionKey` (SessionKey) -- Current session identifier
+
+**Return (optional):**
+- `params` (Record&lt;string, unknown&gt;) -- Modified parameters
+- `block` (boolean) -- Set to `true` to prevent the tool from executing
+- `blockReason` (string) -- Reason for blocking (logged and returned to agent)
+
+```typescript
+import type { PluginPort, PluginRegistryApi } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
+
+registry.registerHook("before_tool_call", (event, ctx) => {
+  if (event.toolName === "dangerous_tool") {
+    return { block: true, blockReason: "Blocked by security policy" };
+  }
+  // Return nothing to allow the call unchanged
+}, { priority: 10 });
+```
+
+</Accordion>
+
+<Accordion title="tool_result_persist">
+
+Fires when a tool result is saved to the session transcript. Use this to redact sensitive data or transform tool output before it is persisted.
+
+**Event payload:**
+- `toolName` (string) -- Name of the tool that executed
+- `result` (string) -- The tool's result text
+
+**Context:**
+- `agentId` (string) -- The agent that called the tool
+- `sessionKey` (SessionKey) -- Current session identifier
+
+**Return (optional):**
+- `result` (string) -- Modified result text to persist
+
+```typescript
+registry.registerHook("tool_result_persist", (event, ctx) => {
+  // Redact API keys from persisted results (MUST be synchronous)
+  const redacted = event.result.replace(/sk-[a-zA-Z0-9]{32,}/g, "[REDACTED]");
+  return { result: redacted };
+});
+```
+
+</Accordion>
+
+<Accordion title="before_compaction">
+
+Fires before the context engine's LLM compaction layer runs (the last-resort summarization step). Use this to cancel compaction for specific sessions or log compaction decisions. See [Compaction](/agents/compaction) for how compaction fits into the 8-layer context engine.
+
+**Event payload:**
+- `sessionKey` (SessionKey) -- Session being compacted
+- `messageCount` (number) -- Current message count
+- `estimatedTokens` (number) -- Estimated token count (optional)
+
+**Context:**
+- `agentId` (string) -- The agent whose session is being compacted
+
+**Return (optional):**
+- `cancel` (boolean) -- Set to `true` to prevent compaction
+- `cancelReason` (string) -- Reason for cancellation
+
+```typescript
+registry.registerHook("before_compaction", (event, ctx) => {
+  if (event.messageCount < 50) {
+    return { cancel: true, cancelReason: "Too few messages to compact" };
+  }
+});
+```
+
+</Accordion>
+
+<Accordion title="agent_end">
+
+Fires after an agent finishes processing a message. Use this for logging, metrics collection, or post-processing.
+
+**Event payload:**
+- `durationMs` (number) -- Total processing time
+- `tokenUsage` (object) -- Token counts: `prompt`, `completion`, `total` (optional)
+- `success` (boolean) -- Whether processing succeeded
+- `error` (string) -- Error message if failed (optional)
+
+**Context:**
+- `agentId` (string) -- The agent that processed the message
+- `sessionKey` (SessionKey) -- Current session identifier
+
+```typescript
+registry.registerHook("agent_end", (event, ctx) => {
+  console.log(`Agent ${ctx.agentId}: ${event.durationMs}ms, ${event.tokenUsage?.total ?? 0} tokens`);
+});
+```
+
+</Accordion>
+
+<Accordion title="after_tool_call">
+
+Fires after a tool completes execution. Use this for audit logging, metrics, or triggering side effects.
+
+**Event payload:**
+- `toolName` (string) -- Name of the tool that executed
+- `params` (Record&lt;string, unknown&gt;) -- Parameters that were passed
+- `result` (unknown) -- The tool's return value
+- `durationMs` (number) -- Execution time
+- `success` (boolean) -- Whether execution succeeded
+
+**Context:**
+- `agentId` (string) -- The agent that called the tool
+- `sessionKey` (SessionKey) -- Current session identifier
+
+```typescript
+registry.registerHook("after_tool_call", (event, ctx) => {
+  console.log(`[audit] ${event.toolName} by ${ctx.agentId} (${event.durationMs}ms)`);
+});
+```
+
+</Accordion>
+
+<Accordion title="after_compaction">
+
+Fires after the context engine's LLM compaction layer completes. Use this for logging compaction results or triggering downstream actions like notifying monitoring systems.
+
+**Event payload:**
+- `sessionKey` (SessionKey) -- Session that was compacted
+- `removedCount` (number) -- Messages removed
+- `retainedCount` (number) -- Messages retained
+- `durationMs` (number) -- Compaction duration
+
+**Context:**
+- `agentId` (string) -- The agent whose session was compacted
+
+```typescript
+registry.registerHook("after_compaction", (event, ctx) => {
+  console.log(`Compacted: removed ${event.removedCount}, retained ${event.retainedCount}`);
+});
+```
+
+</Accordion>
+
+<Accordion title="before_delivery">
+
+Fires before a message is delivered to a channel. Use this to modify the outgoing text, cancel delivery, or attach metadata for downstream processing. See [Delivery](/channels/delivery) for how delivery hooks fit into the message pipeline.
+
+**Event payload:**
+- `text` (string) -- The message text about to be delivered
+- `channelType` (string) -- Target channel type (e.g., "telegram", "discord")
+- `channelId` (string) -- Target channel identifier
+- `options` (Record&lt;string, unknown&gt;) -- Platform-specific delivery options
+- `origin` (string) -- Where the message originated (e.g., "agent", "system")
+
+**Context:**
+- `sessionKey` (string) -- Current session identifier (optional)
+- `agentId` (string) -- The agent sending the message (optional)
+- `traceId` (string) -- Request trace identifier (optional)
+
+**Return (optional):**
+- `text` (string) -- Modified message text
+- `cancel` (boolean) -- Set to `true` to prevent delivery
+- `cancelReason` (string) -- Reason for cancellation (logged)
+- `metadata` (Record&lt;string, unknown&gt;) -- Arbitrary metadata passed to the delivery layer
+
+```typescript
+registry.registerHook("before_delivery", (event, ctx) => {
+  // Add a footer to all outgoing messages
+  return { text: event.text + "\n\n_Sent via Comis_" };
+});
+```
+
+</Accordion>
+
+<Accordion title="after_delivery">
+
+Fires after a message has been delivered to a channel. Use this for delivery tracking, analytics, or triggering follow-up actions.
+
+**Event payload:**
+- `text` (string) -- The message text that was delivered
+- `channelType` (string) -- Channel type the message was delivered to
+- `channelId` (string) -- Channel identifier
+- `result` (unknown) -- Platform-specific delivery result
+- `durationMs` (number) -- Delivery duration in milliseconds
+- `origin` (string) -- Where the message originated
+
+**Context:**
+- `sessionKey` (string) -- Current session identifier (optional)
+- `agentId` (string) -- The agent that sent the message (optional)
+- `traceId` (string) -- Request trace identifier (optional)
+
+```typescript
+registry.registerHook("after_delivery", (event, ctx) => {
+  console.log(`Delivered to ${event.channelType}:${event.channelId} in ${event.durationMs}ms`);
+});
+```
+
+</Accordion>
+
+<Accordion title="session_start">
+
+Fires when a new session begins. Use this for session tracking, initializing per-session state, or logging.
+
+**Event payload:**
+- `sessionKey` (SessionKey) -- The new session identifier
+- `isNew` (boolean) -- Whether this is a brand-new session or a resumed one
+
+**Context:**
+- `agentId` (string) -- The agent for this session (optional)
+
+```typescript
+registry.registerHook("session_start", (event, ctx) => {
+  if (event.isNew) {
+    console.log(`New session started: ${event.sessionKey.channelId}`);
+  }
+});
+```
+
+</Accordion>
+
+<Accordion title="session_end">
+
+Fires when a session ends. Use this for cleanup, final logging, or triggering follow-up actions.
+
+**Event payload:**
+- `sessionKey` (SessionKey) -- The session that ended
+- `reason` (string) -- Why the session ended
+- `durationMs` (number) -- Total session duration (optional)
+
+**Context:**
+- `agentId` (string) -- The agent for this session (optional)
+
+```typescript
+registry.registerHook("session_end", (event, ctx) => {
+  console.log(`Session ended (${event.reason}): ${event.durationMs ?? 0}ms`);
+});
+```
+
+</Accordion>
+
+<Accordion title="gateway_start">
+
+Fires when the HTTP gateway starts. Use this for initialization that depends on the gateway being ready.
+
+**Event payload:**
+- `port` (number) -- The port the gateway is listening on
+- `host` (string) -- The host address
+- `tls` (boolean) -- Whether TLS is enabled
+
+```typescript
+registry.registerHook("gateway_start", (event) => {
+  console.log(`Gateway ready on ${event.host}:${event.port} (TLS: ${event.tls})`);
+});
+```
+
+</Accordion>
+
+<Accordion title="gateway_stop">
+
+Fires when the HTTP gateway stops. Use this for cleanup or graceful shutdown coordination.
+
+**Event payload:**
+- `reason` (string) -- Why the gateway is stopping
+
+```typescript
+registry.registerHook("gateway_stop", (event) => {
+  console.log(`Gateway stopping: ${event.reason}`);
+});
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## Complete Plugin Example
+
+This audit logger plugin demonstrates multiple registration types: lifecycle hooks (both observing and modifying), a custom HTTP route, and priority ordering. This is a non-channel plugin -- for channel adapter plugins, see [Custom Adapters](/developer-guide/custom-adapters).
+
+```typescript
+import type { PluginPort, PluginRegistryApi } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
+
+interface AuditEntry {
+  timestamp: number;
+  agentId: string;
+  toolName: string;
+  durationMs: number;
+}
+
+export const auditPlugin: PluginPort = {
+  id: "audit-logger",
+  name: "Audit Logger Plugin",
+  version: "1.0.3",
+
+  register(registry: PluginRegistryApi): Result<void, Error> {
+    const recentLogs: AuditEntry[] = [];
+
+    // 1. Observe all tool calls (void hook, parallel)
+    registry.registerHook("after_tool_call", (event, ctx) => {
+      recentLogs.push({
+        timestamp: Date.now(),
+        agentId: ctx.agentId,
+        toolName: event.toolName,
+        durationMs: event.durationMs,
+      });
+      // Keep only the last 1000 entries
+      if (recentLogs.length > 1000) recentLogs.shift();
+    });
+
+    // 2. Block specific tools (modifying hook, sequential)
+    registry.registerHook("before_tool_call", (event) => {
+      if (event.toolName === "shell_exec") {
+        return { block: true, blockReason: "shell_exec blocked by audit policy" };
+      }
+    }, { priority: 100 }); // High priority: run before other hooks
+
+    // 3. Inject context before agent starts
+    registry.registerHook("before_agent_start", (event) => {
+      return { prependContext: "AUDIT MODE: All tool calls are logged." };
+    });
+
+    // 4. Register an HTTP route for audit data
+    registry.registerHttpRoute({
+      method: "GET",
+      path: "/api/audit/recent",
+      handler: async (req) => {
+        return { logs: recentLogs.slice(-50) };
+      },
+    });
+
+    return ok(undefined);
+  },
+};
+```
+
+<Tip>
+This plugin demonstrates hooks (observe + modify), a custom HTTP route, and priority ordering. For channel adapter plugins, see [Custom Adapters](/developer-guide/custom-adapters).
+</Tip>
+
+## PluginRegistry Lifecycle
+
+The `PluginRegistry` manages plugin state through the application lifecycle:
+
+- **`register(plugin)`** -- Adds the plugin to the registry and calls `plugin.register(api)` with a scoped facade. Returns `err()` if the plugin ID is empty or already registered.
+- **`activateAll()`** -- Calls `activate()` on all plugins that define it (after all plugins are registered). Collects and reports activation errors.
+- **`deactivateAll()`** -- Calls `deactivate()` on all plugins during graceful shutdown. Runs in registration order.
+- **`getPlugin(id)` / `getPlugins()`** -- Query registered plugins by ID or get all plugins.
+- **`unregister(id)`** -- Remove a plugin and all its registered hooks.
+
+The registry is created via `createPluginRegistry()` and wired in the composition root (`bootstrap.ts`). Plugins are registered during the bootstrap phase before the daemon starts accepting connections.
+
+<CardGroup cols={2}>
+  <Card title="Custom Adapters" icon="plug" href="/developer-guide/custom-adapters">
+    Channel adapter plugins (ChannelPluginPort)
+  </Card>
+  <Card title="Event Bus" icon="tower-broadcast" href="/developer-guide/event-bus">
+    Events that trigger hooks
+  </Card>
+  <Card title="Custom Skills" icon="wand-magic-sparkles" href="/developer-guide/custom-skills">
+    registerTool for agent tools
+  </Card>
+  <Card title="Architecture" icon="hexagon" href="/developer-guide/architecture">
+    PluginPort in the port system
+  </Card>
+</CardGroup>

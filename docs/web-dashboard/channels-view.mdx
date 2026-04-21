@@ -1,0 +1,106 @@
+---
+title: "Channels View"
+description: "Monitor and manage your messaging platform connections from the web dashboard"
+icon: "tower-broadcast"
+---
+
+The Channels view shows the status of every connected messaging platform. At a glance you can see which channels are online, which need attention, and how each one is performing.
+
+## What You See
+
+### Platform Cards
+
+Each messaging platform gets its own expandable card. The card header shows:
+
+- A **platform icon** identifying the service (Telegram, Discord, Slack, etc.)
+- The **platform name**
+- A **connection status dot** and label -- green for connected, red for disconnected
+
+Click a card header to expand it and reveal more detail:
+
+- **Uptime** -- how long the channel has been connected since its last restart
+- **Messages** -- the number of messages sent and received through this channel
+- **Last activity** -- when the channel last processed a message
+- **Bot name** -- the name your bot is using on that platform
+
+Each expanded card also shows action buttons: **Configure** to open the channel detail page, **Restart** to reconnect the channel, and **Stop** to shut it down.
+
+### Disabled Channels
+
+Below the active platform cards, you will see a section for disabled channels. These appear as compact rows showing just the platform name and an **Enable** button. Clicking Enable activates the channel with its existing configuration.
+
+### Stale Channel Alerts
+
+At the bottom of the page, a highlighted section appears when any channel has been inactive for more than 5 minutes. Stale channels may indicate a dropped connection or a platform-side issue that needs attention.
+
+## Channel Details
+
+Clicking the **Configure** button on any platform card opens the channel detail page. This page provides:
+
+- A **breadcrumb trail** back to the channel list
+- The platform name, connection status, and action buttons (Restart, Enable/Disable) in the header
+- **Platform-specific configuration fields** -- each platform displays its relevant settings like bot tokens, webhook URLs, guild IDs, and other connection parameters. Secret values are masked and never shown in plain text.
+- **Shared configuration sections** -- enable/disable toggle, allow-from filters, streaming settings, auto-reply options, send policy, and delivery trace information
+- **Media processing toggles** to control which types of incoming media the channel handles:
+  - **Voice Transcription** -- Convert incoming audio and voice messages to text
+  - **Image Analysis** -- Analyze incoming images using vision AI
+  - **Video Description** -- Generate text descriptions of incoming video
+  - **Document Extraction** -- Extract text from PDF, CSV, and other document files
+  - **Link Understanding** -- Fetch and inject content from URLs found in messages
+- **Recent delivery traces** -- a table of recent message deliveries showing timing and success status
+
+## Common Tasks
+
+### Check If a Channel Is Connected
+
+<Steps>
+  <Step title="Open the Channels view">
+    Click **Channels** in the sidebar.
+  </Step>
+  <Step title="Look for the status dot">
+    Find the platform you are interested in. A **green dot** next to the platform name means it is connected and working. A **red dot** means it is disconnected.
+  </Step>
+</Steps>
+
+### Restart a Channel
+
+<Steps>
+  <Step title="Find the channel">
+    Locate the platform card in the Channels view.
+  </Step>
+  <Step title="Expand the card">
+    Click the card header to expand it and reveal the action buttons.
+  </Step>
+  <Step title="Click Restart">
+    Click the **Restart** button. The channel disconnects and reconnects. Wait a few moments for the status dot to turn green.
+  </Step>
+</Steps>
+
+### Enable Media Processing
+
+<Steps>
+  <Step title="Open channel details">
+    Click the **Configure** button on the platform card to open the detail page.
+  </Step>
+  <Step title="Find the media section">
+    Scroll down to the media processing toggles.
+  </Step>
+  <Step title="Toggle the types you want">
+    Turn on the media types you want the channel to process -- voice, image, video, document, or link. Changes take effect for new incoming messages.
+  </Step>
+</Steps>
+
+<Warning>
+**Stale channels:** If a channel shows as stale (inactive for more than 5 minutes), the messaging platform may have dropped the connection. Try clicking **Restart** first. If the channel still does not connect, check that your platform credentials (bot token, API keys) are still valid and that the platform's servers are reachable.
+</Warning>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Channels Documentation" icon="messages" href="/channels/index">
+    Step-by-step setup guides for each messaging platform.
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/web-dashboard/observability">
+    Delivery metrics, channel health, and system diagnostics.
+  </Card>
+</CardGroup>

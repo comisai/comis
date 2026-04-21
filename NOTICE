@@ -1,0 +1,128 @@
+Comis
+Copyright 2024-2026 Moshe Anconina
+
+Licensed under the Apache License, Version 2.0.
+
+This product includes software developed by third parties.
+See package.json files for the complete dependency list with versions.
+
+NOTABLE THIRD-PARTY COMPONENTS
+===============================
+
+pi-mono (pi-agent-core, pi-ai, pi-coding-agent)
+  Copyright Mario Zechner
+  Licensed under MIT
+  https://github.com/badlogic/pi-mono
+
+Hono - Ultrafast web framework
+  Copyright Yusuke Wada and Hono contributors
+  Licensed under MIT
+  https://github.com/honojs/hono
+
+Pino - Super fast Node.js logger
+  Copyright Matteo Collina and David Mark Clements
+  Licensed under MIT
+  https://github.com/pinojs/pino
+
+Zod - TypeScript-first schema validation
+  Copyright Colin McDonnell
+  Licensed under MIT
+  https://github.com/colinhacks/zod
+
+better-sqlite3 - Fast SQLite3 driver for Node.js
+  Copyright Joshua Wise
+  Licensed under MIT
+  https://github.com/WiseLibs/better-sqlite3
+
+sharp - High performance image processing
+  Copyright Lovell Fuller and contributors
+  Licensed under Apache-2.0
+  https://github.com/lovell/sharp
+
+discord.js - Discord API library
+  Copyright Amish Shah and discord.js contributors
+  Licensed under Apache-2.0
+  https://github.com/discordjs/discord.js
+
+grammY - Telegram Bot framework
+  Copyright KnorpelSenf and contributors
+  Licensed under MIT
+  https://github.com/grammyjs/grammY
+
+@slack/bolt - Slack app framework
+  Copyright Slack Technologies, LLC
+  Licensed under MIT
+  https://github.com/slackapi/bolt-js
+
+@whiskeysockets/baileys - WhatsApp Web API
+  Copyright WhiskeySockets contributors
+  Licensed under MIT
+  https://github.com/WhiskeySockets/Baileys
+
+@line/bot-sdk - LINE Messaging API SDK
+  Copyright LINE Corporation
+  Licensed under Apache-2.0
+  https://github.com/line/line-bot-sdk-nodejs
+
+irc-framework - IRC client library
+  Copyright Kiwi IRC contributors
+  Licensed under MIT
+  https://github.com/kiwiirc/irc-framework
+
+@modelcontextprotocol/sdk - Model Context Protocol SDK
+  Copyright Anthropic
+  Licensed under MIT
+  https://github.com/modelcontextprotocol/typescript-sdk
+
+openai - OpenAI API client
+  Copyright OpenAI
+  Licensed under Apache-2.0
+  https://github.com/openai/openai-node
+
+@google/genai - Google Gemini API client
+  Copyright Google LLC
+  Licensed under Apache-2.0
+  https://github.com/googleapis/js-genai
+
+Lit - Web components library
+  Copyright Google LLC
+  Licensed under BSD-3-Clause
+  https://github.com/lit/lit
+
+Commander.js - Command-line interface
+  Copyright TJ Holowaychuk
+  Licensed under MIT
+  https://github.com/tj/commander.js
+
+Vitest - Testing framework
+  Copyright Anthony Fu and Vitest contributors
+  Licensed under MIT
+  https://github.com/vitest-dev/vitest
+
+@mozilla/readability - Article content extraction
+  Copyright Mozilla Foundation
+  Licensed under Apache-2.0
+  https://github.com/mozilla/readability
+
+playwright-core - Browser automation
+  Copyright Microsoft Corporation
+  Licensed under Apache-2.0
+  https://github.com/microsoft/playwright
+
+COPYLEFT DEPENDENCIES (TRANSITIVE)
+====================================
+
+The following transitive dependencies use copyleft licenses.
+They are separate npm packages, not embedded in Comis source code.
+
+@whiskeysockets/libsignal-node
+  Licensed under GPL-3.0
+  Transitive dependency of @whiskeysockets/baileys (WhatsApp adapter)
+
+edge-tts-universal
+  Licensed under AGPL-3.0
+  Used as a fallback TTS provider
+
+@img/sharp-libvips-darwin-arm64
+  Licensed under LGPL-3.0-or-later
+  Platform-specific native binary for sharp image processing

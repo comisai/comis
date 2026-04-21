@@ -1,0 +1,535 @@
+---
+title: "Troubleshooting"
+description: "Solutions to common Comis issues"
+icon: "wrench"
+---
+
+This page covers the most common issues you might encounter with Comis. Each entry includes the exact error message you will see, what caused it, and step-by-step instructions to fix it.
+
+<Tip>Use your browser's find (Ctrl+F / Cmd+F) to search for the error message you are seeing.</Tip>
+
+## Startup Issues
+
+<AccordionGroup>
+  <Accordion title="Bootstrap failed: Config file not found">
+    **Error message:**
+
+    ```
+    FATAL: Bootstrap failed: Config file not found
+    ```
+
+    **What happened:** The daemon cannot find your configuration file at the expected path.
+
+    **How to fix:**
+
+    1. Check that the config file exists:
+       ```bash
+       ls -la ~/.comis/config.yaml
+       ```
+    2. If the file is missing, restore from the last-known-good backup:
+       ```bash
+       cp ~/.comis/config.last-good.yaml ~/.comis/config.yaml
+       ```
+    3. If using pm2, re-run setup to regenerate the ecosystem config with the correct path:
+       ```bash
+       node packages/cli/dist/cli.js pm2 setup
+       ```
+    4. If using systemd, verify `COMIS_CONFIG_PATHS` is set in `/etc/comis/env`
+
+    <Info>The daemon automatically saves a last-known-good config on every successful startup. Look for `~/.comis/config.last-good.yaml` as a recovery option.</Info>
+  </Accordion>
+
+  <Accordion title="Secrets bootstrap failed">
+    **Error message:**
+
+    ```
+    Secrets bootstrap failed: ...
+    ```
+
+    **What happened:** The master encryption key used to protect stored secrets is missing or invalid.
+
+    **How to fix:**
+
+    1. Check that `COMIS_MASTER_KEY` is set in your environment or `.env` file:
+       ```bash
+       grep COMIS_MASTER_KEY ~/.comis/.env
+       ```
+    2. If the key was lost, remove the secrets database to start fresh:
+       ```bash
+       rm ~/.comis/secrets.db
+       ```
+    3. Restart the daemon — it will create a new secrets database
+    4. Re-add any secrets that were stored (API keys configured via the secrets system)
+  </Accordion>
+
+  <Accordion title="Secret decryption failed">
+    **Error message:**
+
+    ```
+    Secret decryption failed: ...
+    ```
+
+    **What happened:** The secrets database exists but cannot be decrypted, usually because the master key has changed since the secrets were stored.
+
+    **How to fix:**
+
+    1. If you changed the master key, restore the original key value
+    2. If the original key is lost, remove the secrets database and re-create:
+       ```bash
+       rm ~/.comis/secrets.db
+       ```
+    3. Restart the daemon and re-add your secrets
+  </Accordion>
+
+  <Accordion title="SecretRef resolution failed">
+    **Error message:**
+
+    ```
+    SecretRef resolution failed: ...
+    ```
+
+    **What happened:** Your configuration references a secret (using `$secret:name` syntax) that does not exist in the secrets store.
+
+    **How to fix:**
+
+    1. Check your `config.yaml` for `$secret:` references
+    2. For each reference, make sure the secret is stored — either add it via the API or replace the reference with the actual value
+    3. Restart the daemon
+  </Accordion>
+
+  <Accordion title="Permission corrections on data directory">
+    **Warning message:**
+
+    ```
+    Permission corrections on data directory
+    ```
+
+    **What happened:** The daemon detected that files in `~/.comis/` have permissions that are too open. It attempted to fix them automatically.
+
+    **How to fix:**
+
+    Set restrictive permissions manually:
+
+    ```bash
+    chmod -R 700 ~/.comis/
+    ```
+
+    This ensures only your user can read, write, and access the data directory.
+  </Accordion>
+
+  <Accordion title="Port already in use (EADDRINUSE)">
+    **Error message:**
+
+    ```
+    EADDRINUSE: address already in use :::4766
+    ```
+
+    **What happened:** Another process is already using port 4766, which the gateway needs.
+
+    **How to fix:**
+
+    1. Find what is using the port:
+       ```bash
+       lsof -i :4766
+       ```
+    2. If it is an old Comis process, stop it:
+       ```bash
+       pm2 stop comis
+       ```
+       Or:
+       ```bash
+       kill <PID from lsof output>
+       ```
+    3. If another application needs port 4766, change the Comis gateway port in `config.yaml`:
+       ```yaml
+       gateway:
+         port: 4767   # or any available port
+       ```
+    4. Restart the daemon
+  </Accordion>
+</AccordionGroup>
+
+## Channel Issues
+
+<AccordionGroup>
+  <Accordion title="Telegram enabled but no bot token configured">
+    **Error message:**
+
+    ```
+    Telegram enabled but no bot token configured
+    ```
+
+    **Hint from the daemon:** `Set botToken in channels.telegram config or TELEGRAM_BOT_TOKEN env var`
+
+    **How to fix:**
+
+    1. Get a bot token from [@BotFather](https://t.me/BotFather) on Telegram
+    2. Add it to your config:
+       ```yaml
+       channels:
+         telegram:
+           enabled: true
+           botToken: "your-bot-token"
+       ```
+       Or set the environment variable `TELEGRAM_BOT_TOKEN`
+    3. Restart the daemon
+  </Accordion>
+
+  <Accordion title="Discord enabled but no bot token configured">
+    **Error message:**
+
+    ```
+    Discord enabled but no bot token configured
+    ```
+
+    **Hint from the daemon:** `Set botToken in channels.discord config or DISCORD_BOT_TOKEN env var`
+
+    **How to fix:**
+
+    1. Get a bot token from the [Discord Developer Portal](https://discord.com/developers/applications)
+    2. Add it to your config:
+       ```yaml
+       channels:
+         discord:
+           enabled: true
+           botToken: "your-bot-token"
+       ```
+       Or set the environment variable `DISCORD_BOT_TOKEN`
+    3. Make sure you have enabled the **Message Content Intent** in the Discord Developer Portal under Bot settings
+    4. Restart the daemon
+  </Accordion>
+
+  <Accordion title="Discord credential validation failed">
+    **Error message:**
+
+    ```
+    Discord credential validation failed
+    ```
+
+    **Hint from the daemon:** `Verify DISCORD_BOT_TOKEN is valid in Discord Developer Portal`
+
+    **How to fix:**
+
+    1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
+    2. Select your application and navigate to Bot
+    3. Verify the token matches what is in your config
+    4. Check that the **Message Content Intent** is enabled (under Privileged Gateway Intents)
+    5. If the token was reset, copy the new token and update your config
+    6. Restart the daemon
+  </Accordion>
+
+  <Accordion title="Slack credential validation failed">
+    **Error message:**
+
+    ```
+    Slack credential validation failed
+    ```
+
+    **How to fix:**
+
+    1. Go to your [Slack API dashboard](https://api.slack.com/apps)
+    2. Verify the Bot User OAuth Token matches your config
+    3. Check that the Signing Secret is correct
+    4. Make sure the bot has the required scopes (chat:write, channels:history, etc.)
+    5. Restart the daemon
+  </Accordion>
+
+  <Accordion title="WhatsApp or Signal connection failed">
+    **Error messages:**
+
+    ```
+    WhatsApp credential validation failed
+    ```
+
+    ```
+    Signal connection validation failed
+    ```
+
+    **How to fix for WhatsApp:**
+
+    1. Verify your WhatsApp Business API credentials
+    2. Check that the phone number ID and access token are correct
+    3. Make sure the WhatsApp Business account is active
+
+    **How to fix for Signal:**
+
+    1. Check that `signal-cli` is installed and running on your server
+    2. Verify the Signal phone number is registered with signal-cli
+    3. Test signal-cli independently:
+       ```bash
+       signal-cli -u +1234567890 receive
+       ```
+    4. Restart the daemon
+  </Accordion>
+</AccordionGroup>
+
+## Runtime Issues
+
+<AccordionGroup>
+  <Accordion title="Gateway token auto-generated (ephemeral)">
+    **Warning message:**
+
+    ```
+    Gateway token auto-generated (ephemeral -- will be lost on restart)
+    ```
+
+    **Hint from the daemon:** `Set GATEWAY_TOKEN_<ID> in environment or secrets store for persistence`
+
+    **What happened:** No gateway token was configured, so the daemon created a temporary one. This token will be different after every restart, meaning you will need to re-authenticate each time.
+
+    **How to fix:**
+
+    Set a permanent token in your `config.yaml`:
+
+    ```yaml
+    gateway:
+      tokens:
+        - id: "admin"
+          secret: "your-secure-token-minimum-32-characters-long"
+          scopes: ["rpc", "ws", "admin"]
+    ```
+
+    The token secret must be at least 32 characters long.
+  </Accordion>
+
+  <Accordion title="Shutdown timeout exceeded, forcing exit">
+    **Error message:**
+
+    ```
+    Shutdown timeout exceeded, forcing exit
+    ```
+
+    **What happened:** The daemon could not stop all components cleanly within the 30-second timeout. This can happen if an agent is in the middle of a long execution or a channel connection is hanging.
+
+    **How to fix:**
+
+    1. Check the logs before the timeout to see which component was still running
+    2. If this happens frequently, increase the timeout:
+       ```yaml
+       daemon:
+         shutdownTimeoutMs: 60000   # 60 seconds instead of 30
+       ```
+    3. If a specific component is always slow, investigate that component (check channel connections, agent executions in progress)
+  </Accordion>
+
+  <Accordion title="Event loop delay exceeds threshold, skipping watchdog ping">
+    **Warning message:**
+
+    ```
+    Event loop delay exceeds threshold, skipping watchdog ping
+    ```
+
+    **What happened:** The daemon is under heavy load and the Node.js event loop is responding slowly. The watchdog ping was skipped to avoid a false health report. If this continues, systemd may restart the daemon.
+
+    **How to fix:**
+
+    1. Check system resources — is the server running out of CPU or memory?
+       ```bash
+       top -p $(pgrep -f daemon.js)
+       ```
+    2. Reduce concurrent work (lower `scheduler.cron.maxConcurrentRuns`)
+    3. If the threshold is too sensitive for your workload, increase it:
+       ```yaml
+       daemon:
+         eventLoopDelayThresholdMs: 1000   # 1 second instead of 500ms
+       ```
+    4. Consider whether your server needs more resources
+  </Accordion>
+
+  <Accordion title="Unhandled promise rejection (non-fatal)">
+    **Warning message:**
+
+    ```
+    Unhandled promise rejection (non-fatal)
+    ```
+
+    **What happened:** An unexpected error occurred in an asynchronous operation, but the daemon caught it and continued running. This does not affect normal operation but may indicate a bug in a tool or skill.
+
+    **How to fix:**
+
+    1. Check the error details in the log line — it includes the rejection reason
+    2. If it mentions a specific tool or skill, check that tool's configuration
+    3. If it persists, this may be a bug — check for updates or report the issue
+  </Accordion>
+</AccordionGroup>
+
+## Configuration Issues
+
+<AccordionGroup>
+  <Accordion title="Config patch rate limit exceeded">
+    **Error message:**
+
+    ```
+    Config patch rate limit exceeded
+    ```
+
+    **What happened:** Too many configuration changes were sent in rapid succession via the RPC API. The daemon rate-limits config patches to prevent accidental flooding.
+
+    **How to fix:**
+
+    1. Wait a moment and retry the config change
+    2. If you need to make many changes at once, batch them into a single `config.apply` call instead of multiple `config.patch` calls
+  </Accordion>
+
+  <Accordion title="Approvals config warning">
+    **Warning message about approvals configuration.**
+
+    **What happened:** The approvals section in your configuration has an issue — typically a referenced approval policy that does not match any defined policy.
+
+    **How to fix:**
+
+    1. Review the `approvals` section in your `config.yaml`
+    2. Make sure all referenced policy names match defined policies
+    3. Restart the daemon
+  </Accordion>
+
+  <Accordion title="Daemon starts but agents don't respond">
+    **No specific error message** — the daemon shows `"Comis daemon started"` but agents ignore incoming messages.
+
+    **How to fix:**
+
+    1. **Check agent routing** — make sure each agent's `bindings` match the channels you are messaging from:
+       ```yaml
+       agents:
+         default:
+           bindings:
+             - channel: telegram
+       ```
+    2. **Check agent status** — the agent might be suspended. Check in the web dashboard or logs.
+    3. **Check budget** — the agent's token or cost budget might be exhausted. See [Agent Safety](/agents/safety).
+    4. **Check model provider** — verify the API key for the configured model provider is valid
+    5. **Check logs** — set `daemon.logLevels.agent: "debug"` to see detailed agent processing logs
+  </Accordion>
+</AccordionGroup>
+
+## Resilience Issues
+
+See [Resilience Architecture](/agents/resilience) for how these systems work together.
+
+<AccordionGroup>
+  <Accordion title="Prompt timeout -- agent falling back to alternate model">
+    **Log event:**
+
+    ```
+    execution:prompt_timeout
+    ```
+
+    **What happened:** An LLM call exceeded the wall-clock timeout. The agent automatically retried with a shorter timeout or fell back to an alternate model.
+
+    **How to fix:**
+
+    1. Check the provider's status page for ongoing outages
+    2. If the model legitimately needs more time for complex tasks, increase `promptTimeoutMs`:
+       ```yaml
+       agents:
+         default:
+           promptTimeout:
+             promptTimeoutMs: 300000   # 5 minutes
+       ```
+    3. Review `modelFailover.fallbackModels` for the agent to ensure fallback models are configured
+  </Accordion>
+
+  <Accordion title="Sub-agent watchdog timeout">
+    **Log message:**
+
+    ```
+    Sub-agent watchdog timeout
+    ```
+
+    **What happened:** A sub-agent ran longer than `maxRunTimeoutMs`. The watchdog force-failed the run and sent a failure notification to the channel.
+
+    **How to fix:**
+
+    1. Check the sub-agent task -- was it genuinely too complex, or did the LLM provider hang?
+    2. If the task is legitimately long, increase `maxRunTimeoutMs`:
+       ```yaml
+       security:
+         agentToAgent:
+           subagentContext:
+             maxRunTimeoutMs: 900000   # 15 minutes
+       ```
+    3. Check for provider slowness via `provider:degraded` events in logs
+  </Accordion>
+
+  <Accordion title="Provider degraded -- LLM calls skipped">
+    **Log event:**
+
+    ```
+    provider:degraded
+    ```
+
+    **What happened:** Multiple agents hit failures within a short window. The provider health monitor flagged the provider as degraded. LLM-dependent operations are being skipped.
+
+    **How to fix:**
+
+    1. Check the provider's status page for ongoing outages
+    2. Wait for automatic recovery -- the system emits a `provider:recovered` event when the provider comes back
+    3. Check the dead-letter queue for missed announcements (`~/.comis/dead-letters.jsonl`)
+  </Accordion>
+
+  <Accordion title="Ghost run detected and force-failed">
+    **Log message:**
+
+    ```
+    Ghost run detected and force-failed
+    ```
+
+    **What happened:** A sub-agent was still marked "running" past the grace period (`maxRunTimeoutMs` + 120 seconds). The ghost sweep force-failed it and delivered a failure notification to the channel.
+
+    **How to fix:**
+
+    1. This usually indicates a process crash during execution
+    2. Check for out-of-memory (OOM) or unhandled errors around the same time in logs
+    3. The failure notification was already delivered to the channel -- no action needed for the user
+  </Accordion>
+
+  <Accordion title="Dead-letter entries accumulating">
+    **Log event:**
+
+    ```
+    announcement:dead_lettered
+    ```
+
+    **What happened:** Announcement delivery failed and entries were saved to the dead-letter queue (`~/.comis/dead-letters.jsonl`). Retry will be attempted up to 5 times.
+
+    **How to fix:**
+
+    1. Check channel connectivity -- is the bot still connected to the channel?
+    2. Verify the bot token is still valid
+    3. Entries auto-expire after 1 hour
+    4. On provider recovery the dead-letter queue drains automatically
+  </Accordion>
+
+  <Accordion title="Execution pipeline timeout -- canned error sent to user">
+    **Log event:**
+
+    ```
+    execution:aborted  reason=pipeline_timeout
+    ```
+
+    **What happened:** The entire agent execution exceeded the 600-second pipeline timeout. A static error message was sent to the user (no LLM call).
+
+    **How to fix:**
+
+    1. Check if the model was slow -- look for `execution:prompt_timeout` events before this
+    2. This is a backstop -- if it fires regularly, investigate per-call prompt timeouts first
+    3. Consider adding fallback models via `modelFailover.fallbackModels` in the agent config
+  </Accordion>
+</AccordionGroup>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    Startup, shutdown, and recovery
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/operations/logging">
+    How to view and understand logs
+  </Card>
+  <Card title="FAQ" icon="circle-question" href="/operations/faq">
+    Common questions about running Comis
+  </Card>
+  <Card title="Verification" icon="circle-check" href="/installation/verify">
+    Diagnostic steps for a new installation
+  </Card>
+</CardGroup>

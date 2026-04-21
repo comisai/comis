@@ -1,0 +1,208 @@
+---
+title: "Browser"
+description: "Headless browser automation with 16 actions for navigation, interaction, and screenshots"
+icon: "window-maximize"
+---
+
+The `browser` tool gives agents control of a headless Chromium browser. Agents can navigate to websites, take screenshots, interact with page elements (click, type, fill forms), read page content via accessibility snapshots, and manage multiple browser tabs and profiles.
+
+## Browser Actions
+
+The browser tool supports 16 actions:
+
+| Action | What It Does |
+|--------|-------------|
+| `status` | Check if the browser is running or stopped |
+| `start` | Launch the browser |
+| `stop` | Close the browser |
+| `profiles` | Manage isolated browser profiles |
+| `tabs` | List all open tabs |
+| `open` | Open a new tab with a URL |
+| `focus` | Switch to a specific tab (by `targetId`) |
+| `close` | Close a tab (by `targetId`) |
+| `snapshot` | Get the page accessibility tree (aria or ai format) |
+| `screenshot` | Capture a page screenshot |
+| `navigate` | Go to a URL in the current tab |
+| `console` | View browser console output |
+| `pdf` | Save the current page as a PDF |
+| `upload` | Upload a file to the page |
+| `dialog` | Handle browser dialogs (alerts, confirms, prompts) |
+| `act` | Interact with page elements (11 sub-kinds) |
+
+## Page Actions
+
+<AccordionGroup>
+  <Accordion title="navigate -- Go to a URL" icon="compass">
+    Navigate the current tab to a new URL.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"navigate"` |
+    | `targetUrl` | string | No | The URL to navigate to |
+
+    The browser loads the page and waits for it to finish loading before returning. SSRF validation prevents navigation to internal network addresses (see [Security](#security) below).
+  </Accordion>
+
+  <Accordion title="screenshot -- Capture a screenshot" icon="camera">
+    Take a screenshot of the current page. The image is returned as a message attachment.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"screenshot"` |
+    | `targetId` | string | No | The tab to capture (defaults to the active tab) |
+    | `fullPage` | boolean | No | Capture the full scrollable page (not just the viewport) |
+    | `type` | string | No | Image format: `"png"` (lossless) or `"jpeg"` (compressed) |
+
+    Screenshots are useful for visual verification -- checking how a page looks, confirming form submissions, or capturing error states.
+  </Accordion>
+
+  <Accordion title="snapshot -- Get the accessibility tree" icon="sitemap">
+    Get a structured representation of the page content using the accessibility tree. This is how agents "read" web pages.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"snapshot"` |
+    | `targetId` | string | No | The tab to snapshot (defaults to the active tab) |
+    | `snapshotFormat` | string | No | `"aria"` for the raw accessibility tree, or `"ai"` for an AI-optimized format |
+    | `mode` | string | No | Snapshot mode: `"efficient"` for compact output optimized for LLM consumption |
+    | `refs` | string | No | Element reference type: `"role"` (ARIA role references) or `"aria"` (ARIA label references) |
+    | `interactive` | boolean | No | Show only interactive elements |
+    | `compact` | boolean | No | Use compact output format |
+    | `depth` | number | No | Maximum tree depth to include |
+    | `maxChars` | number | No | Maximum characters in the snapshot output |
+
+    **Format options:**
+    - **aria** -- The full accessibility tree with all ARIA roles and properties. Detailed but verbose.
+    - **ai** -- A condensed format designed for AI consumption. Shows interactive elements (buttons, links, inputs) with labels and references that can be used with the `act` action.
+
+    The `ai` format is recommended for most use cases -- it gives agents the information they need to interact with the page without overwhelming them with structural details.
+  </Accordion>
+
+  <Accordion title="act -- Interact with page elements" icon="hand-pointer">
+    Interact with elements on the page. The `act` action supports 11 different interaction types (called "sub-kinds"), each designed for a specific type of interaction.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"act"` |
+    | `request.kind` | string | Yes | The interaction type (see table below) |
+    | `request.*` | *(varies)* | *(varies)* | Additional parameters depend on the `kind` |
+
+    The `act` action wraps its interaction parameters inside a `request` object. See the [Interaction Types](#interaction-types-act-sub-kinds) section below for all 11 sub-kinds and their parameters.
+  </Accordion>
+
+  <Accordion title="open -- Open a new tab" icon="plus">
+    Open a new browser tab and navigate to a URL.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"open"` |
+    | `targetUrl` | string | No | The URL to open in the new tab |
+
+    SSRF validation applies to the URL (same as `navigate`).
+  </Accordion>
+
+  <Accordion title="pdf -- Save page as PDF" icon="file-pdf">
+    Save the current page as a PDF document, returned as a message attachment.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"pdf"` |
+
+    Useful for archiving web pages or generating printable versions of online content.
+  </Accordion>
+
+  <Accordion title="upload -- Upload files" icon="upload">
+    Upload one or more files to a file input element on the page.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"upload"` |
+    | `inputRef` | string | No | CSS selector or aria reference for the file input element |
+    | `paths` | string[] | No | Array of file paths to upload |
+  </Accordion>
+
+  <Accordion title="dialog -- Handle browser dialogs" icon="message">
+    Respond to browser dialogs such as JavaScript alerts, confirmation prompts, and input prompts.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"dialog"` |
+    | `accept` | boolean | No | Whether to accept (`true`) or dismiss (`false`) the dialog |
+    | `promptText` | string | No | Text to enter in a prompt dialog |
+  </Accordion>
+
+  <Accordion title="console -- View console output" icon="terminal">
+    Retrieve the browser's developer console output, including errors, warnings, and log messages.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"console"` |
+
+    Useful for debugging page issues or monitoring JavaScript errors.
+  </Accordion>
+</AccordionGroup>
+
+## Interaction Types (act sub-kinds)
+
+When using the `act` action, the `kind` parameter determines what type of interaction to perform. There are 11 interaction types:
+
+| Kind | What It Does | Key Parameters |
+|------|-------------|----------------|
+| `click` | Click an element | `ref` (element reference or CSS selector), `doubleClick`, `button`, `modifiers` |
+| `type` | Type text character by character | `ref`, `text`, `submit`, `slowly` |
+| `press` | Press a keyboard key | `key` (e.g., `"Enter"`, `"Tab"`, `"Escape"`) |
+| `hover` | Hover over an element | `ref` |
+| `drag` | Drag from one element to another | `startRef`, `endRef` (both element references) |
+| `select` | Select a dropdown option | `ref`, `values` (array of option values) |
+| `fill` | Fill form fields (clears existing content first) | `ref`, `fields` (array of field objects) |
+| `resize` | Resize the browser viewport | `width`, `height` |
+| `wait` | Wait for a condition | `timeMs` (milliseconds), `textGone` (text to wait to disappear) |
+| `evaluate` | Run JavaScript in the page | `fn` (JavaScript code) |
+| `close` | Close the current page or dialog | *(no additional parameters)* |
+
+### Selecting Elements
+
+Most interaction types require a `ref` parameter to identify which element to interact with. You can use:
+
+- **CSS selectors** -- Standard CSS selectors like `#login-button`, `.submit-btn`, or `input[name="email"]`
+- **Aria references** -- References from the `snapshot` output in `ai` format, which label interactive elements with short identifiers
+
+<Tip>
+The recommended workflow is: take a `snapshot` in `ai` format to see the page structure, then use the element references from the snapshot in your `act` calls via the `ref` parameter.
+</Tip>
+
+## Browser Profiles
+
+Profiles create isolated browser contexts with separate cookies, local storage, and session data. This is useful for:
+
+- Managing multiple accounts on the same website
+- Testing with different user states (logged in vs. logged out)
+- Keeping browsing sessions separate between different tasks
+
+Use the `profiles` action to create, list, and switch between browser profiles.
+
+## Security
+
+The browser includes built-in security protections:
+
+- **SSRF validation** -- The `navigate` and `open` actions validate URLs before loading them. The browser cannot access localhost, internal IP addresses (like `10.x.x.x` or `192.168.x.x`), or cloud metadata endpoints (like `169.254.169.254`). This prevents attacks where a crafted message tricks the browser into accessing your internal network.
+- **Screenshot sanitization** -- Screenshots are processed and sanitized before being stored or sent.
+
+For more details on network security protections, see [Security](/get-started/security).
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Built-in Tools" icon="wrench" href="/skills/built-in-tools">
+    All built-in tools including browser
+  </Card>
+  <Card title="Web Tools" icon="globe" href="/agent-tools/web-tools">
+    Web search and page fetching tools
+  </Card>
+  <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
+    See all available agent tools
+  </Card>
+  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
+    Browser and tool configuration options
+  </Card>
+</CardGroup>

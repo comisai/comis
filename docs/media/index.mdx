@@ -1,0 +1,203 @@
+---
+title: "Media & Voice"
+description: "How your agent handles images, voice messages, documents, links, and interactive messages"
+icon: "photo-film"
+---
+
+When someone sends a photo, a voice note, a PDF, or a link to your agent,
+Comis processes it automatically. Your agent can see images, listen to voice
+messages, read documents, and understand web pages -- all without any extra
+effort from you. This page gives you the big picture of what Comis does with
+different types of media and how to configure each capability.
+
+## What Comis Handles
+
+Your agent can work with five types of media. Some processing happens
+automatically before your agent even starts thinking -- the results are ready
+by the time your agent sees the message. Other capabilities are available as
+on-demand tools that your agent can call when it decides more analysis is
+needed.
+
+| Media Type | What Happens Automatically | On-Demand Tool | Details |
+|------------|---------------------------|----------------|---------|
+| Images | Your agent sees the image directly (when vision is enabled) | `image_analyze` | [Vision](/media/vision) |
+| Voice Messages | Audio is transcribed to text so your agent can read it | `transcribe_audio`, `tts_synthesize` | [Voice](/media/voice) |
+| Documents | Text is extracted from PDFs, CSVs, code files, and more | `extract_document` | [Documents](/media/documents) |
+| Links | URLs in messages are fetched and the content is summarized | -- | [Links](/media/links) |
+| Videos | Video content is described using vision AI | `describe_video` | [Vision](/media/vision) |
+
+<Info>
+Automatic processing happens before your agent even starts thinking. On-demand
+tools let your agent actively request analysis when it decides to.
+</Info>
+
+## How Media Processing Works
+
+Understanding the flow helps you see where configuration matters. Here is
+what happens step by step when someone sends a message with media attached:
+
+<Steps>
+  <Step title="Someone sends a message with media">
+    A user sends a photo, voice note, document, or link in any connected chat
+    platform.
+  </Step>
+  <Step title="Comis detects the media type">
+    The media preprocessor identifies what was sent -- whether it is an image,
+    audio file, video, document, or URL. Each type has its own processing
+    pipeline optimized for that kind of content.
+  </Step>
+  <Step title="Automatic processing runs">
+    Based on your configuration, Comis processes the media automatically. This
+    might mean transcribing a voice message to text, sending an image to
+    vision AI for analysis, extracting text from a PDF, or fetching the
+    content of a linked web page.
+  </Step>
+  <Step title="Your agent receives the enriched message">
+    The agent sees the original message text plus all of the processed media
+    results. A voice message becomes readable text. An image comes with a
+    description. A document's content is available inline. The agent has
+    everything it needs to respond intelligently.
+  </Step>
+  <Step title="Agent can do more on demand">
+    If the automatic processing was not enough, your agent can use on-demand
+    tools to analyze further. For example, it can ask specific questions about
+    an image, re-analyze a document with different settings, or transcribe
+    audio that was not automatically processed.
+  </Step>
+</Steps>
+
+## What Happens Without Configuration
+
+Even if you have not configured any media providers, Comis still handles
+media gracefully. When media arrives without a configured provider, your agent
+does not crash or ignore the message. Instead, it receives a helpful hint
+about what was sent so it can still respond appropriately.
+
+Here is what your agent sees for each media type when no provider is
+configured:
+
+**Voice messages:** Your agent receives a hint like "Voice message attached --
+use `transcribe_audio` tool to listen" so it knows a voice message was sent.
+If the on-demand transcription tool is available, the agent can still process
+the audio by calling it explicitly.
+
+**Images:** Your agent sees a hint that includes the image URL. If a vision
+provider is available for on-demand analysis, the agent can use the
+`image_analyze` tool to understand the image contents. Without any vision
+provider at all, the agent still knows an image was shared and can
+acknowledge it.
+
+**Documents:** Your agent sees a hint about the attached file -- including the
+filename, MIME type, and file size. The agent can use `extract_document` to
+read the content on demand if the extraction tool is available.
+
+**Videos:** Similar to images, your agent sees a hint about the video
+attachment. If Google Gemini is configured, the agent can use the
+`describe_video` tool to get a text description of the video content.
+
+**Links:** When link understanding is disabled (the default), URLs in messages
+are passed through as plain text. Your agent can still see and reference the
+URLs, but Comis does not automatically fetch and summarize the linked content.
+
+This means you can start using Comis without configuring every media provider
+up front. Add providers later as you need more automatic processing. Your
+agent always knows when media was sent, even without full media configuration.
+
+## Cross-Platform Support
+
+Media processing works across all connected chat platforms. The same
+configuration applies everywhere -- you set up vision once, and it works
+whether someone sends a photo in Telegram, Discord, Slack, or any other
+connected channel.
+
+However, each platform handles media attachments differently behind the
+scenes. Comis abstracts these differences so you do not need to worry about
+them:
+
+- **Telegram** sends voice messages as `.ogg` audio files
+- **Discord** uses various audio formats depending on the client
+- **WhatsApp** sends voice notes in a specific format that Comis converts
+  automatically
+- **Slack** hosts files on its own CDN with authentication tokens
+
+Your configuration stays the same regardless of which platform the media
+comes from. Comis handles the platform-specific details internally so your
+agent gets consistent results no matter where the message originated.
+
+<Note>
+Some media features are only available on certain platforms. For example,
+rich messages with buttons work on Discord, Telegram, Slack, and LINE, but
+not on IRC or Signal. See each capability page for platform-specific details.
+</Note>
+
+## Configuration Overview
+
+All media settings live under `integrations.media` in your `config.yaml`.
+Each media capability has its own section with sensible defaults, so you only
+need to configure the features you actually want to use. Here is a minimal
+example showing the main toggles:
+
+```yaml
+# config.yaml
+integrations:
+  media:
+    vision:
+      enabled: true
+    transcription:
+      provider: openai
+    tts:
+      provider: openai
+      autoMode: off
+    linkUnderstanding:
+      enabled: false
+    documentExtraction:
+      enabled: true
+```
+
+Each section in the configuration corresponds to one of the five media
+capabilities:
+
+- **`vision`** -- Image and video analysis (see [Vision](/media/vision))
+- **`transcription`** -- Speech-to-text for voice messages (see
+  [Voice](/media/voice))
+- **`tts`** -- Text-to-speech for voice replies (see [Voice](/media/voice))
+- **`linkUnderstanding`** -- Automatic URL content fetching (see
+  [Links](/media/links))
+- **`documentExtraction`** -- File text extraction (see
+  [Documents](/media/documents))
+
+<Tip>
+Each capability page below shows the full configuration options. You only need
+to configure the features you want to use -- everything has sensible defaults.
+</Tip>
+
+## Explore Capabilities
+
+<CardGroup cols={2}>
+  <Card title="Vision" icon="eye" href="/media/vision">
+    How your agent sees and understands images and videos
+  </Card>
+  <Card title="Voice" icon="microphone" href="/media/voice">
+    Speech-to-text transcription and text-to-speech auto-reply
+  </Card>
+  <Card title="Documents" icon="file-lines" href="/media/documents">
+    PDF, CSV, code files, and more
+  </Card>
+  <Card title="Links" icon="link" href="/media/links">
+    Automatic URL content understanding
+  </Card>
+  <Card title="Rich Messages" icon="rectangle-list" href="/media/rich-messages">
+    Buttons, cards, embeds, and polls across platforms
+  </Card>
+</CardGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Agent Tools: Media" icon="toolbox" href="/agent-tools/media">
+    See all media tool parameters and usage
+  </Card>
+  <Card title="Configuration Reference" icon="file-code" href="/reference/config-yaml">
+    Full config.yaml reference
+  </Card>
+</CardGroup>

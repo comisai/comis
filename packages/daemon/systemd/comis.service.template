@@ -1,0 +1,120 @@
+# Comis Daemon - systemd unit template
+#
+# This file is a TEMPLATE. Do not install it directly — it contains
+# @PLACEHOLDER@ tokens that the installer substitutes at install time.
+#
+# managed-by: comis-installer
+# template-version: 1
+#
+# Placeholders:
+#   @NODE_BIN@         absolute path to node (e.g. /usr/bin/node)
+#   @DAEMON_JS@        absolute path to daemon entry (e.g. .../packages/daemon/dist/daemon.js)
+#   @DAEMON_DIR@       dirname(@DAEMON_JS@)
+#   @WORKING_DIR@      WorkingDirectory for the service
+#   @USER@             system user (e.g. comis)
+#   @GROUP@            system group (e.g. comis)
+#   @SVC_HOME@         service user home (e.g. /home/comis)
+#   @DATA_DIR@         read-write data directory (e.g. /home/comis/.comis)
+#   @ENV_FILE@         path to EnvironmentFile (e.g. /etc/comis/env)
+#
+# Rendered units are written with a `# managed-by: comis-installer` header
+# plus a checksum so the installer can detect user edits on upgrade.
+
+[Unit]
+Description=Comis AI Agent Daemon
+Documentation=https://docs.comis.ai/operations/systemd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@WORKING_DIR@
+
+# --permission: Node permission model. fs-read wildcarded because the daemon
+# reads from many locations (undici internals, CA bundle, source-map traces).
+# ProtectSystem=strict + ProtectHome=read-only already enforce the real
+# filesystem perimeter at the kernel level. Writes are scoped to:
+#   @DATA_DIR@          — config, logs, memory.db, workspace, sessions
+#   @SVC_HOME@/.npm     — npm cache + logs (MCP servers spawned via npx)
+#   @SVC_HOME@/.pi      — pi-agent-core SettingsManager (agent config dir)
+#   /tmp                — media temp files (PrivateTmp=yes sandboxes this)
+# --allow-addons + --allow-worker: required by native deps (sharp, better-sqlite3).
+# --jitless and MemoryDenyWriteExecute are intentionally NOT set — both break
+# WebAssembly (Node's bundled undici uses WASM for HTTP parsing).
+ExecStart=@NODE_BIN@ --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=@DATA_DIR@ --allow-fs-write=@SVC_HOME@/.npm --allow-fs-write=@SVC_HOME@/.pi --allow-fs-write=/tmp --allow-child-process @DAEMON_JS@
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Watchdog: systemd kills process if no ping within WatchdogSec
+# Daemon pings at half this interval (15s) with health gating
+WatchdogSec=30s
+
+# Shutdown: allow 45s for graceful shutdown (app timeout is 30s)
+TimeoutStopSec=45
+
+# Resource limits
+MemoryMax=2G
+TasksMax=100
+
+# Standard output/error to journald for structured log collection
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=comis
+
+# Environment
+Environment=NODE_ENV=production
+EnvironmentFile=-@ENV_FILE@
+
+# --- Security Hardening ---
+
+# Filesystem protection.
+# ProtectHome=read-only hides /root and other users' homes from the service
+# while the explicit ReadWritePaths below punches through to @DATA_DIR@.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+# Must match the --allow-fs-write set above — Node's permission model and
+# systemd's kernel-level ProtectHome both have to allow the same paths.
+ReadWritePaths=@DATA_DIR@ @SVC_HOME@/.npm @SVC_HOME@/.pi
+
+# Memory protection
+# MemoryDenyWriteExecute intentionally omitted — would break V8 JIT + WebAssembly
+# (undici uses WASM for HTTP parsing). SystemCallFilter and RestrictNamespaces
+# below still block the most dangerous W^X abuse vectors.
+
+# Privilege escalation prevention
+NoNewPrivileges=yes
+
+# Drop all capabilities
+CapabilityBoundingSet=
+
+# System call filtering: allow only standard service calls.
+# @mount (pivot_root, mount, umount2…) + setns are needed by bubblewrap
+# when wrapping agent-issued exec calls. Without them bwrap dies with SIGSYS
+# and the sandbox becomes a no-op.
+SystemCallFilter=@system-service @mount
+SystemCallFilter=setns
+SystemCallArchitectures=native
+
+# Kernel and device protection
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+# RestrictNamespaces: allowlist the namespace types bubblewrap uses for the
+# agent-command exec sandbox. With =yes, bwrap fails with "No permissions to
+# create new namespace" and the sandbox becomes a no-op.
+RestrictNamespaces=user mnt pid net ipc uts cgroup
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

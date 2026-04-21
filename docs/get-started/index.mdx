@@ -1,0 +1,81 @@
+---
+title: "Welcome to Comis"
+description: "Open-source AI agent fleet that lives in your messaging apps"
+icon: "hand-wave"
+---
+
+Comis _(Latin: friendly, courteous)_ is an open-source platform that puts AI agents directly inside the messaging apps you already use -- Telegram, Discord, Slack, WhatsApp, Signal, iMessage, IRC, and LINE. Instead of switching to yet another tool, your AI assistants live right where your conversations happen, ready to help at any moment.
+
+Most AI tools are chatbots trapped in a browser tab. Comis is different. It is a full operations center that lets you run a fleet of specialized agents, each with their own memory, tools, and personality. They work around the clock, even while you sleep.
+
+## Who is Comis for?
+
+- **Community managers** running Discord or Telegram groups who need an AI moderator,
+  FAQ bot, or engagement assistant that actually remembers past conversations.
+- **Small business owners** who want AI-powered customer support inside WhatsApp
+  or Slack without hiring a developer or learning to code.
+- **Developers** building AI-powered automation, custom tools, or multi-agent
+  workflows with full control over the source code.
+- **Teams** that need multiple specialized AI agents working together -- one for
+  research, one for writing, one for scheduling -- all coordinated through a
+  single platform.
+
+## What can it do?
+
+<CardGroup cols={2}>
+  <Card title="Lives Where You Are" icon="messages" href="/channels/index">
+    Connect to 9 messaging platforms at once. Your agents appear in your existing chats -- no new apps to install.
+  </Card>
+  <Card title="A Team of Specialists" icon="robot" href="/agents/index">
+    Run multiple AI agents, each with their own personality, knowledge, and tools. An analyst, a writer, an ops bot -- all working together.
+  </Card>
+  <Card title="Remembers Everything" icon="brain" href="/agents/memory">
+    Your agents build lasting memory across conversations. They recall your preferences, your projects, and your past requests.
+  </Card>
+  <Card title="Endlessly Extensible" icon="puzzle-piece" href="/skills/index">
+    Add new abilities with skills and tools. Connect to thousands of external services through the MCP protocol.
+  </Card>
+  <Card title="Works While You Sleep" icon="clock" href="/agent-tools/scheduling">
+    Schedule tasks, set reminders, and run recurring automations. Your agents keep working even when you are away.
+  </Card>
+  <Card title="Keeps You Safe" icon="shield-check" href="/get-started/security">
+    Encrypted secrets, injection protection, approval gates for sensitive actions, and audit logging -- security is built in from day one.
+  </Card>
+</CardGroup>
+
+## Quick example
+
+Install Comis globally, run the setup wizard, and start the daemon -- three commands is all it takes:
+
+```bash
+npm install -g comisai
+comis init
+comis daemon start
+```
+
+That's it -- your first agent is running. Open `http://localhost:4766` in your
+browser to start chatting. See the full [Quickstart](/get-started/quickstart)
+for the complete walkthrough.
+
+## Explore the Docs
+
+<CardGroup cols={3}>
+  <Card title="Quickstart" icon="rocket" href="/get-started/quickstart">
+    Zero to first message in under 5 minutes.
+  </Card>
+  <Card title="How It Works" icon="diagram-project" href="/get-started/how-it-works">
+    Understand the architecture in plain language.
+  </Card>
+  <Card title="Channels" icon="messages" href="/channels/index">
+    Connect Discord, Telegram, Slack, and more.
+  </Card>
+  <Card title="Agents" icon="robot" href="/agents/index">
+    Configure your AI agents and their behavior.
+  </Card>
+  <Card title="Skills" icon="puzzle-piece" href="/skills/index">
+    Add tools and abilities to your agents.
+  </Card>
+  <Card title="Security" icon="shield-check" href="/get-started/security">
+    Learn how Comis keeps your data safe.
+  </Card>
+</CardGroup>

@@ -1,0 +1,165 @@
+---
+title: "Node Permissions"
+description: "Node.js permission model integration reference for child process sandboxing"
+icon: "lock"
+---
+
+Comis integrates with the Node.js `--permission` flag to provide OS-level sandboxing for child processes spawned during skill execution. When enabled, child processes run with restricted file system and network access.
+
+<Info>
+  **Source:** `packages/core/src/config/schema-security.ts` -- `PermissionConfigSchema` Zod schema.
+</Info>
+
+## Overview
+
+The Node.js permission model (available in Node.js 22+) restricts what a child process can access at the operating system level. This provides a defense layer beneath application-level controls like tool policies and content scanning.
+
+**Key distinction:** The daemon itself does NOT run with `--permission`. It needs full access to manage channels, databases, and config files. Only child processes spawned for tool execution receive permission restrictions.
+
+## Configuration
+
+The `PermissionConfigSchema` has 3 fields:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enableNodePermissions` | `boolean` | `false` | Enable Node.js `--permission` flag enforcement for child processes |
+| `allowedFsPaths` | `string[]` | `[]` | Allowed filesystem read/write paths (passed as `--allow-fs-read` and `--allow-fs-write`) |
+| `allowedNetHosts` | `string[]` | `[]` | Allowed network hosts for outbound connections (passed as `--allow-net`) |
+
+### YAML Configuration Example
+
+```yaml
+security:
+  permission:
+    enableNodePermissions: true
+    allowedFsPaths:
+      - /home/comis/workspace
+      - /tmp/comis
+    allowedNetHosts:
+      - api.openai.com
+      - api.anthropic.com
+```
+
+## How It Works
+
+When `enableNodePermissions` is `true`, the daemon passes Node.js permission flags to child processes:
+
+1. **File system access:** `allowedFsPaths` controls both `--allow-fs-read` and `--allow-fs-write` flags. Paths not in this list are inaccessible to the child process.
+
+2. **Network access:** `allowedNetHosts` controls the `--allow-net` flag. Only connections to listed hosts are permitted.
+
+3. **Child process spawning:** The child process inherits the restricted permissions. It cannot spawn further child processes unless explicitly allowed.
+
+### Permission Flag Mapping
+
+| Config Field | Node.js Flag | Effect |
+|-------------|-------------|--------|
+| `allowedFsPaths` | `--allow-fs-read`, `--allow-fs-write` | Restricts file system access to listed paths |
+| `allowedNetHosts` | `--allow-net` | Restricts outbound network to listed hosts |
+| (implicit) | `--permission` | Enables the permission model on the child process |
+
+## Limitations
+
+<Warning>
+  The Node.js permission model has several limitations to be aware of before enabling it.
+</Warning>
+
+- **Node.js 22+ required:** The `--permission` flag is not available in older Node.js versions. Comis requires Node.js 22+, so this is satisfied by default.
+- **Third-party module compatibility:** Some npm packages that perform unrestricted file system or network operations will fail when permissions are enabled. Test thoroughly before enabling in production.
+- **No per-tool granularity:** Permissions apply to the entire child process. You cannot grant different file system paths to different tools within the same execution.
+- **Path resolution:** Paths in `allowedFsPaths` should be absolute. Relative paths may not resolve as expected in the child process context.
+- **No wildcard support:** The Node.js permission model does not support glob patterns in path specifications. Each directory must be listed explicitly.
+
+## Error Behavior
+
+When a child process attempts an operation that violates its permissions, Node.js throws a `ERR_ACCESS_DENIED` error. This error propagates through the tool execution system and is reported to the agent as a tool failure.
+
+Example error when a child process attempts to read a file outside `allowedFsPaths`:
+
+```
+Error [ERR_ACCESS_DENIED]: Access to this API has been restricted.
+```
+
+The daemon logs these permission violations at WARN level with the restricted operation details for security audit.
+
+## Default Behavior
+
+When `enableNodePermissions` is `false` (the default), child processes inherit the full permissions of the daemon process. This is the recommended setting for most deployments where the daemon runs as a dedicated system user with appropriate OS-level access controls.
+
+Enable Node.js permissions only when you need an additional sandboxing layer -- for example, when running untrusted skills that may attempt to access files or network resources outside their intended scope.
+
+## Recommended Paths
+
+When enabling permissions, include at minimum:
+
+| Path | Purpose |
+|------|---------|
+| Data directory (`~/.comis`) | Database, config, logs |
+| Agent workspace directory | File operations from tools |
+| `/tmp` (or a subdirectory) | Temporary files for media processing |
+| Node.js installation directory | Module resolution |
+
+```yaml
+security:
+  permission:
+    enableNodePermissions: true
+    allowedFsPaths:
+      - /home/comis/.comis
+      - /home/comis/workspace
+      - /tmp/comis
+      - /usr/lib/node_modules
+    allowedNetHosts:
+      - api.openai.com
+      - api.anthropic.com
+      - api.groq.com
+```
+
+## Interaction with Other Security Layers
+
+Node.js permissions are one layer in Comis's defense-in-depth approach:
+
+| Layer | Scope | Mechanism |
+|-------|-------|-----------|
+| **Tool Policy** | Application-level | Controls which tools an agent can use |
+| **Content Scanner** | Skill-level | Detects malicious patterns in skill bodies |
+| **SSRF Guard** | Network-level | Blocks requests to internal/metadata IPs |
+| **Safe Path** | File-level | Prevents path traversal within allowed directories |
+| **Node Permissions** | OS-level | Restricts child process file system and network access |
+| **Budget / Circuit Breaker** | Resource-level | Limits token spend and failure cascades |
+
+Node.js permissions provide the lowest-level defense: even if all application-level checks are bypassed, the OS-level restrictions prevent access to unauthorized resources.
+
+## SecurityConfigSchema Context
+
+The `PermissionConfigSchema` is nested within the broader `SecurityConfigSchema`:
+
+```yaml
+security:
+  logRedaction: true              # Structured log redaction (default: true)
+  auditLog: true                  # Audit event logging (default: true)
+  permission:                     # Node.js permission model
+    enableNodePermissions: false
+    allowedFsPaths: []
+    allowedNetHosts: []
+  actionConfirmation:             # Action confirmation gates
+    requireForDestructive: true
+    requireForSensitive: false
+    autoApprove: []
+  secrets:                        # Encrypted secrets store
+    enabled: false
+    dbPath: "secrets.db"
+```
+
+The full `SecurityConfigSchema` is defined in `packages/core/src/config/schema-security.ts` and parsed via Zod with defaults for all fields.
+
+<CardGroup cols={2}>
+  <Card title="Security Model" icon="shield" href="/security">
+    Defense-in-depth security architecture
+  </Card>
+  <Card title="Sandbox" icon="box" href="/reference/sandbox">
+    Skill sandboxing implementation
+  </Card>
+  <Card title="Safe Path" icon="folder-closed" href="/reference/safe-path">
+    Path traversal prevention
+  </Card>
+</CardGroup>

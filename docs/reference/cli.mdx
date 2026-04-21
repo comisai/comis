@@ -1,0 +1,722 @@
+---
+title: "CLI Reference"
+description: "Complete reference for all 17 command groups, subcommands, and flags"
+icon: "terminal"
+---
+
+Complete reference for the Comis command-line interface. The CLI connects to the Comis daemon via JSON-RPC over WebSocket. All commands are available via `comis <command>` (if globally installed) or `node packages/cli/dist/cli.js <command>`.
+
+## Global Options
+
+These options apply across multiple commands:
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `string` | `table` | Output format. Most list/show commands accept `table` or `json`. Some inspect commands accept `detail` or `json`. |
+| `-c, --config <paths...>` | `string[]` | - | Config file paths. Supported by `config validate`, `configure`, `doctor`, `health`, `models set`, `reset`, `security audit`, and `security fix`. |
+| `-y, --yes` | `boolean` | `false` | Skip confirmation prompts for destructive operations. Supported by `agent delete`, `config rollback`, `memory clear`, `reset`, `secrets get`, `secrets delete`, and `security fix`. |
+
+## Command Groups
+
+### `comis agent`
+
+Agent management commands for listing, creating, updating, and deleting agent configurations.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `agent list` | List all configured agents |
+| `agent create <name>` | Create a new agent configuration |
+| `agent configure <name>` | Update an existing agent's settings |
+| `agent delete <name>` | Delete an agent configuration |
+
+#### `agent list`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+#### `agent create <name>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--provider <provider>` | `string` | - | AI provider (e.g. `anthropic`, `openai`) |
+| `--model <model>` | `string` | - | Model to use (e.g. `claude-sonnet-4-5-20250929`) |
+
+#### `agent configure <name>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--provider <provider>` | `string` | - | AI provider |
+| `--model <model>` | `string` | - | Model to use |
+
+#### `agent delete <name>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-y, --yes` | `boolean` | `false` | Skip confirmation prompt |
+
+```bash
+# List all agents
+comis agent list
+
+# Create an agent with a specific provider and model
+comis agent create my-agent --provider anthropic --model claude-sonnet-4-5-20250929
+
+# Delete an agent without confirmation
+comis agent delete old-agent --yes
+```
+
+---
+
+### `comis channel`
+
+Channel management commands for viewing the connection status of configured chat platform adapters.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `channel status` | Display channel connection status |
+
+#### `channel status`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+```bash
+# View channel connection status
+comis channel status
+```
+
+---
+
+### `comis config`
+
+Configuration management commands for validating, viewing, modifying, and version-controlling the config file.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `config validate` | Validate configuration files against the schema |
+| `config show [section]` | Display current configuration (optionally filtered to a section) |
+| `config set <path> <value>` | Modify a config value via the daemon (triggers restart) |
+| `config history` | Display config change history (git-backed) |
+| `config diff [sha]` | Display config diff against HEAD or a specific commit |
+| `config rollback <sha>` | Restore config from a previous commit |
+
+#### `config validate`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-c, --config <paths...>` | `string[]` | From `COMIS_CONFIG_PATHS` or defaults | Config file paths to validate |
+
+#### `config show [section]`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `detail` \| `json` | `detail` | Output format |
+
+#### `config set <path> <value>`
+
+No additional flags. The path uses dot-notation (e.g. `gateway.port 5000`). Values are parsed as JSON first, falling back to string.
+
+#### `config history`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--limit <n>` | `string` | `10` | Maximum entries to display |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+#### `config diff [sha]`
+
+No additional flags. Displays a colorized diff of the current config against HEAD or a specific commit SHA.
+
+#### `config rollback <sha>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-y, --yes` | `boolean` | `false` | Skip confirmation prompt |
+
+```bash
+# Validate config files
+comis config validate -c ~/.comis/config.yaml
+
+# Show the gateway section
+comis config show gateway
+
+# Set a config value (triggers daemon restart)
+comis config set gateway.port 5000
+
+# View config change history
+comis config history --limit 5
+
+# Rollback to a previous config version
+comis config rollback abc1234 --yes
+```
+
+---
+
+### `comis configure`
+
+Interactive configuration editor using terminal prompts. Walks through editable config fields section by section, validates changes against the Zod schema, and writes back to the YAML file preserving formatting and comments.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-c, --config <path>` | `string` | `~/.comis/config.yaml` | Config file path |
+| `--section <section>` | `string` | - | Jump directly to a specific section |
+
+<Info>Requires an interactive terminal (TTY). Use `comis config set` for non-interactive config changes.</Info>
+
+```bash
+# Launch interactive config editor
+comis configure
+
+# Edit a specific section directly
+comis configure --section gateway
+```
+
+---
+
+### `comis daemon`
+
+Control the Comis daemon process. Uses systemd if available, otherwise falls back to direct process management with PID file tracking.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `daemon start` | Start the Comis daemon |
+| `daemon stop` | Stop the Comis daemon |
+| `daemon status` | Show daemon status |
+| `daemon logs` | Show daemon logs |
+
+#### `daemon start`
+
+No additional flags. Starts via systemd if installed, otherwise spawns a detached Node.js process and waits for the gateway health endpoint to respond.
+
+#### `daemon stop`
+
+No additional flags. Sends SIGTERM (graceful), escalates to SIGKILL after 10 seconds if the process does not exit.
+
+#### `daemon status`
+
+No additional flags. Checks status via RPC first, then systemd, then PID file.
+
+#### `daemon logs`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-f, --follow` | `boolean` | `false` | Follow log output in real-time |
+| `-n, --lines <n>` | `string` | `50` | Number of lines to show |
+
+```bash
+# Start the daemon
+comis daemon start
+
+# Follow logs in real-time
+comis daemon logs -f
+
+# Show last 100 log lines
+comis daemon logs -n 100
+```
+
+---
+
+### `comis doctor`
+
+Run diagnostic health checks across five categories: configuration, daemon, gateway, channels, and workspace. Supports auto-repair mode for fixable issues.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--repair` | `boolean` | `false` | Auto-fix repairable issues |
+| `-c, --config <paths...>` | `string[]` | - | Config file paths to check |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+```bash
+# Run full diagnostics
+comis doctor
+
+# Auto-repair fixable issues
+comis doctor --repair -c ~/.comis/config.yaml
+```
+
+---
+
+### `comis health`
+
+Quick view of system health issues. Unlike `doctor` which shows all checks, `health` shows only failures and warnings by default. Exits with code 1 when failures exist, making it suitable for CI pipelines.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-c, --config <paths...>` | `string[]` | - | Config file paths |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+| `--all` | `boolean` | `false` | Show all findings including passing checks |
+
+```bash
+# Quick health check
+comis health
+
+# Show all checks including passing ones
+comis health --all
+
+# JSON output for CI
+comis health --format json
+```
+
+---
+
+### `comis init`
+
+Interactive setup wizard for first-time configuration. Supports three modes: interactive wizard (default), non-interactive with flags for CI/Docker, and JSON output for automation.
+
+#### Key Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--non-interactive` | `boolean` | `false` | No prompts, all values from flags |
+| `--accept-risk` | `boolean` | `false` | Acknowledge security notice (required for non-interactive) |
+| `--quick` | `boolean` | `false` | Skip flow selection, use QuickStart |
+| `--json` | `boolean` | `false` | Output result as JSON |
+
+#### Provider and Credentials
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--provider <id>` | `string` | - | LLM provider (e.g. `anthropic`, `openai`) |
+| `--api-key <key>` | `string` | - | Provider API key |
+| `--agent-name <name>` | `string` | `comis-agent` | Agent identifier |
+| `--model <id>` | `string` | - | Model identifier |
+
+#### Gateway
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--gateway-port <n>` | `number` | `4766` | Gateway port |
+| `--gateway-bind <mode>` | `loopback` \| `lan` \| `custom` | `loopback` | Bind mode |
+| `--gateway-auth <mode>` | `token` \| `password` | `token` | Authentication mode |
+| `--gateway-token <tok>` | `string` | - | Explicit gateway token |
+| `--gateway-password <pw>` | `string` | - | Gateway password (if auth=password) |
+
+#### Channels
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--channels <list>` | `string` | - | Comma-separated channel list |
+| `--telegram-token <tok>` | `string` | - | Telegram bot token |
+| `--discord-token <tok>` | `string` | - | Discord bot token |
+| `--slack-bot-token <tok>` | `string` | - | Slack bot token |
+| `--slack-app-token <tok>` | `string` | - | Slack app token |
+| `--line-token <tok>` | `string` | - | LINE channel token |
+| `--line-secret <sec>` | `string` | - | LINE channel secret |
+
+#### Paths and Behavior
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--data-dir <path>` | `string` | `~/.comis` | Workspace directory |
+| `--config-dir <dir>` | `string` | - | Override config directory |
+| `--start-daemon` | `boolean` | `false` | Auto-start daemon after config |
+| `--skip-health` | `boolean` | `false` | Skip post-setup health check |
+| `--skip-validation` | `boolean` | `false` | Skip API key validation |
+| `--reset` | `boolean` | `false` | Reset existing config before setup |
+| `--reset-scope <scope>` | `config` \| `config+creds` \| `full` | `config` | Reset scope |
+
+<Tip>Run `comis init --help` for the complete list of all flags.</Tip>
+
+```bash
+# Interactive setup wizard
+comis init
+
+# Non-interactive setup for CI/Docker
+comis init --non-interactive --accept-risk \
+  --provider anthropic --api-key "$ANTHROPIC_API_KEY" \
+  --start-daemon --json
+```
+
+---
+
+### `comis memory`
+
+Memory management commands for searching, inspecting, and clearing conversation memory entries.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `memory search <query>` | Search memory entries by content |
+| `memory inspect <id>` | Display full details of a memory entry |
+| `memory stats` | Display memory statistics |
+| `memory clear` | Clear memory entries matching a filter |
+
+#### `memory search <query>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--limit <n>` | `string` | `10` | Maximum results to return |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+#### `memory inspect <id>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `detail` \| `json` | `detail` | Output format |
+
+#### `memory stats`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `detail` \| `json` | `detail` | Output format |
+
+#### `memory clear`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--filter <filter>` | `string` | - | Filter expression (e.g. `memoryType=conversation`) |
+| `--tenant <tenantId>` | `string` | - | Filter by tenant ID |
+| `-y, --yes` | `boolean` | `false` | Skip confirmation prompt |
+
+<Warning>At least one filter (`--filter` or `--tenant`) is required. This safety check prevents accidental blanket clears.</Warning>
+
+```bash
+# Search memory
+comis memory search "project requirements" --limit 5
+
+# View memory statistics
+comis memory stats
+
+# Clear conversation memory for a specific tenant
+comis memory clear --tenant default --filter memoryType=conversation --yes
+```
+
+---
+
+### `comis models`
+
+Model management commands for browsing the model catalog and updating agent model assignments.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `models list` | List available models from the catalog |
+| `models set <agent> <model>` | Set the model for an agent |
+
+#### `models list`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--provider <provider>` | `string` | - | Filter by provider name |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+#### `models set <agent> <model>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-c, --config <path>` | `string` | Auto-detected | Config file path |
+
+```bash
+# List all available models
+comis models list
+
+# Filter by provider
+comis models list --provider anthropic
+
+# Set agent model
+comis models set my-agent claude-sonnet-4-5-20250929
+```
+
+---
+
+### `comis pm2`
+
+Manage the daemon via pm2 as a cross-platform process supervisor (alternative to systemd on macOS and WSL).
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `pm2 setup` | Generate pm2 ecosystem config file |
+| `pm2 start` | Start daemon via pm2 |
+| `pm2 stop` | Stop daemon via pm2 |
+| `pm2 restart` | Restart daemon via pm2 |
+| `pm2 status` | Show pm2 process status |
+| `pm2 logs` | Stream daemon logs via pm2 |
+
+#### `pm2 logs`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-n, --lines <n>` | `string` | `50` | Number of recent lines to show |
+
+The other pm2 subcommands (`setup`, `start`, `stop`, `restart`, `status`) have no additional flags.
+
+```bash
+# One-time setup
+comis pm2 setup
+
+# Start and verify
+comis pm2 start
+comis pm2 status
+
+# Stream logs
+comis pm2 logs -n 100
+```
+
+---
+
+### `comis reset`
+
+Reset sessions, configuration, or the entire workspace. Requires explicit confirmation for all destructive operations.
+
+| Argument | Description |
+|----------|-------------|
+| `<target>` | What to reset: `sessions`, `config`, or `workspace` |
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--yes` | `boolean` | `false` | Skip confirmation prompt |
+| `-c, --config <path>` | `string` | - | Config file path for resolving data directory |
+
+- **sessions** -- Deletes all conversation sessions (tries RPC first, falls back to direct database removal)
+- **config** -- Removes `config.yaml` and `.env` from the config directory
+- **workspace** -- Removes the entire data directory and config files
+
+<Warning>The `workspace` target deletes all data including sessions, memory, logs, and configuration. This cannot be undone.</Warning>
+
+```bash
+# Clear all sessions
+comis reset sessions --yes
+
+# Full workspace reset
+comis reset workspace --yes
+```
+
+---
+
+### `comis secrets`
+
+Encrypted secret management using AES-256-GCM. All operations work offline without a running daemon.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `secrets init` | Generate a new master encryption key |
+| `secrets set <name>` | Encrypt and store a secret |
+| `secrets get <name>` | Decrypt and display a secret |
+| `secrets list` | List stored secrets (metadata only, no values) |
+| `secrets delete <name>` | Delete a secret from the store |
+| `secrets import` | Import secrets from a `.env` file |
+| `secrets audit` | Scan config and `.env` files for plaintext secrets |
+
+#### `secrets init`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--write` | `boolean` | `false` | Append key to `~/.comis/.env` instead of printing to stdout |
+
+#### `secrets set <name>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--value <value>` | `string` | - | Secret value (alternative to interactive prompt) |
+| `--stdin` | `boolean` | `false` | Read value from stdin pipe |
+| `--provider <provider>` | `string` | Auto-detected | Provider tag for categorization |
+
+#### `secrets get <name>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--yes` | `boolean` | `false` | Skip confirmation prompt |
+
+#### `secrets list`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+#### `secrets delete <name>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--yes` | `boolean` | `false` | Skip confirmation prompt |
+
+#### `secrets import`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--file <path>` | `string` | `~/.comis/.env` | Source `.env` file path |
+
+#### `secrets audit`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--config <paths...>` | `string[]` | `~/.comis/config.yaml`, `~/.comis/config.local.yaml` | Config file paths to scan |
+| `--env-file <path>` | `string` | `~/.comis/.env` | Path to `.env` file |
+| `--check` | `boolean` | `false` | Exit with code 1 if any findings exist (for CI) |
+| `--json` | `boolean` | `false` | Output findings as JSON array |
+
+```bash
+# Generate and save master key
+comis secrets init --write
+
+# Store a secret interactively
+comis secrets set OPENAI_API_KEY
+
+# Store a secret from a pipe
+echo "sk-..." | comis secrets set OPENAI_API_KEY --stdin
+
+# Import secrets from .env file
+comis secrets import --file ~/.comis/.env
+
+# Audit for plaintext secrets (CI-friendly)
+comis secrets audit --check --json
+```
+
+---
+
+### `comis security`
+
+Security audit and auto-remediation tools. Runs 14 check categories covering configuration validation, file permissions, secret exposure, gateway hardening, and more.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `security audit` | Run security audit checks |
+| `security fix` | Auto-remediate security findings (dry-run by default) |
+
+#### `security audit`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-c, --config <paths...>` | `string[]` | - | Config file paths to audit |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+| `--severity <level>` | `info` \| `warning` \| `critical` | `info` | Minimum severity to show |
+
+#### `security fix`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--yes` | `boolean` | `false` | Apply fixes without confirmation (default is dry-run preview) |
+| `-c, --config <paths...>` | `string[]` | - | Config file paths |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+```bash
+# Run security audit
+comis security audit -c ~/.comis/config.yaml
+
+# Show only critical findings
+comis security audit --severity critical
+
+# Preview fixes (dry-run)
+comis security fix -c ~/.comis/config.yaml
+
+# Apply fixes
+comis security fix --yes -c ~/.comis/config.yaml
+```
+
+---
+
+### `comis sessions`
+
+Session management commands for listing, inspecting, and deleting conversation sessions.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `sessions list` | List all sessions |
+| `sessions inspect <key>` | Display full details of a session |
+| `sessions delete <key>` | Delete a session |
+
+#### `sessions list`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--tenant <tenantId>` | `string` | - | Filter by tenant ID |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+#### `sessions inspect <key>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+#### `sessions delete <key>`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--yes` | `boolean` | `false` | Skip confirmation prompt |
+
+```bash
+# List all sessions
+comis sessions list
+
+# Inspect a specific session
+comis sessions inspect "default:user123:telegram"
+
+# Delete a session
+comis sessions delete "default:user123:telegram" --yes
+```
+
+---
+
+### `comis signal-setup`
+
+Interactive setup wizard for installing and configuring Signal CLI. Guides through Java prerequisite checks, signal-cli installation from GitHub releases, phone number registration with SMS or voice verification, and a test message.
+
+No flags. Requires an interactive terminal (TTY).
+
+```bash
+# Launch Signal setup wizard
+comis signal-setup
+```
+
+---
+
+### `comis status`
+
+Display a unified system status overview showing daemon, gateway, channel, and agent information. Connects to the daemon via RPC for live data and handles daemon offline gracefully.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+```bash
+# View system status
+comis status
+
+# Machine-readable output
+comis status --format json
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Error (validation failure, operation failed, critical findings found) |
+
+Commands that detect problems (`doctor`, `health`, `security audit`) exit with code 1 when failures or critical findings are present, making them suitable for CI pipeline gating.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Config YAML" icon="file-code" href="/reference/config-yaml">
+    Configuration file reference
+  </Card>
+  <Card title="Environment Variables" icon="key" href="/reference/environment-variables">
+    Environment variable reference
+  </Card>
+  <Card title="Operations Overview" icon="server" href="/operations">
+    Deployment and management guides
+  </Card>
+  <Card title="Secrets Management" icon="lock" href="/security/secrets">
+    Managing API keys and passwords
+  </Card>
+</CardGroup>

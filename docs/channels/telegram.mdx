@@ -1,0 +1,226 @@
+---
+title: "Telegram"
+description: "Connect Comis to Telegram with step-by-step setup"
+icon: "telegram"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+Connect your Comis agent to Telegram groups, channels, forum topics, and private chats.
+Telegram supports reactions, inline buttons, HTML formatting, file attachments
+up to 50 MB, and live-streaming responses that update in real time as your
+agent thinks.
+
+## Prerequisites
+
+<Prereqs />
+
+- A Telegram account
+
+<Warning>
+By default, Telegram bots in groups only see messages that mention them or
+start with `/`. If your agent should see **all** messages in a group, you need
+to disable privacy mode via BotFather (explained in the troubleshooting section
+below).
+</Warning>
+
+## Setup
+
+<Steps>
+  <Step title="Create a bot with BotFather">
+    Open Telegram and search for **@BotFather** (the official bot for creating
+    bots).
+
+    Send `/newbot` and follow the prompts:
+    1. Choose a display name for your bot (e.g. "My Comis Agent")
+    2. Choose a username ending in `bot` (e.g. `my_comis_agent_bot`)
+
+    BotFather will confirm creation and display your bot token.
+  </Step>
+
+  <Step title="Copy the bot token">
+    BotFather replies with a token that looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`.
+    Copy it immediately and store it somewhere safe.
+
+    This token is your bot's password. Anyone who has it can control your bot.
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the Telegram channel to your Comis configuration file (`~/.comis/config.yaml`):
+
+    ```yaml
+    channels:
+      telegram:
+        enabled: true
+        botToken: "${TELEGRAM_BOT_TOKEN}"
+    ```
+
+    Set the `TELEGRAM_BOT_TOKEN` environment variable in your `~/.comis/.env` file:
+
+    ```bash
+    TELEGRAM_BOT_TOKEN=your-token-from-step-2
+    ```
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check the logs for a successful connection:
+
+    ```bash
+    comis daemon logs
+    ```
+
+    Look for a line containing **"Telegram adapter connected"** or
+    **"channel-telegram activated"**. If you see this, your bot is online.
+
+    Open Telegram, find your bot by its username, and send it a message to
+    confirm it responds.
+  </Step>
+</Steps>
+
+## Configuration
+
+These options go under `channels.telegram` in your `config.yaml`:
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Turns on the Telegram adapter |
+| `botToken` | string / SecretRef | (required) | Bot authentication token from BotFather |
+| `allowFrom` | string[] | `[]` (all) | Restrict to specific Telegram user IDs. Empty means all users can talk to the bot. |
+| `mediaProcessing.transcribeAudio` | boolean | `true` | Transcribe voice messages to text before passing to the agent |
+| `mediaProcessing.analyzeImages` | boolean | `true` | Describe images sent to the bot using AI vision |
+| `mediaProcessing.describeVideos` | boolean | `true` | Extract descriptions from video content |
+| `mediaProcessing.extractDocuments` | boolean | `true` | Extract text from PDFs, DOCX, and other documents |
+| `mediaProcessing.understandLinks` | boolean | `true` | Fetch and summarize URLs included in messages |
+
+## What your agent can do
+
+Once connected to Telegram, your agent can:
+
+- Send, edit, and delete messages in any chat it has access to
+- React to messages with emoji
+- Send inline buttons for user choices
+- Send rich cards with formatted content
+- Use HTML formatting (bold, italic, code, links, spoilers)
+- Apply message effects (spoiler reveal, silent send)
+- Send file attachments up to 50 MB
+- Stream responses with live editing (updates every 300 ms)
+- Mention users in group chats
+- Manage forum topics (create, edit, close, reopen) in supergroups with forums enabled
+
+Telegram supports native forum topics (threads) in supergroups. It does **not** support fetching message history.
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 4,096 characters | Automatically splits long responses into multiple messages at paragraph boundaries |
+| Attachment size | 50 MB | Files over 50 MB are rejected with a user-friendly error message |
+
+## Forum Topics
+
+Telegram supergroups can enable **forum mode**, which organizes conversations into
+topics -- similar to channels within a Discord server. Each topic is a separate
+conversation thread with its own name, icon, and message history. When forum mode
+is enabled, your agent automatically detects which topic a message came from and
+routes its replies to the same topic.
+
+### Setting up forum topics
+
+<Steps>
+  <Step title="Enable forum mode in your Telegram group">
+    Open your Telegram supergroup, go to **Settings** (tap the group name) >
+    **Topics** > **Enable**. The group must be a supergroup -- regular groups
+    do not support forums.
+  </Step>
+
+  <Step title="Make the bot an administrator">
+    Your bot needs admin permissions to manage forum topics. Go to
+    **Settings** > **Administrators** > **Add Administrator** and select your bot.
+    Grant at least **Manage Topics** permission.
+  </Step>
+
+  <Step title="No Comis configuration needed">
+    Forum topic support is automatic. When your bot receives a message from a
+    forum topic, Comis routes replies to that topic. No changes to
+    `config.yaml` are required.
+  </Step>
+</Steps>
+
+### How it works
+
+When a user sends a message in a forum topic:
+
+1. Comis detects the topic and attaches thread metadata to the message
+2. The agent processes the message as usual
+3. All replies -- including multi-part responses, media, and voice -- go to the same topic
+4. Typing indicators appear in the correct topic
+
+Each topic gets its own session by default, so conversations in different topics
+stay separate. See [Sessions](/agents/sessions) for details on per-topic session
+isolation and how to configure it.
+
+### General Topic
+
+Every forum group has a **General** topic that exists by default. Comis handles
+the General Topic automatically -- no special configuration is needed. Messages
+sent to the General Topic work the same as messages in any other topic.
+
+<Tip>
+Your agent can create, edit, close, and reopen forum topics using
+[platform actions](/agent-tools/platform-actions). This lets the agent organize
+conversations programmatically -- for example, creating a new topic for each
+support ticket.
+</Tip>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Bot doesn't respond in groups">
+    **What happened:** Privacy mode is enabled (the default). In privacy mode,
+    bots in groups only receive messages that mention them or start with `/`.
+
+    **How to fix it:** Open Telegram, send `/setprivacy` to **@BotFather**,
+    select your bot, and choose **Disable**. Restart the Comis daemon afterward.
+  </Accordion>
+
+  <Accordion title="Bot token rejected">
+    **What happened:** The token is expired, revoked, or was copied incorrectly.
+
+    **How to fix it:** Open Telegram, send `/token` to **@BotFather**, and select
+    your bot to regenerate the token. Update the token in your `~/.comis/.env`
+    file and restart the daemon.
+  </Accordion>
+
+  <Accordion title="Messages take a long time to arrive">
+    **What happened:** Telegram uses long-polling for bot updates, which can
+    occasionally have brief delays.
+
+    **How to fix it:** This is normal Telegram behavior, not a Comis issue. If
+    delays exceed several seconds consistently, check your server's network
+    connection and firewall rules for outbound HTTPS traffic.
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 9 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>

@@ -1,0 +1,77 @@
+---
+title: "Config Editor"
+description: "View and edit your Comis configuration from the browser"
+icon: "sliders"
+---
+
+The Config Editor lets you view and tweak your Comis settings without opening a text file. Click **Config** in the sidebar to open it.
+
+<Warning>
+Changes made via the **YAML Editor** and **Gateway** tabs take effect immediately but are **not saved to disk** -- they revert on daemon restart. The **History** tab supports rollback to previous config versions, which triggers a daemon restart to reload the applied configuration. To make permanent changes, edit `config.yaml` directly. See [Configuration](/installation/configuration) for details.
+</Warning>
+
+## Tabs
+
+The Config Editor has four top-level tabs:
+
+<Tabs>
+  <Tab title="YAML Editor">
+    The main configuration editing tab. A **section navigation sidebar** on the left lists all config sections (gateway, agents, channels, security, and more). Click any section to load its settings into the editor area.
+
+    Within this tab, three **sub-modes** are available via mode buttons at the top:
+
+    - **Form** -- The most user-friendly option. Shows visual controls for each setting: toggles, dropdowns, text fields, array editors, and token management widgets. Simply change the values you want, then click **Save** to apply.
+    - **YAML** -- For users comfortable editing configuration files directly. Shows the raw YAML text for the selected section in a full text editor. Edit the YAML, then click **Save** to apply.
+    - **Schema** -- A read-only reference view showing the structure and validation rules for the selected section. Useful for understanding which fields exist, what types they expect, and any constraints like minimum or maximum values.
+
+    **Save** and **Reset** buttons apply per-section. Changes are in-memory only (sent via the `config.apply` RPC).
+  </Tab>
+  <Tab title="Gateway">
+    A dedicated tab for gateway-specific settings including API tokens, CORS origins, rate limits, and TLS configuration. Individual field changes are sent via the `config.patch` RPC.
+
+    Changes in this tab are also **in-memory only** and revert on daemon restart.
+  </Tab>
+  <Tab title="History">
+    Shows the config change history (retrieved via the `config.history` RPC). Each entry represents a previous configuration state.
+
+    You can **rollback** to any previous version by clicking it. Rollback calls `config.apply`, which triggers a **daemon restart** to reload from the applied configuration.
+  </Tab>
+  <Tab title="Setup Wizard">
+    Renders the setup wizard component inline. This walks you through initial configuration for first-time setup, including provider selection, agent creation, and channel wiring.
+  </Tab>
+</Tabs>
+
+## Common Tasks
+
+<Steps>
+  <Step title="Change a setting">
+    Open the **YAML Editor** tab. Select the section from the sidebar (for example, **gateway** or **agents**). Use the **Form** sub-mode for visual controls, the **YAML** sub-mode to edit raw text, or the **Schema** sub-mode to check validation rules. Make your changes and click **Save**.
+  </Step>
+  <Step title="Configure gateway settings">
+    Switch to the **Gateway** tab for token management, CORS origins, and rate limit configuration. Changes take effect immediately but are in-memory only.
+  </Step>
+  <Step title="View or rollback config history">
+    Switch to the **History** tab. Browse previous configuration versions and click one to rollback. Note that rollback restarts the daemon to reload the restored configuration.
+  </Step>
+  <Step title="Run initial setup">
+    Switch to the **Setup Wizard** tab for guided first-time configuration. The wizard walks you through provider setup, agent creation, and channel wiring step by step.
+  </Step>
+  <Step title="Reset changes">
+    If you have made edits you want to discard in the YAML Editor, click **Reset** to revert the section to its last saved state. This only affects the current section -- other sections are not touched.
+  </Step>
+</Steps>
+
+<Tip>
+Use the Config Editor to test changes quickly, then copy the working values to your `config.yaml` file to make them permanent. The **YAML** sub-mode within the YAML Editor tab is especially handy for this -- you can copy the text directly into your configuration file.
+</Tip>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Configuration Guide" icon="gear" href="/installation/configuration">
+    Learn how to write and manage your permanent config.yaml configuration file.
+  </Card>
+  <Card title="Security View" icon="shield-check" href="/web-dashboard/security-view">
+    Manage security settings, API tokens, and approval policies.
+  </Card>
+</CardGroup>

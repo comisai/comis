@@ -1,0 +1,230 @@
+---
+title: "HTTP Gateway Reference"
+description: "Complete reference for all HTTP endpoints, authentication, and rate limiting"
+icon: "globe"
+---
+
+Complete reference for the Comis HTTP gateway. The gateway serves HTTP endpoints, WebSocket connections, and optionally a web dashboard. Default port: `4766`. All endpoints require authentication unless noted otherwise.
+
+## Authentication
+
+The gateway supports four authentication methods depending on the endpoint type.
+
+### Bearer Token
+
+The primary authentication method. Pass a token configured in `gateway.tokens[]` via the `Authorization` header.
+
+```bash
+curl -H "Authorization: Bearer your-token" http://localhost:4766/api/agents
+```
+
+Tokens are configured with scopes that determine which endpoints and JSON-RPC methods the client can access.
+
+### Query Parameter
+
+For SSE and WebSocket clients that cannot set custom headers, pass the token as a query parameter.
+
+```bash
+# SSE stream
+curl "http://localhost:4766/api/events?token=your-token"
+
+# WebSocket
+wscat -c "ws://localhost:4766/ws?token=your-token"
+```
+
+<Warning>
+Query parameter tokens appear in server access logs. Use the `Authorization` header in production.
+</Warning>
+
+### HMAC Signature
+
+The webhook endpoint (`/hooks/webhook`) authenticates requests using an HMAC signature. The signature is computed over the request body and verified against a shared secret. The HMAC algorithm is configurable (defaults to SHA-256).
+
+### mTLS
+
+Optional TLS client certificate verification. When `gateway.tls.requireClientCert` is `true`, the server requires clients to present a valid certificate signed by the configured CA.
+
+## Rate Limiting
+
+The gateway applies rate limiting at multiple levels to protect against abuse.
+
+- **Global HTTP rate limiter** applies to all HTTP endpoints except `/health` and `/api/health`. Configured via `gateway.rateLimit`.
+- **Per-connection WebSocket rate limiting** uses a sliding window to limit messages per connection. Configured via `gateway.wsMessageRateLimit.maxMessages` and `gateway.wsMessageRateLimit.windowMs`.
+- **Body size limit** on POST endpoints (default: 1 MB). Configured via `gateway.httpBodyLimitBytes`.
+
+<Info>
+For detailed rate limiting configuration, see [Rate Limiting](/reference/rate-limiting).
+</Info>
+
+## Core Routes
+
+These routes are always available when the gateway is running.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/health` | None | Health check endpoint. Returns `{ status: "ok", timestamp: "..." }`. Rate-limit exempt. |
+| GET | `/ws` | Bearer / query param | WebSocket upgrade for JSON-RPC 2.0 communication. See [WebSocket Protocol](/reference/websocket). |
+| POST | `/hooks/webhook` | HMAC signature | Webhook endpoint. Only mounted when webhook configuration is provided. |
+| GET | `/` | None | Redirects to `/app/` when the web dashboard is enabled. |
+
+## REST API
+
+The REST API is mounted at `/api` and provides HTTP endpoints for the web dashboard. These endpoints are available when `gateway.webDashboard` is enabled (or equivalent web dashboard configuration is provided).
+
+<Info>
+REST API endpoints are available when the web dashboard is enabled. All authenticated REST API endpoints require at least the `rpc` scope.
+</Info>
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/health` | None | API health check. Rate-limit exempt. |
+| GET | `/api/agents` | Bearer (`rpc`) | Agent configuration list with ID, name, provider, and model. |
+| GET | `/api/channels` | Bearer (`rpc`) | Enabled channel connection status. |
+| GET | `/api/activity` | Bearer (`rpc`) | Recent activity events from the ring buffer. Accepts `?limit=` (1-100, default 50). |
+| GET | `/api/memory/search` | Bearer (`rpc`) | Memory search. Requires `?q=` query. Accepts `?limit=` (1-100, default 10). |
+| GET | `/api/memory/stats` | Bearer (`rpc`) | Memory statistics (entry counts, index info). |
+| GET | `/api/chat/history` | Bearer (`rpc`) | Chat session history. Accepts `?channelId=` to filter by channel. |
+| POST | `/api/chat` | Bearer (`rpc`) | Execute an agent turn. Requires JSON body. |
+
+### POST /api/chat
+
+Execute an agent turn with the following request body.
+
+<CodeGroup>
+```json Request
+{
+  "message": "What is the weather today?",
+  "agentId": "default",
+  "sessionKey": "web-session-1"
+}
+```
+```json Response
+{
+  "response": "I don't have access to real-time weather data...",
+  "tokensUsed": {
+    "input": 142,
+    "output": 87,
+    "total": 229
+  },
+  "finishReason": "stop"
+}
+```
+</CodeGroup>
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `message` | `string` | Yes | The user message to process. |
+| `agentId` | `string` | No | Target agent ID. Uses default agent if omitted. |
+| `sessionKey` | `string` | No | Session key for conversation continuity. |
+
+## SSE Endpoints
+
+Server-Sent Events (SSE) endpoints provide real-time streaming. Both endpoints accept authentication via `Authorization` header or `?token=` query parameter.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/events` | Bearer | SSE stream of system events (messages, sessions, skills, scheduler, approvals, graphs). |
+| GET | `/api/chat/stream` | Bearer | Streaming chat via SSE. Requires `?message=`. Accepts `?agentId=`. |
+
+### SSE Connection Lifecycle
+
+The `/api/events` endpoint streams system events as they occur. The server sends periodic keep-alive pings (every 15 seconds) to maintain the connection. If the connection drops, clients should reconnect using the `retry` directive (default: 3 seconds).
+
+Event types are organized by category:
+
+**Messages:** `message:received`, `message:sent`, `message:streaming`
+
+**Sessions:** `session:created`, `session:expired`, `session:sub_agent_spawned`, `session:sub_agent_completed`, `session:sub_agent_archived`, `session:sub_agent_spawn_rejected`, `session:sub_agent_spawn_started`, `session:sub_agent_spawn_queued`, `session:sub_agent_lifecycle_ended`
+
+**Security:** `audit:event`, `security:injection_detected`, `security:injection_rate_exceeded`, `security:memory_tainted`, `security:warn`, `secret:accessed`, `secret:modified`
+
+**Skills:** `skill:executed`, `skill:rejected`, `skill:loaded`, `skill:registry_reset`
+
+**Observability:** `observability:metrics`, `observability:token_usage`, `observability:reset`
+
+**Scheduler:** `scheduler:job_started`, `scheduler:job_completed`, `scheduler:heartbeat_check`, `scheduler:heartbeat_delivered`, `scheduler:heartbeat_alert`, `scheduler:task_extracted`
+
+**Approvals:** `approval:requested`, `approval:resolved`
+
+**Graphs:** `graph:started`, `graph:node_updated`, `graph:completed`
+
+**Config:** `config:patched`
+
+**Diagnostics:** `diagnostic:channel_health`, `diagnostic:billing_snapshot`
+
+**Models:** `model:catalog_loaded`, `model:fallback_attempt`, `model:fallback_exhausted`, `model:auth_cooldown`
+
+**Providers:** `provider:degraded`, `provider:recovered`
+
+**Agents:** `agent:hot_added`, `agent:hot_removed`
+
+**Channels:** `channel:registered`, `channel:deregistered`
+
+**System:** `system:error`
+
+### SSE Chat Streaming
+
+The `/api/chat/stream` endpoint sends incremental token deltas as `token` events, followed by a final `done` event with the complete response.
+
+```
+event: token
+data: {"delta": "Hello", "accumulated": "Hello"}
+
+event: token
+data: {"delta": " world", "accumulated": "Hello world"}
+
+event: done
+data: {"response": "Hello world", "tokensUsed": {...}, "finishReason": "stop"}
+```
+
+## OpenAI-Compatible Endpoints
+
+The gateway exposes an OpenAI-compatible API for drop-in integration with tools and libraries that support the OpenAI API format.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/v1/chat/completions` | Bearer | ChatCompletion endpoint (streaming and non-streaming). |
+| GET | `/v1/models` | Bearer | List available models. |
+| GET | `/v1/models/:model_id` | Bearer | Get a specific model. |
+| POST | `/v1/embeddings` | Bearer | Generate text embeddings. |
+| POST | `/v1/responses` | Bearer | OpenResponses format (streaming and non-streaming). |
+
+<Info>
+For detailed OpenAI-compatible API documentation, see [OpenAI API Reference](/reference/openai-api).
+</Info>
+
+## Media Routes
+
+Media routes serve stored media files (images, audio, video, documents). Authentication is optional and depends on gateway configuration.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/media/:id` | Bearer (optional) | Serve a media file with correct Content-Type. Returns 404 if not found, 410 if expired (TTL-based). |
+| GET | `/media/:id/meta` | Bearer (optional) | JSON metadata for a media file (content type, saved timestamp, size). |
+
+Media IDs are validated against a safe character pattern (letters, digits, dots, hyphens, underscores) to prevent path traversal. Content types are resolved from sidecar `.meta` files or file extension fallback.
+
+## Static Files
+
+When the web dashboard is enabled and a `webDistPath` is configured, the gateway serves the single-page application.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/app/*` | None | Web dashboard SPA files. No authentication required for static assets. |
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="JSON-RPC Methods" icon="code" href="/reference/json-rpc">
+    All JSON-RPC methods available over WebSocket and HTTP
+  </Card>
+  <Card title="WebSocket Protocol" icon="plug" href="/reference/websocket">
+    WebSocket connection protocol, heartbeat, and error handling
+  </Card>
+  <Card title="OpenAI API" icon="sparkles" href="/reference/openai-api">
+    OpenAI-compatible endpoint reference
+  </Card>
+  <Card title="Rate Limiting" icon="gauge" href="/reference/rate-limiting">
+    Rate limiting configuration and behavior
+  </Card>
+</CardGroup>

@@ -1,0 +1,335 @@
+---
+title: "systemd"
+description: "Running Comis as a systemd service on Linux"
+icon: "linux"
+---
+
+systemd is the standard way to run background services on Linux. Setting up Comis
+as a systemd service means it starts automatically when your server boots, restarts
+if it crashes, and integrates with standard Linux monitoring tools.
+
+<Warning>
+systemd is **Linux only**. If you are on macOS, use [pm2](/operations/pm2) instead.
+</Warning>
+
+## Prerequisites
+
+Before setting up the systemd service, make sure you have:
+
+- **Node.js 22 or newer** installed on your server
+- **Comis built** -- run `pnpm build` in the Comis directory
+- **A dedicated system user** for running Comis (created in step 1 below)
+
+## Setup
+
+<Steps>
+  <Step title="Create a system user">
+    Create a dedicated `comis` user that has no login shell. This is a security
+    best practice -- the daemon runs under its own user with limited permissions.
+
+    ```bash
+    sudo useradd -r -s /sbin/nologin comis
+    ```
+
+    The `-r` flag creates a system user (no home directory, no login). The
+    `-s /sbin/nologin` flag prevents anyone from logging in as this user.
+  </Step>
+
+  <Step title="Install Comis">
+    Copy your built Comis files to a system directory and create the data directory:
+
+    ```bash
+    sudo mkdir -p /opt/comis
+    sudo cp -r . /opt/comis/
+    sudo mkdir -p /var/lib/comis
+    sudo chown -R comis:comis /opt/comis /var/lib/comis
+    ```
+
+    - `/opt/comis/` -- where the application code lives (read-only at runtime)
+    - `/var/lib/comis/` -- where the database, logs, and runtime data are stored (read-write)
+  </Step>
+
+  <Step title="Create the configuration">
+    Create a directory for the config file and environment variables:
+
+    ```bash
+    sudo mkdir -p /etc/comis
+    sudo cp ~/.comis/config.yaml /etc/comis/config.yaml
+    sudo chown comis:comis /etc/comis/config.yaml
+    sudo chmod 600 /etc/comis/config.yaml
+    ```
+
+    Create the environment file at `/etc/comis/env` with your API keys and config path:
+
+    ```bash
+    sudo tee /etc/comis/env > /dev/null << 'EOF'
+    COMIS_CONFIG_PATHS=/etc/comis/config.yaml
+    ANTHROPIC_API_KEY=your-api-key-here
+    EOF
+    sudo chmod 600 /etc/comis/env
+    sudo chown comis:comis /etc/comis/env
+    ```
+
+    <Tip>
+    Keep API keys in the environment file rather than in config.yaml. The environment
+    file has strict permissions (readable only by the comis user) and is not tracked
+    in version control.
+    </Tip>
+  </Step>
+
+  <Step title="Install the service file">
+    Create the systemd unit file at `/etc/systemd/system/comis.service`:
+
+    ```ini
+    [Unit]
+    Description=Comis AI Agent Daemon
+    Documentation=https://github.com/comis/comis
+    After=network-online.target
+    Wants=network-online.target
+
+    [Service]
+    Type=notify
+    User=comis
+    Group=comis
+    WorkingDirectory=/opt/comis
+
+    # --jitless: Disable JIT to reduce attack surface (no W^X pages)
+    # --permission: Enable Node.js permission model for filesystem restrictions
+    ExecStart=/usr/bin/node --jitless --permission \
+      --allow-fs-read=/opt/comis \
+      --allow-fs-write=/var/lib/comis \
+      --allow-child-process dist/daemon.js
+
+    # Restart policy
+    Restart=on-failure
+    RestartSec=5s
+
+    # Watchdog: systemd kills process if no ping within WatchdogSec
+    # Daemon pings at half this interval (15s) with health gating
+    WatchdogSec=30s
+
+    # Shutdown: allow 45s for graceful shutdown (app timeout is 30s)
+    TimeoutStopSec=45
+
+    # Resource limits
+    MemoryMax=2G
+    TasksMax=100
+
+    # Standard output/error to journald for structured log collection
+    StandardOutput=journal
+    StandardError=journal
+    SyslogIdentifier=comis
+
+    # Environment
+    Environment=NODE_ENV=production
+    EnvironmentFile=-/etc/comis/env
+
+    # --- Security Hardening ---
+
+    # Filesystem protection
+    ProtectSystem=strict
+    ProtectHome=yes
+    PrivateTmp=yes
+    ReadWritePaths=/var/lib/comis /var/log/comis
+
+    # Memory protection
+    MemoryDenyWriteExecute=yes
+
+    # Privilege escalation prevention
+    NoNewPrivileges=yes
+
+    # Drop all capabilities
+    CapabilityBoundingSet=
+
+    # System call filtering: allow only standard service calls
+    SystemCallFilter=@system-service
+    SystemCallArchitectures=native
+
+    # Kernel and device protection
+    PrivateDevices=yes
+    ProtectKernelTunables=yes
+    ProtectKernelModules=yes
+    ProtectKernelLogs=yes
+    ProtectControlGroups=yes
+    ProtectClock=yes
+    ProtectHostname=yes
+    RestrictRealtime=yes
+    RestrictSUIDSGID=yes
+    RestrictNamespaces=yes
+    LockPersonality=yes
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+
+    Then reload systemd to pick up the new file:
+
+    ```bash
+    sudo systemctl daemon-reload
+    ```
+  </Step>
+
+  <Step title="Start the service">
+    Enable the service (so it starts on boot) and start it immediately:
+
+    ```bash
+    sudo systemctl enable --now comis
+    ```
+
+    Expected output:
+
+    ```
+    Created symlink /etc/systemd/system/multi-user.target.wants/comis.service -> /etc/systemd/system/comis.service.
+    ```
+  </Step>
+
+  <Step title="Verify it is running">
+    Check the service status:
+
+    ```bash
+    sudo systemctl status comis
+    ```
+
+    You should see output similar to:
+
+    ```
+    ● comis.service - Comis AI Agent Daemon
+         Loaded: loaded (/etc/systemd/system/comis.service; enabled)
+         Active: active (running) since ...
+       Main PID: 12345 (node)
+         Status: "Comis daemon started"
+          Tasks: 12 (limit: 100)
+         Memory: 150.0M (max: 2.0G)
+    ```
+
+    The key indicators are:
+    - **Active: active (running)** -- the daemon is running
+    - **Status: "Comis daemon started"** -- the daemon completed its startup sequence
+  </Step>
+</Steps>
+
+## Service file explained
+
+Here is what each important section of the unit file does:
+
+### Type=notify
+
+The daemon tells systemd when it is ready, not just when the process starts. This
+means systemd waits until Comis has fully loaded its configuration, connected to
+channels, and started the gateway before reporting the service as "active." If the
+daemon fails during startup, systemd knows immediately.
+
+### WatchdogSec=30s
+
+systemd checks every 30 seconds that the daemon is healthy. The daemon pings
+systemd at half this interval (every 15 seconds) with a health check. If the
+daemon stops pinging -- because it has crashed, frozen, or the event loop is
+blocked -- systemd automatically restarts it.
+
+### Restart=on-failure + RestartSec=5s
+
+If the daemon crashes (exits with a non-zero code), systemd waits 5 seconds
+and then starts it again automatically. This covers unexpected errors, out-of-memory
+kills, and unhandled exceptions. Normal stops (via `systemctl stop`) do not trigger
+a restart.
+
+### MemoryMax=2G + TasksMax=100
+
+Resource limits prevent the daemon from consuming too many system resources. If memory
+exceeds 2 GB, systemd kills the process (which then triggers a restart). TasksMax
+limits the number of threads and processes the daemon can create.
+
+### Node.js --permission flags
+
+The `--permission` flag enables the Node.js permission model, which restricts what
+the daemon can access:
+
+- `--allow-fs-read=/opt/comis` -- can read application code only from `/opt/comis`
+- `--allow-fs-write=/var/lib/comis` -- can write data only to `/var/lib/comis`
+- `--allow-child-process` -- can spawn child processes (needed for some tools)
+
+This acts as a second layer of security, even if a vulnerability is exploited.
+
+### EnvironmentFile=-/etc/comis/env
+
+Loads environment variables (like API keys and `COMIS_CONFIG_PATHS`) from the
+specified file. The `-` prefix means systemd will not fail if the file is missing --
+it simply skips loading it.
+
+### Security hardening directives
+
+The bottom section of the unit file locks down the service:
+
+| Directive | What it does |
+|-----------|-------------|
+| `ProtectSystem=strict` | Makes the entire filesystem read-only except explicitly allowed paths |
+| `ProtectHome=yes` | Hides all home directories from the service |
+| `NoNewPrivileges=yes` | Prevents the daemon from gaining elevated permissions |
+| `MemoryDenyWriteExecute=yes` | Blocks creating memory that is both writable and executable |
+| `SystemCallFilter=@system-service` | Only allows system calls needed for normal services |
+| `PrivateDevices=yes` | Hides physical devices from the service |
+
+## Common commands
+
+| Command | What it does |
+|---------|-------------|
+| `sudo systemctl start comis` | Start the daemon |
+| `sudo systemctl stop comis` | Stop the daemon (waits up to 45 seconds for graceful shutdown) |
+| `sudo systemctl restart comis` | Stop and start the daemon |
+| `sudo systemctl status comis` | Show current status, PID, memory, and recent log lines |
+| `sudo systemctl enable comis` | Start automatically on boot |
+| `sudo systemctl disable comis` | Do not start on boot |
+
+## Viewing logs
+
+systemd sends all daemon output to the journal. Use `journalctl` to view logs:
+
+**Live logs** (follow mode):
+
+```bash
+journalctl -u comis -f
+```
+
+**Recent logs** (last hour):
+
+```bash
+journalctl -u comis --since "1 hour ago"
+```
+
+**Logs since last boot:**
+
+```bash
+journalctl -u comis -b
+```
+
+**Only errors and warnings:**
+
+```bash
+journalctl -u comis -p err
+```
+
+<Info>
+The daemon also writes logs to `~comis/.comis/daemon.log` if file logging is
+configured. See [Logging](/operations/logging) for details on configuring log
+levels and rotation.
+</Info>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    How the daemon starts, runs, and shuts down.
+  </Card>
+  <Card title="pm2" icon="rotate" href="/operations/pm2">
+    Alternative process manager for macOS and Linux.
+  </Card>
+  <Card title="Docker" icon="docker" href="/operations/docker">
+    Run Comis in a Docker container.
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/operations/logging">
+    Configure log levels, rotation, and structured output.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Solutions to common issues.
+  </Card>
+</CardGroup>

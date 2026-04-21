@@ -1,0 +1,50 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+@import "tailwindcss";
+
+/* -- Brand Palette -- */
+@theme {
+  --color-navy: #0F172A;
+  --color-navy-light: #1E293B;
+  --color-navy-lighter: #334155;
+  --color-charcoal: #1E293B;
+  --color-coral: #FF6B4A;
+  --color-coral-dark: #E5593A;
+  --color-coral-btn: #BF4024;
+  --color-coral-btn-hover: #A5361E;
+  --color-teal: #06B6D4;
+  --color-teal-dark: #0891B2;
+  --color-muted: #94A3B8;
+  --color-muted-light: #CBD5E1;
+
+  /* Channel colors */
+  --color-telegram: #26A5E4;
+  --color-discord: #5865F2;
+  --color-slack: #4A154B;
+  --color-whatsapp: #25D366;
+  --color-signal: #3A76F0;
+  --color-imessage: #999999;
+  --color-line: #00C300;
+  --color-irc: #6B7280;
+
+  /* Typography */
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+/* -- Base styles -- */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-navy);
+  color: #F9FAFB;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background-color: var(--color-coral);
+  color: white;
+}
