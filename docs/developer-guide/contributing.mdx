@@ -1,0 +1,176 @@
+---
+title: "Contributing"
+description: "Development setup, coding standards, testing conventions, and PR process"
+icon: "code-pull-request"
+---
+
+This page covers everything you need to start contributing to Comis: setting up the development environment, understanding the coding conventions, running tests, and submitting changes. For the complete engineering protocol, see `AGENTS.md` in the repository root.
+
+## Prerequisites
+
+- **Node.js >= 22** -- runtime and build toolchain
+- **pnpm** -- package manager (monorepo workspace support)
+- **Git** -- version control
+- **Linux** for deployment (macOS works for development only)
+
+## Setup
+
+<Steps>
+
+<Step title="Clone the repository">
+```bash
+git clone https://github.com/comis-platform/comis.git
+cd comis
+```
+</Step>
+
+<Step title="Install dependencies">
+```bash
+pnpm install
+```
+This installs all workspace packages including native dependencies (`better-sqlite3`, `sharp`).
+</Step>
+
+<Step title="Build all packages">
+```bash
+pnpm build
+```
+Runs TypeScript compilation across all 13 packages, respecting project references.
+</Step>
+
+<Step title="Run tests">
+```bash
+pnpm test
+```
+Runs all unit tests via the Vitest workspace configuration.
+</Step>
+
+<Step title="Run security lint">
+```bash
+pnpm lint:security
+```
+Runs ESLint with `eslint-plugin-security` rules that enforce path safety, secret management, and other security constraints.
+</Step>
+
+</Steps>
+
+<Tip>
+The full validation command is `pnpm build && pnpm test && pnpm lint:security`. Run this before every commit.
+</Tip>
+
+## Coding Standards
+
+### Principles
+
+The codebase follows five mandatory engineering principles:
+
+- **KISS** -- Prefer straightforward control flow over meta-programming
+- **YAGNI** -- Do not add config keys, port methods, or feature flags without a concrete caller
+- **DRY (Rule of Three)** -- Extract shared helpers only after three repetitions
+- **Fail Fast** -- Return `err()` for unsupported or unsafe states via the Result pattern
+- **Secure by Default** -- Security rules enforced at lint time
+
+### Naming Conventions
+
+| Element | Convention | Example |
+|---------|-----------|---------|
+| Functions | camelCase | `createCircuitBreaker()` |
+| Types/Interfaces | PascalCase | `ChannelPort`, `NormalizedMessage` |
+| Factory functions | `createXxx()` | `createHookRunner()` |
+| Port interfaces | `*Port` suffix | `MemoryPort`, `SkillPort` |
+| Adapter classes | `*Adapter` suffix | `SqliteMemoryAdapter` |
+| Constants | SCREAMING_SNAKE | `MAX_RETRIES` |
+| Files | kebab-case.ts | `hook-runner.ts` |
+
+### Key Rules
+
+- **Return `Result<T, E>`** -- never throw exceptions. Use `ok()`, `err()`, `tryCatch()`, and `fromPromise()` from `@comis/shared`.
+- **Use `safePath()`** from `@comis/core/security` -- never use `path.join()` (prevents directory traversal attacks).
+- **Use `SecretManager`** -- never read `process.env` directly for secrets.
+- **No `eval()` or `Function()` constructor** -- banned entirely.
+- **No empty `.catch(() => {})`** -- use `suppressError()` from `@comis/shared`.
+- **ES modules only** (`"type": "module"`) with `.js` extensions in import paths.
+
+## Testing
+
+- **Unit tests** are co-located with source: `component.ts` alongside `component.test.ts`
+- Each package has its own `vitest.config.ts` with `include: ["src/**/*.test.ts"]`
+- Run a single package: `cd packages/core && pnpm test`
+- Run a single test file: `pnpm vitest run src/path/to/file.test.ts`
+- **Integration tests** live in `test/integration/` and require `pnpm build` first (they import from `dist/`)
+- Integration tests run sequentially (`maxConcurrency: 1`, `pool: "forks"`)
+- Run integration tests: `pnpm test:integration`
+- Run integration tests with mock providers: `pnpm test:integration:mock`
+
+## Commits and Branches
+
+**Commit format:** [Conventional Commits](https://www.conventionalcommits.org/) with package scope:
+
+```
+feat(agent): add retry logic for failed tool calls
+fix(channels): handle WebSocket disconnect gracefully
+test(memory): add FTS5 search edge cases
+refactor(core): simplify hook runner priority sorting
+chore(cli): update Commander.js to v13
+docs(daemon): document pm2 setup process
+```
+
+**Branch naming:** Create branches from `main` using the pattern:
+
+- `feature/<description>` -- new features
+- `fix/<description>` -- bug fixes
+- `docs/<description>` -- documentation changes
+
+**Validation before commit:**
+
+```bash
+pnpm build && pnpm test && pnpm lint:security
+```
+
+## Anti-Patterns
+
+Common mistakes to avoid -- these are enforced by ESLint and will fail CI:
+
+| Instead of | Use | Why |
+|-----------|-----|-----|
+| `path.join()` | `safePath()` | SSRF and directory traversal protection |
+| `process.env.X` | `SecretManager` | Centralized secret management |
+| `throw new Error()` | `return err(new Error())` | Result pattern for explicit error handling |
+| Empty `.catch(() => {})` | `suppressError()` | Explicit error suppression |
+| Cross-package internal imports | Public package exports | Maintain package boundaries |
+
+<Warning>
+These patterns are enforced by ESLint. Your PR will not pass CI if it uses `path.join()`, `process.env`, or thrown exceptions.
+</Warning>
+
+## Risk Tiers
+
+Changes are classified by risk level, which determines the review and testing requirements:
+
+- **Low risk:** Documentation, tests, type-only changes
+- **Medium risk:** Behavior changes in existing features
+- **High risk:** Security, ports, gateway, daemon, config, domain, and bootstrap changes
+
+High-risk changes require extra review and thorough testing. When in doubt, treat a change as higher risk.
+
+## Related
+
+<CardGroup cols={2}>
+
+<Card title="Architecture" icon="hexagon" href="/developer-guide/architecture">
+  Understand the codebase structure
+</Card>
+
+<Card title="Packages" icon="cubes" href="/developer-guide/packages">
+  Package roles and dependency rules
+</Card>
+
+<Card title="Custom Adapters" icon="plug" href="/developer-guide/custom-adapters">
+  Build your first adapter
+</Card>
+
+<Card title="Developer Guide" icon="code" href="/developer-guide/index">
+  Back to developer guide overview
+</Card>
+
+</CardGroup>

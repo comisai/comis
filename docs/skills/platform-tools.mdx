@@ -1,0 +1,337 @@
+---
+title: "Platform Tools"
+description: "Overview of all Comis-specific tools agents can use for messaging, scheduling, and administration"
+icon: "puzzle-piece"
+---
+
+Platform tools are built specifically for Comis. They let agents do things
+like schedule tasks, send messages across channels, manage sessions, analyze
+media, control infrastructure, and perform platform-specific actions. Unlike
+built-in tools (which handle files and web access), platform tools are about
+working within the Comis ecosystem.
+
+## Tool Categories
+
+Every platform tool is documented in detail in the [Agent Tools](/agent-tools/index)
+tab. Here is a summary of what is available, organized by category:
+
+| Category | Tools | What They Do | Details |
+|----------|-------|-------------|---------|
+| Scheduling | `cron`, `heartbeat_manage` | Create scheduled jobs, manage heartbeat timing | [Scheduling Guide](/agent-tools/scheduling) |
+| Messaging | `message`, `notify_user` | Send, reply, react, edit, delete messages; proactive notifications | [Messaging Guide](/agent-tools/messaging) |
+| Sessions | `session_status`, `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `subagents`, `agents_list`, `session_tool` | Manage conversations and spawn sub-agents | [Sessions Guide](/agent-tools/sessions) |
+| Orchestration | `pipeline` | Define, execute, and manage multi-agent DAG workflows | [Execution Graphs](/agents/execution-graphs) |
+| Media | `image_analyze`, `tts_synthesize`, `transcribe_audio`, `describe_video`, `extract_document`, `image_generate` | Analyze images, generate speech, transcribe audio, process documents, generate images | [Media Guide](/agent-tools/media) |
+| Infrastructure | `gateway` | Read and modify configuration, manage the gateway | [Infrastructure Guide](/agent-tools/infrastructure) |
+| Memory | `memory_search`, `memory_get`, `memory_store`, `memory_tool` | Search, read, and store long-term memories | [Sessions Guide](/agent-tools/sessions) |
+| Context | `session_search`, `ctx_search`, `ctx_inspect`, `ctx_recall`, `ctx_expand`, `context_tool` | Search and recall from current and compressed conversation history | [Context Tools](/skills/built-in-tools#context-tools) |
+| Browser | `browser` | Automate a headless browser with 16 actions | [Browser Guide](/agent-tools/browser) |
+| Background | `background_tasks` | List, inspect, cancel, and read output from background tasks | Below |
+| Fleet Management | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage` | Supervisor-level administration tools | [Infrastructure Guide](/agent-tools/infrastructure) |
+| Platform Actions | `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` | Platform-specific moderation (54 total actions) | [Platform Actions Guide](/agent-tools/platform-actions) |
+
+### Scheduling
+
+The `cron` tool lets agents create, list, update, and remove scheduled jobs.
+Agents can set up recurring tasks using cron expressions (like "every day at
+9am"), interval-based schedules ("every 30 minutes"), or one-time future runs.
+This is how agents automate routine work -- daily reports, periodic check-ins,
+scheduled reminders, and more.
+
+The `heartbeat_manage` tool controls the agent's periodic heartbeat -- an
+automatic wake-up that lets agents check for pending work even when no one has
+messaged them. Agents can adjust the heartbeat interval or disable it entirely.
+
+### Messaging
+
+The `message` tool is how agents communicate across channels. It supports
+sending new messages, replying to specific messages, adding reactions, editing
+previous messages, and deleting messages. A single agent can message across
+different platforms -- posting to Discord and Telegram from the same
+conversation.
+
+This is one of the most frequently used platform tools. Whenever an agent
+needs to proactively reach out (not just reply), it uses the `message` tool.
+
+### Sessions
+
+Session tools give agents awareness of their conversation state and the
+ability to collaborate with other agents:
+
+- `session_status` -- check the current session's state
+- `sessions_list` -- see all active sessions
+- `sessions_history` -- review past conversation turns
+- `sessions_send` -- send a message to another agent's session
+- `sessions_spawn` -- create a new sub-agent session for parallel work
+- `subagents` -- manage spawned sub-agents
+- `agents_list` -- see all available agents in the fleet
+
+### Orchestration
+
+The `pipeline` tool lets agents define execution graphs (DAGs) of sub-agent
+tasks with dependency ordering, barrier modes, budget controls, and shared
+data folders. Agents can define, execute, monitor, cancel, retrieve outputs,
+save, load, list, and delete graphs -- 9 actions in total.
+
+See [Execution Graphs](/agents/execution-graphs) for concepts and the
+[Pipeline Tool Guide](/agent-tools/pipelines) for the full action reference.
+
+### Media
+
+Media tools handle rich content beyond text:
+
+- `image_analyze` -- describe images or answer questions about visual content
+- `tts_synthesize` -- generate speech audio from text (text-to-speech)
+- `transcribe_audio` -- convert speech to text (speech-to-text)
+- `describe_video` -- summarize video content
+- `extract_document` -- pull text from PDFs and other document formats
+
+These tools integrate with external AI services (such as OpenAI, ElevenLabs,
+Deepgram, and Groq) depending on your configuration.
+
+### Infrastructure
+
+The `gateway` tool lets agents read and modify the Comis configuration at
+runtime. Agents with appropriate permissions can inspect current settings,
+apply configuration patches, and manage gateway state. This is particularly
+useful for supervisor agents that need to reconfigure the system -- adjusting
+model settings, changing rate limits, or updating channel connections --
+without human intervention.
+
+### Memory
+
+Memory tools give agents long-term recall beyond the current conversation:
+
+- `memory_store` -- save important information with metadata tags so it can
+  be found later
+- `memory_search` -- retrieve relevant memories using semantic search, which
+  finds memories by meaning rather than exact keywords
+- `memory_get` -- retrieve a specific memory by its identifier
+
+Memories persist across sessions, so an agent that stores a user's preferences
+today can recall them weeks later in a completely different conversation.
+
+### Context
+
+Context tools let agents search and recall information from the current conversation, including content that has been compressed by the context engine. In **pipeline mode**, `session_search` searches the raw session history. In **DAG mode**, `ctx_search` provides full-text and regex search across messages and summaries, `ctx_inspect` retrieves the full content of any node, `ctx_recall` spawns a sub-agent to answer questions from compressed history, and `ctx_expand` (sub-agent only) reads the original messages behind a summary.
+
+Which tools are available is determined by the `contextEngine.version` setting. See [Context Tools](/skills/built-in-tools#context-tools) for the full parameter reference.
+
+### Fleet Management
+
+Fleet management tools are supervisor-level capabilities for managing the
+entire Comis installation:
+
+- `agents_manage` -- create, update, and delete agent configurations (create/delete take effect immediately without daemon restart; update requires restart)
+- `obs_query` -- query observability data (logs, metrics, traces)
+- `sessions_manage` -- administrative session operations
+- `memory_manage` -- administrative memory operations (bulk delete, export)
+- `channels_manage` -- manage channel connections and settings
+- `tokens_manage` -- manage authentication tokens
+- `models_manage` -- manage model configurations and API keys
+- `skills_manage` -- manage skill registrations (supports per-agent scope: local or shared)
+- `mcp_manage` -- manage MCP server connections
+
+These tools are restricted to supervisor agents. See the section below on
+regular vs supervisor tools for details.
+
+### Platform Actions
+
+Each supported messaging platform has its own action tool:
+
+- `discord_action` -- Discord-specific moderation and administration
+- `telegram_action` -- Telegram group and channel management
+- `slack_action` -- Slack workspace and channel operations
+- `whatsapp_action` -- WhatsApp messaging and group management
+
+These provide platform-specific capabilities like banning users, managing
+channels, pinning messages, setting permissions, and other actions unique to
+each platform. There are 54 total actions across all four platforms.
+
+### Unified Tools
+
+Comis provides unified versions of several tool families that consolidate
+multiple individual tools into a single tool with an `action` parameter.
+These reduce the number of tools in the agent's context while keeping the
+same functionality.
+
+#### session_tool
+
+Consolidates session tools (`sessions_list`, `sessions_history`,
+`session_status`, `session_search`) into a single tool with action dispatch.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | `string` | Yes | `search`, `status`, `history`, or `list` |
+| `query` | `string` | For search | Keywords, phrases, or boolean expressions |
+| `scope` | `string` | No | Filter by role: `all` (default), `user`, `assistant`, `tool` (action: search) |
+| `summarize` | `boolean` | No | Summarize matched sessions using LLM (default: true when query provided) (action: search) |
+| `model` | `string` | No | Model override for status display (action: status) |
+| `session_key` | `string` | For history | Target session key to retrieve history for |
+| `offset` | `integer` | No | Pagination offset (default: 0) (action: history) |
+| `limit` | `integer` | No | Max results (action: search default 10 max 30, action: history default 20) |
+| `kind` | `string` | No | Filter by session kind: `all` (default), `dm`, `group`, `sub-agent` (action: list) |
+| `since_minutes` | `integer` | No | Only sessions active within N minutes (action: list) |
+
+#### memory_tool
+
+Consolidates memory tools (`memory_get`, `memory_search`, `memory_store`,
+`memory_manage`) into a single tool with action dispatch. The `manage`
+action supports sub-actions for administrative operations.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | `string` | Yes | `get`, `search`, `store`, or `manage` |
+| `path` | `string` | For get | File path relative to workspace |
+| `start_line` | `integer` | No | Start line, 1-based (action: get) |
+| `end_line` | `integer` | No | End line, 1-based (action: get) |
+| `query` | `string` | For search | Semantic search query |
+| `content` | `string` | For store | Text content to persist in memory |
+| `tags` | `string[]` | No | Tags for categorisation (action: store, manage) |
+| `manage_action` | `string` | For manage | Sub-action: `stats`, `browse`, `delete`, `flush`, or `export` |
+| `tenant_id` | `string` | No | Tenant ID scope (action: manage) |
+| `agent_id` | `string` | No | Agent ID scope for filtering (action: manage) |
+| `ids` | `string[]` | No | Memory entry IDs to delete (action: manage, manage_action: delete) |
+| `offset` | `integer` | No | Pagination offset (action: manage) |
+| `limit` | `integer` | No | Max results (action: search default 10, action: manage varies) |
+| `sort` | `string` | No | Sort order: `newest` (default) or `oldest` (action: manage, manage_action: browse) |
+| `memory_type` | `string` | No | Filter by memory type (action: manage) |
+| `trust_level` | `string` | No | Filter by trust level (action: manage) |
+
+#### context_tool
+
+Consolidates context DAG tools (`ctx_search`, `ctx_recall`, `ctx_inspect`,
+`ctx_expand`) into a single tool with action dispatch. Available when
+`contextEngine.version` is set to DAG mode.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | `string` | Yes | `search`, `recall`, `inspect`, or `expand` |
+| `query` | `string` | For search/recall | Search pattern (FTS query or regex) or text search for summaries |
+| `mode` | `string` | No | Search mode: `fts` (default) or `regex` (action: search) |
+| `scope` | `string` | No | Search scope: `both` (default), `messages`, or `summaries` (action: search) |
+| `limit` | `integer` | No | Max results (action: search default 20 max 100) |
+| `prompt` | `string` | For recall | What to find or answer from earlier history |
+| `summary_ids` | `string[]` | No | Explicit summary IDs to expand (action: recall) |
+| `max_tokens` | `integer` | No | Max answer length (default: 2000, max: 10000) (action: recall) |
+| `id` | `string` | For inspect | ID of the summary (`sum_xxx`) or file (`file_xxx`) to inspect |
+| `grant_id` | `string` | For expand | Expansion grant ID (provided in domain knowledge) |
+| `summary_id` | `string` | For expand | Summary to expand |
+
+### Notifications
+
+#### notify_user
+
+Sends a proactive notification to the user outside of the normal
+request-response flow. Supports priority levels and automatic channel
+resolution. The daemon-side handler applies rate limiting, deduplication,
+quiet hours enforcement, and channel resolution guards before delivery.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `message` | `string` | Yes | Notification text to send to the user |
+| `priority` | `string` | No | Priority level: `low`, `normal` (default), `high`, or `critical`. `critical` bypasses quiet hours. |
+| `channel_type` | `string` | No | Target channel type (e.g., `telegram`, `discord`). Omit for auto-resolution. |
+| `channel_id` | `string` | No | Target channel/chat ID. Required when `channel_type` is specified. |
+
+### Image Generation
+
+#### image_generate
+
+Generates images from text prompts using configured image generation
+providers (FAL or OpenAI). Generated images are delivered directly to the
+current channel. The daemon-side handler applies rate limiting and safety
+checking before executing the generation request.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `prompt` | `string` | Yes | Text description of the image to generate |
+| `size` | `string` | No | Image size. Provider-specific: fal.ai uses presets (`square_hd`, `landscape_16_9`), OpenAI uses pixel dimensions (`1024x1024`, `1792x1024`). Omit for provider default. |
+
+### Background Tasks
+
+#### background_tasks
+
+Manages background tasks that are running or have completed for the current
+agent. Provides four actions for task lifecycle management. Any agent can
+check its own tasks -- this is not restricted to supervisor agents.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | `string` | Yes | `list`, `get`, `cancel`, or `read_output` |
+| `taskId` | `string` | For get/cancel/read_output | Task ID to operate on |
+
+**Actions:**
+
+- **list** -- show all tasks for the current agent with status and metadata
+- **get** -- get detailed information about a specific task by ID
+- **cancel** -- cancel a running task
+- **read_output** -- read the output of a completed task
+
+## Regular vs Supervisor Tools
+
+Most platform tools are available to any agent running with the `coding`,
+`messaging`, or `full` tool policy profile. However, fleet management tools
+require the `supervisor` tool policy profile or an explicit `allow` list in
+the tool policy configuration. The supervisor-restricted tools are:
+
+- `agents_manage`
+- `obs_query`
+- `sessions_manage`
+- `memory_manage`
+- `channels_manage`
+- `tokens_manage`
+- `models_manage`
+- `skills_manage`
+- `mcp_manage`
+
+These are admin-level tools for managing the entire Comis installation -- you
+would not want every agent to have access to them. A typical setup has one
+supervisor agent with full access and several regular agents with only the
+tools they need for their specific role.
+
+See [Tool Policy](/skills/tool-policy) for details on configuring which tools
+each agent can use.
+
+## Web and Browser Tools
+
+The `web_search`, `web_fetch`, and `browser` tools are technically built-in
+tools (they come from the underlying coding agent framework), not platform
+tools. However, they are documented in the Agent Tools tab because most users
+expect to find web and browser capabilities alongside other tool guides. If
+you are looking for details on web search providers or browser automation
+actions, you will find them there:
+
+- [Web Tools Guide](/agent-tools/web-tools) -- 8 web search providers and URL
+  content fetching
+- [Browser Guide](/agent-tools/browser) -- headless browser with 16 automation
+  actions
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
+    See the master reference table of all tools
+  </Card>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">
+    Control which tools agents can use
+  </Card>
+  <Card title="Built-in Tools" icon="wrench" href="/skills/built-in-tools">
+    File, shell, and web tools
+  </Card>
+  <Card title="Skills Overview" icon="wand-magic-sparkles" href="/skills/index">
+    Back to the skills taxonomy
+  </Card>
+</CardGroup>

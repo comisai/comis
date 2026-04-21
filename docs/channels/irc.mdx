@@ -1,0 +1,175 @@
+---
+title: "IRC"
+description: "Connect Comis to IRC with step-by-step setup"
+icon: "hashtag"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+Connect your Comis agent to IRC servers and channels. IRC is the simplest
+adapter -- just point it at a server and join channels. Supports TLS encryption,
+NickServ authentication, and nick-based mentions. No file attachments or rich
+formatting.
+
+## Prerequisites
+
+<Prereqs />
+
+- An IRC server to connect to (e.g., `irc.libera.chat`, `irc.oftc.net`)
+- (Optional) A registered nickname on the server
+
+<Note>
+IRC has a **512-character** message limit per line. Long agent responses are
+automatically split across multiple messages with flood protection delays
+between them.
+</Note>
+
+## Setup
+
+<Steps>
+  <Step title="Choose your IRC server">
+    Pick the IRC server you want your bot to join. Popular options:
+
+    - **Libera.Chat** -- `irc.libera.chat` (port 6697 with TLS)
+    - **OFTC** -- `irc.oftc.net` (port 6697 with TLS)
+    - **Your own server** -- use whatever hostname and port it runs on
+
+    If you want the bot to use a registered nickname, register it first with
+    NickServ on the server:
+
+    ```
+    /msg NickServ REGISTER yourpassword your@email.com
+    ```
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the IRC channel to your Comis configuration file
+    (`~/.comis/config.yaml`):
+
+    ```yaml
+    channels:
+      irc:
+        enabled: true
+        host: "irc.libera.chat"
+        port: 6697
+        nick: "comis-bot"
+        tls: true
+        channels:
+          - "#my-channel"
+        nickservPassword: "${IRC_NICKSERV_PASSWORD}"
+    ```
+
+    If you registered a nickname, set the password in your `~/.comis/.env` file:
+
+    ```bash
+    IRC_NICKSERV_PASSWORD=your-nickserv-password
+    ```
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check the logs for a successful connection:
+
+    ```bash
+    comis daemon logs
+    ```
+
+    Look for **"IRC adapter started"** or **"channel-irc activated"**.
+
+    Join the configured channel on your IRC client and send a message
+    mentioning the bot's nick (e.g., `comis-bot hello!`) to confirm it
+    responds.
+  </Step>
+</Steps>
+
+## Configuration
+
+These options go under `channels.irc` in your `config.yaml`:
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Turns on the IRC adapter |
+| `host` | string | (required) | IRC server hostname (e.g., `irc.libera.chat`) |
+| `port` | number | `6697` | IRC server port. Use 6697 for TLS, 6667 for plaintext. |
+| `nick` | string | (required) | The bot's nickname on the IRC server |
+| `tls` | boolean | `true` | Use TLS encryption for the connection |
+| `channels` | string[] | `[]` | Channels to auto-join on connect (e.g., `["#my-channel"]`) |
+| `nickservPassword` | string / SecretRef | (optional) | NickServ password for identifying with a registered nick |
+| `allowFrom` | string[] | `[]` (all) | Restrict to specific IRC nicknames. Empty means all users can talk to the bot. |
+
+## What your agent can do
+
+Once connected to IRC, your agent can:
+
+- Send and receive messages in channels and direct messages
+- Respond when mentioned by nick (e.g., `comis-bot what time is it?`)
+
+IRC does **not** support reactions, editing or deleting sent messages, fetching
+message history, file attachments, threads, buttons, cards or embeds, streaming
+(live-updating responses), or rich text formatting (only IRC control codes for
+bold and color).
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 512 characters | Automatically splits every response into multiple lines with flood protection delays (500 ms between lines) |
+| Attachment size | N/A | IRC does not support file attachments. The bot sends text only. |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection refused">
+    **What happened:** The IRC client cannot reach the server at the configured
+    host and port.
+
+    **How to fix it:** Check the `host` and `port` in your config. If using TLS
+    (the default), make sure the port is the TLS port (usually 6697) and
+    `tls: true` is set. For plaintext connections, use port 6667 and set
+    `tls: false`. Also verify that your firewall allows outgoing connections on
+    the configured port.
+  </Accordion>
+
+  <Accordion title="Nick already in use">
+    **What happened:** Another user or bot is already using the nickname you
+    configured.
+
+    **How to fix it:** Choose a different `nick` in your config, or register
+    the nickname with NickServ on the server first and then set the
+    `nickservPassword` so the bot can reclaim it. Some servers support the
+    REGAIN command: `/msg NickServ REGAIN yournick yourpassword`.
+  </Accordion>
+
+  <Accordion title="Bot joins channel but does not respond">
+    **What happened:** The bot is connected to the server and present in the
+    channel, but ignores messages.
+
+    **How to fix it:** IRC bots typically respond to messages that mention their
+    nick or to direct (private) messages. Try addressing the bot by name:
+    `comis-bot hello`. Also check the `allowFrom` setting -- if it contains
+    specific nicks, only those users can trigger the bot.
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 9 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>

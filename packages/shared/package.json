@@ -1,0 +1,37 @@
+{
+  "name": "@comis/shared",
+  "private": true,
+  "version": "1.0.11",
+  "author": "Moshe Anconina",
+  "license": "Apache-2.0",
+  "description": "Shared types and utilities for the Comis platform",
+  "keywords": ["comis", "ai", "agent", "types", "result"],
+  "engines": { "node": ">=22" },
+  "files": ["dist"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comisai/comis.git",
+    "directory": "packages/shared"
+  },
+  "homepage": "https://github.com/comisai/comis#readme",
+  "bugs": {
+    "url": "https://github.com/comisai/comis/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}

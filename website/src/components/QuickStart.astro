@@ -1,0 +1,143 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+---
+
+<section class="px-6 pt-4 pb-20 md:pt-6 md:pb-28" id="quick-start">
+  <div class="max-w-3xl mx-auto text-center">
+    <h2 class="sr-only">Quick Start</h2>
+
+    <!-- Terminal window -->
+    <div class="bg-navy-light border border-white/10 rounded-xl overflow-hidden text-left shadow-2xl shadow-coral/5">
+
+      <!-- Title bar: traffic lights + method tabs + platform pill -->
+      <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
+        <div class="flex items-center gap-4">
+          <!-- Traffic lights -->
+          <div class="flex items-center gap-1.5">
+            <div class="w-3 h-3 rounded-full bg-red-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/60"></div>
+          </div>
+          <!-- Method tabs -->
+          <div class="flex items-center gap-1 font-mono text-xs">
+            <button
+              data-tab="oneliner"
+              class="tab-btn px-3 py-1 rounded border border-coral text-coral font-semibold"
+            >One-liner</button>
+            <button
+              data-tab="npm"
+              class="tab-btn px-3 py-1 rounded border border-transparent text-muted hover:text-white transition-colors"
+            >npm</button>
+            <button
+              data-tab="source"
+              class="tab-btn px-3 py-1 rounded border border-transparent text-muted hover:text-white transition-colors"
+            >From source</button>
+          </div>
+        </div>
+        <!-- Platform pill -->
+        <div class="hidden sm:flex items-center gap-1 font-mono text-xs">
+          <span class="px-3 py-1 rounded border border-coral text-coral font-semibold">macOS/Linux</span>
+        </div>
+      </div>
+
+      <!-- Tab content: One-liner -->
+      <div data-content="oneliner" class="tab-content relative" data-copy="curl -fsSL https://comis.ai/install.sh | bash">
+        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Works everywhere. Installs everything. Friendly about it.</span>
+
+<span class="text-coral">$</span> <span class="text-teal">curl -fsSL https://comis.ai/install.sh | bash</span></code></pre>
+        <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
+          <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
+          <svg class="check-icon w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          <span class="copied-label hidden text-xs font-mono font-semibold">Copied!</span>
+        </button>
+      </div>
+
+      <!-- Tab content: npm -->
+      <div data-content="npm" class="tab-content hidden relative" data-copy="npm install -g comisai&#10;comis init my-agent&#10;comis channel add telegram --token <YOUR_TOKEN>&#10;comis start">
+        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Requires Node.js 22+</span>
+
+<span class="text-coral">$</span> <span class="text-teal">npm install -g comisai</span>
+<span class="text-coral">$</span> <span class="text-teal">comis init my-agent</span>
+<span class="text-coral">$</span> <span class="text-teal">comis channel add telegram --token</span> <span class="text-coral">&lt;YOUR_TOKEN&gt;</span>
+<span class="text-coral">$</span> <span class="text-teal">comis start</span></code></pre>
+        <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
+          <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
+          <svg class="check-icon w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          <span class="copied-label hidden text-xs font-mono font-semibold">Copied!</span>
+        </button>
+      </div>
+
+      <!-- Tab content: From source -->
+      <div data-content="source" class="tab-content hidden relative" data-copy="git clone https://github.com/comisai/comis.git&#10;cd comis && pnpm install && pnpm build&#10;node packages/cli/dist/cli.js init my-agent">
+        <pre class="p-6 pr-14 text-sm md:text-base font-mono leading-relaxed overflow-x-auto"><code><span class="text-muted-light"># Requires Node.js 22+, pnpm</span>
+
+<span class="text-coral">$</span> <span class="text-teal">git clone https://github.com/comisai/comis.git</span>
+<span class="text-coral">$</span> <span class="text-teal">cd comis && pnpm install && pnpm build</span>
+<span class="text-coral">$</span> <span class="text-teal">node packages/cli/dist/cli.js init my-agent</span></code></pre>
+        <button class="copy-btn absolute bottom-6 right-4 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-muted hover:text-white hover:bg-white/10 transition-all" aria-label="Copy to clipboard">
+          <svg class="copy-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke-width="2"/></svg>
+          <svg class="check-icon w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          <span class="copied-label hidden text-xs font-mono font-semibold">Copied!</span>
+        </button>
+      </div>
+
+    </div>
+
+    <p class="text-muted mt-8 text-lg">
+      Works on macOS &amp; Linux. The one-liner installs Node.js and everything else for you.
+    </p>
+
+    <a
+      href="https://docs.comis.ai"
+      class="inline-flex items-center gap-2 mt-6 text-coral hover:text-coral-dark font-medium transition-colors"
+    >
+      Read the docs &rarr;
+    </a>
+  </div>
+</section>
+
+<script>
+  // Tab switching
+  document.querySelectorAll<HTMLButtonElement>(".tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.tab;
+
+      document.querySelectorAll<HTMLButtonElement>(".tab-btn").forEach((b) => {
+        b.classList.remove("border-coral", "text-coral", "font-semibold");
+        b.classList.add("border-transparent", "text-muted");
+      });
+      btn.classList.remove("border-transparent", "text-muted");
+      btn.classList.add("border-coral", "text-coral", "font-semibold");
+
+      document.querySelectorAll<HTMLElement>(".tab-content").forEach((c) => {
+        c.classList.toggle("hidden", c.dataset.content !== target);
+      });
+    });
+  });
+
+  // Copy buttons
+  document.querySelectorAll<HTMLButtonElement>(".copy-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const panel = btn.closest<HTMLElement>(".tab-content");
+      if (!panel?.dataset.copy) return;
+
+      navigator.clipboard.writeText(panel.dataset.copy);
+
+      const copyIcon = btn.querySelector(".copy-icon") as HTMLElement;
+      const checkIcon = btn.querySelector(".check-icon") as HTMLElement;
+      const label = btn.querySelector(".copied-label") as HTMLElement;
+
+      copyIcon.classList.add("hidden");
+      checkIcon.classList.remove("hidden");
+      label.classList.remove("hidden");
+      btn.classList.add("text-teal");
+
+      setTimeout(() => {
+        checkIcon.classList.add("hidden");
+        label.classList.add("hidden");
+        copyIcon.classList.remove("hidden");
+        btn.classList.remove("text-teal");
+      }, 2000);
+    });
+  });
+</script>

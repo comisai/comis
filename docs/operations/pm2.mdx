@@ -1,0 +1,223 @@
+---
+title: "pm2"
+description: "Running Comis with the pm2 process manager"
+icon: "rotate"
+---
+
+pm2 is a process manager that keeps Comis running in the background, restarts it
+if it crashes, and provides easy log viewing. It works on both Linux and macOS,
+making it the recommended choice for most users.
+
+## Prerequisites
+
+Before setting up pm2, make sure you have:
+
+- **Node.js 22 or newer** installed
+- **Comis built** -- run `pnpm build` in the Comis directory
+- **pm2 installed globally:**
+
+```bash
+npm install -g pm2
+```
+
+## Setup
+
+<Steps>
+  <Step title="Generate the config file">
+    Run the setup command to generate the pm2 ecosystem config:
+
+    ```bash
+    node packages/cli/dist/cli.js pm2 setup
+    ```
+
+    Expected output:
+
+    ```
+    ✔ Ecosystem file written to /home/user/.comis/ecosystem.config.js
+    ℹ Start with: comis pm2 start
+    ```
+
+    This creates `~/.comis/ecosystem.config.js` with the correct paths to your
+    daemon binary and configuration file. You do not need to edit this file.
+
+    <Tip>
+    The generated ecosystem config automatically sets `COMIS_CONFIG_PATHS` so you
+    do not need to manage environment variables manually. This avoids the common
+    pitfall of environment variables not propagating to background processes.
+    </Tip>
+  </Step>
+
+  <Step title="Start Comis">
+    Start the daemon through pm2:
+
+    ```bash
+    node packages/cli/dist/cli.js pm2 start
+    ```
+
+    Expected output:
+
+    ```
+    ✔ Daemon started via pm2
+    ```
+  </Step>
+
+  <Step title="Verify it is running">
+    Check the process status:
+
+    ```bash
+    pm2 status comis
+    ```
+
+    You should see a table with `status: online`:
+
+    ```
+    ┌────┬──────┬────────┬───┬─────┬───────────┐
+    │ id │ name │ status │ ↺ │ cpu │ memory    │
+    ├────┼──────┼────────┼───┼─────┼───────────┤
+    │ 0  │ comis│ online │ 0 │ 0%  │ 120.0 MB  │
+    └────┴──────┴────────┴───┴─────┴───────────┘
+    ```
+
+    Then check the logs to confirm the daemon started successfully:
+
+    ```bash
+    pm2 logs comis --lines 10 --nostream
+    ```
+
+    Look for `"Comis daemon started"` in the output.
+  </Step>
+</Steps>
+
+## Common commands
+
+| Command | What it does |
+|---------|-------------|
+| `node packages/cli/dist/cli.js pm2 start` | Start the daemon |
+| `node packages/cli/dist/cli.js pm2 stop` | Stop the daemon |
+| `node packages/cli/dist/cli.js pm2 restart` | Restart the daemon |
+| `pm2 status comis` | Check if the daemon is running |
+| `pm2 logs comis` | View live logs (streaming) |
+| `pm2 logs comis --lines 50 --nostream` | View the last 50 log lines and exit |
+
+<Info>
+After rebuilding Comis (`pnpm build`), always restart the daemon to pick up the
+new code:
+
+```bash
+pm2 restart comis
+```
+</Info>
+
+## Auto-start on boot
+
+By default, pm2 processes stop when the server reboots. To make Comis start
+automatically on boot:
+
+**1. Generate the startup script:**
+
+```bash
+pm2 startup
+```
+
+This prints a command that you need to run with `sudo`. Copy and run the
+exact command it shows you. For example:
+
+```
+[PM2] To setup the Startup Script, copy/paste the following command:
+sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u youruser --hp /home/youruser
+```
+
+**2. Save the current process list:**
+
+```bash
+pm2 save
+```
+
+Now pm2 will restore the Comis process automatically on every reboot.
+
+## Ecosystem config
+
+The `pm2 setup` command generates a config file at `~/.comis/ecosystem.config.js`.
+Here is what it contains:
+
+```javascript
+module.exports = {
+  apps: [{
+    name: "comis",
+    script: "/path/to/packages/daemon/dist/daemon.js",
+    env: {
+      COMIS_CONFIG_PATHS: "~/.comis/config.yaml",
+    },
+    restart_delay: 2000,
+    kill_timeout: 10000,
+    max_restarts: 10,
+    autorestart: true,
+  }],
+};
+```
+
+Here is what each field does:
+
+| Field | Value | What it means |
+|-------|-------|-------------|
+| `name` | `"comis"` | The process name used in all pm2 commands |
+| `script` | Path to daemon.js | The Node.js file to run |
+| `COMIS_CONFIG_PATHS` | Config file path | Tells the daemon where to find config.yaml |
+| `restart_delay` | `2000` | Wait 2 seconds between restart attempts |
+| `kill_timeout` | `10000` | Wait 10 seconds for the daemon to shut down gracefully |
+| `max_restarts` | `10` | Give up after 10 consecutive crashes (prevents restart loops) |
+| `autorestart` | `true` | Automatically restart if the daemon crashes |
+
+## Log management
+
+pm2 stores its logs in `~/.pm2/logs/`, not in `~/.comis/`. You will find two files:
+
+- `comis-out.log` -- standard output (normal log messages)
+- `comis-error.log` -- standard error (error messages)
+
+**Clear old logs:**
+
+```bash
+pm2 flush comis
+```
+
+**Set up automatic log rotation:**
+
+```bash
+pm2 install pm2-logrotate
+```
+
+This prevents log files from growing indefinitely. The default rotation keeps
+logs under 10 MB per file.
+
+<Info>
+The daemon also supports its own file logging with rotation. See
+[Logging](/operations/logging) for details on configuring the daemon's built-in
+log rotation.
+</Info>
+
+<Warning>
+Do **not** use `export COMIS_CONFIG_PATHS=...` separately from the start command.
+The ecosystem config handles this for you. Setting it separately may not propagate
+to the background process, causing a "Config file not found" error.
+</Warning>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    How the daemon starts, runs, and shuts down.
+  </Card>
+  <Card title="systemd" icon="linux" href="/operations/systemd">
+    Run Comis as a systemd service on Linux.
+  </Card>
+  <Card title="Docker" icon="docker" href="/operations/docker">
+    Run Comis in a Docker container.
+  </Card>
+  <Card title="Logging" icon="file-lines" href="/operations/logging">
+    Configure log levels, rotation, and structured output.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Solutions to common issues.
+  </Card>
+</CardGroup>

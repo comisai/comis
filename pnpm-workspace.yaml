@@ -1,0 +1,7 @@
+packages:
+  - "packages/*"
+onlyBuiltDependencies:
+  - "@whiskeysockets/baileys"
+  - better-sqlite3
+  - isolated-vm
+  - sharp

@@ -1,0 +1,477 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+import Base from "../layouts/Base.astro";
+import Footer from "../components/Footer.astro";
+
+const title = "Security - Built from Scratch with Security in Mind";
+const description = "Comis wasn't patched for security after launch. It was designed around the question: what happens when an AI agent has real power and someone tries to abuse it?";
+
+const layers = [
+  {
+    name: "Input Guard",
+    category: "Perimeter",
+    color: "coral",
+    threat: "Prompt injection & jailbreaks",
+    how: "Semantic scoring engine with 13 weighted pattern categories, typoglycemia detection for scrambled-letter evasion, and code-block exclusion to avoid false positives. Three risk levels (low/medium/high) with configurable actions: pass, warn, reinforce, or block.",
+  },
+  {
+    name: "Output Guard",
+    category: "Perimeter",
+    color: "coral",
+    threat: "Secret leakage & data exfiltration",
+    how: "Scans every LLM response for 15 secret patterns (AWS keys, bearer tokens, JWTs, database connection strings), canary token leakage, and system prompt extraction attempts. Critical findings are redacted as [REDACTED] before delivery.",
+  },
+  {
+    name: "External Content Wrapping",
+    category: "Perimeter",
+    color: "coral",
+    threat: "Indirect prompt injection",
+    how: "All external content (web fetches, API responses, emails, webhooks) is wrapped in randomized 24-hex-char security delimiters with an explicit warning header. The LLM sees clear boundaries between trusted instructions and untrusted content.",
+  },
+  {
+    name: "Zero-Width Character Stripping",
+    category: "Perimeter",
+    color: "coral",
+    threat: "Invisible character injection",
+    how: "Strips 15+ categories of invisible Unicode characters (U+200B-200F, U+2060, FEFF, U+00AD, tag block U+E0000-E007F) while preserving legitimate flag emoji. Prevents hidden instruction embedding.",
+  },
+  {
+    name: "Injection Rate Limiter",
+    category: "Perimeter",
+    color: "coral",
+    threat: "Repeated injection attempts",
+    how: "Per-user sliding 5-minute window with progressive thresholds: warn at 3 detections, audit at 5. TTL-based eviction with 10K entry cap to prevent memory exhaustion.",
+  },
+  {
+    name: "Secret Manager",
+    category: "Secrets",
+    color: "teal",
+    threat: "Credential exposure",
+    how: "AES-256-GCM encryption at rest with HKDF-SHA256 key derivation and per-encryption random salts. Defensive snapshot of environment at creation - no mutation tracking. No enumeration API. Diagnostic errors include the missing key name but never the value.",
+  },
+  {
+    name: "Scoped Secret Manager",
+    category: "Secrets",
+    color: "teal",
+    threat: "Cross-agent credential access",
+    how: "Per-agent glob-pattern filtering (e.g., OPENAI_*, ANTHROPIC_*). Decorator pattern: indistinguishable from plain SecretManager. Audit events (secret:accessed) log every access attempt with success/denied/not_found outcomes.",
+  },
+  {
+    name: "Log Sanitizer",
+    category: "Secrets",
+    color: "teal",
+    threat: "Secrets in logs",
+    how: "Three layers deep: Pino fast-redact for structured fields, regex-based sanitizer with 18 patterns for free-text credential detection, and ReDoS mitigation with 1MB input cap. Defense-in-depth - any single layer failing doesn't expose secrets.",
+  },
+  {
+    name: "SSRF Guard",
+    category: "Network",
+    color: "purple",
+    threat: "Server-side request forgery",
+    how: "DNS-pinned URL validation before every outbound fetch. Blocks private RFC 1918 ranges, loopback, link-local, and explicitly blocks cloud metadata IPs (169.254.169.254 for AWS/GCP/Azure, 100.100.100.200 for Alibaba). HTTP/HTTPS only.",
+  },
+  {
+    name: "OS-Level Exec Sandbox",
+    category: "Process Isolation",
+    color: "red",
+    threat: "Filesystem escape & host compromise",
+    how: "Kernel-enforced filesystem isolation for every shell command. Linux uses bubblewrap (bwrap) with full namespace unsharing (mount, PID, user, cgroup, IPC). macOS uses sandbox-exec with SBPL deny-default profiles. Agents can only see their own workspace - the host filesystem is invisible. Package manager caches are redirected into the workspace. Process tree kill cascades via --die-with-parent.",
+  },
+  {
+    name: "Tool Policy Engine",
+    category: "Access Control",
+    color: "blue",
+    threat: "Unauthorized tool access",
+    how: "Named profiles (minimal, coding, messaging, supervisor, full) with group-based expansion. Per-agent allow/deny lists. The minimal profile exposes only exec, read, write - no memory, no web, no messaging.",
+  },
+  {
+    name: "Approval Gates",
+    category: "Access Control",
+    color: "blue",
+    threat: "Unsupervised destructive actions",
+    how: "In-memory request queue with configurable timeouts. Dual caching: approval cache (30s) and denial cache (60s) with mutual invalidation. Batch parallel requests join existing pending entries. Graceful shutdown denies all pending.",
+  },
+  {
+    name: "Memory Trust Partitioning",
+    category: "Memory",
+    color: "green",
+    threat: "Memory poisoning via indirect injection",
+    how: "Three trust levels: system (platform-injected, highest), learned (from conversation), external (from tools/APIs/web, lowest). Low-trust sources can't overwrite high-trust memories. Provenance tracking records who stored each entry, from which channel, at which trust level.",
+  },
+  {
+    name: "Pre-Write Security Scan",
+    category: "Memory",
+    color: "green",
+    threat: "Dangerous patterns persisted in memory",
+    how: "Every memory entry passes through a security scan before storage. Blocks injection patterns, encoded payloads, and instruction-like content from being persisted where it could later surface via RAG retrieval and influence agent behavior.",
+  },
+  {
+    name: "RAG Trust Filtering",
+    category: "Memory",
+    color: "green",
+    threat: "Poisoned memories surfacing in retrieval",
+    how: "RAG retrieval excludes external-trust memories by default. Only system and learned memories are returned unless explicitly requested. Prevents low-trust content from web scrapes, API responses, or tool outputs from influencing agent reasoning through semantic search.",
+  },
+  {
+    name: "Canary Tokens",
+    category: "Detection",
+    color: "yellow",
+    threat: "System prompt extraction",
+    how: "Deterministic per-session HMAC-SHA256 tokens (CTKN_{16 hex chars}) injected into the system prompt. If the token appears in a response, the OutputGuard detects leakage and redacts it. Proves the LLM was tricked into revealing system instructions.",
+  },
+  {
+    name: "Bearer Token Authentication",
+    category: "Transport",
+    color: "indigo",
+    threat: "Unauthorized API access via token guessing",
+    how: "Timing-safe bearer token comparison using crypto.timingSafeEqual. Eliminates timing side channels that could leak token bytes through response latency differences. All API endpoints require authentication by default.",
+  },
+  {
+    name: "mTLS Authentication",
+    category: "Transport",
+    color: "indigo",
+    threat: "Unauthorized client connections",
+    how: "Mutual TLS certificate validation with Common Name (CN) extraction for client identity. Establishes cryptographic client identity at the transport layer before any application logic executes.",
+  },
+  {
+    name: "Webhook Verification",
+    category: "Transport",
+    color: "indigo",
+    threat: "Forged webhook deliveries",
+    how: "HMAC-SHA256/384/512 signature verification on all incoming webhooks. Timestamp freshness checks with a 5-minute replay window prevent captured webhook payloads from being replayed later.",
+  },
+  {
+    name: "Budget Guard",
+    category: "Runtime",
+    color: "orange",
+    threat: "Runaway LLM costs",
+    how: "Three-tier token budgets (per-execution, per-hour, per-day) checked before the LLM call, not after. A prompt injection that tries to exhaust your API budget is stopped before it costs anything. Context window guard blocks at 95% utilization.",
+  },
+  {
+    name: "Circuit Breaker",
+    category: "Runtime",
+    color: "orange",
+    threat: "Cascading provider failures",
+    how: "Three-state machine (closed/open/halfOpen) per model and provider. Tracks consecutive failures and latency. When open, returns a fallback response immediately instead of propagating the failure. Automatic recovery via half-open probes.",
+  },
+  {
+    name: "Tool Output Sanitizer",
+    category: "Runtime",
+    color: "orange",
+    threat: "Indirect injection via tool results",
+    how: "Normalizes NFKC Unicode, strips invisible characters, detects instruction-like patterns in tool output, and truncates oversized results at newline boundaries (50K char default). Catches injection attempts that arrive through tool results rather than user input.",
+  },
+];
+
+const categories = [
+  { name: "Perimeter", color: "coral", count: 5, desc: "Block threats before they reach the LLM" },
+  { name: "Secrets", color: "teal", count: 3, desc: "Encrypt, scope, and redact credentials at every layer" },
+  { name: "Network", color: "purple-400", count: 1, desc: "Prevent outbound requests to private networks" },
+  { name: "Process Isolation", color: "red-400", count: 1, desc: "Kernel-enforced filesystem sandbox for shell commands" },
+  { name: "Access Control", color: "blue-400", count: 2, desc: "Limit what each agent can do and require approval" },
+  { name: "Memory", color: "green-400", count: 3, desc: "Partition trust levels to prevent memory poisoning" },
+  { name: "Detection", color: "yellow-400", count: 1, desc: "Detect when the LLM leaks system instructions" },
+  { name: "Transport", color: "indigo-400", count: 3, desc: "Authenticate and verify every connection" },
+  { name: "Runtime", color: "orange-400", count: 3, desc: "Prevent runaway costs and sanitize tool output" },
+];
+---
+
+<Base title={title} description={description}>
+  <main>
+    <!-- Hero -->
+    <section class="relative overflow-hidden px-6 pt-32 pb-16 md:pt-40 md:pb-20">
+      <div class="absolute inset-0 pointer-events-none">
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-coral/5 rounded-full blur-[120px]"></div>
+      </div>
+
+      <div class="relative max-w-3xl mx-auto text-center">
+        <a href="/" class="inline-flex items-center gap-1 text-sm text-muted hover:text-teal transition-colors mb-8">
+          &larr; Back to Home
+        </a>
+        <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.1] text-white">
+          Security engineered in.
+          <span class="text-coral">Not bolted on.</span>
+        </h1>
+        <p class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed">
+          Comis wasn't patched for security after launch. Every component was built from scratch with the question:
+          what happens when an AI agent has real power and someone tries to abuse it?
+        </p>
+      </div>
+    </section>
+
+    <!-- Stats bar -->
+    <section class="px-6 pb-16">
+      <div class="max-w-4xl mx-auto">
+        <div class="bg-navy-light/80 border border-coral/20 rounded-2xl p-8 md:p-12">
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+            <div>
+              <p class="text-4xl font-bold text-coral font-mono">22</p>
+              <p class="text-muted text-sm mt-2">Security layers</p>
+            </div>
+            <div>
+              <p class="text-4xl font-bold text-white font-mono">40+</p>
+              <p class="text-muted text-sm mt-2">Injection patterns</p>
+            </div>
+            <div>
+              <p class="text-4xl font-bold text-white font-mono">18</p>
+              <p class="text-muted text-sm mt-2">Log redaction rules</p>
+            </div>
+            <div>
+              <p class="text-4xl font-bold text-white font-mono">0</p>
+              <p class="text-muted text-sm mt-2">Secrets in plaintext</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- OS-Level Sandbox Spotlight -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-coral/20 flex items-center justify-center">
+            <svg class="w-4 h-4 text-coral" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+          </div>
+          <p class="text-coral font-semibold text-sm uppercase tracking-widest">Flagship feature</p>
+        </div>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Kernel-enforced process isolation.
+        </h2>
+        <p class="text-muted text-lg mb-10 max-w-2xl">
+          Every shell command your agent runs is sandboxed at the OS level. The agent sees its workspace. Nothing else. No tricks, no escapes - the kernel enforces it.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-6 mb-10">
+          <!-- Linux -->
+          <div class="bg-navy-light/80 border border-coral/15 rounded-xl p-6">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="text-xs font-mono px-2 py-0.5 rounded bg-coral/10 text-coral">Linux</span>
+              <span class="text-white font-semibold">Bubblewrap (bwrap)</span>
+            </div>
+            <ul class="space-y-2 text-sm text-muted">
+              <li class="flex items-start gap-2">
+                <span class="text-coral mt-0.5">&#x2022;</span>
+                <span><span class="text-white">Full namespace unsharing</span> - mount, PID, user, cgroup, IPC all isolated</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-coral mt-0.5">&#x2022;</span>
+                <span><span class="text-white">Private /tmp and /dev</span> - tmpfs mounts, no host filesystem leakage</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-coral mt-0.5">&#x2022;</span>
+                <span><span class="text-white">Read-only system paths</span> - /usr, /bin, /lib, /etc (subset) mounted read-only</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-coral mt-0.5">&#x2022;</span>
+                <span><span class="text-white">--die-with-parent</span> - sandbox process dies if daemon dies, no orphans</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-coral mt-0.5">&#x2022;</span>
+                <span><span class="text-white">Network preserved</span> - network isolation is a separate concern (SSRF guard)</span>
+              </li>
+            </ul>
+          </div>
+
+          <!-- macOS -->
+          <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-6">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="text-xs font-mono px-2 py-0.5 rounded bg-teal/10 text-teal">macOS</span>
+              <span class="text-white font-semibold">sandbox-exec (SBPL)</span>
+            </div>
+            <ul class="space-y-2 text-sm text-muted">
+              <li class="flex items-start gap-2">
+                <span class="text-teal mt-0.5">&#x2022;</span>
+                <span><span class="text-white">Default-deny profile</span> - starts from (deny default), explicitly allows each capability</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-teal mt-0.5">&#x2022;</span>
+                <span><span class="text-white">Dynamic SBPL generation</span> - per-invocation profile based on agent workspace</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-teal mt-0.5">&#x2022;</span>
+                <span><span class="text-white">Symlink resolution</span> - resolves /tmp &rarr; /private/tmp for kernel path matching</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-teal mt-0.5">&#x2022;</span>
+                <span><span class="text-white">Startup smoke test</span> - verifies sandbox-exec works on current macOS version</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-teal mt-0.5">&#x2022;</span>
+                <span><span class="text-white">Graceful degradation</span> - falls back to command denylist if unavailable</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- What the sandbox controls -->
+        <div class="bg-navy rounded-xl border border-white/5 p-6">
+          <p class="text-white font-semibold mb-4">6 layers of exec defense, inside out:</p>
+          <div class="grid md:grid-cols-3 gap-4">
+            <div class="text-center">
+              <p class="text-coral font-mono text-sm font-semibold mb-1">Layer 1</p>
+              <p class="text-muted text-xs">Tool policy can remove exec entirely</p>
+            </div>
+            <div class="text-center">
+              <p class="text-coral font-mono text-sm font-semibold mb-1">Layer 2</p>
+              <p class="text-muted text-xs">Command denylist blocks rm -rf, mkfs, etc.</p>
+            </div>
+            <div class="text-center">
+              <p class="text-coral font-mono text-sm font-semibold mb-1">Layer 3</p>
+              <p class="text-muted text-xs">Env denylist blocks LD_PRELOAD, DYLD_*</p>
+            </div>
+            <div class="text-center">
+              <p class="text-coral font-mono text-sm font-semibold mb-1">Layer 4</p>
+              <p class="text-muted text-xs">CWD validation via safePath()</p>
+            </div>
+            <div class="text-center bg-coral/10 rounded-lg py-2">
+              <p class="text-coral font-mono text-sm font-bold mb-1">Layer 5</p>
+              <p class="text-muted-light text-xs">OS kernel sandbox (bwrap / sandbox-exec)</p>
+            </div>
+            <div class="text-center">
+              <p class="text-coral font-mono text-sm font-semibold mb-1">Layer 6</p>
+              <p class="text-muted text-xs">Subprocess env filtering strips API keys</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Defense categories overview -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">Defense in depth</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          9 defense categories. 22 independent layers.
+        </h2>
+        <p class="text-muted text-lg mb-12 max-w-2xl">
+          Each layer protects against a specific attack vector. No single layer failing compromises the system.
+        </p>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {categories.map((cat) => (
+            <div class="bg-navy rounded-xl border border-white/5 p-5">
+              <div class="flex items-center gap-2 mb-2">
+                <span class={`text-${cat.color} font-mono font-bold text-2xl`}>{cat.count}</span>
+                <span class="text-white font-semibold text-sm">{cat.name}</span>
+              </div>
+              <p class="text-muted text-xs leading-relaxed">{cat.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- All 22 layers -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Every layer explained</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-12">
+          What each layer protects against - and how.
+        </h2>
+
+        <div class="space-y-4">
+          {layers.map((layer, i) => (
+            <div class="bg-navy-light/80 border border-white/5 rounded-xl overflow-hidden">
+              <div class="flex flex-col md:flex-row">
+                <div class="md:w-14 shrink-0 flex items-center justify-center py-3 md:py-0 bg-coral/10">
+                  <span class="text-coral font-mono font-bold">{i + 1}</span>
+                </div>
+                <div class="flex-1 p-6">
+                  <div class="flex flex-wrap items-center gap-3 mb-2">
+                    <h3 class="text-white font-semibold">{layer.name}</h3>
+                    <span class="text-xs font-mono px-2 py-0.5 rounded bg-white/5 text-muted">{layer.category}</span>
+                  </div>
+                  <p class="text-coral text-sm font-medium mb-2">Protects against: {layer.threat}</p>
+                  <p class="text-muted text-sm leading-relaxed">{layer.how}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Key principles -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Design principles</p>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-12">
+          Why "security-first" isn't a marketing claim.
+        </h2>
+
+        <div class="grid md:grid-cols-2 gap-6">
+          <div class="flex gap-4">
+            <div class="shrink-0 w-1 rounded-full bg-gradient-to-b from-coral to-teal"></div>
+            <div>
+              <p class="text-white font-semibold mb-1">Single source of truth for all patterns</p>
+              <p class="text-muted text-sm leading-relaxed">Every injection pattern, secret format, and dangerous command is defined once in injection-patterns.ts and shared across InputGuard, OutputGuard, Tool Sanitizer, and Memory Validator. No drift between components.</p>
+            </div>
+          </div>
+          <div class="flex gap-4">
+            <div class="shrink-0 w-1 rounded-full bg-gradient-to-b from-coral to-teal"></div>
+            <div>
+              <p class="text-white font-semibold mb-1">Constant-time comparisons everywhere</p>
+              <p class="text-muted text-sm leading-relaxed">Bearer token verification, HMAC webhook validation, and secret comparison all use crypto.timingSafeEqual. No timing side channels.</p>
+            </div>
+          </div>
+          <div class="flex gap-4">
+            <div class="shrink-0 w-1 rounded-full bg-gradient-to-b from-coral to-teal"></div>
+            <div>
+              <p class="text-white font-semibold mb-1">Result type - no thrown exceptions</p>
+              <p class="text-muted text-sm leading-relaxed">Every security operation returns Result&lt;T, E&gt;. Error handling is explicit and type-checked. No catch blocks hiding security failures.</p>
+            </div>
+          </div>
+          <div class="flex gap-4">
+            <div class="shrink-0 w-1 rounded-full bg-gradient-to-b from-coral to-teal"></div>
+            <div>
+              <p class="text-white font-semibold mb-1">Audit events on every decision</p>
+              <p class="text-muted text-sm leading-relaxed">TypedEventBus emits security:warn, secret:accessed, approval:requested/resolved, and tool:executed events. Full audit trail without touching application logic.</p>
+            </div>
+          </div>
+          <div class="flex gap-4">
+            <div class="shrink-0 w-1 rounded-full bg-gradient-to-b from-coral to-teal"></div>
+            <div>
+              <p class="text-white font-semibold mb-1">Trust boundaries on memory</p>
+              <p class="text-muted text-sm leading-relaxed">Memory entries carry provenance (who stored it, from which channel, trust level). External content from web/APIs cannot overwrite system or learned memories. RAG excludes external by default.</p>
+            </div>
+          </div>
+          <div class="flex gap-4">
+            <div class="shrink-0 w-1 rounded-full bg-gradient-to-b from-coral to-teal"></div>
+            <div>
+              <p class="text-white font-semibold mb-1">Pre-commit budget checks</p>
+              <p class="text-muted text-sm leading-relaxed">Token budgets are checked before the LLM call, not after. A prompt injection that tries to exhaust your API budget is stopped before it costs you anything.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Audit every line. Run it on your infrastructure.
+        </h2>
+        <p class="text-muted text-lg mb-10">
+          Comis is Apache-2.0-licensed, fully open source, and self-hosted. No telemetry, no cloud lock-in, no trust required.
+        </p>
+
+        <div class="flex flex-wrap gap-4 justify-center">
+          <a href="https://docs.comis.ai" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
+            Get Started
+          </a>
+          <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            View on GitHub
+          </a>
+          <a href="/" class="inline-flex items-center justify-center px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-medium rounded-lg transition-colors border border-white/10">
+            Back to Home
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Base>

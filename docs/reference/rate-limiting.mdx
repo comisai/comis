@@ -1,0 +1,225 @@
+---
+title: "Rate Limiting"
+description: "Multi-layer rate limiting reference covering HTTP, WebSocket, config patch, and injection detection layers"
+icon: "gauge-high"
+---
+
+Comis implements four distinct rate limiting layers, each protecting a different attack surface. These layers operate independently and serve different purposes.
+
+## Overview
+
+| Layer | Scope | Default Limit | Response |
+|-------|-------|--------------|----------|
+| [HTTP Rate Limiting](#http-rate-limiting) | Per-client API requests | 100 requests / 60 seconds | HTTP 429 with JSON-RPC error |
+| [WebSocket Rate Limiting](#websocket-rate-limiting) | Per-connection messages | 60 messages / 60 seconds | Silently dropped |
+| [Config Patch Rate Limiting](#config-patch-rate-limiting) | Config write operations | 5 patches / 60 seconds | RPC error with retry-after |
+| [Injection Rate Limiting](#injection-rate-limiting) | Per-user injection attempts | warn at 3, audit at 5 / 5 minutes | Progressive audit escalation |
+
+## HTTP Rate Limiting
+
+The gateway HTTP rate limiter enforces a per-client request limit across all API endpoints.
+
+<Info>
+  **Source:** `packages/gateway/src/rate-limit/rate-limiter.ts` -- Hono middleware using `hono-rate-limiter`.
+</Info>
+
+### Configuration
+
+The `GatewayRateLimitSchema` has 2 fields:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `windowMs` | `number` | `60000` (1 minute) | Time window in milliseconds |
+| `maxRequests` | `number` | `100` | Maximum requests per window per client |
+
+```yaml
+gateway:
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 100
+```
+
+### Key Generation
+
+Rate limiting keys are resolved in priority order:
+
+1. **`clientId` from auth context** -- set by bearer token authentication. This ensures that authenticated clients are tracked by their token, not their IP.
+2. **Client IP address** -- fallback when no authentication context is available.
+
+### IP Resolution
+
+The `getClientIp()` function resolves the real client IP with trusted proxy support:
+
+- **Default (no trusted proxies):** Uses the TCP socket remote address directly via `getConnInfo()`. `X-Forwarded-For` header is never trusted.
+- **With trusted proxies configured:** If the direct connection IP matches an entry in `trustedProxies`, the leftmost IP in `X-Forwarded-For` is used as the client IP.
+- **Fallback:** In test environments without real sockets, falls back to the `x-real-ip` header.
+
+```yaml
+gateway:
+  # Only trust X-Forwarded-For from these proxy IPs
+  trustedProxies:
+    - "10.0.0.1"
+    - "10.0.0.2"
+```
+
+### Response Format
+
+When the rate limit is exceeded, the gateway returns HTTP 429 with a JSON-RPC formatted error body:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32000,
+    "message": "Rate limit exceeded"
+  },
+  "id": null
+}
+```
+
+The rate limit logger also emits a WARN-level log with the client IP, method, path, and the exceeded limit.
+
+## WebSocket Rate Limiting
+
+Per-connection message rate tracking for WebSocket connections.
+
+<Info>
+  **Source:** `packages/core/src/config/schema-gateway.ts` -- `wsMessageRateLimit` schema within `GatewayConfigSchema`.
+</Info>
+
+### Configuration
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxMessages` | `number` | `60` | Maximum messages per window per connection |
+| `windowMs` | `number` | `60000` (1 minute) | Time window in milliseconds |
+
+```yaml
+gateway:
+  wsMessageRateLimit:
+    maxMessages: 60
+    windowMs: 60000
+```
+
+### Behavior
+
+WebSocket rate limiting tracks message counts per individual connection. When a connection exceeds `maxMessages` within `windowMs`:
+
+- **Excess messages are silently dropped** -- no error response is sent back to the client
+- The connection remains open (not terminated)
+- The counter resets at the start of each window
+
+This "silent drop" behavior prevents denial-of-service through error message amplification. A misbehaving client that sends 1000 messages per second would receive at most 60 responses per minute, not 1000 error messages.
+
+### Related Limits
+
+The gateway also enforces:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `wsMaxMessageBytes` | 1,048,576 (1 MB) | Maximum WebSocket message size in characters before JSON.parse |
+| `wsHeartbeatMs` | 30,000 (30 seconds) | WebSocket heartbeat interval for connection keep-alive |
+
+## Config Patch Rate Limiting
+
+A token bucket rate limiter prevents runaway config changes from agent tool calls or automated scripts.
+
+<Info>
+  **Source:** `packages/daemon/src/rpc/config-handlers.ts` -- CFGSAFE-02: token bucket shared between `config.patch` and `config.apply`.
+</Info>
+
+### Configuration
+
+The config patch rate limiter is hardcoded (not user-configurable):
+
+| Parameter | Value |
+|-----------|-------|
+| Maximum tokens | 5 |
+| Window | 60,000 ms (1 minute) |
+| Refill | Continuous proportional refill |
+
+### Behavior
+
+- **Shared bucket:** `config.patch` and `config.apply` share the same token bucket. A mix of 3 patches and 2 applies within one minute would exhaust the limit.
+- **Token bucket algorithm:** Tokens refill continuously and proportionally. After consuming all 5 tokens, waiting 12 seconds refills ~1 token.
+- **Error response:** When exhausted, returns an RPC error:
+
+```
+Config patch rate limit exceeded: max 5 patches per minute.
+Try again in N seconds.
+```
+
+### Purpose
+
+This rate limiter protects against:
+
+- **Agent loop bugs:** An LLM agent in a retry loop rapidly patching config
+- **Automated scripts:** External automation making rapid config changes via the API
+- **Config churn:** Excessive config writes causing constant daemon restarts (each patch triggers SIGUSR1)
+
+## Injection Rate Limiting
+
+Per-user tracking of high-score prompt injection detection attempts with progressive escalation thresholds.
+
+<Info>
+  **Source:** `packages/core/src/security/injection-rate-limiter.ts` -- singleton per daemon instance, per-user sliding window tracking.
+</Info>
+
+### Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `windowMs` | `number` | `300000` (5 minutes) | Sliding window for counting detections |
+| `warnThreshold` | `number` | `3` | Detection count that triggers warn level |
+| `auditThreshold` | `number` | `5` | Detection count that triggers audit level |
+| `entryTtlMs` | `number` | `300000` (5 minutes) | TTL for inactive entries |
+| `maxEntries` | `number` | `10000` | Max tracked users (prevents memory leak) |
+
+### How It Works
+
+1. When the input guard detects a high-score injection attempt, it calls `record(tenantId, userId)`.
+2. The limiter maintains a sliding window of detection timestamps per `${tenantId}:${userId}` key.
+3. Timestamps outside the window are pruned on each `record()` call.
+4. Progressive thresholds determine the response level:
+
+| Threshold | Count | Behavior |
+|-----------|-------|----------|
+| None | 1-2 | Normal logging, no escalation |
+| Warn | 3 | `thresholdCrossed: true` on the exact 3rd detection |
+| Audit | 5 | `thresholdCrossed: true` on the exact 5th detection, automatic audit event emission |
+
+### RateLimitResult
+
+```typescript
+interface RateLimitResult {
+  thresholdCrossed: boolean;  // true only on the EXACT threshold count
+  count: number;              // current count in window
+  level: "none" | "warn" | "audit";
+}
+```
+
+The `thresholdCrossed` flag fires only once per threshold crossing (on the exact 3rd or 5th detection), not on every subsequent detection. This prevents audit event flooding.
+
+### Memory Protection
+
+- **Entry TTL:** Each user entry has a TTL timer. If no detections occur within `entryTtlMs`, the entry is automatically evicted.
+- **Max entries cap:** If the tracked user count reaches `maxEntries`, the oldest entry (by most recent detection timestamp) is evicted to make room.
+- **Clean shutdown:** `destroy()` clears all entries and timers. Timer handles use `unref()` so they do not prevent Node.js process exit.
+
+### User Isolation
+
+Users are tracked independently by `${tenantId}:${userId}` composite key. This ensures that injection attempts from one user in a group chat do not affect other users' thresholds.
+
+For security model details, see [Security Overview](/security).
+
+<CardGroup cols={2}>
+  <Card title="Security Model" icon="shield" href="/security">
+    Defense-in-depth security architecture
+  </Card>
+  <Card title="HTTP Gateway" icon="server" href="/reference/http-gateway">
+    HTTP and WebSocket gateway reference
+  </Card>
+  <Card title="Hot Reload" icon="rotate" href="/reference/hot-reload">
+    Config and skill hot reload mechanisms
+  </Card>
+</CardGroup>

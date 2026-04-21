@@ -1,0 +1,260 @@
+---
+title: "Reverse Proxy"
+description: "Putting Comis behind Nginx or Caddy for TLS and domain access"
+icon: "shield-halved"
+---
+
+A reverse proxy sits in front of Comis and handles TLS (HTTPS), custom domains,
+and can add an extra layer of security. This is the recommended setup for
+production servers exposed to the internet.
+
+## Why use a reverse proxy
+
+- **TLS encryption** -- all traffic between clients and your server is encrypted with HTTPS
+- **Custom domain** -- access Comis at `comis.yourdomain.com` instead of an IP address and port number
+- **Hide the port** -- users visit a standard HTTPS URL without needing to know the port (4766)
+- **Security headers** -- the proxy can add headers that protect against common web attacks
+
+## Comis configuration
+
+Before setting up the proxy, configure the Comis gateway to accept proxied
+connections. In your `config.yaml`:
+
+```yaml
+gateway:
+  host: "127.0.0.1"
+  trustedProxies: ["127.0.0.1"]
+```
+
+Here is what each setting does:
+
+- **host: "127.0.0.1"** -- the gateway only listens on localhost (the reverse proxy handles external connections)
+- **trustedProxies** -- tells Comis to trust the `X-Forwarded-For` header from the proxy, so rate limiting and logging show the real client IP instead of the proxy's IP
+
+<Warning>
+Do **not** add public IPs to `trustedProxies`. Only add the IP addresses of your
+reverse proxy servers. Adding untrusted IPs would allow anyone to spoof their
+client IP address.
+</Warning>
+
+## Nginx
+
+<Steps>
+  <Step title="Install Nginx">
+    Install Nginx on your server:
+
+    ```bash
+    # Ubuntu / Debian
+    sudo apt install nginx
+
+    # Fedora / RHEL
+    sudo dnf install nginx
+    ```
+  </Step>
+
+  <Step title="Create the configuration">
+    Create a new Nginx config file for Comis:
+
+    ```bash
+    sudo nano /etc/nginx/sites-available/comis
+    ```
+
+    Paste the following configuration:
+
+    ```nginx
+    server {
+        listen 80;
+        server_name comis.yourdomain.com;
+
+        location / {
+            proxy_pass http://127.0.0.1:4766;
+
+            # Pass client information to Comis
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # WebSocket support
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+
+            # Long timeout for WebSocket connections
+            proxy_read_timeout 86400;
+        }
+    }
+    ```
+
+    Replace `comis.yourdomain.com` with your actual domain name.
+
+    Here is what the important lines do:
+
+    | Directive | What it does |
+    |-----------|-------------|
+    | `proxy_pass` | Forwards all requests to the Comis gateway on port 4766 |
+    | `X-Real-IP` | Passes the client's real IP address to Comis |
+    | `X-Forwarded-For` | Standard header for tracking the original client through proxies |
+    | `X-Forwarded-Proto` | Tells Comis whether the original request was HTTP or HTTPS |
+    | `Upgrade` + `Connection` | Enables WebSocket connections (used by the web dashboard and API) |
+    | `proxy_read_timeout 86400` | Keeps WebSocket connections alive for up to 24 hours |
+  </Step>
+
+  <Step title="Enable the site">
+    Create a symlink to enable the config, test it, and reload Nginx:
+
+    ```bash
+    sudo ln -s /etc/nginx/sites-available/comis /etc/nginx/sites-enabled/
+    sudo nginx -t
+    sudo systemctl reload nginx
+    ```
+
+    Expected output from `nginx -t`:
+
+    ```
+    nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+    nginx: configuration file /etc/nginx/nginx.conf test is successful
+    ```
+  </Step>
+
+  <Step title="Add TLS with Certbot">
+    Install Certbot and obtain a free TLS certificate from Let's Encrypt:
+
+    ```bash
+    sudo apt install certbot python3-certbot-nginx
+    sudo certbot --nginx -d comis.yourdomain.com
+    ```
+
+    Certbot automatically modifies your Nginx config to add HTTPS and sets up
+    automatic certificate renewal. After running this command, your site is
+    accessible at `https://comis.yourdomain.com`.
+
+    <Tip>
+    Certbot automatically renews certificates before they expire. You do not need
+    to manage renewals manually.
+    </Tip>
+  </Step>
+</Steps>
+
+## Caddy
+
+Caddy is a simpler alternative that handles TLS automatically with zero extra
+configuration.
+
+<Steps>
+  <Step title="Install Caddy">
+    Install Caddy on your server:
+
+    ```bash
+    # Ubuntu / Debian
+    sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+    sudo apt update
+    sudo apt install caddy
+    ```
+
+    See the [Caddy install docs](https://caddyserver.com/docs/install) for other
+    platforms.
+  </Step>
+
+  <Step title="Create the Caddyfile">
+    Edit the Caddyfile (usually at `/etc/caddy/Caddyfile`):
+
+    ```
+    comis.yourdomain.com {
+        reverse_proxy localhost:4766
+    }
+    ```
+
+    Replace `comis.yourdomain.com` with your actual domain name.
+
+    That is the entire configuration. Caddy automatically:
+    - Obtains a TLS certificate from Let's Encrypt
+    - Redirects HTTP to HTTPS
+    - Renews certificates before they expire
+    - Handles WebSocket connections
+  </Step>
+
+  <Step title="Start Caddy">
+    ```bash
+    sudo systemctl reload caddy
+    ```
+
+    Your site is now accessible at `https://comis.yourdomain.com`.
+  </Step>
+</Steps>
+
+<Tip>
+Caddy is the simpler option -- it handles TLS automatically with zero configuration.
+Choose Nginx if you need more advanced features like load balancing, caching, or
+custom header manipulation.
+</Tip>
+
+## CORS configuration
+
+If you access the web dashboard from a different domain than the API (uncommon),
+you may need to configure CORS. In your `config.yaml`:
+
+```yaml
+gateway:
+  corsOrigins: ["https://comis.yourdomain.com"]
+```
+
+This tells Comis to accept requests from the specified origin. In most setups
+this is not needed because the web dashboard and API are served from the same
+domain through the reverse proxy.
+
+## Verifying the setup
+
+After setting up the reverse proxy and TLS, verify everything is working:
+
+**1. Check the health endpoint:**
+
+```bash
+curl -I https://comis.yourdomain.com/health
+```
+
+Expected output:
+
+```
+HTTP/2 200
+content-type: application/json
+```
+
+**2. Check the full response:**
+
+```bash
+curl https://comis.yourdomain.com/health
+```
+
+Expected output:
+
+```json
+{ "status": "ok", "timestamp": "2026-03-12T10:00:00.000Z" }
+```
+
+**3. Open the web dashboard:**
+
+Visit `https://comis.yourdomain.com` in your browser. You should see the Comis
+web dashboard.
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Web UI" icon="browser" href="/operations/web-ui">
+    Set up and access the web dashboard.
+  </Card>
+  <Card title="Docker" icon="docker" href="/operations/docker">
+    Run Comis in a Docker container.
+  </Card>
+  <Card title="systemd" icon="linux" href="/operations/systemd">
+    Run Comis as a systemd service.
+  </Card>
+  <Card title="pm2" icon="rotate" href="/operations/pm2">
+    Run Comis with the pm2 process manager.
+  </Card>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    How the daemon starts, runs, and shuts down.
+  </Card>
+</CardGroup>

@@ -1,0 +1,263 @@
+---
+title: "Skill Examples"
+description: "Complete skill walkthroughs you can follow step by step"
+icon: "lightbulb"
+---
+
+Learn by example. This page provides complete skill walkthroughs you can follow to
+create useful skills for your agents. Each example includes the full SKILL.md file,
+an explanation of how it works, and how to test it.
+
+## Customer support persona
+
+A prompt skill that teaches the agent to respond as a customer support representative
+with specific tone, escalation rules, and response templates.
+
+**Create the file at:** `~/.comis/skills/customer-support/SKILL.md`
+
+```yaml
+---
+name: customer-support
+description: "Customer support persona with escalation rules"
+userInvocable: true
+allowedTools: ["message", "memory_search"]
+---
+```
+
+```markdown
+You are a customer support representative for our company.
+
+## Tone
+- Always be polite, empathetic, and professional
+- Use the customer's name when possible
+- Acknowledge their frustration before offering solutions
+
+## Escalation Rules
+- If the customer asks for a refund, search memory for their order history first
+- If no resolution after 3 exchanges, offer to escalate to a human
+- Never promise specific timelines without checking
+
+## Response Format
+1. Acknowledge the issue
+2. Provide a solution or next step
+3. Ask if there is anything else you can help with
+```
+
+**How it works:**
+
+- The `allowedTools` restriction ensures the agent only uses messaging and memory
+  tools while this skill is active -- it cannot run shell commands, browse the web,
+  or access other tools
+- The `userInvocable: true` setting (which is the default) means anyone in the chat
+  can activate it with `/skill:customer-support`
+- The agent follows the tone, escalation, and response format rules for every reply
+
+**Test it:**
+
+```
+/skill:customer-support
+```
+
+Then send a message like: "I ordered a product last week and it still has not arrived."
+
+## Daily briefing
+
+A prompt skill that generates a morning briefing when triggered by a scheduled cron
+job. This example shows how skills and scheduling work together.
+
+**Create the file at:** `~/.comis/skills/daily-briefing/SKILL.md`
+
+```yaml
+---
+name: daily-briefing
+description: "Generate a morning briefing with weather, news, and tasks"
+disableModelInvocation: false
+argumentHint: "[timezone]"
+---
+```
+
+```markdown
+Generate a morning briefing for {timezone}.
+
+Include:
+1. A friendly good morning greeting
+2. Use web_search to find today's top 3 news headlines
+3. Use memory_search to find any pending tasks or reminders
+4. Keep it concise -- no more than 10 lines total
+
+Format as a clean, readable message suitable for a chat channel.
+```
+
+**How it works:**
+
+- The `argumentHint` shows users that the skill expects a timezone argument
+- The `{timezone}` placeholder gets replaced with whatever the user provides
+- The `disableModelInvocation: false` setting (the default) means the agent can
+  also decide to use this skill on its own when relevant
+
+**Test it manually:**
+
+```
+/skill:daily-briefing US/Eastern
+```
+
+**Automate it with scheduling:**
+
+To run this automatically every morning, use the cron tool to create a scheduled job:
+
+```
+action: add
+name: morning-brief
+schedule_kind: cron
+schedule_expr: "0 9 * * *"
+timezone: America/New_York
+payload_kind: agent_turn
+payload_text: "/skill:daily-briefing US/Eastern"
+```
+
+This tells the agent to invoke the daily briefing skill every day at 9:00 AM Eastern.
+
+## Code review checklist
+
+A prompt skill with tool restrictions that provides a structured code review
+checklist. This example demonstrates how to combine instructions with specific
+tool access.
+
+**Create the file at:** `~/.comis/skills/code-review/SKILL.md`
+
+```yaml
+---
+name: code-review
+description: "Structured code review with checklist"
+argumentHint: "[file-path]"
+allowedTools: ["read", "grep", "find"]
+comis:
+  requires:
+    bins: ["git"]
+---
+```
+
+```markdown
+Review the code at $1 using this checklist:
+
+## Security
+- [ ] No hardcoded secrets or API keys
+- [ ] Input validation on all user-facing functions
+- [ ] No SQL injection vulnerabilities
+
+## Quality
+- [ ] Functions are under 50 lines
+- [ ] No duplicated logic
+- [ ] Error handling is present (no silent failures)
+
+## Style
+- [ ] Consistent naming conventions
+- [ ] Comments explain "why", not "what"
+
+Use the read tool to examine the file. Use grep to check for patterns.
+Report findings with pass/fail for each item.
+```
+
+**How it works:**
+
+- The `$1` placeholder is replaced with the file path the user provides
+- The `allowedTools` restriction limits the agent to read-only file tools -- it
+  cannot modify files, run commands, or access the network during the review
+- The `comis.requires.bins` field ensures `git` is installed on the system before
+  the skill is loaded. If git is missing, the skill is marked as ineligible.
+
+**Test it:**
+
+```
+/skill:code-review src/api/handler.ts
+```
+
+The agent reads the file, checks each item on the checklist, and reports its findings.
+
+## Data formatter
+
+A skill that formats CSV data into a readable Markdown table. This example
+shows how permissions control file access.
+
+**Create the file at:** `~/.comis/skills/csv-formatter/SKILL.md`
+
+```yaml
+---
+name: csv-formatter
+description: "Format CSV data into a readable table"
+argumentHint: "[path-to-csv-file]"
+permissions:
+  fsRead: ["./data/*.csv"]
+---
+```
+
+```markdown
+Parse the CSV data provided and format it as a Markdown table.
+
+Input: $1 (path to CSV file or raw CSV text)
+
+Rules:
+- Align columns neatly
+- Truncate cells longer than 30 characters with "..."
+- Show row count at the bottom
+```
+
+**How it works:**
+
+- The `permissions.fsRead` field grants the skill read access to CSV files in the
+  `./data/` directory -- and only that directory
+- The skill cannot read files outside of `./data/*.csv`, write any files, or
+  access the network
+- The `argumentHint` shows users what input to provide
+
+**Test it:**
+
+```
+/skill:csv-formatter ./data/report.csv
+```
+
+The agent reads the CSV file, parses the contents, and returns a neatly formatted
+Markdown table.
+
+## Tips for writing good skills
+
+These tips apply to all prompt skills:
+
+1. **Keep instructions specific and actionable.** Instead of "be helpful", write
+   "respond with a numbered list of 3 options, each with a one-sentence explanation".
+
+2. **Use numbered steps for procedures.** The agent follows numbered steps more
+   reliably than unstructured paragraphs.
+
+3. **Restrict tools to only what the skill needs.** Use `allowedTools` to follow
+   the principle of least privilege. A research skill should not have access to
+   file editing tools.
+
+4. **Test with simple inputs first.** Start with the most basic invocation and
+   work up to complex cases. Check that template variables resolve correctly.
+
+5. **Use `argumentHint` to guide users.** Show users what inputs your skill expects
+   so they do not have to guess. For example: `argumentHint: "[language] [file-path]"`.
+
+6. **Write clear descriptions.** The agent uses the `description` field to decide
+   when to apply skills automatically. A vague description like "helper skill" gives
+   the agent little to work with.
+
+<Info>
+Skills are the primary way to customize your agent's behavior. Start with one or
+two simple prompt skills, and expand as you learn what works best for your team.
+</Info>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Prompt Skills" icon="file-lines" href="/skills/prompt-skills">
+    Learn to create prompt skills
+  </Card>
+  <Card title="Manifest Reference" icon="file-code" href="/skills/manifest">
+    All manifest fields
+  </Card>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">
+    Control tool access
+  </Card>
+</CardGroup>

@@ -1,0 +1,360 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+import Base from "../layouts/Base.astro";
+import Footer from "../components/Footer.astro";
+
+const title = "Comis vs. Other AI Agents - Comparison";
+const description = "See how Comis compares to typical AI agent platforms on security, architecture, channels, and open-source commitment.";
+
+const securityRows = [
+  {
+    label: "Authentication",
+    them: "Often missing or optional. Many platforms ship with no auth, leaving agents accessible to anyone who finds the endpoint.",
+    us: "Required by default. mTLS gateway support, bearer token authentication. No open ports without explicit configuration.",
+    verdict: "comis",
+  },
+  {
+    label: "Prompt injection",
+    them: "No detection. Agents blindly execute instructions embedded in fetched web pages, emails, or user-provided content.",
+    us: "48 attack patterns across 13 weighted categories detected and blocked. External content is marked and isolated. Agents can't be tricked into treating fetched text as instructions.",
+    verdict: "comis",
+  },
+  {
+    label: "Memory safety",
+    them: "Single trust level. All memories treated equally - attackers can poison persistent memory to change agent behavior over time.",
+    us: "Trust-partitioned across three levels: system, learned, and external. Your instructions can't be overwritten by content from the internet.",
+    verdict: "comis",
+  },
+  {
+    label: "Secrets management",
+    them: "Plaintext in config files. API keys leaked in logs, tool outputs, and chat responses.",
+    us: "AES-256 encrypted at rest. 18 log redaction rules. Secrets never appear in tool output, chat responses, or plaintext on disk.",
+    verdict: "comis",
+  },
+  {
+    label: "Tool access control",
+    them: "Unchecked. Agents get shell access, file access, and API keys with no oversight or approval workflow.",
+    us: "Approval gates before destructive actions. Per-agent tool policies whitelist exactly which tools each agent can use.",
+    verdict: "comis",
+  },
+  {
+    label: "Process isolation",
+    them: "None. Shell commands run with full host filesystem access. Agents can read any file on the system.",
+    us: "OS-level exec sandbox. Every shell command runs inside a kernel-enforced filesystem namespace (bubblewrap on Linux, sandbox-exec on macOS). Agents can only see their own workspace.",
+    verdict: "comis",
+  },
+  {
+    label: "Skill safety",
+    them: "Install and hope. Community marketplaces where a significant percentage of packages contain vulnerabilities or data exfiltration.",
+    us: "Explicit skill allowlists per agent. Scope isolation. Skills can't escalate privileges or access tools outside their designated scope.",
+    verdict: "comis",
+  },
+  {
+    label: "Network safety",
+    them: "No SSRF protection. Agents can be tricked into making requests to private networks, localhost, or cloud metadata endpoints.",
+    us: "Outbound requests to private networks, localhost, and cloud metadata endpoints are blocked. Network boundaries enforced by default.",
+    verdict: "comis",
+  },
+  {
+    label: "Budget controls",
+    them: "No limits. A single runaway conversation or prompt injection can drain your entire API budget.",
+    us: "Per-agent daily token budgets. Circuit breakers halt execution when limits are reached. No surprises on your bill.",
+    verdict: "comis",
+  },
+  {
+    label: "Audit trail",
+    them: "None. When something goes wrong, there's no record of what happened, which agent did it, or why.",
+    us: "Every security-relevant action logged and classified. Error kinds, action classifications, and trace IDs across every operation.",
+    verdict: "comis",
+  },
+];
+
+const architectureRows = [
+  {
+    label: "Agent architecture",
+    them: "Single agent doing everything. One model, one context, one point of failure.",
+    us: "Multi-agent fleet. Each agent has its own model, memory, skills, and budget. Agents hand off work to each other.",
+    verdict: "comis",
+  },
+  {
+    label: "Workflow orchestration",
+    them: "Simple linear chains or manual scripting.",
+    us: "DAG pipeline orchestration - parallel fan-out, barrier sync, scheduled triggers, channel delivery. Created via natural language.",
+    verdict: "comis",
+  },
+  {
+    label: "Setup experience",
+    them: "Edit YAML config files. Read docs for an hour. Restart on every change.",
+    us: "Describe what you want in plain language. Comis creates agents, pipelines, and configurations autonomously.",
+    verdict: "comis",
+  },
+  {
+    label: "Context management",
+    them: "Naive truncation. When the context window fills up, old messages are silently dropped. No compression, no recovery.",
+    us: "8-layer context pipeline with dead content eviction, observation masking, LLM compaction with 3-level fallback, and post-compaction rehydration. DAG mode for hierarchical summarization.",
+    verdict: "comis",
+  },
+  {
+    label: "Memory",
+    them: "Session-based or simple key-value storage. Lost between restarts.",
+    us: "Persistent semantic memory with SQLite + FTS5 + vector search. Survives restarts. Trust-partitioned. RAG retrieval with provenance annotations.",
+    verdict: "comis",
+  },
+  {
+    label: "Channels",
+    them: "Varies. Often limited to one or two platforms, or requires separate integrations.",
+    us: "9 platforms with full experience: Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, LINE, Email (IMAP/SMTP).",
+    verdict: "comis",
+  },
+  {
+    label: "Model support",
+    them: "Often locked to one provider or requires significant reconfiguration to switch.",
+    us: "Any model, any provider - Claude, GPT, Gemini, Groq, Ollama, OpenRouter. Different agents can use different models. Switch anytime.",
+    verdict: "comis",
+  },
+  {
+    label: "Tools",
+    them: "Built-in tools only, or complex plugin development.",
+    us: "50+ tools via MCP. GitHub, Gmail, Notion, PostgreSQL, browser automation, shell. One-line integration.",
+    verdict: "comis",
+  },
+  {
+    label: "Media",
+    them: "Text-only or limited image support.",
+    us: "Voice notes, images, PDFs, files, speech synthesis, transcription, image generation - across all 9 channels.",
+    verdict: "comis",
+  },
+];
+
+const trustRows = [
+  {
+    label: "License",
+    them: "Closed source, or 'open core' with paywalled enterprise features.",
+    us: "Apache-2.0 licensed. Every line of code on GitHub. No paywalled features.",
+    verdict: "comis",
+  },
+  {
+    label: "Telemetry",
+    them: "Often enabled by default. Usage data sent to vendor servers.",
+    us: "No telemetry you didn't ask for. Self-host with zero phone-home.",
+    verdict: "comis",
+  },
+  {
+    label: "Cloud dependency",
+    them: "Requires vendor cloud infrastructure. Data passes through third-party servers.",
+    us: "Fully self-hosted. Runs on your machine, your server, your infrastructure. No cloud lock-in.",
+    verdict: "comis",
+  },
+  {
+    label: "Codebase",
+    them: "Monolithic or poorly documented. Hard to audit or extend.",
+    us: "13-package TypeScript monorepo. Hexagonal architecture. Every function returns a typed Result. Fully documented.",
+    verdict: "comis",
+  },
+];
+---
+
+<Base title={title} description={description}>
+  <main>
+    <!-- Hero -->
+    <section class="relative overflow-hidden px-6 pt-32 pb-16 md:pt-40 md:pb-20">
+      <div class="absolute inset-0 pointer-events-none">
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-coral/5 rounded-full blur-[120px]"></div>
+      </div>
+
+      <div class="relative max-w-3xl mx-auto text-center">
+        <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.1] text-white">
+          Not another chatbot.
+        </h1>
+        <p class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed">
+          See how Comis compares to typical AI agent platforms on security, architecture, channels, and trust.
+        </p>
+        <p class="mt-4">
+          <a href="/compare/openclaw" class="text-sm text-teal hover:text-teal-dark transition-colors font-medium">
+            Looking for the Comis vs OpenClaw deep technical comparison? &rarr;
+          </a>
+        </p>
+      </div>
+    </section>
+
+    <!-- Security Comparison -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-coral/20 flex items-center justify-center">
+            <svg class="w-4 h-4 text-coral" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+          </div>
+          <p class="text-coral font-semibold text-sm uppercase tracking-widest">Security</p>
+        </div>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Security-first, not security-later.
+        </h2>
+        <p class="text-muted text-lg mb-12 max-w-2xl">
+          Most AI agents ship fast and bolt on security later - after the CVEs, after the breaches, after the exposed instances. Comis was designed around the question: what happens when an AI agent has real power and someone tries to abuse it?
+        </p>
+
+        <div class="space-y-6">
+          {securityRows.map((r) => (
+            <div class="bg-navy rounded-xl border border-white/5 overflow-hidden">
+              <div class="px-6 py-4 border-b border-white/5">
+                <h3 class="text-lg font-semibold text-white">{r.label}</h3>
+              </div>
+              <div class="grid md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-white/5">
+                <div class="px-6 py-5">
+                  <p class="text-xs font-medium text-muted uppercase tracking-wider mb-2">Typical AI agents</p>
+                  <p class="text-muted leading-relaxed">{r.them}</p>
+                </div>
+                <div class="px-6 py-5 bg-coral/5">
+                  <p class="text-xs font-medium text-coral uppercase tracking-wider mb-2">Comis</p>
+                  <p class="text-muted-light leading-relaxed">{r.us}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Architecture Comparison -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-5xl mx-auto">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-teal/20 flex items-center justify-center">
+            <svg class="w-4 h-4 text-teal" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+            </svg>
+          </div>
+          <p class="text-teal font-semibold text-sm uppercase tracking-widest">Architecture & Capabilities</p>
+        </div>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Built different.
+        </h2>
+        <p class="text-muted text-lg mb-12 max-w-2xl">
+          Beyond security, Comis rethinks how AI agents are built, configured, and used - from single-bot simplicity to multi-agent power.
+        </p>
+
+        <div class="space-y-6">
+          {architectureRows.map((r) => (
+            <div class="bg-navy-light/50 rounded-xl border border-white/5 overflow-hidden">
+              <div class="px-6 py-4 border-b border-white/5">
+                <h3 class="text-lg font-semibold text-white">{r.label}</h3>
+              </div>
+              <div class="grid md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-white/5">
+                <div class="px-6 py-5">
+                  <p class="text-xs font-medium text-muted uppercase tracking-wider mb-2">Typical AI agents</p>
+                  <p class="text-muted leading-relaxed">{r.them}</p>
+                </div>
+                <div class="px-6 py-5 bg-teal/5">
+                  <p class="text-xs font-medium text-teal uppercase tracking-wider mb-2">Comis</p>
+                  <p class="text-muted-light leading-relaxed">{r.us}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Trust & Openness -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-5xl mx-auto">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
+            <svg class="w-4 h-4 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+          </div>
+          <p class="text-purple-400 font-semibold text-sm uppercase tracking-widest">Trust & Openness</p>
+        </div>
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Security through transparency.
+        </h2>
+        <p class="text-muted text-lg mb-12 max-w-2xl">
+          You shouldn't have to trust a black box with your data, your tools, and your API keys. Comis is fully open - audit every line, run it on your infrastructure, own your data.
+        </p>
+
+        <div class="space-y-6">
+          {trustRows.map((r) => (
+            <div class="bg-navy rounded-xl border border-white/5 overflow-hidden">
+              <div class="px-6 py-4 border-b border-white/5">
+                <h3 class="text-lg font-semibold text-white">{r.label}</h3>
+              </div>
+              <div class="grid md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-white/5">
+                <div class="px-6 py-5">
+                  <p class="text-xs font-medium text-muted uppercase tracking-wider mb-2">Typical AI agents</p>
+                  <p class="text-muted leading-relaxed">{r.them}</p>
+                </div>
+                <div class="px-6 py-5 bg-purple-500/5">
+                  <p class="text-xs font-medium text-purple-400 uppercase tracking-wider mb-2">Comis</p>
+                  <p class="text-muted-light leading-relaxed">{r.us}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick summary table -->
+    <section class="px-6 py-16 md:py-24">
+      <div class="max-w-4xl mx-auto">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4 text-center">
+          The full picture.
+        </h2>
+        <p class="text-muted text-lg mb-12 text-center max-w-xl mx-auto">
+          Everything at a glance - 23 dimensions where Comis leads.
+        </p>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left">
+            <thead>
+              <tr class="border-b border-white/10">
+                <th scope="col" class="py-3 pr-6 text-sm font-medium text-muted"></th>
+                <th scope="col" class="py-3 px-6 text-sm font-medium text-muted">Typical AI agents</th>
+                <th scope="col" class="py-3 pl-6 text-sm font-semibold text-coral">Comis</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...securityRows, ...architectureRows, ...trustRows].map((r) => (
+                <tr class="border-b border-white/5">
+                  <th scope="row" class="py-3 pr-6 text-sm font-medium text-white whitespace-nowrap text-left">{r.label}</th>
+                  <td class="py-3 px-6 text-sm text-muted max-w-[200px]">{r.them.split('.')[0]}.</td>
+                  <td class="py-3 pl-6 text-sm text-muted-light max-w-[200px]">{r.us.split('.')[0]}.</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Ready to try something different?
+        </h2>
+        <p class="text-muted text-lg mb-10">
+          Comis is free, open source, and takes four commands to set up.
+        </p>
+
+        <div class="flex flex-wrap gap-4 justify-center">
+          <a href="https://docs.comis.ai" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
+            Get Started
+          </a>
+          <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            View on GitHub
+          </a>
+          <a href="/" class="inline-flex items-center justify-center px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-medium rounded-lg transition-colors border border-white/10">
+            Back to Home
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Base>

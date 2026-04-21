@@ -1,0 +1,150 @@
+---
+title: "Memory"
+description: "How your agent stores and organizes long-term knowledge"
+icon: "database"
+---
+
+Your agent does not just forget everything after each conversation. Comis stores
+important information in long-term memory -- facts, conversation summaries,
+instructions, and more. This memory persists across sessions and helps your
+agent get smarter over time.
+
+## Memory types
+
+Comis organizes memories into four categories, each serving a different purpose.
+Think of them as different drawers in a filing cabinet:
+
+**Working** ("Current conversation") -- What is in the active session right now.
+This is temporary and only lasts until the session ends or is compacted. It
+includes your messages, the agent's responses, and any tool results from the
+current conversation.
+
+**Episodic** ("Conversation summaries") -- Summaries of past conversations,
+created automatically by [compaction](/agents/compaction). Like a diary, these
+capture what happened in previous sessions so your agent can reference past
+interactions even after the original messages have been compacted away.
+
+**Semantic** ("Facts and knowledge") -- Specific facts the agent has learned.
+Like a notebook of important details -- your name, your preferences, project
+details, or anything else the agent has picked up from conversations. Semantic
+memories are the most common type your agent creates and recalls.
+
+**Procedural** ("How-to instructions") -- Step-by-step procedures the agent
+knows. Like a recipe book, these store instructions for tasks the agent has
+learned to do. For example, how to format a report, or the steps to deploy
+your application.
+
+## Trust levels
+
+Each memory has a trust level that controls how it is used when recalled:
+
+**system** -- Created by Comis itself (compaction summaries, internal data).
+Fully trusted. The agent treats these as reliable facts.
+
+**learned** -- Things the agent learned from conversations with you. Trusted
+by default. The agent treats these as information from a reliable source.
+
+**external** -- Information from outside sources (web searches, tool results
+from untrusted inputs). When an external memory is recalled, it is marked with
+a warning label so the agent knows to verify it before relying on it.
+
+By default, [memory recall (RAG)](/agents/rag) only includes `system` and
+`learned` memories. You can include `external` memories as well, but the agent
+will always flag them for caution.
+
+## Memory operations
+
+Your agent can perform these operations on its long-term memory:
+
+- **Store** -- Save new information as a memory entry
+- **Search** -- Find relevant memories based on a query (see [Search](/agents/search))
+- **Get** -- Retrieve a specific memory by its identifier
+- **Update** -- Modify an existing memory with new information
+- **Delete** -- Remove a specific memory that is no longer needed
+- **Clear** -- Remove all memories of a specific type or from a specific time period
+
+These operations are available as tools that the agent can use during
+conversations, or through the web dashboard for manual management.
+
+## How memory is stored
+
+Comis uses a SQLite database (stored as `memory.db` in your data directory,
+typically `~/.comis/`) to hold all memories. The database uses secure file
+permissions so only the Comis process can access it.
+
+Each agent's memories are isolated by tenant ID, which means if you run
+multiple agents, they each have their own separate memory space. An agent
+cannot accidentally access another agent's memories.
+
+The database uses WAL mode (write-ahead logging) by default, which allows
+your agent to read memories quickly even while new ones are being written.
+
+## Guardrails
+
+Automatic limits prevent memory from growing unbounded:
+
+- **Compaction threshold** -- When the number of entries exceeds the threshold
+  (default 1000), older entries are compacted to keep the database manageable.
+- **Target size** -- After compaction, the database is trimmed to the target
+  size (default 500 entries).
+- **Retention limits** -- You can set a maximum age for memories (in days) and
+  a maximum total number of entries. Memories beyond these limits are
+  automatically cleaned up.
+
+These limits work together to keep your agent's memory focused and efficient
+without requiring manual cleanup.
+
+## DAG context store
+
+When your agent runs in DAG mode (`contextEngine.version: "dag"`), Comis
+maintains an additional storage layer alongside the regular long-term memory.
+The DAG context store preserves the full conversation history in a structured
+graph -- every message, tool result, and file content is stored as a node, and
+compaction creates summary nodes that link back to their source messages. This
+means nothing is ever truly lost; even after compaction, your agent can recall
+the original content using the `ctx_search`, `ctx_inspect`, and `ctx_recall`
+tools.
+
+The DAG context store lives in the same SQLite database as your agent's regular
+memory. It uses 12 dedicated tables (prefixed with `ctx_`) and 2 full-text
+search indexes for fast lookups.
+
+See [Compaction](/agents/compaction) for how DAG compaction works, and
+[Built-in Tools](/skills/built-in-tools) for the recall tool reference.
+
+## Configuration
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `memory.dbPath` | string | `"memory.db"` | Path to the SQLite database file |
+| `memory.walMode` | boolean | `true` | Enable write-ahead logging for better read performance |
+| `memory.compaction.enabled` | boolean | `true` | Enable automatic memory compaction |
+| `memory.compaction.threshold` | number | `1000` | Number of entries before compaction triggers |
+| `memory.compaction.targetSize` | number | `500` | Maximum entries to keep after compaction |
+| `memory.retention.maxAgeDays` | number | `0` | Maximum age of entries in days (0 = no limit) |
+| `memory.retention.maxEntries` | number | `0` | Maximum total entries (0 = no limit) |
+
+```yaml title="~/.comis/config.yaml"
+memory:
+  dbPath: "memory.db"
+  walMode: true
+  compaction:
+    enabled: true
+    threshold: 1000
+    targetSize: 500
+  retention:
+    maxAgeDays: 0     # No age limit
+    maxEntries: 0     # No count limit
+```
+
+<CardGroup cols={2}>
+  <Card title="Search" icon="magnifying-glass" href="/agents/search">
+    How Comis finds relevant memories using text and meaning matching.
+  </Card>
+  <Card title="Embeddings" icon="microchip" href="/agents/embeddings">
+    Setting up meaning-based search for better memory recall.
+  </Card>
+  <Card title="Compaction" icon="compress" href="/agents/compaction">
+    How conversation summaries become long-term memories.
+  </Card>
+</CardGroup>

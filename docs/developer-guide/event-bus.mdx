@@ -1,0 +1,339 @@
+---
+title: "Event Bus"
+description: "160 typed events across 4 domain subsystems for cross-module communication"
+icon: "tower-broadcast"
+---
+
+Comis uses a `TypedEventBus` for cross-module communication. Instead of packages importing each other directly, they emit and subscribe to typed events. The bus provides compile-time safety -- TypeScript enforces that you emit events with the correct payload shape and subscribe to events that actually exist.
+
+## How It Works
+
+The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All 160 events are defined in the `EventMap` interface, which is composed from 4 domain-specific sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`).
+
+API methods include `emit()`, `on()`, `off()`, `once()`, `removeAllListeners()`, `listenerCount()`, and `setMaxListeners()`. All methods are constrained by `EventMap` -- you cannot emit an event name that does not exist in the map, and every payload is type-checked at compile time.
+
+```typescript
+import type { TypedEventBus, EventMap } from "@comis/core";
+
+// Subscribe to an event
+eventBus.on("message:received", (payload) => {
+  // TypeScript knows payload has: message, sessionKey
+  console.log(`Message received in session ${payload.sessionKey}`);
+});
+
+// Emit an event (payload type-checked at compile time)
+eventBus.emit("tool:executed", {
+  toolName: "web_search",
+  durationMs: 1500,
+  success: true,
+  timestamp: Date.now(),
+});
+```
+
+## Event Naming Convention
+
+Events follow a `subsystem:action` naming pattern (for example, `message:received`, `tool:executed`, `graph:started`). The 160 events are organized into 4 subsystems:
+
+| Subsystem | Event Count | Scope |
+|-----------|-------------|-------|
+| `MessagingEvents` | 35 | Message lifecycle, sessions, subagent lifecycle, compaction, context, commands, announcements |
+| `AgentEvents` | 36 | Skills, tools, audit, observability, model selection, security, graphs, cache, SEP |
+| `ChannelEvents` | 43 | Channel lifecycle, queuing, streaming, typing, auto-reply, policies, delivery, steer |
+| `InfraEvents` | 46 | Approvals, config, plugins, hooks, auth, diagnostics, media, scheduler, system, MCP, notifications, background tasks |
+
+## Most Commonly Used Events
+
+A quick reference for the events developers are most likely to need when building plugins or adapters:
+
+| Event | Subsystem | When It Fires | Typical Use |
+|-------|-----------|---------------|-------------|
+| `message:received` | Messaging | Incoming message from any channel | Logging, analytics |
+| `message:sent` | Messaging | Agent sends a response | Delivery tracking |
+| `tool:executed` | Agent | After a tool completes | Audit logging, metrics |
+| `session:created` | Messaging | New conversation session begins | Session setup hooks |
+| `session:expired` | Messaging | Conversation session ends | Cleanup, analytics |
+| `channel:registered` | Channel | Channel adapter registered | Health monitoring |
+| `queue:enqueued` | Channel | Message enters command queue | Queue depth monitoring |
+| `graph:started` | Agent | Execution graph begins | Pipeline monitoring |
+| `graph:completed` | Agent | Execution graph finishes | Pipeline results |
+| `config:patched` | Infra | Runtime config modified | Config-reactive behavior |
+| `plugin:registered` | Infra | Plugin loaded | Plugin lifecycle tracking |
+| `diagnostic:message_processed` | Infra | Full message lifecycle complete | End-to-end metrics |
+
+## Complete Event Reference
+
+<AccordionGroup>
+
+<Accordion title="MessagingEvents (35 events)">
+
+Message lifecycle, session management, subagent lifecycle, compaction, context engine lifecycle, context engine metrics, response filtering, execution control, and dead-letter queue events.
+
+| Event Name | Key Payload Fields |
+|------------|-------------------|
+| `announcement:dead_lettered` | runId, channelType, reason, timestamp |
+| `announcement:dead_letter_delivered` | runId, channelType, attemptCount, timestamp |
+| `compaction:started` | agentId, sessionKey, timestamp |
+| `compaction:recommended` | agentId, sessionKey, contextPercent, contextTokens, contextWindow, timestamp |
+| `compaction:flush` | sessionKey, memoriesWritten, trigger, success, timestamp |
+| `context:masked` | agentId, sessionKey, maskedCount, totalChars, persistedToDisk, timestamp |
+| `context:compacted` | agentId, sessionKey, fallbackLevel, attempts, originalMessages, keptMessages, timestamp |
+| `context:rehydrated` | agentId, sessionKey, sectionsInjected, filesInjected, skillsInjected, overflowStripped, timestamp |
+| `context:overflow` | agentId, sessionKey, contextTokens, budgetTokens, recoveryAction, timestamp |
+| `context:evicted` | agentId, sessionKey, evictedCount, evictedChars, categories, timestamp |
+| `context:reread` | agentId, sessionKey, rereadCount, rereadTools, timestamp |
+| `context:pipeline` | agentId, sessionKey, tokensLoaded, tokensEvicted, tokensMasked, tokensCompacted, thinkingBlocksRemoved, budgetUtilization, evictionCategories, rereadCount, rereadTools, sessionDepth, sessionToolResults, cacheHitTokens, cacheWriteTokens, cacheMissTokens, cacheFenceIndex, durationMs, layerCount, layers, timestamp |
+| `context:pipeline:cache` | agentId, sessionKey, cacheHitTokens, cacheWriteTokens, cacheMissTokens, timestamp |
+| `context:dag_compacted` | conversationId, agentId, sessionKey, leafSummariesCreated, condensedSummariesCreated, maxDepthReached, totalSummariesCreated, durationMs, timestamp |
+| `context:integrity` | conversationId, agentId, sessionKey, issueCount, repairsApplied, errorsLogged, issueTypes, durationMs, timestamp |
+| `execution:aborted` | sessionKey, reason, agentId, timestamp |
+| `execution:output_escalated` | agentId, sessionKey, originalMaxTokens, escalatedMaxTokens, timestamp |
+| `execution:prompt_timeout` | agentId, sessionKey, timeoutMs, timestamp |
+| `message:received` | message, sessionKey |
+| `message:sent` | channelId, messageId, content |
+| `message:streaming` | channelId, messageId, delta, accumulated |
+| `response:filtered` | channelId, suppressedBy, timestamp |
+| `session:created` | sessionKey, timestamp |
+| `session:expired` | sessionKey, reason |
+| `session:cross_send` | fromSessionKey, toSessionKey, mode, timestamp |
+| `session:ping_pong_turn` | fromSessionKey, toSessionKey, turnNumber, totalTurns, tokensUsed, timestamp |
+| `session:sub_agent_spawned` | runId, parentSessionKey, agentId, task, timestamp |
+| `session:sub_agent_completed` | runId, agentId, success, runtimeMs, tokensUsed, cost, timestamp, cacheReadTokens, cacheWriteTokens |
+| `session:sub_agent_archived` | runId, sessionKey, ageMs, timestamp |
+| `session:sub_agent_spawn_prepared` | runId, parentSessionKey, agentId, task, depth, maxDepth, artifactCount, timestamp |
+| `session:sub_agent_spawn_queued` | runId, parentSessionKey, agentId, task, queuePosition, activeChildren, maxChildren, timestamp |
+| `session:sub_agent_spawn_rejected` | parentSessionKey, agentId, task, reason, currentDepth, maxDepth, currentChildren, maxChildren, timestamp |
+| `session:sub_agent_spawn_started` | runId, parentSessionKey, agentId, task, depth, timestamp |
+| `session:sub_agent_result_condensed` | runId, agentId, level, originalTokens, condensedTokens, compressionRatio, taskComplete, diskPath, timestamp |
+| `session:sub_agent_lifecycle_ended` | runId, agentId, parentSessionKey, endReason, durationMs, tokensUsed, cost, condensationLevel, timestamp |
+
+The `context:*` events provide per-turn observability into context engine decisions:
+- **`context:evicted`** fires when the dead content evictor removes superseded tool results (pipeline mode).
+- **`context:reread`** fires when the re-read detector identifies duplicate tool calls in the session (pipeline mode).
+- **`context:pipeline`** fires after every pipeline run with a full metrics snapshot (pipeline mode). This is always emitted, even when no optimization was needed.
+- **`context:pipeline:cache`** fires post-LLM to patch cache-specific metrics (cache hit/write/miss tokens) once the API response is available.
+- **`context:dag_compacted`** fires after a DAG compaction pass creates new summaries (DAG mode).
+- **`context:integrity`** fires when the DAG integrity checker detects and repairs structural issues (DAG mode).
+
+See [Compaction](/agents/compaction) for details on what triggers each event.
+
+</Accordion>
+
+<Accordion title="AgentEvents (36 events)">
+
+Skill lifecycle, tool execution, audit logging, observability (tokens and latency), cache break detection, model failover, security, execution graph, provider health, SEP (step-execution planning), and exec command blocking events.
+
+| Event Name | Key Payload Fields |
+|------------|-------------------|
+| `audit:event` | timestamp, agentId, tenantId, actionType, classification, outcome, metadata |
+| `cache:graph_prefix_written` | graphId, nodeId, cacheWriteTokens, timestamp |
+| `command:blocked` | agentId, commandPrefix, reason, blocker, timestamp |
+| `graph:started` | graphId, label, nodeCount, timestamp |
+| `graph:node_updated` | graphId, nodeId, status, previousStatus, durationMs, error, timestamp |
+| `graph:completed` | graphId, status, durationMs, nodeCount, nodesCompleted, nodesFailed, nodesSkipped, cancelReason, timestamp, graphCacheReadTokens, graphCacheWriteTokens, graphCacheEffectiveness, nodeEffectiveness |
+| `graph:driver_lifecycle` | graphId, nodeId, typeId, phase |
+| `memory:review_completed` | agentId, sessionsReviewed, memoriesExtracted, duplicatesSkipped, durationMs, timestamp |
+| `model:auth_cooldown` | keyName, provider, cooldownMs, failureCount, timestamp |
+| `model:catalog_loaded` | providerCount, modelCount, timestamp |
+| `model:fallback_attempt` | fromProvider, fromModel, toProvider, toModel, error, attemptNumber, timestamp |
+| `model:fallback_exhausted` | provider, model, totalAttempts, timestamp |
+| `observability:cache_break` | provider, reason, tokenDrop, tokenDropRelative, previousCacheRead, currentCacheRead, callCount, changes, toolsChanged, ttlCategory, agentId, sessionKey, timestamp, toolsAdded, toolsRemoved, toolsSchemaChanged, systemCharDelta, model, effortValue |
+| `observability:latency` | operation, durationMs, timestamp, metadata |
+| `observability:token_usage` | timestamp, traceId, agentId, channelId, executionId, provider, model, tokens, cost, latencyMs, cacheReadTokens, cacheWriteTokens, sessionKey, savedVsUncached, cacheEligible, responseId, cacheCreation |
+| `provider:degraded` | provider, failingAgents, timestamp |
+| `provider:recovered` | provider, timestamp |
+| `security:injection_detected` | timestamp, source, patterns, riskLevel, agentId, sessionKey, traceId |
+| `security:injection_rate_exceeded` | timestamp, sessionKey, count, threshold, action |
+| `security:memory_tainted` | timestamp, agentId, originalTrustLevel, adjustedTrustLevel, patterns, blocked |
+| `sender:trust_resolved` | agentId, senderId, trustLevel, displayMode, sessionKey, timestamp |
+| `sep:plan_extracted` | agentId, sessionKey, stepCount, timestamp |
+| `sep:plan_completed` | agentId, sessionKey, stepsPlanned, stepsCompleted, stepsSkipped, nudgeTriggered, durationMs, timestamp |
+| `skill:created` | skillName, scope, agentId, timestamp |
+| `skill:executed` | skillName, durationMs, success, timestamp |
+| `skill:failed` | skillName, error, phase, agentId, timestamp |
+| `skill:loaded` | skillName, source, timestamp |
+| `skill:prompt_invoked` | skillName, invokedBy, args, timestamp |
+| `skill:prompt_loaded` | skillName, source, bodyLength, timestamp |
+| `skill:registry_reset` | clearedMetadata, clearedPromptCache, timestamp |
+| `skill:rejected` | skillName, reason, violations, timestamp |
+| `skill:updated` | skillName, scope, agentId, timestamp |
+| `skills:reloaded` | agentId, skillCount, timestamp |
+| `tool:executed` | toolName, durationMs, success, timestamp, userId, traceId, agentId, sessionKey, params, errorMessage, errorKind, description, truncated, fullChars, returnedChars |
+| `tool:policy_filtered` | profile, agentId, filtered, timestamp |
+| `tool:started` | toolName, toolCallId, timestamp, agentId, sessionKey, traceId, description |
+
+The `graph:driver_lifecycle` event fires at each phase transition during typed node execution. The `phase` field indicates which stage the driver has reached:
+
+| Phase | When It Fires | Description |
+|-------|---------------|-------------|
+| `initialized` | After the coordinator calls `initialize()` on the driver and receives the first action | The driver has started execution and returned its initial action (typically `spawn` or `spawn_all`) |
+| `progress` | When the driver returns a `progress` action | The driver is reporting intermediate status (e.g., "Round 2 of 3 complete"). Used for observability and UI updates |
+| `completed` | When the driver returns a `complete` action with final output | The node transitions to the `completed` state. Output is stored and dependent nodes become eligible for scheduling |
+| `partial_complete` | When the driver returns a `partial_complete` action | Partial results available (e.g., some sub-tasks succeeded, others failed) |
+| `failed` | When the driver returns a `fail` action, or when an unhandled error occurs during driver execution | The node transitions to the `failed` state. Dependent nodes may be skipped depending on the graph's `onFailure` strategy |
+| `aborted` | When the coordinator calls `onAbort()` due to timeout, cancellation, or graph shutdown | The node transitions to the `failed` state with an abort reason. Resources are cleaned up |
+
+Subscribe to this event for driver-level monitoring, logging, or triggering downstream actions based on typed node progress. See the [Pipelines: Driver Lifecycle](/developer-guide/pipelines#driver-lifecycle) documentation for the full execution flow.
+
+**Cache cost fields** (added in v58.0): The `observability:token_usage` event includes prompt caching data when the provider supports it. `cost.cacheRead` and `cost.cacheWrite` are dollar costs for cached token reads/writes. `savedVsUncached` is the net savings compared to uncached pricing (positive = money saved). `cacheEligible` indicates whether the model supports prompt caching. `sessionKey` identifies the conversation session for per-session cost aggregation.
+
+</Accordion>
+
+<Accordion title="ChannelEvents (43 events)">
+
+Channel registration, command queuing, streaming delivery, typing indicators, auto-reply, send policies, debounce, group history, follow-up chains, priority lanes, elevated routing, retry engine, ack reactions, steer lifecycle, block coalescing, unified delivery pipeline, delivery queue, channel health monitoring, delivery hooks, and sub-agent proxy typing events.
+
+| Event Name | Key Payload Fields |
+|------------|-------------------|
+| `ack:reaction_sent` | channelId, channelType, messageId, emoji, timestamp |
+| `autoreply:activated` | channelId, senderId, activationMode, reason, timestamp |
+| `autoreply:suppressed` | channelId, senderId, reason, injectedAsHistory, timestamp |
+| `channel:deregistered` | channelType, pluginId, timestamp |
+| `channel:health_changed` | channelType, previousState, currentState, connectionMode, error, lastMessageAt, timestamp |
+| `channel:health_check` | channelType, state, responseTimeMs, timestamp |
+| `channel:registered` | channelType, pluginId, capabilities, timestamp |
+| `coalesce:flushed` | channelId, chatId, blockCount, charCount, trigger, timestamp |
+| `debounce:buffered` | sessionKey, channelType, bufferedCount, windowMs, timestamp |
+| `debounce:flushed` | sessionKey, channelType, messageCount, trigger, timestamp |
+| `delivery:aborted` | channelId, channelType, reason, chunksDelivered, totalChunks, durationMs, origin, timestamp |
+| `delivery:acked` | entryId, channelId, channelType, messageId, durationMs, timestamp |
+| `delivery:chunk_sent` | channelId, channelType, chunkIndex, totalChunks, charCount, ok, retried, timestamp |
+| `delivery:complete` | channelId, channelType, totalChunks, deliveredChunks, failedChunks, totalChars, durationMs, origin, strategy, timestamp |
+| `delivery:enqueued` | entryId, channelId, channelType, origin, timestamp |
+| `delivery:failed` | entryId, channelId, channelType, error, reason, timestamp |
+| `delivery:hook_cancelled` | channelId, channelType, reason, origin, timestamp |
+| `delivery:nacked` | entryId, channelId, channelType, error, attemptCount, nextRetryAt, timestamp |
+| `delivery:queue_drained` | entriesAttempted, entriesDelivered, entriesFailed, durationMs, timestamp |
+| `elevated:model_routed` | sessionKey, senderTrustLevel, modelRoute, agentId, timestamp |
+| `followup:depth_exceeded` | sessionKey, chainId, maxDepth, timestamp |
+| `followup:enqueued` | sessionKey, channelType, reason, chainId, chainDepth, timestamp |
+| `grouphistory:injected` | sessionKey, channelType, messageCount, charCount, timestamp |
+| `priority:aged_promotion` | sessionKey, fromLane, toLane, waitTimeMs, timestamp |
+| `priority:lane_assigned` | sessionKey, channelType, lane, reason, timestamp |
+| `queue:coalesced` | sessionKey, channelType, messageCount, timestamp |
+| `queue:dequeued` | sessionKey, channelType, waitTimeMs, timestamp |
+| `queue:enqueued` | sessionKey, channelType, queueDepth, mode, timestamp |
+| `queue:overflow` | sessionKey, channelType, policy, droppedCount, timestamp |
+| `retry:attempted` | channelId, chatId, attempt, maxAttempts, delayMs, error, timestamp |
+| `retry:exhausted` | channelId, chatId, totalAttempts, finalError, timestamp |
+| `retry:markdown_fallback` | channelId, chatId, originalParseMode, timestamp |
+| `sendpolicy:allowed` | channelId, channelType, chatType, reason, timestamp |
+| `sendpolicy:denied` | channelId, channelType, chatType, reason, timestamp |
+| `sendpolicy:override_changed` | sessionKey, override, changedBy, timestamp |
+| `steer:followup_queued` | sessionKey, channelType, agentId, reason, timestamp |
+| `steer:injected` | sessionKey, channelType, agentId, timestamp |
+| `steer:rejected` | sessionKey, channelType, agentId, reason, timestamp |
+| `streaming:block_sent` | channelId, chatId, blockIndex, totalBlocks, charCount, timestamp |
+| `typing:proxy_start` | runId, channelType, channelId, parentSessionKey, agentId, threadId, timestamp |
+| `typing:proxy_stop` | runId, channelType, channelId, reason, durationMs, timestamp |
+| `typing:started` | channelId, chatId, mode, timestamp |
+| `typing:stopped` | channelId, chatId, durationMs, timestamp |
+
+</Accordion>
+
+<Accordion title="InfraEvents (46 events)">
+
+Approval gates, config patches, plugin lifecycle, hook execution, auth token rotation, diagnostics, media file extraction, scheduler (cron, heartbeat, tasks), process metrics, observability admin, agent hot-add/remove, MCP server connection lifecycle, notifications, background task lifecycle, system lifecycle, secret management, security warnings, and lifecycle reaction events.
+
+| Event Name | Key Payload Fields |
+|------------|-------------------|
+| `agent:hot_added` | agentId, timestamp |
+| `agent:hot_removed` | agentId, timestamp |
+| `approval:requested` | requestId, toolName, action, params, agentId, sessionKey, trustLevel, createdAt, timeoutMs, channelType |
+| `approval:resolved` | requestId, approved, approvedBy, reason, resolvedAt |
+| `auth:token_rotated` | provider, profileName, expiresAtMs, timestamp |
+| `background_task:cancelled` | agentId, taskId, toolName, timestamp |
+| `background_task:completed` | agentId, taskId, toolName, durationMs, timestamp |
+| `background_task:failed` | agentId, taskId, toolName, error, durationMs, timestamp |
+| `background_task:promoted` | agentId, taskId, toolName, timestamp |
+| `config:patched` | section, key, patchedBy, timestamp |
+| `diagnostic:billing_snapshot` | providers, totalCost, timestamp |
+| `diagnostic:channel_health` | channels, timestamp |
+| `diagnostic:message_processed` | messageId, channelId, channelType, agentId, sessionKey, receivedAt, executionDurationMs, deliveryDurationMs, totalDurationMs, tokensUsed, cost, success, finishReason, timestamp |
+| `diagnostic:webhook_delivered` | webhookId, source, event, statusCode, success, durationMs, error, timestamp |
+| `hook:executed` | hookName, pluginId, durationMs, success, error, timestamp |
+| `mcp:server:disconnected` | serverName, reason, timestamp |
+| `mcp:server:reconnect_failed` | serverName, attempts, lastError, timestamp |
+| `mcp:server:reconnected` | serverName, attempt, toolCount, durationMs, timestamp |
+| `mcp:server:reconnecting` | serverName, attempt, maxAttempts, nextDelayMs, timestamp |
+| `mcp:server:tools_changed` | serverName, previousToolCount, currentToolCount, addedTools, removedTools, timestamp |
+| `media:file_extracted` | fileName, mimeType, chars, truncated, durationMs, timestamp |
+| `media:file_persisted` | relativePath, mimeType, sizeBytes, mediaKind, agentId, timestamp |
+| `notification:delivered` | agentId, channelType, channelId, messageId, durationMs, timestamp |
+| `notification:enqueued` | agentId, priority, channelType, channelId, origin, timestamp |
+| `notification:suppressed` | agentId, reason, priority, timestamp |
+| `observability:metrics` | rssBytes, heapUsedBytes, heapTotalBytes, externalBytes, eventLoopDelayMs, activeHandles, uptimeSeconds, timestamp |
+| `observability:reset` | admin, table, rowsDeleted, timestamp |
+| `plugin:deactivated` | pluginId, reason, timestamp |
+| `plugin:registered` | pluginId, pluginName, hookCount, timestamp |
+| `reaction:cleanup` | messageId, channelType, channelId, chatId, removedEmoji, timestamp |
+| `reaction:phase_changed` | messageId, channelType, channelId, chatId, phase, emoji, previousPhase, timestamp |
+| `reaction:stall_detected` | messageId, channelType, channelId, chatId, phase, severity, stallMs, timestamp |
+| `reaction:terminal` | messageId, channelType, channelId, chatId, phase, emoji, timestamp |
+| `scheduler:heartbeat_alert` | agentId, consecutiveErrors, classification, reason, backoffMs, timestamp |
+| `scheduler:heartbeat_check` | checksRun, alertsRaised, timestamp |
+| `scheduler:heartbeat_delivered` | agentId, channelType, channelId, chatId, level, outcome, reason, durationMs, timestamp |
+| `scheduler:job_completed` | jobId, jobName, agentId, durationMs, success, error, timestamp |
+| `scheduler:job_result` | jobId, jobName, agentId, result, success, deliveryTarget, timestamp, payloadKind, sessionStrategy, maxHistoryTurns, cronJobModel, onComplete |
+| `scheduler:job_started` | jobId, jobName, agentId, timestamp |
+| `scheduler:job_suspended` | jobId, jobName, agentId, consecutiveErrors, lastError, timestamp, deliveryTarget |
+| `scheduler:task_extracted` | taskId, title, priority, confidence, sessionKey, timestamp |
+| `secret:accessed` | secretName, agentId, outcome, timestamp |
+| `secret:modified` | secretName, action, timestamp |
+| `security:warn` | category, agentId, message, timestamp |
+| `system:error` | error, source |
+| `system:shutdown` | reason, graceful |
+
+</Accordion>
+
+</AccordionGroup>
+
+<Tip>
+All event payloads are TypeScript interfaces. Import `EventMap` from `@comis/core` and use your IDE's type inference to explore the exact payload shape for any event.
+</Tip>
+
+## Subscribing to Events
+
+Plugins subscribe to events via lifecycle hooks, not directly on the event bus. The hook system provides priority ordering and result merging.
+
+```typescript
+import type { PluginPort, PluginRegistryApi } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
+
+const metricsPlugin: PluginPort = {
+  id: "metrics-collector",
+  name: "Metrics Collector",
+  register(registry: PluginRegistryApi): Result<void, Error> {
+    // Count tool calls (void hook -- fire and forget)
+    registry.registerHook("after_tool_call", (event) => {
+      metrics.increment("tool_calls", { tool: event.toolName });
+    });
+    return ok(undefined);
+  },
+};
+```
+
+<Info>
+Plugins subscribe to events via lifecycle hooks (see [Plugins](/developer-guide/plugins)), not directly on the event bus. The hook system provides priority ordering and result merging. Direct `eventBus.on()` is available for internal subsystem wiring in the composition root.
+</Info>
+
+## Related
+
+<CardGroup cols={2}>
+
+<Card title="Architecture" icon="hexagon" href="/developer-guide/architecture">
+  TypedEventBus in the hexagonal architecture
+</Card>
+
+<Card title="Plugins" icon="puzzle-piece" href="/developer-guide/plugins">
+  Hook into events via the plugin system
+</Card>
+
+<Card title="Custom Adapters" icon="plug" href="/developer-guide/custom-adapters">
+  Adapters emit channel events
+</Card>
+
+<Card title="Packages" icon="cubes" href="/developer-guide/packages">
+  Which package owns which events
+</Card>
+
+</CardGroup>

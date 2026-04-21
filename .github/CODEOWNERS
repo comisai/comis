@@ -1,0 +1,6 @@
+# Default — all PRs require maintainer review
+* @comisai/maintainers
+
+# Security-critical paths
+packages/core/src/security/ @comisai/maintainers
+packages/gateway/ @comisai/maintainers

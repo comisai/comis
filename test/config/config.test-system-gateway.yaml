@@ -1,0 +1,81 @@
+# Comis Test Configuration — System Gateway Validation Tests
+#
+# Covers auth edge cases, REST API data endpoints, chat validation,
+# error handling, and OpenAI edge cases. No LLM API key required.
+#
+# Uses port 8530 to avoid conflicts with other test suites.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "TestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8530
+  corsOrigins:
+    - "*"
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-integration-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-system-gateway.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

@@ -1,0 +1,342 @@
+---
+title: "Hardening"
+description: "A step-by-step checklist to maximize the security of your Comis installation"
+icon: "lock"
+---
+
+Comis is secure by default -- audit logging, input scanning, output guarding, and many other protections are active from the moment you start the daemon. But you can make your installation even stronger by following this hardening checklist. Each item below addresses a specific security concern, ordered by priority so you tackle the most important changes first.
+
+## Quick Check: Run the Security Audit
+
+Before working through the checklist manually, run the built-in security audit to see where your installation stands:
+
+```bash
+comis doctor
+```
+
+This command checks 5 security categories and reports findings with severity levels (critical, warning, info) and specific remediation advice. Each finding tells you exactly what to fix and how. Run it again after making changes to verify your progress.
+
+<Tip>
+The security audit can automatically fix some findings. Follow the suggested remediation commands in the output.
+</Tip>
+
+## Hardening Checklist
+
+### Critical (Do First)
+
+These items address the most significant security risks. Complete them before exposing your installation to any network.
+
+<Steps>
+  <Step title="Set file permissions">
+    Your config file contains sensitive settings and your data directory holds databases and secrets. Restrict access so only your user account can read them:
+
+    ```bash
+    chmod 600 ~/.comis/config.yaml      # Only owner can read/write
+    chmod 700 ~/.comis/                  # Only owner can access directory
+    ```
+
+    **Why:** Prevents other users on the system from reading your configuration or data files. On a shared server, this is essential.
+
+    **Verify:** `ls -la ~/.comis/config.yaml` shows `-rw-------`.
+  </Step>
+
+  <Step title="Remove plaintext secrets from config">
+    If your config.yaml contains raw API keys, migrate them to environment variables or the encrypted store:
+
+    ```yaml
+    # Bad: plaintext secret in config
+    providers:
+      openai:
+        apiKey: sk-abc123...
+
+    # Good: reference an environment variable
+    providers:
+      openai:
+        apiKey: ${OPENAI_API_KEY}
+    ```
+
+    Or better yet: set up the [encrypted secrets store](/security/secrets) for production-grade secret management.
+
+    **Why:** Config files may be backed up, shared, or accidentally committed to version control. Plaintext secrets in config are the most common security mistake.
+
+    **Verify:** `comis doctor` reports no "plaintext secret" findings.
+  </Step>
+
+  <Step title="Configure gateway authentication">
+    If you expose the HTTP gateway (for the web dashboard, JSON-RPC, or WebSocket), always require authentication tokens:
+
+    ```yaml title="~/.comis/config.yaml"
+    gateway:
+      tokens:
+        - "your-strong-random-token-here"
+    ```
+
+    Generate a strong token:
+
+    ```bash
+    openssl rand -hex 32
+    ```
+
+    **Why:** Without authentication, anyone who can reach the gateway can control your agents, read your data, and modify your configuration.
+
+    **Verify:** `curl http://localhost:4766/health` returns 200, but `curl http://localhost:4766/api/agents` returns 401.
+  </Step>
+
+  <Step title="Bind to localhost or enable TLS">
+    If the gateway is only for local use (web dashboard on the same machine), bind to localhost:
+
+    ```yaml title="~/.comis/config.yaml"
+    gateway:
+      host: "127.0.0.1"
+      port: 4766
+    ```
+
+    If you need remote access, enable TLS to encrypt traffic:
+
+    ```yaml title="~/.comis/config.yaml"
+    gateway:
+      tls:
+        certPath: "/path/to/cert.pem"
+        keyPath: "/path/to/key.pem"
+        caPath: "/path/to/ca.pem"
+    ```
+
+    **Why:** Without TLS, traffic (including auth tokens) is sent in plain text over the network. Anyone on the same network can intercept it.
+
+    **Verify:** `comis doctor` reports no "gateway exposure" findings.
+  </Step>
+</Steps>
+
+### Important (Do Next)
+
+These items strengthen your security posture significantly. They are important for any production deployment.
+
+<Steps>
+  <Step title="Enable the encrypted secrets store">
+    Migrate from .env files to the encrypted store for production:
+
+    ```yaml title="~/.comis/config.yaml"
+    security:
+      secrets:
+        enabled: true
+    ```
+
+    The encrypted store uses AES-256-GCM encryption at rest, protecting your secrets even if someone gains access to the data directory.
+
+    See [Secrets](/security/secrets) for the step-by-step setup procedure, including master key generation and importing existing secrets.
+
+    **Why:** .env files store secrets in plain text. The encrypted store ensures secrets cannot be read without the master key.
+  </Step>
+
+  <Step title="Configure per-agent secret access">
+    Restrict each agent to only the secrets it needs using glob patterns:
+
+    ```yaml title="~/.comis/config.yaml"
+    agents:
+      customer-support:
+        secrets:
+          allow:
+            - "openai_*"
+      code-assistant:
+        secrets:
+          allow:
+            - "ANTHROPIC_API_KEY"
+            - "GITHUB_TOKEN"
+    ```
+
+    See [Secrets: Per-Agent Access](/security/secrets) for details.
+
+    **Why:** Follows the principle of least privilege. If an agent is compromised, it can only access the secrets it was explicitly granted -- not every secret in the store.
+  </Step>
+
+  <Step title="Enable the approval workflow">
+    Require human approval for destructive agent actions:
+
+    ```yaml title="~/.comis/config.yaml"
+    approvals:
+      enabled: true
+      defaultMode: auto
+    ```
+
+    This pauses execution when an agent attempts a destructive action (like deleting a file) and waits for your approval before proceeding. If you do not respond within the timeout, the action is automatically denied.
+
+    See [Approvals](/security/approvals) for the full configuration including custom rules and timeout settings.
+
+    **Why:** Prevents agents from taking irreversible actions without your knowledge. This is especially important for agents with broad tool access.
+  </Step>
+
+  <Step title="Review tool policy profiles">
+    Switch agents from the default `full` profile to a more restrictive one:
+
+    ```yaml title="~/.comis/config.yaml"
+    agents:
+      customer-support:
+        skills:
+          toolPolicy:
+            profile: messaging    # Only communication tools
+      code-assistant:
+        skills:
+          toolPolicy:
+            profile: coding       # Only development tools
+    ```
+
+    See [Tool Policy](/skills/tool-policy) for all profiles and custom rules.
+
+    **Why:** Limits the blast radius if an agent is compromised. A messaging agent does not need file system access, and a coding agent does not need fleet management tools.
+  </Step>
+
+  <Step title="Verify audit logging is enabled">
+    Confirm that audit logging is active (it should be by default):
+
+    ```yaml title="~/.comis/config.yaml"
+    security:
+      auditLog: true
+    ```
+
+    **Why:** Audit logs are essential for detecting and investigating security incidents. Without them, you have no visibility into what your agents have done.
+
+    **Verify:** Check the [Security dashboard](/web-dashboard/security-view) Audit Log tab for recent events.
+  </Step>
+</Steps>
+
+### Advanced
+
+These items provide additional hardening for environments with strict security requirements.
+
+<Steps>
+  <Step title="Verify exec sandbox is active">
+    The exec sandbox wraps shell commands in an OS-level namespace so agents
+    cannot access files outside their workspace. On Linux, this requires
+    bubblewrap:
+
+    ```bash
+    # Check if bubblewrap is installed
+    which bwrap
+
+    # Install if missing (Debian/Ubuntu)
+    sudo apt install bubblewrap
+    ```
+
+    On macOS, `sandbox-exec` is built in -- no installation needed.
+
+    Verify your config does not disable the sandbox:
+
+    ```yaml title="~/.comis/config.yaml"
+    agents:
+      my-agent:
+        skills:
+          execSandbox:
+            enabled: "always"   # default -- do not set to "never"
+    ```
+
+    **Why:** Without the exec sandbox, agents can bypass file tool path
+    restrictions by using `exec cat` instead of the `read` tool. The
+    sandbox prevents this at the kernel level.
+
+    **Verify:** Check logs for `"Exec sandbox provider: bwrap"` (Linux) or
+    `"Exec sandbox provider: sandbox-exec"` (macOS) at daemon startup.
+  </Step>
+
+  <Step title="Configure Node.js permission model">
+    For maximum process isolation, enable the Node.js permission model to restrict what the Comis process itself can access:
+
+    ```yaml title="~/.comis/config.yaml"
+    security:
+      permission:
+        enableNodePermissions: true
+        allowedFsPaths:
+          - "~/.comis/"
+        allowedNetHosts:
+          - "api.openai.com"
+          - "api.anthropic.com"
+    ```
+
+    **Why:** Restricts the Node.js process itself to only the file paths and network hosts you specify. Even if an attacker achieves code execution, they cannot access files or hosts outside the allowed list.
+
+    <Warning>
+    This is a restrictive setting. Test thoroughly before enabling in production -- some features may need additional paths or hosts. The default is `security.permission.enableNodePermissions: false`.
+    </Warning>
+  </Step>
+
+  <Step title="Set up CORS restrictions">
+    If the web dashboard is accessed from a specific domain, restrict CORS to prevent unauthorized web pages from making API requests:
+
+    ```yaml title="~/.comis/config.yaml"
+    gateway:
+      corsOrigins:
+        - "https://your-domain.com"
+    ```
+
+    **Why:** Without CORS restrictions, any web page open in a user's browser could potentially make API requests to your gateway if the user is on the same network.
+  </Step>
+
+  <Step title="Review plugin hook registrations">
+    If you use custom plugins, review which hooks they register. Each hook point has security implications -- a plugin registered on the `beforeToolCall` hook can intercept and modify tool invocations, while a plugin on `beforeResponse` can alter agent output.
+
+    **Why:** Malicious or poorly written plugins can intercept and modify messages, tool calls, or agent behavior. Only install plugins from trusted sources.
+
+    **Verify:** Review your plugin configuration and the hooks each plugin uses.
+  </Step>
+
+  <Step title="Configure browser sandboxing">
+    If agents use browser tools, ensure sandboxing is properly configured. Browser tools provide powerful web access capabilities, which also means they are a potential vector for data exfiltration or accessing internal services.
+
+    **Why:** Browser tools can access the web, which creates opportunities for both SSRF attacks and data exfiltration. Proper sandboxing ensures browser actions are constrained.
+
+    **Verify:** Check your `comis doctor` output for specific browser security recommendations.
+  </Step>
+
+  <Step title="Review SSRF attack surface">
+    Review which agents have access to web-fetching tools. SSRF protection is always active -- Comis blocks requests to private IPs, loopback addresses, and cloud metadata endpoints -- but reducing the number of agents with web access reduces your overall attack surface.
+
+    ```yaml title="~/.comis/config.yaml"
+    agents:
+      customer-support:
+        skills:
+          toolPolicy:
+            deny:
+              - "web_fetch"
+              - "browser_*"
+    ```
+
+    **Why:** Fewer agents with web access means fewer potential SSRF vectors. Even with built-in SSRF protection, defense in depth means reducing unnecessary exposure.
+  </Step>
+</Steps>
+
+## Verification
+
+After completing the checklist, run the security audit again to confirm your changes:
+
+```bash
+comis doctor
+```
+
+A fully hardened installation should show no critical or warning findings. Info-level findings are informational and typically do not require action.
+
+Review the output carefully. Each finding includes:
+
+- **Severity** -- Critical, warning, or info
+- **Description** -- What was found
+- **Remediation** -- Specific steps to fix the finding
+- **Category** -- Which security area the finding relates to
+
+<Info>
+Security hardening is not a one-time task. Re-run `comis doctor` periodically, especially after configuration changes or upgrades. New versions may introduce additional security checks.
+</Info>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
+    All 18+ security layers explained
+  </Card>
+  <Card title="Secrets" icon="key" href="/security/secrets">
+    Set up the encrypted secrets store
+  </Card>
+  <Card title="Approvals" icon="clipboard-check" href="/security/approvals">
+    Configure human-in-the-loop approval
+  </Card>
+  <Card title="Security Model Reference" icon="file-code" href="/reference/security-model">
+    Technical security reference
+  </Card>
+</CardGroup>

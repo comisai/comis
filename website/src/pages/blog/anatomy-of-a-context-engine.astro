@@ -1,0 +1,373 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+import Base from "../../layouts/Base.astro";
+import Footer from "../../components/Footer.astro";
+
+const title = "Anatomy of a Context Engine: 8 Layers That Keep AI Agents Affordable";
+const description = "How Comis processes every conversation through an 8-layer pipeline that strips thinking traces, strips inline reasoning tags, evicts dead content, masks old observations, and compresses entire conversations - keeping costs predictable at any scale.";
+const publishDate = "April 9, 2026";
+---
+
+<Base title={title} description={description}>
+  <main>
+    <!-- Hero -->
+    <section class="relative overflow-hidden px-6 pt-32 pb-8 md:pt-40 md:pb-12">
+      <div class="absolute inset-0 pointer-events-none">
+        <div class="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-teal/5 rounded-full blur-[150px]"></div>
+      </div>
+
+      <div class="relative max-w-3xl mx-auto">
+        <a href="/blog" class="inline-flex items-center gap-1 text-sm text-muted hover:text-teal transition-colors mb-8">
+          &larr; All Posts
+        </a>
+        <div class="flex items-center gap-3 text-sm text-muted mb-6">
+          <span>By <span class="text-white">Moshe Anconina</span></span>
+          <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+          <span>{publishDate}</span>
+          <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+          <span>15 min read</span>
+          <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+          <span class="text-teal">Engineering</span>
+        </div>
+        <h1 class="text-3xl md:text-5xl font-extrabold tracking-tight leading-[1.15] text-white mb-6">
+          Anatomy of a context engine: <span class="text-teal">8 layers</span> that keep AI agents affordable
+        </h1>
+        <p class="text-lg md:text-xl text-muted leading-relaxed">
+          A single conversation with an AI agent can accumulate 200K+ tokens. Tool results, file reads, web fetches, thinking traces - they pile up fast. Without management, your 30-turn session costs $15. I built an 8-layer pipeline that keeps it under $2. Here's how each layer works and why it exists.
+        </p>
+      </div>
+    </section>
+
+    <!-- Hero image -->
+    <section class="px-6 pb-12">
+      <div class="max-w-4xl mx-auto">
+        <img src="/images/blog-context-hero.jpg" alt="8-layer context engine pipeline processing data" class="w-full rounded-2xl border border-white/5" loading="eager" />
+      </div>
+    </section>
+
+    <!-- Article body -->
+    <article class="px-6 pb-24">
+      <div class="max-w-3xl mx-auto">
+
+        <!-- The Problem -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The token explosion problem</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Let me paint the picture. You're running an AI agent on Telegram. A user asks it to analyze a codebase. The agent reads 5 files (8K tokens each), runs a few commands (2K each), thinks deeply about the architecture (4K thinking trace per turn), and has a 20-turn conversation building up context.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            By turn 20, you're sending <strong class="text-coral">180,000 tokens</strong> to the API. On Claude Opus, that's <strong class="text-coral">$0.90 per message</strong> just for input. And it keeps growing. Turn 30 might hit 250K tokens. Turn 40 approaches the context window limit.
+          </p>
+
+          <div class="bg-navy-light/80 border border-coral/15 rounded-xl p-6 my-8">
+            <p class="text-white font-semibold mb-3">The naive approach costs spiral:</p>
+            <div class="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <p class="text-2xl font-bold text-coral font-mono">Turn 10</p>
+                <p class="text-muted text-sm">~80K tokens</p>
+                <p class="text-coral text-sm font-mono">$0.40/msg</p>
+              </div>
+              <div>
+                <p class="text-2xl font-bold text-coral font-mono">Turn 20</p>
+                <p class="text-muted text-sm">~180K tokens</p>
+                <p class="text-coral text-sm font-mono">$0.90/msg</p>
+              </div>
+              <div>
+                <p class="text-2xl font-bold text-coral font-mono">Turn 30</p>
+                <p class="text-muted text-sm">~250K tokens</p>
+                <p class="text-coral text-sm font-mono">$1.25/msg</p>
+              </div>
+            </div>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The insight that started the context engine: <strong class="text-white">most of those tokens are waste</strong>. Old thinking traces the model no longer needs. File reads that were superseded by newer reads of the same file. Tool results from 15 turns ago that are completely irrelevant. The model is paying to re-read garbage.
+          </p>
+        </div>
+
+        <!-- The 8 Layers -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The pipeline: layer by layer</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-8">
+            Every conversation in Comis passes through this pipeline before each LLM call. The layers run in order, each targeting a specific source of token waste. Every layer has a circuit breaker - 3 consecutive failures disables it. No optimization can crash the system.
+          </p>
+
+          <!-- Layer 1 -->
+          <div class="relative pl-8 border-l-2 border-teal/20 pb-12">
+            <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-teal/10 border-2 border-teal/40 flex items-center justify-center">
+              <span class="text-teal font-mono font-bold text-sm">1</span>
+            </div>
+            <h3 class="text-xl font-bold text-white mb-3">Thinking Block Cleaner</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              Claude's extended thinking produces detailed reasoning traces - internal deliberation that guided the response. These are valuable for the <em>current</em> turn but become dead weight afterward. A 4K thinking trace from turn 5 is taking up space at turn 25 with zero benefit.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              This layer strips non-redacted thinking blocks from assistant messages beyond a configurable keep window (default: 10 turns). Redacted thinking blocks (encrypted signatures the API needs for continuity) are always preserved.
+            </p>
+            <div class="bg-navy rounded-lg p-3 font-mono text-xs">
+              <span class="text-muted">Typical savings:</span> <span class="text-teal">6-9 blocks per pipeline run, ~4K tokens each</span>
+            </div>
+          </div>
+
+          <!-- Layer 2 -->
+          <div class="relative pl-8 border-l-2 border-teal/20 pb-12">
+            <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-teal/10 border-2 border-teal/40 flex items-center justify-center">
+              <span class="text-teal font-mono font-bold text-sm">2</span>
+            </div>
+            <h3 class="text-xl font-bold text-white mb-3">Reasoning Tag Stripper</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              Different LLM providers embed reasoning in different ways. Anthropic uses structured <code class="text-teal text-xs">thinking</code> blocks (handled by layer 1). But DeepSeek and others use inline tags like <code class="text-teal text-xs">&lt;think&gt;</code>, <code class="text-teal text-xs">&lt;thinking&gt;</code>, <code class="text-teal text-xs">&lt;thought&gt;</code>, and <code class="text-teal text-xs">&lt;antThinking&gt;</code> embedded directly in the response text.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              This layer strips those inline tags. It's always active regardless of the current model's capabilities, because sessions can contain messages from multiple providers - a user might switch models mid-conversation, and old DeepSeek reasoning tags would otherwise accumulate forever.
+            </p>
+            <div class="bg-navy rounded-lg p-3 font-mono text-xs">
+              <span class="text-muted">Typical savings:</span> <span class="text-teal">0-2K tokens per run (depends on provider history in session)</span>
+            </div>
+          </div>
+
+          <!-- Layer 3 -->
+          <div class="relative pl-8 border-l-2 border-teal/20 pb-12">
+            <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-teal/10 border-2 border-teal/40 flex items-center justify-center">
+              <span class="text-teal font-mono font-bold text-sm">3</span>
+            </div>
+            <h3 class="text-xl font-bold text-white mb-3">History Window</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              The simplest and most impactful layer. Caps conversation history to the last N user turns (default: 15). Everything older gets trimmed from the front.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              But it's not a dumb truncation. The window is <strong class="text-white">pair-safe</strong> - it never splits a tool-call/tool-result pair, which would confuse the model. And compaction summaries (from layer 6) are always preserved as anchors, so the model retains the gist of the trimmed conversation.
+            </p>
+            <div class="bg-navy rounded-lg p-3 font-mono text-xs">
+              <span class="text-muted">Typical savings:</span> <span class="text-teal">97-120 messages trimmed per run in long sessions</span>
+            </div>
+          </div>
+
+          <!-- Layer 4 -->
+          <div class="relative pl-8 border-l-2 border-teal/20 pb-12">
+            <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-teal/10 border-2 border-teal/40 flex items-center justify-center">
+              <span class="text-teal font-mono font-bold text-sm">4</span>
+            </div>
+            <h3 class="text-xl font-bold text-white mb-3">Dead Content Evictor</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              This is the one I'm most proud of from a pure engineering perspective. It uses <strong class="text-white">forward-index O(n) analysis</strong> to detect provably superseded tool results.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              If the agent read <code class="text-teal text-xs">package.json</code> at turn 5 and again at turn 20, the turn-5 result is provably dead - the newer read has the same or more recent content. The evictor replaces dead results with a 50-byte placeholder: <code class="text-muted text-xs">[Superseded by newer read at turn 20]</code>.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              It tracks 5 categories: file reads, exec results, web fetches, image analysis, and error tool results. Each has its own supersession rules. File reads supersede by path. Exec results supersede by command similarity. Dead error turns (tool-call that errored, never retried) are evicted entirely.
+            </p>
+            <div class="bg-navy rounded-lg p-3 font-mono text-xs">
+              <span class="text-muted">Typical savings:</span> <span class="text-teal">8K-50K tokens per run in tool-heavy sessions</span>
+            </div>
+          </div>
+
+          <!-- Layer 5 -->
+          <div class="relative pl-8 border-l-2 border-teal/20 pb-12">
+            <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-coral/10 border-2 border-coral/40 flex items-center justify-center">
+              <span class="text-coral font-mono font-bold text-sm">5</span>
+            </div>
+            <h3 class="text-xl font-bold text-white mb-3">Observation Masker</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              This is the heavy artillery. When total context exceeds 120K characters, the masker activates and replaces tool result bodies outside a keep window (default: 25 most recent) with <code class="text-muted text-xs">[masked]</code> placeholders.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              The key innovation is <strong class="text-white">hysteresis</strong>. It activates at 120K but doesn't deactivate until context drops below 100K. This prevents oscillation - without it, the masker would activate, mask content (dropping below threshold), deactivate, then re-activate on the next turn when new content pushes it back over. The oscillation would invalidate the cache on every turn.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              Protected tools (memory lookups, recent file reads) are exempt from masking. And there's a monotonic guarantee: once a tool result is masked in a session, it's <em>always</em> re-masked on subsequent turns. This prevents the cached representation from changing between turns.
+            </p>
+            <div class="bg-navy rounded-lg p-3 font-mono text-xs">
+              <span class="text-muted">Typical savings:</span> <span class="text-teal">36K+ tokens when active (context > 120K chars)</span>
+            </div>
+          </div>
+
+          <!-- Layer 6 -->
+          <div class="relative pl-8 border-l-2 border-teal/20 pb-12">
+            <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-coral/10 border-2 border-coral/40 flex items-center justify-center">
+              <span class="text-coral font-mono font-bold text-sm">6</span>
+            </div>
+            <h3 class="text-xl font-bold text-white mb-3">LLM Compaction</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              The last resort. When context exceeds 85% of the model's window despite all previous layers, compaction fires. It sends the entire conversation to a cheaper model (Haiku by default) and asks it to produce a 9-section structured summary.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              The 50+ message conversation becomes a single summary message. The model loses granular context but retains the gist. It's a brutal trade-off, but the alternative is hitting the context window limit and crashing.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed">
+              Three-tier fallback: full summarization first. If that fails (model error, timeout), try filtered summarization (only recent messages). If that fails, inject a count-only note: <code class="text-muted text-xs">"[53 messages compacted - context preserved in summary above]"</code>. The conversation continues either way.
+            </p>
+          </div>
+
+          <!-- Layer 7 -->
+          <div class="relative pl-8 border-l-2 border-teal/20 pb-12">
+            <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-teal/10 border-2 border-teal/40 flex items-center justify-center">
+              <span class="text-teal font-mono font-bold text-sm">7</span>
+            </div>
+            <h3 class="text-xl font-bold text-white mb-3">Rehydration</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              After compaction destroys most of the context, rehydration strategically re-injects what was lost. Workspace instructions (<code class="text-teal text-xs">AGENTS.md</code>, max 3K chars), recently-accessed files (max 5 files, 8K each), and a resume instruction for seamless continuation.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed">
+              The agent doesn't know compaction happened. It sees a summary of the old conversation, its workspace context, and a prompt to continue. From the user's perspective, the conversation just keeps going.
+            </p>
+          </div>
+
+          <!-- Layer 8 -->
+          <div class="relative pl-8 pb-4">
+            <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-teal/10 border-2 border-teal/40 flex items-center justify-center">
+              <span class="text-teal font-mono font-bold text-sm">8</span>
+            </div>
+            <h3 class="text-xl font-bold text-white mb-3">Objective Reinforcement</h3>
+            <p class="text-muted-light text-sm leading-relaxed mb-3">
+              For sub-agents running delegated tasks, compaction is especially dangerous - the agent might forget <em>why</em> it was spawned. This layer re-injects the original task objective after compaction so sub-agents stay on track even through context compression.
+            </p>
+            <p class="text-muted-light text-sm leading-relaxed">
+              It's the simplest layer (under 50 lines of code) but arguably the most important for multi-agent reliability.
+            </p>
+          </div>
+        </div>
+
+        <!-- The Result -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The numbers don't lie</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Here's what the pipeline produces in production. This is a real log entry from an 188-message session running an 8-agent stock analysis pipeline:
+          </p>
+
+          <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-6 my-8 font-mono text-sm overflow-x-auto">
+            <pre class="text-muted-light whitespace-pre">{`{
+  "tokensLoaded": 40112,
+  "tokensEvicted": 0,
+  "tokensMasked": 0,
+  "tokensCompacted": 0,
+  "thinkingBlocksRemoved": 0,
+  "budgetUtilization": 0.05,
+  "cacheFenceIndex": 54,
+  "sessionDepth": 188,
+  "durationMs": 1
+}`}</pre>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            188 messages. 40K tokens loaded. Budget utilization at 5%. Pipeline completed in <strong class="text-teal">1 millisecond</strong>. The thinking block cleaner removed nothing (fence protected them). The observation masker is inactive (below threshold). The cache fence at index 54 is protecting the prefix from invalidation.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            That same 188-message session without the context engine? Every message, every old tool result, every thinking trace sent to the API. Roughly 250K tokens. The context engine reduced it to 40K - an <strong class="text-teal">84% reduction</strong>.
+          </p>
+
+          <div class="bg-navy-light/80 border border-teal/20 rounded-2xl p-8 my-8">
+            <div class="grid md:grid-cols-3 gap-6 text-center">
+              <div>
+                <p class="text-4xl font-bold text-coral font-mono">250K</p>
+                <p class="text-muted text-sm mt-1">Without context engine</p>
+              </div>
+              <div>
+                <p class="text-4xl font-bold text-white font-mono">&rarr;</p>
+                <p class="text-muted text-sm mt-1">8-layer pipeline (1ms)</p>
+              </div>
+              <div>
+                <p class="text-4xl font-bold text-teal font-mono">40K</p>
+                <p class="text-muted text-sm mt-1">84% reduction</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Design Philosophy -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Design decisions that mattered</h2>
+
+          <div class="space-y-6 mb-8">
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">1. Never mutate in place</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                Every layer returns a new array. The input messages are never modified. This makes the pipeline predictable, testable, and debuggable. If a layer produces wrong output, you compare input and output - the input is pristine.
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">2. Circuit breakers on every layer</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                If the dead content evictor throws 3 consecutive errors, it disables itself. The pipeline continues with the remaining layers. No single optimization bug can take down the system. I learned this the hard way when a regex in the evictor caused a ReDoS on a pathological tool result - the circuit breaker caught it and the user never noticed.
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">3. The cache fence changes everything</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                The biggest architectural challenge was making the pipeline <em>cache-aware</em>. Layers 1, 2, 4, and 5 modify message content - which invalidates Anthropic's KV cache. The <a href="/blog/cache-optimization-journey" class="text-teal hover:text-teal-dark underline">cache fence system</a> tracks where the cached prefix ends and prevents layers from touching anything above it. This single feature improved our cache read/write ratio from 1.19x to 2.90x.
+              </p>
+            </div>
+
+            <div>
+              <h3 class="text-lg font-semibold text-white mb-2">4. Observability is not optional</h3>
+              <p class="text-muted-light text-base leading-relaxed">
+                Every pipeline run emits a structured log with tokens loaded, evicted, masked, compacted, thinking blocks removed, budget utilization, cache fence index, and duration. Events fire on the typed event bus for the web dashboard. You can watch the pipeline work in real time. When something goes wrong - and in production it always eventually does - you know exactly which layer misbehaved.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Closing -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Build it once, run it forever</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The context engine runs on every single LLM call in Comis. Parent sessions, sub-agents, cron heartbeats, graph pipeline nodes - all of them. It processes in 1-5ms. No user-facing latency. No configuration needed (though every threshold is tunable).
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            If you're building AI agents that have long conversations or use tools heavily, context management isn't a nice-to-have. It's the difference between "$15 per session" and "$2 per session". Between hitting the context window at turn 30 and running indefinitely.
+          </p>
+
+          <div class="bg-navy-light/80 border border-teal/20 rounded-xl p-6 mt-12 mb-8">
+            <p class="text-white font-semibold mb-2">Want the full technical spec?</p>
+            <p class="text-muted text-sm leading-relaxed">
+              The <a href="/context-management" class="text-teal hover:text-teal-dark underline">context management page</a> covers all 25 cost optimization mechanisms including the cache fence, progressive tool disclosure, microcompaction, and budget guards. The context engine source lives in <code class="text-teal text-xs">packages/agent/src/context-engine/</code>.
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </article>
+
+    <!-- Post navigation -->
+    <section class="px-6 py-12 border-t border-white/5">
+      <div class="max-w-3xl mx-auto flex items-center justify-between">
+        <div></div>
+        <a href="/blog" class="inline-flex items-center gap-2 text-sm text-muted hover:text-teal transition-colors">
+          All Posts &rarr;
+        </a>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          Predictable costs at any scale.
+        </h2>
+        <p class="text-muted text-lg mb-10">
+          8-layer context engine. 84% token reduction. 1ms latency. All open source.
+        </p>
+        <div class="flex flex-wrap gap-4 justify-center">
+          <a href="/context-management" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
+            Full Technical Docs
+          </a>
+          <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Base>

@@ -1,0 +1,60 @@
+{
+  "name": "@comis/channels",
+  "private": true,
+  "version": "1.0.11",
+  "author": "Moshe Anconina",
+  "license": "Apache-2.0",
+  "description": "Chat platform adapters — Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, LINE",
+  "keywords": ["comis", "ai", "agent", "discord", "telegram", "slack", "whatsapp", "signal", "irc"],
+  "engines": { "node": ">=22" },
+  "files": ["dist"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comisai/comis.git",
+    "directory": "packages/channels"
+  },
+  "homepage": "https://github.com/comisai/comis#readme",
+  "bugs": {
+    "url": "https://github.com/comisai/comis/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@grammyjs/auto-retry": "^2.0.2",
+    "@grammyjs/files": "^1.2.0",
+    "@grammyjs/runner": "^2.0.3",
+    "@hapi/boom": "^10.0.1",
+    "@comis/agent": "workspace:*",
+    "@comis/core": "workspace:*",
+    "@comis/infra": "workspace:*",
+    "@comis/shared": "workspace:*",
+    "@line/bot-sdk": "^10.6.0",
+    "@slack/bolt": "^4.6.0",
+    "@slack/web-api": "^7.14.1",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "discord.js": "^14.25.1",
+    "file-type": "^21.3.0",
+    "grammy": "^1.41.1",
+    "imapflow": "^1.2.18",
+    "irc-framework": "^4.14.0",
+    "mailparser": "^3.9.6",
+    "nodemailer": "^8.0.5"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.5",
+    "@types/nodemailer": "^6.4.17",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}

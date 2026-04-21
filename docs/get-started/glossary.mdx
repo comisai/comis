@@ -1,0 +1,352 @@
+---
+title: "Glossary"
+description: "Definitions for every technical term used in the Comis documentation"
+icon: "book"
+---
+
+This glossary defines every technical term you will encounter in the Comis documentation. Terms are listed alphabetically. If you see an unfamiliar word on any page, you can find its definition here.
+
+## Adapter
+
+A connection between Comis and a messaging platform. Each platform (Discord, Telegram, Slack, and others) has its own adapter that handles the differences between how each platform sends and receives messages. See [Channels](/channels/index).
+
+## AES (Advanced Encryption Standard)
+
+A widely-used encryption algorithm that scrambles data so only authorized parties can read it. In Comis, AES-256-GCM encrypts stored secrets and sensitive configuration values, ensuring that even if someone gains access to the database file, they cannot read your API keys or tokens. See [Secrets](/security/secrets).
+
+## Agent
+
+Your AI assistant -- the brain that reads messages, thinks about responses, uses tools, and writes replies. You can run multiple agents with different personalities and capabilities, each connected to different channels. See [Agents](/agents/index).
+
+## Approval Gate
+
+A graph node type that pauses pipeline execution and sends a prompt to a chat channel, waiting for a human to approve or deny before proceeding. When the pipeline reaches an approval gate node, it posts a message to the originating channel and waits for a reply containing APPROVE or DENY. If no response is received within the configured timeout (default 60 minutes), the node fails. Approval gates enable human-in-the-loop workflows in automated pipelines -- for example, requiring a manager to sign off before executing a high-stakes action. See [Execution Graphs](/agents/execution-graphs) and [Pipeline Tool](/agent-tools/pipelines).
+
+## Auto-Reply
+
+Controls when your agent responds to messages. Modes include "always" (reply to everything), "mention-gated" (only when mentioned by name), and custom patterns that match specific message formats. See [Agents](/agents/index).
+
+## Barrier Mode
+
+Controls when a fan-in node in an execution graph proceeds based on upstream dependency results. Three modes are available: `all` (every dependency must complete), `majority` (more than half must complete), or `best-effort` (at least one must complete). All modes wait for every dependency to reach a terminal state before evaluating. See [Execution Graphs](/agents/execution-graphs).
+
+## Budget
+
+Spending limits that prevent your agent from using too many AI tokens. You can set limits per conversation, per hour, and per day to keep costs predictable. See [Agent Safety](/agents/safety).
+
+## Cache Break Attribution
+
+The process of detecting and identifying the cause when a prompt cache is invalidated. Comis tracks cache breaks across providers (Anthropic, Gemini) by hashing system prompts, tool schemas, and message content, then comparing hashes between turns to pinpoint which component changed. Attribution results are logged as events and optionally written to diff files for debugging. See [Compaction](/agents/compaction).
+
+## Canary Token
+
+An invisible tracking marker embedded in your agent's instructions. If an attacker tries to extract the system prompt, the canary triggers an alert so you know an attempt was made. See [Security](/security/defense-in-depth).
+
+## Channel
+
+A messaging platform where your agent operates. Comis supports Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, and Email. See [Channels](/channels/index).
+
+## Circuit Breaker
+
+An automatic safety switch that temporarily stops your agent if it encounters repeated errors -- like a fuse in your house that trips to prevent damage. Once the errors stop, the circuit breaker resets and your agent resumes. See [Agent Safety](/agents/safety).
+
+## CLI (Command-Line Interface)
+
+A text-based way to control software by typing commands in a terminal. The Comis CLI lets you start and stop the daemon, manage agents, check status, and configure settings without using the web dashboard. See [Quickstart](/get-started/quickstart).
+
+## Compaction
+
+Automatic conversation management. When a conversation grows long, the context engine trims old thinking blocks, windows history to recent turns, masks stale tool results, and -- as a last resort -- summarizes older messages via AI. This keeps conversations manageable while preserving important context. See [Compaction](/agents/compaction).
+
+## Condensation
+
+The process of compressing a sub-agent's result so it fits efficiently in the parent agent's context window. Comis uses a 3-level pipeline: passthrough (small results), LLM condensation (large results summarized into structured JSON), and head+tail truncation (fallback). Full results are always saved to disk regardless of condensation level. See [Subagent Context Lifecycle](/agents/subagent-lifecycle).
+
+## Condensed Summary
+
+A higher-level summary in the DAG context engine created by merging multiple leaf summaries. Condensed summaries form the upper layers of the context DAG hierarchy -- each condensed summary covers a broader span of conversation than the leaf summaries it replaces. See [Compaction](/agents/compaction).
+
+## Context DAG
+
+The directed acyclic graph that stores an agent's full conversation history when running in DAG mode. Each message, tool result, and file is a node; compaction creates summary nodes linked to their sources. Unlike the pipeline mode (which discards old content), the DAG preserves everything and makes it retrievable through recall tools. See [Compaction](/agents/compaction).
+
+## Context Engine
+
+The system that manages what your agent sees each turn. The context engine runs a series of optimization steps before every AI call -- cleaning up old thinking blocks, keeping only recent history, masking stale tool results, and summarizing when needed. It ensures your agent always has room to think without losing critical context. See [Compaction](/agents/compaction).
+
+## Context Threshold
+
+The budget utilization percentage at which DAG compaction triggers. When the assembled context window exceeds this fraction of the model's token budget (default 75%), the DAG engine compresses older content into summaries. Configured via `contextEngine.contextThreshold`. See [Compaction](/agents/compaction).
+
+## Context Window
+
+The maximum amount of text an AI model can process at once. Different models have different limits (some handle more text than others). Comis manages this automatically by compacting older messages when needed. See [Models](/agents/models).
+
+## CORS (Cross-Origin Resource Sharing)
+
+A browser security rule that controls which websites can make requests to your Comis gateway. Properly configuring CORS prevents unauthorized web pages from accessing your agent's API while allowing your own web dashboard to connect. See [Hardening](/security/hardening).
+
+## Cron
+
+A scheduling system that runs tasks at specific times or intervals, using expressions like "every day at 9am" or "every 5 minutes." In Comis, cron schedules let your agent perform recurring tasks automatically -- sending daily reports, checking services, or cleaning up old data. See [Scheduling](/agent-tools/scheduling).
+
+## Daemon
+
+The background process that runs Comis. Once started, it keeps your agents alive and connected to their channels without needing a terminal window open. See [Daemon](/operations/daemon).
+
+## DAG (Directed Acyclic Graph)
+
+A way to organize tasks where each step flows forward and never loops back -- like a one-way flowchart. In Comis, graph pipelines use DAGs to define multi-step workflows where some steps can run in parallel and others must wait for dependencies to finish. See [Pipelines](/developer-guide/pipelines).
+
+## Delivery Pipeline
+
+The system that formats and sends agent replies to chat. It handles streaming (showing the response as it is generated), typing indicators, retry logic when messages fail, and platform-specific formatting rules. See [Delivery](/channels/delivery).
+
+## Driver
+
+A pluggable component that controls how a graph node orchestrates sub-agents. Each node type (debate, vote, refine, collaborate, approval-gate, map-reduce) is implemented by a driver that manages the multi-turn interaction pattern. Drivers are pure functions that receive context and return actions (spawn a sub-agent, spawn all in parallel, complete, fail, or wait for input). The coordinator calls the driver at each lifecycle stage and executes the returned action. Seven built-in drivers are included; custom driver registration is not yet available. See [Pipelines Developer Guide](/developer-guide/pipelines).
+
+## Embedding
+
+A way to represent text as numbers so Comis can find similar content in memory. When you ask "find messages about scheduling," embeddings help Comis locate relevant memories even if the exact word "scheduling" was never used. See [Embeddings](/agents/embeddings).
+
+## Email Channel
+
+Email as a supported messaging platform in Comis. The Email adapter connects via IMAP (for receiving) and SMTP (for sending), allowing your agents to read incoming emails and reply directly. Supports HTML rendering, attachments, and thread tracking via Message-ID headers. See [Email](/channels/email).
+
+## Event Bus
+
+The internal messaging system that lets different parts of Comis communicate with each other. When something happens (a message is received, a tool is used, an error occurs), an event is broadcast so other components can react. See [Event Bus](/developer-guide/event-bus).
+
+## Execution Graph
+
+A directed acyclic graph (DAG) defining a multi-agent workflow where each node is a sub-agent task. Nodes can run in parallel when independent, or wait for dependencies to complete. Agents create and run execution graphs using the `pipeline` tool. Graphs support barrier modes, failure policies, budget limits, shared data folders, and template-based input passing between nodes. See [Execution Graphs](/agents/execution-graphs).
+
+## Follow-Up Run
+
+When an agent uses a tool, it may need another thinking step to process the tool's result before responding. This automatic continuation is a follow-up run. For example, if the agent searches the web, it needs a follow-up run to read the results and write a reply. See [Agent Lifecycle](/agents/lifecycle).
+
+## Fresh Tail
+
+The most recent turns in a DAG-mode conversation that are always protected from compaction. The fresh tail ensures the agent has full, uncompressed access to the latest exchanges. The number of protected turns is configured via `contextEngine.freshTailTurns` (default 8). See [Compaction](/agents/compaction).
+
+## Gateway
+
+The HTTP and WebSocket server that allows external applications to communicate with Comis -- like a reception desk for incoming requests. The CLI and web dashboard both connect through the gateway. See [HTTP Gateway](/reference/http-gateway).
+
+## Graph Pipeline
+
+A multi-step workflow defined as a directed graph. Steps can run in sequence or in parallel, wait for each other to finish, and pass results forward. Used for complex automation where multiple agents or actions need to coordinate. See [Pipelines](/developer-guide/pipelines).
+
+## Graph Node
+
+A single task within an execution graph, executed by a sub-agent. Each node has a task description and can optionally specify an agent override, model override, timeout, barrier mode, maximum steps, a built-in node type (`typeId`/`typeConfig`) for multi-agent patterns (debate, vote, refine, etc.), and input mappings from upstream nodes. Nodes transition through the lifecycle: pending, ready, running, then completed, failed, or skipped. See [Execution Graphs](/agents/execution-graphs).
+
+## Graph Node Type
+
+A built-in driver that controls how a graph node orchestrates sub-agents. Seven types are available: `agent` (single task), `debate` (adversarial rounds), `vote` (parallel independent voting), `refine` (sequential improvement), `collaborate` (sequential contributions), `approval-gate` (human checkpoint), and `map-reduce` (parallel processing with aggregation). Set via the `typeId` and `typeConfig` fields on a graph node. See [Node Types](/developer-guide/pipelines#node-types).
+
+## Heartbeat
+
+Periodic health checks that your agent runs automatically on a schedule. Heartbeats can monitor disk space, system resources, external services, and more -- alerting you when something needs attention. See [Scheduling](/agent-tools/scheduling).
+
+## Hexagonal Architecture
+
+The design pattern Comis uses internally. Core logic is surrounded by "ports" (standardized interfaces) and "adapters" (platform-specific implementations), making it easy to add new platforms or swap components without changing the core. See [Architecture](/developer-guide/architecture).
+
+## HKDF (HMAC-based Key Derivation Function)
+
+A cryptographic technique for generating secure encryption keys from a master secret. In Comis, HKDF derives separate keys for different purposes (encryption, signing) from your single master key, so compromising one key does not expose the others. See [Secrets](/security/secrets).
+
+## Hook
+
+An extension point in the plugin system. Plugins can register functions that run at specific moments in the agent lifecycle -- before a tool call, after compaction, when a message arrives, and more. See [Plugins](/developer-guide/plugins).
+
+## Identity
+
+The collection of workspace files that define your agent's personality, instructions, and behavior. These Markdown files (like SOUL.md, IDENTITY.md, and ROLE.md) tell your agent who it is, how to behave, and what rules to follow. See [Identity](/agents/identity).
+
+## JSON-RPC
+
+A protocol for sending commands to the Comis gateway. The CLI and web dashboard use JSON-RPC to communicate with the running daemon -- starting agents, checking status, and managing configuration. See [JSON-RPC Reference](/reference/json-rpc).
+
+## JWT (JSON Web Token)
+
+A compact, digitally-signed data packet used to verify identity. In Comis, JWTs can authenticate API requests to the gateway, proving that the caller has permission to interact with your agents. See [Defense in Depth](/security/defense-in-depth).
+
+## Leaf Summary
+
+The first level of compression in the DAG context engine. When raw messages accumulate beyond the compaction threshold, the engine groups them into chunks and creates leaf summaries -- concise descriptions of what was discussed. Leaf summaries are the building blocks that may later be merged into condensed summaries at higher levels. See [Compaction](/agents/compaction).
+
+## LLM (Large Language Model)
+
+The type of AI that powers your agent's ability to understand and generate text. Models like Claude, GPT, and Gemini are all LLMs. In Comis, you choose which LLM each agent uses, and can switch models without changing your agent's personality or skills. See [Models](/agents/models).
+
+## Manifest
+
+The SKILL.md file that describes a skill's name, type, permissions, and input requirements. Every skill needs a manifest so Comis knows when and how to use it. See [Skill Manifest](/skills/manifest).
+
+## Narrative Casting
+
+The formatting step that wraps a sub-agent's condensed result in tagged metadata before injecting it into the parent agent's context. The result appears with a `[Subagent Result: {label}]` prefix and a footer containing runtime, token usage, cost, condensation level, and disk path. This prevents role confusion between parent and sub-agent content. See [Subagent Context Lifecycle](/agents/subagent-lifecycle).
+
+## MCP (Model Context Protocol)
+
+An open standard for connecting AI tools. Comis can connect to any MCP-compatible tool server, giving your agents access to external services like databases, APIs, monitoring systems, and more. See [MCP Integration](/skills/mcp).
+
+## Microcompaction
+
+A write-time guard that intercepts oversized tool results before they are saved to the session transcript. Each tool type has an inline character threshold (default 8,000 for standard tools, 15,000 for MCP and file_read, hard cap 100,000). Results exceeding the threshold are saved to disk as JSON files with compact inline references in the conversation. This prevents large tool outputs from bloating context and wasting tokens. See [Compaction](/agents/compaction).
+
+## Middle-out Compaction
+
+A compaction strategy that preserves both the oldest and newest turns in a conversation while summarizing the middle. The oldest turns (the "prefix anchor", default 2 user-turn cycles) are kept intact to maintain prompt cache stability, the newest turns are preserved for recency, and the middle content is compressed by the compaction model. This three-zone layout prevents cache breaks when new turns are added. See [Compaction](/agents/compaction).
+
+## Model
+
+The AI brain behind your agent. Comis supports 300+ models from providers like Anthropic (Claude), OpenAI (GPT), Google (Gemini), and many others. Different models have different strengths, speeds, and costs. See [Models](/agents/models).
+
+## mTLS (Mutual TLS)
+
+A security feature where both the client and server verify each other's identity using certificates. Used for securing the gateway so only authorized applications can connect. See [Security Reference](/reference/security-model).
+
+## NFKC (Unicode Normalization)
+
+A text standardization process that converts visually similar characters into a single consistent form. In Comis, NFKC normalization prevents attackers from using look-alike characters (like replacing "a" with a Cyrillic equivalent) to bypass content scanning filters. See [Defense in Depth](/security/defense-in-depth).
+
+## NormalizedMessage
+
+Comis's internal message format. Every message from every platform is converted into this standard format before processing, so the agent does not need to know which platform a message came from. See [Architecture](/developer-guide/architecture).
+
+## OCR (Optical Character Recognition)
+
+Technology that reads text from images. In Comis, OCR lets your agent extract text from screenshots, photos of documents, and other images -- enabling it to understand and respond to visual content sent in chat. See [Vision](/media/vision).
+
+## Plugin
+
+An extension that adds functionality to Comis by hooking into its lifecycle events. Plugins can add new tools, register HTTP routes, provide configuration options, and respond to system events. See [Plugins](/developer-guide/plugins).
+
+## Pipeline Tool
+
+The built-in agent tool (`pipeline`) for defining, executing, and managing execution graphs. Supports 9 actions: define, execute, status, cancel, outputs, save, load, list, and delete. Cancel and delete require user confirmation before executing. See [Execution Graphs](/agents/execution-graphs) and [Pipeline Guide](/agent-tools/pipelines).
+
+## Port
+
+An interface that defines how a part of Comis communicates with the outside world. Each port has one or more adapters that implement it for specific platforms or services. This separation keeps the core logic clean and extensible. See [Architecture](/developer-guide/architecture).
+
+## Prompt Injection
+
+An attack where someone hides instructions inside a message, document, or image to trick your agent into doing something unintended. Comis defends against this with content scanning, canary tokens, and trust levels that treat external content as less reliable. See [Defense in Depth](/security/defense-in-depth).
+
+## Prompt Skill
+
+A custom skill defined as a Markdown file with instructions. When activated, the instructions are injected into the agent's prompt -- giving it specialized knowledge without writing any code. See [Prompt Skills](/skills/prompt-skills).
+
+## RAG (Retrieval-Augmented Generation)
+
+A technique where the agent searches its long-term memory for relevant information before responding. This makes answers more accurate and contextual because the agent can draw on stored knowledge instead of relying solely on its training data. See [RAG](/agents/rag).
+
+## Recall Grant
+
+A time-limited authorization token that allows a recall sub-agent to expand and inspect DAG summaries. When an agent uses the `ctx_recall` tool, Comis creates a recall grant that controls which summaries the sub-agent can access, how many tokens it can read, and when the grant expires. A daily quota (`contextEngine.maxRecallsPerDay`, default 10) limits how many recall grants can be issued per agent per day. See [Compaction](/agents/compaction).
+
+## Result Type
+
+A pattern used throughout Comis code where functions return either a success value or an error -- never throwing exceptions. This makes error handling predictable and explicit. See [Architecture](/developer-guide/architecture).
+
+## Routing
+
+Rules that determine which agent handles messages from which channel or user. You can have different agents for different platforms, groups, or individual users -- each with their own personality and capabilities. See [Routing](/agents/routing).
+
+## Session
+
+A conversation between a user and an agent. Sessions track message history and can be scoped per user, per channel, or globally depending on your configuration. See [Sessions](/agents/sessions).
+
+## Session Key
+
+The identifier that determines how conversations are grouped. Different scoping modes (per-user, per-channel, global) create different session boundaries, controlling whether users share a conversation or each get their own. See [Sessions](/agents/sessions).
+
+## Shared Data Folder
+
+A per-graph temporary directory (`~/.comis/graph-runs/{graphId}/`) where execution graph nodes can exchange files during execution. All nodes in a graph share the same folder, making it useful for large payloads (reports, data files, images) that do not fit in text-based input passing. The folder is automatically cleaned up after the graph completes. See [Execution Graphs](/agents/execution-graphs).
+
+## Spawn Packet
+
+A structured context bundle that Comis prepares when a parent agent spawns a sub-agent. Instead of receiving a bare task string, the sub-agent gets a packet containing the task description, artifact file references, domain knowledge, tool groups, an objective that survives compaction, and optionally a summary of the parent conversation. See [Subagent Context Lifecycle](/agents/subagent-lifecycle).
+
+## Skill
+
+A capability that extends what your agent can do. Skills come in several forms: built-in tools (pre-packaged with Comis), prompt skills (Markdown instructions you write), and MCP tools (from external servers). See [Skills](/skills/index).
+
+## Slash Command
+
+A command typed in chat starting with a forward slash that triggers a specific action. For example, /new starts a fresh session, /model switches the AI model, and /status shows agent information. See [Slash Commands](/agents/slash-commands).
+
+## SSRF (Server-Side Request Forgery)
+
+An attack where someone tricks a server into accessing internal resources it should not reach. Comis blocks this with its built-in network protection guard, which prevents agents from fetching internal URLs. See [Security](/security/defense-in-depth).
+
+## Step Counter
+
+A safety limit on how many thinking steps an agent can take per message. This prevents infinite loops where the agent keeps calling tools endlessly without producing a final response. See [Agent Safety](/agents/safety).
+
+## STT (Speech-to-Text)
+
+Technology that converts spoken audio into written text. In Comis, STT lets your agent understand voice messages sent in chat by transcribing them before processing. Supported providers include OpenAI Whisper, Groq, and Deepgram. See [Voice](/media/voice).
+
+## Sub-Agent
+
+A child agent spawned by a parent agent to handle a delegated task. The sub-agent runs independently with its own context, receives a structured spawn packet, and reports condensed results back to the parent when finished. See [Sessions](/agent-tools/sessions) and [Subagent Context Lifecycle](/agents/subagent-lifecycle).
+
+## Subagent Context Lifecycle
+
+The end-to-end process of preparing, executing, and capturing results from a sub-agent session. Includes spawn packet construction, spawn limit enforcement, execution with objective reinforcement, result condensation, narrative casting, and injection back into the parent agent's context. See [Subagent Context Lifecycle](/agents/subagent-lifecycle).
+
+## Tenant
+
+An isolation boundary in Comis. Each tenant has separate memory, configuration, and agents. Most setups use a single tenant, but multi-tenant deployments let you run completely independent agent fleets on one installation. See [Configuration](/reference/config-yaml).
+
+## Token
+
+A unit of text that AI models process. Roughly 4 characters or three-quarters of a word. Token usage determines API costs, and Comis tracks token consumption through its budget system. See [Agent Safety](/agents/safety).
+
+## Tool Policy
+
+Rules that control which tools an agent is allowed to use. Profiles range from minimal (basic tools only) to full (all tools available), giving you fine-grained control over agent capabilities. See [Tool Policy](/skills/tool-policy).
+
+## Tool Deferral
+
+A cache optimization strategy where MCP server tools are deferred from the initial tool registration and only included in the prompt when the agent has recently used them. By keeping rarely-used MCP tools out of the system prompt, tool deferral reduces the prompt size and improves cache hit rates. Tools from the same MCP server are grouped together, and a brief preamble replaces the full tool definitions until the agent requests them. See [MCP Integration](/skills/mcp).
+
+## Trust Level
+
+A classification for memory entries and message sources: system (highest trust), learned (medium), or external (lowest). Higher trust means the content is treated as more reliable when the agent retrieves memories. See [Security](/security/defense-in-depth).
+
+## TTS (Text-to-Speech)
+
+Technology that converts written text into spoken audio. In Comis, TTS lets your agent send voice replies in chat. Supported providers include OpenAI, ElevenLabs, and Edge TTS. See [Voice](/media/voice).
+
+## WAL (Write-Ahead Logging)
+
+A database technique used by Comis's SQLite storage for reliability. Changes are written to a log before the main database, preventing data loss if the system crashes during a write operation. See [Memory](/agents/memory).
+
+## Webhook
+
+An HTTP callback that Comis can send or receive when events happen. Webhooks let you integrate Comis with external services -- triggering actions in other systems or receiving notifications from them. See [Webhooks Reference](/reference/webhooks).
+
+## Workspace
+
+The collection of 9 Markdown files and configuration that define an agent's identity, instructions, and behavior. Key files include SOUL.md (personality), AGENTS.md (platform instructions, read-only), and ROLE.md (role-specific behavior). A workspace also includes prompt skills and other resources that shape how your agent operates. See [Identity](/agents/identity).
+
+<Info>
+This glossary is updated regularly. If you encounter a term that is not defined here, please [open an issue](https://github.com/comisai/comis/issues).
+</Info>
+
+<CardGroup cols={2}>
+  <Card title="Welcome" icon="hand-wave" href="/get-started/index">
+    Back to the overview
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/get-started/quickstart">
+    Get started in 5 minutes
+  </Card>
+</CardGroup>

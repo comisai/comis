@@ -1,0 +1,245 @@
+---
+title: "Custom Skills"
+description: "Advanced skill development with SkillPort, manifests, content scanning, and MCP integration"
+icon: "wand-magic-sparkles"
+---
+
+Custom skills extend what Comis agents can do. Beyond the built-in tools, you can create prompt-based skills with SKILL.md manifests, connect external MCP servers, or register plugin-provided tools. This page covers the developer internals -- the `SkillPort` interface, skill loading, content scanning, and the MCP integration layer.
+
+## SkillPort Interface
+
+Every skill in Comis implements the `SkillPort` interface, the hexagonal architecture boundary for skill execution. The port handles permission validation, timeout enforcement, and structured output.
+
+```typescript
+import type { SkillPort, SkillManifest, SkillInput, SkillOutput } from "@comis/core";
+import type { Result } from "@comis/shared";
+
+export interface SkillPort {
+  readonly manifest: SkillManifest;
+  validate(input: SkillInput): Result<true, Error>;
+  execute(input: SkillInput): Promise<Result<SkillOutput, Error>>;
+}
+```
+
+- **`manifest`** -- Metadata describing the skill (name, description, parameters, permissions, timeout)
+- **`validate()`** -- Checks input before execution. Verifies parameter types, required fields, and permission constraints. Returns `ok(true)` or `err()` with a descriptive error.
+- **`execute()`** -- Runs the skill and returns structured output. Implementations must enforce timeout limits and return `Result` -- no thrown exceptions.
+
+### Supporting Types
+
+```typescript
+import type { SkillInput, SkillOutput, SkillPermissions } from "@comis/core";
+
+// Input provided to a skill when it executes
+interface SkillInput {
+  name: string;                    // Skill being invoked
+  params: Record<string, unknown>; // Parameters passed to the skill
+  timeoutMs?: number;              // Timeout enforced by the runtime
+}
+
+// Output returned after execution
+interface SkillOutput {
+  success: boolean;                // Whether the skill completed
+  data?: unknown;                  // Result data (JSON-serializable)
+  error?: string;                  // Error message if failed
+  durationMs: number;              // Execution time
+}
+
+// Permissions required by a skill
+interface SkillPermissions {
+  fsRead?: string[];               // Filesystem read paths
+  fsWrite?: string[];              // Filesystem write paths
+  net?: string[];                  // Network access domains
+  env?: string[];                  // Environment variable keys
+}
+```
+
+## Skill Manifest
+
+The `SkillManifest` type is the internal TypeScript representation of SKILL.md frontmatter. It describes what a skill does, what it needs, and how it should be constrained.
+
+```typescript
+import type { SkillManifest } from "@comis/core";
+
+const manifest: SkillManifest = {
+  name: "web-search",              // Required: unique identifier
+  description: "Search the web",   // Required: shown to the agent
+  inputSchema: {                   // JSON Schema for parameters
+    type: "object",
+    properties: {
+      query: { type: "string" },
+    },
+    required: ["query"],
+  },
+  permissions: {                   // Security permissions
+    net: ["api.example.com"],
+  },
+  maxTimeoutMs: 30_000,            // Maximum execution time
+};
+```
+
+Additional manifest fields available in SKILL.md frontmatter:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | **Required.** Unique skill identifier |
+| `description` | string | **Required.** What the skill does (shown to agent) |
+| `type` | string | Skill type: `prompt` (default) |
+| `version` | string | Semantic version |
+| `license` | string | License identifier |
+| `userInvocable` | boolean | Whether users can trigger directly (default: `true`) |
+| `disableModelInvocation` | boolean | Prevent agent from calling autonomously |
+| `allowedTools` | string[] | Restrict which tools the skill can use |
+| `argumentHint` | string | Hint for the argument format |
+| `inputSchema` | object | JSON Schema for parameters |
+| `permissions` | object | Security permissions: `fsRead`, `fsWrite`, `net`, `env` |
+
+<Info>
+For the user-facing SKILL.md format and examples, see [Skill Manifest Reference](/skills/manifest). This page focuses on the internal TypeScript types and processing pipeline.
+</Info>
+
+## Prompt Skills
+
+Prompt skills are the most common skill type. They are Markdown files (SKILL.md) that instruct the agent how to perform a task. Here is how they work internally:
+
+1. **Discovery** -- SKILL.md files are found in the workspace's `skills/` directory at startup
+2. **Parsing** -- YAML frontmatter is parsed as `SkillManifest`, the Markdown body becomes the skill prompt
+3. **Template substitution** -- Variables in the body are replaced with user-provided arguments:
+   - Named placeholders: `{variable_name}` -- mapped positionally to arguments
+   - Positional syntax: `$1`, `$2` (1-indexed), `$@` (all arguments), `${@:N}` (arguments from index N)
+4. **System prompt injection** -- The processed skill body is wrapped in XML and injected into the agent's context
+
+### Processing Pipeline
+
+Before a prompt skill reaches the agent, it passes through a four-stage pipeline:
+
+<Steps>
+
+<Step title="Content Scanner">
+Inspects the skill body for security violations across six categories:
+
+| Category | Severity | Examples |
+|----------|----------|---------|
+| Exec injection | CRITICAL | `$(command)`, backtick injection, `eval()` |
+| Environment harvesting | WARN | `printenv`, `/proc/environ`, mass dumps |
+| Crypto mining | CRITICAL | `stratum://` protocols, miner binaries |
+| Network exfiltration | WARN/CRITICAL | `curl \| bash`, reverse shells |
+| Obfuscated encoding | WARN/CRITICAL | Long base64 strings, decode-and-execute chains |
+| XML breakout | CRITICAL | Closing `</skill>` tags, `<system>` injection |
+
+Skills with CRITICAL findings are rejected. The scanner is a pure function -- it accepts a string and returns structured findings without side effects.
+</Step>
+
+<Step title="Sanitizer">
+Cleans the skill body through a strict pipeline:
+
+1. **Strip HTML comments** -- Removes hidden content (`<!-- ... -->`)
+2. **NFKC normalization** -- Decomposes fullwidth and ligature characters
+3. **Strip invisible characters** -- Removes zero-width joiners, tag block bypass characters
+4. **Enforce size limits** -- Truncates to maximum body length with a `[TRUNCATED]` marker
+
+Sanitization metadata (comment count, truncation flag, tag block detection) is returned for audit logging.
+</Step>
+
+<Step title="Template Processor">
+Substitutes variables with actual values from user arguments:
+
+- Named placeholders (`{topic}`, `{language}`) are mapped positionally to arguments
+- Positional references (`$1`, `$@`) follow shell-like conventions
+- Unmatched placeholders are left as-is (safe behavior)
+- Extra arguments beyond placeholder count are appended as "Additional arguments"
+</Step>
+
+<Step title="Executor">
+Injects the processed prompt into the agent's context as an XML block:
+
+```xml
+<skill name="my-skill" location="/path/to/skills/my-skill">
+References are relative to /path/to/skills/my-skill.
+[processed skill body]
+</skill>
+```
+
+The agent reads the skill content and follows its instructions using the available tools.
+</Step>
+
+</Steps>
+
+## MCP Integration
+
+MCP (Model Context Protocol) servers integrate as skill providers, exposing external tools to Comis agents.
+
+- MCP servers are configured in `config.yaml` under the `skills.mcp` section
+- Each MCP server exposes tools that become available to agents
+- Tools from MCP servers are namespaced by server name to avoid conflicts (e.g., `github.create_issue`)
+- The MCP client handles connection lifecycle, tool discovery, and execution
+
+The integration layer translates between the MCP protocol and the internal `SkillPort` interface, so agents interact with MCP tools the same way they interact with built-in tools and prompt skills.
+
+<Info>
+For MCP server configuration and setup, see [MCP Integration](/skills/mcp). This page covers only the integration architecture.
+</Info>
+
+## Plugin-Provided Tools
+
+Plugins can register tools via `registry.registerTool()` (documented in the [Plugins](/developer-guide/plugins) page). These tools become available alongside built-in tools and skill-provided tools.
+
+```typescript
+import type { PluginRegistryApi } from "@comis/core";
+
+registry.registerTool({
+  name: "sentiment_analyze",
+  description: "Analyze the sentiment of text",
+  parameters: {
+    type: "object",
+    properties: {
+      text: { type: "string", description: "Text to analyze" },
+    },
+    required: ["text"],
+  },
+  execute: async (params) => {
+    const text = params.text as string;
+    // Perform sentiment analysis
+    return { sentiment: "positive", confidence: 0.92 };
+  },
+});
+```
+
+Plugin tools, MCP tools, and prompt skills all go through the same `SkillPort` interface. The agent sees them identically and selects tools based on the task description matching the tool's description.
+
+## Skill Loading and Caching
+
+The `SkillRegistry` manages skill discovery and lifecycle:
+
+- **Discovery** -- Skills are loaded from the workspace's `skills/` directory on startup. Each subdirectory with a `SKILL.md` file is treated as a skill.
+- **Validation** -- Manifest frontmatter is validated to ensure required fields (`name`, `description`) are present and well-formed.
+- **Caching** -- Skills are cached in memory after first load. Subsequent requests use the cached version.
+- **Hot reload** -- When enabled, file changes in the skills directory trigger re-parsing and cache invalidation. Skills that fail validation on reload are kept at their previous version.
+- **Visibility** -- Skills with `disableModelInvocation: true` are hidden from the model's available skills listing but can still be invoked directly by users.
+
+The available skills listing is injected into the system prompt as an XML block, giving the agent awareness of all skills it can invoke:
+
+```xml
+<available_skills>
+  <skill>
+    <name>web-search</name>
+    <description>Search the web for information</description>
+    <location>/workspace/skills/web-search</location>
+  </skill>
+</available_skills>
+```
+
+<CardGroup cols={2}>
+  <Card title="Skill Manifest Reference" icon="file-lines" href="/skills/manifest">
+    User-facing SKILL.md format
+  </Card>
+  <Card title="MCP Integration" icon="server" href="/skills/mcp">
+    Connecting MCP servers
+  </Card>
+  <Card title="Plugins" icon="puzzle-piece" href="/developer-guide/plugins">
+    registerTool for plugin-provided tools
+  </Card>
+  <Card title="Tool Policy" icon="shield" href="/skills/tool-policy">
+    Controlling which tools agents can use
+  </Card>
+</CardGroup>

@@ -1,0 +1,499 @@
+---
+title: "OpenAI-Compatible API"
+description: "Complete request/response schema reference for /v1/chat/completions, /v1/models, and /v1/embeddings"
+icon: "code"
+---
+
+Comis exposes an OpenAI-compatible REST API at the `/v1/` prefix. Any client
+library, proxy, or tool that speaks the OpenAI Chat Completions protocol can
+connect to Comis without modification. The API supports chat completions
+(streaming and non-streaming), model listing, and embeddings.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/chat/completions` | Send messages and receive agent responses |
+| `GET` | `/v1/models` | List all configured models |
+| `GET` | `/v1/models/:id` | Retrieve a single model by ID |
+| `POST` | `/v1/embeddings` | Generate text embeddings |
+
+## Authentication
+
+All endpoints require a valid bearer token configured in `gateway.tokens[]`.
+Pass the token via the `Authorization` header:
+
+```bash
+curl -H "Authorization: Bearer your-token" \
+  http://localhost:4766/v1/chat/completions
+```
+
+Tokens are defined in config with a minimum 32-character secret and optional
+scope restrictions:
+
+```yaml
+gateway:
+  tokens:
+    - id: "my-client"
+      secret: "a-secure-token-at-least-32-characters-long"
+      scopes: ["rpc", "ws"]
+```
+
+---
+
+## Chat Completions
+
+### Request
+
+`POST /v1/chat/completions`
+
+The request body is validated against `ChatCompletionRequestSchema`. All fields
+must match exactly -- unknown fields are rejected (`strictObject`).
+
+| Field | Type | Required | Constraints | Default | Description |
+|-------|------|----------|-------------|---------|-------------|
+| `model` | `string` | Yes | `min(1)` | -- | Model identifier (e.g., `"anthropic/claude-sonnet-4-5-20250929"`) |
+| `messages` | `ChatMessage[]` | Yes | `min(1)` array | -- | Conversation messages in order |
+| `stream` | `boolean` | No | -- | `false` | Enable Server-Sent Events streaming |
+| `temperature` | `number` | No | `min(0)`, `max(2)` | -- | Sampling temperature |
+| `max_tokens` | `number` | No | Positive integer | -- | Maximum tokens to generate |
+| `stream_options` | `StreamOptions` | No | -- | -- | Streaming behavior options |
+
+<Info>
+Source: `ChatCompletionRequestSchema` in `packages/gateway/src/openai/openai-types.ts`
+</Info>
+
+#### Message Format
+
+Each message in the `messages` array follows `ChatMessageSchema`:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `role` | `"system"` \| `"user"` \| `"assistant"` | Yes | Message role |
+| `content` | `string` | Yes | Message text content |
+
+System messages are concatenated (joined with newline) and passed as the system
+prompt. The last `user` message becomes the agent input. If no user message is
+found, the request returns `400`.
+
+#### Stream Options
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `include_usage` | `boolean` | No | Include token usage in the final stream chunk |
+
+#### Example Request
+
+```json title="POST /v1/chat/completions"
+{
+  "model": "anthropic/claude-sonnet-4-5-20250929",
+  "messages": [
+    { "role": "system", "content": "You are a helpful assistant." },
+    { "role": "user", "content": "What is the weather like today?" }
+  ],
+  "stream": false,
+  "temperature": 0.7,
+  "max_tokens": 1024
+}
+```
+
+### Non-Streaming Response
+
+When `stream` is `false` (default), the endpoint returns a single JSON object
+following the `ChatCompletion` interface:
+
+```json title="ChatCompletion Response"
+{
+  "id": "chatcmpl-550e8400-e29b-41d4-a716-446655440000",
+  "object": "chat.completion",
+  "created": 1710000000,
+  "model": "anthropic/claude-sonnet-4-5-20250929",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "I don't have access to real-time weather data..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 42,
+    "completion_tokens": 128,
+    "total_tokens": 170
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Unique completion ID with `chatcmpl-` prefix and UUID |
+| `object` | `"chat.completion"` | Fixed object type |
+| `created` | `number` | Unix timestamp (seconds) |
+| `model` | `string` | Model identifier from request |
+| `choices` | `Choice[]` | Array with single choice (index 0) |
+| `choices[].message.role` | `"assistant"` | Always `"assistant"` |
+| `choices[].message.content` | `string \| null` | Response text |
+| `choices[].finish_reason` | `string` | Mapped finish reason (see table below) |
+| `usage.prompt_tokens` | `number` | Input token count |
+| `usage.completion_tokens` | `number` | Output token count |
+| `usage.total_tokens` | `number` | Total token count |
+
+<Info>
+Source: `ChatCompletion` interface in `packages/gateway/src/openai/openai-types.ts`
+</Info>
+
+### Streaming Response
+
+When `stream` is `true`, the endpoint returns Server-Sent Events (SSE). Each
+event contains a `ChatCompletionChunk` serialized as JSON. The streaming
+sequence follows five steps:
+
+**Step 1: Role chunk** -- Announces the assistant role.
+
+```
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1710000000,"model":"anthropic/claude-sonnet-4-5-20250929","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+```
+
+**Step 2: Content chunks** -- One event per text delta (N chunks).
+
+```
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1710000000,"model":"anthropic/claude-sonnet-4-5-20250929","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+```
+
+**Step 3: Finish chunk** -- Contains the `finish_reason`, empty delta.
+
+```
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1710000000,"model":"anthropic/claude-sonnet-4-5-20250929","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+```
+
+**Step 4: Usage chunk** -- Token counts with empty choices array.
+
+```
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1710000000,"model":"anthropic/claude-sonnet-4-5-20250929","choices":[],"usage":{"prompt_tokens":42,"completion_tokens":128,"total_tokens":170}}
+```
+
+**Step 5: Terminal marker** -- Signals end of stream.
+
+```
+data: [DONE]
+```
+
+#### ChatCompletionChunk Interface
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Same `chatcmpl-` ID for all chunks in one completion |
+| `object` | `"chat.completion.chunk"` | Fixed chunk object type |
+| `created` | `number` | Unix timestamp (seconds) |
+| `model` | `string` | Model identifier from request |
+| `choices` | `ChunkChoice[]` | Array with delta content |
+| `choices[].index` | `number` | Always `0` |
+| `choices[].delta.role` | `"assistant"` \| undefined | Present only in role chunk |
+| `choices[].delta.content` | `string` \| undefined | Present in content chunks |
+| `choices[].finish_reason` | `string \| null` | `null` until finish chunk |
+| `usage` | `Usage` \| undefined | Present only in usage chunk |
+
+<Info>
+Source: `ChatCompletionChunk` interface in `packages/gateway/src/openai/openai-types.ts`, streaming sequence in `packages/gateway/src/openai/openai-completions.ts`
+</Info>
+
+### Finish Reason Mapping
+
+Comis maps its internal finish reasons to OpenAI-compatible values. Unknown
+reasons default to `"stop"`.
+
+| Comis Reason | OpenAI Reason | Description |
+|--------------|---------------|-------------|
+| `stop` | `stop` | Agent completed normally |
+| `max_steps` | `length` | Maximum execution steps reached |
+| `budget_exceeded` | `stop` | Token budget exhausted |
+| `circuit_open` | `stop` | Circuit breaker tripped |
+| `context_loop` | `stop` | Context loop detected |
+| `error` | `stop` | Execution error occurred |
+| _(unknown)_ | `stop` | Any unrecognized reason |
+
+<Info>
+Source: `FINISH_REASON_MAP` in `packages/gateway/src/openai/openai-types.ts`
+</Info>
+
+### Session Key
+
+Each OpenAI API request creates an ephemeral session with an auto-generated key:
+
+```json
+{
+  "userId": "openai-api",
+  "channelId": "openai",
+  "peerId": "chatcmpl-<uuid>"
+}
+```
+
+The `peerId` uses the completion ID, making each request a unique session. This
+means there is no conversation history between requests -- each call is
+stateless from the agent's perspective.
+
+<Info>
+Source: Session key construction in `packages/gateway/src/openai/openai-completions.ts`
+</Info>
+
+### Model Resolution
+
+If the gateway has a `resolveModel` function wired, the `model` field is
+validated against the model catalog. If the model is not found, the endpoint
+returns a `404` error:
+
+```json
+{
+  "error": {
+    "message": "Model not found: invalid/model",
+    "type": "not_found_error",
+    "param": null,
+    "code": null
+  }
+}
+```
+
+---
+
+## Models
+
+### List Models
+
+`GET /v1/models`
+
+Returns all configured models in OpenAI's List Models format.
+
+```json title="GET /v1/models Response"
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "anthropic/claude-sonnet-4-5-20250929",
+      "object": "model",
+      "created": 0,
+      "owned_by": "anthropic"
+    },
+    {
+      "id": "openai/gpt-4o",
+      "object": "model",
+      "created": 0,
+      "owned_by": "openai"
+    }
+  ]
+}
+```
+
+### Get Model
+
+`GET /v1/models/:model_id`
+
+Retrieves a single model by its ID. Model IDs use `provider/modelId` format
+(e.g., `anthropic/claude-sonnet-4-5-20250929`). The route uses a wildcard param
+to accommodate the slash in the ID.
+
+**Success:**
+
+```json title="GET /v1/models/anthropic/claude-sonnet-4-5-20250929"
+{
+  "id": "anthropic/claude-sonnet-4-5-20250929",
+  "object": "model",
+  "created": 0,
+  "owned_by": "anthropic"
+}
+```
+
+**Not found:**
+
+```json
+{
+  "error": {
+    "message": "Model not found",
+    "type": "not_found_error",
+    "param": null,
+    "code": null
+  }
+}
+```
+
+### Model Format
+
+Each model object has the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | `"provider/modelId"` format |
+| `object` | `"model"` | Fixed object type |
+| `created` | `number` | Always `0` (no creation timestamp tracked) |
+| `owned_by` | `string` | Provider name from model catalog |
+
+<Info>
+Source: `toOpenAIModel()` in `packages/gateway/src/openai/openai-models.ts`
+</Info>
+
+---
+
+## Embeddings
+
+### Request
+
+`POST /v1/embeddings`
+
+The request body is validated against `EmbeddingsRequestSchema`.
+
+| Field | Type | Required | Constraints | Default | Description |
+|-------|------|----------|-------------|---------|-------------|
+| `model` | `string` | Yes | `min(1)` | -- | Embedding model identifier |
+| `input` | `string \| string[]` | Yes | -- | -- | Text to embed (single string or array) |
+| `encoding_format` | `"float"` \| `"base64"` | No | -- | `"float"` | Output encoding format |
+
+#### Example Requests
+
+```json title="Single string input"
+{
+  "model": "openai/text-embedding-3-small",
+  "input": "Hello, world!"
+}
+```
+
+```json title="Batch input"
+{
+  "model": "openai/text-embedding-3-small",
+  "input": ["Hello", "World"],
+  "encoding_format": "float"
+}
+```
+
+### Response
+
+```json title="POST /v1/embeddings Response"
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "embedding": [0.0023, -0.009, 0.015, ...],
+      "index": 0
+    }
+  ],
+  "model": "openai/text-embedding-3-small",
+  "usage": {
+    "prompt_tokens": 3,
+    "total_tokens": 3
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `object` | `"list"` | Fixed collection type |
+| `data[].object` | `"embedding"` | Fixed embedding type |
+| `data[].embedding` | `number[]` | Embedding vector |
+| `data[].index` | `number` | Position in input array |
+| `model` | `string` | Model ID from the embedding port |
+| `usage.prompt_tokens` | `number` | Estimated token count (`ceil(chars / 4)`) |
+| `usage.total_tokens` | `number` | Same as `prompt_tokens` (no completion tokens) |
+
+If no embedding provider is configured, the endpoint returns `404`:
+
+```json
+{
+  "error": {
+    "message": "No embedding provider configured",
+    "type": "not_found_error",
+    "param": null,
+    "code": null
+  }
+}
+```
+
+<Info>
+Source: `EmbeddingsRequestSchema` and `createOpenaiEmbeddingsRoute()` in `packages/gateway/src/openai/openai-embeddings.ts`
+</Info>
+
+---
+
+## Error Responses
+
+All endpoints return errors in the `OpenAIErrorResponse` format:
+
+```json title="Error Response Format"
+{
+  "error": {
+    "message": "Description of what went wrong",
+    "type": "invalid_request_error",
+    "param": "model",
+    "code": null
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `error.message` | `string` | Human-readable error description |
+| `error.type` | `string` | Error category (see mapping below) |
+| `error.param` | `string \| null` | The parameter that caused the error (if applicable) |
+| `error.code` | `string \| null` | Always `null` |
+
+### Error Type Mapping
+
+| HTTP Status | OpenAI Error Type | Typical Cause |
+|-------------|-------------------|---------------|
+| `400` | `invalid_request_error` | Missing required field, invalid value |
+| `401` | `authentication_error` | Missing or invalid bearer token |
+| `403` | `permission_error` | Insufficient token scopes |
+| `404` | `not_found_error` | Model not found, no embedding provider |
+| `429` | `rate_limit_error` | Rate limit exceeded |
+| `500` | `server_error` | Internal error during execution |
+
+Unknown HTTP status codes fall back to `"server_error"`.
+
+<Info>
+Source: `STATUS_TO_ERROR_TYPE` and `createOpenAIError()` in `packages/gateway/src/openai/openai-types.ts`
+</Info>
+
+---
+
+## Configuration
+
+The OpenAI-compatible API is enabled automatically when the gateway is running.
+Relevant configuration fields:
+
+```yaml
+gateway:
+  enabled: true          # Enable the gateway server (default: true)
+  host: "127.0.0.1"     # Bind address (default: loopback only)
+  port: 4766            # Listen port (default: 4766)
+  tokens:               # Bearer tokens for authentication
+    - id: "client-1"
+      secret: "your-secret-at-least-32-characters"
+      scopes: []        # Empty = all scopes
+  rateLimit:
+    windowMs: 60000     # Rate limit window (default: 60s)
+    maxRequests: 100    # Max requests per window (default: 100)
+  httpBodyLimitBytes: 1048576  # Max POST body (default: 1MB)
+```
+
+<Info>
+Source: `GatewayConfigSchema` in `packages/core/src/config/schema-gateway.ts`
+</Info>
+
+---
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="HTTP Gateway" icon="globe" href="/reference/http-gateway">
+    Full gateway endpoint reference
+  </Card>
+  <Card title="JSON-RPC" icon="brackets-curly" href="/reference/json-rpc">
+    JSON-RPC method reference
+  </Card>
+  <Card title="WebSocket" icon="plug" href="/reference/websocket">
+    WebSocket streaming reference
+  </Card>
+  <Card title="Rate Limiting" icon="gauge" href="/reference/rate-limiting">
+    Rate limiting configuration
+  </Card>
+</CardGroup>

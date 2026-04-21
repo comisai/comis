@@ -1,0 +1,180 @@
+---
+title: "Observability"
+description: "Monitor your agents' activity, costs, and message delivery from a single view"
+icon: "chart-line"
+---
+
+The Observe section in the sidebar contains **six sub-views**, each accessible as its own page: Overview, Context Engine, Context DAG, Billing, Delivery, and Diagnostics. These give you a bird's-eye view of everything happening in your Comis installation -- how active your agents are, how much they cost, whether messages are being delivered successfully, and how the context engine is performing.
+
+<Info>
+The Overview page at `/observe/overview` also contains internal tabs (Overview, Billing, Delivery, Channels, Diagnostics) that provide the same data as the standalone sub-views. The sidebar links route to the standalone components (e.g., `/observe/billing`), while the Overview's tabs offer a unified view within a single page.
+</Info>
+
+## What You See
+
+### Overview
+
+Route: `/observe/overview` (also the default when clicking "Overview" in the sidebar)
+
+The Overview is your at-a-glance summary. At the top, four stat cards show today's numbers:
+
+- **Requests Today** -- how many messages your agents have handled
+- **Tokens Today** -- the total number of AI tokens consumed
+- **Cost Today** -- estimated cost across all providers
+- **Errors Today** -- how many requests failed
+
+Below the stat cards, a **24-hour activity chart** plots token usage over time so you can see when your agents are busiest.
+
+The Overview also includes internal tabs for Billing, Delivery, Channels, and Diagnostics within the same page.
+
+### Billing
+
+Route: `/observe/billing` (standalone sub-view)
+
+The Billing view breaks down your AI spending into two tables:
+
+- **By Provider** -- one row per AI provider (such as Anthropic, OpenAI, or Google) showing the provider name, total tokens used, number of API calls, cost, and cache savings. The cache savings column shows how much prompt caching has reduced your spending for that provider. A totals row at the bottom sums everything up.
+- **By Agent** -- one row per agent showing the agent name, tokens used, what percentage of total usage that agent accounts for, and cost.
+
+This helps you answer questions like "Which provider is costing the most?" and "Is one agent consuming a disproportionate share of resources?"
+
+<Tip>
+The cache savings column helps you see the return on investment from prompt
+caching. Providers with high cache savings ratios indicate effective prompt
+reuse -- your system prompts and repeated context are being cached efficiently.
+</Tip>
+
+### Delivery
+
+Route: `/observe/delivery` (standalone sub-view)
+
+The Delivery view tracks whether messages are actually reaching their destinations. At the top, you will see three summary numbers:
+
+- **Success rate** -- the percentage of messages delivered successfully (green if 99%+, yellow if 95-99%, red below 95%)
+- **Average latency** -- how long deliveries take on average
+- **Total deliveries** -- the total count in the selected time window
+
+Below the summary, a **filter row** lets you narrow results by:
+
+- **Channel type** -- filter to a specific platform (Telegram, Discord, etc.)
+- **Status** -- show only successful, failed, or timed-out deliveries
+- **Time range** -- choose between 1 hour, 6 hours, 24 hours, or 7 days
+
+The trace table below shows each delivery with its timestamp, channel, a short message preview, status, latency, and number of steps. Click any row to expand it and see the full **delivery step waterfall** -- a step-by-step breakdown showing exactly where in the process a delivery succeeded or failed.
+
+### Diagnostics
+
+Route: `/observe/diagnostics` (standalone sub-view)
+
+The Diagnostics view is an event log showing system-level activity. Each row has:
+
+- **Time** -- when the event occurred
+- **Category** -- what part of the system generated the event
+- **Message** -- a description of what happened
+- **Level** -- a severity badge (error, warning, or informational)
+
+Events are sorted with the most recent at the top.
+
+## Understanding Your Costs
+
+The Billing tab is your best tool for keeping spending under control. Here is how to read it effectively:
+
+1. Start with the **By Provider** table to see which AI service is your biggest expense. The totals row at the bottom gives you the full picture.
+2. Switch to the **By Agent** table to find which agents are consuming the most resources. The percentage column makes it easy to spot outliers.
+3. Compare the two tables -- a high-cost provider combined with a high-usage agent tells you exactly where to optimize.
+
+<Tip>
+Check the Billing tab weekly to catch unexpected cost increases early. A sudden spike in one agent's token usage often means it is stuck in a loop or receiving more traffic than expected.
+</Tip>
+
+## Tracking Message Delivery
+
+When messages are not getting through, the Delivery tab helps you pinpoint the problem.
+
+<Steps>
+  <Step title="Switch to the Delivery tab">
+    Click the **Delivery** tab at the top of the Observability view.
+  </Step>
+  <Step title="Filter by channel or status">
+    Use the filter dropdowns to narrow results. To find problems quickly, set the status filter to **Failed** or **Timeout**.
+  </Step>
+  <Step title="Look for failed deliveries">
+    Scan the trace table for rows with a red "failed" or orange "timeout" status badge.
+  </Step>
+  <Step title="Inspect the delivery waterfall">
+    Click a failed delivery row to expand it. The step waterfall shows each stage of the delivery process with a green dot for successful steps and a red dot for the step that failed, along with the error message. This tells you exactly where the delivery broke down.
+  </Step>
+</Steps>
+
+<Info>
+Data updates in real time via Server-Sent Events (SSE). Stat cards, tables, and charts refresh automatically as events arrive -- there is no manual polling delay.
+</Info>
+
+## Context Engine
+
+Route: `/observe/context` (standalone sub-view)
+
+The Context Engine view provides end-to-end observability for the DAG-based context pipeline. It refreshes automatically every 30 seconds and shows data for a selected agent or all agents at once via a filter dropdown.
+
+### Pipeline Metrics
+
+The top section shows key metrics in a 2-column grid:
+
+- **Cache Hit Rate** -- percentage of prompt cache reuse (displayed as a gauge)
+- **Budget Utilization** -- how much of the token budget is being consumed (displayed as a gauge)
+- **Token Budget Segment Bar** -- a full-width segmented bar showing how the token budget is allocated across system prompt, tools, context, and messages
+- **Eviction Chart** -- breakdown of context evictions by category
+
+### Layer Waterfall
+
+Below the metrics, a **layer waterfall** visualization shows the context assembly pipeline. Each layer represents a stage in context construction (system prompt, RAG results, session history, tool schemas, etc.) with timing information showing how long each layer took to assemble. This helps identify bottlenecks in context construction.
+
+### DAG Compaction Panel
+
+When DAG compaction has occurred, an additional section shows compaction statistics:
+
+- **Total Compactions** -- how many compaction operations have run
+- **Avg Summaries** -- average number of summary nodes per compaction
+- **Max Depth** -- the deepest level in the DAG tree
+- **Latest Duration** -- how long the most recent compaction took (in milliseconds)
+
+## Context DAG Browser
+
+Route: `/context` (standalone sub-view, listed under Observe in the sidebar)
+
+The Context DAG Browser is an interactive tool for inspecting the directed acyclic graph (DAG) of context nodes that the context engine builds during conversations. It uses a two-column layout:
+
+### Left Panel: Conversation List and Tree
+
+- **Conversation list** -- shows all DAG conversations with their session keys. Select a conversation to load its tree structure.
+- **Summary tree** -- an expandable tree view showing the hierarchical structure of the DAG. Nodes represent messages and summaries at various depth levels. Click a node to inspect it.
+- **Search** -- a search bar performs server-side FTS5 full-text search within the selected conversation, highlighting matching nodes.
+
+### Right Panel: Node Inspection
+
+When you click a node in the tree, a slide-in detail panel shows:
+
+- **Node type** -- message or summary
+- **Content** -- the full text content of the node
+- **Depth** -- the node's level in the DAG hierarchy
+- **Kind** -- the node's classification (e.g., user message, assistant response)
+- **Token count** -- how many tokens the node content contains
+- **Parent IDs** -- which nodes this node was derived from
+- **Child IDs** -- which nodes were derived from this node
+- **Source message count** -- for summary nodes, how many original messages were compressed
+
+This view is primarily useful for operators debugging context compaction behavior, understanding how summaries are generated, and verifying that the DAG structure matches expectations.
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Channels View" icon="tower-broadcast" href="/web-dashboard/channels-view">
+    Manage your connected messaging platforms and see their status.
+  </Card>
+  <Card title="Operations Monitoring" icon="gauge" href="/operations/monitoring">
+    Server-side monitoring, health checks, and alerting.
+  </Card>
+  <Card title="Agents View" icon="robot" href="/web-dashboard/agents-view">
+    View and manage your AI agents, their configuration, and activity.
+  </Card>
+</CardGroup>

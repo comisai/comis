@@ -1,0 +1,95 @@
+---
+title: "Message Center"
+description: "Browse, send, and manage messages across all connected channels"
+icon: "envelope"
+---
+
+The Message Center lets you interact with messages across all your connected channels from a single interface. You can browse message history, send new messages, reply to existing ones, add reactions, pin messages, and execute platform-specific actions -- all from the dashboard.
+
+## Routes
+
+- `/messages` -- opens the Message Center with the default (first) channel selected
+- `/messages/:type` -- opens the Message Center pre-filtered to a specific channel type (e.g., `messages/discord`, `messages/telegram`)
+
+## What You See
+
+### Channel and Chat Selectors
+
+At the top of the page, a breadcrumb trail shows navigation context (Channels > selected channel > Messages). Below it, two dropdown selectors let you choose:
+
+- **Channel** -- pick which messaging platform to browse (Discord, Telegram, Slack, WhatsApp, etc.)
+- **Chat** -- pick which specific conversation/chat within that channel to view
+
+When you change the channel, the chat list updates to show available conversations for that platform.
+
+### Message List
+
+The main area displays recent messages sorted by timestamp (oldest first). Each message row shows:
+
+| Element | Description |
+|---------|-------------|
+| **Sender** | The sender's platform-specific user ID |
+| **Text** | The message content (plain text or formatted) |
+| **Timestamp** | Relative time since the message was sent |
+| **Actions** | Reply, React, Edit, Delete buttons (availability depends on platform capabilities) |
+
+Click a message row to select it. The selected message highlights and becomes the target for reply and platform actions that require a message ID.
+
+### Message Actions
+
+Depending on the platform's capabilities, you can perform these actions on messages:
+
+- **Reply** -- compose a reply to a selected message (opens a confirmation dialog with operator attribution)
+- **React** -- add an emoji reaction from a curated set of 24 common emoji
+- **Edit** -- modify a sent message (only available if the platform supports `editMessages`)
+- **Delete** -- remove a message (only available if the platform supports `deleteMessages`, with a confirmation dialog)
+
+### Send Form
+
+Below the message list, a compose area lets you send new messages to the current channel and chat. Sending requires confirmation via a dialog that shows operator attribution -- messages sent from the dashboard are clearly identified as coming from the operator, not the AI agent.
+
+### Attachment Form
+
+You can attach files to messages with support for four attachment types: image, file, audio, and video. Select the attachment type, choose a file, and send it to the current conversation.
+
+### Platform Actions
+
+At the bottom, an expandable section shows platform-specific actions grouped by category. Available actions vary by platform:
+
+- **Discord** -- Pin/Unpin messages, Kick/Ban/Unban users, Set Topic, Set Slowmode, Send Typing, Create/List Threads, Guild Info, Channel Info
+- **Telegram** -- Pin/Unpin messages, Ban/Unban/Restrict/Promote/Demote users, Set Chat Title/Description, Send Typing, Chat Info, Member Count, Get Admins
+- **Slack** -- Pin/Unpin messages, Set Topic/Purpose, Archive/Unarchive Channel, Send Typing, Invite/Kick users, List Members, Channel Info, Add Bookmark
+- **WhatsApp** -- Group Info, Update Subject/Description, Get Invite Code, Add/Remove Participants, Promote/Demote Admins, Group Settings
+
+Each action is executed via RPC and results are displayed inline.
+
+## Common Tasks
+
+<Steps>
+  <Step title="Browse messages from a channel">
+    Select a channel from the Channel dropdown. Then pick a chat from the Chat dropdown. Messages load automatically.
+  </Step>
+  <Step title="Send a message">
+    Type your message in the compose area at the bottom and click Send. Confirm the operator attribution dialog to deliver the message.
+  </Step>
+  <Step title="Reply to a message">
+    Click a message row to select it, then click the Reply button. Compose your reply and confirm the attribution dialog.
+  </Step>
+  <Step title="Execute a platform action">
+    Expand the Platform Actions section, find the action you want (grouped by category), fill in any required fields (user ID, topic text, etc.), and click Execute.
+  </Step>
+</Steps>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Channels View" icon="tower-broadcast" href="/web-dashboard/channels-view">
+    Monitor and manage your messaging platform connections.
+  </Card>
+  <Card title="Chat Console" icon="message" href="/web-dashboard/chat">
+    Talk to your agents directly through the browser.
+  </Card>
+  <Card title="Platform Actions" icon="bolt" href="/agent-tools/platform-actions">
+    Full reference for all platform-specific actions.
+  </Card>
+</CardGroup>

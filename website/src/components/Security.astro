@@ -1,0 +1,92 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+const threats = [
+  {
+    threat: "Remote code execution",
+    desc: "Attackers hijack agents through exposed endpoints and WebSocket connections.",
+    answer: "Authenticated by default.",
+    detail: "mTLS gateway, bearer token auth, no open ports without explicit configuration.",
+  },
+  {
+    threat: "Prompt injection",
+    desc: "Malicious instructions hidden in web pages or fetched content trick agents into executing attacker commands.",
+    answer: "Injection detection.",
+    detail: "48 attack patterns across 13 weighted categories detected and blocked. External content is marked and isolated.",
+  },
+  {
+    threat: "Memory poisoning",
+    desc: "Attackers modify an agent's persistent memory to change its behavior over time.",
+    answer: "Trust-partitioned memory.",
+    detail: "Three trust levels - system, learned, external. Low-trust sources can't overwrite high-trust memories.",
+  },
+  {
+    threat: "Credential exposure",
+    desc: "API keys and secrets leaked through logs, tool outputs, or unencrypted storage.",
+    answer: "Encrypted secrets.",
+    detail: "AES-256 at rest. 18 log redaction rules. Never in tool output, never in chat responses.",
+  },
+  {
+    threat: "Unchecked tool access",
+    desc: "Agents with shell and file access operating with no oversight.",
+    answer: "Approval gates + kernel sandbox.",
+    detail: "Destructive actions require your sign-off. Shell commands run inside an OS-level filesystem sandbox - agents can only see their own workspace, not your host system.",
+  },
+  {
+    threat: "Malicious skills",
+    desc: "Community skills that exfiltrate data or override safety guidelines.",
+    answer: "Skill policies + tool whitelisting.",
+    detail: "Each agent has an explicit allowlist. Skills can't escalate privileges or access tools outside their scope.",
+  },
+  {
+    threat: "Data exfiltration",
+    desc: "Agents tricked into sending private data to external servers.",
+    answer: "SSRF protection.",
+    detail: "Outbound requests to private networks, localhost, and cloud metadata endpoints are blocked.",
+  },
+  {
+    threat: "No audit trail",
+    desc: "When something goes wrong, there's no record of what happened.",
+    answer: "Full audit system.",
+    detail: "Every security-relevant action is logged, classified, and traceable with trace IDs.",
+  },
+];
+---
+
+<section class="px-6 py-20 md:py-28">
+  <div class="max-w-5xl mx-auto">
+    <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">Security deep dive</p>
+    <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+      Security that's engineered in, not bolted on.
+    </h2>
+    <p class="text-muted text-lg mb-14 max-w-2xl">
+      Other AI agents ship fast and patch later. Comis was designed from day one around the question: what happens when an AI agent has real power and someone tries to abuse it?
+    </p>
+
+    <div class="grid md:grid-cols-2 gap-6">
+      {threats.map((t) => (
+        <div class="bg-navy-light/50 border border-white/5 rounded-xl p-6 hover:border-coral/20 transition-colors">
+          <div class="flex items-start gap-4">
+            <div class="shrink-0 w-2 h-2 rounded-full bg-red-400 mt-2.5"></div>
+            <div class="flex-1">
+              <p class="text-sm text-muted mb-2">{t.threat}: {t.desc}</p>
+              <p class="text-white font-semibold">
+                <span class="text-coral">&rarr;</span> {t.answer}
+              </p>
+              <p class="text-sm text-muted-light mt-1">{t.detail}</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <p class="text-center mt-14 text-lg text-muted">
+      Other agents ask you to trust them. <span class="text-white font-semibold">Comis gives you reasons to.</span>
+    </p>
+    <div class="text-center mt-6">
+      <a href="/security" class="inline-flex items-center gap-2 text-sm font-semibold text-coral hover:text-coral-dark transition-colors">
+        Deep dive: 22 layers of defense in depth, including OS-level sandboxing
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+      </a>
+    </div>
+  </div>
+</section>

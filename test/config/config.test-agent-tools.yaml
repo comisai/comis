@@ -1,0 +1,92 @@
+# Comis Test Configuration (Agent Tools Platform Tests)
+#
+# Port 8493 -- unique to comprehensive agent tools integration tests
+# Two agents (default, helper) for session.list + agents.list coverage
+# agentToAgent enabled for session.spawn/run_status testing
+# Scheduler enabled for wake tool testing
+# No embeddings/RAG needed
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  default:
+    name: "TestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+  helper:
+    name: "HelperAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8493
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-integration-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-agent-tools.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

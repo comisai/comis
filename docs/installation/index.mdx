@@ -1,0 +1,91 @@
+---
+title: "Installation"
+description: "Choose your setup method and install Comis"
+icon: "download"
+---
+
+This section walks you through installing Comis on your server or development
+machine. There are three ways to get started -- pick the one that fits your
+workflow best.
+
+## Quick Install
+
+One-liner -- installs Node.js and everything else:
+
+```bash
+curl -fsSL https://comis.ai/install.sh | bash
+```
+
+## Choose Your Setup Method
+
+<CardGroup cols={3}>
+  <Card title="Setup Wizard" icon="wand-magic-sparkles" href="/installation/install-linux">
+    Recommended for most users. The interactive wizard handles Node.js
+    installation, configuration, and startup in a single procedure.
+  </Card>
+  <Card title="Docker" icon="docker" href="/installation/install-docker">
+    Run Comis in a container. No system-level Node.js installation needed --
+    everything runs inside Docker.
+  </Card>
+  <Card title="Manual Configuration" icon="gear" href="/installation/configuration">
+    Full control over every setting. For experienced users who want to build
+    their config.yaml from scratch.
+  </Card>
+</CardGroup>
+
+## Comparison
+
+| Method | Best for | Time estimate |
+|---|---|---|
+| Setup Wizard | First-time users, quick start | ~5 minutes |
+| Docker | Container-based workflows, isolation | ~10 minutes |
+| Manual | Custom setups, advanced users | ~15 minutes |
+
+All three methods produce the same result: a running Comis daemon with a web
+dashboard at `http://localhost:4766`. The difference is how much the tooling
+handles for you versus how much you configure by hand.
+
+### What Gets Installed
+
+Regardless of which method you choose, Comis sets up:
+
+- **The `comis` CLI** -- a command-line tool for managing your agents, running
+  diagnostics, and controlling the daemon.
+- **A background daemon** -- the process that keeps your agents running, serves
+  the web dashboard, and handles incoming messages from connected channels.
+- **A configuration directory** at `~/.comis/` containing your config file,
+  environment secrets, and local database.
+
+The setup wizard creates sensible defaults for all of these. The manual path
+lets you customize each one individually.
+
+<Info>
+**Already installed?** If Comis is already running and you want to check that
+everything is healthy, skip ahead to the [Verification](/installation/verify)
+page for diagnostic steps.
+</Info>
+
+## Before You Begin
+
+Make sure your system meets the minimum requirements before starting any
+installation method. The [Requirements](/installation/requirements) page lists
+everything you need -- hardware specs, software versions, and AI provider
+accounts. Most users only need Node.js 22+, basic build tools, and an API key
+from one AI provider.
+
+## Explore the Installation Guides
+
+<CardGroup cols={2}>
+  <Card title="Requirements" icon="clipboard-check" href="/installation/requirements">
+    Hardware, software, and account prerequisites.
+  </Card>
+  <Card title="Install on Linux" icon="linux" href="/installation/install-linux">
+    Step-by-step procedure for Ubuntu, Fedora, and Arch.
+  </Card>
+  <Card title="Install with Docker" icon="docker" href="/installation/install-docker">
+    Container-based setup with Docker Compose.
+  </Card>
+  <Card title="Verification" icon="circle-check" href="/installation/verify">
+    Confirm your installation is healthy.
+  </Card>
+</CardGroup>

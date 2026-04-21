@@ -1,0 +1,180 @@
+---
+title: "Install with Docker"
+description: "Run Comis in a Docker container with Docker Compose"
+icon: "docker"
+---
+
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+This guide sets up Comis in a Docker container. You do not need Node.js installed
+on your system -- Docker handles everything.
+
+<Warning>
+You need **Docker Engine 24+** and **Docker Compose v2+** installed. Check with:
+
+```bash
+docker --version
+docker compose version
+```
+</Warning>
+
+## Automated setup
+
+The repository includes a setup script that creates directories, generates a
+gateway token, builds the Docker image, and starts the daemon. This is the
+recommended way to get started.
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/comis-platform/comis.git
+    cd comis
+    ```
+  </Step>
+
+  <Step title="Configure environment">
+    Copy the included environment template and add your API keys:
+
+    ```bash
+    cp .env.docker.example .env
+    ```
+
+    Open `.env` in your editor and fill in at minimum:
+
+    ```bash
+    ANTHROPIC_API_KEY=your-key-here
+    # or
+    OPENAI_API_KEY=your-key-here
+    ```
+
+    <SecretWarning />
+
+    <Tip>
+    The `.env.docker.example` file lists all available settings including
+    channel tokens (Telegram, Discord, Slack), network binding options, and
+    optional provider keys. See the comments in that file for details.
+    </Tip>
+  </Step>
+
+  <Step title="Run the setup script">
+    ```bash
+    ./docker-setup.sh
+    ```
+
+    The script performs these steps automatically:
+
+    1. Creates the data directory (`~/.comis`) with a `traces/` subdirectory
+    2. Generates a gateway authentication token (or reuses an existing one)
+    3. Writes token and network settings to `~/.comis/.env`
+    4. Creates a default `config.yaml` with gateway, logging, and memory paths
+    5. Builds the Docker image from the included `Dockerfile`
+    6. Fixes data directory ownership for the container's non-root user (UID 1000)
+    7. Starts the `comis-daemon` service and waits for its health check to pass
+
+    When complete, the script prints the gateway URL and a truncated token.
+  </Step>
+
+  <Step title="Verify">
+    Confirm the daemon is healthy:
+
+    ```bash
+    curl http://localhost:4766/health
+    ```
+
+    Expected response:
+
+    ```json
+    { "status": "ok" }
+    ```
+  </Step>
+</Steps>
+
+## Optional services
+
+The daemon is the only service that starts by default. The web dashboard and
+CLI are available as Docker Compose profiles.
+
+### Web dashboard
+
+Start the Nginx-served web UI on port 8080:
+
+```bash
+docker compose --profile web up -d
+```
+
+Then open `http://localhost:8080` in your browser. The dashboard proxies API
+calls and WebSocket connections to the daemon automatically.
+
+### CLI
+
+Run one-shot CLI commands against the running daemon:
+
+```bash
+docker compose --profile cli run --rm comis-cli status
+```
+
+The CLI container shares the daemon's network namespace, so it reaches the
+gateway at `127.0.0.1:4766` without extra configuration.
+
+## Stopping and updating
+
+| Action | Command |
+|--------|---------|
+| Stop daemon | `docker compose down` |
+| Stop web dashboard | `docker compose --profile web down` |
+| Restart daemon | `docker compose restart comis-daemon` |
+| Update | `git pull && docker compose up -d --build` |
+| View logs | `docker compose logs -f comis-daemon` |
+
+## Common issues
+
+<AccordionGroup>
+  <Accordion title="Setup script fails">
+    Common causes:
+
+    - **Docker not running** -- start Docker Desktop or the Docker daemon
+    - **Port 4766 in use** -- stop the other process or set `COMIS_GATEWAY_PORT` in `.env`
+    - **Missing openssl** -- the script uses `openssl rand -hex 32` for token generation; install it with your system package manager
+  </Accordion>
+
+  <Accordion title="Cannot access dashboard from host">
+    **Symptom:** `curl http://localhost:4766/health` returns "connection refused"
+    even though the container is running.
+
+    **Fix:** Verify these settings:
+
+    1. The `COMIS_GATEWAY_HOST` in your `.env` file controls which host IP the port binds to (`127.0.0.1` for localhost only, `0.0.0.0` for all interfaces)
+    2. The container is running and healthy: `docker compose ps`
+    3. No firewall is blocking the port
+  </Accordion>
+
+  <Accordion title="Container exits immediately">
+    **Symptom:** The container starts but stops within seconds.
+
+    **Fix:** Check the logs for the error:
+
+    ```bash
+    docker compose logs comis-daemon
+    ```
+
+    Common causes:
+
+    - **Invalid config.yaml** -- check YAML syntax and required fields
+    - **Missing API key** -- verify the `.env` file has the correct variable name
+    - **Port already in use** -- another process is using port 4766 on the host
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration Guide" icon="gear" href="/installation/configuration">
+    Customize your agent settings, add channels, and configure advanced options.
+  </Card>
+  <Card title="Verify Installation" icon="circle-check" href="/installation/verify">
+    Run diagnostic commands to confirm everything is working.
+  </Card>
+  <Card title="Operations: Docker" icon="docker" href="/operations/docker">
+    Production-ready Docker deployment with multi-stage builds and security hardening.
+  </Card>
+</CardGroup>

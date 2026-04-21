@@ -1,0 +1,74 @@
+---
+title: "Sub-Agents"
+description: "Monitor spawned sub-agent tasks, outputs, costs, and lineage"
+icon: "users"
+---
+
+The Sub-Agents view shows all recently spawned sub-agent runs. Sub-agents are created when an agent delegates tasks to child agents during execution -- for example, a research agent spawning a summarizer. This view lets you monitor their status, review results, and terminate stuck runs.
+
+## Route
+
+- `/subagents` -- opens the sub-agents monitoring view
+
+## What You See
+
+### Run List
+
+The main area displays sub-agent runs from the last 60 minutes as a vertical list of cards. Each run card shows:
+
+| Element | Description |
+|---------|-------------|
+| **Status** | Colored tag showing the current state: running (blue), queued (gray), completed (green), failed (red), killed (yellow) |
+| **Agent ID** | The identifier of the sub-agent that was spawned |
+| **Task** | The task description given to the sub-agent (truncated to 80 characters, full text on hover) |
+| **Started** | Relative timestamp of when the run began |
+| **Duration** | How long the run took (shown for completed runs) |
+| **Depth** | The spawn depth level (1 = direct child, 2 = grandchild, etc.) |
+| **Tokens** | Total tokens used (shown for completed runs with results) |
+| **Cost** | Total cost in USD (shown for completed runs with results) |
+| **Steps** | Number of execution steps completed (shown for completed runs) |
+
+Failed runs display an error message in a red-highlighted section below the metadata.
+
+### Kill Action
+
+Running or queued sub-agents display a **Kill** button. Clicking it opens a confirmation dialog warning that the parent session will receive an error result. This is useful for terminating sub-agents that are stuck or consuming excessive resources.
+
+### Real-Time Updates
+
+The view subscribes to SSE lifecycle events. When a sub-agent starts, completes, or fails, the list automatically refreshes via a debounced reload. This means you see status changes without manually refreshing the page.
+
+### Empty State
+
+If no sub-agent runs occurred in the last 60 minutes, the view shows an empty state message. Sub-agent runs are only retained in the runtime list for recent activity monitoring -- historical data is available through session logs.
+
+## Common Tasks
+
+<Steps>
+  <Step title="Monitor active sub-agents">
+    Open the Sub-Agents view. Running sub-agents appear with a blue status tag. Watch for status changes as they complete or fail.
+  </Step>
+  <Step title="Check sub-agent cost">
+    Look at the Tokens and Cost fields on completed run cards. These show the total resource consumption for each sub-agent task.
+  </Step>
+  <Step title="Kill a stuck sub-agent">
+    Find the running sub-agent in the list, click the Kill button, and confirm in the dialog. The parent agent's session will receive an error result for that task.
+  </Step>
+  <Step title="Review sub-agent errors">
+    Failed runs display their error message in a red section below the metadata. Check the error text and the parent agent's session for context.
+  </Step>
+</Steps>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Sub-Agent Lifecycle" icon="arrows-split-up-and-left" href="/agents/subagent-lifecycle">
+    How sub-agents are spawned, managed, and cleaned up.
+  </Card>
+  <Card title="Execution Graphs" icon="diagram-project" href="/agents/execution-graphs">
+    Multi-agent pipelines that orchestrate sub-agent tasks.
+  </Card>
+  <Card title="Sessions View" icon="clock-rotate-left" href="/web-dashboard/sessions-view">
+    View conversation histories including sub-agent sessions.
+  </Card>
+</CardGroup>

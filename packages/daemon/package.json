@@ -1,0 +1,65 @@
+{
+  "name": "@comis/daemon",
+  "private": true,
+  "version": "1.0.11",
+  "author": "Moshe Anconina",
+  "license": "Apache-2.0",
+  "description": "Background daemon and orchestrator for the Comis platform",
+  "keywords": ["comis", "ai", "agent", "daemon", "orchestrator"],
+  "engines": { "node": ">=22" },
+  "files": [
+    "dist",
+    "bundled-skills"
+  ],
+  "bin": {
+    "comis-daemon": "./dist/daemon.js"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comisai/comis.git",
+    "directory": "packages/daemon"
+  },
+  "homepage": "https://github.com/comisai/comis#readme",
+  "bugs": {
+    "url": "https://github.com/comisai/comis/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@comis/agent": "workspace:*",
+    "@comis/channels": "workspace:*",
+    "@comis/core": "workspace:*",
+    "@comis/gateway": "workspace:*",
+    "@comis/infra": "workspace:*",
+    "@comis/memory": "workspace:*",
+    "@comis/scheduler": "workspace:*",
+    "@comis/shared": "workspace:*",
+    "@comis/skills": "workspace:*",
+    "@mariozechner/pi-ai": "0.67.68",
+    "better-sqlite3": "^12.6.2",
+    "hono": "^4.12.5",
+    "pino": "^10.3.1",
+    "pino-roll": "^4.0.0",
+    "yaml": "^2.8.2",
+    "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "sd-notify": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}

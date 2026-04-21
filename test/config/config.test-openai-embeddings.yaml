@@ -1,0 +1,71 @@
+# Comis OpenAI Embeddings + Error Format Test Configuration
+#
+# Port 8487 -- unique to OpenAI embeddings + error format tests.
+# Designed for testing the /v1/embeddings endpoint with a real OpenAI
+# embedding provider and validating OpenAI error format compliance
+# across all /v1/* endpoints.
+# Requires OPENAI_API_KEY in ~/.comis/.env.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "TestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8487
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-integration-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+memory:
+  dbPath: "test-memory-openai-embeddings.db"
+
+embedding:
+  enabled: true
+  provider: "openai"
+  openai:
+    model: "text-embedding-3-small"
+    dimensions: 256
+  cache:
+    maxEntries: 100
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

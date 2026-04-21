@@ -1,0 +1,212 @@
+---
+title: "Documents"
+description: "How your agent reads PDFs, spreadsheets, code files, and other documents"
+icon: "file-lines"
+---
+
+When someone sends a document to your agent -- a PDF report, a CSV
+spreadsheet, a code file, or a plain text file -- Comis extracts the text
+content so your agent can read and understand it. This works automatically
+for 14 supported file types, including scanned PDFs that need OCR. Your agent
+can then answer questions about the document, summarize it, or use the
+content in its responses.
+
+## Supported File Types
+
+Comis can extract text from all of the following file types out of the box.
+If someone sends one of these files to your agent, the content is available
+immediately.
+
+| File Type | Extension | MIME Type |
+|-----------|-----------|-----------|
+| Plain text | `.txt` | `text/plain` |
+| CSV | `.csv` | `text/csv` |
+| Markdown | `.md` | `text/markdown` |
+| HTML | `.html` | `text/html` |
+| XML | `.xml` | `text/xml`, `application/xml` |
+| JSON | `.json` | `application/json` |
+| PDF | `.pdf` | `application/pdf` |
+| YAML | `.yaml`, `.yml` | `text/yaml`, `application/x-yaml` |
+| JavaScript | `.js` | `text/javascript` |
+| Python | `.py` | `text/x-python` |
+| TypeScript | `.ts` | `text/x-typescript` |
+| Shell scripts | `.sh` | `application/x-sh` |
+
+<Info>
+The list above covers most common document types. If you need to support
+additional MIME types, you can extend the list using the `allowedMimes`
+configuration option (see the Configuration section below).
+</Info>
+
+## How It Works
+
+### Automatic Extraction
+
+When `documentExtraction.enabled` is `true` (the default), any supported
+document attached to a message is automatically extracted before your agent
+processes the message. The agent sees the document text inline, as if the user
+had pasted the content directly into the chat. No tool call is needed -- the
+content is simply there when the agent starts processing.
+
+For example, if someone sends a CSV file, your agent sees the raw CSV data
+and can answer questions about it, summarize it, or extract specific values --
+all without any extra steps. If someone sends a Python script, the agent sees
+the source code and can review it, explain what it does, or suggest
+improvements.
+
+When multiple documents are attached to a single message, Comis extracts all
+of them (up to the `maxTotalChars` limit). The agent sees the content of each
+document labeled by filename and type.
+
+### On-Demand Extraction
+
+Your agent can also use the `extract_document` tool to process documents
+explicitly. This is useful when:
+
+- The agent wants to extract a document that was shared earlier in the
+  conversation
+- Automatic extraction is disabled and the agent needs to read a file
+- The agent wants to process a document from a URL rather than an attachment
+- A document exceeds automatic extraction limits and the agent wants to try
+  extracting a specific portion
+
+See [Media Tools](/agent-tools/media) for the full `extract_document` tool
+parameters and usage examples.
+
+## PDF Handling
+
+PDFs have special handling because they come in two varieties:
+
+**Text-based PDFs:** These are normal PDFs where the text can be selected and
+copied. Comis extracts the text directly, numbering each page so your agent
+knows which content comes from where.
+
+**Scanned PDFs (images of text):** These are PDFs created from scanned paper
+documents or photos. The pages are images, so normal text extraction returns
+little or no text. By default, scanned PDFs produce empty or minimal results.
+
+To handle scanned PDFs, enable the vision OCR fallback. When enabled, Comis
+detects pages with very little text and sends them to your configured vision
+AI provider to read the text from the image.
+
+```yaml
+integrations:
+  media:
+    documentExtraction:
+      pdfImageFallback: true              # Use vision AI for scanned PDFs
+      pdfImageFallbackThreshold: 50       # Min characters per page before triggering OCR
+      maxPages: 20                        # Max pages to process
+```
+
+The `pdfImageFallbackThreshold` controls when OCR kicks in. If a page has
+fewer than this many characters after normal text extraction, Comis treats it
+as a scanned page and uses vision AI to read it. The default threshold is 50
+characters.
+
+<Info>
+PDF OCR uses your configured vision provider, so make sure you have at least
+one vision provider set up if you enable this feature. See
+[Vision](/media/vision) for provider setup.
+</Info>
+
+## What Happens Without Document Extraction
+
+If document extraction is disabled or the file type is not supported, your
+agent still knows a document was sent. It receives a hint like:
+
+> "Attached: report.pdf (application/pdf) -- use `extract_document` tool to
+> read"
+
+The agent can then use the `extract_document` on-demand tool if it is
+available. This means documents are never silently ignored -- your agent
+always knows when a file was shared, even if automatic extraction is not
+configured.
+
+For unsupported file types (like `.zip` archives or binary executables), the
+agent sees the filename and MIME type but cannot extract text content. It can
+still acknowledge the file and let the user know that the file type is not
+supported for text extraction.
+
+## Limits
+
+You can control how much processing power documents consume using these
+settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxBytes` | 10 MB | Maximum file size for extraction |
+| `maxChars` | 200,000 | Maximum characters in extracted text |
+| `maxTotalChars` | 500,000 | Maximum total characters across all attachments in a single message |
+| `maxPages` | 20 | Maximum pages for paginated documents like PDFs |
+| `timeoutMs` | 30,000 ms | Extraction timeout per document |
+
+When a limit is reached, extraction stops gracefully rather than failing.
+For example:
+
+- If a PDF has 50 pages but `maxPages` is set to 20, only the first 20 pages
+  are extracted and your agent is informed that the document was truncated.
+- If a document's extracted text exceeds `maxChars`, the text is cut off at
+  the limit and the agent knows the content was truncated.
+- If a file exceeds `maxBytes`, extraction is skipped entirely and the agent
+  receives a hint about the file instead.
+
+These limits protect your system from excessive memory or processing usage
+when handling very large documents.
+
+## Configuration
+
+Here is the complete configuration reference for document extraction. All
+settings live under `integrations.media.documentExtraction` in your
+`config.yaml`:
+
+```yaml
+integrations:
+  media:
+    documentExtraction:
+      enabled: true                    # Enable automatic extraction (default: true)
+      maxBytes: 10485760               # Max file size: 10 MB
+      maxChars: 200000                 # Max characters per document
+      maxTotalChars: 500000            # Max total characters per message
+      maxPages: 20                     # Max PDF pages
+      timeoutMs: 30000                 # Extraction timeout in milliseconds
+      pdfImageFallback: false          # Vision OCR for scanned PDFs (default: false)
+      pdfImageFallbackThreshold: 50    # Min characters per page to trigger fallback
+      allowedMimes:                    # Override the supported MIME types
+        - "text/plain"
+        - "text/csv"
+        - "text/markdown"
+        - "text/html"
+        - "text/xml"
+        - "application/xml"
+        - "application/json"
+        - "application/pdf"
+        - "text/yaml"
+        - "application/x-yaml"
+        - "text/javascript"
+        - "text/x-python"
+        - "text/x-typescript"
+        - "application/x-sh"
+```
+
+<Tip>
+Most users never need to change these defaults. The settings above are
+designed to handle typical documents efficiently without excessive resource
+use. Adjust limits only if you regularly work with very large files.
+</Tip>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Vision" icon="eye" href="/media/vision">
+    Image analysis powers PDF OCR fallback
+  </Card>
+  <Card title="Media Tools" icon="toolbox" href="/agent-tools/media">
+    The `extract_document` tool reference
+  </Card>
+  <Card title="Media Overview" icon="photo-film" href="/media">
+    Back to media overview
+  </Card>
+  <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
+    Full configuration reference
+  </Card>
+</CardGroup>

@@ -1,0 +1,165 @@
+---
+title: "Channels"
+description: "Connect Comis to Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, and Email"
+icon: "message-dots"
+---
+
+Channels are how your AI agent communicates with users on different chat platforms.
+Each channel connects Comis to a messaging service -- Discord, Telegram, Slack, and
+more -- so your agent can send and receive messages where your community already hangs out.
+One agent can connect to multiple channels at the same time.
+
+## How channels work
+
+When you enable a channel, Comis starts a **channel adapter** that handles all the
+platform-specific details: logging in with your credentials, receiving incoming messages,
+and sending replies in the format each platform expects. You provide the credentials
+(a bot token, API key, or phone number depending on the platform), and Comis does the rest.
+
+Your agent does not need to know which platform a message came from -- it just sees
+text, images, and files. The adapter translates everything into a common format,
+so the same agent can hold a conversation on Discord and Telegram without any
+extra configuration.
+
+Each adapter also handles platform-specific features automatically:
+
+- **Message splitting** -- If a response is too long for the platform, Comis splits it
+  into multiple messages at natural break points (paragraphs, sentences, or code blocks).
+- **Format conversion** -- Your agent writes Markdown. Comis converts it to HTML for
+  Telegram, mrkdwn for Slack, or plain text for platforms that do not support formatting.
+- **Media processing** -- When a user sends an image, voice message, or document, Comis
+  can transcribe, analyze, or extract text from it before passing it to your agent.
+- **Typing indicators** -- While your agent is thinking, Comis shows a typing indicator
+  on platforms that support it, so users know a response is coming.
+
+## Platform comparison
+
+The table below shows what each platform supports. Use it to pick the right channel
+for your use case, or to understand the differences when connecting multiple platforms.
+
+### Features
+
+| Platform | Chat Types | Streaming | Threads | Reactions | Edit / Delete | Buttons | Formatting |
+|---|---|---|---|---|---|---|---|
+| [Discord](/channels/discord) | DM, group, thread, channel, forum | Edit | Native | Yes | Yes / Yes | Yes | Markdown |
+| [Telegram](/channels/telegram) | DM, group, channel, forum | Edit | Native | Yes | Yes / Yes | Yes | HTML |
+| [Slack](/channels/slack) | DM, group, thread, channel | Edit | Reply-chain | Yes | Yes / Yes | Yes | mrkdwn |
+| [WhatsApp](/channels/whatsapp) | DM, group | Block | No | Yes | Yes / Yes | Yes | None |
+| [Signal](/channels/signal) | DM, group | Block | No | Yes | No / Yes | No | Signal styles |
+| [iMessage](/channels/imessage) | DM, group | None | No | No | No / No | No | None |
+| [LINE](/channels/line) | DM, group | None | No | No | No / No | No | Flex |
+| [IRC](/channels/irc) | DM, channel | None | No | No | No / No | No | IRC codes |
+| [Email](/channels/email) | DM | None | Reply-chain | No | No / No | No | HTML |
+
+### Limits
+
+| Platform | Max Message Length | Max Attachment Size |
+|---|---|---|
+| [Discord](/channels/discord) | 2,000 characters | 25 MB |
+| [Telegram](/channels/telegram) | 4,096 characters | 50 MB |
+| [Slack](/channels/slack) | 4,000 characters | 1,000 MB |
+| [WhatsApp](/channels/whatsapp) | 65,536 characters | 100 MB |
+| [Signal](/channels/signal) | 65,536 characters | 100 MB |
+| [iMessage](/channels/imessage) | 20,000 characters | 16 MB |
+| [LINE](/channels/line) | 5,000 characters | 200 MB |
+| [IRC](/channels/irc) | 512 characters | N/A |
+| [Email](/channels/email) | 100,000 characters | N/A |
+
+<Tip>
+**Reading the table:** "Edit / Delete" shows whether Comis can edit its own messages
+and delete them on that platform. "Streaming" describes how live responses appear --
+see the next section for details. When a response exceeds the max message length,
+Comis automatically splits it into multiple messages.
+</Tip>
+
+## Streaming methods
+
+Comis supports three ways to deliver responses as they are generated:
+
+- **Edit streaming** (Discord, Telegram, Slack) -- Comis sends an initial message and
+  continuously edits it with new text as the AI generates more. This creates a
+  "live typing" effect similar to ChatGPT. Each platform has its own edit throttle
+  (500 ms for Discord, 300 ms for Telegram, 400 ms for Slack) to stay within
+  rate limits.
+
+- **Block streaming** (WhatsApp, Signal) -- Comis sends each paragraph as a separate
+  message as the AI generates it. You see multiple messages arriving in sequence.
+  This works well on platforms that do not support message editing.
+
+- **No streaming** (iMessage, LINE, IRC, Email) -- Comis waits for the full response and sends
+  it as a single message (or splits it if the response exceeds the platform limit).
+  This is the simplest mode and works everywhere.
+
+For full details on how delivery works -- including typing indicators, retry logic, and
+pacing -- see [Delivery Infrastructure](/channels/delivery).
+
+## Choosing the right platform
+
+Not sure which channel to start with? Here are some common scenarios:
+
+- **Community server or workspace** -- Use [Discord](/channels/discord) or
+  [Slack](/channels/slack). Both support threads, reactions, buttons, and live-streaming
+  responses, making them ideal for interactive group conversations.
+
+- **Mobile-first messaging** -- Use [Telegram](/channels/telegram) or
+  [WhatsApp](/channels/whatsapp). Both are widely used on phones and support buttons
+  for interactive workflows.
+
+- **Privacy-focused** -- Use [Signal](/channels/signal). Messages are end-to-end
+  encrypted, and the Signal adapter communicates through a local signal-cli daemon
+  that you control.
+
+- **macOS personal assistant** -- Use [iMessage](/channels/imessage). Your agent
+  appears as a regular iMessage contact on your Mac.
+
+- **Legacy or lightweight** -- Use [IRC](/channels/irc). Minimal resource usage,
+  works with any IRC network, and supports TLS for secure connections.
+
+- **Asynchronous communication** -- Use [Email](/channels/email). Your agent
+  monitors an inbox via IMAP and replies via SMTP. Good for workflows where
+  responses do not need to be instant, or for integrating with systems that
+  communicate via email.
+
+You can always add more channels later. Your agent's memory and personality carry
+across all connected platforms.
+
+## Getting started
+
+Pick the platform you want to connect and follow the step-by-step setup guide. Each
+guide walks you through creating the required credentials and configuring Comis, from
+account creation to your first message.
+
+If you have not installed Comis yet, start with the [Quickstart](/get-started/quickstart).
+
+<CardGroup cols={3}>
+  <Card title="Discord" icon="discord" href="/channels/discord">
+    Servers, DMs, threads, buttons, embeds, and live-streaming responses.
+  </Card>
+  <Card title="Telegram" icon="telegram" href="/channels/telegram">
+    Bots, groups, channels, forum topics, inline buttons, and HTML formatting.
+  </Card>
+  <Card title="Slack" icon="slack" href="/channels/slack">
+    Workspaces, channels, threads, Socket Mode or HTTP, and mrkdwn.
+  </Card>
+  <Card title="WhatsApp" icon="whatsapp" href="/channels/whatsapp">
+    Personal and group chats with QR code pairing and large file support.
+  </Card>
+  <Card title="Signal" icon="signal" href="/channels/signal">
+    Private messaging with end-to-end encryption via signal-cli.
+  </Card>
+  <Card title="iMessage" icon="message" href="/channels/imessage">
+    macOS-only Apple iMessage integration for DMs and group chats.
+  </Card>
+  <Card title="LINE" icon="line" href="/channels/line">
+    LINE Messaging API with webhook-based message delivery and Flex formatting.
+  </Card>
+  <Card title="IRC" icon="terminal" href="/channels/irc">
+    Classic IRC with TLS, NickServ auth, and multi-channel support.
+  </Card>
+  <Card title="Email" icon="envelope" href="/channels/email">
+    IMAP/SMTP email integration with OAuth2, threading, and sender filtering.
+  </Card>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, retry logic, and message pacing work.
+  </Card>
+</CardGroup>

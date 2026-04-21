@@ -1,0 +1,169 @@
+---
+title: "Skills Overview"
+description: "Understand the types of skills and tools your Comis agents can use"
+icon: "wand-magic-sparkles"
+---
+
+Comis agents come equipped with a variety of skills and tools. Some are built
+in, some come from the platform, and you can create your own. This page
+explains the different types and how they work together.
+
+## Understanding Skills and Tools
+
+Agents use **tools** to take actions in the world -- search the web, send
+messages, read files, manage schedules, and more. Tools are pieces of code
+that actually do things. When an agent decides it needs to look something up
+online, it calls the `web_search` tool. When it needs to create a file, it
+calls the `write` tool. Tools are the hands of your agent.
+
+**Skills** are different. They are custom instructions you write to teach
+agents new behaviors. A skill might define a customer support persona, a code
+review checklist, or a set of rules for moderating a community. Skills are
+knowledge that guides how your agent thinks and responds -- they shape its
+personality, its expertise, and its approach to problems.
+
+Together, tools give your agents capabilities and skills give them expertise.
+An agent with the right tools can do almost anything; an agent with the right
+skills knows exactly _how_ to do it.
+
+## The Four Types
+
+Comis organizes all agent capabilities into four categories. Each serves a
+different purpose and comes from a different source:
+
+| Type | What It Is | Examples | Who Creates It |
+|------|-----------|----------|----------------|
+| Built-in Tools | Core tools for file operations, web access, and shell commands | `read`, `write`, `exec`, `web_search`, `browser` | Comes with Comis |
+| Platform Tools | Comis-specific tools for messaging, scheduling, and administration | `cron`, `message`, `sessions_spawn`, `gateway` | Comes with Comis |
+| Prompt Skills | Custom Markdown instruction files that teach agents new behaviors | Customer support persona, code review checklist | You create these |
+| MCP Tools | External tools from MCP (Model Context Protocol) servers | Database queries, third-party APIs, custom integrations | External servers |
+
+The first two types (built-in tools and platform tools) ship with Comis and
+are ready to use out of the box. The last two (prompt skills and MCP tools) are ways you can extend your agents
+with custom capabilities.
+
+### Built-in Tools
+
+There are 13 built-in tools covering four areas:
+
+- **File operations** -- read, write, edit, search, and list files
+- **Shell commands** -- execute commands and manage background processes
+- **Web access** -- search the web and fetch page content
+- **Browser automation** -- control a headless browser for page interaction
+
+These are the fundamental capabilities that come with every Comis agent --
+think of them as the standard toolkit that any coding assistant would need.
+You can enable or disable each one individually through configuration, so an
+agent that should not run shell commands can have `exec` turned off while
+keeping everything else.
+
+See [Built-in Tools](/skills/built-in-tools) for the complete reference with
+parameters and usage examples.
+
+### Platform Tools
+
+Platform tools are specific to Comis. There are over 30 tools across
+categories including:
+
+- **Scheduling** -- create cron jobs and manage heartbeat timing
+- **Messaging** -- send, reply, react, edit, and delete messages across any
+  connected channel
+- **Sessions** -- manage conversations, spawn sub-agents, run pipelines
+- **Media** -- analyze images, generate speech, transcribe audio, process
+  documents
+- **Infrastructure** -- read and modify configuration at runtime
+- **Memory** -- search, read, and store long-term memories
+- **Fleet management** -- supervisor-level tools for managing the entire
+  installation
+- **Platform actions** -- platform-specific moderation for Discord, Telegram,
+  Slack, and WhatsApp
+
+These let your agents interact with the Comis ecosystem -- sending messages
+across channels, scheduling recurring jobs, analyzing images, managing other
+agents, and more.
+
+See [Platform Tools](/skills/platform-tools) for the full overview, or browse
+the [Agent Tools](/agent-tools/index) tab for detailed guides on each
+category.
+
+### Prompt Skills
+
+Prompt skills are Markdown files (with a special `SKILL.md` format) that you
+write to teach your agents new behaviors. No coding required -- you write
+instructions in plain language, and Comis loads them into the agent's context.
+
+A prompt skill might define:
+
+- A customer support persona with tone guidelines and escalation procedures
+- A set of moderation rules for a Discord community
+- A research methodology that the agent follows step by step
+- A code review checklist with specific criteria to check
+
+Prompt skills are the easiest way to customize your agent. If you can write a
+document, you can write a prompt skill.
+
+In a multi-agent setup, each named agent automatically discovers skills from its
+own workspace directory. Skills can be scoped as agent-local or shared across all
+agents. See [Prompt Skills](/skills/prompt-skills) for the full scoping model.
+
+See [Prompt Skills](/skills/prompt-skills) for a walkthrough on creating your
+first skill.
+
+### MCP Tools
+
+MCP (Model Context Protocol) is an open standard that lets AI agents connect
+to external tool servers. If someone has built an MCP server for a database, a
+CRM, a project management tool, or any other service, your Comis agents can
+use those tools directly. This is how you extend Comis with capabilities from
+the broader AI ecosystem without writing any code yourself.
+
+Comis connects to MCP servers over standard I/O or HTTP, discovers available
+tools automatically, and makes them available to your agents alongside
+built-in and platform tools.
+
+See [MCP Integration](/skills/mcp) for setup instructions.
+
+## How Tools Get Selected
+
+Not every agent needs every tool. Comis lets you configure a **tool policy**
+for each agent, controlling exactly which tools it can access. Think of it
+like giving each agent a specific toolbox: a coding agent might have file and
+shell tools, while a customer service agent might have only messaging tools.
+
+Comis ships with five named profiles so you can quickly set the right level
+of access:
+
+- **minimal** -- read and write only, for highly restricted agents
+- **coding** -- file operations, shell commands, and process management for development agents
+- **messaging** -- message sending and session status for communication-focused agents
+- **supervisor** -- fleet management tools for administration agents
+- **full** -- all tools with no restrictions (this is the default)
+
+See [Tool Policy](/skills/tool-policy) for details on configuring tool access.
+
+## Explore Skills
+
+<CardGroup cols={3}>
+  <Card title="Built-in Tools" icon="wrench" href="/skills/built-in-tools">
+    File operations, shell commands, web search, and browser automation
+  </Card>
+  <Card title="Platform Tools" icon="puzzle-piece" href="/skills/platform-tools">
+    Messaging, scheduling, sessions, media, and administration tools
+  </Card>
+  <Card title="Prompt Skills" icon="file-lines" href="/skills/prompt-skills">
+    Write custom instruction files to teach agents new behaviors
+  </Card>
+  <Card title="MCP Integration" icon="plug" href="/skills/mcp">
+    Connect to external tool servers using the Model Context Protocol
+  </Card>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">
+    Control which tools each agent can use
+  </Card>
+</CardGroup>
+
+<CardGroup cols={1}>
+  <Card title="Agent Tools" icon="toolbox" href="/agent-tools/index">
+    See every platform tool in action -- the master reference for all
+    Comis-specific tools
+  </Card>
+</CardGroup>

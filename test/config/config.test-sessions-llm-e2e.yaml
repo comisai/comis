@@ -1,0 +1,76 @@
+# Comis Test Configuration (Sessions LLM E2E Tests)
+#
+# Port 8506 -- unique to real LLM session E2E tests (Phase 129 Plan 02)
+# Tests session creation via agent.execute, multi-turn conversation,
+# session.status with real token tracking, cross-session messaging,
+# sub-agent spawning, session isolation, and pagination.
+# Requires real LLM API keys (ANTHROPIC_API_KEY or OPENAI_API_KEY).
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  default:
+    name: "TestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8506
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-integration-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-129-sessions-llm-e2e.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false

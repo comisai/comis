@@ -1,0 +1,363 @@
+---
+title: "Install on a VPS"
+description: "Deploy Comis on Hostinger, DigitalOcean, Hetzner, or any Ubuntu VPS in under 10 minutes"
+icon: "server"
+---
+
+This guide walks you through deploying Comis on a fresh VPS (Virtual Private
+Server). By the end you will have a running daemon managed by systemd, with your
+AI agent reachable through Telegram, Discord, or any supported channel.
+
+The instructions work on **any provider** that gives you an Ubuntu server with
+root SSH access -- Hostinger, DigitalOcean, Hetzner, Vultr, Linode, AWS
+Lightsail, and others.
+
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
+
+<NonTechnicalNote />
+
+## What you need
+
+Before you start, have these ready:
+
+| Item | Where to get it |
+|---|---|
+| A VPS running **Ubuntu 22.04+** with at least 1 GB RAM | Your hosting provider's dashboard |
+| **Root SSH access** to the server | Your provider sends credentials after purchase |
+| An **AI provider API key** (Anthropic, OpenAI, or Google) | [Anthropic Console](https://console.anthropic.com), [OpenAI Platform](https://platform.openai.com), or [Google AI Studio](https://aistudio.google.com) |
+| A **chat channel bot token** (optional) | See the [Channels](/channels/index) section for setup guides |
+
+<Tip>
+Most providers offer an Ubuntu image by default. If you have a choice, pick
+**Ubuntu 24.04 LTS** -- it has the best compatibility with Comis.
+</Tip>
+
+## Step 1: Connect to your server
+
+Open a terminal on your computer and SSH into your VPS. Replace the IP address
+with your server's address.
+
+```bash
+ssh root@your-server-ip
+```
+
+Your provider may give you a password or an SSH key. Hostinger, for example,
+shows the password in the VPS dashboard under **SSH Access**.
+
+<Tip>
+If your provider gives you a password, you will be prompted to enter it after
+running the SSH command. You can also set up SSH keys later for passwordless
+login.
+</Tip>
+
+## Step 2: Install Comis
+
+Run the one-line installer. It handles everything: Node.js, system packages, a
+dedicated `comis` user, systemd service, and the Comis package itself.
+
+```bash
+curl -fsSL https://comis.ai/install.sh | bash
+```
+
+The installer takes 2-3 minutes. You will see a progress log like this:
+
+```
+  COMIS Installer
+  Friendly by nature. Powerful by design.
+
+  [1/4] Preparing system (as root)
+  ✓ Node.js v22 installed
+  ✓ System dependencies ready
+  ✓ User 'comis' created
+
+  [2/4] Installing Comis
+  ✓ Comis npm package installed
+
+  [2/4] Registering daemon as a service
+  ✓ comis.service started
+  ✓ Daemon is responding on the gateway port
+
+  Comis installed successfully (1.0.9)!
+```
+
+<Warning>
+Do **not** run the installer with `sudo`. Run it as `root` directly. The
+installer creates a dedicated `comis` user with restricted permissions and runs
+the daemon under that user -- this is the secure default.
+</Warning>
+
+## Step 3: Switch to the comis user
+
+The daemon runs under its own system user. Switch to it for all Comis commands:
+
+```bash
+su - comis
+```
+
+Verify the installation:
+
+```bash
+comis --version
+```
+
+Expected output:
+
+```
+1.0.9
+```
+
+## Step 4: Run the setup wizard
+
+The interactive wizard configures your AI provider, generates a gateway token,
+and (optionally) connects a chat channel.
+
+```bash
+comis init
+```
+
+The wizard walks you through:
+
+1. **AI Provider** -- choose Anthropic, OpenAI, or Google and paste your API key
+2. **Agent name** -- give your agent a personality
+3. **Channels** -- connect Telegram, Discord, or others (you can skip and add later)
+4. **Gateway security** -- auto-generates an authentication token
+5. **Start daemon** -- restarts the daemon with your new configuration
+
+<Tip>
+When the wizard asks to restart the daemon, choose **Restart (recommended)**.
+This ensures the daemon picks up your API key and gateway token immediately.
+</Tip>
+
+## Step 5: Verify everything works
+
+```bash
+comis status
+```
+
+You should see all systems online:
+
+```
+  Daemon
+     Status    online
+     Uptime    12s
+
+  Gateway
+     Status     online
+     Address    127.0.0.1:4766
+
+  Agents
+  ┌─────────┬───────────┬─────────────────┐
+  │ Name    │ Provider  │ Model           │
+  ├─────────┼───────────┼─────────────────┤
+  │ default │ anthropic │ claude-opus-4-6 │
+  └─────────┴───────────┴─────────────────┘
+```
+
+Run the doctor to check for any issues:
+
+```bash
+comis doctor
+```
+
+## Managing the daemon
+
+The comis user has full control over the daemon:
+
+```bash
+comis daemon status    # Check if running
+comis daemon start     # Start the daemon
+comis daemon stop      # Stop the daemon
+comis daemon logs      # View recent logs
+comis daemon logs -f   # Follow logs in real-time
+```
+
+The daemon runs under systemd and starts automatically on boot. If you ever need
+to restart it as root:
+
+```bash
+sudo systemctl restart comis
+```
+
+## Common tasks
+
+### Change the AI model
+
+```bash
+comis models list --provider anthropic
+comis models set default claude-sonnet-4-6
+```
+
+### Add a Telegram bot
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) on Telegram
+2. Copy the bot token
+3. Run the setup wizard for channels:
+
+```bash
+comis configure --section channels
+```
+
+Or edit the config directly:
+
+```bash
+comis config show channels
+```
+
+See the [Telegram channel guide](/channels/telegram) for detailed instructions.
+
+### Check memory and sessions
+
+```bash
+comis memory stats          # Memory database statistics
+comis memory search "topic" # Search stored memories
+comis sessions list         # List active sessions
+```
+
+### Run a security audit
+
+```bash
+comis security audit        # Check for security issues
+comis secrets audit         # Scan for plaintext secrets
+```
+
+## Provider-specific notes
+
+<AccordionGroup>
+  <Accordion title="Hostinger">
+    Hostinger VPS plans come with Ubuntu and root SSH access by default.
+
+    1. In the Hostinger dashboard, go to **VPS** and find your server's IP and password
+    2. SSH in: `ssh root@your-ip`
+    3. Run the installer as shown above
+
+    Hostinger's KVM plans (starting at 1 GB RAM) work well with Comis. The
+    installer handles all dependencies automatically.
+  </Accordion>
+
+  <Accordion title="DigitalOcean">
+    Create a Droplet with **Ubuntu 24.04**, minimum **1 GB / 1 vCPU**.
+
+    1. In the DigitalOcean dashboard, create a new Droplet
+    2. Choose Ubuntu 24.04 LTS
+    3. Select the $6/month plan (1 GB RAM) or higher
+    4. Add your SSH key or choose password authentication
+    5. SSH in and run the installer
+
+    DigitalOcean Droplets work out of the box -- no extra configuration needed.
+  </Accordion>
+
+  <Accordion title="Hetzner">
+    Create a server with **Ubuntu 24.04**, minimum **CX22** (2 GB RAM).
+
+    1. In the Hetzner Cloud console, create a new server
+    2. Choose Ubuntu 24.04
+    3. Select CX22 or higher
+    4. Add your SSH key
+    5. SSH in and run the installer
+
+    Hetzner offers excellent value for Comis deployments, especially the
+    ARM-based CAX servers.
+  </Accordion>
+
+  <Accordion title="Vultr / Linode / AWS Lightsail">
+    Any provider that offers Ubuntu 22.04+ with root access works identically:
+
+    1. Create an Ubuntu instance with at least 1 GB RAM
+    2. SSH in as root
+    3. Run the one-line installer
+
+    The installer auto-detects the environment and handles everything.
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Installer fails with 'npm install' errors">
+    Clear the npm cache and retry:
+
+    ```bash
+    npm cache clean --force
+    curl -fsSL https://comis.ai/install.sh | bash
+    ```
+  </Accordion>
+
+  <Accordion title="Daemon won't start after comis init">
+    The daemon may need a restart to pick up the new configuration:
+
+    ```bash
+    comis daemon stop
+    comis daemon start
+    comis daemon logs --lines 20
+    ```
+
+    If the logs show startup errors, check your API key is valid:
+
+    ```bash
+    comis doctor
+    ```
+  </Accordion>
+
+  <Accordion title="'comis status' shows offline but daemon is running">
+    This usually means the gateway token is not loaded. Restart the daemon:
+
+    ```bash
+    comis daemon stop
+    comis daemon start
+    ```
+
+    If that doesn't help, re-run the setup wizard:
+
+    ```bash
+    comis init
+    ```
+  </Accordion>
+
+  <Accordion title="Cannot stop/start daemon as comis user">
+    If you see a permissions error, the sudoers rule may be missing. As root:
+
+    ```bash
+    echo 'comis ALL=(root) NOPASSWD: /usr/bin/systemctl start comis, /usr/bin/systemctl stop comis, /usr/bin/systemctl restart comis' > /etc/sudoers.d/comis
+    chmod 0440 /etc/sudoers.d/comis
+    ```
+
+    Then switch back to the comis user and try again.
+  </Accordion>
+
+  <Accordion title="Server runs out of memory">
+    Comis uses around 300-500 MB of RAM. If your server has only 1 GB, consider:
+
+    - Adding swap space: `fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`
+    - Upgrading to a 2 GB plan
+    - Using a smaller model (e.g., `claude-haiku-4-5` instead of `claude-opus-4-6`)
+  </Accordion>
+</AccordionGroup>
+
+## Uninstalling
+
+To completely remove Comis from the server:
+
+```bash
+# As root
+curl -fsSL https://comis.ai/install.sh | bash -s -- --uninstall --remove-user
+```
+
+This stops the daemon, removes the systemd service, deletes the comis user, and
+cleans up all data.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Connect Channels" icon="comments" href="/channels/index">
+    Add Telegram, Discord, Slack, or other messaging platforms.
+  </Card>
+  <Card title="Configure Your Agent" icon="robot" href="/agents/index">
+    Customize your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Set Up Security" icon="shield" href="/security/index">
+    Enable encrypted secrets, TLS, and approval gates.
+  </Card>
+  <Card title="Monitor Operations" icon="chart-line" href="/operations/index">
+    Logs, metrics, and the web dashboard.
+  </Card>
+</CardGroup>

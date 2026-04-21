@@ -1,0 +1,264 @@
+---
+title: "Daemon"
+description: "How the Comis daemon starts, runs, and shuts down"
+icon: "server"
+---
+
+The daemon is the background process that powers your Comis installation. Think of
+it as the engine running behind the scenes -- it manages your agents, handles
+messages, runs scheduled tasks, and keeps everything connected. You start it once
+and it runs continuously until you stop it.
+
+## What the Daemon Does
+
+When the daemon is running, it handles four main responsibilities:
+
+- **Manages agent connections** -- Keeps your AI agents online and ready to respond to messages across all connected channels.
+- **Processes messages** -- Routes incoming messages to the right agent, sends them to your AI provider, and delivers the response back to the user.
+- **Runs scheduled tasks** -- Executes cron jobs, heartbeat health checks, and any tasks your agents have scheduled for themselves.
+- **Monitors system health** -- Watches disk space, CPU, memory, and other vital signs, alerting you if something needs attention.
+
+## Starting Up
+
+When you start the daemon, it goes through a careful initialization sequence:
+loading your configuration, connecting to channels, starting agents, and beginning
+health monitoring.
+
+The whole process typically takes one to three seconds. When it finishes, you will
+see a startup banner in the logs:
+
+```json
+{
+  "level": "info",
+  "module": "daemon",
+  "msg": "Comis daemon started",
+  "version": "1.0.6",
+  "agents": ["default"],
+  "channels": ["telegram", "discord"],
+  "port": 4766,
+  "instanceId": "a1b2c3d4",
+  "startupDurationMs": 1234,
+  "configPaths": ["~/.comis/config.yaml"],
+  "logLevel": "info"
+}
+```
+
+This banner tells you everything important at a glance: which agents are running,
+which channels are connected, what port the gateway is listening on, and how long
+startup took.
+
+<Tip>
+Look for `"Comis daemon started"` in the logs -- if you see it, everything
+initialized successfully. If you see `FATAL:` instead, check the
+[Recovering from Problems](#recovering-from-problems) section below or the
+[Troubleshooting](/operations/troubleshooting) page.
+</Tip>
+
+### What Happens During Startup
+
+Behind the scenes, the daemon runs through these steps in order:
+
+1. Loads environment variables from `~/.comis/.env`
+2. Decrypts any stored secrets (API keys, tokens)
+3. Hardens file permissions on the data directory (`~/.comis/`)
+4. Reads configuration from `~/.comis/config.yaml`
+5. Sets up logging (file transport, per-module log levels)
+6. Initializes observability (token tracking, latency recording)
+7. Opens the memory database (SQLite with full-text search)
+8. Creates agent executors with their configured models
+9. Starts channel adapters (Telegram, Discord, Slack, etc.)
+10. Starts the scheduler (cron jobs, heartbeat monitoring)
+11. Launches the gateway server (HTTP, WebSocket, web dashboard)
+12. Registers graceful shutdown handlers
+
+After step 12, the daemon saves a copy of the working configuration as a
+"last-known-good" snapshot (more on this in [Recovering from Problems](#recovering-from-problems)).
+
+## Running
+
+Once started, the daemon runs continuously in the background. It processes messages
+as they arrive, runs health checks at regular intervals (every 5 minutes by default),
+and collects system metrics every 30 seconds.
+
+You do not need to interact with the daemon while it is running -- it handles
+everything automatically. To check on it, view the logs or visit the
+[Web Dashboard](/operations/web-ui).
+
+## Shutting Down
+
+When you stop the daemon (by sending a stop signal like SIGTERM), it performs a
+graceful shutdown. This means it does not just cut everything off -- it carefully
+stops each component in the right order to avoid losing data or leaving connections
+open.
+
+Here is what the shutdown sequence looks like in the logs:
+
+```json
+{"level":"info","msg":"Graceful shutdown initiated","signal":"SIGTERM"}
+{"level":"info","msg":"Daemon session summary","totalExecutions":42,"totalCostUsd":0.15,"totalTokens":25000}
+{"level":"info","msg":"Component stopped","component":"graph-coordinator","shutdownOrder":1}
+{"level":"info","msg":"Component stopped","component":"sub-agent-runner","shutdownOrder":2}
+{"level":"info","msg":"Component stopped","component":"cron-scheduler","shutdownOrder":5}
+{"level":"info","msg":"Component stopped","component":"channel-manager","shutdownOrder":10}
+{"level":"info","msg":"Component stopped","component":"gateway","shutdownOrder":14}
+{"level":"info","msg":"Component stopped","component":"memory-database","shutdownOrder":16}
+{"level":"info","msg":"Graceful shutdown complete","shutdownDurationMs":456}
+```
+
+The shutdown follows this order:
+
+1. **Session summary** -- Logs total executions, cost, and token usage for the session.
+2. **Graph coordinator** -- Stops any running multi-agent pipelines.
+3. **Sub-agent runner** -- Drains active sub-agent tasks.
+4. **Cron schedulers** -- Stops scheduled jobs.
+5. **Channel adapters** -- Disconnects from messaging platforms (no new messages accepted).
+6. **Heartbeat runner** -- Stops health checks.
+7. **Gateway server** -- Closes HTTP and WebSocket connections.
+8. **Observability** -- Removes event subscriptions.
+9. **Memory database** -- Closes the SQLite database cleanly.
+
+<Info>
+The daemon waits up to 30 seconds for everything to stop cleanly. Active
+conversations will finish processing before shutdown completes. If a component
+takes too long, the daemon logs a timeout warning and forces an exit.
+</Info>
+
+The final log line confirms a clean shutdown:
+
+```json
+{"level":"info","msg":"Graceful shutdown complete","shutdownDurationMs":456}
+```
+
+## Watchdog
+
+The watchdog is an integration with systemd (the Linux service manager) that
+provides automatic health monitoring at the operating system level. If the daemon
+becomes unresponsive, systemd detects this and automatically restarts it.
+
+Here is how it works:
+
+1. When the daemon starts, it tells systemd "I am ready" (via sd-notify).
+2. Every 15 seconds, the daemon sends a heartbeat ping to systemd.
+3. Before each ping, the daemon checks its own health (specifically, whether the
+   event loop is responsive).
+4. If the event loop is too slow (above 500ms delay), the daemon skips the ping.
+5. If systemd does not receive a ping within the expected window (30 seconds by
+   default), it restarts the daemon.
+
+This means the daemon can recover from situations where it becomes stuck -- such as
+a runaway computation or resource exhaustion -- without any human intervention.
+
+<Warning>
+The watchdog only works on Linux with systemd. On macOS, watchdog operations are
+automatically disabled (this is expected during development). For automatic restarts
+on macOS, use [pm2](/operations/pm2) instead. For the full systemd setup, see the
+[systemd](/operations/systemd) page.
+</Warning>
+
+## Recovering from Problems
+
+### Last-Known-Good Config
+
+Every time the daemon starts successfully, it saves a copy of the working
+configuration file as a "last-known-good" snapshot. If you make a config change that
+prevents the daemon from starting, you can use this snapshot to recover.
+
+When a startup failure occurs due to a bad config change, you will see output like this:
+
+```
+FATAL: Bootstrap failed: Config file not found
+
+--- Last-known-good config available ---
+A last-known-good config exists from a previous successful startup.
+To restore it, run: node daemon.js --restore-last-good
+Or manually: cp "/home/user/.comis/config.last-good.yaml" "/home/user/.comis/config.yaml"
+```
+
+<Tip>
+The daemon tells you exactly how to recover -- look for "last-known-good config
+available" in the error output. Follow the instructions it gives you, then restart
+the daemon.
+</Tip>
+
+To restore the last working configuration:
+
+<Steps>
+  <Step title="Copy the last-known-good config">
+    ```bash
+    cp ~/.comis/config.last-good.yaml ~/.comis/config.yaml
+    ```
+  </Step>
+  <Step title="Restart the daemon">
+    <Tabs>
+      <Tab title="pm2">
+        ```bash
+        pm2 restart comis
+        ```
+      </Tab>
+      <Tab title="systemd">
+        ```bash
+        sudo systemctl restart comis
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+  <Step title="Verify it started">
+    Check the logs for `"Comis daemon started"` to confirm the recovery worked.
+  </Step>
+</Steps>
+
+### Common Startup Errors
+
+If the daemon fails to start, the error message tells you what went wrong:
+
+| Error Message | Meaning | What to Do |
+|---|---|---|
+| `Bootstrap failed: Config file not found` | The configuration file is missing | Check that `~/.comis/config.yaml` exists |
+| `Secrets bootstrap failed` | Invalid or missing master encryption key | Check `SECRETS_MASTER_KEY` in your `.env` file |
+| `Secret decryption failed` | The secrets database is corrupted | Delete `~/.comis/secrets.db` and re-enter your secrets |
+| `SecretRef resolution failed` | A config value references a missing secret | Check SecretRef entries in your config |
+
+For a complete list of error messages and solutions, see the
+[Troubleshooting](/operations/troubleshooting) page.
+
+## Configuration
+
+The daemon has several configuration options that control its behavior. Most users
+do not need to change these -- the defaults work well for typical installations.
+
+```yaml
+# config.yaml
+daemon:
+  watchdogIntervalMs: 30000        # systemd watchdog interval (0 to disable)
+  shutdownTimeoutMs: 30000         # maximum time to wait for graceful shutdown
+  metricsIntervalMs: 30000         # how often to collect system metrics
+  eventLoopDelayThresholdMs: 500   # skip watchdog ping if event loop is slower than this
+```
+
+| Setting | Default | What It Controls |
+|---|---|---|
+| `watchdogIntervalMs` | 30000 (30s) | How often the daemon pings systemd. Set to 0 to disable. |
+| `shutdownTimeoutMs` | 30000 (30s) | Maximum time to wait for graceful shutdown before forcing exit. |
+| `metricsIntervalMs` | 30000 (30s) | How often CPU, memory, and event loop metrics are collected. |
+| `eventLoopDelayThresholdMs` | 500 (0.5s) | If the event loop is slower than this, the watchdog ping is skipped. |
+
+<CardGroup cols={2}>
+  <Card title="Logging" icon="file-lines" href="/operations/logging">
+    Understanding log output and controlling log levels.
+  </Card>
+  <Card title="Monitoring" icon="heart-pulse" href="/operations/monitoring">
+    What the daemon monitors and how alerts work.
+  </Card>
+  <Card title="systemd" icon="linux" href="/operations/systemd">
+    Running the daemon as a Linux system service.
+  </Card>
+  <Card title="pm2" icon="play" href="/operations/pm2">
+    Managing the daemon with pm2 process manager.
+  </Card>
+  <Card title="Docker" icon="docker" href="/operations/docker">
+    Running the daemon in a Docker container.
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Solving common startup and runtime problems.
+  </Card>
+</CardGroup>

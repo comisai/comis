@@ -1,0 +1,194 @@
+---
+title: "Signal"
+description: "Connect Comis to Signal with step-by-step setup"
+icon: "signal"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+Connect your Comis agent to Signal private and group messages. Signal supports
+reactions, file attachments up to 100 MB, signal-text-styles formatting, and
+block-streaming responses. Signal requires an external **signal-cli** daemon
+running alongside Comis.
+
+## Prerequisites
+
+<Prereqs />
+
+- A phone number to register with Signal
+- signal-cli installed and running (see Step 1)
+
+<Warning>
+Signal is the only adapter that requires an external daemon. Comis does not
+connect to Signal directly -- it communicates with a locally-running
+**signal-cli** REST API. You must install and register signal-cli before
+enabling the Signal adapter.
+</Warning>
+
+## Setup
+
+<Steps>
+  <Step title="Install and register signal-cli">
+    Install signal-cli from the
+    [official repository](https://github.com/AsamK/signal-cli). Follow the
+    installation instructions for your platform.
+
+    Register your phone number:
+
+    ```bash
+    signal-cli -u +1234567890 register
+    ```
+
+    Verify with the code sent to your phone:
+
+    ```bash
+    signal-cli -u +1234567890 verify CODE
+    ```
+
+    Start the signal-cli REST API daemon:
+
+    ```bash
+    signal-cli -u +1234567890 daemon --json-rpc
+    ```
+
+    Verify it is running:
+
+    ```bash
+    curl http://127.0.0.1:8080/v1/about
+    ```
+
+    You should get a JSON response with version information.
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the Signal channel to your Comis configuration file (`~/.comis/config.yaml`):
+
+    ```yaml
+    channels:
+      signal:
+        enabled: true
+        baseUrl: "http://127.0.0.1:8080"
+        account: "+1234567890"
+    ```
+
+    Replace `+1234567890` with the phone number you registered in Step 1.
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check the logs for a successful connection:
+
+    ```bash
+    comis daemon logs
+    ```
+
+    Look for a line containing **"Signal adapter connected"** or
+    **"channel-signal activated"**. If you see this, the adapter is online.
+
+    Send a Signal message to the registered phone number from another device
+    to confirm the agent responds.
+  </Step>
+
+  <Step title="Keep signal-cli running">
+    The signal-cli daemon must stay running alongside Comis. If signal-cli
+    stops, the Signal adapter will log connection errors and be unable to
+    send or receive messages.
+
+    For a production setup, consider running signal-cli as a **systemd service**
+    or in a **screen/tmux** session to ensure it survives terminal closures and
+    restarts automatically.
+  </Step>
+</Steps>
+
+## Configuration
+
+These options go under `channels.signal` in your `config.yaml`:
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Turns on the Signal adapter |
+| `baseUrl` | string | `http://127.0.0.1:8080` | URL of the signal-cli REST API daemon |
+| `account` | string | (required) | Phone number registered with Signal (include country code with `+`) |
+| `cliPath` | string | (optional) | Path to the signal-cli binary for auto-spawn mode. When set, Comis starts signal-cli automatically instead of requiring a separate daemon. |
+| `allowFrom` | string[] | `[]` (all) | Restrict to specific Signal phone numbers. Empty means all contacts can talk to the bot. |
+| `mediaProcessing.transcribeAudio` | boolean | `true` | Transcribe voice messages to text before passing to the agent |
+| `mediaProcessing.analyzeImages` | boolean | `true` | Describe images sent to the bot using AI vision |
+| `mediaProcessing.describeVideos` | boolean | `true` | Extract descriptions from video content |
+| `mediaProcessing.extractDocuments` | boolean | `true` | Extract text from PDFs, DOCX, and other documents |
+| `mediaProcessing.understandLinks` | boolean | `true` | Fetch and summarize URLs included in messages |
+
+## What your agent can do
+
+Once connected to Signal, your agent can:
+
+- Send and delete messages
+- React to messages with emoji
+- Send file attachments up to 100 MB
+- Use signal-text-styles formatting (bold, italic, monospace, strikethrough, spoiler)
+- Stream responses as separate message blocks (updates every 500 ms)
+
+Signal does **not** support editing messages, threads, fetching message history,
+buttons, cards/embeds, or mentions.
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 65,536 characters | Rarely hit; automatically splits if exceeded |
+| Attachment size | 100 MB | Files over 100 MB are rejected with a user-friendly error message |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Connection refused to localhost:8080">
+    **What happened:** The signal-cli daemon is not running or is listening on
+    a different port.
+
+    **How to fix it:** Start signal-cli with
+    `signal-cli -u YOUR_NUMBER daemon --json-rpc` and verify it responds at
+    `http://127.0.0.1:8080/v1/about`. If you changed the port, update `baseUrl`
+    in your Comis config to match.
+  </Accordion>
+
+  <Accordion title="Signal adapter connects but no messages arrive">
+    **What happened:** The `account` in your config does not match the phone
+    number registered with signal-cli.
+
+    **How to fix it:** Make sure the `account` field includes the country code
+    with `+` (e.g. `"+1234567890"`) and matches exactly what you used during
+    `signal-cli register`.
+  </Accordion>
+
+  <Accordion title="Registration failed">
+    **What happened:** Signal may require CAPTCHA verification for new
+    registrations, especially from servers or cloud instances.
+
+    **How to fix it:** Follow the
+    [signal-cli CAPTCHA documentation](https://github.com/AsamK/signal-cli/wiki/Registration-with-captcha)
+    for CAPTCHA-assisted registration. You may need to solve a CAPTCHA challenge
+    in a browser and pass the token to signal-cli.
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 9 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>

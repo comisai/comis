@@ -1,0 +1,312 @@
+---
+title: "Sandbox"
+description: "Skill sandboxing implementation reference covering content scanning, sanitization, tool policy, and execution limits"
+icon: "box"
+---
+
+The sandbox is a multi-layer defense system for custom skill execution. It combines content scanning, input sanitization, tool policy enforcement, and execution limits to prevent malicious or runaway skill behavior.
+
+## Overview
+
+Every custom skill passes through four protection layers before and during execution:
+
+<Steps>
+  <Step title="Content Scanning">
+    Skill body inspected for 18 dangerous patterns across 6 categories at load time.
+  </Step>
+
+  <Step title="Sanitization Pipeline">
+    Skill body cleaned through 4-step pipeline: HTML comment stripping, Unicode normalization, invisible character removal, and size enforcement.
+  </Step>
+
+  <Step title="Tool Policy Enforcement">
+    Available tools filtered by profile, allow/deny lists, and per-skill restrictions.
+  </Step>
+
+  <Step title="Execution Limits">
+    Runtime constraints via budget protection, circuit breaker, step limits, and optional Node.js permissions.
+  </Step>
+</Steps>
+
+## Content Scanning
+
+The content scanner inspects skill body content at load time for dangerous patterns. It is a pure function -- callers handle audit emission and blocking decisions.
+
+<Info>
+  **Source:** `packages/skills/src/prompt/content-scanner.ts` -- 18 patterns across 6 categories. Patterns imported from `@comis/core` injection-patterns module.
+</Info>
+
+### Scan Categories
+
+Six categories of malicious content are detected:
+
+<AccordionGroup>
+  <Accordion title="exec_injection (4 patterns) -- CRITICAL">
+    Targets actual injection syntax operators combined with dangerous binaries. These patterns detect subshell injection, backtick injection, `eval()` usage, and pipe-to-shell patterns.
+
+    | Pattern ID | Severity | Description |
+    |-----------|----------|-------------|
+    | `EXEC_SUBSHELL` | CRITICAL | Subshell command injection: `$(command)` with dangerous binary |
+    | `EXEC_BACKTICK` | CRITICAL | Backtick command injection with dangerous binary |
+    | `EXEC_EVAL` | CRITICAL | `eval()` with string argument |
+    | `EXEC_PIPE_BASH` | CRITICAL | Pipe to shell interpreter |
+  </Accordion>
+
+  <Accordion title="env_harvesting (3 patterns) -- WARN">
+    Targets mass-dump patterns that extract all environment variables. Individual `$VAR` references are NOT flagged because they are common in configuration documentation.
+
+    | Pattern ID | Severity | Description |
+    |-----------|----------|-------------|
+    | `ENV_PRINTENV` | WARN | `printenv` command dumps all environment variables |
+    | `ENV_PROC_ENVIRON` | WARN | Direct read of process environment via `/proc` |
+    | `ENV_MASS_DUMP` | WARN | Environment dump piped to exfiltration or encoding |
+  </Accordion>
+
+  <Accordion title="crypto_mining (3 patterns) -- CRITICAL/WARN">
+    Very low false-positive risk. These terms almost never appear in legitimate AI skill instructions.
+
+    | Pattern ID | Severity | Description |
+    |-----------|----------|-------------|
+    | `CRYPTO_STRATUM` | CRITICAL | Mining pool protocol (`stratum://`) |
+    | `CRYPTO_MINER_BINARY` | CRITICAL | Known cryptocurrency miner binary |
+    | `CRYPTO_POOL_DOMAIN` | WARN | Mining pool domain pattern |
+  </Accordion>
+
+  <Accordion title="network_exfiltration (3 patterns) -- WARN/CRITICAL">
+    Focuses on piped execution patterns (curl/wget output piped to interpreter) rather than standalone URL references. Reverse shell patterns are elevated to CRITICAL.
+
+    | Pattern ID | Severity | Description |
+    |-----------|----------|-------------|
+    | `NET_CURL_PIPE` | WARN | curl output piped to interpreter |
+    | `NET_WGET_EXEC` | WARN | wget output to stdout piped elsewhere |
+    | `NET_REVERSE_SHELL` | CRITICAL | Reverse shell pattern |
+  </Accordion>
+
+  <Accordion title="obfuscated_encoding (3 patterns) -- WARN/CRITICAL">
+    Only flags long encoded blocks (likely obfuscated payloads) or decode-and-execute chains. Short base64 examples in documentation are not flagged.
+
+    | Pattern ID | Severity | Description |
+    |-----------|----------|-------------|
+    | `OBF_BASE64_LONG` | WARN | Long base64-encoded string (80+ chars) |
+    | `OBF_HEX_LONG` | WARN | Long hex-escaped string (20+ sequences) |
+    | `OBF_BASE64_DECODE_PIPE` | CRITICAL | base64 decode piped to another command |
+  </Accordion>
+
+  <Accordion title="xml_breakout (2 patterns) -- CRITICAL">
+    Detects attempts to escape the skill XML structure and inject system-level instructions at a higher privilege level.
+
+    | Pattern ID | Severity | Description |
+    |-----------|----------|-------------|
+    | `XML_SKILL_CLOSE` | CRITICAL | Closing tag for skill XML structure (breakout attempt) |
+    | `XML_SYSTEM_TAG` | CRITICAL | System-level message tag (breakout attempt) |
+  </Accordion>
+</AccordionGroup>
+
+### Severity Levels
+
+| Severity | Meaning | Categories |
+|----------|---------|-----------|
+| **CRITICAL** | Active exploitation attempt. Skill should be blocked. | `exec_injection`, `crypto_mining` (stratum, miner binary), `network_exfiltration` (reverse shell), `obfuscated_encoding` (decode pipe), `xml_breakout` |
+| **WARN** | Suspicious pattern with possible legitimate use. Flag for review. | `env_harvesting`, `crypto_mining` (pool domain), `network_exfiltration` (curl/wget pipe), `obfuscated_encoding` (long encoded strings) |
+
+### Scan Result Interface
+
+```typescript
+interface ContentScanResult {
+  clean: boolean;                     // true if no patterns matched
+  findings: ContentScanFinding[];     // array of all matched patterns
+}
+
+interface ContentScanFinding {
+  ruleId: string;          // Pattern ID (e.g., "EXEC_SUBSHELL")
+  category: ScanCategory;  // Category name
+  severity: ScanSeverity;  // "CRITICAL" or "WARN"
+  description: string;     // Human-readable description
+  matchedText: string;     // Matched content (truncated to 100 chars)
+  position: number;        // Character offset in content
+}
+```
+
+For user-facing guide, see [Security Scanning](/skills/security-scanning).
+
+## Sanitization Pipeline
+
+The 4-step sanitization pipeline processes skill body content before it reaches the system prompt. All functions are pure with no side effects.
+
+<Info>
+  **Source:** `packages/skills/src/prompt/sanitizer.ts` -- strict pipeline order: strip HTML comments, NFKC normalize, strip invisible, enforce size.
+</Info>
+
+### Step 1: Strip HTML Comments
+
+Removes all `&lt;!-- ... --&gt;` sequences using non-greedy regex (`/&lt;!--[\s\S]*?--&gt;/g`). Non-greedy matching handles multiple separate comments correctly, stopping at the first `--&gt;` rather than the last.
+
+Returns the count of comments removed for audit logging.
+
+### Step 2: Unicode NFKC Normalization
+
+Applies NFKC normalization (compatibility decomposition + canonical composition) via `String.prototype.normalize("NFKC")`. This:
+
+- Decomposes fullwidth characters to their ASCII equivalents (e.g., fullwidth A to A)
+- Decomposes ligatures into component characters
+- Normalizes compatibility characters to their canonical forms
+
+This prevents homoglyph-based obfuscation where visually similar characters bypass pattern matching.
+
+### Step 3: Strip Invisible Characters
+
+Removes zero-width and invisible Unicode characters that could hide malicious content:
+
+| Character | Code Point | Name |
+|-----------|-----------|------|
+| ZWJ | U+200D | Zero-width joiner |
+| ZWNJ | U+200C | Zero-width non-joiner |
+| ZWSP | U+200B | Zero-width space |
+| SHY | U+00AD | Soft hyphen |
+| LRM | U+200E | Left-to-right mark |
+| RLM | U+200F | Right-to-left mark |
+| Tag block | U+E0000-U+E007F | Unicode tag block characters |
+
+Also detects and reports Unicode tag block bypass attempts (characters in the U+E0000-U+E007F range used to encode hidden instructions).
+
+### Step 4: Size Limit Enforcement
+
+Truncates the sanitized output at `maxBodyLength` characters. Default: **20,000 characters**.
+
+- Size enforcement applies to the output AFTER all other steps
+- This prevents unnecessary truncation when HTML comments inflate the raw input size
+- When truncation occurs, `[TRUNCATED]` marker is appended
+
+### Pipeline Result
+
+```typescript
+interface SanitizeResult {
+  body: string;                  // Final sanitized content
+  htmlCommentsStripped: number;  // Count of HTML comments removed
+  truncated: boolean;            // Whether size limit was hit
+  tagBlockDetected: boolean;     // Unicode tag block bypass detected
+}
+```
+
+## Tool Policy Enforcement
+
+Tool policies control which tools are available to each agent during skill execution.
+
+<Info>
+  **Source:** `packages/skills/src/policy/tool-policy.ts` -- config-driven filtering with 5 profiles and group expansion.
+</Info>
+
+### Built-in Profiles
+
+| Profile | Tools | Use Case |
+|---------|-------|----------|
+| `minimal` | `exec`, `read`, `write` | Basic file operations only |
+| `coding` | `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process` | Software development tasks |
+| `messaging` | `message`, `session_status` | Communication-only agents |
+| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage` | Administrative agents |
+| `full` | All tools (empty array = unrestricted) | Fully trusted agents |
+
+### Resolution Order
+
+1. **Profile baseline** -- populate allowed set from the profile's tool list
+2. **Allow list additions** -- add explicitly allowed tools (with group expansion)
+3. **Deny list removals** -- remove denied tools (deny always wins)
+
+### Per-Skill Restrictions
+
+In addition to agent-level tool policy, individual skills can declare tool restrictions in their SKILL.md manifest. These restrictions further filter the already-policy-filtered tool set. A skill cannot grant tools that the agent's policy denies.
+
+For user-facing guide, see [Tool Policy](/skills/tool-policy).
+
+## Execution Limits
+
+Runtime constraints prevent runaway or expensive skill executions.
+
+### Budget Protection
+
+Each agent has a configurable token budget that limits total LLM spend. When the budget is exhausted, further tool calls are rejected. See [Agent Safety](/agents/safety) for configuration details.
+
+### Circuit Breaker
+
+The circuit breaker tracks consecutive LLM failures per agent. After a configurable number of failures, the circuit opens and rejects further requests until a cooldown period expires. This prevents cascading failures from propagating through the system. See [Agent Safety](/agents/safety) for configuration details.
+
+### Step Limit
+
+Each execution has a maximum number of tool-use steps. When the limit is reached, the execution completes with the current state. This prevents infinite loops where the LLM keeps calling tools without converging on a response.
+
+### Source Profiles
+
+Built-in tools that ingest external content have per-tool source profiles controlling byte/char limits and extraction strategies. These are clamped to hard ceilings to prevent runaway context injection:
+
+| Tool | Max Response Bytes | Max Chars | Extraction Strategy |
+|------|-------------------|-----------|-------------------|
+| `web_fetch` | 2 MB | 50,000 | readability |
+| `web_search` | 500 KB | 40,000 | structured |
+| `bash` | 500 KB | 50,000 | tail |
+| `file_read` | 1 MB | 100,000 | raw |
+| `mcp_default` | 2 MB | 50,000 | raw |
+
+Hard ceilings: 5 MB max response bytes, 500K max chars. Operator overrides cannot exceed these values.
+
+<Info>
+  **Source:** `packages/skills/src/builtin/tool-source-profiles.ts` -- per-tool defaults with hard ceiling clamping. Operator overrides via per-agent config.
+</Info>
+
+## Defense Layer Summary
+
+| Layer | When | What | Action on Violation |
+|-------|------|------|-------------------|
+| Content Scanning | Skill load time | Inspects skill body for malicious patterns | Blocks skill loading (CRITICAL) or flags for review (WARN) |
+| Sanitization | Skill load time | Strips hidden content and normalizes encoding | Silently removes dangerous content |
+| Tool Policy | Execution time | Filters available tools by profile/allow/deny | Tool call rejected |
+| Budget | Execution time | Tracks cumulative token spend | Execution halted |
+| Circuit Breaker | Execution time | Tracks consecutive LLM failures | Requests rejected until cooldown |
+| Step Limit | Execution time | Counts tool-use iterations | Execution completed with current state |
+| Source Profiles | Tool result time | Caps external content size | Content truncated to limit |
+| Exec Sandbox | Execution time | Wraps exec child process in OS namespace (bwrap/sandbox-exec) | Logs WARN, runs unsandboxed (graceful fallback) |
+| Node Permissions | OS level | Restricts file system and network access | ERR_ACCESS_DENIED thrown |
+
+### Node.js Permissions
+
+When enabled, child processes spawned during skill execution run with restricted OS-level permissions. This provides a defense layer beneath application-level controls.
+
+See [Node Permissions](/reference/node-permissions) for full configuration reference.
+
+## Configuration Reference
+
+All sandbox-related configuration fields consolidated:
+
+| Config Path | Type | Default | Description |
+|------------|------|---------|-------------|
+| `agents.{id}.toolPolicy.profile` | `string` | `"coding"` | Tool policy profile name |
+| `agents.{id}.toolPolicy.allow` | `string[]` | `[]` | Additional tools to allow |
+| `agents.{id}.toolPolicy.deny` | `string[]` | `[]` | Tools to deny (overrides allow) |
+| `agents.{id}.budget.maxTokens` | `number` | varies | Maximum tokens per execution |
+| `agents.{id}.budget.maxCostUsd` | `number` | varies | Maximum cost per execution |
+| `agents.{id}.skills.execSandbox.enabled` | `enum` | `"always"` | OS-level sandbox mode: `"always"` or `"never"` |
+| `agents.{id}.skills.execSandbox.readOnlyAllowPaths` | `string[]` | `[]` | Additional read-only paths inside sandbox |
+| `security.permission.enableNodePermissions` | `boolean` | `false` | Enable OS-level sandboxing |
+| `security.permission.allowedFsPaths` | `string[]` | `[]` | Allowed file system paths |
+| `security.permission.allowedNetHosts` | `string[]` | `[]` | Allowed network hosts |
+
+<Info>
+  **Source:** Config schemas in `packages/core/src/config/schema-security.ts` and `packages/core/src/config/schema-agent.ts`.
+</Info>
+
+<CardGroup cols={2}>
+  <Card title="Security Model" icon="shield" href="/security">
+    Defense-in-depth security architecture
+  </Card>
+  <Card title="Tool Security" icon="shield-check" href="/reference/tool-security">
+    SSRF guard, tool policies, content scanner
+  </Card>
+  <Card title="Action Classifier" icon="tags" href="/reference/action-classifier">
+    Complete action registry
+  </Card>
+  <Card title="Node Permissions" icon="lock" href="/reference/node-permissions">
+    Node.js permission model
+  </Card>
+  <Card title="Sandbox Guide" icon="box" href="/security/sandbox">
+    User-facing sandbox setup guide
+  </Card>
+</CardGroup>

@@ -1,0 +1,211 @@
+---
+title: "Media"
+description: "Image analysis, text-to-speech, audio transcription, video description, and document extraction"
+icon: "photo-film"
+---
+
+The media tools let your agents process images, audio, video, and documents. Agents can analyze images with AI vision, generate spoken audio from text, transcribe voice messages, describe video content, and extract text from PDFs and other documents.
+
+These tools are especially useful for agents in group chats where users share photos, voice notes, documents, and video clips. Instead of ignoring media content, your agent can understand and respond to it.
+
+## Quick Reference
+
+| Tool | What It Does |
+|------|-------------|
+| `image_analyze` | Analyze images using AI vision (file, URL, base64, or attachment URL) |
+| `tts_synthesize` | Generate spoken audio from text |
+| `transcribe_audio` | Convert speech to text |
+| `describe_video` | Describe video content using vision |
+| `extract_document` | Extract text from PDFs, CSVs, and other documents |
+
+## Tool Details
+
+<AccordionGroup>
+  <Accordion title="image_analyze -- Analyze images with AI vision" icon="image">
+    Use `image_analyze` to have your agent look at an image and describe what it sees, answer questions about the content, or extract information like text in a screenshot.
+
+    The tool supports multiple ways to provide an image:
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Always `"analyze"` |
+    | `source_type` | string | No | How the image is provided: `"file"`, `"url"`, or `"base64"` (required unless `attachment_url` is used) |
+    | `source` | string | No | The image data -- a file path, URL, or base64-encoded string (required unless `attachment_url` is used) |
+    | `prompt` | string | No | A specific question about the image (e.g., "What text is visible in this screenshot?"). Defaults to a general description. |
+    | `attachment_url` | string | No | Platform attachment URL from a message hint (e.g., `tg-file://...`, `discord://...`). When provided, overrides `source_type`/`source`. |
+    | `mime_type` | string | No | MIME type for base64 input (auto-detected if omitted) |
+
+    **Source types explained:**
+    - **file** -- A path to an image file on the server (e.g., `/tmp/screenshot.png`)
+    - **url** -- A publicly accessible image URL
+    - **base64** -- Raw image data encoded as a base64 string
+
+    For images attached to chat messages, use the `attachment_url` parameter instead of `source_type`/`source`. The `attachment_url` is provided in the message hint and resolves platform-specific attachment URLs automatically.
+
+    **Example usage:**
+    When a user sends a photo in a chat, the agent can analyze it:
+    ```
+    "Analyze this screenshot and tell me what application is shown."
+    ```
+
+    The agent calls `image_analyze` with `attachment_url` from the message hint, then responds with a description of the image content.
+
+    <Tip>
+    Use the `prompt` parameter to ask specific questions about images. Without a prompt, the agent generates a general description. With a prompt like "What error message is shown?", the agent focuses on extracting that specific information.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="tts_synthesize -- Generate spoken audio from text" icon="volume-high">
+    Use `tts_synthesize` to convert text into spoken audio. The generated audio file is automatically sent as a message attachment in the chat.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | Always `"synthesize"` |
+    | `text` | string | Yes | The text to speak |
+    | `voice` | string | No | Voice identifier (provider-specific, available voices depend on your configured provider) |
+    | `format` | string | No | Audio format: `"mp3"`, `"opus"`, or `"wav"` (default: from config) |
+
+    The TTS provider (OpenAI, ElevenLabs, or Edge TTS) is determined by your `config.yaml` -- there is no per-call `provider` parameter.
+
+    **Supported providers (configured in config.yaml):**
+    - **OpenAI** -- High-quality voices with natural intonation. Requires an OpenAI API key.
+    - **ElevenLabs** -- Wide selection of realistic voices with emotion control. Requires an ElevenLabs API key.
+    - **Edge TTS** -- Free text-to-speech using Microsoft Edge's built-in voices. No API key required.
+
+    **Example usage:**
+    ```
+    "Read this summary aloud using the 'alloy' voice."
+    ```
+
+    The agent calls `tts_synthesize` with the summary text and the requested voice, then sends the audio file as a chat attachment.
+  </Accordion>
+
+  <Accordion title="transcribe_audio -- Convert speech to text" icon="microphone">
+    Use `transcribe_audio` to convert an audio or voice message into written text. This is useful for processing voice messages that users send in chat.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `attachment_url` | string | Yes | The URL of the audio file to transcribe (from a message hint, e.g., `tg-file://...`, `discord://...`) |
+    | `language` | string | No | BCP-47 language hint to improve transcription accuracy (e.g., `"en"`, `"he"`, `"es"`) |
+
+    **Supported providers:**
+    - **OpenAI Whisper** -- High accuracy across many languages
+    - **Groq** -- Fast transcription with Whisper models
+    - **Deepgram** -- Real-time transcription with speaker detection
+
+    The provider used depends on your configuration. The tool returns the transcribed text, which the agent can then use in its response.
+
+    **Supported audio formats:**
+    Most common audio formats are supported, including MP3, WAV, OGG, M4A, and WEBM. Voice messages from chat platforms (Discord, Telegram, WhatsApp) are automatically handled.
+
+    **Example usage:**
+    When a user sends a voice message, the agent automatically transcribes it and responds to the spoken content. This works especially well in chat platforms where voice messages are common -- the agent can participate in voice-message conversations by reading the transcribed text and responding in text or with a TTS audio reply.
+  </Accordion>
+
+  <Accordion title="describe_video -- Describe video content" icon="film">
+    Use `describe_video` to have your agent watch a video and describe what happens in it. The tool uses the vision pipeline to extract key frames from the video and analyze them.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `attachment_url` | string | Yes | The URL of the video to describe |
+
+    The tool extracts representative frames from the video, analyzes each frame with AI vision, and returns a coherent description of the video content. This is useful for understanding short clips, tutorials, or screen recordings shared in chat.
+
+    **How it works:**
+    1. The video is downloaded from the provided URL
+    2. Key frames are extracted at intervals throughout the video
+    3. Each frame is analyzed using AI vision
+    4. The individual frame descriptions are combined into a coherent narrative
+
+    **Example usage:**
+    When a user shares a video clip, the agent can describe what is happening:
+    ```
+    "What's going on in this video?"
+    ```
+
+    The agent watches the video and responds with a description like: "The video shows a step-by-step tutorial for configuring a Discord bot, starting with the developer portal and ending with the bot joining a server."
+  </Accordion>
+
+  <Accordion title="extract_document -- Extract text from documents" icon="file-lines">
+    Use `extract_document` to pull readable text from documents. This is useful for processing PDFs, spreadsheets, and other files that users share in chat.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `attachment_url` | string | Yes | The URL of the document to extract text from |
+
+    **Supported formats:**
+    - **PDF** -- Extracts text from PDF documents
+    - **CSV** -- Reads comma-separated data
+    - **TXT** -- Plain text files
+    - Other text-based formats
+
+    The tool returns the extracted text content, which the agent can then summarize, answer questions about, or process further.
+
+    **Example usage:**
+    ```
+    "Read this PDF and give me a summary of the key points."
+    ```
+
+    The agent extracts the text from the PDF, then uses that text to generate a summary. For spreadsheets (CSV), the data is returned in a structured format that the agent can analyze, filter, or summarize.
+
+    <Note>
+    Document extraction works best with text-based PDFs. Scanned documents (images of text) may require the `image_analyze` tool instead, since the content is stored as images rather than selectable text.
+    </Note>
+  </Accordion>
+</AccordionGroup>
+
+## Common Workflows
+
+Here are some typical ways agents use media tools together:
+
+- **Voice message handling** -- When a user sends a voice note, the agent uses `transcribe_audio` to convert it to text, processes the request, and optionally uses `tts_synthesize` to reply with audio.
+- **Document Q&A** -- A user shares a PDF report. The agent uses `extract_document` to read it, then answers questions about the content.
+- **Image moderation** -- In a group chat, the agent uses `image_analyze` to check shared images for content that violates community guidelines.
+- **Accessibility** -- The agent uses `describe_video` and `image_analyze` to provide text descriptions of visual content for users who need them.
+
+## Provider Configuration
+
+Media tools use the AI providers configured in your `config.yaml`. Different tools have different provider requirements:
+
+- **Vision** (image_analyze, describe_video) -- Requires a model that supports image inputs, such as Claude or GPT-4 with vision.
+- **Text-to-speech** (tts_synthesize) -- Uses your configured TTS provider (OpenAI, ElevenLabs, or Edge TTS).
+- **Transcription** (transcribe_audio) -- Uses your configured speech-to-text provider (OpenAI, Groq, or Deepgram).
+- **Document extraction** (extract_document) -- Works with any configured provider, no special requirements.
+
+See the [Media & Voice](/media/index) section for detailed provider setup instructions and configuration options.
+
+<Info>
+All media tools process content on your server. Files are not sent to third parties beyond the configured AI provider for analysis.
+</Info>
+
+## Enabling Media Tools
+
+Media tools are enabled by default in the `full` tool policy profile. If you are using a restricted profile (like `minimal` or `coding`), you can enable specific media tools by adding them to your agent's `allow` list:
+
+```yaml
+skills:
+  toolPolicy:
+    profile: minimal
+    allow:
+      - image_analyze
+      - transcribe_audio
+```
+
+See [Tool Policy](/skills/tool-policy) for more details on controlling which tools your agents can access.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Media & Voice" icon="microphone" href="/media/index">
+    Detailed media provider setup and configuration
+  </Card>
+  <Card title="Vision" icon="eye" href="/media/vision">
+    How AI vision processing works
+  </Card>
+  <Card title="Voice" icon="volume-high" href="/media/voice">
+    Text-to-speech and transcription configuration
+  </Card>
+  <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
+    See all available agent tools
+  </Card>
+</CardGroup>

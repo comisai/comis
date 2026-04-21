@@ -1,0 +1,86 @@
+/* Design Tokens - Comis Operator Console
+ * Source of truth: UI-DESIGN.md Appendix C
+ * All components use var(--ic-*) instead of hardcoded values.
+ */
+
+:root {
+  /* Surfaces */
+  --ic-bg:         #030712;
+  --ic-surface:    #111827;
+  --ic-surface-2:  #1f2937;
+  --ic-border:     #374151;
+
+  /* Text */
+  --ic-text:       #f9fafb;
+  --ic-text-muted: #9ca3af;
+  --ic-text-dim:   #858d9d;
+
+  /* Accent */
+  --ic-accent:     #3b82f6;
+  --ic-accent-hover: #2563eb;
+
+  /* Status */
+  --ic-success:    #22c55e;
+  --ic-warning:    #eab308;
+  --ic-error:      #ef4444;
+  --ic-info:       #06b6d4;
+
+  /* Platform Colors */
+  --ic-telegram:   #26a5e4;
+  --ic-discord:    #5865f2;
+  --ic-slack:      #4a154b;
+  --ic-whatsapp:   #25d366;
+  --ic-line:       #00b900;
+  --ic-signal:     #3a76f0;
+  --ic-imessage:   #34c759;
+  --ic-irc:        #9ca3af;
+
+  /* Spacing */
+  --ic-space-xs:   4px;
+  --ic-space-sm:   8px;
+  --ic-space-md:   16px;
+  --ic-space-lg:   24px;
+  --ic-space-xl:   32px;
+  --ic-space-2xl:  48px;
+
+  /* Radius */
+  --ic-radius-sm:  4px;
+  --ic-radius-md:  8px;
+  --ic-radius-lg:  12px;
+  --ic-radius-xl:  16px;
+
+  /* Typography */
+  --ic-font-mono:  'JetBrains Mono', 'Fira Code', monospace;
+  --ic-font-sans:  'Inter', system-ui, sans-serif;
+  --ic-text-xs:    12px;
+  --ic-text-sm:    14px;
+  --ic-text-base:  16px;
+  --ic-text-lg:    18px;
+  --ic-text-xl:    20px;
+  --ic-text-2xl:   24px;
+
+  /* Shadows */
+  --ic-shadow-sm:  0 1px 2px rgba(0,0,0,0.3);
+  --ic-shadow-md:  0 4px 6px rgba(0,0,0,0.3);
+  --ic-shadow-lg:  0 10px 15px rgba(0,0,0,0.3);
+
+  /* Transitions */
+  --ic-transition: 150ms ease;
+  --ic-transition-slow: 300ms ease;
+}
+
+/* Accessibility - Focus visible outlines */
+*:focus-visible {
+  outline: 2px solid var(--ic-accent);
+  outline-offset: 2px;
+}
+
+/* Accessibility - Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,285 @@
+---
+title: "Install on Linux"
+description: "Step-by-step installation guide for Ubuntu, Fedora, and Arch Linux"
+icon: "linux"
+---
+
+This guide walks you through installing Comis on a Linux server or workstation.
+Every command is copy-paste ready, and each step shows the expected output so
+you know things are working.
+
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
+
+<NonTechnicalNote />
+
+<Warning>
+Make sure you have Node.js 22+, build tools, and an AI provider API key ready
+before starting. See the [Requirements](/installation/requirements) page for
+the full list.
+</Warning>
+
+## Installation
+
+<Steps>
+  <Step title="Install Node.js 22">
+    <Tabs>
+      <Tab title="Ubuntu / Debian">
+        ```bash
+        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+        ```
+      </Tab>
+      <Tab title="Fedora / RHEL">
+        ```bash
+        curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo -E bash -
+        sudo dnf install -y nodejs
+        ```
+      </Tab>
+      <Tab title="Arch">
+        ```bash
+        sudo pacman -S nodejs npm
+        ```
+      </Tab>
+    </Tabs>
+
+    Verify the installation:
+
+    ```bash
+    node --version
+    ```
+
+    Expected output:
+
+    ```
+    v22.x.x
+    ```
+  </Step>
+
+  <Step title="Install build tools">
+    These tools compile native modules during the Comis installation.
+
+    <Tabs>
+      <Tab title="Ubuntu / Debian">
+        ```bash
+        sudo apt-get install -y build-essential python3
+        ```
+      </Tab>
+      <Tab title="Fedora / RHEL">
+        ```bash
+        sudo dnf install -y gcc-c++ make python3
+        ```
+      </Tab>
+      <Tab title="Arch">
+        ```bash
+        sudo pacman -S --needed base-devel python
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Install Comis">
+    ```bash
+    npm install -g comisai
+    ```
+
+    Verify:
+
+    ```bash
+    comis --version
+    ```
+
+    Expected output:
+
+    ```
+    comis/1.0.6
+    ```
+
+    <Tip>
+    If you get an `EACCES` permission error, see the "Permission denied during
+    npm install" section in Common Issues below.
+    </Tip>
+  </Step>
+
+  <Step title="Run the setup wizard">
+    ```bash
+    comis init
+    ```
+
+    The wizard walks you through three questions:
+
+    1. **Which AI provider?** -- Choose from Anthropic (Claude), OpenAI (GPT),
+       Google (Gemini), and 8 others. Pick whichever provider you have an API
+       key for.
+    2. **Your API key** -- Paste the API key from your chosen provider. The
+       wizard stores it securely in `~/.comis/.env` and never displays it again.
+    3. **A name for your agent** -- Give your agent a name (like "Atlas" or
+       "Helper"), or press Enter to accept the default.
+
+    When the wizard finishes, it creates two files:
+
+    - `~/.comis/config.yaml` -- Your agent's configuration (name, provider,
+      model, gateway settings)
+    - `~/.comis/.env` -- Your API key, stored separately for security
+  </Step>
+
+  <Step title="Start the daemon">
+    ```bash
+    comis daemon start
+    ```
+
+    You should see output similar to:
+
+    ```
+    Comis daemon started
+      Agent:    Atlas
+      Provider: anthropic (claude-sonnet-4-5-20250929)
+      Gateway:  http://localhost:4766
+      Status:   ready
+    ```
+
+    The daemon runs in the background. It manages your agents, handles incoming
+    messages, and serves the web dashboard.
+
+    <Tip>
+    You can close this terminal and the daemon will keep running. To stop it
+    later, run `comis daemon stop`.
+    </Tip>
+  </Step>
+
+  <Step title="Open the web dashboard">
+    Open your browser and go to:
+
+    ```
+    http://localhost:4766
+    ```
+
+    The web dashboard provides a chat interface where you can talk directly to
+    your agent. It also shows your agent's status, memory usage, and
+    configuration. Type a message and press Enter to start a conversation.
+  </Step>
+</Steps>
+
+## Non-Interactive Install
+
+For CI pipelines, scripting, or Docker containers, you can skip the interactive
+wizard entirely:
+
+```bash
+comis init --non-interactive --accept-risk \
+  --provider anthropic \
+  --api-key "$ANTHROPIC_API_KEY" \
+  --agent-name "Atlas"
+```
+
+This creates the same `~/.comis/config.yaml` and `~/.comis/.env` files without
+prompting for input. Replace `anthropic` with your provider of choice and set
+the `ANTHROPIC_API_KEY` environment variable (or substitute the appropriate
+variable for your provider) before running.
+
+<Info>
+The `--accept-risk` flag acknowledges that you are providing an API key on the
+command line rather than through the interactive prompt. See `comis init --help`
+for all 27 available flags.
+</Info>
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="Permission denied during npm install">
+    **Symptom:** `EACCES: permission denied` when running `npm install -g comisai`
+
+    **Fix:** Configure npm to use a directory you own instead of the
+    system-level global directory:
+
+    ```bash
+    mkdir -p ~/.npm-global
+    npm config set prefix '~/.npm-global'
+    echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
+    source ~/.bashrc
+    ```
+
+    Then retry the install:
+
+    ```bash
+    npm install -g comisai
+    ```
+  </Accordion>
+
+  <Accordion title="node-gyp build errors">
+    **Symptom:** Errors mentioning `node-gyp`, `gyp ERR!`, or `make: g++: not
+    found` during installation.
+
+    **Cause:** Missing build tools required for compiling native modules.
+
+    **Fix:** Install the build tools for your distribution (Step 2 above), then
+    retry:
+
+    ```bash
+    npm install -g comisai
+    ```
+
+    If the problem persists, check that Python 3 is installed and accessible as
+    `python3`. See the [Requirements](/installation/requirements) page for the
+    full list of build dependencies.
+  </Accordion>
+
+  <Accordion title="Port 4766 already in use">
+    **Symptom:** The daemon starts but reports that port 4766 is already in use.
+
+    **Diagnose:** Find what is using the port:
+
+    ```bash
+    lsof -i :4766
+    ```
+
+    **Fix:** Either stop the other process, or change the Comis gateway port in
+    `~/.comis/config.yaml`:
+
+    ```yaml
+    gateway:
+      port: 4800
+    ```
+
+    Then restart the daemon:
+
+    ```bash
+    comis daemon stop
+    comis daemon start
+    ```
+  </Accordion>
+
+  <Accordion title="Daemon starts but no web dashboard">
+    **Symptom:** `comis daemon start` succeeds but `http://localhost:4766` does
+    not load in your browser.
+
+    **Diagnose:** Run the built-in diagnostic tool:
+
+    ```bash
+    comis doctor
+    ```
+
+    This checks five categories: config, daemon, gateway, channels, and
+    workspace. Look for failures in the "gateway" category.
+
+    **Common causes:**
+    - The gateway is disabled in your config. Make sure `gateway.enabled` is not
+      set to `false`.
+    - The gateway is bound to a different host. Check the `gateway.host` setting
+      in your config file.
+    - A firewall is blocking the port.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration Guide" icon="sliders" href="/installation/configuration">
+    Customize your agent's settings, add channels, and fine-tune behavior.
+  </Card>
+  <Card title="Verification" icon="circle-check" href="/installation/verify">
+    Run diagnostic checks to confirm everything is working.
+  </Card>
+  <Card title="Connect a Channel" icon="messages" href="/channels/index">
+    Add Discord, Telegram, Slack, or any of the 9 supported platforms.
+  </Card>
+</CardGroup>

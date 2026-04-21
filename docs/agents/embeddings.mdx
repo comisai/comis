@@ -1,0 +1,146 @@
+---
+title: "Embeddings"
+description: "Setting up meaning-based memory search"
+icon: "microchip"
+---
+
+Embeddings are what power the "meaning matching" side of memory search. They
+convert text into a numerical representation that lets Comis find memories based
+on meaning, not just matching words. You do not need to understand the math --
+just choose a provider and Comis handles the rest.
+
+## Why embeddings matter
+
+Without embeddings, memory search only finds exact word matches. With
+embeddings, your agent can find related memories even when different words are
+used.
+
+For example:
+- A memory about "cooking pasta" would match a search for "making spaghetti"
+- A memory about "budget planning" would match a search for "financial forecasting"
+- A memory about "fixing the deployment" would match a search for "resolving the release issue"
+
+This makes your agent significantly better at recalling relevant information,
+especially over long periods where the same topics might be discussed using
+different terminology.
+
+## Choosing a provider
+
+Comis supports three embedding provider options:
+
+**auto** (default) -- Tries local first, then falls back to remote. This is the
+best option for most users because it works without any setup. Comis
+automatically downloads a local model and uses it. If the local model fails to
+load, it falls back to the OpenAI API.
+
+**local** -- Runs entirely on your machine using a downloaded model. This option
+is free, private (no data leaves your machine), and works offline. It requires
+approximately 500MB of disk space for the model and uses some RAM while running.
+GPU acceleration is used automatically when available.
+
+**openai** -- Uses OpenAI's embedding API. This option is fast and accurate but
+costs a small amount per search (fractions of a cent) and requires an OpenAI API
+key. Choose this if you want the highest quality embeddings or if your machine
+does not have enough resources for the local model.
+
+<Tip>
+  The local embedding model downloads automatically on first use. No manual
+  setup is needed -- just start Comis and it handles everything.
+</Tip>
+
+## Configuration
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `embedding.enabled` | boolean | `true` | Enable embedding generation for meaning-based search |
+| `embedding.provider` | string | `"auto"` | Provider: `auto`, `local`, or `openai` |
+| `embedding.local.gpu` | string | `"auto"` | GPU acceleration: `auto`, `metal`, `cuda`, `vulkan`, or `false` |
+| `embedding.local.contextSize` | number | `2048` | Maximum text length the local model can process (in tokens) |
+| `embedding.openai.model` | string | `"text-embedding-3-small"` | OpenAI embedding model to use |
+| `embedding.openai.dimensions` | number | `1536` | Vector dimensions for the OpenAI model |
+| `embedding.cache.maxEntries` | number | `10000` | Maximum cached embeddings in L1 in-memory cache (0 = disabled) |
+| `embedding.cache.persistent` | boolean | `false` | Enable persistent L2 SQLite cache for embeddings that survive restarts |
+| `embedding.cache.persistentMaxEntries` | number | `50000` | Maximum entries in L2 persistent cache |
+| `embedding.cache.ttlMs` | number | _(none)_ | TTL in milliseconds for cache entries. When unset, LRU eviction only |
+| `embedding.cache.pruneIntervalMs` | number | `300000` | How often to check for expired or excess cache entries (5 min default) |
+| `embedding.batch.batchSize` | number | `100` | Number of memories processed per batch during indexing |
+| `embedding.batch.indexOnStartup` | boolean | `true` | Index any un-embedded memories when Comis starts |
+| `embedding.autoReindex` | boolean | `true` | Automatically re-index all memories when the provider changes |
+
+### Local provider example
+
+```yaml title="~/.comis/config.yaml"
+embedding:
+  enabled: true
+  provider: "local"
+  local:
+    gpu: "auto"
+    contextSize: 2048
+  cache:
+    maxEntries: 10000
+```
+
+### OpenAI provider example
+
+```yaml title="~/.comis/config.yaml"
+embedding:
+  enabled: true
+  provider: "openai"
+  openai:
+    model: "text-embedding-3-small"
+    dimensions: 1536
+  cache:
+    maxEntries: 10000
+```
+
+## Persistent caching
+
+Comis uses a two-tier embedding cache to avoid redundant API calls:
+
+- **L1 (in-memory LRU)** -- Fast access for recent embeddings. Controlled by
+  `embedding.cache.maxEntries`. Lost on daemon restart.
+- **L2 (SQLite-backed persistent)** -- Durable storage that survives daemon
+  restarts. Embeddings computed once are reused across sessions indefinitely.
+
+When a text needs to be embedded, Comis checks L1 first, then L2, and only calls
+the provider on a double miss. Cache misses at L1 that hit at L2 are promoted
+back to L1 for faster subsequent access.
+
+```yaml title="~/.comis/config.yaml"
+embedding:
+  cache:
+    maxEntries: 10000
+    persistent: true
+    persistentMaxEntries: 50000
+    pruneIntervalMs: 300000
+```
+
+<Tip>
+  Enable persistent caching if your agents frequently discuss the same topics.
+  The L2 cache eliminates redundant embedding API calls after restarts, saving
+  both time and money.
+</Tip>
+
+<Note>
+  If you change your embedding provider (for example, switching from local to
+  OpenAI), Comis automatically re-indexes all existing memories to use the new
+  model. This happens in the background and does not interrupt normal operation.
+  You can disable this with `autoReindex: false` if you prefer to manage
+  re-indexing manually.
+</Note>
+
+## Disabling embeddings
+
+If you do not want to use meaning-based search at all, set `embedding.enabled`
+to `false`. Memory search will still work using text matching only. This is
+useful if you want to minimize resource usage or if your agent's memory is small
+enough that text matching is sufficient.
+
+<CardGroup cols={2}>
+  <Card title="Search" icon="magnifying-glass" href="/agents/search">
+    How text matching and meaning matching work together.
+  </Card>
+  <Card title="Memory" icon="database" href="/agents/memory">
+    The different types of memories your agent stores.
+  </Card>
+</CardGroup>

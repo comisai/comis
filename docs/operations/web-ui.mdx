@@ -1,0 +1,108 @@
+---
+title: "Web UI"
+description: "Setting up the Comis web dashboard"
+icon: "browser"
+---
+
+The web dashboard is a browser-based control panel for managing your Comis installation. It lets you chat with agents, view sessions, manage memory, manage agent workspaces, check observability data, and configure settings — all from your browser.
+
+This page covers how to set up the dashboard. For how to use each view, see the [Web Dashboard](/web-dashboard) documentation.
+
+## How It Works
+
+The web dashboard is a single-page application built into Comis and served by the gateway — the same HTTP server that handles API requests. There is no separate installation required.
+
+By default, the dashboard is available at:
+
+```
+http://localhost:4766
+```
+
+Open this URL in your browser to access the dashboard. You will be prompted for a gateway token to authenticate.
+
+## Configuration
+
+The gateway settings in your `config.yaml` control how the dashboard is served:
+
+```yaml
+# config.yaml
+gateway:
+  enabled: true
+  host: "127.0.0.1"     # Only accessible from this machine
+  port: 4766            # Dashboard and API port
+  corsOrigins: []        # Same-origin only (no cross-domain access)
+```
+
+| Setting | Default | What It Does |
+|---------|---------|--------------|
+| `enabled` | `true` | Whether the gateway (and dashboard) is active |
+| `host` | `"127.0.0.1"` | Which network interface to listen on. `127.0.0.1` = localhost only (secure). `0.0.0.0` = all interfaces. |
+| `port` | 4766 | The port number for both the dashboard and API |
+| `corsOrigins` | `[]` (empty) | Allowed cross-origin domains. Empty means same-origin only. |
+
+<Warning>Setting `host` to `"0.0.0.0"` exposes the dashboard to your entire network. Make sure you have a strong gateway token configured and ideally put Comis behind a [reverse proxy](/operations/reverse-proxy) with TLS.</Warning>
+
+## Authentication
+
+The dashboard requires a gateway token to access. Tokens are configured in your `config.yaml`:
+
+```yaml
+# config.yaml
+gateway:
+  tokens:
+    - id: "admin"
+      secret: "your-secure-token-here-minimum-32-characters"
+      scopes: ["rpc", "ws", "admin"]
+```
+
+When you open the dashboard, enter this token to authenticate.
+
+<Tip>If you see `"Gateway token auto-generated (ephemeral)"` in your logs, the daemon created a temporary token because none was configured. This token is lost on restart. Set a permanent token in your config to avoid re-entering it after every restart.</Tip>
+
+## Accessing from Other Machines
+
+To access the dashboard from another computer on your network:
+
+<Steps>
+  <Step title="Update the gateway host">
+    Change the host in your `config.yaml`:
+
+    ```yaml
+    gateway:
+      host: "0.0.0.0"
+    ```
+
+    This makes the gateway listen on all network interfaces instead of just localhost.
+  </Step>
+  <Step title="Open the dashboard">
+    From another machine on your network, open:
+
+    ```
+    http://<your-server-ip>:4766
+    ```
+
+    Replace `<your-server-ip>` with the IP address of the machine running Comis.
+  </Step>
+  <Step title="Enter your gateway token">
+    Authenticate with the token configured in your `config.yaml`.
+  </Step>
+</Steps>
+
+<Info>For production use, put Comis behind a [reverse proxy](/operations/reverse-proxy) with TLS instead of exposing port 4766 directly. This encrypts all traffic between your browser and the server.</Info>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Web Dashboard" icon="browser" href="/web-dashboard">
+    How to use each view in the dashboard
+  </Card>
+  <Card title="Reverse Proxy" icon="shield-halved" href="/operations/reverse-proxy">
+    TLS and custom domains with Nginx or Caddy
+  </Card>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    The background process that serves the dashboard
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/installation/configuration">
+    Full configuration guide including gateway settings
+  </Card>
+</CardGroup>

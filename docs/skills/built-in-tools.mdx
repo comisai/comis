@@ -1,0 +1,638 @@
+---
+title: "Built-in Tools"
+description: "Every built-in tool your Comis agents can use for files, shell commands, web access, and browser automation"
+icon: "wrench"
+---
+
+Built-in tools are the core capabilities that come with every Comis agent.
+They handle file operations, shell commands, web access, and browser
+automation. These tools are always available unless you restrict them with a
+[tool policy](/skills/tool-policy).
+
+## All Built-in Tools
+
+| Tool | What It Does | Config Toggle |
+|------|-------------|---------------|
+| `read` | Read file contents | `builtinTools.read` |
+| `write` | Create or overwrite files | `builtinTools.write` |
+| `edit` | Search-and-replace edits in files | `builtinTools.edit` |
+| `notebook_edit` | Cell-level Jupyter notebook editing (insert, replace, delete cells) | `builtinTools.notebookEdit` |
+| `grep` | Search file contents with patterns | `builtinTools.grep` |
+| `find` | Find files by name pattern | `builtinTools.find` |
+| `ls` | List directory contents | `builtinTools.ls` |
+| `exec` | Run shell commands | `builtinTools.exec` |
+| `process` | Manage background processes | `builtinTools.process` |
+| `web_search` | Search the web (8 providers) | `builtinTools.webSearch` |
+| `web_fetch` | Fetch and read web pages | `builtinTools.webFetch` |
+| `apply_patch` | Apply multi-file patches | Enabled with `edit` |
+| `browser` | Control a headless browser | `builtinTools.browser` |
+
+## Tool Details
+
+<AccordionGroup>
+
+<Accordion title="read -- Read file contents">
+
+Reads the contents of a file with line numbers. Useful for inspecting source
+code, configuration files, logs, or any text file in the workspace.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | `string` | Yes | Path to the file to read |
+| `offset` | `number` | No | Start reading from this line number |
+| `limit` | `number` | No | Maximum number of lines to return |
+
+**Example usage:**
+
+```yaml
+# Read the first 50 lines of a config file
+tool: read
+path: config.yaml
+limit: 50
+```
+
+**Notes:**
+- Respects safe path rules -- agents cannot read files outside the workspace
+  directory
+- Automatically detects binary files and returns a warning instead of garbled
+  content
+- Line numbers are included in the output for easy reference
+
+</Accordion>
+
+<Accordion title="write -- Create or overwrite files">
+
+Creates a new file or completely overwrites an existing file. Use this for
+creating new files from scratch. For surgical edits to existing files, use
+the `edit` tool instead.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | `string` | Yes | Path where the file should be created |
+| `content` | `string` | Yes | The full content to write to the file |
+
+**Example usage:**
+
+```yaml
+# Create a new configuration file
+tool: write
+path: settings.json
+content: |
+  {
+    "theme": "dark",
+    "language": "en"
+  }
+```
+
+**Notes:**
+- Automatically creates parent directories if they do not exist
+- Respects safe path rules -- agents cannot write files outside the workspace
+- Overwrites the entire file -- there is no append mode
+
+</Accordion>
+
+<Accordion title="edit -- Search-and-replace edits in files">
+
+Makes precise text replacements in an existing file. The agent specifies the
+exact text to find and the text to replace it with. This is safer than
+rewriting entire files because it only changes the targeted section.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | `string` | Yes | Path to the file to edit |
+| `old_string` | `string` | Yes | Exact text to find (must match exactly) |
+| `new_string` | `string` | Yes | Replacement text |
+
+**Example usage:**
+
+```yaml
+# Change a configuration value
+tool: edit
+path: config.yaml
+old_string: "port: 3000"
+new_string: "port: 8080"
+```
+
+**Notes:**
+- Requires an exact match -- this is not a regular expression search
+- Fails if `old_string` is not found in the file
+- Fails if `old_string` appears more than once (ambiguous edit)
+- Respects safe path rules
+
+</Accordion>
+
+<Accordion title="notebook_edit -- Cell-level Jupyter notebook editing">
+
+Edits Jupyter notebook (`.ipynb`) files at the cell level. Supports inserting
+new cells, replacing cell content, and deleting cells by index. This is safer
+than rewriting an entire notebook because it preserves cell metadata and outputs
+for unchanged cells.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | `string` | Yes | Path to the `.ipynb` notebook file |
+| `action` | `string` | Yes | Action to perform: `insert`, `replace`, or `delete` |
+| `index` | `number` | Yes | Cell index (0-based) to operate on |
+| `content` | `string` | For insert/replace | Cell source content |
+| `cell_type` | `string` | No | Cell type: `code` (default) or `markdown` |
+
+**Example usage:**
+
+```yaml
+# Insert a new code cell at position 2
+tool: notebook_edit
+path: analysis.ipynb
+action: insert
+index: 2
+content: "import pandas as pd\ndf = pd.read_csv('data.csv')"
+
+# Replace cell content
+tool: notebook_edit
+path: analysis.ipynb
+action: replace
+index: 0
+content: "# Updated Analysis\nThis notebook analyzes the Q4 results."
+cell_type: markdown
+```
+
+**Notes:**
+- Respects safe path rules -- agents cannot edit notebooks outside the workspace
+- Preserves cell outputs and metadata for unchanged cells
+- Enabled via `builtinTools.notebookEdit` config toggle (default: `true`)
+
+</Accordion>
+
+<Accordion title="grep -- Search file contents with patterns">
+
+Searches through files using regular expression patterns, similar to the
+`grep` command-line tool. Returns matching lines with file paths and line
+numbers.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pattern` | `string` | Yes | Regular expression pattern to search for |
+| `path` | `string` | No | Directory to search in (defaults to workspace root) |
+| `include` | `string` | No | File glob filter (e.g., `*.ts`, `*.md`) |
+
+**Example usage:**
+
+```yaml
+# Find all TODO comments in TypeScript files
+tool: grep
+pattern: "TODO"
+include: "*.ts"
+```
+
+**Notes:**
+- Uses ripgrep under the hood for fast searching
+- Respects `.gitignore` rules by default
+- Safe path rules apply to the search directory
+
+</Accordion>
+
+<Accordion title="find -- Find files by name pattern">
+
+Finds files matching a glob pattern. Returns a list of file paths. Useful for
+locating files when you know part of the name but not the exact directory.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pattern` | `string` | Yes | Glob pattern to match file names (e.g., `*.config.ts`) |
+| `path` | `string` | No | Directory to search in (defaults to workspace root) |
+
+**Example usage:**
+
+```yaml
+# Find all test files
+tool: find
+pattern: "*.test.ts"
+```
+
+**Notes:**
+- Uses fd under the hood for fast file discovery
+- Respects `.gitignore` and `.fdignore` rules
+- Returns full paths relative to the workspace root
+
+</Accordion>
+
+<Accordion title="ls -- List directory contents">
+
+Lists the contents of a directory, including hidden files (dotfiles). Returns
+file and directory names in alphabetical order.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | `string` | Yes | Path to the directory to list |
+
+**Example usage:**
+
+```yaml
+# List workspace root
+tool: ls
+path: "."
+```
+
+**Notes:**
+- Shows dotfiles (files starting with `.`)
+- Results are sorted alphabetically
+- Respects safe path rules
+
+</Accordion>
+
+<Accordion title="apply_patch -- Apply multi-file patches">
+
+Applies a set of file operations (add, update, delete, move) in a single
+atomic operation. All changes succeed together or none are applied. This is
+useful when an agent needs to make coordinated changes across multiple files.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `patch` | `string` | Yes | Patch content in the `*** Begin Patch` format |
+
+The patch format supports four operations per file:
+- **Add** -- create a new file with specified content
+- **Update** -- modify specific sections of an existing file
+- **Delete** -- remove a file
+- **Move** -- rename or relocate a file
+
+**Notes:**
+- Atomic -- all patches apply or none do, preventing partial updates
+- Enabled when the `edit` config toggle is on
+- Respects safe path rules for all file operations
+
+</Accordion>
+
+<Accordion title="exec -- Run shell commands">
+
+Runs a shell command and returns the output (stdout, stderr, and exit code).
+Supports foreground mode (waits for completion) and background mode (returns
+immediately).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `command` | `string` | Yes | The shell command to execute |
+| `cwd` | `string` | No | Working directory (defaults to workspace root) |
+| `timeoutMs` | `number` | No | Timeout in milliseconds (default 30000, max 300000) |
+| `env` | `object` | No | Environment variable overrides |
+| `background` | `boolean` | No | Run in background and return immediately |
+| `input` | `string` | No | String to write to the process stdin |
+
+**Example usage:**
+
+```yaml
+# Run a build command
+tool: exec
+command: "npm run build"
+timeoutMs: 60000
+
+# Run a server in the background
+tool: exec
+command: "node server.js"
+background: true
+```
+
+**Notes:**
+- **OS-level sandbox** (enabled by default) -- on Linux, commands run inside a
+  [bubblewrap](https://github.com/containers/bubblewrap) namespace where only the
+  workspace, graph shared directory, and system binaries are visible. On macOS
+  (dev only), `sandbox-exec` provides equivalent file-access restrictions. The
+  agent cannot read other workspaces, home directory secrets, or system files --
+  they simply do not exist inside the sandbox. Set `execSandbox.enabled: "never"`
+  to disable (falls back to denylist-only protection).
+- Blocks dangerous commands like `rm -rf /`, filesystem format commands,
+  and piped script execution as an additional defense-in-depth measure
+- Working directory is validated to prevent execution outside workspace bounds
+- Dangerous environment variables (`LD_PRELOAD`, `DYLD_*`, etc.) are blocked
+- Large outputs are automatically truncated with a notice showing the original
+  size
+
+</Accordion>
+
+<Accordion title="process -- Manage background processes">
+
+Manages background processes that were started by the `exec` tool. Provides
+four actions for process lifecycle management.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | `string` | Yes | Action to perform: `list`, `kill`, `status`, or `log` |
+| `sessionId` | `string` | For kill/status/log | The session ID of the target process |
+| `offset` | `number` | No | Line offset for log pagination |
+| `limit` | `number` | No | Maximum lines to return for log (default 200) |
+
+**Actions:**
+
+- **list** -- show all background process sessions with status and command
+- **kill** -- terminate a running process (sends SIGTERM then SIGKILL)
+- **status** -- inspect a single process session
+- **log** -- read paginated output from a process
+
+**Notes:**
+- Only manages processes started by the agent via `exec` with `background: true`
+- Each background process gets a unique session ID returned at creation time
+
+</Accordion>
+
+<Accordion title="web_search -- Search the web">
+
+Searches the web using one of 8 configurable search providers with automatic
+fallback. Returns a list of search results with titles, URLs, and descriptions.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Search query string |
+| `count` | `number` | No | Number of results to return (1-10, default 5) |
+| `deepFetch` | `number` | No | Auto-fetch full content for top N results (0-5, default 0) |
+| `country` | `string` | No | 2-letter country code for regional results (e.g., `US`, `DE`) |
+| `search_lang` | `string` | No | ISO language code for results (e.g., `en`, `fr`) |
+| `freshness` | `string` | No | Filter by time (Brave only): `pd` (past day), `pw` (past week), `pm` (past month), `py` (past year) |
+| `provider` | `string` | No | Override search provider for this call |
+
+**Available providers:** Brave, Perplexity, Grok, DuckDuckGo, SearXNG, Tavily,
+Exa, Jina. DuckDuckGo requires no API key. Other providers need API keys
+configured in your Comis settings.
+
+**Example usage:**
+
+```yaml
+# Basic search
+tool: web_search
+query: "latest Node.js release"
+
+# Search with full page content for top 3 results
+tool: web_search
+query: "TypeScript best practices"
+deepFetch: 3
+count: 5
+```
+
+**Notes:**
+- Results are cached for 15 minutes by default to reduce API calls
+- When `deepFetch` is greater than 0, the tool automatically fetches full page
+  content for the top results, saving separate `web_fetch` calls
+- If the primary provider fails, the tool automatically tries fallback providers
+- See [Web Tools Guide](/agent-tools/web-tools) for provider setup details
+
+</Accordion>
+
+<Accordion title="web_fetch -- Fetch and read web pages">
+
+Fetches a URL and extracts the readable content. Converts HTML pages into
+clean Markdown or plain text using the Readability algorithm (the same
+technology behind browser reading modes).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | `string` | Yes | HTTP or HTTPS URL to fetch |
+| `extractMode` | `string` | No | Extraction mode: `markdown` (default) or `text` |
+| `maxChars` | `number` | No | Maximum characters to return (default 50000) |
+
+**Example usage:**
+
+```yaml
+# Fetch a documentation page
+tool: web_fetch
+url: "https://docs.example.com/guide"
+
+# Get plain text with a smaller limit
+tool: web_fetch
+url: "https://news.example.com/article"
+extractMode: "text"
+maxChars: 10000
+```
+
+**Notes:**
+- Uses SSRF (Server-Side Request Forgery) validation to prevent access to
+  internal network addresses -- agents cannot fetch `localhost` or private IPs
+- Uses Chrome TLS fingerprinting to avoid bot detection on most websites
+- Results are cached to reduce duplicate fetches
+- JSON responses are automatically pretty-printed
+
+</Accordion>
+
+<Accordion title="browser -- Control a headless browser">
+
+Controls a headless Chromium browser for web research, form filling, and page
+interaction. Supports 16 different actions for full browser automation.
+
+**Key actions:**
+
+- **navigate** -- go to a URL
+- **screenshot** -- capture the current page as an image
+- **snapshot** -- get the accessibility tree (a structured representation of
+  page elements)
+- **act** -- interact with the page (click, type, fill, press keys, hover,
+  scroll, select)
+- **start** / **stop** -- launch or close the browser
+- **tabs** / **open** / **close** / **focus** -- manage browser tabs
+- **console** -- read browser console logs
+- **pdf** -- save the current page as a PDF
+- **upload** -- upload files to file input elements
+- **dialog** -- handle browser dialogs (alerts, confirms, prompts)
+- **profiles** -- list available browser profiles
+- **status** -- check if the browser is running
+
+**Example usage:**
+
+```yaml
+# Navigate to a page and take a screenshot
+tool: browser
+action: navigate
+targetUrl: "https://example.com"
+
+tool: browser
+action: screenshot
+```
+
+**Notes:**
+- URLs are validated through the SSRF guard before navigation -- agents cannot
+  browse to internal network addresses
+- The browser runs headless (no visible window) on the server
+- Screenshots are returned as images that the agent can analyze
+- See [Browser Guide](/agent-tools/browser) for the complete action reference
+  with all parameters
+
+</Accordion>
+
+</AccordionGroup>
+
+## Context Tools
+
+Context tools help your agent search and recall information from the current conversation session. Which tools are available depends on the context engine mode: **pipeline mode** provides `session_search`, while **DAG mode** provides `ctx_search`, `ctx_inspect`, `ctx_recall`, and `ctx_expand`. These tools are registered automatically based on your `contextEngine.version` setting -- you do not need to enable them manually. See [Compaction](/agents/compaction) for how each mode works.
+
+### Mode Availability
+
+| Tool | Pipeline Mode | DAG Mode | Description |
+|------|:---:|:---:|-------------|
+| `session_search` | Yes | -- | Search current session history |
+| `ctx_search` | -- | Yes | Search messages and summaries (FTS or regex) |
+| `ctx_inspect` | -- | Yes | View full content of a summary or file |
+| `ctx_recall` | -- | Yes | Spawn a sub-agent to answer questions from compressed history |
+| `ctx_expand` | -- | Sub-agent only | Expand a summary node (requires recall grant) |
+
+<AccordionGroup>
+
+<Accordion title="session_search -- Search session history">
+
+Searches through the current conversation session history using case-insensitive substring matching. Available in pipeline mode only.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Search pattern (case-insensitive substring match) |
+| `scope` | `string` | No | Filter by message role: `"all"` (default), `"user"`, `"assistant"`, `"tool"` |
+| `limit` | `number` | No | Maximum results to return (1-30, default 10) |
+
+**Notes:**
+- Available in pipeline mode only
+- Search results are protected from observation masking, so recovered content remains visible
+- This tool is registered as a protected tool name -- its results survive compaction
+
+</Accordion>
+
+<Accordion title="ctx_search -- Search context DAG">
+
+Searches across messages and summaries in the context DAG using full-text search or regular expressions. Available in DAG mode only.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | `string` | Yes | Search pattern (FTS query or regex depending on mode) |
+| `mode` | `string` | No | Search mode: `"fts"` (default, full-text search) or `"regex"` |
+| `scope` | `string` | No | Search scope: `"both"` (default), `"messages"`, or `"summaries"` |
+| `limit` | `number` | No | Maximum results to return (1-100, default 20) |
+
+**Notes:**
+- Available in DAG mode only
+- Results are truncated to 500 characters -- use `ctx_inspect` to view full content
+- FTS mode uses SQLite FTS5 for fast full-text matching
+- Regex mode extracts the longest literal substring for a pre-filter, then applies the full regex in post-processing
+
+</Accordion>
+
+<Accordion title="ctx_inspect -- Inspect DAG node">
+
+Returns the full content of a summary or the full text of a stored file. Use this after `ctx_search` to read the complete text of a result that was truncated in the search output. Available in DAG mode only.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | `string` | Yes | ID of the node to inspect: summary ID (`sum_xxx`) or file ID (`file_xxx`) |
+
+**Notes:**
+- Available in DAG mode only
+- Returns the full content of a summary or the full text of a stored file
+- Use this after `ctx_search` to read the complete text of a result that was truncated in the search output
+
+</Accordion>
+
+<Accordion title="ctx_recall -- Recall from compressed history">
+
+Spawns a bounded sub-agent to answer questions from compressed conversation history. The sub-agent has access to `ctx_expand` and `ctx_inspect` tools to read through summaries and produce an answer. Available in DAG mode only.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `prompt` | `string` | Yes | What to find or answer from earlier conversation history |
+| `query` | `string` | No | Text search query to locate relevant summaries (helps the recall agent find the right content) |
+| `summary_ids` | `string[]` | No | Explicit summary IDs to expand (bypasses search, goes directly to these summaries) |
+| `max_tokens` | `number` | No | Maximum answer length in tokens (100-10000, default 2000) |
+
+**Notes:**
+- Available in DAG mode only
+- Spawns a bounded sub-agent with `ctx_expand` and `ctx_inspect` tools to read compressed history and produce an answer
+- Subject to a daily quota (`contextEngine.maxRecallsPerDay`, default 10) and a timeout (`contextEngine.recallTimeoutMs`, default 120 seconds)
+- Each recall consumes one recall grant
+
+</Accordion>
+
+<Accordion title="ctx_expand -- Expand DAG summary">
+
+Expands a summary node to show the original messages that were compressed into it. This tool is only available to recall sub-agents -- it cannot be used directly by regular agents.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `grant_id` | `string` | Yes | Expansion grant ID (provided in the recall sub-agent's domain knowledge) |
+| `summary_id` | `string` | Yes | ID of the summary to expand (shows the original messages that were compressed) |
+
+<Warning>
+This tool is only available to recall sub-agents spawned by `ctx_recall`. Regular agents cannot use `ctx_expand` directly -- it requires a valid expansion grant that is created during the recall process. If you need to view summary content from a regular agent session, use `ctx_inspect` instead.
+</Warning>
+
+</Accordion>
+
+</AccordionGroup>
+
+<Tip>
+Context tools belong to two tool policy groups: `group:context` includes `ctx_search`, `ctx_inspect`, and `ctx_recall`. `group:context_expand` includes `ctx_expand` and `ctx_inspect`. Use these group names in your [tool policy](/skills/tool-policy) configuration to control access.
+</Tip>
+
+## Disabling Tools
+
+Each built-in tool can be individually toggled off through configuration. This
+is useful when you want to restrict what an agent can do at the config level,
+independent of the tool policy:
+
+```yaml
+skills:
+  builtinTools:
+    exec: false      # Disable shell commands
+    browser: false   # Disable browser automation
+    write: false     # Disable file creation
+    webSearch: false  # Disable web search
+```
+
+When a tool is disabled via config, it is completely removed from the agent's
+available tools -- the agent will not even know it exists. This is different
+from the tool policy, which can deny access to a tool but still lets the agent
+see it.
+
+See [Configuration Reference](/reference/config-yaml) for the full list of
+config options.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Platform Tools" icon="puzzle-piece" href="/skills/platform-tools">
+    Comis-specific tools for messaging, scheduling, and administration
+  </Card>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">
+    Control which tools each agent can use
+  </Card>
+  <Card title="Web Tools Guide" icon="globe" href="/agent-tools/web-tools">
+    Web search providers and URL content fetching
+  </Card>
+  <Card title="Browser Guide" icon="window-maximize" href="/agent-tools/browser">
+    Headless browser automation with 16 actions
+  </Card>
+</CardGroup>

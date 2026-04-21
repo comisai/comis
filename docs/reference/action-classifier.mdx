@@ -1,0 +1,429 @@
+---
+title: "Action Classifier"
+description: "Complete registry of action classifications for security audit logging and confirmation gates"
+icon: "tags"
+---
+
+The action classifier assigns a risk level to every action in the system. This classification drives audit logging verbosity, confirmation gate requirements, and security policy enforcement.
+
+## Overview
+
+Every action gets classified into one of three levels:
+
+| Level | Description | Default Behavior |
+|-------|-------------|-----------------|
+| `read` | No side effects, safe to auto-approve | Auto-approved, logged |
+| `mutate` | Modifiable side effects, reversible | Auto-approved, logged |
+| `destructive` | Irreversible or high-risk | Requires confirmation |
+
+**Fail-closed principle:** Unknown actions default to `destructive`. If an action is not in the registry, it is treated as the highest risk level.
+
+**Registry locking:** After bootstrap completes, `lockRegistry()` is called to prevent runtime classification downgrades by malicious plugins. Once locked, `registerAction()` throws an error.
+
+<Info>
+  **Source:** `packages/core/src/security/action-classifier.ts` -- SEC-06 requirement. 177 registered actions across 21 categories.
+</Info>
+
+## API
+
+### classifyAction
+
+```typescript
+function classifyAction(actionType: string): ActionClassification
+```
+
+Returns the registered classification for an action, or `"destructive"` for unknown actions (fail-closed).
+
+### requiresConfirmation
+
+```typescript
+function requiresConfirmation(actionType: string): boolean
+```
+
+Returns `true` if the action is classified as `"destructive"`.
+
+### registerAction
+
+```typescript
+function registerAction(
+  actionType: string,
+  classification: ActionClassification
+): void
+```
+
+Register a new action type with its classification. Overwrites any existing registration. Throws `Error` if the registry has been locked via `lockRegistry()`.
+
+### lockRegistry
+
+```typescript
+function lockRegistry(): void
+```
+
+Locks the registry, preventing any further registrations. Idempotent -- calling multiple times is a no-op.
+
+### isRegistryLocked
+
+```typescript
+function isRegistryLocked(): boolean
+```
+
+Returns `true` if `lockRegistry()` has been called.
+
+### Usage Example
+
+```typescript
+import {
+  classifyAction,
+  requiresConfirmation,
+  registerAction,
+  lockRegistry,
+} from "@comis/core";
+
+// Register custom plugin actions during bootstrap
+registerAction("myplugin.export", "mutate");
+registerAction("myplugin.purge", "destructive");
+
+// Lock after bootstrap -- no more registrations allowed
+lockRegistry();
+
+// Classify actions at runtime
+classifyAction("file.read");       // "read"
+classifyAction("memory.delete");   // "destructive"
+classifyAction("unknown.action");  // "destructive" (fail-closed)
+
+// Check confirmation requirement
+requiresConfirmation("file.read");     // false
+requiresConfirmation("system.shutdown"); // true
+```
+
+## Complete Action Registry
+
+All 177 registered actions from `ACTION_REGISTRY`, grouped by category.
+
+<AccordionGroup>
+  <Accordion title="File Operations (4 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `file.read` | read |
+    | `file.write` | mutate |
+    | `file.create` | mutate |
+    | `file.delete` | destructive |
+  </Accordion>
+
+  <Accordion title="Memory Operations (12 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `memory.search` | read |
+    | `memory.get` | read |
+    | `memory.search_files` | read |
+    | `memory.get_file` | read |
+    | `memory.stats` | read |
+    | `memory.browse` | read |
+    | `memory.export` | read |
+    | `memory.store` | mutate |
+    | `memory.update` | mutate |
+    | `memory.delete` | destructive |
+    | `memory.clear` | destructive |
+    | `memory.flush` | destructive |
+  </Accordion>
+
+  <Accordion title="Config Operations (10 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `config.read` | read |
+    | `config.schema` | read |
+    | `config.history` | read |
+    | `config.diff` | read |
+    | `config.update` | mutate |
+    | `config.patch` | destructive |
+    | `config.apply` | destructive |
+    | `config.reset` | destructive |
+    | `config.rollback` | destructive |
+    | `config.gc` | destructive |
+  </Accordion>
+
+  <Accordion title="Session Operations (15 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `session.get` | read |
+    | `session.list` | read |
+    | `session.history` | read |
+    | `session.status` | read |
+    | `session.run_status` | read |
+    | `session.export` | read |
+    | `session.create` | mutate |
+    | `session.send` | mutate |
+    | `session.send_wait` | mutate |
+    | `session.spawn` | mutate |
+    | `session.compact` | mutate |
+    | `session.destroy` | destructive |
+    | `session.delete` | destructive |
+    | `session.new` | destructive |
+    | `session.reset` | destructive |
+  </Accordion>
+
+  <Accordion title="Scheduling Operations (7 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `cron.list` | read |
+    | `cron.status` | read |
+    | `cron.runs` | read |
+    | `cron.wake` | read |
+    | `cron.add` | mutate |
+    | `cron.update` | mutate |
+    | `cron.remove` | destructive |
+  </Accordion>
+
+  <Accordion title="Messaging Operations (6 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `message.fetch` | read |
+    | `message.send` | mutate |
+    | `message.reply` | mutate |
+    | `message.react` | mutate |
+    | `message.edit` | mutate |
+    | `message.delete` | destructive |
+  </Accordion>
+
+  <Accordion title="Agent Management (7 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `agents.list` | read |
+    | `agents.get` | read |
+    | `agents.update` | mutate |
+    | `agents.resume` | mutate |
+    | `agents.create` | destructive |
+    | `agents.delete` | destructive |
+    | `agents.suspend` | destructive |
+  </Accordion>
+
+  <Accordion title="Channel Management (5 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `channels.list` | read |
+    | `channels.get` | read |
+    | `channels.enable` | destructive |
+    | `channels.disable` | destructive |
+    | `channels.restart` | destructive |
+  </Accordion>
+
+  <Accordion title="Token Management (4 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `tokens.list` | read |
+    | `tokens.create` | destructive |
+    | `tokens.revoke` | destructive |
+    | `tokens.rotate` | destructive |
+  </Accordion>
+
+  <Accordion title="Browser Operations (14 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `browser.status` | read |
+    | `browser.tabs` | read |
+    | `browser.profiles` | read |
+    | `browser.snapshot` | read |
+    | `browser.console` | read |
+    | `browser.start` | mutate |
+    | `browser.stop` | mutate |
+    | `browser.navigate` | mutate |
+    | `browser.open` | mutate |
+    | `browser.focus` | mutate |
+    | `browser.close` | mutate |
+    | `browser.screenshot` | mutate |
+    | `browser.pdf` | mutate |
+    | `browser.act` | mutate |
+  </Accordion>
+
+  <Accordion title="Discord Actions (11 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `discord.guild_info` | read |
+    | `discord.channel_info` | read |
+    | `discord.pin` | mutate |
+    | `discord.unpin` | mutate |
+    | `discord.unban` | mutate |
+    | `discord.role_add` | mutate |
+    | `discord.role_remove` | mutate |
+    | `discord.set_topic` | mutate |
+    | `discord.set_slowmode` | mutate |
+    | `discord.kick` | destructive |
+    | `discord.ban` | destructive |
+  </Accordion>
+
+  <Accordion title="Telegram Actions (12 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `telegram.chat_info` | read |
+    | `telegram.member_count` | read |
+    | `telegram.get_admins` | read |
+    | `telegram.pin` | mutate |
+    | `telegram.unpin` | mutate |
+    | `telegram.poll` | mutate |
+    | `telegram.sticker` | mutate |
+    | `telegram.set_title` | mutate |
+    | `telegram.set_description` | mutate |
+    | `telegram.unban` | mutate |
+    | `telegram.ban` | destructive |
+    | `telegram.promote` | destructive |
+  </Accordion>
+
+  <Accordion title="Slack Actions (12 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `slack.channel_info` | read |
+    | `slack.members_list` | read |
+    | `slack.pin` | mutate |
+    | `slack.unpin` | mutate |
+    | `slack.set_topic` | mutate |
+    | `slack.set_purpose` | mutate |
+    | `slack.unarchive` | mutate |
+    | `slack.invite` | mutate |
+    | `slack.bookmark_add` | mutate |
+    | `slack.archive` | destructive |
+    | `slack.create_channel` | destructive |
+    | `slack.kick` | destructive |
+  </Accordion>
+
+  <Accordion title="WhatsApp Actions (11 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `whatsapp.group_info` | read |
+    | `whatsapp.group_invite_code` | read |
+    | `whatsapp.group_update_subject` | mutate |
+    | `whatsapp.group_update_description` | mutate |
+    | `whatsapp.group_participants_add` | mutate |
+    | `whatsapp.group_demote` | mutate |
+    | `whatsapp.group_settings` | mutate |
+    | `whatsapp.profile_status` | mutate |
+    | `whatsapp.group_participants_remove` | destructive |
+    | `whatsapp.group_promote` | destructive |
+    | `whatsapp.group_leave` | destructive |
+  </Accordion>
+
+  <Accordion title="Skills Operations (9 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `skill.list` | read |
+    | `skill.load` | read |
+    | `skill.scan` | read |
+    | `skill.scan.reject` | read |
+    | `skill.prompt.load` | read |
+    | `skill.install` | mutate |
+    | `skill.execute` | mutate |
+    | `skill.prompt.invoke` | mutate |
+    | `skill.uninstall` | destructive |
+  </Accordion>
+
+  <Accordion title="Model Operations (5 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `model.fallback` | read |
+    | `model.list` | read |
+    | `models.list` | read |
+    | `models.test` | read |
+    | `model.switch` | mutate |
+  </Accordion>
+
+  <Accordion title="Graph Pipeline Operations (8 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `graph.status` | read |
+    | `graph.load` | read |
+    | `graph.list` | read |
+    | `graph.define` | mutate |
+    | `graph.execute` | mutate |
+    | `graph.save` | mutate |
+    | `graph.cancel` | destructive |
+    | `graph.delete` | destructive |
+  </Accordion>
+
+  <Accordion title="Sub-agent Operations (3 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `subagent.list` | read |
+    | `subagent.kill` | mutate |
+    | `subagent.steer` | mutate |
+  </Accordion>
+
+  <Accordion title="Command Operations (3 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `command.parse` | read |
+    | `command.context` | read |
+    | `command.status` | read |
+  </Accordion>
+
+  <Accordion title="Web and Media Operations (6 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `web.fetch` | read |
+    | `web.search` | read |
+    | `image.analyze` | read |
+    | `media.transcribe` | read |
+    | `media.describe_video` | read |
+    | `media.extract_document` | read |
+  </Accordion>
+
+  <Accordion title="System and Infrastructure Operations (13 actions)">
+    | Action | Classification |
+    |--------|---------------|
+    | `status.check` | read |
+    | `log.read` | read |
+    | `tool.execute` | read |
+    | `gateway.status` | read |
+    | `daemon.setLogLevel` | mutate |
+    | `tts.synthesize` | mutate |
+    | `canvas.present` | mutate |
+    | `canvas.eval` | mutate |
+    | `system.shutdown` | destructive |
+    | `system.exec` | destructive |
+    | `gateway.restart` | destructive |
+    | `gateway.update` | destructive |
+    | `env.set` | destructive |
+  </Accordion>
+</AccordionGroup>
+
+## Configuration
+
+The `ActionConfirmationConfigSchema` controls confirmation gate behavior:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `requireForDestructive` | `boolean` | `true` | Require human confirmation for destructive actions |
+| `requireForSensitive` | `boolean` | `false` | Require human confirmation for sensitive (non-destructive but important) actions |
+| `autoApprove` | `string[]` | `[]` | Actions that bypass confirmation (e.g., `["config.patch"]`) |
+
+<Info>
+  **Source:** `packages/core/src/config/schema-security.ts` -- `ActionConfirmationConfigSchema` Zod schema.
+</Info>
+
+```yaml
+security:
+  actionConfirmation:
+    requireForDestructive: true
+    requireForSensitive: false
+    autoApprove:
+      - config.patch
+      - session.new
+```
+
+## Classification Summary
+
+| Classification | Count | Examples |
+|---------------|-------|---------|
+| `read` | 68 | `file.read`, `memory.search`, `config.read`, `browser.status` |
+| `mutate` | 67 | `file.write`, `message.send`, `cron.add`, `browser.navigate` |
+| `destructive` | 42 | `file.delete`, `memory.clear`, `system.shutdown`, `discord.ban` |
+
+<CardGroup cols={2}>
+  <Card title="Security Model" icon="shield" href="/security">
+    Defense-in-depth security architecture
+  </Card>
+  <Card title="Safe Path" icon="folder-closed" href="/reference/safe-path">
+    Path traversal prevention
+  </Card>
+  <Card title="Tool Security" icon="shield-check" href="/reference/tool-security">
+    SSRF guard, tool policies, content scanner
+  </Card>
+</CardGroup>

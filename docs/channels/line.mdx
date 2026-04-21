@@ -1,0 +1,194 @@
+---
+title: "LINE"
+description: "Connect Comis to LINE with step-by-step setup"
+icon: "comment-dots"
+---
+
+import Prereqs from '/snippets/prereqs.mdx';
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+Connect your Comis agent to LINE private and group chats. Supports file
+attachments up to 200 MB and Flex Message formatting. LINE uses webhooks for
+receiving messages, so your Comis instance must be accessible from the internet.
+
+## Prerequisites
+
+<Prereqs />
+
+- A LINE account
+- A [LINE Developer Console](https://developers.line.biz/console/) account
+- A publicly accessible URL for webhooks (or a tunnel like ngrok for testing)
+
+<Warning>
+LINE uses **webhooks** to deliver messages to your bot. Your Comis gateway must
+be reachable from the internet at the webhook URL you configure. For local
+testing, use a tunnel service like [ngrok](https://ngrok.com). For production,
+deploy behind a reverse proxy with HTTPS.
+</Warning>
+
+## Setup
+
+<Steps>
+  <Step title="Create a LINE Messaging API channel">
+    Go to the [LINE Developer Console](https://developers.line.biz/console/)
+    and sign in with your LINE account.
+
+    - Create a new **Provider** (or use an existing one)
+    - Under the provider, create a new **Messaging API** channel
+    - Give it a name and description -- this is what users will see when they
+      add your bot as a friend
+    - Note the **Channel ID** on the channel overview page
+  </Step>
+
+  <Step title="Get your credentials">
+    In the channel settings, go to the **Messaging API** tab:
+
+    - Scroll to the bottom and click **Issue** next to Channel Access Token
+      (long-lived). Copy this token -- it is your bot's API key.
+
+    Go to the **Basic settings** tab:
+
+    - Copy the **Channel Secret**. This is used to verify that webhook requests
+      actually come from LINE.
+  </Step>
+
+  <Step title="Configure the webhook URL">
+    In the LINE Developer Console, go to **Messaging API** then
+    **Webhook settings**:
+
+    - Set the **Webhook URL** to `https://your-domain:port/webhooks/line`
+      (replace `your-domain:port` with your actual server address)
+    - Enable **Use webhook**
+    - Disable **Auto-reply messages** and **Greeting messages** (Comis handles
+      responses itself)
+  </Step>
+
+  <Step title="Configure Comis">
+    Add the LINE channel to your Comis configuration file
+    (`~/.comis/config.yaml`):
+
+    ```yaml
+    channels:
+      line:
+        enabled: true
+        botToken: "${LINE_CHANNEL_ACCESS_TOKEN}"
+        channelSecret: "${LINE_CHANNEL_SECRET}"
+        webhookPath: "/webhooks/line"
+    ```
+
+    Set the environment variables in your `~/.comis/.env` file:
+
+    ```bash
+    LINE_CHANNEL_ACCESS_TOKEN=your-access-token-from-step-2
+    LINE_CHANNEL_SECRET=your-channel-secret-from-step-2
+    ```
+
+    <SecretWarning />
+  </Step>
+
+  <Step title="Restart and verify">
+    Restart the Comis daemon to pick up the new configuration:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Check the logs for a successful startup:
+
+    ```bash
+    comis daemon logs
+    ```
+
+    Look for **"LINE adapter started"** or **"channel-line activated"**.
+
+    Back in the LINE Developer Console, click **Verify** next to the webhook
+    URL to confirm the connection works. Then add the bot as a friend in the
+    LINE app and send it a message.
+  </Step>
+</Steps>
+
+## Configuration
+
+These options go under `channels.line` in your `config.yaml`:
+
+| Option | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Turns on the LINE adapter |
+| `botToken` | string / SecretRef | (required) | Channel Access Token from the LINE Developer Console |
+| `channelSecret` | string / SecretRef | (required) | Channel Secret for webhook signature verification |
+| `webhookPath` | string | `"/webhooks/line"` | URL path where LINE sends webhook events |
+| `allowFrom` | string[] | `[]` (all) | Restrict to specific LINE user IDs. Empty means all users can talk to the bot. |
+| `mediaProcessing.transcribeAudio` | boolean | `true` | Transcribe voice messages to text before passing to the agent |
+| `mediaProcessing.analyzeImages` | boolean | `true` | Describe images sent to the bot using AI vision |
+| `mediaProcessing.describeVideos` | boolean | `true` | Extract descriptions from video content |
+| `mediaProcessing.extractDocuments` | boolean | `true` | Extract text from PDFs, DOCX, and other documents |
+| `mediaProcessing.understandLinks` | boolean | `true` | Fetch and summarize URLs included in messages |
+
+## What your agent can do
+
+Once connected to LINE, your agent can:
+
+- Send and receive messages in private chats and groups
+- Send file attachments (images, video, audio) up to 200 MB
+- Send Flex Messages for rich formatted content
+
+LINE does **not** support reactions, editing or deleting sent messages, fetching
+message history, threads, buttons, cards or embeds, streaming (live-updating
+responses), or mentions.
+
+## Platform limits
+
+| Limit | Value | What Comis does about it |
+|---|---|---|
+| Message length | 5,000 characters | Automatically splits long responses into multiple messages at paragraph boundaries |
+| Attachment size | 200 MB | Generous limit that is rarely hit in practice |
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Bot can send messages but never receives any">
+    **What happened:** The webhook URL is not configured correctly or is not
+    reachable from LINE's servers.
+
+    **How to fix it:** In the LINE Developer Console, go to Messaging API and
+    check the Webhook settings. Verify the URL points to your Comis gateway
+    (including the correct port) and click **Verify** to test the connection.
+    Make sure your server is accessible from the internet and not blocked by
+    a firewall.
+  </Accordion>
+
+  <Accordion title="Invalid signature error in logs">
+    **What happened:** The Channel Secret in your Comis config does not match
+    the one in the LINE Developer Console.
+
+    **How to fix it:** Go to the LINE Developer Console, open the **Basic
+    settings** tab, and copy the Channel Secret. Update the
+    `LINE_CHANNEL_SECRET` value in your `~/.comis/.env` file and restart
+    the daemon.
+  </Accordion>
+
+  <Accordion title="Webhook URL verification fails">
+    **What happened:** Comis is not running, the gateway is not accessible, or
+    the webhook path does not match.
+
+    **How to fix it:** Make sure Comis is running (`comis daemon status`). Check
+    that the `webhookPath` in your config matches the path in the LINE Developer
+    Console (default is `/webhooks/line`). If you are running locally, make sure
+    your tunnel (e.g., ngrok) is active and pointing to the correct port.
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={2}>
+  <Card title="Delivery Infrastructure" icon="truck-fast" href="/channels/delivery">
+    How streaming, typing indicators, and retry logic work under the hood.
+  </Card>
+  <Card title="All Channels" icon="message-dots" href="/channels">
+    Compare all 9 supported platforms side by side.
+  </Card>
+  <Card title="Agent Configuration" icon="robot" href="/agents">
+    Set up your agent's personality, tools, and behavior.
+  </Card>
+  <Card title="Secret Management" icon="key" href="/security/secrets">
+    Learn how to manage API keys and tokens securely.
+  </Card>
+</CardGroup>

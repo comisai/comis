@@ -1,0 +1,93 @@
+# Comis Media Tools Test Configuration
+#
+# Designed for Phase 35 media integration tests:
+# - ElevenLabs TTS provider (requires ELEVENLABS_API_KEY)
+# - Port 8453 (avoids conflicts with ports 4766-8452 used by other test suites)
+# - Isolated memory DB for test independence
+# - Debug logging for maximum visibility
+# - Relaxed budgets and circuit breaker thresholds
+# - All monitoring sources disabled
+#
+# Note: Edge TTS was originally planned but Microsoft's WebSocket speech service
+# is unreachable in sandboxed/CI environments. ElevenLabs provides reliable TTS
+# testing when ELEVENLABS_API_KEY is available.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "TestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8453
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-integration-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-media-memory.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+integrations:
+  media:
+    tts:
+      provider: "elevenlabs"
+      voice: "Xb7hH8MSUJpSbSDYk0k2"
+      format: "mp3"

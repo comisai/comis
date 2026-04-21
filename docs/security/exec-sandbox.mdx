@@ -1,0 +1,124 @@
+---
+title: "Exec Sandbox"
+description: "OS-level filesystem isolation for the exec tool using bubblewrap (Linux) and sandbox-exec (macOS)"
+icon: "box"
+---
+
+File tools like `read`, `write`, and `edit` are protected by [Safe Path](/reference/safe-path) validation -- every path parameter is checked before the operation proceeds. But the `exec` tool spawns a full shell that can access any file on the host filesystem. The exec sandbox closes this gap with kernel-enforced filesystem isolation, ensuring that shell commands run inside a restricted namespace where only approved paths are visible.
+
+## The Problem
+
+Safe Path validation protects file tool parameters, but it cannot inspect shell command strings. This creates a gap where `exec` can access files that `read` would block:
+
+```bash
+# Blocked by Safe Path -- read validates the path parameter
+tool: read
+path: "/etc/passwd"
+# Result: DENIED -- path outside workspace
+
+# Bypasses Safe Path -- exec runs a shell command, not a file tool
+tool: exec
+command: "cat /etc/passwd"
+# Without sandbox: SUCCEEDS -- shell has full filesystem access
+# With sandbox:    DENIED -- /etc/passwd is not mounted inside the namespace
+```
+
+The exec sandbox prevents this by making unauthorized paths invisible to the shell process at the OS level. The process cannot read, write, or even see that those paths exist.
+
+## How It Works
+
+The sandbox uses platform-native isolation to restrict what the shell process can see:
+
+- **Linux:** [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) creates a mount namespace with only allowed paths visible. The process runs in its own user namespace with `--unshare-all --share-net --die-with-parent --new-session`.
+- **macOS:** `sandbox-exec` applies an SBPL (Sandbox Profile Language) profile that restricts filesystem access. Default deny, with explicit read/write grants for approved paths.
+- **Both platforms:** The workspace directory is read-write, system binaries are read-only, and everything else is invisible. Network access is allowed (network isolation is a separate concern).
+
+Detection happens once at daemon startup. The provider is reused for all agents throughout the daemon's lifetime.
+
+## Mount Table
+
+The table below shows what paths are visible inside the sandbox. Anything not listed here is invisible to the sandboxed process.
+
+| Path | Access | Purpose |
+|------|--------|---------|
+| Workspace (`~/.comis/workspace-{agent}/`) | Read-Write | Agent's working directory |
+| Graph shared dir (`~/.comis/graph-runs/{runId}/`) | Read-Write | Pipeline data sharing between graph nodes |
+| `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/lib32` | Read-Only | System binaries and shared libraries |
+| `/etc/resolv.conf`, `/etc/hosts`, `/etc/hostname` | Read-Only | Network configuration |
+| `/etc/ssl`, `/etc/ca-certificates`, `/etc/pki` | Read-Only | TLS certificates |
+| `/etc/ld.so.cache`, `/etc/ld.so.conf`, `/etc/ld.so.conf.d` | Read-Only | Dynamic linker configuration |
+| `/etc/alternatives`, `/etc/localtime` | Read-Only | System settings |
+| `/etc/passwd`, `/etc/group`, `/etc/nsswitch.conf` | Read-Only | User and group name resolution |
+| `~/.gitconfig`, `~/.config/git/` | Read-Only | Git author config (no credentials -- `~/.ssh` is NOT mounted) |
+| `/proc` | proc | Process information filesystem |
+| `/dev` | dev | Device nodes |
+| `/tmp` | Private tmpfs | Isolated temp directory (not shared with host) |
+| `readOnlyAllowPaths` entries | Read-Only | Operator-configured additional paths |
+| Spillover temp dir | Read-Write | Exec tool internal temp files |
+
+<Info>
+On macOS, the sandbox-exec provider uses equivalent paths: `/Library`, `/System`, `/opt/homebrew`, `/usr/local` for system binaries, and `/private/tmp`, `/private/var/folders` for temp directories.
+</Info>
+
+## Configuration
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  my-agent:
+    skills:
+      execSandbox:
+        enabled: "always"            # "always" (default) or "never"
+        readOnlyAllowPaths:          # Additional read-only paths inside the sandbox
+          - /opt/data
+          - /mnt/shared/datasets
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `enum` | `"always"` | `"always"` -- sandbox is active; if the sandbox binary is unavailable, the exec tool logs a warning and runs unsandboxed (graceful fallback). `"never"` -- sandbox is unconditionally disabled. |
+| `readOnlyAllowPaths` | `string[]` | `[]` | Additional filesystem paths exposed read-only inside the sandbox. Use this for shared data directories that agents need to read but should not modify. |
+
+<Warning>
+Setting `enabled: "never"` removes the OS-level filesystem isolation entirely. The exec tool will fall back to its command denylist as the only protection. This is not recommended for production deployments.
+</Warning>
+
+## System Requirements
+
+- **Linux:** Install bubblewrap -- `apt install bubblewrap` (Debian/Ubuntu) or the equivalent for your distribution. See the [bubblewrap GitHub repository](https://github.com/containers/bubblewrap) for details.
+- **macOS:** `sandbox-exec` is built in to macOS. No installation needed.
+
+<Warning>
+`sandbox-exec` on macOS is deprecated by Apple and may be removed in a future macOS release. It remains functional for development use, but use bubblewrap on Linux for production deployments.
+</Warning>
+
+## Limitations
+
+<Info>
+The exec sandbox provides **filesystem isolation only**. It does not restrict other resource types:
+
+- **Network access is NOT restricted** -- network isolation is a separate concern from filesystem isolation
+- **CPU, memory, and disk limits are NOT enforced** -- resource limits are out of scope for the filesystem sandbox
+- **MCP tool servers run outside the sandbox** -- MCP servers have their own security model and are not wrapped by the exec sandbox
+- **sandbox-exec on macOS is deprecated** -- Apple may remove it in a future macOS release; use bubblewrap on Linux for production
+</Info>
+
+## Graph Integration
+
+When an agent runs inside an [execution graph](/agents/execution-graphs) pipeline, the graph's shared directory (`~/.comis/graph-runs/{runId}/`) is automatically mounted read-write inside the sandbox. This allows pipeline nodes to share data files while maintaining filesystem isolation -- each node can read outputs from upstream nodes and write outputs for downstream nodes, but cannot access any other part of the host filesystem.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
+    How the exec sandbox fits into the 18 security layers
+  </Card>
+  <Card title="Safe Path" icon="folder-closed" href="/reference/safe-path">
+    Path validation for file tools (read, write, edit)
+  </Card>
+  <Card title="Tool Security" icon="box" href="/reference/sandbox">
+    Technical sandbox reference for all defense layers
+  </Card>
+  <Card title="Hardening Guide" icon="lock" href="/security/hardening">
+    Production hardening checklist
+  </Card>
+</CardGroup>

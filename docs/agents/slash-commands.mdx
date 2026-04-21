@@ -1,0 +1,272 @@
+---
+title: "Slash Commands"
+description: "All the commands you can type to control your agent"
+icon: "terminal"
+---
+
+Slash commands let you control your agent directly from the chat. Type a
+command starting with `/` and your agent will act on it instead of treating
+it as a regular message.
+
+## Quick reference
+
+Here is the complete list of all 16 commands:
+
+| Command | What it does | Example |
+|---------|-------------|---------|
+| `/think [level]` | Set reasoning depth (off, minimal, low, medium, high, xhigh) | `/think high` |
+| `/verbose [on\|off]` | Toggle detailed output | `/verbose on` |
+| `/reasoning [on\|off]` | Show or hide the reasoning process | `/reasoning on` |
+| `/context` | Show context window usage and file sizes | `/context` |
+| `/status` | Show session info, message count, model, tokens used, cost | `/status` |
+| `/usage` | Show per-provider token and cost breakdown | `/usage` |
+| `/config` | Show current agent configuration | `/config` |
+| `/model list\|switch\|cycle` | List available models, switch model, or cycle through them | `/model switch anthropic claude-sonnet-4-5-20250929` |
+| `/new` | Start a fresh conversation (new session) | `/new` |
+| `/reset` | Reset current session (clear history) | `/reset` |
+| `/compact [verbose] [instructions]` | Manually trigger context compaction | `/compact` |
+| `/export [path]` | Export session to HTML file | `/export ~/chat.html` |
+| `/stop` | Cancel current agent execution | `/stop` |
+| `/fork` | Fork conversation at your latest message | `/fork` |
+| `/branch [list\|target-id]` | List branch points or navigate to one | `/branch list` |
+| `/budget [tokens]` | Set per-execution token budget for the current session | `/budget 500000` |
+| `/skill:name [args]` | Invoke a prompt skill by name | `/skill:weather London` |
+
+## Command categories
+
+### Thinking controls
+
+**Commands:** `/think`, `/verbose`, `/reasoning`
+
+These are *directive* commands -- they modify how your agent processes your
+message rather than being separate actions. When you use a directive, the
+command is stripped from your text before your agent sees it. Your agent never
+sees the `/think` part -- it just receives your message with the thinking level
+already adjusted.
+
+#### /think
+
+Controls how deeply your agent reasons about its response. Higher levels mean
+more thorough thinking, which can improve answer quality for complex questions
+but uses more tokens.
+
+| Level | What it means |
+|-------|--------------|
+| `off` | No extended thinking -- fastest, cheapest |
+| `minimal` | Light reasoning for simple tasks |
+| `low` | Basic reasoning for straightforward questions |
+| `medium` | Balanced reasoning for most tasks |
+| `high` | Deep reasoning for complex problems |
+| `xhigh` | Maximum reasoning depth for the hardest problems |
+
+Without an argument, `/think` toggles thinking on or off.
+
+#### /verbose
+
+Toggles detailed output. When enabled, your agent includes more information
+in its responses -- useful for debugging or understanding its decision-making.
+
+#### /reasoning
+
+Shows or hides the reasoning process. When enabled, you can see how your
+agent arrived at its answer, including its internal thought steps.
+
+### Information
+
+**Commands:** `/context`, `/status`, `/usage`, `/config`
+
+Read-only commands that show you what is happening. None of these change
+anything -- they just report on the current state.
+
+#### /context
+
+Shows how much of the context window your agent is using. This includes the
+sizes of workspace files, tool definitions, and conversation history. Useful
+for understanding why your agent might be forgetting earlier parts of a long
+conversation.
+
+#### /status
+
+Shows session details: how many messages have been exchanged, which model is
+active, how many tokens have been used, and the estimated cost so far.
+
+#### /usage
+
+Shows a breakdown of token usage and costs per provider. If you are using
+multiple models or providers, this helps you understand where your budget is
+going.
+
+#### /config
+
+Displays the current agent configuration: name, model, provider, max steps,
+and other active settings.
+
+### Model switching
+
+**Commands:** `/model`
+
+The `/model` command has three sub-commands:
+
+| Sub-command | What it does | Example |
+|------------|-------------|---------|
+| `list` | Shows all available models and providers | `/model list` |
+| `switch` | Changes the model for this session | `/model switch anthropic claude-sonnet-4-5-20250929` |
+| `cycle` | Rotates through configured models | `/model cycle` |
+
+The `switch` sub-command takes two arguments: the provider name and the model
+identifier. The change applies only to the current session -- it does not
+modify your configuration file.
+
+### Session management
+
+**Commands:** `/new`, `/reset`, `/compact`, `/export`
+
+These commands manage your conversation state:
+
+#### /new
+
+Starts a completely fresh conversation. Your agent gets a new session with
+no history. This is useful when you want to change topics entirely or start
+from a clean slate.
+
+#### /reset
+
+Clears the history of the current session but keeps the same session
+identifier. Your agent forgets what was said in this conversation but stays
+in the same session context.
+
+#### /compact
+
+Manually triggers the context engine's LLM compaction step. When your
+conversation gets long, this command summarizes older messages to free up space
+in the context window. Normally, the context engine manages conversation length
+automatically through multiple optimization steps (see
+[Compaction](/agents/compaction)), but you can trigger the summarization step
+directly if you want to reclaim space sooner.
+
+Optional arguments:
+- `verbose` -- Include detailed output about what was compacted
+- Any additional text is used as instructions for the compaction summary
+
+#### /export
+
+Exports the current session to an HTML file. Optionally specify a file path
+(defaults to a generated path in your home directory).
+
+### Execution control
+
+**Commands:** `/stop`
+
+Cancels the current agent execution. If your agent is taking too long, going
+in the wrong direction, or stuck in a tool loop, `/stop` immediately halts
+the current run. The session remains intact -- you can continue chatting
+normally after stopping.
+
+### Branching
+
+**Commands:** `/fork`, `/branch`
+
+These commands let you explore different conversation paths, like a "what if"
+feature for your chats.
+
+#### /fork
+
+Creates a copy of your conversation at your latest message. This lets you
+try a different approach without losing the original conversation. Think of it
+as going back to the last thing you said and asking for a different response.
+
+#### /branch
+
+Navigates between conversation branches.
+
+| Usage | What it does |
+|-------|-------------|
+| `/branch list` | Shows all available branch points in your conversation |
+| `/branch [target-id]` | Jumps to a specific branch point |
+
+After forking, you can use `/branch list` to see all the points where you
+branched off, and `/branch [id]` to jump back to any of them.
+
+### Budget control
+
+**Command:** `/budget`
+
+The `/budget` command sets a per-execution token budget for the current session. This overrides the default budget limit for the next agent execution only.
+
+| Usage | Effect |
+|-------|--------|
+| `/budget 500000` | Set the next execution to use at most 500,000 tokens |
+| `/budget` | Show the current budget setting |
+
+Like `/think` and `/verbose`, `/budget` is a *directive* command -- it modifies how your agent processes the next message rather than being a separate action.
+
+### Skills
+
+**Commands:** `/skill:name`
+
+Custom prompt skills can be invoked directly from the chat using the
+`/skill:skillname` syntax. The skill name comes after the colon, and any
+text after the name is passed as arguments.
+
+For example, if you have a prompt skill called `weather`:
+
+```
+/skill:weather London
+```
+
+This invokes the `weather` skill with "London" as the argument. The skill's
+prompt template is expanded and used to guide your agent's response.
+
+See [Prompt Skills](/skills/prompt-skills) for how to create and manage
+custom skills.
+
+## Combining directives with messages
+
+<Tip>
+  Directive commands (`/think`, `/verbose`, `/reasoning`) can be combined with
+  a regular message. For example:
+
+  `/think high Tell me about quantum computing`
+
+  This sets reasoning to high AND sends the message "Tell me about quantum
+  computing" to your agent. The directive is stripped before your agent sees
+  the text.
+</Tip>
+
+This works because directives modify the *processing* of your message, not the
+message itself. Other commands (like `/status` or `/new`) are standalone -- they
+do not accept additional message text.
+
+## How commands are recognized
+
+Slash commands are only recognized when your message *starts* with the `/`
+character. If you write a `/` in the middle of a sentence, it is treated as
+regular text. This means you can safely type things like "I need help with
+my /home directory" without triggering a command.
+
+Commands are not case-sensitive for the `/skill:` prefix (`/Skill:weather` and
+`/skill:Weather` both work), but the built-in command names must be lowercase
+(`/think`, not `/Think`).
+
+If you type an unrecognized command (for example, `/hello`), it is treated as
+a regular message and passed to your agent as-is. Only the 16 built-in
+commands and the `/skill:name` prefix have special behavior.
+
+<Note>
+  Slash commands work on every platform -- Discord, Telegram, Slack, WhatsApp,
+  the web dashboard, and all other connected channels. They are processed by
+  Comis before reaching your agent, so the platform does not need to support
+  slash commands natively.
+</Note>
+
+<CardGroup cols={2}>
+  <Card title="Sessions" icon="comments" href="/agents/sessions">
+    How conversations are tracked and managed.
+  </Card>
+  <Card title="Models" icon="microchip" href="/agents/models">
+    Choosing AI providers and switching models.
+  </Card>
+  <Card title="Prompt Skills" icon="wand-magic-sparkles" href="/skills/prompt-skills">
+    Create custom skills your agent can invoke.
+  </Card>
+</CardGroup>

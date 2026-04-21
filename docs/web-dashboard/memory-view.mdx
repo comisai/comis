@@ -1,0 +1,92 @@
+---
+title: "Memory View"
+description: "Browse, search, and manage your agents' stored knowledge"
+icon: "brain"
+---
+
+The Memory view lets you explore everything your agents have learned and remembered. You can search for specific information, browse all stored entries, filter by type or agent, and export data for backup or analysis.
+
+## What You See
+
+When you open the Memory view, the top of the page displays four summary cards:
+
+- **Total Entries** -- the total number of memories stored across all agents.
+- **Sessions** -- how many conversation sessions have contributed to the memory store.
+- **Vectors** -- how many entries have been embedded for semantic (meaning-based) search.
+- **Database Size** -- the current size of the memory database on disk.
+
+Below the summary cards, you will find:
+
+- **Mode toggle** -- switch between **Search** mode (find specific memories by keyword or meaning) and **Browse All** mode (page through every entry).
+- **Filter bar** -- narrow your results using four filter types:
+  - **Memory type** checkboxes -- select which types of memory to include (working, episodic, semantic, or procedural).
+  - **Trust level** checkboxes -- filter by how the memory was created (system, learned, or external).
+  - **Agent** dropdown -- show memories from a specific agent or all agents.
+  - **Date range** picker -- limit results to a specific time period.
+- **Results table** -- displays matching entries with selectable rows (checkboxes) for bulk actions.
+
+## Searching Memories
+
+<Steps>
+  <Step title="Switch to Search mode">
+    Click the **Search** button in the mode toggle at the top of the page. A search box appears next to the toggle.
+  </Step>
+  <Step title="Type your query">
+    Enter a word, phrase, or question in the search box and press Enter. You can search by content, topic, or keyword.
+  </Step>
+  <Step title="Review results">
+    Results appear below, ranked by relevance. Each row shows the memory content, type, trust level, agent, and creation date.
+  </Step>
+  <Step title="View full details">
+    Click any row to open a slide-out detail panel with the complete memory content and all metadata.
+  </Step>
+</Steps>
+
+## Browsing All Memories
+
+<Steps>
+  <Step title="Switch to Browse All mode">
+    Click the **Browse All** button in the mode toggle. The view automatically loads the first page of entries.
+  </Step>
+  <Step title="Use filters to narrow results">
+    Check or uncheck memory type and trust level checkboxes, select a specific agent from the dropdown, or set a date range to focus on the entries you care about.
+  </Step>
+  <Step title="Navigate pages">
+    Use the **Prev** and **Next** buttons at the bottom of the results table to move between pages. The page indicator shows which entries you are viewing out of the total count.
+  </Step>
+</Steps>
+
+## Working with Memories
+
+### Viewing Details
+
+Click any row in the results table to open a slide-out detail panel on the right side of the screen. The panel shows the full memory content along with all metadata -- type, trust level, agent, creation date, tags, and whether the entry has a vector embedding. You can close the panel by clicking the X button or clicking outside it.
+
+### Bulk Actions
+
+Select multiple entries by clicking the checkboxes next to each row. A bulk actions bar appears showing the number of selected entries and two action buttons:
+
+- **Delete Selected** -- permanently removes the selected entries. A confirmation dialog appears before the delete happens.
+- **Export Selected** -- downloads the selected entries as a JSONL file.
+
+### Exporting All Results
+
+Click the **Export JSONL** button in the results header to download all currently visible results as a JSONL file. This works in both Search and Browse All modes.
+
+<Tip>
+**Understanding memory types:**
+
+- **Working** -- short-term scratch pad. Temporary information the agent is actively using during a conversation.
+- **Episodic** -- conversation memories. What happened in past conversations, including who said what and when.
+- **Semantic** -- learned facts. General knowledge the agent has picked up, like "the team meeting is every Tuesday."
+- **Procedural** -- how-to knowledge. Instructions and procedures the agent has learned, like "to deploy, run these three commands."
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Memory Concepts" icon="brain" href="/agents/memory">
+    Learn how agents store and retrieve memories.
+  </Card>
+  <Card title="Search Documentation" icon="magnifying-glass" href="/agents/search">
+    Understand how semantic and keyword search works.
+  </Card>
+</CardGroup>

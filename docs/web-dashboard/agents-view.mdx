@@ -1,0 +1,177 @@
+---
+title: "Agents View"
+description: "View and manage your AI agents from the web dashboard"
+icon: "robot"
+---
+
+The Agents view shows all your AI agents at a glance. You can see which agents are active, check their statistics, edit their configuration, and take actions like suspending or deleting an agent -- all from a single screen.
+
+## What You See
+
+The Agents view has three sub-views: a list of all agents, a detail page for each agent, and an editor for changing agent settings.
+
+### Agent List
+
+The main view is a sortable data grid showing every configured agent. Click any column header to sort by that column. The columns are:
+
+| Column | What It Shows |
+|--------|--------------|
+| **ID** | The unique identifier for the agent |
+| **Name** | The display name you gave the agent |
+| **Model** | The AI model the agent uses (such as Claude or GPT) |
+| **Status** | Current state, shown as a colored tag |
+| **Actions** | Buttons for Configure, Suspend/Resume, and Delete |
+
+Each agent's status appears as a colored tag:
+
+- **Active** (green) -- The agent is running and processing messages
+- **Idle** (blue) -- The agent is running but has had no recent activity
+- **Suspended** (yellow) -- The agent has been paused by a user
+- **Error** (red) -- Something went wrong and the agent needs attention
+
+Click any row in the grid to open that agent's detail page.
+
+### Agent Detail
+
+The detail page gives you a comprehensive look at a single agent. At the top, a breadcrumb trail lets you navigate back to the agent list.
+
+**Stat cards** across the top show at-a-glance numbers:
+
+- Messages handled today
+- Tokens used (input and output combined)
+- Tool calls made
+
+Below the stat cards, you will find several information sections:
+
+- **Configuration summary** -- The agent's provider, model, max steps, and other core settings displayed in a two-column grid
+- **Budget usage** -- Visual progress bars showing how much of the agent's per-execution, per-hour, and per-day token budgets have been consumed
+- **Circuit breaker status** -- Whether the circuit breaker is closed (normal), open (tripped due to errors), or half-open (testing after a cooldown)
+- **Safety config** -- Context guard settings and SDK retry configuration
+- **Skills list** -- All skills and tools available to this agent
+- **Routing bindings** -- Which channels and routing rules direct messages to this agent
+
+Action buttons in the header let you **Edit**, **Workspace**, **Suspend** or **Resume**, and **Delete** the agent.
+
+### Agent Editor
+
+The editor organizes agent settings into **13 sections** using an accordion layout. The first section is always visible; the remaining 12 are collapsible:
+
+| # | Section | Collapsible | What It Configures |
+|---|---------|-------------|-------------------|
+| 1 | **Essential** | No (always visible) | Agent ID, name, provider, model, system prompt, and core identity settings |
+| 2 | **Budget** | Yes | Per-execution, per-hour, and per-day token budget limits |
+| 3 | **Session Policy** | Yes | Session reset schedule, idle timeout, and session key format |
+| 4 | **Skills** | Yes | Which skills and tools are available to this agent |
+| 5 | **Heartbeat** | Yes | Periodic heartbeat interval and prompt |
+| 6 | **Advanced** | Yes | Max steps, retry behavior, model failover chain, RAG settings |
+| 7 | **Context Engine** | Yes | Context assembly layers, compaction strategy, and token budget allocation |
+| 8 | **Streaming (System-Wide)** | Yes | Streaming response configuration (applies to all agents) |
+| 9 | **Delivery (System-Wide)** | Yes | Message delivery timing and batching (applies to all agents) |
+| 10 | **Queue / Overflow (System-Wide)** | Yes | Queue depth limits and overflow recovery (applies to all agents) |
+| 11 | **Auto-Reply (System-Wide)** | Yes | Automatic reply messages when agents are busy or unavailable (applies to all agents) |
+| 12 | **Send Policy (System-Wide)** | Yes | Message send rate limits and channel-specific policies (applies to all agents) |
+| 13 | **Log Levels (Runtime)** | Yes | Per-module log level overrides for debugging (applies at runtime) |
+
+<Info>
+Sections marked **(System-Wide)** affect all agents, not just the one being edited. Changes to these sections are applied globally.
+</Info>
+
+Each accordion section presents form fields appropriate to that category -- text inputs, toggles, dropdowns, and number fields. Make your changes and click **Save** to apply them.
+
+## Common Tasks
+
+### View Agent Details
+
+<Steps>
+  <Step title="Open the Agents view">
+    Click **Agents** in the sidebar.
+  </Step>
+  <Step title="Click an agent row">
+    Click on any agent in the list to open its detail page with stats, configuration, and available actions.
+  </Step>
+</Steps>
+
+### Suspend an Agent
+
+<Steps>
+  <Step title="Find the agent">
+    In the agent list, locate the agent you want to suspend. You can also open the agent detail page.
+  </Step>
+  <Step title="Click Suspend">
+    Click the **Suspend** button. The agent immediately stops processing new messages. Its status tag changes to yellow.
+  </Step>
+  <Step title="Resume when ready">
+    To restart the agent, click the **Resume** button that replaces the Suspend button. The agent goes back to processing messages.
+  </Step>
+</Steps>
+
+### Edit Agent Configuration
+
+<Steps>
+  <Step title="Open the agent detail page">
+    Click the agent row in the list to open its detail page.
+  </Step>
+  <Step title="Click Edit">
+    Click the **Edit** button in the header to open the agent editor.
+  </Step>
+  <Step title="Make your changes">
+    Expand the accordion sections to find the settings you want to change. Modify the fields as needed.
+  </Step>
+  <Step title="Save">
+    Click **Save** to apply your changes. A confirmation message appears if the save succeeds.
+  </Step>
+</Steps>
+
+### Delete an Agent
+
+<Steps>
+  <Step title="Open the agent detail or list">
+    Navigate to the agent you want to remove.
+  </Step>
+  <Step title="Click Delete">
+    Click the **Delete** button. A confirmation dialog appears asking you to confirm.
+  </Step>
+  <Step title="Confirm deletion">
+    Click **Confirm** in the dialog to permanently remove the agent.
+  </Step>
+</Steps>
+
+### Open the Workspace Manager
+
+<Steps>
+  <Step title="Open the agent detail page">
+    Click the agent row in the list to open its detail page.
+  </Step>
+  <Step title="Click Workspace">
+    Click the **Workspace** button in the header. This opens the workspace manager for that agent, where you can browse files, edit content, and manage git history.
+  </Step>
+</Steps>
+
+<Tip>
+**What do the statuses mean?**
+- **Active** = The agent is online and ready to respond to messages
+- **Idle** = The agent is running but hasn't handled a message recently
+- **Suspended** = You paused the agent manually -- it won't process messages until you resume it
+- **Error** = The agent encountered a problem -- check the Observe view for details
+</Tip>
+
+<Info>
+**About the circuit breaker:** If an agent hits too many consecutive errors, the circuit breaker trips to prevent runaway costs. While open, the agent stops making AI provider calls. After a cooldown period, it enters a "half-open" state where it tests with a single request. If the test succeeds, the circuit breaker closes and the agent resumes normal operation.
+</Info>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Chat Console" icon="message" href="/web-dashboard/chat">
+    Start a conversation with any of your agents.
+  </Card>
+  <Card title="Sessions View" icon="clock-rotate-left" href="/web-dashboard/sessions-view">
+    Browse conversation histories for all agents.
+  </Card>
+  <Card title="Agents Documentation" icon="robot" href="/agents/index">
+    Learn about agent configuration, routing, and behavior in depth.
+  </Card>
+  <Card title="Workspace Manager" icon="folder-open" href="/web-dashboard/workspace-view">
+    Browse and edit workspace files, manage git history.
+  </Card>
+</CardGroup>
