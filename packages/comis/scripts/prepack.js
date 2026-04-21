@@ -59,7 +59,10 @@ for (const pkg of WORKSPACE_PACKAGES) {
     console.error(`ERROR: ${distSrc} does not exist — run pnpm build first`);
     process.exit(1);
   }
-  cpSync(distSrc, join(destDir, "dist"), { recursive: true });
+  cpSync(distSrc, join(destDir, "dist"), {
+    recursive: true,
+    filter: (src) => !src.endsWith(".test.js") && !src.endsWith(".test.d.ts") && !src.endsWith(".test.d.ts.map"),
+  });
 
   // Copy package.json with dependencies stripped — all external deps are
   // listed at the comisai top level, so bundled packages don't need their own.

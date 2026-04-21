@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-04-22
+
+### Changed
+- Upgraded 15+ dependencies to resolve all known security vulnerabilities (protobufjs, undici, hono, music-metadata, vite, yaml, axios, and others)
+- Added pnpm overrides to enforce patched versions of transitive dependencies
+
+### Fixed
+- Stripped test files from published npm tarball, reducing package size by ~500KB
+- Updated CHANGELOG to reflect all releases
+
+## [1.0.10] - 2026-04-21
+
+### Added
+- `allowFrom` option for Telegram channels in wizard channel setup
+- Auto-detection of Telegram user ID via `getUpdates` in wizard sender trust
+
+### Fixed
+- Skipped redundant sender ID prompt when Telegram ID is auto-detected
+
 ## [1.0.9] - 2026-04-21
 
 ### Added
@@ -24,5 +43,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - One-line VPS installer with systemd integration and sudoers setup
 - Support for Anthropic, OpenAI, and Google AI providers
 
-[Unreleased]: https://github.com/comisai/comis/compare/v1.0.9...HEAD
+[Unreleased]: https://github.com/comisai/comis/compare/v1.0.11...HEAD
+[1.0.11]: https://github.com/comisai/comis/compare/v1.0.10...v1.0.11
+[1.0.10]: https://github.com/comisai/comis/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/comisai/comis/releases/tag/v1.0.9

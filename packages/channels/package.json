@@ -44,7 +44,7 @@
     "@slack/web-api": "^7.14.1",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "discord.js": "^14.25.1",
-    "file-type": "^21.3.0",
+    "file-type": "^21.3.2",
     "grammy": "^1.41.1",
     "imapflow": "^1.2.18",
     "irc-framework": "^4.14.0",

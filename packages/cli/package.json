@@ -47,7 +47,7 @@
     "commander": "^14.0.0",
     "ora": "^9.0.0",
     "ws": "^8.19.0",
-    "yaml": "^2.8.2"
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
