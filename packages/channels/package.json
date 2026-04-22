@@ -39,7 +39,7 @@
     "@comis/core": "workspace:*",
     "@comis/infra": "workspace:*",
     "@comis/shared": "workspace:*",
-    "@line/bot-sdk": "^10.6.0",
+    "@line/bot-sdk": "^11.0.0",
     "@slack/bolt": "^4.6.0",
     "@slack/web-api": "^7.14.1",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
