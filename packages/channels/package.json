@@ -53,7 +53,7 @@
   },
   "devDependencies": {
     "@types/mailparser": "^3.4.5",
-    "@types/nodemailer": "^6.4.17",
+    "@types/nodemailer": "^8.0.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0"
   }
