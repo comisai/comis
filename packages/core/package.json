@@ -37,8 +37,8 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "safe-regex2": "^5.0.0",
+    "safe-regex2": "^5.1.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.0"
+    "vitest": "^4.1.5"
   }
 }
