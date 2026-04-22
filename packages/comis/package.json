@@ -160,7 +160,7 @@
     "diff": "8.0.4",
     "discord.js": "^14.25.1",
     "edge-tts-universal": "^1.4.0",
-    "file-type": "^21.3.2",
+    "file-type": "^22.0.1",
     "grammy": "^1.41.1",
     "hono": "^4.12.14",
     "hono-rate-limiter": "^0.5.3",
