@@ -163,15 +163,16 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
 
     async destroySession(sessionKey: SessionKey): Promise<void> {
       const sessionPath = sessionKeyToPath(sessionKey, deps.sessionBaseDir);
-      try {
-        await unlink(sessionPath);
-      } catch {
-        // File may not exist -- that's fine (already destroyed or never created)
-      }
+      const sessionKeyStr = formatSessionKey(sessionKey);
 
-      // Clean up offloaded tool results
-      const toolResultsDir = safePath(dirname(sessionPath), "tool-results");
-      await suppressError(rm(toolResultsDir, { recursive: true, force: true }), "tool-results dir may not exist");
+      await withSessionLock(deps.lockDir, sessionKeyStr, async () => {
+        try { await unlink(sessionPath); } catch { /* ENOENT ok */ }
+        const toolResultsDir = safePath(dirname(sessionPath), "tool-results");
+        await suppressError(
+          rm(toolResultsDir, { recursive: true, force: true }),
+          "tool-results dir may not exist",
+        );
+      }, { retries: 10, retryMinTimeout: 500 });
     },
 
     writeSessionMetadata(sessionKey: SessionKey, metadata: SessionMetadata): void {

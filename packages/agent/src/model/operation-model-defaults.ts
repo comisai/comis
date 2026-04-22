@@ -81,4 +81,5 @@ export const OPERATION_CACHE_DEFAULTS: Partial<Record<ModelOperationType, "none"
   compaction: "none",
   taskExtraction: "none",
   condensation: "short",
+  cron: "short", // 5m TTL: covers within-execution multi-step reuse, avoids 1h write premium across hourly runs.
 };
