@@ -324,7 +324,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
 
       // Resolve cron operation model via 5-level priority chain
       const agentConfig = agents[payload.agentId];
-      let cronOverrides: { model: string; operationType: "cron"; promptTimeout: { promptTimeoutMs: number }; cacheRetention?: "none" | "short" } | undefined;
+      let cronOverrides: { model: string; operationType: "cron"; promptTimeout: { promptTimeoutMs: number }; cacheRetention?: "none" | "short" | "long" } | undefined;
       if (agentConfig) {
         const resolution = resolveOperationModel({
           operationType: "cron",
@@ -339,7 +339,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
           model: resolution.model,
           operationType: "cron",
           promptTimeout: { promptTimeoutMs: resolution.timeoutMs },
-          cacheRetention: resolution.cacheRetention,
+          cacheRetention: payload.cacheRetention ?? resolution.cacheRetention,
         };
         logger.info(
           { jobName, model: resolution.model, source: resolution.source, agentId: payload.agentId },
@@ -356,6 +356,19 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       // Fresh strategy — expire existing session before each execution
       if (sessionStrategy === "fresh") {
         sessionManager.expire(sessionKey);
+
+        const piAdapter = deps.piSessionAdapters?.get(payload.agentId)
+                       ?? deps.piSessionAdapters?.get(defaultAgentId);
+        if (piAdapter) {
+          await piAdapter.destroySession(sessionKey);
+        } else {
+          logger.warn(
+            { agentId: payload.agentId, jobName, hint: "No piSessionAdapter found — JSONL may accumulate", errorKind: "config" as const },
+            "Cron fresh strategy could not destroy JSONL",
+          );
+        }
+
+        container.eventBus.emit("session:expired", { sessionKey, reason: "cron-fresh" });
       }
 
       const syntheticMsg: NormalizedMessage = {
@@ -830,10 +843,12 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
             if (adapter) {
               // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
               adapter.destroySession(key).catch(() => { /* fire-and-forget session destroy */ });
+              container.eventBus.emit("session:expired", { sessionKey: key, reason: "chat-reset" });
               return;
             }
             // Fallback: expire via session manager
             deps.sessionManager.expire(key);
+            container.eventBus.emit("session:expired", { sessionKey: key, reason: "chat-reset" });
           },
           getAvailableModels: () => [],
           getUsageBreakdown: () => {

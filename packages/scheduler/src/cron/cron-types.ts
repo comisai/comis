@@ -112,6 +112,8 @@ export const CronJobSchema = z.strictObject({
     sessionStrategy: CronSessionStrategySchema.default("fresh"),
     /** Number of recent turns to keep for rolling strategy (default 3). */
     maxHistoryTurns: z.number().int().positive().default(3).optional(),
+    /** Per-job cache retention override. Default inherits OPERATION_CACHE_DEFAULTS["cron"] = "short". */
+    cacheRetention: z.enum(["none", "short", "long"]).optional(),
     /** Delivery target for routing results to originating channel */
     deliveryTarget: CronDeliveryTargetSchema.optional(),
     /** Whether this job is currently enabled */

@@ -97,6 +97,26 @@ describe("handleConfigChatCommand scope enforcement", () => {
 });
 
 // ===========================================================================
+// Gateway destroySession session:expired emission (source verification)
+// ===========================================================================
+
+describe("setupGateway destroySession emits session:expired", () => {
+  it("source contains session:expired emission with gateway-reset reason", async () => {
+    // The gateway destroySession callback is deeply nested inside setupGateway
+    // and requires a full gateway server harness to exercise end-to-end.
+    // This structural test verifies the source code contains the expected
+    // session:expired emission so regressions are caught.
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(
+      new URL("./setup-gateway.ts", import.meta.url).pathname,
+      "utf-8",
+    );
+    expect(source).toContain('container.eventBus.emit("session:expired"');
+    expect(source).toContain('"gateway-reset"');
+  });
+});
+
+// ===========================================================================
 // RPC Bridge tests
 // ===========================================================================
 
