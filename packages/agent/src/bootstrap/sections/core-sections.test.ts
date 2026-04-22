@@ -247,6 +247,52 @@ describe("buildInboundMetadataSection", () => {
     expect(joined).toContain("scheduled reminder delivery");
   });
 
+  it("includes CRON AGENT TURN block when flags.isCronAgentTurn is true", () => {
+    const meta: InboundMetadata = {
+      messageId: "msg-1",
+      senderId: "user-1",
+      chatId: "chat-1",
+      channel: "telegram",
+      chatType: "dm",
+      flags: { isCronAgentTurn: true },
+    };
+    const result = buildInboundMetadataSection(meta, false);
+    const joined = result.join("\n");
+    expect(joined).toContain("CRON AGENT TURN");
+    expect(joined).toContain("NO_REPLY");
+    expect(joined).not.toContain("SCHEDULED REMINDER");
+  });
+
+  it("does NOT include CRON AGENT TURN block when only isScheduled is set", () => {
+    const meta: InboundMetadata = {
+      messageId: "msg-1",
+      senderId: "user-1",
+      chatId: "chat-1",
+      channel: "telegram",
+      chatType: "dm",
+      flags: { isScheduled: true },
+    };
+    const result = buildInboundMetadataSection(meta, false);
+    const joined = result.join("\n");
+    expect(joined).toContain("SCHEDULED REMINDER");
+    expect(joined).not.toContain("CRON AGENT TURN");
+  });
+
+  it("isCronAgentTurn takes precedence over isScheduled if both set", () => {
+    const meta: InboundMetadata = {
+      messageId: "msg-1",
+      senderId: "user-1",
+      chatId: "chat-1",
+      channel: "telegram",
+      chatType: "dm",
+      flags: { isCronAgentTurn: true, isScheduled: true },
+    };
+    const result = buildInboundMetadataSection(meta, false);
+    const joined = result.join("\n");
+    expect(joined).toContain("CRON AGENT TURN");
+    expect(joined).not.toContain("SCHEDULED REMINDER");
+  });
+
   it("does NOT include SCHEDULED REMINDER block when isScheduled is absent", () => {
     const meta: InboundMetadata = {
       messageId: "msg-1",

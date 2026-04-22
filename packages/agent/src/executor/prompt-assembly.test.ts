@@ -531,6 +531,16 @@ describe("assembleExecutionPrompt", () => {
       const flags = await getFlags({ metadata: { isScheduled: true } });
       expect(flags.isScheduled).toBe(true);
     });
+
+    it("sets isCronAgentTurn when metadata.isCronAgentTurn is true", async () => {
+      const flags = await getFlags({ metadata: { isCronAgentTurn: true } });
+      expect(flags.isCronAgentTurn).toBe(true);
+    });
+
+    it("does not set isScheduled for isCronAgentTurn messages", async () => {
+      const flags = await getFlags({ metadata: { isCronAgentTurn: true } });
+      expect(flags.isScheduled).toBeUndefined();
+    });
   });
 
   // -----------------------------------------------------------------
