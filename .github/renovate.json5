@@ -1,0 +1,89 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  "extends": [
+    "config:best-practices",
+    "schedule:earlyMondays"
+  ],
+
+  // pnpm auto-detected from pnpm-workspace.yaml; npm for /website
+  "enabledManagers": ["pnpm", "npm", "dockerfile", "github-actions"],
+
+  // Don't update internal workspace packages
+  "ignoreDeps": ["@comis/shared", "@comis/core", "@comis/infra", "@comis/memory",
+                  "@comis/gateway", "@comis/scheduler", "@comis/agent", "@comis/channels",
+                  "@comis/skills", "@comis/cli", "@comis/daemon", "@comis/comis", "@comis/web"],
+
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 4,
+
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on Monday"]
+  },
+
+  "packageRules": [
+    // --- Auto-merge patch updates when CI passes ---
+    {
+      "description": "Auto-merge patch updates",
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "groupName": "Patch updates",
+      "groupSlug": "patch-updates"
+    },
+
+    // --- Group minor production dep updates ---
+    {
+      "description": "Group minor production dependency updates",
+      "matchUpdateTypes": ["minor"],
+      "matchDepTypes": ["dependencies"],
+      "groupName": "Minor production updates",
+      "groupSlug": "minor-prod"
+    },
+
+    // --- Group minor dev dep updates ---
+    {
+      "description": "Group minor dev dependency updates",
+      "matchUpdateTypes": ["minor"],
+      "matchDepTypes": ["devDependencies"],
+      "groupName": "Minor dev updates",
+      "groupSlug": "minor-dev"
+    },
+
+    // --- Major updates: separate PRs, never auto-merge ---
+    {
+      "description": "Major updates get individual PRs",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "breaking-change"]
+    },
+
+    // --- Website dependencies ---
+    {
+      "description": "Group website dependency updates",
+      "matchFileNames": ["website/**"],
+      "groupName": "Website dependencies",
+      "groupSlug": "website-deps"
+    },
+
+    // --- GitHub Actions: pin to SHA digests ---
+    {
+      "description": "Pin GitHub Actions to SHA digests for supply-chain security",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true,
+      "groupName": "GitHub Actions",
+      "groupSlug": "github-actions"
+    },
+
+    // --- Docker: pin base image digests ---
+    {
+      "description": "Pin Docker base images to SHA digests",
+      "matchManagers": ["dockerfile"],
+      "pinDigests": true,
+      "groupName": "Docker images",
+      "groupSlug": "docker"
+    }
+  ]
+}
