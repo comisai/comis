@@ -20,6 +20,18 @@ updates:
     ignore:
       - dependency-name: "@comis/*"
 
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      website-dependencies:
+        update-types:
+          - minor
+          - patch
+
   - package-ecosystem: docker
     directory: /
     schedule:

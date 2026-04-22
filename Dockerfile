@@ -181,8 +181,8 @@ ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "packages/daemon/dist/daemon.js"]
 
 # OCI metadata
-LABEL org.opencontainers.image.source="https://github.com/comis-platform/comis" \
+LABEL org.opencontainers.image.source="https://github.com/comisai/comis" \
       org.opencontainers.image.title="Comis" \
       org.opencontainers.image.description="Security-first AI agent assistant platform" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.vendor="Comis"
