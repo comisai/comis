@@ -157,7 +157,7 @@
     "cli-table3": "^0.6.5",
     "commander": "^14.0.0",
     "croner": "^10.0.1",
-    "diff": "8.0.4",
+    "diff": "9.0.0",
     "discord.js": "^14.25.1",
     "edge-tts-universal": "^1.4.0",
     "file-type": "^21.3.2",
