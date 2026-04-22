@@ -326,6 +326,9 @@ function buildMessageFlags(msg: NormalizedMessage): Record<string, boolean> {
   if (meta.isScheduled === true) {
     flags.isScheduled = true;
   }
+  if (meta.isCronAgentTurn === true) {
+    flags.isCronAgentTurn = true;
+  }
 
   return flags;
 }
