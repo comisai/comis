@@ -745,6 +745,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
           const adapter = piSessionAdapters?.get(execAgentId);
           if (adapter) {
             suppressError(adapter.destroySession(key), "fire-and-forget session destroy");
+            container.eventBus.emit("session:expired", { sessionKey: key, reason: "gateway-reset" });
             return;
           }
         },

@@ -149,4 +149,8 @@ describe("OPERATION_CACHE_DEFAULTS", () => {
   it("condensation cache retention is short", () => {
     expect(OPERATION_CACHE_DEFAULTS.condensation).toBe("short");
   });
+
+  it("cron cache retention is short", () => {
+    expect(OPERATION_CACHE_DEFAULTS.cron).toBe("short");
+  });
 });

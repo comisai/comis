@@ -373,9 +373,10 @@ describe("setupChannels", () => {
       expect(mockAdapter.sendMessage).toHaveBeenCalledWith("chat123", "fallback raw text");
     });
 
-    it("fresh strategy calls sessionManager.expire() before executor.execute()", async () => {
+    it("fresh strategy calls sessionManager.expire() and destroySession before executor.execute()", async () => {
       mockAdaptersByType.set("telegram", mockAdapter);
       const expireSpy = vi.fn();
+      const destroySessionSpy = vi.fn(async () => {});
       const mockExecutor = {
         execute: vi.fn(async () => ({
           response: "Agent reply",
@@ -391,9 +392,13 @@ describe("setupChannels", () => {
         loadOrCreate: vi.fn(() => []),
         save: vi.fn(),
       };
+      const piSessionAdapters = new Map([["agent1", {
+        getSessionStats: vi.fn(),
+        destroySession: destroySessionSpy,
+      }]]);
 
       const { container, eventHandlers } = makeContainer();
-      const deps = makeDeps({ container, executors, sessionManager: sessionMgr as any });
+      const deps = makeDeps({ container, executors, sessionManager: sessionMgr as any, piSessionAdapters: piSessionAdapters as any });
       await setupChannels(deps);
 
       const cronHandler = eventHandlers.find((h) => h.event === "scheduler:job_result")?.callback;
@@ -407,15 +412,71 @@ describe("setupChannels", () => {
         sessionStrategy: "fresh",
       });
 
+      const expectedSessionKey = expect.objectContaining({ channelId: "cron:j-fresh" });
+
       // expire must be called before execute
-      expect(expireSpy).toHaveBeenCalledWith(expect.objectContaining({
-        channelId: "cron:j-fresh",
-      }));
+      expect(expireSpy).toHaveBeenCalledWith(expectedSessionKey);
       expect(mockExecutor.execute).toHaveBeenCalled();
-      // Verify expire was called before execute
       expect(expireSpy.mock.invocationCallOrder[0]).toBeLessThan(
         mockExecutor.execute.mock.invocationCallOrder[0],
       );
+
+      // destroySession must be called on piSessionAdapter
+      expect(destroySessionSpy).toHaveBeenCalledWith(expectedSessionKey);
+      expect(destroySessionSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        mockExecutor.execute.mock.invocationCallOrder[0],
+      );
+
+      // session:expired event must be emitted with reason "cron-fresh"
+      expect(container.eventBus.emit).toHaveBeenCalledWith("session:expired", {
+        sessionKey: expectedSessionKey,
+        reason: "cron-fresh",
+      });
+    });
+
+    it("fresh strategy warns when piSessionAdapter is missing", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const mockExecutor = {
+        execute: vi.fn(async () => ({
+          response: "Agent reply",
+          tokensUsed: { input: 50, output: 50, total: 100 },
+          cost: { total: 0.001 },
+          stepsExecuted: 1,
+          llmCalls: 1,
+        })),
+      };
+      const executors = new Map([["agent1", mockExecutor as any]]);
+      const sessionMgr = {
+        expire: vi.fn(),
+        loadOrCreate: vi.fn(() => []),
+        save: vi.fn(),
+      };
+      // Empty piSessionAdapters -- no adapter for agent1
+      const piSessionAdapters = new Map() as any;
+
+      const { container, eventHandlers } = makeContainer();
+      const logger = makeLogger();
+      const deps = makeDeps({ container, executors, sessionManager: sessionMgr as any, piSessionAdapters, logger });
+      await setupChannels(deps);
+
+      const cronHandler = eventHandlers.find((h) => h.event === "scheduler:job_result")?.callback;
+      await cronHandler!({
+        deliveryTarget: { channelType: "telegram", channelId: "chat123", tenantId: "t1", userId: "u1" },
+        result: "prompt",
+        jobName: "fresh-job",
+        payloadKind: "agent_turn",
+        jobId: "j-fresh",
+        agentId: "agent1",
+        sessionStrategy: "fresh",
+      });
+
+      // Execution should still proceed
+      expect(mockExecutor.execute).toHaveBeenCalled();
+
+      // session:expired should still be emitted
+      expect(container.eventBus.emit).toHaveBeenCalledWith("session:expired", expect.objectContaining({
+        reason: "cron-fresh",
+      }));
     });
 
     it("rolling strategy prunes session to maxHistoryTurns after execution", async () => {

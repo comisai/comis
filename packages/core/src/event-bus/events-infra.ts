@@ -224,6 +224,8 @@ export interface InfraEvents {
     maxHistoryTurns?: number;
     /** Per-cron-job model override from CronPayload.agent_turn.model. */
     cronJobModel?: string;
+    /** Per-cron-job cache retention override from CronJob config. */
+    cacheRetention?: "none" | "short" | "long";
     /** Callback for agent_turn jobs to report execution result back to the scheduler.
      *  Called by the event handler after agent execution completes. */
     onComplete?: (result: { status: "ok" | "error"; error?: string }) => void;

@@ -187,6 +187,7 @@ export async function setupSchedulers(deps: {
             sessionStrategy: job.sessionStrategy,
             maxHistoryTurns: job.maxHistoryTurns,
             cronJobModel: job.payload.kind === "agent_turn" ? job.payload.model : undefined,
+            cacheRetention: job.cacheRetention,
             onComplete: deferredResolve,
           });
 

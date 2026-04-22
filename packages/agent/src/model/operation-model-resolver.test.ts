@@ -322,6 +322,15 @@ describe("cache retention", () => {
     );
     expect(result.cacheRetention).toBeUndefined();
   });
+
+  it("includes cacheRetention short for cron operations", () => {
+    const result = resolveOperationModel(
+      baseParams({
+        operationType: "cron",
+      }),
+    );
+    expect(result.cacheRetention).toBe("short");
+  });
 });
 
 describe("resolveProviderFamily", () => {

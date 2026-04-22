@@ -215,6 +215,43 @@ describe("CronJobSchema", () => {
     const result = CronJobSchema.safeParse({ ...validJob, sessionStrategy: "invalid" });
     expect(result.success).toBe(false);
   });
+
+  it("accepts cacheRetention: none", () => {
+    const result = CronJobSchema.safeParse({ ...validJob, cacheRetention: "none" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cacheRetention).toBe("none");
+    }
+  });
+
+  it("accepts cacheRetention: short", () => {
+    const result = CronJobSchema.safeParse({ ...validJob, cacheRetention: "short" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cacheRetention).toBe("short");
+    }
+  });
+
+  it("accepts cacheRetention: long", () => {
+    const result = CronJobSchema.safeParse({ ...validJob, cacheRetention: "long" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cacheRetention).toBe("long");
+    }
+  });
+
+  it("rejects invalid cacheRetention value", () => {
+    const result = CronJobSchema.safeParse({ ...validJob, cacheRetention: "invalid" });
+    expect(result.success).toBe(false);
+  });
+
+  it("defaults cacheRetention to undefined when omitted", () => {
+    const result = CronJobSchema.safeParse(validJob);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.cacheRetention).toBeUndefined();
+    }
+  });
 });
 
 describe("CronSessionStrategySchema", () => {

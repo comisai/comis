@@ -338,3 +338,65 @@ describe("createSessionLifecycle", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// ComisSessionManager.destroySession write-lock tests
+// ---------------------------------------------------------------------------
+
+describe("ComisSessionManager.destroySession", () => {
+  it("acquires write lock before unlinking JSONL", async () => {
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { createComisSessionManager } = await import("./comis-session-manager.js");
+
+    const baseDir = await mkdtemp(join(tmpdir(), "csm-destroy-"));
+    const lockDir = await mkdtemp(join(tmpdir(), "csm-lock-"));
+
+    const mgr = createComisSessionManager({
+      sessionBaseDir: baseDir,
+      lockDir,
+      cwd: baseDir,
+    });
+
+    const sessionKey: SessionKey = { tenantId: "t1", userId: "u1", channelId: "test-ch" };
+
+    // Create a fake JSONL file so destroySession has something to unlink
+    const { sessionKeyToPath } = await import("./session-key-mapper.js");
+    const sessionPath = sessionKeyToPath(sessionKey, baseDir);
+    const { mkdir: mkdirFs } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    await mkdirFs(dirname(sessionPath), { recursive: true });
+    await writeFile(sessionPath, '{"type":"header"}\n');
+
+    // Verify file exists before destroy
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(sessionPath)).toBe(true);
+
+    await mgr.destroySession(sessionKey);
+
+    // Verify file is gone after destroy
+    expect(existsSync(sessionPath)).toBe(false);
+  });
+
+  it("destroySession is idempotent when file does not exist", async () => {
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { createComisSessionManager } = await import("./comis-session-manager.js");
+
+    const baseDir = await mkdtemp(join(tmpdir(), "csm-destroy-idem-"));
+    const lockDir = await mkdtemp(join(tmpdir(), "csm-lock-idem-"));
+
+    const mgr = createComisSessionManager({
+      sessionBaseDir: baseDir,
+      lockDir,
+      cwd: baseDir,
+    });
+
+    const sessionKey: SessionKey = { tenantId: "t1", userId: "u1", channelId: "no-exist" };
+
+    // Should not throw even if file does not exist
+    await expect(mgr.destroySession(sessionKey)).resolves.toBeUndefined();
+  });
+});
