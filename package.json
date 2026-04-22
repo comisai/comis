@@ -27,7 +27,7 @@
     "test:cleanup": "npx tsx test/support/cleanup-test-artifacts.ts"
   },
   "devDependencies": {
-    "@agentclientprotocol/sdk": "^0.15.0",
+    "@agentclientprotocol/sdk": "^0.19.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
     "eslint": "^10.0.3",

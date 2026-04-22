@@ -38,12 +38,12 @@
     "@comis/memory": "workspace:*",
     "@comis/scheduler": "workspace:*",
     "@comis/shared": "workspace:*",
-    "@google/genai": "1.47.0",
-    "@mariozechner/pi-agent-core": "0.67.68",
-    "@mariozechner/pi-ai": "0.67.68",
-    "@mariozechner/pi-coding-agent": "0.67.68",
+    "@google/genai": "1.50.1",
+    "@mariozechner/pi-agent-core": "0.68.1",
+    "@mariozechner/pi-ai": "0.68.1",
+    "@mariozechner/pi-coding-agent": "0.68.1",
     "diff": "8.0.4",
-    "p-queue": "^9.1.0",
+    "p-queue": "^9.1.2",
     "proper-lockfile": "^4.1.2",
     "sharp": "^0.34.5",
     "zod": "^4.3.6"
@@ -52,7 +52,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/diff": "^8.0.0",
     "@types/proper-lockfile": "^4.1.4",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^12.9.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.0"
   }
