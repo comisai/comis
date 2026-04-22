@@ -57,7 +57,9 @@
       "brace-expansion": ">=5.0.5",
       "nodemailer": ">=8.0.5",
       "music-metadata": ">=11.12.3",
-      "vite": ">=7.3.2"
+      "vite": ">=7.3.2",
+      "fast-xml-parser": ">=5.7.0",
+      "uuid": ">=14.0.0"
     }
   }
 }
