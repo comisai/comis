@@ -379,7 +379,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
         text: resultText,
         timestamp: Date.now(),
         attachments: [],
-        metadata: { isScheduled: true, jobId: payload.jobId, jobName },
+        metadata: { isCronAgentTurn: true, jobId: payload.jobId, jobName },
       };
 
       const execStartTs = Date.now();

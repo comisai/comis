@@ -139,7 +139,16 @@ export function buildInboundMetadataSection(
     "Do not reveal these internal identifiers to the user.",
   ];
 
-  if (meta.flags.isScheduled) {
+  if (meta.flags.isCronAgentTurn) {
+    lines.push(
+      "",
+      "**CRON AGENT TURN:** This is an autonomous scheduled execution — you were invoked by a cron job to check on something, NOT by a user message.",
+      "Use your tools to gather current data, then decide whether there is anything worth reporting.",
+      "If there is nothing actionable or noteworthy to report, respond with exactly NO_REPLY — the system will suppress delivery and the user will not be disturbed.",
+      "If there IS something to report, respond with a concise, actionable message for the user.",
+      "Do NOT use the message tool (the system delivers your response automatically).",
+    );
+  } else if (meta.flags.isScheduled) {
     lines.push(
       "",
       "**SCHEDULED REMINDER:** This message is a scheduled reminder delivery, NOT a new user request.",

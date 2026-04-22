@@ -276,6 +276,38 @@ describe("setupChannels", () => {
       expect(mockAdapter.sendMessage).toHaveBeenCalledWith("chat123", "Agent generated reply");
     });
 
+    it("passes isCronAgentTurn metadata (not isScheduled) to executor", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const mockExecutor = {
+        execute: vi.fn(async () => ({
+          response: "Agent reply",
+          tokensUsed: { input: 50, output: 50, total: 100 },
+          cost: { total: 0.001 },
+          stepsExecuted: 1,
+          llmCalls: 1,
+        })),
+      };
+      const executors = new Map([["agent1", mockExecutor as any]]);
+
+      const { container, eventHandlers } = makeContainer();
+      const deps = makeDeps({ container, executors });
+      await setupChannels(deps);
+
+      const cronHandler = eventHandlers.find((h) => h.event === "scheduler:job_result")?.callback;
+      await cronHandler!({
+        deliveryTarget: { channelType: "telegram", channelId: "chat123", tenantId: "t1", userId: "u1" },
+        result: "cron prompt text",
+        jobName: "hourly-check",
+        payloadKind: "agent_turn",
+        jobId: "j2",
+        agentId: "agent1",
+      });
+
+      const syntheticMsg = mockExecutor.execute.mock.calls[0][0];
+      expect(syntheticMsg.metadata.isCronAgentTurn).toBe(true);
+      expect(syntheticMsg.metadata.isScheduled).toBeUndefined();
+    });
+
     it("suppresses NO_REPLY in agentTurn", async () => {
       mockAdaptersByType.set("telegram", mockAdapter);
       const mockExecutor = {
