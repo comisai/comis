@@ -6,8 +6,8 @@
     "schedule:earlyMondays"
   ],
 
-  // pnpm auto-detected from pnpm-workspace.yaml; npm for /website
-  "enabledManagers": ["pnpm", "npm", "dockerfile", "github-actions"],
+  // npm manager handles both npm and pnpm; auto-detects pnpm-workspace.yaml
+  "enabledManagers": ["npm", "dockerfile", "github-actions"],
 
   // Don't update internal workspace packages
   "ignoreDeps": ["@comis/shared", "@comis/core", "@comis/infra", "@comis/memory",
