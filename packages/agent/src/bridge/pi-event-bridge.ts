@@ -794,12 +794,6 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // SEP: Extract plan from first LLM turn that has tool calls + assistant text.
           // This runs inside the agentic loop so subsequent turns can track against the plan.
           if (deps.executionPlan && deps.sepConfig && !deps.executionPlan.current) {
-            const hasToolCalls = Array.isArray(assistantMsg?.content) && assistantMsg!.content.some(
-              (c: unknown) => {
-                const block = c as { type?: string };
-                return block.type === "toolCall" || block.type === "tool_use";
-              },
-            );
             const assistantTextForPlan = Array.isArray(assistantMsg?.content)
               ? assistantMsg!.content
                   .filter((c: unknown) => (c as { type?: string })?.type === "text")
@@ -807,7 +801,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   .join(" ")
               : "";
 
-            if (hasToolCalls && assistantTextForPlan.length > 0) {
+            if (assistantTextForPlan.length > 0) {
               const steps = extractPlanFromResponse(assistantTextForPlan, deps.sepConfig.maxSteps);
               if (steps && steps.length >= deps.sepConfig.minSteps) {
                 const plan: ExecutionPlan = {
