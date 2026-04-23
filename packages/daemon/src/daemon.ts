@@ -396,6 +396,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats,
     embeddingCircuitBreakerState,
+    maintenanceTick,
   } = await setupMemory({ container, memoryLogger });
 
   // Observability persistence (dual-write to SQLite)
@@ -1379,6 +1380,8 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
         } catch { /* WAL file may not exist */ }
       }
     } catch { /* stat failure must not crash health check */ }
+
+    maintenanceTick();
 
     // Compute sub-agent health metrics (threshold-aware split)
     const stuckKillThresholdMs = container.config.security.agentToAgent.subagentContext?.stuckKillThresholdMs ?? 180_000;
