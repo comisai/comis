@@ -88,6 +88,9 @@ vi.mock("@comis/skills", () => ({
   shouldAutoTts: vi.fn(),
   resolveOutputFormat: vi.fn(),
   parseOutboundMedia: vi.fn(),
+  // Passthrough: return all tools and empty filtered list (no policy applied).
+  // Individual tests that want to assert policy filtering can override this.
+  applyToolPolicy: vi.fn((tools: unknown[]) => ({ tools, filtered: [] })),
 }));
 
 import { setupChannels, type ChannelsDeps } from "./setup-channels.js";
