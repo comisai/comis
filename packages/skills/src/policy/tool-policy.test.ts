@@ -464,3 +464,128 @@ describe("applyToolPolicy - supervisor profile", () => {
     expect(result).toContain("heartbeat_manage");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Operational profiles (cron-minimal + heartbeat-minimal)
+// Design-doc §Testing #4
+// ---------------------------------------------------------------------------
+
+/** Tools representative of a real cron context: includes tools in cron-minimal
+ *  plus tools that should get filtered out (e.g. subagents, sessions_spawn). */
+function createCronTools(): AgentTool<any>[] {
+  return [
+    mockTool("web_search"),
+    mockTool("message"),
+    mockTool("read_file"),
+    mockTool("write_file"),
+    mockTool("list_dir"),
+    mockTool("memory_store"),
+    mockTool("memory_search"),
+    mockTool("cron"),
+    mockTool("discover"),
+    // Out-of-profile tools that should be filtered
+    mockTool("exec"),
+    mockTool("browser"),
+    mockTool("subagents"),
+    mockTool("sessions_spawn"),
+    mockTool("yfinance"),
+  ];
+}
+
+describe("TOOL_PROFILES operational presets", () => {
+  it("cron-minimal profile is defined with the documented tool set", () => {
+    expect(TOOL_PROFILES["cron-minimal"]).toEqual([
+      "web_search",
+      "message",
+      "read_file",
+      "write_file",
+      "list_dir",
+      "memory_store",
+      "memory_search",
+      "cron",
+      "discover",
+    ]);
+  });
+
+  it("heartbeat-minimal profile is defined with the documented tool set", () => {
+    expect(TOOL_PROFILES["heartbeat-minimal"]).toEqual([
+      "message",
+      "memory_store",
+      "memory_search",
+      "discover",
+    ]);
+  });
+});
+
+describe("applyToolPolicy - operational opt-in behavior (design-doc §Testing #4)", () => {
+  it("opt-in inheritance: cron job without toolPolicy keeps every tool via agent-level 'full' policy", () => {
+    // Scenario: cron job.toolPolicy is undefined, agent.toolPolicy = full
+    // Resolution: { profile: "full", allow: [], deny: [] } -> passthrough
+    const allTools = createCronTools();
+    const fallbackPolicy = { profile: "full", allow: [], deny: [] };
+    const result: ToolPolicyResult = applyToolPolicy(allTools, fallbackPolicy);
+
+    expect(result.tools.length).toBe(allTools.length);
+    expect(result.filtered.length).toBe(0);
+  });
+
+  it("cron-minimal preset filters out-of-profile tools with not_in_profile reason", () => {
+    const allTools = createCronTools();
+    const result = applyToolPolicy(allTools, {
+      profile: "cron-minimal",
+      allow: [],
+      deny: [],
+    });
+
+    const names = result.tools.map((t) => t.name);
+    // Tools from TOOL_PROFILES["cron-minimal"] should be present
+    for (const allowed of TOOL_PROFILES["cron-minimal"]!) {
+      expect(names).toContain(allowed);
+    }
+    // Out-of-profile tools should be filtered
+    expect(names).not.toContain("exec");
+    expect(names).not.toContain("browser");
+    expect(names).not.toContain("subagents");
+    expect(names).not.toContain("yfinance");
+
+    // Each filtered tool should report the profile by name
+    expect(result.filtered.length).toBeGreaterThan(0);
+    const execFiltered = result.filtered.find((f) => f.toolName === "exec");
+    expect(execFiltered).toBeDefined();
+    expect(execFiltered!.reason).toEqual({
+      kind: "not_in_profile",
+      profile: "cron-minimal",
+      toolName: "exec",
+    });
+  });
+
+  it("profile + allow composition: cron-minimal + yfinance keeps yfinance in the tool set", () => {
+    const allTools = createCronTools();
+    const result = applyToolPolicy(allTools, {
+      profile: "cron-minimal",
+      allow: ["yfinance"],
+      deny: [],
+    });
+
+    const names = result.tools.map((t) => t.name);
+    expect(names).toContain("yfinance");
+    // Still keeps the cron-minimal baseline
+    expect(names).toContain("web_search");
+    expect(names).toContain("memory_store");
+    // Still filters out-of-profile, non-allowed tools
+    expect(names).not.toContain("exec");
+    expect(names).not.toContain("subagents");
+  });
+
+  it("heartbeat-minimal preset keeps only the 4 narrow tools", () => {
+    const allTools = createCronTools();
+    const result = applyToolPolicy(allTools, {
+      profile: "heartbeat-minimal",
+      allow: [],
+      deny: [],
+    });
+
+    const names = result.tools.map((t) => t.name);
+    expect(names.sort()).toEqual(["discover", "memory_search", "memory_store", "message"]);
+  });
+});
