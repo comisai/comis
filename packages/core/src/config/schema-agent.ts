@@ -804,6 +804,17 @@ export const PerAgentHeartbeatConfigSchema = z.strictObject({
     alertCooldownMs: z.number().int().positive().optional(),
     /** Override stuck detection timeout in ms (per-agent) */
     staleMs: z.number().int().positive().optional(),
+    /** Per-agent heartbeat tool policy override -- matches AgentConfig.toolPolicy shape.
+     *
+     *  Resolution order: heartbeat.toolPolicy > agentConfig.toolPolicy > passthrough.
+     *  Opt-in: omitting this field preserves the agent's interactive tool set for
+     *  heartbeat ticks. Use `{ profile: "heartbeat-minimal" }` for the conservative
+     *  preset in `packages/skills/src/policy/tool-policy.ts`. */
+    toolPolicy: z.object({
+      profile: z.string().default("full"),
+      allow: z.array(z.string()).default([]),
+      deny: z.array(z.string()).default([]),
+    }).optional(),
   });
 
 export type HeartbeatTarget = z.infer<typeof HeartbeatTargetSchema>;

@@ -114,6 +114,17 @@ export const CronJobSchema = z.strictObject({
     maxHistoryTurns: z.number().int().positive().default(3).optional(),
     /** Per-job cache retention override. Default inherits OPERATION_CACHE_DEFAULTS["cron"] = "short". */
     cacheRetention: z.enum(["none", "short", "long"]).optional(),
+    /** Per-job tool policy override -- matches AgentConfig.toolPolicy shape.
+     *
+     *  Resolution order: job.toolPolicy > agentConfig.toolPolicy > passthrough
+     *  (no filtering). Opt-in: omitting this field preserves existing tool set
+     *  for the job. No silent defaults -- operators explicitly request
+     *  conservative presets like `{ profile: "cron-minimal" }`. */
+    toolPolicy: z.object({
+      profile: z.string().default("full"),
+      allow: z.array(z.string()).default([]),
+      deny: z.array(z.string()).default([]),
+    }).optional(),
     /** Delivery target for routing results to originating channel */
     deliveryTarget: CronDeliveryTargetSchema.optional(),
     /** Whether this job is currently enabled */

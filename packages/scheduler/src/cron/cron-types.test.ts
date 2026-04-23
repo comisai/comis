@@ -252,6 +252,58 @@ describe("CronJobSchema", () => {
       expect(result.data.cacheRetention).toBeUndefined();
     }
   });
+
+  // toolPolicy (design-doc §"Layer 2: CronJobSchema.toolPolicy") ---------------
+
+  it("accepts toolPolicy with cron-minimal profile", () => {
+    const result = CronJobSchema.safeParse({
+      ...validJob,
+      toolPolicy: { profile: "cron-minimal", allow: [], deny: [] },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.toolPolicy).toEqual({
+        profile: "cron-minimal",
+        allow: [],
+        deny: [],
+      });
+    }
+  });
+
+  it("accepts toolPolicy with profile + allow composition", () => {
+    const result = CronJobSchema.safeParse({
+      ...validJob,
+      toolPolicy: { profile: "cron-minimal", allow: ["yfinance"], deny: [] },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.toolPolicy?.allow).toEqual(["yfinance"]);
+    }
+  });
+
+  it("defaults toolPolicy to undefined when omitted (opt-in, no silent default)", () => {
+    const result = CronJobSchema.safeParse(validJob);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.toolPolicy).toBeUndefined();
+    }
+  });
+
+  it("applies Zod defaults inside toolPolicy when partial fields given", () => {
+    // profile alone should populate allow=[] and deny=[] via Zod defaults.
+    const result = CronJobSchema.safeParse({
+      ...validJob,
+      toolPolicy: { profile: "cron-minimal" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.toolPolicy).toEqual({
+        profile: "cron-minimal",
+        allow: [],
+        deny: [],
+      });
+    }
+  });
 });
 
 describe("CronSessionStrategySchema", () => {

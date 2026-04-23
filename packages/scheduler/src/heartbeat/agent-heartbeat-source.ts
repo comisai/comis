@@ -60,6 +60,18 @@ interface HeartbeatActiveRunRegistry {
   has(sessionKey: string): boolean;
 }
 
+/** Tool policy filter function signature -- matches applyToolPolicy from @comis/skills.
+ *  Injected as a dep so scheduler doesn't take a hard dependency on skills. */
+export interface HeartbeatToolPolicyFilter {
+  (
+    tools: unknown[],
+    policy: { profile: string; allow: string[]; deny: string[] },
+  ): {
+    tools: unknown[];
+    filtered: Array<{ toolName: string; reason: { kind: string } }>;
+  };
+}
+
 /** Injected session side-effects for heartbeat response processing. */
 export interface HeartbeatSessionOps {
   /** Remove the last user+assistant turn from session transcript. */
@@ -80,8 +92,12 @@ export interface AgentHeartbeatSourceDeps {
   assembleToolsForAgent: (agentId: string) => Promise<unknown[]>;
   /** Get the resolved heartbeat config for an agent. */
   getEffectiveConfig: (agentId: string) => EffectiveHeartbeatConfig;
-  /** Get agent-level config (model, tenantId). */
-  getAgentConfig: (agentId: string) => { model: string; tenantId: string };
+  /** Get agent-level config (model, tenantId, optional toolPolicy). */
+  getAgentConfig: (agentId: string) => {
+    model: string;
+    tenantId: string;
+    toolPolicy?: { profile: string; allow: string[]; deny: string[] };
+  };
   /** Returns true if HEARTBEAT.md is effectively empty (should skip LLM). */
   checkFileGate: (agentId: string) => Promise<boolean>;
   /** Session-scoped system event queue. */
@@ -94,6 +110,9 @@ export interface AgentHeartbeatSourceDeps {
   sessionOps?: HeartbeatSessionOps;
   /** Optional: fetch memory stats for an agent (for heartbeat prompt injection). */
   getMemoryStats?: (agentId: string, tenantId: string) => HeartbeatMemoryStats | undefined;
+  /** Optional: apply a tool policy filter (wired to `applyToolPolicy` from @comis/skills).
+   *  When absent, no policy is applied and tools pass through unchanged. */
+  applyToolPolicyFilter?: HeartbeatToolPolicyFilter;
   /** Logger instance. */
   logger: SchedulerLogger;
 }
@@ -206,8 +225,33 @@ export function createAgentHeartbeatSource(
         return;
       }
 
-      // 6. Assemble tools
-      const tools = await deps.assembleToolsForAgent(agentId);
+      // 6. Assemble tools, then apply opt-in tool policy.
+      // Resolution order: config.toolPolicy (heartbeat) > agentConfig.toolPolicy > passthrough.
+      // Policy is opt-in per agent -- a missing toolPolicy preserves the agent's
+      // interactive tool set for heartbeat ticks. No silent defaults: the explicit
+      // "full" fallback documents the contract at the call site.
+      const allTools = await deps.assembleToolsForAgent(agentId);
+      const effectivePolicy =
+        config.toolPolicy ??
+        agentConfig.toolPolicy ??
+        { profile: "full" as const, allow: [] as string[], deny: [] as string[] };
+      let tools: unknown[] = allTools;
+      if (deps.applyToolPolicyFilter) {
+        const { tools: filteredTools, filtered } = deps.applyToolPolicyFilter(allTools, effectivePolicy);
+        tools = filteredTools;
+        if (filtered.length > 0) {
+          logger.debug(
+            {
+              agentId,
+              trigger,
+              profile: effectivePolicy.profile,
+              filteredCount: filtered.length,
+              filtered: filtered.map((f) => ({ tool: f.toolName, reason: f.reason.kind })),
+            },
+            "Heartbeat tool policy applied",
+          );
+        }
+      }
 
       // 6.5 Fetch memory stats for conditional prompt injection
       let memoryStats: HeartbeatMemoryStats | undefined;
