@@ -2,8 +2,7 @@
 /**
  * Foundational types and constants for the init wizard redesign.
  *
- * Replaces the role of flow-types.ts with a richer type system
- * that supports the full wizard architecture: immutable state
+ * Core type system for the wizard architecture: immutable state
  * accumulation, structured validation, and multi-flow support.
  *
  * @module
