@@ -70,6 +70,7 @@ export interface PromptRunnerBridge {
     lastStopReason?: string;
     tokensUsed?: { output?: number };
     stepsExecuted?: number;
+    toolCallHistory?: string[];
   };
 }
 
@@ -750,6 +751,16 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
       if (plan) {
         executionPlanRef.current = plan;
         deps.logger.debug({ agentId }, "SEP plan extracted (post-loop fallback)");
+        // Inline backfill: post-loop extraction means no mid-loop step tracking
+        // ran, so completedCount is stuck at 0 and the nudge cannot fire. Use
+        // the bridge's recorded tool history as a proxy for work done and mark
+        // the first N steps as "done" (N = min(toolHistoryLen, stepCount)).
+        // Tool-to-step attribution is advisory/observability only; over-counting
+        // is strictly better than the 0/N deadlock.
+        const toolHistoryLen = bridge.getResult().toolCallHistory?.length ?? 0;
+        const doneCount = Math.min(toolHistoryLen, plan.steps.length);
+        for (let i = 0; i < doneCount; i++) plan.steps[i]!.status = "done";
+        plan.completedCount = doneCount;
       }
     }
     if (sepEnabled && !executionPlanRef.current && extractedResponse && toolCallCount === 0) {
