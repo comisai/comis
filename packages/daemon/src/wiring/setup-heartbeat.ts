@@ -25,6 +25,7 @@ import {
   type DuplicateDetector,
   type SystemEventQueue,
 } from "@comis/scheduler";
+import { applyToolPolicy } from "@comis/skills";
 
 // ---------------------------------------------------------------------------
 // Local type aliases (avoid importing from agent to prevent circular deps)
@@ -185,6 +186,7 @@ export function setupHeartbeat(deps: HeartbeatSetupDeps): HeartbeatSetupResult {
     getAgentConfig: (agentId: string) => ({
       model: agents[agentId]!.model,
       tenantId: container.config.tenantId,
+      toolPolicy: agents[agentId]!.skills?.toolPolicy,
     }),
     checkFileGate,
     systemEventQueue,
@@ -196,6 +198,17 @@ export function setupHeartbeat(deps: HeartbeatSetupDeps): HeartbeatSetupResult {
     },
     activeRunRegistry,
     getMemoryStats,
+    // Inject applyToolPolicy so scheduler can filter without taking a direct
+    // dependency on @comis/skills. Type-erased `unknown[]` at the boundary is
+    // safe: the filter reads only the `.name` field from each tool, and
+    // scheduler never inspects tool contents beyond passing them through.
+    applyToolPolicyFilter: (allTools, policy) => {
+      const { tools, filtered } = applyToolPolicy(
+        allTools as Parameters<typeof applyToolPolicy>[0],
+        policy,
+      );
+      return { tools, filtered };
+    },
     logger: schedulerLogger,
   });
 
