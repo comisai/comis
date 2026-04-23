@@ -17,6 +17,7 @@ export {
   truncateFileContent,
   filterBootstrapFilesForSubAgent,
   filterBootstrapFilesForLightContext,
+  filterBootstrapFilesForCron,
   filterBootstrapFilesForGroupChat,
   buildBootstrapContextFiles,
 } from "./workspace-loader.js";

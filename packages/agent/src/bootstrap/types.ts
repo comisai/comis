@@ -42,10 +42,16 @@ export interface TruncationResult {
  * System prompt verbosity mode.
  *
  * - `"full"`: All workspace sections included (primary agents)
+ * - `"operational"`: All workspace sections relevant to autonomous operations;
+ *    drops interactive-only guidance (compaction recovery, silent replies,
+ *    heartbeats, reactions, media, SEP, sender trust). Used for cron and
+ *    heartbeat executions. `staticPrefix` and `attribution` cache blocks
+ *    remain byte-identical to `"full"` so the cached identity/attribution
+ *    prefix is shared across modes.
  * - `"minimal"`: Only AGENTS.md + TOOLS.md (sub-agents)
  * - `"none"`: Identity-only prompt (lightweight contexts)
  */
-export type PromptMode = "full" | "minimal" | "none";
+export type PromptMode = "full" | "operational" | "minimal" | "none";
 
 /**
  * Runtime metadata injected into the system prompt header.

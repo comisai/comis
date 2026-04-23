@@ -329,6 +329,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     resolvedModelId: resolvedModel?.id,
     resolvedModelProvider: resolvedModel?.provider,
     resolvedModelReasoning: resolvedModel?.reasoning,
+    // "interactive" default guards the optional overrides; mirrors pi-executor.ts:1077.
+    operationType: executionOverrides?.operationType ?? "interactive",
   });
 
   // -------------------------------------------------------------------

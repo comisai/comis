@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { assembleRichSystemPrompt, assembleRichSystemPromptBlocks, SECTION_SEPARATOR } from "./system-prompt-assembler.js";
+import { assembleRichSystemPrompt, assembleRichSystemPromptBlocks, SECTION_SEPARATOR, SECTIONS } from "./system-prompt-assembler.js";
 import {
   buildDateTimeSection,
   buildRuntimeMetadataSection,
@@ -2259,5 +2259,151 @@ describe("assembleRichSystemPromptBlocks", () => {
 
   it("SECTION_SEPARATOR is the documented separator pattern", () => {
     expect(SECTION_SEPARATOR).toBe("\n\n---\n\n");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Operational PromptMode (design-doc §Testing #1-3, #6)
+// ---------------------------------------------------------------------------
+
+/** Realistic params used across operational-mode tests to mirror a production cron run. */
+function makeOperationalParams() {
+  const bootstrapFiles: BootstrapContextFile[] = [
+    { path: "SOUL.md", content: "You are a helpful persona." },
+    { path: "ROLE.md", content: "Role: news-watcher with specific duties and output format." },
+    { path: "AGENTS.md", content: "Long AGENTS.md content with operating instructions and behavior rules." },
+    { path: "TOOLS.md", content: "Notes about available tools and their preferred usage patterns." },
+    { path: "USER.md", content: "User preferences: verbose output disabled, prefers concise summaries." },
+    { path: "HEARTBEAT.md", content: "Every tick, check pending tasks and email." },
+    { path: "BOOTSTRAP.md", content: "Onboarding steps for first-run." },
+  ];
+  const runtimeInfo: RuntimeInfo = {
+    agentId: "test-bot",
+    host: "test-host",
+    os: "linux",
+    arch: "x64",
+    model: "claude-sonnet",
+  };
+  return {
+    agentName: "TestBot",
+    toolNames: ["read", "write", "web_search", "message", "memory_store", "memory_search", "cron", "discover"],
+    skillsPrompt: "skill info",
+    hasMemoryTools: true,
+    workspaceDir: "/tmp/ws",
+    heartbeatPrompt: "check email every 10 minutes",
+    reasoningEnabled: true,
+    runtimeInfo,
+    bootstrapFiles,
+    outboundMediaEnabled: true,
+    autonomousMediaEnabled: true,
+    userLanguage: "English",
+    sepEnabled: true,
+  };
+}
+
+describe("SECTIONS descriptor contract (design-doc §Testing #3)", () => {
+  it("every SECTION descriptor declares a non-empty includeIn set", () => {
+    for (const s of SECTIONS) {
+      expect(s.includeIn.size).toBeGreaterThan(0);
+      expect(s.id).toBeTruthy();
+      expect(typeof s.id).toBe("string");
+      expect(typeof s.build).toBe("function");
+    }
+  });
+
+  it("SECTION ids are unique", () => {
+    const ids = SECTIONS.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("no descriptor claims 'none' mode (short-circuited in assembler)", () => {
+    for (const s of SECTIONS) {
+      expect(s.includeIn.has("none")).toBe(false);
+    }
+  });
+
+  it("SECTIONS array has the expected minimum length (guard against accidental deletions)", () => {
+    // Canonical order has 30 base sections (identity, persona, safety, language,
+    // tooling, tool-call-style, self-update, config-secret, privileged,
+    // compact-recover, post-compact, coding-fallback, task-delegation, skills,
+    // memory-recall, workspace, documentation, messaging, background,
+    // silent-replies, heartbeats, reactions, media-sharing, media-files,
+    // autonomous-media, reasoning, sep, runtime-meta, sender-trust,
+    // project-context).
+    expect(SECTIONS.length).toBeGreaterThanOrEqual(30);
+  });
+});
+
+describe("PromptMode block invariant (design-doc §Testing #1)", () => {
+  it.each(["full", "operational", "minimal"] as const)(
+    "assembleRichSystemPromptBlocks identity holds for mode=%s",
+    (mode) => {
+      const params = { ...makeOperationalParams(), promptMode: mode };
+      const blocks = assembleRichSystemPromptBlocks(params);
+      // Join non-empty blocks with SECTION_SEPARATOR (empty blocks are dropped
+      // by the assembler's joinSections helper).
+      const parts = [blocks.staticPrefix, blocks.attribution, blocks.semiStableBody].filter(Boolean);
+      const joined = parts.join(SECTION_SEPARATOR);
+      expect(joined).toEqual(assembleRichSystemPrompt(params));
+    },
+  );
+});
+
+describe("staticPrefix/attribution byte-identity full vs operational (design-doc §Testing #2)", () => {
+  it("staticPrefix and attribution cache blocks are byte-identical between 'full' and 'operational'", () => {
+    const params = makeOperationalParams();
+    const fullBlocks = assembleRichSystemPromptBlocks({ ...params, promptMode: "full" });
+    const opBlocks = assembleRichSystemPromptBlocks({ ...params, promptMode: "operational" });
+
+    // Cache prefix invariant: the static prefix (identity+persona) and
+    // attribution (safety+language) must match byte-for-byte so that
+    // Anthropic's cache_control entry on the identity prefix remains valid
+    // across cron/heartbeat/interactive sessions.
+    expect(opBlocks.staticPrefix).toEqual(fullBlocks.staticPrefix);
+    expect(opBlocks.attribution).toEqual(fullBlocks.attribution);
+
+    // Body differs because operational strips interactive-only sections.
+    expect(opBlocks.semiStableBody).not.toEqual(fullBlocks.semiStableBody);
+    expect(opBlocks.semiStableBody.length).toBeLessThan(fullBlocks.semiStableBody.length);
+  });
+
+  it("operational mode drops interactive-only sections but keeps core operational ones", () => {
+    const params = makeOperationalParams();
+    const full = assembleRichSystemPrompt({ ...params, promptMode: "full" });
+    const op = assembleRichSystemPrompt({ ...params, promptMode: "operational" });
+
+    // Present in full but not in operational (MODES_FULL-only sections)
+    expect(full).toContain("## Safety");
+    expect(op).toContain("## Safety");
+    // Sections that drop in operational
+    expect(full).toContain("## Heartbeats");
+    expect(op).not.toContain("## Heartbeats");
+    expect(full).toContain("## Silent Replies");
+    expect(op).not.toContain("## Silent Replies");
+
+    // Present in both (MODES_FULL_OP sections)
+    expect(op).toContain("## Available Tools");
+    expect(op).toContain("## Workspace");
+    expect(op).toContain("## Project Context");
+  });
+});
+
+describe("Snapshot regression: operational prompt trim delta (design-doc §Testing #6)", () => {
+  it("operational mode saves at least 4500 chars vs full mode for a representative prompt", () => {
+    // Representative params mirror a real cron job: full tool list, real
+    // bootstrap files, heartbeat prompt, skills, documentation, etc.
+    const params = makeOperationalParams();
+
+    const fullPrompt = assembleRichSystemPrompt({ ...params, promptMode: "full" });
+    const opPrompt = assembleRichSystemPrompt({ ...params, promptMode: "operational" });
+
+    const delta = fullPrompt.length - opPrompt.length;
+
+    // Design doc claims ~10,100 tokens ≈ ~30,000 chars saved per run.
+    // Use a conservative 4500-char floor (~±10% of a 1500-token floor) to
+    // tolerate section-content drift while catching accidental regressions
+    // where an "operational"-excluded section slips back in.
+    expect(delta).toBeGreaterThanOrEqual(4500);
+    expect(opPrompt.length).toBeLessThan(fullPrompt.length);
   });
 });
