@@ -1,6 +1,6 @@
 {
   "name": "comisai",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Security-first AI agent platform \u2014 connects AI agents to Discord, Telegram, Slack, WhatsApp, and more",
