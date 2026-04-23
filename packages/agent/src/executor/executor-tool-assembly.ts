@@ -39,7 +39,7 @@ import {
   type SenderTrustDisplayConfig,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/infra";
-import { applyToolDeferral, buildDeferredToolsContext, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
+import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult } from "./tool-deferral.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
@@ -485,6 +485,28 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deps.embeddingPort,
     config.skills?.toolDiscovery,
   );
+
+  // Rebuild discover_tools with the now-known active set so it can answer
+  // "already active" queries correctly. Post-deferral set (active +
+  // discovered) is the only factually-accurate set -- using mergedCustomTools
+  // (pre-deferral) would false-positive on currently-deferred tools and tell
+  // the agent "call directly, no discovery needed" for tools that aren't
+  // actually loaded. See design §4.2, §5.5, decision log row 4:
+  // .planning/design/discover-tools-bm25-fallback-fix.md
+  if (deferralResult.discoverTool) {
+    const activeAfterDeferral = new Set<string>([
+      ...deferralResult.activeTools.map(t => t.name),
+      ...deferralResult.discoveredTools.map(t => t.name),
+    ]);
+    deferralResult.discoverTool = createDiscoverTool(
+      deferralResult.deferredEntries,
+      deps.logger,
+      deps.embeddingPort,
+      config.skills?.toolDiscovery,
+      activeAfterDeferral,
+    );
+  }
+
   mergedCustomTools = [...deferralResult.activeTools, ...deferralResult.discoveredTools];
   if (deferralResult.discoverTool) {
     mergedCustomTools.push(deferralResult.discoverTool);
