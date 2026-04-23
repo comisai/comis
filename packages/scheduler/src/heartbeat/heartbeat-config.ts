@@ -20,6 +20,9 @@ export interface EffectiveHeartbeatConfig {
   alertCooldownMs?: number;
   /** Max ms a heartbeat tick can run before stuck detection */
   staleMs?: number;
+  /** Per-agent heartbeat tool policy override. Opt-in.
+   *  Resolution order: config.toolPolicy > agentConfig.toolPolicy > passthrough. */
+  toolPolicy?: { profile: string; allow: string[]; deny: string[] };
 }
 
 export function resolveEffectiveHeartbeatConfig(
@@ -42,5 +45,7 @@ export function resolveEffectiveHeartbeatConfig(
     alertThreshold: perAgent?.alertThreshold ?? global.alertThreshold,
     alertCooldownMs: perAgent?.alertCooldownMs ?? global.alertCooldownMs,
     staleMs: perAgent?.staleMs ?? global.staleMs,
+    // Heartbeat tool policy is per-agent only (no global counterpart). Opt-in.
+    toolPolicy: perAgent?.toolPolicy,
   };
 }

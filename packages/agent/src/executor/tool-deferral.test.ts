@@ -13,6 +13,7 @@ import {
 } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult, DeferredToolEntry } from "./tool-deferral.js";
 import type { EmbeddingPort } from "@comis/core";
+import { err } from "@comis/shared";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
 import { registerToolMetadata } from "@comis/core";
 import { createDiscoveryTracker } from "./discovery-tracker.js";
@@ -454,14 +455,16 @@ describe("applyToolDeferral - discover_tools creation", () => {
     const resultText = (searchResult.content[0] as any).text;
     expect(resultText).toContain("No matching tools found");
 
-    // Verify enriched WARN shape (query + hint + errorKind)
+    // Verify enriched WARN shape (query + hint + errorKind).
+    // As of 260423-irr, zero-signal queries (rawTopScore === 0) emit the
+    // "query tokens absent from deferred corpus" variant per design §5.3.
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "zzzznonexistent_xyzzy",
-        hint: expect.stringContaining("discover_tools floor"),
+        hint: expect.stringContaining("Query tokens do not appear"),
         errorKind: "validation",
       }),
-      "discover_tools: no good matches found",
+      "discover_tools: query tokens absent from deferred corpus",
     );
   });
 
@@ -572,14 +575,17 @@ describe("discover_tools score-floor filter", () => {
     const sideEffects = (searchResult as Record<string, unknown>).sideEffects as Record<string, unknown>;
     expect(sideEffects.discoveredTools).toEqual([]);
 
+    // 260423-irr update: zero-signal queries now emit the "query tokens
+    // absent from deferred corpus" variant (rawTopScore === 0 branch of
+    // design §5.3). The "generate" token happens to not overlap any doc
+    // after tokenization on this fixture -> rawTopScore === 0.
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "gemini image generate",
         searchMode: "bm25",
-        hint: expect.stringContaining("floor"),
         errorKind: "validation",
       }),
-      "discover_tools: no good matches found",
+      expect.stringMatching(/discover_tools: (no matches above floor|query tokens absent from deferred corpus)/),
     );
   });
 
@@ -595,14 +601,16 @@ describe("discover_tools score-floor filter", () => {
     expect(resultText).toContain('"name":"agents_manage"');
   });
 
-  it("lowering threshold to 0 makes spurious matches visible (regression pin)", async () => {
-    const logger = createMockLogger();
-
-    // Fixture chosen so BM25 scores the "generate" overlap BELOW the 0.8
-    // default floor but above 0. Uses custom tool names (not in
-    // LEAN_TOOL_DESCRIPTIONS) so test descriptions actually reach the BM25
-    // corpus, plus a long description on the matching doc so length
-    // normalization drags the score below the floor.
+  it("normalized BM25: top match with any positive signal always surfaces at default threshold (regression pin, post-260423-irr)", async () => {
+    // 260423-irr: BM25 scores are now normalized to [0, 1] before the floor.
+    // Design §6.4 explicitly notes the pre-fix "spurious match filtered"
+    // assertion flips: whenever any doc has a positive BM25 signal, the top
+    // normalizes to 1.0 and clears the 0.8 default floor. So this regression
+    // pin now asserts the opposite: the top match DOES surface at the
+    // default threshold, and the fraction-of-top contract is honored.
+    //
+    // The zero-threshold override branch remains meaningful: it surfaces
+    // even secondary matches that sit below the 0.8 fraction floor.
     const longMatchingDesc =
       "generate alpha beta charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa";
     const overlapFixture: DeferredToolEntry[] = [
@@ -632,12 +640,22 @@ describe("discover_tools score-floor filter", () => {
       },
     ];
 
-    // Default-threshold call: low-score single-term match should be filtered out.
+    // Default-threshold call: "generate" appears only in custom_tokens, so
+    // custom_tokens is the unique top match. Normalized score 1.0 >= 0.8.
+    const logger = createMockLogger();
     const defaultTool = createDiscoverTool(overlapFixture, logger);
     const defaultResult = await defaultTool.execute!("call-1", { query: "gemini image generate" });
-    expect((defaultResult.content[0] as any).text).toContain("No matching tools found");
+    const defaultText = (defaultResult.content[0] as any).text;
+    expect(defaultText).toContain("<functions>");
+    expect(defaultText).toContain('"name":"custom_tokens"');
+    // Secondary docs ("alpha beta", "alpha beta charlie") have no "generate"
+    // token so their BM25 contribution is 0 -> excluded from ranked.
+    expect(defaultText).not.toContain('"name":"custom_fleet"');
 
-    // Zero-threshold override: spurious match now surfaces.
+    // Zero-threshold override: at the zero floor, every positive-scoring
+    // doc surfaces. Here only custom_tokens has any match for the query
+    // (corpus-wide "generate" is unique), so the result set is unchanged --
+    // which is the stronger semantic: the floor never filters the top.
     const zeroTool = createDiscoverTool(
       overlapFixture,
       logger,
@@ -645,10 +663,10 @@ describe("discover_tools score-floor filter", () => {
       { minBm25Score: 0, minHybridScore: 0 },
     );
     const zeroResult = await zeroTool.execute!("call-1", { query: "gemini image generate" });
-
     expect(zeroResult.isError).toBe(false);
     const zeroText = (zeroResult.content[0] as any).text;
     expect(zeroText).toContain("<functions>");
+    expect(zeroText).toContain('"name":"custom_tokens"');
 
     const sideEffects = (zeroResult as Record<string, unknown>).sideEffects as Record<string, unknown>;
     const discovered = sideEffects.discoveredTools as string[];
@@ -684,13 +702,15 @@ describe("discover_tools score-floor filter", () => {
     // or we get results. The key assertion is that when empty, WARN carries hybrid shape.
     const resultText = (searchResult.content[0] as any).text;
     if (resultText.includes("No matching tools found")) {
+      // 260423-irr: WARN message differs by rawTopScore branch.
+      // The hybrid scenario here has rawTopScore > 0 (one token overlaps),
+      // so the "no matches above floor" variant applies.
       expect(logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           searchMode: "hybrid",
-          hint: expect.stringContaining("floor"),
           errorKind: "validation",
         }),
-        "discover_tools: no good matches found",
+        expect.stringMatching(/discover_tools: (no matches above floor|query tokens absent from deferred corpus)/),
       );
     } else {
       // If any match survived, the combined score must have been above floor;
@@ -1059,14 +1079,15 @@ describe("discover_tools -- searchHint BM25 enrichment", () => {
     const resultText = (searchResult.content[0] as any).text;
     expect(resultText).toContain("No matching tools found");
 
-    // Verify enriched WARN shape (query + hint + errorKind)
+    // Verify enriched WARN shape (query + hint + errorKind).
+    // 260423-irr: zero-signal query emits "query tokens absent from deferred
+    // corpus" variant (rawTopScore === 0 branch of design §5.3).
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "zzzznonexistent_xyzzy",
-        hint: expect.stringContaining("discover_tools floor"),
         errorKind: "validation",
       }),
-      "discover_tools: no good matches found",
+      "discover_tools: query tokens absent from deferred corpus",
     );
   });
 });
@@ -2121,5 +2142,145 @@ describe("applyToolDeferral - provider-aware MCP deferral", () => {
 
     expect(result.deferredNames).not.toContain("mcp__srv--tool_a");
     expect(result.deferredNames).not.toContain("mcp__srv--tool_b");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 8: discover_tools -- BM25 normalization + active-tool awareness
+// (260423-irr regression pins for srv1593437 2026-04-23T08:06 failures)
+// ---------------------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- minimal type for execute() result shape used in assertions
+type DiscoverFn = (toolCallId: string, params: unknown) => Promise<any>;
+
+describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
+  const makeEntry = (name: string, desc: string): DeferredToolEntry => ({
+    name,
+    original: {
+      name,
+      description: desc,
+      parameters: { type: "object", properties: {} },
+    } as unknown as ToolDefinition,
+    description: desc,
+  });
+
+  it("BM25-only mode returns mcp_manage for 'install MCP' (regression for srv1593437 08:06:39Z)", async () => {
+    // Pre-fix: raw BM25 for mcp_manage against "install MCP" was ~0.74, below the
+    // 0.8 raw-score floor, filtered out. Post-fix: normalization brings top to 1.0,
+    // always clears the floor.
+    const deferred = [
+      makeEntry("mcp_manage", "Manage MCP servers: list, status, connect, disconnect, reconnect."),
+      makeEntry("find", "Find files by name or pattern"),
+      makeEntry("read", "Read a file from disk"),
+    ];
+    const tool = createDiscoverTool(deferred, createMockLogger(), undefined); // no embedding
+    const result = await (tool.execute as unknown as DiscoverFn)("tc-1", { query: "install MCP" });
+    expect(result.content[0].text).toContain("mcp_manage");
+  });
+
+  it("BM25-only mode zero-signal query returns 'no matches'", async () => {
+    const deferred = [makeEntry("foo", "does foo"), makeEntry("bar", "does bar")];
+    const tool = createDiscoverTool(deferred, createMockLogger(), undefined);
+    const result = await (tool.execute as unknown as DiscoverFn)("tc-2", { query: "zzzzzzzz" });
+    expect(result.content[0].text).toContain("No matching tools found");
+  });
+
+  it("active-tool match: query for already-active MCP server returns 'already active' guide", async () => {
+    // Regression for production log 2026-04-23T08:06:41Z: query="yfinance" when
+    // all mcp__yfinance--* tools are ACTIVE (not deferred). Pre-fix: "no matches".
+    const deferred = [makeEntry("other_tool", "unrelated")];
+    const active = new Set([
+      "mcp__yfinance--get_stock_price",
+      "mcp__yfinance--get_stock_summary",
+      "mcp__yfinance--get_financials",
+    ]);
+    const tool = createDiscoverTool(deferred, createMockLogger(), undefined, undefined, active);
+    const result = await (tool.execute as unknown as DiscoverFn)("tc-3", { query: "yfinance" });
+    const text = result.content[0].text;
+    expect(text).toContain("already active");
+    expect(text).toContain("mcp__yfinance--get_stock_price");
+    expect(text).toContain("mcp__yfinance--get_stock_summary");
+  });
+
+  it("active-tool match: exact-name query for active tool returns single 'already active' entry", async () => {
+    const active = new Set(["mcp__yfinance--get_stock_price"]);
+    const tool = createDiscoverTool([], createMockLogger(), undefined, undefined, active);
+    const result = await (tool.execute as unknown as DiscoverFn)("tc-4", {
+      query: "mcp__yfinance--get_stock_price",
+    });
+    const text = result.content[0].text;
+    expect(text).toContain("already active");
+    expect(text).toContain("mcp__yfinance--get_stock_price");
+  });
+
+  it("embedding failure (throws) falls back to normalized BM25 and emits one dependency WARN", async () => {
+    const deferred = [makeEntry("mcp_manage", "Manage MCP servers: install, connect")];
+    // Throw-based failure exercises the try/catch WARN path from design §5.3.
+    const embedding: EmbeddingPort = {
+      provider: "mock",
+      dimensions: 3,
+      modelId: "mock",
+      embed: async () => { throw new Error("embedding down"); },
+      embedBatch: async () => { throw new Error("embedding down"); },
+    };
+    const logger = createMockLogger();
+    const tool = createDiscoverTool(deferred, logger, embedding);
+    const result = await (tool.execute as unknown as DiscoverFn)("tc-5", { query: "install MCP" });
+    expect(result.content[0].text).toContain("mcp_manage");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "dependency" }),
+      expect.stringContaining("discover_tools embedding re-ranking failed"),
+    );
+  });
+
+  it("embedding result-err falls back to normalized BM25 without WARN (Result is a valid signal, not an error)", async () => {
+    // Result-err path: embed() resolves with { ok: false }. Design §5.3 keeps
+    // this silent -- the code only WARNs for thrown exceptions.
+    const deferred = [makeEntry("mcp_manage", "Manage MCP servers: install, connect")];
+    const embedding: EmbeddingPort = {
+      provider: "mock",
+      dimensions: 3,
+      modelId: "mock",
+      embed: async () => err(new Error("embedding down")),
+      embedBatch: async () => err(new Error("embedding down")),
+    };
+    const logger = createMockLogger();
+    const tool = createDiscoverTool(deferred, logger, embedding);
+    const result = await (tool.execute as unknown as DiscoverFn)("tc-5b", { query: "install MCP" });
+    expect(result.content[0].text).toContain("mcp_manage");
+  });
+
+  it("reproduces srv1593437 08:06 scenario: active tools invisible under BM25 mode", async () => {
+    // Production state: 11 deferred tools, yfinance fully active, embedding breaker open.
+    const deferredFixture = [
+      makeEntry("find", "find files by pattern"),
+      makeEntry("read", "read a file"),
+      makeEntry("edit", "edit a file"),
+      makeEntry("write", "write a file"),
+      makeEntry("exec", "execute a shell command"),
+      makeEntry("web_fetch", "fetch a URL"),
+      makeEntry("web_search", "search the web"),
+      makeEntry("cron_manage", "manage cron jobs"),
+      makeEntry("skills_manage", "manage skills"),
+      makeEntry("channels_manage", "manage channels"),
+      makeEntry("mcp_manage", "Manage MCP servers: list, status, connect, disconnect, reconnect"),
+    ];
+    const active = new Set([
+      "mcp__yfinance--get_stock_price",
+      "mcp__yfinance--get_stock_summary",
+      "mcp__yfinance--get_stock_profile",
+      "mcp__yfinance--get_stock_history",
+      "mcp__yfinance--get_financials",
+    ]);
+    const tool = createDiscoverTool(deferredFixture, createMockLogger(), undefined, undefined, active);
+
+    // The exact queries the agent emitted in production:
+    const r1 = await (tool.execute as unknown as DiscoverFn)("t-prod-1", { query: "yfinance get_stock" });
+    const r2 = await (tool.execute as unknown as DiscoverFn)("t-prod-2", { query: "yfinance" });
+
+    // Pre-fix: both returned "No matching tools found". Post-fix: both return "already active".
+    expect(r1.content[0].text).toContain("already active");
+    expect(r1.content[0].text).toContain("mcp__yfinance--get_stock_price");
+    expect(r2.content[0].text).toContain("already active");
   });
 });

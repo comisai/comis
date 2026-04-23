@@ -53,6 +53,8 @@ export interface MemoryResult {
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;
   /** Embedding circuit breaker state accessor for memory persistence operations. */
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
+  /** Throttled WAL checkpoint — call every health tick, runs checkpoint every 10th call. */
+  maintenanceTick: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +276,19 @@ export async function setupMemory(deps: {
     ? async () => { await cachedPort!.dispose!(); }
     : undefined;
 
+  // Throttled WAL checkpoint: runs PASSIVE checkpoint every 10th call (~5 min at 30s health interval)
+  let maintenanceTickCount = 0;
+  const maintenanceTick = (): void => {
+    maintenanceTickCount++;
+    if (maintenanceTickCount % 10 !== 0) return;
+    try {
+      const pages = memoryAdapter.checkpoint();
+      if (pages > 0) {
+        memoryLogger.debug({ pages }, "WAL checkpoint moved pages");
+      }
+    } catch { /* checkpoint failure must not crash health tick */ }
+  };
+
   return {
     disposeEmbedding,
     cachedPort,
@@ -285,5 +300,6 @@ export async function setupMemory(deps: {
     backgroundIndexingPromise,
     embeddingCacheStats,
     embeddingCircuitBreakerState: embeddingCbRef ? () => embeddingCbRef!.getState() : undefined,
+    maintenanceTick,
   };
 }

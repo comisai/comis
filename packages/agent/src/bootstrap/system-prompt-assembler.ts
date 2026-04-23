@@ -172,76 +172,131 @@ function joinSections(sections: string[][]): string {
   return nonEmpty.map((lines) => lines.join("\n")).join(SECTION_SEPARATOR);
 }
 
+// ---------------------------------------------------------------------------
+// Typed section descriptor (design §1b)
+//
+// Replaces scattered `skipForOp ? [] :` calls. Each SECTIONS entry declares
+// which PromptModes include it via `includeIn`. Any new section MUST declare
+// an includeIn set -- there is no "default" fall-through. The test at
+// system-prompt-assembler.test.ts asserts every descriptor has a non-empty
+// includeIn + unique id, which catches accidental omissions.
+//
+// "none" mode is NOT in the inclusion matrix; the assembler short-circuits
+// early and emits only identity.
+// ---------------------------------------------------------------------------
+
 /**
- * Build all section arrays in the canonical order (1-22).
+ * Internal descriptor for a system prompt section.
+ *
+ * Engineering notes:
+ *  - `id` must be unique across SECTIONS and stable (used by tests).
+ *  - `includeIn` must be non-empty.
+ *  - `build` receives `(params, mode)` and is responsible for forwarding
+ *    `mode === "minimal"` as the existing builders' `isMinimal` parameter.
+ *
+ * @internal exported for tests only
+ */
+export interface SectionDescriptor {
+  readonly id: string;
+  readonly includeIn: ReadonlySet<PromptMode>;
+  readonly build: (params: AssemblerParams, mode: PromptMode) => string[];
+}
+
+/** Sections present in full, operational, and minimal modes.
+ *  NB: builders may still self-filter to `[]` when their isMinimal flag is set. */
+const MODES_ALL: ReadonlySet<PromptMode> = new Set<PromptMode>(["full", "operational", "minimal"]);
+/** Sections present in full and minimal modes (stripped in operational).
+ *  Interactive-only guidance that doesn't apply to autonomous cron/heartbeat runs
+ *  but that minimal sub-agent contexts historically saw before this refactor.
+ *  Minimal-mode builders typically self-filter to [] via their own isMinimal flag;
+ *  membership here preserves pre-refactor behavior without changing minimal output. */
+const MODES_FULL_MIN: ReadonlySet<PromptMode> = new Set<PromptMode>(["full", "minimal"]);
+/** Sections present only in full mode (stripped in operational AND minimal).
+ *  Reserved for sections whose builder is cheap but whose output is not desired
+ *  in either non-interactive context. Currently unused; MODES_FULL_MIN is
+ *  preferred to preserve pre-refactor minimal output. */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for future use
+const MODES_FULL: ReadonlySet<PromptMode> = new Set<PromptMode>(["full"]);
+
+/**
+ * Canonical section list in emission order.
+ *
+ * Order MUST match the previous hand-written `buildAllSections` so the
+ * `staticPrefix`/`attribution` index boundaries (2 + 2) continue to enclose
+ * identity+persona and safety+language respectively.
+ *
+ * @internal exported for tests only
+ */
+export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
+  // --- Static prefix block (indices 0-1 in every mode that includes them) ---
+  { id: "identity",         includeIn: MODES_ALL,      build: (p) => buildIdentitySection(p.agentName ?? "Comis") },
+  { id: "persona",          includeIn: MODES_ALL,      build: (p) => buildPersonaSection(p.bootstrapFiles ?? []) },
+  // --- Attribution block (safety self-filters in minimal) ---
+  { id: "safety",           includeIn: MODES_ALL,      build: (p, m) => buildSafetySection(m === "minimal") },
+  { id: "language",         includeIn: MODES_ALL,      build: (p) => buildLanguageSection(p.userLanguage) },
+  // --- Semi-stable body: operational-kept sections (MODES_ALL -- builders self-filter for minimal) ---
+  { id: "tooling",          includeIn: MODES_ALL,      build: (p, m) => buildToolingSection(p.toolNames ?? [], m === "minimal" ? "small" as ModelTier : "large" as ModelTier, p.toolSummaries) },
+  { id: "tool-call-style",  includeIn: MODES_ALL,      build: (p, m) => buildToolCallStyleSection(m === "minimal", p.toolNames ?? []) },
+  // --- Operational-stripped sections (MODES_FULL_MIN -- dropped in "operational") ---
+  { id: "self-update",      includeIn: MODES_FULL_MIN, build: (p, m) => buildSelfUpdateGatingSection(p.toolNames ?? [], m === "minimal", true) },
+  { id: "config-secret",    includeIn: MODES_FULL_MIN, build: (p, m) => buildConfigSecretIntegritySection(p.toolNames ?? [], m === "minimal") },
+  { id: "privileged",       includeIn: MODES_FULL_MIN, build: (p, m) => buildPrivilegedToolsSection(p.toolNames ?? [], m === "minimal", true) },
+  { id: "compact-recover",  includeIn: MODES_FULL_MIN, build: (p, m) => buildCompactedOutputRecoverySection(m === "minimal") },
+  { id: "post-compact",     includeIn: MODES_FULL_MIN, build: (p, m) => buildPostCompactionRecoverySection(p.bootstrapFiles ?? [], m === "minimal", p.postCompactionSections) },
+  { id: "coding-fallback",  includeIn: MODES_FULL_MIN, build: (p, m) => buildCodingFallbackSection(p.toolNames ?? [], m === "minimal", true) },
+  { id: "task-delegation",  includeIn: MODES_FULL_MIN, build: (p, m) => buildTaskDelegationSection(p.toolNames ?? [], m === "minimal", p.subAgentToolNames, p.mcpToolsInherited, true) },
+  // --- Operational-kept body (MODES_ALL) ---
+  { id: "skills",           includeIn: MODES_ALL,      build: (p, m) => buildSkillsSection(p.skillsPrompt, m === "minimal", p.promptSkillsXml, p.activePromptSkillContent) },
+  { id: "memory-recall",    includeIn: MODES_ALL,      build: (p, m) => buildMemoryRecallSection(p.hasMemoryTools ?? false, m === "minimal") },
+  { id: "workspace",        includeIn: MODES_ALL,      build: (p, m) => buildWorkspaceSection(p.workspaceDir, m === "minimal") },
+  // --- Operational-stripped body ---
+  { id: "documentation",    includeIn: MODES_FULL_MIN, build: (p, m) => p.documentationConfig
+                                                          ? buildDocumentationSection(p.documentationConfig, p.toolNames ?? [], m === "minimal")
+                                                          : [] },
+  { id: "messaging",        includeIn: MODES_ALL,      build: (p, m) => buildMessagingSection(p.toolNames ?? [], m === "minimal", p.channelContext) },
+  { id: "background",       includeIn: MODES_FULL_MIN, build: (p, m) => buildBackgroundTaskSection(p.toolNames ?? [], m === "minimal", p.channelContext) },
+  { id: "silent-replies",   includeIn: MODES_FULL_MIN, build: (p, m) => buildSilentRepliesSection(m === "minimal") },
+  { id: "heartbeats",       includeIn: MODES_FULL_MIN, build: (p, m) => buildHeartbeatsSection(p.heartbeatPrompt, m === "minimal") },
+  { id: "reactions",        includeIn: MODES_FULL_MIN, build: (p, m) => buildReactionGuidanceSection(p.reactionLevel, p.channelContext?.channelType, m === "minimal") },
+  { id: "media-sharing",    includeIn: MODES_FULL_MIN, build: (p, m) => buildMediaSharingSection(p.outboundMediaEnabled, m === "minimal") },
+  { id: "media-files",      includeIn: MODES_FULL_MIN, build: (p, m) => buildMediaFilesSection(p.hasMemoryTools ?? false, (p.toolNames ?? []).includes("message"), p.workspaceDir, p.mediaPersistenceEnabled ?? false, m === "minimal") },
+  { id: "autonomous-media", includeIn: MODES_FULL_MIN, build: (p, m) => buildAutonomousMediaSection(p.autonomousMediaEnabled ?? false, m === "minimal") },
+  { id: "reasoning",        includeIn: MODES_ALL,      build: (p, m) => buildReasoningSection(p.reasoningEnabled ?? false, m === "minimal", p.reasoningTagHint ?? false) },
+  { id: "sep",              includeIn: MODES_FULL_MIN, build: (p, m) => buildTaskPlanningSection(p.sepEnabled ?? false, m === "minimal") },
+  { id: "runtime-meta",     includeIn: MODES_ALL,      build: (p, m) => buildRuntimeMetadataSection(p.runtimeInfo ?? {}, m === "minimal") },
+  { id: "sender-trust",     includeIn: MODES_FULL_MIN, build: (p, m) => buildSenderTrustSection(p.senderTrustEntries ?? [], p.senderTrustDisplayMode ?? "raw", m === "minimal") },
+  { id: "project-context",  includeIn: MODES_ALL,      build: (p, m) => buildProjectContextSection(
+                                                          p.bootstrapFiles ?? [],
+                                                          m === "minimal",
+                                                          p.excludeBootstrapFromContext ? new Set(["BOOTSTRAP.md"]) : undefined,
+                                                          p.workspaceProfile,
+                                                        ) },
+];
+
+/**
+ * Build all section arrays in the canonical order.
+ *
+ * Filters `SECTIONS` by mode inclusion, then builds each included descriptor.
+ * Subagent context is appended unconditionally as the last entry (matches the
+ * previous behavior).
  *
  * Shared by both `assembleRichSystemPrompt` and `assembleRichSystemPromptBlocks`
  * to guarantee identity by construction between both assembly functions.
  *
  * @returns Array of section line arrays in fixed order
  */
-function buildAllSections(params: AssemblerParams, isMinimal: boolean): string[][] {
-  const agentName = params.agentName ?? "Comis";
-  const modelTier: ModelTier = isMinimal ? "small" : "large";
+function buildAllSections(params: AssemblerParams, mode: PromptMode): string[][] {
+  const base = SECTIONS
+    .filter((s) => s.includeIn.has(mode))
+    .map((s) => s.build(params, mode));
 
-  return [
-    // --- Static prefix sections (indices 0-1) ---
-    buildIdentitySection(agentName),                                          // 1
-    buildPersonaSection(params.bootstrapFiles ?? []),                          // 1b: Persona (SOUL.md) before Safety
-    // --- Attribution sections (indices 2-3) ---
-    buildSafetySection(isMinimal),                                            // 2
-    buildLanguageSection(params.userLanguage),                                 // 2b
-    // --- Semi-stable body sections (indices 4+) ---
-    buildToolingSection(params.toolNames ?? [], modelTier, params.toolSummaries), // 3
-    buildToolCallStyleSection(isMinimal, params.toolNames ?? []),              // 4
-    buildSelfUpdateGatingSection(params.toolNames ?? [], isMinimal, true),    // 5: deferred to tool result
-    buildConfigSecretIntegritySection(params.toolNames ?? [], isMinimal),     // 5a: always-present
-    buildPrivilegedToolsSection(params.toolNames ?? [], isMinimal, true),     // 5b: deferred to tool result
-    buildCompactedOutputRecoverySection(isMinimal),                           // 6
-    buildPostCompactionRecoverySection(                                       // 6a
-      params.bootstrapFiles ?? [],
-      isMinimal,
-      params.postCompactionSections,
-    ),
-    buildCodingFallbackSection(params.toolNames ?? [], isMinimal, true),      // 6b: deferred to tool result
-    buildTaskDelegationSection(params.toolNames ?? [], isMinimal, params.subAgentToolNames, params.mcpToolsInherited, true), // 6c: deferred to tool result
-    buildSkillsSection(params.skillsPrompt, isMinimal, params.promptSkillsXml, params.activePromptSkillContent), // 7: Merged filesystem + prompt skills
-    buildMemoryRecallSection(params.hasMemoryTools ?? false, isMinimal),       // 8
-    buildWorkspaceSection(params.workspaceDir, isMinimal),                    // 9
-    params.documentationConfig
-      ? buildDocumentationSection(params.documentationConfig, params.toolNames ?? [], isMinimal)
-      : [],                                                                    // 9b: Documentation
-    buildMessagingSection(params.toolNames ?? [], isMinimal, params.channelContext), // 10
-    buildBackgroundTaskSection(params.toolNames ?? [], isMinimal, params.channelContext), // 11
-    buildSilentRepliesSection(isMinimal),                                     // 14
-    buildHeartbeatsSection(params.heartbeatPrompt, isMinimal),                // 15
-    buildReactionGuidanceSection(params.reactionLevel, params.channelContext?.channelType, isMinimal), // 16
-    buildMediaSharingSection(params.outboundMediaEnabled, isMinimal),                                // 16b
-    buildMediaFilesSection(                                                                            // 16c
-      params.hasMemoryTools ?? false,
-      (params.toolNames ?? []).includes("message"),
-      params.workspaceDir,
-      params.mediaPersistenceEnabled ?? false,
-      isMinimal,
-    ),
-    buildAutonomousMediaSection(params.autonomousMediaEnabled ?? false, isMinimal),                      // 16d
-    buildReasoningSection(params.reasoningEnabled ?? false, isMinimal, params.reasoningTagHint ?? false), // 17
-    buildTaskPlanningSection(params.sepEnabled ?? false, isMinimal),            // 17b: SEP task planning (static, cache-stable)
-    // buildDateTimeSection() removed from system prompt (relocated to user-message preamble in prompt-assembly.ts)
-    buildRuntimeMetadataSection(params.runtimeInfo ?? {}, isMinimal),          // 19
-    // buildInboundMetadataSection() removed from system prompt (relocated to user-message preamble in prompt-assembly.ts)
-    buildSenderTrustSection(params.senderTrustEntries ?? [], params.senderTrustDisplayMode ?? "raw", isMinimal), // 20b
-    buildProjectContextSection(                                                 // 21
-      params.bootstrapFiles ?? [],
-      isMinimal,
-      params.excludeBootstrapFromContext ? new Set(["BOOTSTRAP.md"]) : undefined,
-      params.workspaceProfile,
-    ),
-    // Subagent: prefer structured params, fall back to raw extraSystemPrompt
-    ...(params.subagentRole
-      ? [buildSubagentRoleSection(params.subagentRole)]
-      : [buildSubagentContextSection(params.extraSystemPrompt)]),              // 22
-  ];
+  // Subagent section: prefer structured params, fall back to raw extraSystemPrompt.
+  // Unconditional; matches the previous hand-written emission.
+  const subagent = params.subagentRole
+    ? buildSubagentRoleSection(params.subagentRole)
+    : buildSubagentContextSection(params.extraSystemPrompt);
+
+  return [...base, subagent];
 }
 
 /**
@@ -281,8 +336,7 @@ export function assembleRichSystemPrompt(params: AssemblerParams): string {
     return buildIdentitySection(agentName).join("\n");
   }
 
-  const isMinimal = mode === "minimal";
-  const allSections = buildAllSections(params, isMinimal);
+  const allSections = buildAllSections(params, mode);
 
   // Filter out empty arrays, join each section's lines, then join sections
   const joined = joinSections(allSections);
@@ -336,10 +390,14 @@ export function assembleRichSystemPromptBlocks(params: AssemblerParams): SystemP
     };
   }
 
-  const isMinimal = mode === "minimal";
-  const allSections = buildAllSections(params, isMinimal);
+  const allSections = buildAllSections(params, mode);
 
   // Split at boundaries: identity+persona | safety+language | tooling+workspace+...
+  // Boundaries are index-based on the filtered section list. In `"full"` and
+  // `"operational"` modes the first 2 entries are identity+persona (both are
+  // in MODES_FULL_OP) and the next 2 are safety+language (MODES_ALL). In
+  // `"minimal"` mode persona is dropped, so the prefix shrinks by one and the
+  // byte-identity between full/operational is NOT expected in minimal mode.
   const staticSections = allSections.slice(0, STATIC_PREFIX_SECTION_COUNT);
   const attributionSections = allSections.slice(
     STATIC_PREFIX_SECTION_COUNT,

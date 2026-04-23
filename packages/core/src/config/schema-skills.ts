@@ -100,8 +100,15 @@ const ExecSandboxSchema = z.strictObject({
  * per-deployment without a rebuild.
  */
 const ToolDiscoverySchema = z.strictObject({
-  /** Minimum BM25 score to consider a match (BM25-only mode). Default 0.8. */
-  minBm25Score: z.number().min(0).default(0.8),
+  /** Minimum BM25 score as FRACTION OF TOP MATCH (0..1). Default 0.8.
+   *  As of 2026-04-23, BM25 scores are normalized to [0, 1] before this floor
+   *  applies, matching the semantics of minHybridScore. A value of 0.8 means
+   *  "return only tools scoring >= 80% of the top match". Values > 1.0 fail
+   *  validation at config load (stale raw-score overrides would produce zero
+   *  matches under the new normalized semantics; fail-fast surfaces the
+   *  error immediately per AGENTS.md §3.4). See design §5.6:
+   *  .planning/design/discover-tools-bm25-fallback-fix.md */
+  minBm25Score: z.number().min(0).max(1).default(0.8),
   /** Minimum combined score (0..1 normalized) for hybrid mode. Default 0.35. */
   minHybridScore: z.number().min(0).max(1).default(0.35),
 });

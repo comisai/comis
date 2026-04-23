@@ -62,6 +62,11 @@ export interface DeferralContext {
    *  "default") do not inject mid-turn, so MCP tools must be active from the
    *  start. When undefined, defaults to deferring (backward compat). */
   providerFamily?: string;
+  /** Names of tools currently ACTIVE in this session (post-deferral).
+   *  Consumed by discover_tools to return "already active" guidance when
+   *  queries re-ask for loaded MCPs. Must NOT include names that were
+   *  deferred -- pass the post-deferral set, not mergedCustomTools. */
+  activeToolNames?: ReadonlySet<string>;
 }
 
 /** Entry describing a deferred tool with its display description and original definition. */
@@ -403,9 +408,14 @@ export function applyToolDeferral(
     }
   }
 
-  // Create discover_tools only when remaining deferred entries exist
+  // Create discover_tools only when remaining deferred entries exist.
+  // Thread active-tool names through so "already active" guidance works.
+  // NOTE: executor-tool-assembly.ts rebuilds this tool a second time with the
+  // post-deferral active set (active + discovered) since the final active set
+  // isn't known until after this function returns.
+  const activeNamesForDiscover = deferralContext.activeToolNames ?? new Set<string>();
   const discoverTool = remainingDeferred.length > 0
-    ? createDiscoverTool(remainingDeferred, logger, embeddingPort, scoreConfig)
+    ? createDiscoverTool(remainingDeferred, logger, embeddingPort, scoreConfig, activeNamesForDiscover)
     : null;
 
   const deferredNames = [...deferredSet];
@@ -549,14 +559,25 @@ const DEFAULT_TOOL_DISCOVERY_SCORES: ToolDiscoveryScoreConfig = {
  * Receives DeferredToolEntry[] (with original schemas and display descriptions)
  * so it can serve full schemas and lean descriptions when queried.
  *
+ * BM25 scores are normalized to [0, 1] (fraction of top match) BEFORE the
+ * score-floor filter applies, matching the semantics of hybrid-mode scoring.
+ * This ensures the top match always clears any floor <= 1.0 whenever any
+ * positive signal exists (fixes the srv1593437 08:06:39Z "install MCP"
+ * regression where raw BM25 ~0.74 was dropped by the 0.8 raw-score floor).
+ *
  * @param scoreConfig Optional score-floor override (defaults to 0.8 BM25 /
  *   0.35 hybrid). Zero or negative floors disable the filter.
+ * @param activeToolNames Names of tools currently ACTIVE in this session
+ *   (post-deferral: active + discovered). Used to return "already active"
+ *   guidance when queries re-ask for loaded MCPs. Must NOT include names
+ *   that were deferred. Default empty set keeps callers backward-compatible.
  */
 export function createDiscoverTool(
   deferredEntries: DeferredToolEntry[],
   logger: ComisLogger,
   embeddingPort?: EmbeddingPort,
   scoreConfig: ToolDiscoveryScoreConfig = DEFAULT_TOOL_DISCOVERY_SCORES,
+  activeToolNames: ReadonlySet<string> = new Set(),
 ): ToolDefinition {
   // Build ToolDefinition[] view for structuredSearch compatibility
   const deferredTools = deferredEntries.map(e => e.original);
@@ -593,121 +614,125 @@ export function createDiscoverTool(
       const p = params as Record<string, unknown>;
       const query = String(p.query ?? "");
 
-      // Try structured search first (deterministic modes)
+      // ---------- Path 1: structured deterministic modes ----------
       const structuredResults = structuredSearch(deferredTools, query, 10);
-
-      let matches: ToolDefinition[];
-      let searchMode: string;
-
       if (structuredResults.length > 0) {
-        // Structured search matched -- skip BM25/embedding entirely
-        matches = structuredResults;
-        searchMode = query.toLowerCase().trim().startsWith("select:")
+        const searchMode = query.toLowerCase().trim().startsWith("select:")
           ? "select"
           : query.toLowerCase().trim().startsWith("mcp__") || query.toLowerCase().trim().startsWith("mcp:")
             ? "prefix"
             : "exact";
-
         logger.debug(
           {
             toolName: "discover_tools",
             query,
             searchMode,
             candidateCount: deferredEntries.length,
-            structuredMatchCount: matches.length,
-            topMatch: matches[0]?.name ?? "none",
+            structuredMatchCount: structuredResults.length,
+            topMatch: structuredResults[0]?.name ?? "none",
           },
           "discover_tools search completed",
         );
-      } else {
-        // No structured match -- fall through to BM25 + optional embedding
-        const documents: BM25Document[] = deferredTools.map(t => ({
-          name: t.name,
-          text: resolveBM25Text(t),
-        }));
+        return formatDiscoveryResponse(structuredResults, deferredEntries);
+      }
 
-        let ranked = bm25Score(query, documents);
+      // ---------- Path 2: BM25 (+ optional hybrid) fallback ----------
+      const documents: BM25Document[] = deferredTools.map(t => ({
+        name: t.name,
+        text: resolveBM25Text(t),
+      }));
 
-        // Optional: semantic re-ranking via EmbeddingPort
-        let embeddingUsed = false;
-        if (embeddingPort && ranked.length > 0) {
-          try {
-            const queryResult = await embeddingPort.embed(query);
-            if (queryResult.ok) {
-              const queryVec = queryResult.value;
-              const textsToEmbed = ranked.map(r => {
-                const doc = documents.find(d => d.name === r.name);
-                return doc?.text ?? r.name;
-              });
-              const batchResult = await embeddingPort.embedBatch(textsToEmbed);
-              if (batchResult.ok) {
-                const docVecs = batchResult.value;
-                const maxBm25 = ranked[0].score;
-                const combined = ranked.map((r, i) => {
-                  const bm25Norm = maxBm25 > 0 ? r.score / maxBm25 : 0;
-                  const cosineSim = cosine(queryVec, docVecs[i]);
-                  return { name: r.name, score: 0.5 * bm25Norm + 0.5 * cosineSim };
-                });
-                combined.sort((a, b) => b.score - a.score);
-                ranked = combined;
-                embeddingUsed = true;
-              }
+      const rankedRaw = bm25Score(query, documents);
+      const rawTopScore = rankedRaw[0]?.score ?? 0;
+
+      // NORMALIZE UP FRONT -- both modes now operate in [0, 1] space.
+      // This makes `minBm25Score` semantically equivalent to `minHybridScore`:
+      // a fraction of the top match. After this step, ranked[0].score === 1.0
+      // whenever rawTopScore > 0, so the top match always clears any floor <= 1.0.
+      let ranked = rawTopScore > 0
+        ? rankedRaw.map(r => ({ name: r.name, score: r.score / rawTopScore }))
+        : rankedRaw.map(r => ({ name: r.name, score: 0 }));
+
+      // Optional: semantic re-ranking via EmbeddingPort
+      let embeddingUsed = false;
+      if (embeddingPort && ranked.length > 0) {
+        try {
+          const queryResult = await embeddingPort.embed(query);
+          if (queryResult.ok) {
+            const queryVec = queryResult.value;
+            const textsToEmbed = ranked.map(r => {
+              const doc = documents.find(d => d.name === r.name);
+              return doc?.text ?? r.name;
+            });
+            const batchResult = await embeddingPort.embedBatch(textsToEmbed);
+            if (batchResult.ok) {
+              const docVecs = batchResult.value;
+              // `ranked` is already BM25-normalized; combine with cosine.
+              // NO second normalization -- that would double-normalize and
+              // change the scoring contract.
+              const combined = ranked.map((r, i) => ({
+                name: r.name,
+                score: 0.5 * r.score + 0.5 * cosine(queryVec, docVecs[i]),
+              }));
+              combined.sort((a, b) => b.score - a.score);
+              ranked = combined;
+              embeddingUsed = true;
             }
-          } catch (embeddingErr) {
-            logger.warn(
-              {
-                err: embeddingErr,
-                hint: "discover_tools falling back to BM25-only search; check embedding provider",
-                errorKind: "dependency" as const,
-              },
-              "discover_tools embedding re-ranking failed",
-            );
           }
-        }
-
-        // Score-floor filter: zero-signal queries produce spurious BM25
-        // matches (token overlap on common words) and cosine-noise in hybrid
-        // mode. Filter below the floor before slicing so "no matches" is
-        // reported honestly instead of surfacing misleading top-10 noise.
-        const floor = embeddingUsed ? scoreConfig.minHybridScore : scoreConfig.minBm25Score;
-        const rawTop = ranked[0];
-        const filtered = ranked.filter(r => r.score >= floor);
-        const topResults = filtered.slice(0, 10);
-        searchMode = embeddingUsed ? "hybrid" : "bm25";
-
-        logger.debug(
-          {
-            toolName: "discover_tools",
-            query,
-            searchMode,
-            candidateCount: deferredEntries.length,
-            resultCount: topResults.length,
-            topScore: topResults[0]?.score ?? 0,
-            topMatch: topResults[0]?.name ?? "none",
-            floor,
-            filteredOut: ranked.length - filtered.length,
-          },
-          "discover_tools search completed",
-        );
-
-        if (topResults.length === 0) {
+        } catch (embeddingErr) {
           logger.warn(
             {
-              query,
-              searchMode,
-              floor,
-              topScore: rawTop?.score ?? 0,
-              topCandidate: rawTop?.name ?? "none",
-              filteredOut: ranked.length - filtered.length,
-              hint: "No tool scored above the discover_tools floor; lower skills.toolDiscovery.minBm25Score / minHybridScore if this query should have matched, or retry with an exact tool name or 'select:...' syntax",
-              errorKind: "validation" as const,
+              err: embeddingErr,
+              hint: "discover_tools falling back to BM25-only search; check embedding provider health",
+              errorKind: "dependency" as const,
             },
-            "discover_tools: no good matches found",
+            "discover_tools embedding re-ranking failed",
+          );
+        }
+      }
+
+      // ---------- Floor check ----------
+      const floor = embeddingUsed ? scoreConfig.minHybridScore : scoreConfig.minBm25Score;
+      const normalizedTopScore = ranked[0]?.score ?? 0;
+      const filtered = ranked.filter(r => r.score >= floor);
+      const topResults = filtered.slice(0, 10);
+      const searchMode = embeddingUsed ? "hybrid" : "bm25";
+
+      logger.debug(
+        {
+          toolName: "discover_tools",
+          query,
+          searchMode,
+          candidateCount: deferredEntries.length,
+          resultCount: topResults.length,
+          normalizedTopScore,
+          rawTopScore,
+          topMatch: topResults[0]?.name ?? "none",
+          floor,
+          filteredOut: ranked.length - filtered.length,
+        },
+        "discover_tools search completed",
+      );
+
+      // ---------- No BM25 match -- check active tools before giving up ----------
+      if (topResults.length === 0) {
+        const activeMatches = findActiveToolMatches(query, activeToolNames);
+        if (activeMatches.length > 0) {
+          logger.info(
+            {
+              toolName: "discover_tools",
+              query,
+              activeMatchCount: activeMatches.length,
+              topActiveMatch: activeMatches[0],
+            },
+            "discover_tools: query matches already-active tools",
           );
           return {
             content: [{
               type: "text" as const,
-              text: "No matching tools found. Try an exact tool name, MCP server name (e.g. 'yfinance'), or select:tool1,tool2 syntax.",
+              text: `Tool(s) already active -- call directly, no discovery needed:\n${
+                activeMatches.slice(0, 20).map(n => `  - ${n}`).join("\n")
+              }${activeMatches.length > 20 ? `\n  ... (${activeMatches.length} total)` : ""}`,
             }],
             isError: false,
             details: undefined,
@@ -715,71 +740,181 @@ export function createDiscoverTool(
           };
         }
 
-        // Resolve BM25 results back to ToolDefinition objects
-        matches = topResults
-          .map(r => deferredTools.find(t => t.name === r.name))
-          .filter((t): t is ToolDefinition => t !== undefined);
+        // Distinguish "corpus has signal but filtered" vs "query terms absent from corpus".
+        // After normalization, the former is only reachable in hybrid mode with adversarial
+        // cosine (combined < floor). In BM25-only mode it's unreachable because the top
+        // match always normalizes to 1.0 >= any floor <= 1.0.
+        const warnMsg = rawTopScore > 0
+          ? "discover_tools: no matches above floor"
+          : "discover_tools: query tokens absent from deferred corpus";
+
+        logger.warn(
+          {
+            query,
+            searchMode,
+            floor,
+            rawTopScore,
+            normalizedTopScore,
+            topCandidate: ranked[0]?.name ?? "none",
+            filteredOut: ranked.length - filtered.length,
+            activeCorpusSize: activeToolNames.size,
+            hint: rawTopScore > 0
+              ? "No tool scored above the discover_tools floor. Lower skills.toolDiscovery.minHybridScore, retry with an exact tool name, or use 'select:<name>' syntax."
+              : "Query tokens do not appear in any deferred tool description. Use 'select:<name>' for exact match, or reconsider whether the tool you want is already active.",
+            errorKind: "validation" as const,
+          },
+          warnMsg,
+        );
+        return {
+          content: [{
+            type: "text" as const,
+            text: "No matching tools found. Try an exact tool name, MCP server name (e.g. 'yfinance'), or select:tool1,tool2 syntax.",
+          }],
+          isError: false,
+          details: undefined,
+          sideEffects: { discoveredTools: [] },
+        };
       }
 
-      const discoveredNames = matches.map(m => m.name);
+      // ---------- Resolve matches, expand, format ----------
+      const matches: ToolDefinition[] = topResults
+        .map(r => deferredTools.find(t => t.name === r.name))
+        .filter((t): t is ToolDefinition => t !== undefined);
 
-      // Server-level activation: expand to all tools from same MCP server(s)
-      const serverNames = new Set<string>();
-      for (const name of discoveredNames) {
-        const server = extractMcpServerName(name);
-        if (server) serverNames.add(server);
-      }
-      if (serverNames.size > 0) {
-        for (const entry of deferredEntries) {
-          const server = extractMcpServerName(entry.name);
-          if (server && serverNames.has(server) && !discoveredNames.includes(entry.name)) {
-            discoveredNames.push(entry.name);
-          }
-        }
-      }
-
-      // Co-discovery: expand to related tools via ComisToolMetadata.coDiscoverWith
-      const coDiscoveryNames: string[] = [];
-      for (const name of discoveredNames) {
-        const meta = getToolMetadata(name);
-        if (meta?.coDiscoverWith) {
-          for (const coName of meta.coDiscoverWith) {
-            if (!discoveredNames.includes(coName) && !coDiscoveryNames.includes(coName)) {
-              // Only add if the tool exists in the deferred set
-              if (deferredEntries.some(e => e.name === coName)) {
-                coDiscoveryNames.push(coName);
-              }
-            }
-          }
-        }
-      }
-      discoveredNames.push(...coDiscoveryNames);
-
-      // Add co-discovered tool schemas to the display output
-      for (const coName of coDiscoveryNames) {
-        const coEntry = deferredEntries.find(e => e.name === coName);
-        if (coEntry && !matches.some(m => m.name === coName)) {
-          matches.push(coEntry.original);
-        }
-      }
-
-      // Format output as <functions> block with full JSON schemas (after all expansions)
-      const functionsBlock = matches.map(m => {
-        return `<function>${JSON.stringify({
-          name: m.name,
-          description: resolveToolDescription(m),
-          parameters: m.parameters,
-        })}</function>`;
-      }).join("\n");
-
-      return {
-        content: [{ type: "text" as const, text: `<functions>\n${functionsBlock}\n</functions>` }],
-        isError: false,
-        details: undefined,
-        sideEffects: { discoveredTools: discoveredNames },
-      };
+      return formatDiscoveryResponse(matches, deferredEntries);
     },
   } as unknown as ToolDefinition;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers: active-tool match + output formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether `query` refers to any already-active tool.
+ * Used to return "already active" guidance instead of "no matches" when
+ * the agent re-discovers a previously-installed MCP or active builtin.
+ *
+ * Match modes (checked in order, first non-empty wins):
+ * 1. Exact name match (case-insensitive) against the full query.
+ * 2. `mcp__` / `mcp:` prefix match against the full query.
+ * 3. Bare server-name match on full query (`"yfinance"` -> all `mcp__yfinance--*`).
+ * 4. Per-token server-name fallback: for multi-word queries like
+ *    `"yfinance get_stock"`, check each whitespace-separated token as a
+ *    potential MCP server name. Catches the srv1593437 08:06:39Z scenario
+ *    where the agent emits `{query: "yfinance get_stock"}` rather than just
+ *    `{query: "yfinance"}`.
+ */
+function findActiveToolMatches(query: string, activeToolNames: ReadonlySet<string>): string[] {
+  const q = query.toLowerCase().trim();
+  if (!q || activeToolNames.size === 0) return [];
+
+  const names = [...activeToolNames];
+  const lowerMap = new Map(names.map(n => [n.toLowerCase(), n]));
+
+  // Mode 1: exact match
+  const exact = lowerMap.get(q);
+  if (exact) return [exact];
+
+  // Mode 2: prefix match (mcp__ or mcp:)
+  if ((q.startsWith("mcp__") || q.startsWith("mcp:")) && q.length > 5) {
+    const prefix = names.filter(n => n.toLowerCase().startsWith(q));
+    if (prefix.length > 0) return prefix;
+  }
+
+  // Mode 3: bare server name -> mcp__<server>--*
+  const serverPrefix = `mcp__${q}--`;
+  const server = names.filter(n => n.toLowerCase().startsWith(serverPrefix));
+  if (server.length > 0) return server;
+
+  // Mode 4: per-token server fallback for multi-word queries.
+  // Each whitespace-separated token is probed as a server name. The first
+  // token that resolves to >= 1 active tool wins. This handles the common
+  // "{server} {verb}" pattern like "yfinance get_stock".
+  const tokens = q.split(/\s+/).filter(t => /^[a-z0-9_-]+$/.test(t));
+  for (const token of tokens) {
+    const tokenServerPrefix = `mcp__${token}--`;
+    const tokenMatches = names.filter(n => n.toLowerCase().startsWith(tokenServerPrefix));
+    if (tokenMatches.length > 0) return tokenMatches;
+  }
+
+  return [];
+}
+
+/**
+ * Format matched tool definitions as a `<functions>` block with full JSON schemas,
+ * applying server-expansion and co-discovery.
+ *
+ * Extracted from the inline block in `createDiscoverTool.execute()` so the two
+ * return paths (structured + BM25) share one formatter.
+ */
+function formatDiscoveryResponse(
+  matches: ToolDefinition[],
+  deferredEntries: DeferredToolEntry[],
+): {
+  content: Array<{ type: "text"; text: string }>;
+  isError: false;
+  details: undefined;
+  sideEffects: { discoveredTools: string[] };
+} {
+  const discoveredNames = matches.map(m => m.name);
+
+  // Server-level activation: expand to all tools from same MCP server(s)
+  const serverNames = new Set<string>();
+  for (const name of discoveredNames) {
+    const server = extractMcpServerName(name);
+    if (server) serverNames.add(server);
+  }
+  if (serverNames.size > 0) {
+    for (const entry of deferredEntries) {
+      const server = extractMcpServerName(entry.name);
+      if (server && serverNames.has(server) && !discoveredNames.includes(entry.name)) {
+        discoveredNames.push(entry.name);
+      }
+    }
+  }
+
+  // Co-discovery: expand to related tools via ComisToolMetadata.coDiscoverWith
+  const coDiscoveryNames: string[] = [];
+  for (const name of discoveredNames) {
+    const meta = getToolMetadata(name);
+    if (meta?.coDiscoverWith) {
+      for (const coName of meta.coDiscoverWith) {
+        if (!discoveredNames.includes(coName) && !coDiscoveryNames.includes(coName)) {
+          // Only add if the tool exists in the deferred set
+          if (deferredEntries.some(e => e.name === coName)) {
+            coDiscoveryNames.push(coName);
+          }
+        }
+      }
+    }
+  }
+  discoveredNames.push(...coDiscoveryNames);
+
+  // Add co-discovered tool schemas to the display output
+  const expandedMatches = [...matches];
+  for (const coName of coDiscoveryNames) {
+    const coEntry = deferredEntries.find(e => e.name === coName);
+    if (coEntry && !expandedMatches.some(m => m.name === coName)) {
+      expandedMatches.push(coEntry.original);
+    }
+  }
+
+  // Format output as <functions> block with full JSON schemas (after all expansions)
+  const functionsBlock = expandedMatches.map(m =>
+    `<function>${JSON.stringify({
+      name: m.name,
+      description: resolveToolDescription(m),
+      parameters: m.parameters,
+    })}</function>`,
+  ).join("\n");
+
+  return {
+    content: [{ type: "text" as const, text: `<functions>\n${functionsBlock}\n</functions>` }],
+    isError: false,
+    details: undefined,
+    sideEffects: { discoveredTools: discoveredNames },
+  };
 }
 
 // ---------------------------------------------------------------------------

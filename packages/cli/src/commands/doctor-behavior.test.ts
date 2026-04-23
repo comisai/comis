@@ -46,11 +46,15 @@ vi.mock("../output/spinner.js", () => ({
 }));
 
 // Mock @comis/core for loadConfigFile/validateConfig
-vi.mock("@comis/core", () => ({
-  loadConfigFile: vi.fn(() => ({ ok: false })),
-  validateConfig: vi.fn(() => ({ ok: false })),
-  sanitizeLogString: vi.fn((s: string) => s),
-}));
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    loadConfigFile: vi.fn(() => ({ ok: false })),
+    validateConfig: vi.fn(() => ({ ok: false })),
+    sanitizeLogString: vi.fn((s: string) => s),
+  };
+});
 
 // Mock node:fs for readFileSync used in buildDoctorContext
 vi.mock("node:fs", () => ({
@@ -61,9 +65,13 @@ vi.mock("node:fs", () => ({
 }));
 
 // Mock node:os for homedir
-vi.mock("node:os", () => ({
-  homedir: () => "/tmp/test-home",
-}));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    homedir: () => "/tmp/test-home",
+  };
+});
 
 // Dynamic imports after mocks
 const { registerDoctorCommand } = await import("./doctor.js");

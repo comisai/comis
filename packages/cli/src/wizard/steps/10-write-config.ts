@@ -32,7 +32,7 @@ import {
 /**
  * Get a sensible default model for a provider.
  *
- * Matches the defaults in the existing config-writer.ts.
+ * Matches the defaults used by the wizard.
  */
 function getDefaultModel(provider?: string): string {
   if (!provider) return "default";

@@ -14,6 +14,7 @@ const {
   mockLoadWorkspaceBootstrapFiles,
   mockBuildBootstrapContextFiles,
   mockFilterBootstrapFilesForLightContext,
+  mockFilterBootstrapFilesForCron,
   mockFilterBootstrapFilesForGroupChat,
   mockDeduplicateResults,
   mockHybridSplit,
@@ -32,6 +33,7 @@ const {
   mockLoadWorkspaceBootstrapFiles: vi.fn().mockResolvedValue([]),
   mockBuildBootstrapContextFiles: vi.fn().mockReturnValue([]),
   mockFilterBootstrapFilesForLightContext: vi.fn((files: any[]) => files.filter((f: any) => f.name === "HEARTBEAT.md")),
+  mockFilterBootstrapFilesForCron: vi.fn((files: any[]) => files.filter((f: any) => f.name === "SOUL.md" || f.name === "ROLE.md")),
   mockFilterBootstrapFilesForGroupChat: vi.fn((files: any[]) => files.filter((f: any) => f.name !== "USER.md")),
   mockDeduplicateResults: vi.fn((results: any[]) => results),
   mockHybridSplit: vi.fn().mockReturnValue({ inlineMemory: undefined, systemPromptSections: ["rag-section-1"] }),
@@ -58,6 +60,7 @@ vi.mock("../bootstrap/index.js", async (importOriginal) => {
     buildSenderTrustSection: mockBuildSenderTrustSection,
     buildSubagentRoleSection: mockBuildSubagentRoleSection,
     filterBootstrapFilesForLightContext: mockFilterBootstrapFilesForLightContext,
+    filterBootstrapFilesForCron: mockFilterBootstrapFilesForCron,
     filterBootstrapFilesForGroupChat: mockFilterBootstrapFilesForGroupChat,
     resolveSenderDisplay: vi.fn().mockImplementation((sid: string) => sid),
   };
@@ -144,6 +147,7 @@ function makeParams(overrides?: Partial<PromptAssemblyParams>): PromptAssemblyPa
     agentId: "agent-1",
     mergedCustomTools: [],
     logger: createMockLogger(),
+    operationType: "interactive",
     ...overrides,
   };
 }
@@ -164,6 +168,7 @@ describe("assembleExecutionPrompt", () => {
     mockLoadWorkspaceBootstrapFiles.mockResolvedValue([]);
     mockBuildBootstrapContextFiles.mockReturnValue([]);
     mockFilterBootstrapFilesForLightContext.mockImplementation((files: any[]) => files.filter((f: any) => f.name === "HEARTBEAT.md"));
+    mockFilterBootstrapFilesForCron.mockImplementation((files: any[]) => files.filter((f: any) => f.name === "SOUL.md" || f.name === "ROLE.md"));
     mockFilterBootstrapFilesForGroupChat.mockImplementation((files: any[]) => files.filter((f: any) => f.name !== "USER.md"));
     mockDeduplicateResults.mockImplementation((results: any[]) => results);
     mockHybridSplit.mockReturnValue({ inlineMemory: undefined, systemPromptSections: ["rag-section-1"] });
@@ -885,6 +890,95 @@ describe("assembleExecutionPrompt", () => {
       expect(mockLoadWorkspaceBootstrapFiles).not.toHaveBeenCalled();
       expect(mockFilterBootstrapFilesForLightContext).not.toHaveBeenCalled();
       expect(mockFilterBootstrapFilesForGroupChat).not.toHaveBeenCalled();
+    });
+
+    // Operational-mode filter tests (design §Testing #5)
+
+    it("operationType='heartbeat' implies effectiveLightContext=true even without metadata flag", async () => {
+      mockLoadWorkspaceBootstrapFiles.mockResolvedValue(fakeBootstrapFiles);
+      const params = makeParams({
+        msg: makeMsg({ metadata: {} }), // no lightContext flag
+        operationType: "heartbeat",
+      });
+      await assembleExecutionPrompt(params);
+
+      // Heartbeat auto-derives the light-context filter -- HEARTBEAT.md only
+      expect(mockFilterBootstrapFilesForLightContext).toHaveBeenCalledOnce();
+      expect(mockFilterBootstrapFilesForLightContext).toHaveBeenCalledWith(fakeBootstrapFiles);
+      expect(mockFilterBootstrapFilesForCron).not.toHaveBeenCalled();
+      expect(mockFilterBootstrapFilesForGroupChat).not.toHaveBeenCalled();
+    });
+
+    it("operationType='cron' applies cron bootstrap filter (SOUL.md + ROLE.md only)", async () => {
+      mockLoadWorkspaceBootstrapFiles.mockResolvedValue(fakeBootstrapFiles);
+      const params = makeParams({
+        msg: makeMsg({ metadata: {} }),
+        operationType: "cron",
+      });
+      await assembleExecutionPrompt(params);
+
+      // Cron bootstrap filter is applied instead of light-context / group-chat filters
+      expect(mockFilterBootstrapFilesForCron).toHaveBeenCalledOnce();
+      expect(mockFilterBootstrapFilesForCron).toHaveBeenCalledWith(fakeBootstrapFiles);
+      expect(mockFilterBootstrapFilesForLightContext).not.toHaveBeenCalled();
+      expect(mockFilterBootstrapFilesForGroupChat).not.toHaveBeenCalled();
+    });
+
+    it("operationType='cron' upgrades promptMode from 'full' to 'operational'", async () => {
+      const params = makeParams({
+        config: makeConfig({ bootstrap: { promptMode: "full" } }),
+        operationType: "cron",
+      });
+      await assembleExecutionPrompt(params);
+
+      const call = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(call.promptMode).toBe("operational");
+    });
+
+    it("operationType='heartbeat' upgrades promptMode from 'full' to 'operational'", async () => {
+      const params = makeParams({
+        config: makeConfig({ bootstrap: { promptMode: "full" } }),
+        operationType: "heartbeat",
+      });
+      await assembleExecutionPrompt(params);
+
+      const call = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(call.promptMode).toBe("operational");
+    });
+
+    it("explicit config promptMode='minimal' wins over cron auto-upgrade", async () => {
+      const params = makeParams({
+        config: makeConfig({ bootstrap: { promptMode: "minimal" } }),
+        operationType: "cron",
+      });
+      await assembleExecutionPrompt(params);
+
+      const call = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(call.promptMode).toBe("minimal");
+    });
+
+    it("operationType='interactive' leaves promptMode='full' unchanged", async () => {
+      const params = makeParams({
+        config: makeConfig({ bootstrap: { promptMode: "full" } }),
+        operationType: "interactive",
+      });
+      await assembleExecutionPrompt(params);
+
+      const call = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(call.promptMode).toBe("full");
+    });
+
+    it("metadata.lightContext=true takes precedence over cron bootstrap filter", async () => {
+      mockLoadWorkspaceBootstrapFiles.mockResolvedValue(fakeBootstrapFiles);
+      const params = makeParams({
+        msg: makeMsg({ metadata: { lightContext: true } }),
+        operationType: "cron",
+      });
+      await assembleExecutionPrompt(params);
+
+      // effectiveLightContext short-circuits to the light-context filter before the cron branch
+      expect(mockFilterBootstrapFilesForLightContext).toHaveBeenCalledOnce();
+      expect(mockFilterBootstrapFilesForCron).not.toHaveBeenCalled();
     });
   });
 

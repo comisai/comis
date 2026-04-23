@@ -62,6 +62,31 @@ export const TOOL_PROFILES: Record<string, string[]> = {
     "mcp_manage",
     "heartbeat_manage",
   ],
+  /**
+   * Conservative presets for non-interactive operations.
+   *
+   * Opt-in via `toolPolicy: { profile: "cron-minimal" }` on a `CronJob` or
+   * `toolPolicy: { profile: "heartbeat-minimal" }` on heartbeat config. The
+   * `*-minimal` suffix signals "opinionated narrow default, expect to `allow`
+   * extras per job" -- never applied as a silent default at the call site.
+   */
+  "cron-minimal": [
+    "web_search",
+    "message",
+    "read_file",
+    "write_file",
+    "list_dir",
+    "memory_store",
+    "memory_search",
+    "cron",
+    "discover",
+  ],
+  "heartbeat-minimal": [
+    "message",
+    "memory_store",
+    "memory_search",
+    "discover",
+  ],
   full: [], // empty = all tools allowed
 };
 

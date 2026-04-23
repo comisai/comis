@@ -226,6 +226,10 @@ export interface InfraEvents {
     cronJobModel?: string;
     /** Per-cron-job cache retention override from CronJob config. */
     cacheRetention?: "none" | "short" | "long";
+    /** Per-cron-job tool policy override (opt-in). Resolution in the handler:
+     *  job.toolPolicy > agentConfig.toolPolicy > passthrough `{ profile: "full" }`.
+     *  Opt-in by design; omitting preserves pre-existing tool set. */
+    toolPolicy?: { profile: string; allow: string[]; deny: string[] };
     /** Callback for agent_turn jobs to report execution result back to the scheduler.
      *  Called by the event handler after agent execution completes. */
     onComplete?: (result: { status: "ok" | "error"; error?: string }) => void;

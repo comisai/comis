@@ -7,9 +7,11 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 // ---------------------------------------------------------------------------
 
 const mockDb = vi.hoisted(() => ({ close: vi.fn() }));
+const mockCheckpoint = vi.hoisted(() => vi.fn(() => 0));
 const mockSqliteMemoryAdapter = vi.hoisted(() => {
   return vi.fn(function (this: any) {
     this.getDb = () => mockDb;
+    this.checkpoint = mockCheckpoint;
   });
 });
 const mockCreateSessionStore = vi.hoisted(() => vi.fn(() => ({ loadByFormattedKey: vi.fn(), save: vi.fn() })));
@@ -565,5 +567,60 @@ describe("setupMemory", () => {
     });
 
     expect(result.disposeEmbedding).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // 17. maintenanceTick calls checkpoint every 10th invocation
+  // -------------------------------------------------------------------------
+
+  it("maintenanceTick calls checkpoint on 10th call but not before", async () => {
+    const container = createMinimalContainer();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+    });
+
+    for (let i = 0; i < 9; i++) result.maintenanceTick();
+    expect(mockCheckpoint).not.toHaveBeenCalled();
+
+    result.maintenanceTick();
+    expect(mockCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // 18. maintenanceTick calls checkpoint again on 20th invocation
+  // -------------------------------------------------------------------------
+
+  it("maintenanceTick calls checkpoint again on 20th invocation", async () => {
+    const container = createMinimalContainer();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+    });
+
+    for (let i = 0; i < 20; i++) result.maintenanceTick();
+    expect(mockCheckpoint).toHaveBeenCalledTimes(2);
+  });
+
+  // -------------------------------------------------------------------------
+  // 19. maintenanceTick survives checkpoint throwing
+  // -------------------------------------------------------------------------
+
+  it("maintenanceTick does not throw when checkpoint throws", async () => {
+    mockCheckpoint.mockImplementationOnce(() => { throw new Error("disk full"); });
+    const container = createMinimalContainer();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+    });
+
+    for (let i = 0; i < 10; i++) result.maintenanceTick();
+    expect(mockCheckpoint).toHaveBeenCalledTimes(1);
   });
 });

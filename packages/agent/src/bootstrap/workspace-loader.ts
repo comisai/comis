@@ -200,6 +200,31 @@ export function filterBootstrapFilesForLightContext(
 }
 
 /**
+ * Allowlist for cron execution context.
+ * Retains ONLY SOUL.md and ROLE.md -- the persona and role behavior needed
+ * for autonomous cron runs. Strips heartbeat cadence rules, user preferences,
+ * tooling docs, and workspace bootstrap.
+ */
+const CRON_BOOTSTRAP_ALLOWLIST = new Set<WorkspaceFileName>(["SOUL.md", "ROLE.md"]);
+
+/**
+ * Filter bootstrap files for cron execution.
+ *
+ * Autonomous cron runs don't need heartbeat cadence rules, user preferences,
+ * tooling docs, or workspace bootstrap -- only the agent's persona (SOUL.md)
+ * and role behavior (ROLE.md). Mirrors the pattern of
+ * filterBootstrapFilesForLightContext.
+ *
+ * @param files - Full array of loaded bootstrap files
+ * @returns Filtered array containing only SOUL.md and ROLE.md
+ */
+export function filterBootstrapFilesForCron(
+  files: BootstrapFile[],
+): BootstrapFile[] {
+  return files.filter((f) => CRON_BOOTSTRAP_ALLOWLIST.has(f.name));
+}
+
+/**
  * Excludelist for group chat context mode.
  * Excludes USER.md (privacy protection: personal preferences
  * should not be exposed in multi-user contexts).

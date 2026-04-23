@@ -3217,7 +3217,34 @@ describe("createPiEventBridge", () => {
       }));
     });
 
-    it("does NOT extract plan when first turn_end has text but no tool calls", () => {
+    it("extracts plan when first turn_end has text but no tool calls (text-only reasoning turn)", () => {
+      const executionPlan = { current: undefined as ExecutionPlan | undefined };
+      const sepDeps = createMockDeps({
+        executionPlan,
+        sepConfig: { maxSteps: 15, minSteps: 3 },
+        sepMessageText: "Please set up the project",
+        sepExecutionStartMs: Date.now(),
+      });
+      const { listener } = createPiEventBridge(sepDeps);
+
+      // Text-only turn (no tool calls) — e.g. Opus 4.6 reasoning model that
+      // separates the plan turn from the execution turn. Mid-loop extraction
+      // should now succeed on text alone because `extractPlanFromResponse`
+      // already guards against non-plan prose via regex + minSteps threshold.
+      listener(makeTurnEndWithPlan(PLAN_TEXT, false) as any);
+
+      expect(executionPlan.current).toBeDefined();
+      expect(executionPlan.current!.active).toBe(true);
+      expect(executionPlan.current!.steps.length).toBe(4);
+      expect(executionPlan.current!.steps[0].description).toBe("Read the configuration file");
+      expect(executionPlan.current!.request).toBe("Please set up the project");
+      expect(sepDeps.logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: "test-agent", stepCount: 4 }),
+        "SEP plan extracted (mid-loop)",
+      );
+    });
+
+    it("does NOT extract plan when text-only turn has no plan structure (conversational prose)", () => {
       const executionPlan = { current: undefined as ExecutionPlan | undefined };
       const sepDeps = createMockDeps({
         executionPlan,
@@ -3227,8 +3254,24 @@ describe("createPiEventBridge", () => {
       });
       const { listener } = createPiEventBridge(sepDeps);
 
-      // Turn with plan text but no tool calls (conversational response)
-      listener(makeTurnEndWithPlan(PLAN_TEXT, false) as any);
+      // Text-only turn with NO numbered list, bullets, or sequential markers.
+      // Confirms the hasToolCalls-gate removal did not relax the plan-extractor
+      // regex/minSteps safeguards — pure prose still yields no plan.
+      const prose =
+        "The project is a TypeScript monorepo with hexagonal architecture. " +
+        "It has thirteen packages and targets Node.js version 22 or newer. " +
+        "The core package defines port interfaces and the bootstrap wires them.";
+      const turn = {
+        type: "turn_end" as const,
+        message: {
+          role: "assistant" as const,
+          content: [{ type: "text", text: prose }],
+          usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 } },
+          stopReason: "end_turn",
+        },
+        toolResults: [],
+      };
+      listener(turn as any);
 
       expect(executionPlan.current).toBeUndefined();
     });

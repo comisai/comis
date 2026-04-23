@@ -24,6 +24,7 @@ import type {
   SenderTrustDisplayConfig,
   SpawnPacket,
   DeliveryMirrorPort,
+  ModelOperationType,
 } from "@comis/core";
 import { wrapExternalContent, safePath, formatSessionKey, generateCanaryToken } from "@comis/core";
 import { suppressError } from "@comis/shared";
@@ -36,6 +37,7 @@ import {
   assembleRichSystemPrompt,
   assembleRichSystemPromptBlocks,
   filterBootstrapFilesForLightContext,
+  filterBootstrapFilesForCron,
   filterBootstrapFilesForGroupChat,
   resolveSenderDisplay,
   buildDateTimeSection,
@@ -257,6 +259,13 @@ export interface PromptAssemblyParams {
   /** Whether the resolved model has native reasoning support (e.g. encrypted thinking blocks).
    *  When true, the `<think>`/`<final>` tag hint is suppressed to avoid double-reasoning. */
   resolvedModelReasoning?: boolean;
+  /** Operation type from ExecutionOverrides. Resolves promptMode and bootstrap filter.
+   *  When omitted by callers at the TypeScript level, executor-tool-assembly supplies
+   *  "interactive" as the default before invoking this function, so this is required
+   *  at the call-site contract level. Values of "cron" or "heartbeat" auto-upgrade
+   *  the promptMode from "full" to "operational" and dispatch operation-specific
+   *  bootstrap filters. */
+  operationType: ModelOperationType;
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +527,22 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   }
 
   // 1. Resolve promptMode
-  const promptMode: PromptMode = (config.bootstrap?.promptMode as PromptMode) ?? "full";
+  // Cron and heartbeat auto-upgrade from "full" -> "operational" to trim
+  // interactive-only sections (compaction recovery, silent replies, reactions,
+  // media, SEP, sender trust). An explicit `config.bootstrap?.promptMode` wins
+  // -- operators can still force "minimal"/"none"/"full" if they have reason.
+  const baseMode: PromptMode = (config.bootstrap?.promptMode as PromptMode) ?? "full";
+  const promptMode: PromptMode =
+    (params.operationType === "cron" || params.operationType === "heartbeat") && baseMode === "full"
+      ? "operational"
+      : baseMode;
+
+  // Consolidated lightContext flag: heartbeat implies light-context regardless
+  // of the explicit msg.metadata.lightContext flag. Callers that only set the
+  // metadata flag OR only set operationType="heartbeat" produce identical
+  // prompt output (design-doc §Risks: "Heartbeat lightContext and operationType drift").
+  const effectiveLightContext =
+    msg.metadata?.lightContext === true || params.operationType === "heartbeat";
 
   // 2. Load workspace bootstrap files (skip for "none" mode)
   let bootstrapContextFiles: BootstrapContextFile[] = [];
@@ -538,12 +562,15 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       sessionBootstrapFileSnapshots.set(bsSnapKey, bootstrapFiles);
     }
 
-    // Heartbeat light context -- keep only HEARTBEAT.md
-    if (msg.metadata?.lightContext === true) {
+    // Bootstrap filter dispatch:
+    //  - effectiveLightContext (heartbeat / explicit flag) -> HEARTBEAT.md only
+    //  - operationType === "cron" -> SOUL.md + ROLE.md only
+    //  - group chat context -> strip USER.md for privacy
+    if (effectiveLightContext) {
       bootstrapFiles = filterBootstrapFilesForLightContext(bootstrapFiles);
-    }
-    // Group chat privacy -- exclude USER.md
-    else if (
+    } else if (params.operationType === "cron") {
+      bootstrapFiles = filterBootstrapFilesForCron(bootstrapFiles);
+    } else if (
       config.bootstrap?.groupChatFiltering !== false &&
       isGroupContext(msg)
     ) {

@@ -221,5 +221,5 @@ export { createImageGenProvider, createImageGenRateLimiter } from "./integration
 export type { ImageGenRateLimiter } from "./integrations/image-gen/index.js";
 
 // Tool policy (profiles and groups for tool filtering)
-export { TOOL_PROFILES, TOOL_GROUPS } from "./policy/index.js";
+export { applyToolPolicy, expandGroups, TOOL_PROFILES, TOOL_GROUPS } from "./policy/index.js";
 export type { ToolFilterReason, ToolPolicyResult } from "./policy/index.js";

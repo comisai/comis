@@ -19,7 +19,7 @@
 import { SessionManager as SdkSessionManager } from "@mariozechner/pi-coding-agent";
 import { formatSessionKey, safePath, type SessionKey } from "@comis/core";
 import { suppressError, type Result } from "@comis/shared";
-import { mkdir, unlink, rm } from "node:fs/promises";
+import { mkdir, unlink, rm, rmdir } from "node:fs/promises";
 import { existsSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { sessionKeyToPath } from "./session-key-mapper.js";
@@ -167,11 +167,13 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
 
       await withSessionLock(deps.lockDir, sessionKeyStr, async () => {
         try { await unlink(sessionPath); } catch { /* ENOENT ok */ }
-        const toolResultsDir = safePath(dirname(sessionPath), "tool-results");
+        const sessionDir = dirname(sessionPath);
+        const toolResultsDir = safePath(sessionDir, "tool-results");
         await suppressError(
           rm(toolResultsDir, { recursive: true, force: true }),
           "tool-results dir may not exist",
         );
+        try { await rmdir(sessionDir); } catch { /* non-empty or already gone */ }
       }, { retries: 10, retryMinTimeout: 500 });
     },
 

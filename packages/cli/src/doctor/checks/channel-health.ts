@@ -10,14 +10,14 @@
  */
 
 import type { DoctorCheck, DoctorFinding } from "../types.js";
-import { CHANNEL_ENV_KEYS } from "../../wizard/flow-types.js";
+import { CHANNEL_ENV_KEYS } from "../../wizard/index.js";
 
 const CATEGORY = "channels";
 
 /**
  * Map of channel types to their required credential environment variable names.
  *
- * Sourced from the shared CHANNEL_ENV_KEYS constant in flow-types.
+ * Sourced from the shared CHANNEL_ENV_KEYS constant in the wizard module.
  * These are format checks only -- we verify the credential appears to be
  * a non-empty string, not that it's a valid API key.
  */

@@ -77,7 +77,7 @@ export interface ShutdownDeps {
   /** Background embedding indexing promise (optional). */
   backgroundIndexingPromise?: Promise<unknown>;
   /** Raw database handle for close. */
-  db: { close: () => void };
+  db: { close: () => void; pragma: (source: string) => unknown };
   /** Coordinated embedding dispose callback: L1 -> L2 flush -> provider dispose */
   disposeEmbedding?: () => Promise<void>;
   /** Per-agent skill watcher handles for shutdown cleanup. */
@@ -469,6 +469,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       // DB close is ALWAYS last -- no withStepTimeout (must complete or the outer 30s hard timeout handles it)
       {
         const stopMs = Date.now();
+        try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch { /* best-effort flush before close */ }
         db.close();
         daemonLogger.info({ component: "memory-database", durationMs: Date.now() - stopMs, shutdownOrder: shutdownOrder + 1 }, "Component stopped");
       }

@@ -35,6 +35,7 @@ import {
   shouldAutoTts,
   resolveOutputFormat,
   parseOutboundMedia,
+  applyToolPolicy,
   type SsrfGuardedFetcher,
 } from "@comis/skills";
 import type { RpcCall } from "@comis/skills";
@@ -384,9 +385,33 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
 
       const execStartTs = Date.now();
       try {
-        const tools = deps.assembleToolsForAgent
+        const allTools = deps.assembleToolsForAgent
           ? await deps.assembleToolsForAgent(payload.agentId)
           : [];
+        // Resolve effective tool policy: job > agent > passthrough `{ profile: "full" }`.
+        // Opt-in per job — omitting payload.toolPolicy preserves the agent's interactive
+        // tool set. The explicit "full" fallback makes the no-silent-default contract
+        // readable in the call site (see design-doc §"no silent default").
+        const effectivePolicy =
+          payload.toolPolicy ??
+          agentConfig?.skills?.toolPolicy ??
+          { profile: "full" as const, allow: [] as string[], deny: [] as string[] };
+        const { tools, filtered: policyFiltered } = applyToolPolicy(
+          allTools as Parameters<typeof applyToolPolicy>[0],
+          effectivePolicy,
+        );
+        if (policyFiltered.length > 0) {
+          logger.debug(
+            {
+              jobName,
+              agentId: payload.agentId,
+              profile: effectivePolicy.profile,
+              filteredCount: policyFiltered.length,
+              filtered: policyFiltered.map((f) => ({ tool: f.toolName, reason: f.reason.kind })),
+            },
+            "Cron tool policy applied",
+          );
+        }
         logger.info(
           { jobName, agentId: payload.agentId, channelType: deliveryTarget.channelType, toolCount: Array.isArray(tools) ? tools.length : 0 },
           "Executing cron agentTurn",

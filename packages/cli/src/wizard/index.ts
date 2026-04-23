@@ -7,9 +7,8 @@
  * init command, tests, future phases) imports from this single entry
  * point rather than reaching into individual wizard files.
  *
- * Legacy wizard files (flow-types.ts, quickstart-flow.ts, manual-flow.ts)
- * are NOT re-exported here -- they remain for backward compatibility
- * but are not part of the new wizard architecture.
+ * Legacy wizard files (flow-types.ts, quickstart-flow.ts, manual-flow.ts,
+ * config-writer.ts) were removed -- superseded by the step-based architecture.
  *
  * @module
  */
