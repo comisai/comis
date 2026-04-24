@@ -150,14 +150,16 @@ describe("finishStep", () => {
     expect(noteCalls).toHaveLength(1);
   });
 
-  it("gateway info shows token preview for token auth", async () => {
+  it("access token block shows full token with a keep-secret warning", async () => {
+    const fullToken = "abcdef1234567890abcdef1234567890abcdef1234567890ab";
     const state: WizardState = {
       completedSteps: [],
       gateway: {
         port: 4766,
         bindMode: "loopback",
         authMethod: "token",
-        token: "abcdef1234567890abcdef1234567890abcdef1234567890ab",
+        token: fullToken,
+        webEnabled: true,
       },
     };
     const prompter = createMockPrompter();
@@ -165,15 +167,65 @@ describe("finishStep", () => {
     await finishStep.execute(state, prompter);
 
     const noteCalls = vi.mocked(prompter.note).mock.calls;
-    const gatewayNote = noteCalls.find(
-      ([msg]) => typeof msg === "string" && msg.includes("Token"),
+    const tokenNote = noteCalls.find(
+      ([msg]) => typeof msg === "string" && msg.includes(fullToken),
     );
-    expect(gatewayNote).toBeDefined();
-    // Should show first 8 chars of token
-    expect(gatewayNote![0]).toContain("abcdef12...");
+    expect(tokenNote).toBeDefined();
+    // Full token shown (so the user can copy-paste), not a preview
+    expect(tokenNote![0]).toContain(fullToken);
+    expect(tokenNote![0]).not.toContain("...");
+    // Warning + password-manager hint make it clear this is sensitive
+    expect(tokenNote![0]).toMatch(/keep it secret/i);
+    expect(tokenNote![0]).toMatch(/password manager/i);
   });
 
-  it("gateway info shows password auth reference for password auth", async () => {
+  it("shows copy-paste SSH tunnel recipe when gateway is loopback-only", async () => {
+    const state: WizardState = {
+      completedSteps: [],
+      gateway: {
+        port: 4766,
+        bindMode: "loopback",
+        authMethod: "token",
+        token: "tok",
+        webEnabled: true,
+      },
+    };
+    const prompter = createMockPrompter();
+
+    await finishStep.execute(state, prompter);
+
+    const noteCalls = vi.mocked(prompter.note).mock.calls;
+    const tunnelNote = noteCalls.find(
+      ([msg]) => typeof msg === "string" && msg.includes("ssh -N -L"),
+    );
+    expect(tunnelNote).toBeDefined();
+    expect(tunnelNote![0]).toContain("ssh -N -L 4766:127.0.0.1:4766 root@YOUR-SERVER");
+    expect(tunnelNote![0]).toContain("http://localhost:4766/app/");
+  });
+
+  it("does not show SSH tunnel recipe when gateway binds LAN", async () => {
+    const state: WizardState = {
+      completedSteps: [],
+      gateway: {
+        port: 4766,
+        bindMode: "lan",
+        authMethod: "token",
+        token: "tok",
+        webEnabled: true,
+      },
+    };
+    const prompter = createMockPrompter();
+
+    await finishStep.execute(state, prompter);
+
+    const noteCalls = vi.mocked(prompter.note).mock.calls;
+    const tunnelNote = noteCalls.find(
+      ([msg]) => typeof msg === "string" && msg.includes("ssh -N -L"),
+    );
+    expect(tunnelNote).toBeUndefined();
+  });
+
+  it("points user at their chosen password when using password auth", async () => {
     const state: WizardState = {
       completedSteps: [],
       gateway: {
@@ -181,6 +233,7 @@ describe("finishStep", () => {
         bindMode: "loopback",
         authMethod: "password",
         password: "my-secret-password",
+        webEnabled: true,
       },
     };
     const prompter = createMockPrompter();
@@ -188,10 +241,12 @@ describe("finishStep", () => {
     await finishStep.execute(state, prompter);
 
     const noteCalls = vi.mocked(prompter.note).mock.calls;
-    const gatewayNote = noteCalls.find(
-      ([msg]) => typeof msg === "string" && msg.includes("Password auth"),
+    const tokenNote = noteCalls.find(
+      ([msg]) => typeof msg === "string" && msg.includes("password you set earlier"),
     );
-    expect(gatewayNote).toBeDefined();
+    expect(tokenNote).toBeDefined();
+    // Should NOT leak the actual password into the wizard output
+    expect(tokenNote![0]).not.toContain("my-secret-password");
   });
 
   it("outro() called with completion message", async () => {
