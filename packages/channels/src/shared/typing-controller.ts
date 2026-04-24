@@ -34,6 +34,13 @@
  *    text deltas from the model). Active generation keeps the indicator
  *    alive beyond the initial TTL window.
  *
+ * 6. **Internal TTL refresh (liveness watchdog)**: While active and not
+ *    sealed, an internal 30s interval calls resetTtl() unconditionally.
+ *    This is a belt-and-braces mechanism for long silences (extended
+ *    thinking, slow tools, inter-turn gaps). External refreshTtl() calls
+ *    from content signals remain the primary mechanism; this timer is
+ *    additive, not a replacement.
+ *
  * Typing failures are non-fatal: errors from `sendTyping` are caught
  * and logged but never propagated to the caller.
  *
@@ -107,6 +114,12 @@ export interface TypingController {
 // Factory
 // ---------------------------------------------------------------------------
 
+/** Internal liveness refresh interval. MUST be strictly less than default
+ *  ttlMs (60_000) so an active, non-sealed controller cannot have its TTL
+ *  expire without an explicit stop() or circuit-breaker trip. Matches the
+ *  tool-active refresh cadence in execution-execute.ts for consistency. */
+const INTERNAL_TTL_REFRESH_MS = 30_000;
+
 /**
  * Create a typing controller that sends platform typing indicators at a
  * configurable refresh interval.
@@ -129,6 +142,7 @@ export function createTypingController(
   let consecutiveFailures = 0;
   let tickInFlight = false;
   let ttlTimer: ReturnType<typeof setTimeout> | null = null;
+  let ttlRefreshTimer: ReturnType<typeof setInterval> | null = null;
   const threshold = config.circuitBreakerThreshold ?? 3;
 
   /** Fire-and-forget typing send with tick serialization and circuit breaker. */
@@ -156,6 +170,10 @@ export function createTypingController(
           if (ttlTimer !== null) {
             clearTimeout(ttlTimer);
             ttlTimer = null;
+          }
+          if (ttlRefreshTimer !== null) {
+            clearInterval(ttlRefreshTimer);
+            ttlRefreshTimer = null;
           }
         } else {
           logger?.warn(
@@ -186,6 +204,10 @@ export function createTypingController(
           clearInterval(timer);
           timer = null;
         }
+        if (ttlRefreshTimer !== null) {
+          clearInterval(ttlRefreshTimer);
+          ttlRefreshTimer = null;
+        }
       }
     }, config.ttlMs ?? 60_000);
   }
@@ -209,6 +231,15 @@ export function createTypingController(
 
       // Arm the TTL timer.
       resetTtl();
+
+      // Belt-and-braces liveness watchdog: refresh the TTL on a fixed cadence so
+      // the indicator survives long silences (extended thinking, slow tools,
+      // inter-turn gaps) even when no external signal calls refreshTtl().
+      ttlRefreshTimer = setInterval(() => {
+        if (active && !sealed) {
+          resetTtl();
+        }
+      }, INTERNAL_TTL_REFRESH_MS);
     },
 
     stop(): void {
@@ -221,6 +252,10 @@ export function createTypingController(
       if (ttlTimer !== null) {
         clearTimeout(ttlTimer);
         ttlTimer = null;
+      }
+      if (ttlRefreshTimer !== null) {
+        clearInterval(ttlRefreshTimer);
+        ttlRefreshTimer = null;
       }
     },
 

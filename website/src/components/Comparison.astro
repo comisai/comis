@@ -1,23 +1,23 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 ---
 const rows = [
-  { label: "Authentication", them: "Often missing or optional", us: "Required by default, mTLS support" },
-  { label: "Prompt injection", them: "No detection", us: "48 patterns across 13 weighted categories" },
-  { label: "Memory safety", them: "Single trust level, poisonable", us: "Trust-partitioned - your words vs. the internet's" },
-  { label: "Secrets", them: "Plaintext in config, leaked in logs", us: "AES-256 encrypted, 18 redaction rules" },
-  { label: "Tool access", them: "Unchecked - full shell by default", us: "Approval gates, per-agent tool policies, OS-level exec sandbox" },
-  { label: "Skill safety", them: "Install and hope", us: "Allowlists, scope isolation" },
-  { label: "Network safety", them: "No SSRF protection", us: "Private network + metadata endpoints blocked" },
-  { label: "Audit trail", them: "None", us: "Every action logged and classified" },
-  { label: "Context management", them: "Truncate and hope", us: "8-layer pipeline: eviction, masking, compaction, rehydration" },
-  { label: "Tool overhead", them: "All tool definitions on every turn", us: "Progressive disclosure: lean definitions, just-in-time guides, context-aware deferral" },
-  { label: "Small model support", them: "Same bloated context for all models", us: "Model-aware tool presentation: pruned schemas, focused tool sets" },
-  { label: "Memory", them: "Session-only, no recall", us: "Persistent semantic search with trust-partitioned RAG" },
-  { label: "Budget", them: "Unlimited spend", us: "Three-tier budget guard: per-execution, per-hour, per-day" },
-  { label: "Agents", them: "One does everything", us: "A team of specialists" },
-  { label: "Channels", them: "Varies", us: "9 platforms, full experience" },
-  { label: "Models", them: "Often locked to one provider", us: "Any model, any provider" },
-  { label: "Source", them: "Closed or partially open", us: "Fully open source, Apache-2.0" },
+  { label: "Authentication", them: "Often missing or optional", us: "Required by default, mTLS support", win: true },
+  { label: "Prompt injection", them: "No detection", us: "48 patterns across 13 weighted categories", win: true },
+  { label: "Memory safety", them: "Single trust level, poisonable", us: "Trust-partitioned - your words vs. the internet's", win: true },
+  { label: "Secrets", them: "Plaintext in config, leaked in logs", us: "AES-256 encrypted, 18 redaction rules", win: true },
+  { label: "Tool access", them: "Unchecked - full shell by default", us: "Approval gates, per-agent tool policies, OS-level exec sandbox", win: true },
+  { label: "Skill safety", them: "Install and hope", us: "Allowlists, scope isolation", win: true },
+  { label: "Network safety", them: "No SSRF protection", us: "Private network + metadata endpoints blocked", win: true },
+  { label: "Audit trail", them: "None", us: "Every action logged and classified", win: true },
+  { label: "Context management", them: "Truncate and hope", us: "8-layer pipeline: eviction, masking, compaction, rehydration", win: true },
+  { label: "Tool overhead", them: "All tool definitions on every turn", us: "Progressive disclosure: lean definitions, just-in-time guides, context-aware deferral", win: true },
+  { label: "Small model support", them: "Same bloated context for all models", us: "Model-aware tool presentation: pruned schemas, focused tool sets", win: true },
+  { label: "Memory", them: "Session-only, no recall", us: "Persistent semantic search with trust-partitioned RAG", win: true },
+  { label: "Budget", them: "Unlimited spend", us: "Three-tier budget guard: per-execution, per-hour, per-day", win: true },
+  { label: "Agents", them: "One does everything", us: "A team of specialists", win: true },
+  { label: "Channels", them: "Varies", us: "9 platforms, full experience", win: true },
+  { label: "Models", them: "Often locked to one provider", us: "Any model, any provider", win: true },
+  { label: "Source", them: "Closed or partially open", us: "Fully open source, Apache-2.0", win: true },
 ];
 ---
 
@@ -41,8 +41,8 @@ const rows = [
           {rows.map((r) => (
             <tr class="border-b border-white/5">
               <th scope="row" class="py-3.5 pr-6 text-sm font-medium text-white whitespace-nowrap text-left">{r.label}</th>
-              <td class="py-3.5 px-6 text-sm text-muted">{r.them}</td>
-              <td class="py-3.5 pl-6 text-sm text-muted-light">{r.us}</td>
+              <td class="py-3.5 px-6 text-sm text-muted/60">{r.them}</td>
+              <td class="py-3.5 pl-6 text-sm text-muted-light font-medium">{r.us}</td>
             </tr>
           ))}
         </tbody>

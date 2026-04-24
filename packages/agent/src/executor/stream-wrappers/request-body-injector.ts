@@ -116,6 +116,14 @@ export interface RequestBodyInjectorConfig {
   /** Getter for elapsed ms since last assistant response.
    *  Used for time-based microcompact to detect cold-start scenarios. */
   getElapsedSinceLastResponse?: () => number | undefined;
+  /** When true, the recent-zone message breakpoint may be promoted from
+   *  "short" to "long" TTL based on observed inter-turn timing.
+   *  Requires sessionKey, getElapsedSinceLastResponse, AND getLastResponseTs. */
+  promoteRecentZoneOnSlowCadence?: boolean;
+  /** Getter for the raw `sessionLastResponseTs.ts` value (ms since epoch)
+   *  for this session, or undefined on cold-start. Used by the cadence
+   *  tracker to detect turn boundaries within a single execute(). */
+  getLastResponseTs?: () => number | undefined;
   /** Number of recent tool results to preserve during microcompact.
    *  Defaults to 25 (matches observation masker keep window). */
   observationKeepWindow?: number;
@@ -175,6 +183,26 @@ export function clearSessionPrefixStability(sessionKey: string): void {
 export function clearSessionBetaHeaderLatches(sessionKey: string): void {
   sessionBetaHeaderLatches.delete(sessionKey);
 }
+
+// ---------------------------------------------------------------------------
+// Cadence tracker for recent-zone TTL promotion.
+// Tracks consecutive turns of same-side cadence to decide promotion.
+// ---------------------------------------------------------------------------
+interface CadenceTrackerEntry {
+  consecutiveSlowTurns: number;
+  consecutiveFastTurns: number;
+  promoted: boolean;
+  lastObservedResponseTs: number | undefined;
+}
+const sessionCadenceTracker = new Map<string, CadenceTrackerEntry>();
+
+export function clearSessionCadenceTracker(sessionKey: string): void {
+  sessionCadenceTracker.delete(sessionKey);
+}
+
+const SLOW_CADENCE_PROMOTION_THRESHOLD = 3;
+const FAST_CADENCE_DEMOTION_THRESHOLD = 5;
+const SLOW_CADENCE_MS = 5 * 60 * 1000; // 5 minutes
 
 // ---------------------------------------------------------------------------
 // Per-model cache retention override resolution.
@@ -372,6 +400,10 @@ interface BreakpointOptions {
   /** Skip cache_control on final messages for sub-agent spawns.
    *  Shifts the recent-zone breakpoint back by one user message position. */
   skipCacheWrite?: boolean;
+  /** When true, promote recent-zone from "short" to "long" on slow cadence. */
+  promoteRecentZoneOnSlowCadence?: boolean;
+  /** Session key for cadence tracker lookup. */
+  sessionKey?: string;
 }
 
 /**
@@ -582,7 +614,17 @@ function placeCacheBreakpoints(
     const startFrom = semiStableIdx >= 0 ? semiStableIdx + 1 : 0;
     const tokensInRange = estimateTokensInRange(startFrom, secondToLastUserIdx);
     if (tokensInRange >= minTokens) {
-      addCacheControlToLastBlock(messages[secondToLastUserIdx] as any, retention);
+      // Promote recent-zone to "long" when cadence indicates user pauses exceed 5m.
+      // Monotonicity guard: recent zone can only be promoted when
+      // resolvedRetention (tool/system) is already "long".
+      let recentRetention = retention;
+      if (options.promoteRecentZoneOnSlowCadence && options.sessionKey) {
+        const cadence = sessionCadenceTracker.get(options.sessionKey);
+        if (cadence?.promoted && resolvedRetention === "long") {
+          recentRetention = "long";
+        }
+      }
+      addCacheControlToLastBlock(messages[secondToLastUserIdx] as any, recentRetention);
       placed++;
     }
   }
@@ -616,7 +658,7 @@ function placeCacheBreakpoints(
   // The Anthropic API uses a 20-block lookback window for cache prefix matching.
   // If any gap exceeds the window and slots remain, place a bridging breakpoint
   // at the midpoint of the gap to prevent silent cache misses.
-  if (placed > 0 && placed < Math.min(maxBreakpoints, 3)) {
+  if (placed > 0 && placed < maxBreakpoints) {
     const breakpointPositions: number[] = [];
     for (let i = 0; i < messages.length; i++) {
       const content = (messages[i] as any).content;
@@ -631,7 +673,7 @@ function placeCacheBreakpoints(
     }
 
     // Check gaps between consecutive breakpoints
-    for (let g = 1; g < breakpointPositions.length && placed < Math.min(maxBreakpoints, 3); g++) {
+    for (let g = 1; g < breakpointPositions.length && placed < maxBreakpoints; g++) {
       const gap = breakpointPositions[g]! - breakpointPositions[g - 1]!;
       if (gap > CACHE_LOOKBACK_WINDOW) {
         // Find a user message near the midpoint of the gap
@@ -1644,6 +1686,8 @@ export function createRequestBodyInjector(
                   resolvedRetention: inCooldown ? "short" : messageRetention, // Force "short" during cooldown
                   strategy: resolveBreakpointStrategy(config.cacheBreakpointStrategy, model.provider),
                   skipCacheWrite: effectiveSkipCacheWrite,
+                  promoteRecentZoneOnSlowCadence: config.promoteRecentZoneOnSlowCadence,
+                  sessionKey: config.sessionKey,
                 },
               );
               if (placed > 0) {
@@ -1811,6 +1855,56 @@ export function createRequestBodyInjector(
           // Feed payload to cache break detector Phase 1 (after breakpoint placement)
           if (config.onPayloadForCacheDetection) {
             config.onPayloadForCacheDetection(result, model, mergedHeaders);
+          }
+
+          // Track cadence for recent-zone promotion (symmetric: promote slow, demote on fast).
+          // Runs after onPayloadForCacheDetection so the detection snapshot reflects the
+          // pre-mutation state. Mutation takes effect on the next turn's placeCacheBreakpoints().
+          if (config.promoteRecentZoneOnSlowCadence && config.sessionKey
+              && config.getElapsedSinceLastResponse && config.getLastResponseTs) {
+            const lastResponseTs = config.getLastResponseTs();
+            if (lastResponseTs !== undefined) {
+              let tracker = sessionCadenceTracker.get(config.sessionKey);
+              if (!tracker) {
+                tracker = {
+                  consecutiveSlowTurns: 0,
+                  consecutiveFastTurns: 0,
+                  promoted: false,
+                  lastObservedResponseTs: undefined,
+                };
+                sessionCadenceTracker.set(config.sessionKey, tracker);
+              }
+
+              // Same-turn guard: successive onPayload calls inside one execute() all
+              // observe the same lastResponseTs. Only count once per turn boundary.
+              if (lastResponseTs !== tracker.lastObservedResponseTs) {
+                tracker.lastObservedResponseTs = lastResponseTs;
+                const elapsed = config.getElapsedSinceLastResponse();
+                if (elapsed !== undefined) {
+                  if (elapsed > SLOW_CADENCE_MS) {
+                    tracker.consecutiveSlowTurns++;
+                    tracker.consecutiveFastTurns = 0;
+                    if (!tracker.promoted && tracker.consecutiveSlowTurns >= SLOW_CADENCE_PROMOTION_THRESHOLD) {
+                      tracker.promoted = true;
+                      logger.info(
+                        { sessionKey: config.sessionKey, consecutiveSlowTurns: tracker.consecutiveSlowTurns },
+                        "Recent-zone TTL promoted to long: slow cadence detected",
+                      );
+                    }
+                  } else {
+                    tracker.consecutiveFastTurns++;
+                    tracker.consecutiveSlowTurns = 0;
+                    if (tracker.promoted && tracker.consecutiveFastTurns >= FAST_CADENCE_DEMOTION_THRESHOLD) {
+                      tracker.promoted = false;
+                      logger.info(
+                        { sessionKey: config.sessionKey, consecutiveFastTurns: tracker.consecutiveFastTurns },
+                        "Recent-zone TTL demoted to short: fast cadence resumed",
+                      );
+                    }
+                  }
+                }
+              }
+            }
           }
 
           // SDK-UPGRADE: Upgrade SDK auto-placed 5m markers to 1h when retention is long.

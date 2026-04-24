@@ -21,7 +21,7 @@ import { clearSessionTracker } from "./tool-lifecycle.js";
 import { clearDiscoveryTracker } from "./discovery-tracker.js";
 import { clearCacheBreakDetectorSession } from "./cache-break-detection.js";
 import { clearSessionLastResponseTs } from "./ttl-guard.js";
-import { clearSessionBetaHeaderLatches } from "./stream-wrappers/request-body-injector.js";
+import { clearSessionBetaHeaderLatches, clearSessionPrefixStability, clearSessionCadenceTracker } from "./stream-wrappers/request-body-injector.js";
 import { clearSessionRenderedToolCache, clearSessionPerToolCache } from "./stream-wrappers/tool-schema-cache.js";
 import { clearSessionBlockStability } from "./block-stability-tracker.js";
 
@@ -51,6 +51,8 @@ export function clearSessionState(formattedKey: string): void {
   clearSessionBlockStability(formattedKey);
   clearSessionEvictionCooldown(formattedKey);
   clearSessionCacheSavings(formattedKey);
+  clearSessionPrefixStability(formattedKey);
+  clearSessionCadenceTracker(formattedKey);
 }
 
 /**

@@ -39,7 +39,7 @@ import {
   type SenderTrustDisplayConfig,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/infra";
-import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
+import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult } from "./tool-deferral.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
@@ -510,6 +510,23 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   mergedCustomTools = [...deferralResult.activeTools, ...deferralResult.discoveredTools];
   if (deferralResult.discoverTool) {
     mergedCustomTools.push(deferralResult.discoverTool);
+  }
+
+  // 7b. Auto-discovery stubs for deferred tools.
+  // Lightweight stubs so the SDK's agent-loop finds deferred tools during
+  // tool resolution. Prevents "Tool X not found" errors when skills
+  // reference deferred MCP tools directly. Stubs are filtered from the
+  // API request by createStubFilterInjector (see stream-wrappers/
+  // stub-filter-injector.ts) -- zero token cost guarantee.
+  // Position: BEFORE JIT guide wrapping / schema pruning / sideEffects
+  // wrapping -- stubs receive all downstream wrappers automatically.
+  if (deferralResult.deferredEntries.length > 0) {
+    const stubs = createAutoDiscoveryStubs(
+      deferralResult.deferredEntries,
+      discoveryTracker,
+      deps.logger,
+    );
+    mergedCustomTools.push(...stubs);
   }
 
   // Build deferred context for dynamic preamble injection

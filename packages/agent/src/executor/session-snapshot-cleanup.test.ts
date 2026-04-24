@@ -19,6 +19,8 @@ const mockClearCacheSafeParams = vi.hoisted(() => vi.fn());
 const mockClearSessionRenderedToolCache = vi.hoisted(() => vi.fn());
 const mockClearSessionPerToolCache = vi.hoisted(() => vi.fn());
 const mockClearSessionBetaHeaderLatches = vi.hoisted(() => vi.fn());
+const mockClearSessionPrefixStability = vi.hoisted(() => vi.fn());
+const mockClearSessionCadenceTracker = vi.hoisted(() => vi.fn());
 const mockClearSessionLatches = vi.hoisted(() => vi.fn());
 const mockClearSessionEvictionCooldown = vi.hoisted(() => vi.fn());
 const mockClearSessionCacheSavings = vi.hoisted(() => vi.fn());
@@ -59,6 +61,8 @@ vi.mock("./ttl-guard.js", () => ({
 
 vi.mock("./stream-wrappers/request-body-injector.js", () => ({
   clearSessionBetaHeaderLatches: mockClearSessionBetaHeaderLatches,
+  clearSessionPrefixStability: mockClearSessionPrefixStability,
+  clearSessionCadenceTracker: mockClearSessionCadenceTracker,
 }));
 
 vi.mock("./stream-wrappers/tool-schema-cache.js", () => ({
@@ -82,7 +86,7 @@ describe("session-snapshot-cleanup", () => {
   // ---------------------------------------------------------------------------
 
   describe("clearSessionState", () => {
-    it("delegates to all 19 clearSession* functions with the same key", () => {
+    it("delegates to all 21 clearSession* functions with the same key", () => {
       const key = "agent:bot1:t:u:c";
 
       clearSessionState(key);
@@ -106,6 +110,8 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionLatches).toHaveBeenCalledWith(key);
       expect(mockClearSessionEvictionCooldown).toHaveBeenCalledWith(key);
       expect(mockClearSessionCacheSavings).toHaveBeenCalledWith(key);
+      expect(mockClearSessionPrefixStability).toHaveBeenCalledWith(key);
+      expect(mockClearSessionCadenceTracker).toHaveBeenCalledWith(key);
     });
 
     it("calls each function exactly once", () => {
@@ -130,6 +136,8 @@ describe("session-snapshot-cleanup", () => {
       expect(mockClearSessionLatches).toHaveBeenCalledTimes(1);
       expect(mockClearSessionEvictionCooldown).toHaveBeenCalledTimes(1);
       expect(mockClearSessionCacheSavings).toHaveBeenCalledTimes(1);
+      expect(mockClearSessionPrefixStability).toHaveBeenCalledTimes(1);
+      expect(mockClearSessionCadenceTracker).toHaveBeenCalledTimes(1);
     });
   });
 

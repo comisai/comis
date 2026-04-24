@@ -6,6 +6,7 @@ import { formatSessionKey, runWithContext, tryGetContext } from "@comis/core";
 import type { ExecutionResult } from "./types.js";
 import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot } from "./prompt-assembly.js";
 import { clearSessionToolSchemaSnapshot } from "./pi-executor.js";
+import { resetPairedMemoryDedupForTests } from "./executor-post-execution.js";
 import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "./cache-break-detection.js";
 
 // ---------------------------------------------------------------------------
@@ -218,6 +219,7 @@ vi.mock("../bootstrap/index.js", () => ({
   buildBootstrapContextFiles: mockBuildBootstrapContextFiles,
   filterBootstrapFilesForLightContext: vi.fn().mockReturnValue([]),
   filterBootstrapFilesForGroupChat: vi.fn().mockReturnValue([]),
+  filterBootstrapFilesForCron: vi.fn().mockReturnValue([]),
   resolveSenderDisplay: vi.fn().mockImplementation((sid: string) => sid),
   resolveVerbosityProfile: vi.fn().mockReturnValue(undefined),
   buildVerbosityHintSection: vi.fn().mockReturnValue([]),
@@ -2867,8 +2869,8 @@ describe("PiExecutor", () => {
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      // +1 for ttlGuard wrapper (was 5, now 6)
-      expect(composedLog![0].wrapperCount).toBe(6);
+      // +1 for ttlGuard wrapper (was 5, now 6), +1 for stubFilterInjector (now 7)
+      expect(composedLog![0].wrapperCount).toBe(7);
     });
 
     it("adds trace wrappers when tracing.enabled is true", async () => {
@@ -2895,13 +2897,13 @@ describe("PiExecutor", () => {
       expect(traceLog![0].apiPayloadPath).toContain("/tmp/test-traces/");
       expect(traceLog![0].apiPayloadPath).toContain(".api-payload.jsonl");
 
-      // Should have 8 wrappers applied (6 base + 2 trace)
+      // Should have 9 wrappers applied (7 base + 2 trace)
       const debugCalls = (deps.logger.debug as Mock).mock.calls;
       const composedLog = debugCalls.find(
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      expect(composedLog![0].wrapperCount).toBe(8);
+      expect(composedLog![0].wrapperCount).toBe(9);
     });
 
     it("trace wrappers are positioned after requestBodyInjector in chain", async () => {
@@ -2938,6 +2940,7 @@ describe("PiExecutor", () => {
         "requestBodyInjector",
         "cacheTraceWriter",
         "apiPayloadTraceWriter",
+        "stubFilterInjector",
       ]);
 
       // Trace wrappers are innermost (closest to base SDK streamFn),
@@ -2965,8 +2968,8 @@ describe("PiExecutor", () => {
         ([_fields, msg]: [any, string]) => msg === "Stream wrappers composed",
       );
       expect(composedLog).toBeDefined();
-      // +1 for ttlGuard wrapper (was 5, now 6)
-      expect(composedLog![0].wrapperCount).toBe(6);
+      // +1 for ttlGuard wrapper (was 5, now 6), +1 for stubFilterInjector (now 7)
+      expect(composedLog![0].wrapperCount).toBe(7);
     });
 
     it("passes sessionId (formattedKey) to both trace wrapper configs", async () => {
@@ -3471,6 +3474,12 @@ describe("PiExecutor", () => {
     const memoryTestText = "tell me about this project and explain the main architecture patterns";
     const memoryTestMessage = { ...testMessage, text: memoryTestText } as NormalizedMessage;
 
+    // Clear the module-level paired-memory dedup cache between tests so that
+    // hash-dedup state from one test does not bleed into the next.
+    beforeEach(() => {
+      resetPairedMemoryDedupForTests();
+    });
+
     it("stores user conversation turn to memory after execution", async () => {
       const mockStore = vi.fn().mockResolvedValue(ok({ id: "test" }));
       const mockEmbeddingEnqueue = vi.fn();
@@ -3621,6 +3630,145 @@ describe("PiExecutor", () => {
       await executor.execute(thresholdMsg, testSessionKey);
 
       expect(mockStore).toHaveBeenCalledTimes(1);
+    });
+
+    // ---------------------------------------------------------------------
+    // Operation-type gate (Layer 1): skip memory for cron/heartbeat/internal
+    // ---------------------------------------------------------------------
+
+    // Helper: call executor with an operationType override.
+    async function executeWithOp(
+      operationType: string,
+      text: string,
+      deps: PiExecutorDeps,
+    ): Promise<ExecutionResult> {
+      const msg = { ...testMessage, text } as NormalizedMessage;
+      const executor = createPiExecutor(testConfig, deps);
+      return executor.execute(
+        msg, testSessionKey, undefined, undefined, "test-agent",
+        undefined, undefined,
+        { operationType } as any,
+      );
+    }
+
+    it.each([
+      ["cron"],
+      ["heartbeat"],
+      ["compaction"],
+      ["taskExtraction"],
+      ["condensation"],
+    ])("skips paired memory for operationType=%s", async (operationType) => {
+      const mockStore = vi.fn().mockResolvedValue(ok({ id: "test" }));
+      const mockEmbeddingEnqueue = vi.fn();
+      const deps = createMockDeps({
+        memoryPort: { store: mockStore, search: vi.fn(), retrieve: vi.fn(), update: vi.fn(), delete: vi.fn(), clear: vi.fn() } as any,
+        embeddingEnqueue: mockEmbeddingEnqueue,
+      });
+
+      await executeWithOp(operationType, memoryTestText, deps);
+
+      expect(mockStore).not.toHaveBeenCalled();
+      expect(mockEmbeddingEnqueue).not.toHaveBeenCalled();
+      expect(deps.logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ operationType }),
+        "Paired memory skipped: non-interactive operation type",
+      );
+    });
+
+    it("stores paired memory for operationType=interactive", async () => {
+      const mockStore = vi.fn().mockResolvedValue(ok({ id: "test" }));
+      const deps = createMockDeps({
+        memoryPort: { store: mockStore, search: vi.fn(), retrieve: vi.fn(), update: vi.fn(), delete: vi.fn(), clear: vi.fn() } as any,
+      });
+
+      // Unique text so content-hash dedup (Layer 2) doesn't suppress this one.
+      await executeWithOp("interactive", memoryTestText + " :: interactive-op-test", deps);
+
+      expect(mockStore).toHaveBeenCalledTimes(1);
+    });
+
+    it("stores paired memory for operationType=subagent", async () => {
+      const mockStore = vi.fn().mockResolvedValue(ok({ id: "test" }));
+      const deps = createMockDeps({
+        memoryPort: { store: mockStore, search: vi.fn(), retrieve: vi.fn(), update: vi.fn(), delete: vi.fn(), clear: vi.fn() } as any,
+      });
+
+      await executeWithOp("subagent", memoryTestText + " :: subagent-op-test", deps);
+
+      expect(mockStore).toHaveBeenCalledTimes(1);
+    });
+
+    it("operationType skip takes precedence over quality gate", async () => {
+      // Short message that would fail the quality gate anyway.
+      // Assert that the OPERATION skip reason is logged, not the quality one.
+      const mockStore = vi.fn().mockResolvedValue(ok({ id: "test" }));
+      const deps = createMockDeps({
+        memoryPort: { store: mockStore, search: vi.fn(), retrieve: vi.fn(), update: vi.fn(), delete: vi.fn(), clear: vi.fn() } as any,
+      });
+
+      // Long enough to pass quality gate so we isolate the operation gate.
+      await executeWithOp("cron", memoryTestText + " :: precedence-test", deps);
+
+      expect(mockStore).not.toHaveBeenCalled();
+      const debugCalls = (deps.logger.debug as Mock).mock.calls.map(
+        ([, msg]: [unknown, string]) => msg,
+      );
+      expect(debugCalls).toContain("Paired memory skipped: non-interactive operation type");
+      expect(debugCalls).not.toContain("Paired memory skipped: content below quality threshold");
+    });
+
+    // ---------------------------------------------------------------------
+    // Content-hash dedup (Layer 2)
+    // ---------------------------------------------------------------------
+
+    it("skips duplicate paired memory within dedup window", async () => {
+      const mockStore = vi.fn().mockResolvedValue(ok({ id: "test" }));
+      const deps = createMockDeps({
+        memoryPort: { store: mockStore, search: vi.fn(), retrieve: vi.fn(), update: vi.fn(), delete: vi.fn(), clear: vi.fn() } as any,
+      });
+
+      const dupText = memoryTestText + " :: dedup-same";
+      await executeWithOp("interactive", dupText, deps);
+      await executeWithOp("interactive", dupText, deps);
+
+      expect(mockStore).toHaveBeenCalledTimes(1);
+      const debugCalls = (deps.logger.debug as Mock).mock.calls.map(
+        ([, msg]: [unknown, string]) => msg,
+      );
+      expect(debugCalls).toContain("Paired memory skipped: duplicate content within dedup window");
+    });
+
+    it("allows different paired content through dedup", async () => {
+      const mockStore = vi.fn().mockResolvedValue(ok({ id: "test" }));
+      const deps = createMockDeps({
+        memoryPort: { store: mockStore, search: vi.fn(), retrieve: vi.fn(), update: vi.fn(), delete: vi.fn(), clear: vi.fn() } as any,
+      });
+
+      await executeWithOp("interactive", memoryTestText + " :: dedup-A", deps);
+      await executeWithOp("interactive", memoryTestText + " :: dedup-B", deps);
+
+      expect(mockStore).toHaveBeenCalledTimes(2);
+    });
+
+    // ---------------------------------------------------------------------
+    // Source traceability (4C)
+    // ---------------------------------------------------------------------
+
+    it("stores sessionKey in memory source for traceability", async () => {
+      const mockStore = vi.fn().mockResolvedValue(ok({ id: "test" }));
+      const deps = createMockDeps({
+        memoryPort: { store: mockStore, search: vi.fn(), retrieve: vi.fn(), update: vi.fn(), delete: vi.fn(), clear: vi.fn() } as any,
+      });
+
+      await executeWithOp("interactive", memoryTestText + " :: source-test", deps);
+
+      expect(mockStore).toHaveBeenCalledTimes(1);
+      const entry = mockStore.mock.calls[0][0];
+      expect(entry.source).toMatchObject({
+        who: "u1",
+        channel: "test",
+        sessionKey: formatSessionKey(testSessionKey),
+      });
     });
   });
 

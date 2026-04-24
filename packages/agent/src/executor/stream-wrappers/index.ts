@@ -51,3 +51,7 @@ export {
   clearSessionPerToolCache,
 } from "./tool-schema-cache.js";
 export type { RenderedToolCacheEntry, PerToolCacheEntry } from "./tool-schema-cache.js";
+
+// Stub filter injector (auto-discovery stubs)
+export { createStubFilterInjector } from "./stub-filter-injector.js";
+export type { StubFilterInjectorConfig } from "./stub-filter-injector.js";

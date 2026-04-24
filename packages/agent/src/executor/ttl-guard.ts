@@ -133,6 +133,15 @@ export function getElapsedSinceLastResponse(sessionKey: string): number | undefi
   return Date.now() - entry.ts;
 }
 
+/**
+ * Get the raw timestamp of the last recorded response for a session.
+ * Returns undefined if no response has been recorded (cold-start).
+ * Used by the cadence tracker to detect turn boundaries.
+ */
+export function getLastResponseTs(sessionKey: string): number | undefined {
+  return sessionLastResponseTs.get(sessionKey)?.ts;
+}
+
 // ---------------------------------------------------------------------------
 // Test-only export
 // ---------------------------------------------------------------------------

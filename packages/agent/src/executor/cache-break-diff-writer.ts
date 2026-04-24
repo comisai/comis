@@ -13,6 +13,7 @@
 import { writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { createPatch } from "diff";
 import { safePath } from "@comis/core";
+import { resolveModelPricing, ZERO_COST } from "../model/model-catalog.js";
 
 const MAX_DIFF_FILES = 50;
 
@@ -71,6 +72,8 @@ export interface CacheBreakDiffPayload {
     message: number;
     sdkAuto: number;
   };
+  /** Model ID for per-model cost attribution. Populated by pi-event-bridge.ts. */
+  model?: string;
 }
 
 export interface CacheBreakDiffWriterConfig {
@@ -112,6 +115,7 @@ export function createCacheBreakDiffWriter(
   config: CacheBreakDiffWriterConfig,
 ): (event: CacheBreakDiffPayload) => void {
   let dirEnsured = false;
+  const unknownModelWarnLatch = new Set<string>();
 
   return (event: CacheBreakDiffPayload): void => {
     try {
@@ -125,6 +129,31 @@ export function createCacheBreakDiffWriter(
       const ts = new Date(event.timestamp).toISOString().replace(/[:.]/g, "-");
       const filename = `${ts}_${event.agentId}_${event.reason}.json`;
       const filePath = safePath(config.outputDir, filename);
+
+      // Cost attribution: compute estimated USD impact using per-model pricing.
+      const modelId = event.model ?? "";
+      const pricing = resolveModelPricing(event.provider, modelId);
+      const pricingKnown = pricing !== ZERO_COST && pricing.input > 0;
+      const retentionDisabled = event.ttlCategory === "none";
+
+      const writeRatePerToken =
+        event.ttlCategory === "long" ? pricing.cacheWrite1h : pricing.cacheWrite;
+      const readRatePerToken = pricing.cacheRead;
+      const perTokenDelta = Math.max(0, writeRatePerToken - readRatePerToken);
+      const estimatedCostUsd = retentionDisabled
+        ? 0
+        : (pricingKnown ? event.tokenDrop * perTokenDelta : null);
+
+      if (!pricingKnown && !retentionDisabled && modelId) {
+        const latchKey = `${event.provider}:${modelId}`;
+        if (!unknownModelWarnLatch.has(latchKey)) {
+          unknownModelWarnLatch.add(latchKey);
+          config.logger.warn(
+            { provider: event.provider, model: modelId, hint: "Cache break cost attribution unavailable for this model", errorKind: "config" as const },
+            "Unknown model pricing for cache break cost attribution",
+          );
+        }
+      }
 
       const diff = {
         timestamp: new Date(event.timestamp).toISOString(),
@@ -161,6 +190,22 @@ export function createCacheBreakDiffWriter(
         effortValue: event.effortValue,
         // Breakpoint budget context
         ...(event.breakpointBudget && { breakpointBudget: event.breakpointBudget }),
+        // Cost attribution
+        estimatedCostUsd: estimatedCostUsd === null
+          ? null
+          : Math.round((estimatedCostUsd as number) * 100_000) / 100_000,
+        costBreakdown: {
+          writeRatePerMTok: pricingKnown
+            ? Math.round(writeRatePerToken * 1_000_000 * 100) / 100
+            : null,
+          readRatePerMTok: pricingKnown
+            ? Math.round(readRatePerToken * 1_000_000 * 100) / 100
+            : null,
+          tokenDrop: event.tokenDrop,
+          model: event.model ?? null,
+          ttlCategory: event.ttlCategory,
+          pricingKnown,
+        },
       };
 
       writeFileSync(filePath, JSON.stringify(diff, null, 2) + "\n");

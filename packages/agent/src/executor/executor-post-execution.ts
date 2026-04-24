@@ -40,7 +40,7 @@ import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { ContextEngine } from "../context-engine/index.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -176,6 +176,74 @@ export function shouldStorePairedMemory(userText: string, agentResponse: string)
   if (combinedLen < PAIRED_MIN_COMBINED_CHARS) return false;
 
   return true;
+}
+
+/**
+ * Operation types that must NOT create paired memories.
+ *
+ * Cron and heartbeat executions are stateless and repetitive -- storing their
+ * prompts pollutes the vector space and degrades RAG recall for interactive
+ * conversations. Compaction / taskExtraction / condensation are system-internal
+ * operations that have their own dedicated memory paths (compaction summaries,
+ * extracted tasks) and should not additionally create paired conversation
+ * entries. Interactive and subagent are deliberately excluded.
+ */
+const MEMORY_SKIP_OPERATIONS: ReadonlySet<string> = new Set([
+  "cron",
+  "heartbeat",
+  "compaction",
+  "taskExtraction",
+  "condensation",
+]);
+
+/**
+ * In-memory dedup cache for paired memory content.
+ *
+ * Defense-in-depth for interactive conversations where the user sends the same
+ * message multiple times (retries, reconnects). The Layer-1 operationType gate
+ * is the primary defense against cron/heartbeat duplication; this Layer-2 hash
+ * dedup catches residual duplicates that slip through.
+ *
+ * Keyed by a 64-bit truncation of sha256(agentId || content). Single-process
+ * daemon deployment (pm2, no cluster) means this cache is always complete.
+ */
+const DEDUP_TTL_MS = 10 * 60 * 1000;
+const DEDUP_MAX_ENTRIES = 500;
+const pairedMemoryDedup = new Map<string, number>();
+
+/**
+ * Check whether paired memory content was stored recently for this agent.
+ *
+ * Exact-content hashing (not semantic similarity) -- targets the cron pattern
+ * of identical prompt + identical NO_REPLY response. Lazy eviction keeps the
+ * cache bounded without a timer.
+ *
+ * Exported for unit tests.
+ */
+export function isDuplicatePairedMemory(content: string, agentId: string): boolean {
+  const now = Date.now();
+
+  if (pairedMemoryDedup.size > DEDUP_MAX_ENTRIES) {
+    for (const [key, ts] of pairedMemoryDedup) {
+      if (now - ts > DEDUP_TTL_MS) pairedMemoryDedup.delete(key);
+    }
+  }
+
+  const hash = createHash("sha256")
+    .update(agentId)
+    .update(content)
+    .digest("hex")
+    .slice(0, 16);
+
+  const existing = pairedMemoryDedup.get(hash);
+  if (existing != null && now - existing <= DEDUP_TTL_MS) return true;
+  pairedMemoryDedup.set(hash, now);
+  return false;
+}
+
+/** Reset the paired-memory dedup cache. Exported for unit tests. */
+export function resetPairedMemoryDedupForTests(): void {
+  pairedMemoryDedup.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -446,41 +514,77 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // Pairing user message with agent response creates entries that carry enough
   // context for meaningful RAG retrieval. Standalone user messages like "Hello"
   // or "you choose" have no semantic value without the agent's response.
-  // Runs for ALL execution paths: gateway, channels, cron.
+  //
+  // Two-layer dedup defense:
+  //   Layer 1: operationType gate -- skip cron/heartbeat/system-internal ops
+  //            which are stateless/repetitive and would pollute the vector
+  //            space with near-identical entries.
+  //   Layer 2: content-hash dedup -- safety net for interactive retries.
+  //
   // Non-blocking, non-fatal -- execution never fails due to memory store errors.
-  if (deps.memoryPort && result.response && msg.text && shouldStorePairedMemory(msg.text, result.response)) {
-    try {
-      const now = Date.now();
-      const userEntryId = randomUUID();
-      const pairedContent = buildPairedMemoryContent(msg.text, result.response);
-      const userStoreResult = await deps.memoryPort.store({
-        id: userEntryId,
-        tenantId: sessionKey.tenantId,
-        agentId: agentId ?? "default",
-        userId: sessionKey.userId,
-        content: pairedContent,
-        trustLevel: "learned",
-        source: { who: sessionKey.userId, channel: msg.channelType ?? "unknown" },
-        tags: ["conversation", "paired"],
-        createdAt: now,
-      });
-      if (!userStoreResult.ok) {
-        deps.logger.warn(
-          { err: userStoreResult.error.message, hint: "Check database connectivity and disk space", errorKind: "dependency" as ErrorKind },
-          "Memory store failed for user message",
-        );
-      } else if (deps.embeddingEnqueue) {
-        deps.embeddingEnqueue(userEntryId, pairedContent);
+  const operationType = params.executionOverrides?.operationType;
+  const skipMemoryForOperation =
+    operationType != null && MEMORY_SKIP_OPERATIONS.has(operationType);
+
+  if (
+    deps.memoryPort &&
+    result.response &&
+    msg.text &&
+    !skipMemoryForOperation &&
+    shouldStorePairedMemory(msg.text, result.response)
+  ) {
+    const now = Date.now();
+    const pairedContent = buildPairedMemoryContent(msg.text, result.response);
+    const effectiveAgentId = agentId ?? "default";
+
+    if (isDuplicatePairedMemory(pairedContent, effectiveAgentId)) {
+      deps.logger.debug(
+        { agentId: effectiveAgentId, sessionKey: formattedKey },
+        "Paired memory skipped: duplicate content within dedup window",
+      );
+    } else {
+      try {
+        const userEntryId = randomUUID();
+        const userStoreResult = await deps.memoryPort.store({
+          id: userEntryId,
+          tenantId: sessionKey.tenantId,
+          agentId: effectiveAgentId,
+          userId: sessionKey.userId,
+          content: pairedContent,
+          trustLevel: "learned",
+          source: {
+            who: sessionKey.userId,
+            channel: msg.channelType ?? "unknown",
+            sessionKey: formattedKey,
+          },
+          tags: ["conversation", "paired"],
+          createdAt: now,
+        });
+        if (!userStoreResult.ok) {
+          deps.logger.warn(
+            { err: userStoreResult.error.message, hint: "Check database connectivity and disk space", errorKind: "dependency" as ErrorKind },
+            "Memory store failed for user message",
+          );
+        } else if (deps.embeddingEnqueue) {
+          deps.embeddingEnqueue(userEntryId, pairedContent);
+        }
+      } catch {
+        // Memory storage failure is non-fatal -- errors already logged per-entry
       }
-    } catch {
-      // Memory storage failure is non-fatal -- errors already logged per-entry
     }
   } else if (deps.memoryPort && result.response && msg.text) {
-    // Quality gate filtered this turn -- log for observability
-    deps.logger.debug(
-      { userLen: msg.text.trim().length, minUserChars: PAIRED_MIN_USER_CHARS, minCombinedChars: PAIRED_MIN_COMBINED_CHARS },
-      "Paired memory skipped: content below quality threshold",
-    );
+    // Memory not stored -- distinguish the two skip reasons for observability.
+    if (skipMemoryForOperation) {
+      deps.logger.debug(
+        { operationType, sessionKey: formattedKey },
+        "Paired memory skipped: non-interactive operation type",
+      );
+    } else {
+      deps.logger.debug(
+        { userLen: msg.text.trim().length, minUserChars: PAIRED_MIN_USER_CHARS, minCombinedChars: PAIRED_MIN_COMBINED_CHARS },
+        "Paired memory skipped: content below quality threshold",
+      );
+    }
   }
 
   // Deregister active run before dispose

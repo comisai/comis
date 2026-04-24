@@ -14,7 +14,9 @@ import type { Command } from "commander";
 import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync } from "node:fs";
 import * as os from "node:os";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
+import chalk from "chalk";
 import { safePath } from "@comis/core";
 import { withClient } from "../client/rpc-client.js";
 import { success, error, info, warn } from "../output/format.js";
@@ -28,6 +30,70 @@ const LOG_FILE = safePath(COMIS_DIR, "daemon.log");
 
 /** Max time to wait for daemon gateway to become ready (ms). */
 const READY_TIMEOUT_MS = 15_000;
+
+// ---------- Log formatting ----------
+
+const PINO_LEVELS: Record<number, { label: string; color: (s: string) => string }> = {
+  10: { label: "TRACE", color: chalk.gray },
+  20: { label: "DEBUG", color: chalk.gray },
+  30: { label: "INFO", color: chalk.cyan },
+  40: { label: "WARN", color: chalk.yellow },
+  50: { label: "ERROR", color: chalk.red },
+  60: { label: "FATAL", color: chalk.bgRed.white },
+};
+
+const PINO_META_KEYS = new Set([
+  "level", "time", "pid", "hostname", "name", "msg", "module",
+  "levelValue", "instanceId",
+]);
+
+function formatPinoLine(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("{")) return line;
+
+  let record: Record<string, unknown>;
+  try {
+    record = JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    return line;
+  }
+
+  if (typeof record["level"] !== "number" && typeof record["level"] !== "string") return line;
+
+  const levelNum = typeof record["level"] === "number"
+    ? record["level"] as number
+    : ({ trace: 10, debug: 20, info: 30, warn: 40, error: 50, fatal: 60 }[record["level"] as string] ?? 30);
+  const levelInfo = PINO_LEVELS[levelNum] ?? { label: String(record["level"]), color: chalk.white };
+
+  const time = record["time"]
+    ? new Date(record["time"] as string | number).toLocaleTimeString()
+    : "";
+  const mod = record["module"] ? `[${record["module"]}]` : "";
+  const msg = record["msg"] ?? "";
+
+  const extra: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(record)) {
+    if (!PINO_META_KEYS.has(k)) extra[k] = v;
+  }
+  const extraStr = Object.keys(extra).length > 0
+    ? chalk.gray(` ${JSON.stringify(extra)}`)
+    : "";
+
+  return `${chalk.dim(time)} ${levelInfo.color(levelInfo.label.padEnd(5))} ${chalk.blue(mod)} ${msg}${extraStr}`;
+}
+
+function formatLogOutput(raw: string): string {
+  return raw
+    .split("\n")
+    .map((line) => (line.trim() ? formatPinoLine(line) : line))
+    .join("\n");
+}
+
+function pipeFormatted(child: import("node:child_process").ChildProcess): void {
+  if (!child.stdout) return;
+  const rl = createInterface({ input: child.stdout });
+  rl.on("line", (line) => console.log(formatPinoLine(line)));
+}
 /** Interval between readiness polls (ms). */
 const READY_POLL_MS = 500;
 
@@ -545,7 +611,7 @@ async function handleDaemonStatus(): Promise<void> {
 }
 
 /** Handle the `daemon logs` subcommand. */
-async function handleDaemonLogs(options: { follow?: boolean; lines: string }): Promise<void> {
+async function handleDaemonLogs(options: { follow?: boolean; lines: string; raw?: boolean }): Promise<void> {
   try {
     const manager = await detectServiceManager();
     switch (manager) {
@@ -569,56 +635,74 @@ async function handleDaemonLogs(options: { follow?: boolean; lines: string }): P
 
 async function streamSystemdLogs(
   scope: "systemd" | "systemd-user",
-  options: { follow?: boolean; lines: string },
+  options: { follow?: boolean; lines: string; raw?: boolean },
 ): Promise<void> {
-  const jArgs = ["--unit=comis", "--no-pager", `-n${options.lines}`];
+  const jArgs = ["--unit=comis", "--no-pager", `-n${options.lines}`, "--output=cat"];
   if (scope === "systemd-user") jArgs.push("--user");
   if (options.follow) jArgs.push("--follow");
 
   if (options.follow) {
-    const child = spawn("journalctl", jArgs, { stdio: "inherit" });
-    child.on("error", (err) => {
-      error(`Failed to read logs: ${err.message}`);
-      process.exit(1);
-    });
+    if (options.raw) {
+      const child = spawn("journalctl", jArgs, { stdio: "inherit" });
+      child.on("error", (err) => {
+        error(`Failed to read logs: ${err.message}`);
+        process.exit(1);
+      });
+    } else {
+      const child = spawn("journalctl", jArgs, { stdio: ["ignore", "pipe", "inherit"] });
+      child.on("error", (err) => {
+        error(`Failed to read logs: ${err.message}`);
+        process.exit(1);
+      });
+      pipeFormatted(child);
+    }
     return;
   }
+
+  const printOutput = (stdout: string): void => {
+    if (stdout.trim()) {
+      console.log(options.raw ? stdout : formatLogOutput(stdout));
+    } else {
+      info("No logs found");
+    }
+  };
 
   // Try journalctl directly first (works when user is in systemd-journal group),
   // then fall back to sudo for system-scope journals.
   try {
     const { stdout } = await exec("journalctl", jArgs, { timeout: 10_000 });
-    if (stdout.trim()) {
-      console.log(stdout);
-    } else {
-      info("No logs found");
-    }
+    printOutput(stdout);
   } catch {
     // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
     if (scope === "systemd" && process.getuid?.() !== 0) {
       const { stdout } = await exec("sudo", ["journalctl", ...jArgs], { timeout: 10_000 });
-      if (stdout.trim()) {
-        console.log(stdout);
-      } else {
-        info("No logs found");
-      }
+      printOutput(stdout);
     } else {
       throw new Error("Failed to read journal logs");
     }
   }
 }
 
-function streamPm2Logs(options: { follow?: boolean; lines: string }): void {
+function streamPm2Logs(options: { follow?: boolean; lines: string; raw?: boolean }): void {
   const args = ["logs", "comis", "--lines", options.lines];
   if (!options.follow) args.push("--nostream");
-  const child = spawn("pm2", args, { stdio: "inherit" });
-  child.on("error", (err) => {
-    error(`Failed to read logs: ${err.message}`);
-    process.exit(1);
-  });
+  if (options.raw) {
+    const child = spawn("pm2", args, { stdio: "inherit" });
+    child.on("error", (err) => {
+      error(`Failed to read logs: ${err.message}`);
+      process.exit(1);
+    });
+  } else {
+    const child = spawn("pm2", args, { stdio: ["ignore", "pipe", "inherit"] });
+    child.on("error", (err) => {
+      error(`Failed to read logs: ${err.message}`);
+      process.exit(1);
+    });
+    pipeFormatted(child);
+  }
 }
 
-async function streamDirectLogs(options: { follow?: boolean; lines: string }): Promise<void> {
+async function streamDirectLogs(options: { follow?: boolean; lines: string; raw?: boolean }): Promise<void> {
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const logPath = process.env["COMIS_LOG_PATH"] ?? LOG_FILE;
   if (!existsSync(logPath)) {
@@ -629,16 +713,25 @@ async function streamDirectLogs(options: { follow?: boolean; lines: string }): P
   const args = ["-n", options.lines, logPath];
   if (options.follow) {
     args.unshift("-f");
-    const child = spawn("tail", args, { stdio: "inherit" });
-    child.on("error", (err) => {
-      error(`Failed to read logs: ${err.message}`);
-      process.exit(1);
-    });
+    if (options.raw) {
+      const child = spawn("tail", args, { stdio: "inherit" });
+      child.on("error", (err) => {
+        error(`Failed to read logs: ${err.message}`);
+        process.exit(1);
+      });
+    } else {
+      const child = spawn("tail", args, { stdio: ["ignore", "pipe", "inherit"] });
+      child.on("error", (err) => {
+        error(`Failed to read logs: ${err.message}`);
+        process.exit(1);
+      });
+      pipeFormatted(child);
+    }
     return;
   }
   const { stdout } = await exec("tail", args, { timeout: 5_000 });
   if (stdout.trim()) {
-    console.log(stdout);
+    console.log(options.raw ? stdout : formatLogOutput(stdout));
   } else {
     info("No logs found");
   }
@@ -674,5 +767,6 @@ export function registerDaemonCommand(program: Command): void {
     .description("Show daemon logs")
     .option("-f, --follow", "Follow log output")
     .option("-n, --lines <n>", "Number of lines to show", "50")
+    .option("--raw", "Show raw JSON output without formatting")
     .action(handleDaemonLogs);
 }

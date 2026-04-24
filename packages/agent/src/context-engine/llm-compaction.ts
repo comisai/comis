@@ -36,6 +36,7 @@ import {
   COMPACTION_REQUIRED_SECTIONS,
   CHARS_PER_TOKEN_RATIO,
   MIN_MIDDLE_MESSAGES_FOR_COMPACTION,
+  CACHE_AWARE_COMPACTION_BLOCK_THRESHOLD,
 } from "./constants.js";
 import {
   estimateContextCharsWithDualRatio,
@@ -327,31 +328,46 @@ export function createLlmCompactionLayer(
           return messages;
         }
 
-        // Step 3: Threshold check
-        // Use anchor-based estimation when available for accurate threshold check
-        /* eslint-disable @typescript-eslint/no-explicit-any */
-        const contextChars = estimateContextCharsWithDualRatio(messages as any);
-        /* eslint-enable @typescript-eslint/no-explicit-any */
-        const charBasedTokens = Math.ceil(contextChars / CHARS_PER_TOKEN_RATIO);
-        const anchor = deps.getTokenAnchor?.() ?? null;
-        const contextTokens = estimateWithAnchor(anchor, messages as unknown as Message[], charBasedTokens);
-        const thresholdTokens = Math.floor(budget.windowTokens * COMPACTION_TRIGGER_PERCENT / 100);
+        // Step 2b: Cache-aware block count trigger.
+        // Fires BEFORE the token-based threshold because lookback overflow
+        // causes cache breaks regardless of how few tokens the messages contain.
+        const messageCount = messages.length;
+        const blockThreshold = CACHE_AWARE_COMPACTION_BLOCK_THRESHOLD;
+        const blockCountExceeded = messageCount > blockThreshold;
 
-        if (contextTokens <= thresholdTokens) {
-          return messages;
+        // Step 3: Token threshold check (only when block-count trigger didn't fire)
+        let contextTokens: number | undefined;
+        let thresholdTokens: number | undefined;
+        if (!blockCountExceeded) {
+          /* eslint-disable @typescript-eslint/no-explicit-any */
+          const contextChars = estimateContextCharsWithDualRatio(messages as any);
+          /* eslint-enable @typescript-eslint/no-explicit-any */
+          const charBasedTokens = Math.ceil(contextChars / CHARS_PER_TOKEN_RATIO);
+          const anchor = deps.getTokenAnchor?.() ?? null;
+          contextTokens = estimateWithAnchor(anchor, messages as unknown as Message[], charBasedTokens);
+          thresholdTokens = Math.floor(budget.windowTokens * COMPACTION_TRIGGER_PERCENT / 100);
+
+          if (contextTokens <= thresholdTokens) {
+            return messages;
+          }
         }
 
-        // Step 4: Pipeline order guarantees observation masker ran before this layer
+        // Step 4: Unified log (conditional spread keeps JSON shape clean).
         deps.logger.warn(
           {
-            contextTokens,
-            thresholdTokens,
+            messageCount,
+            ...(blockCountExceeded
+              ? { blockThreshold, trigger: "block_count" as const }
+              : { contextTokens, thresholdTokens, trigger: "token_threshold" as const }),
             windowTokens: budget.windowTokens,
-            messageCount: messages.length,
             errorKind: "resource" as const,
-            hint: "Context approaching capacity; LLM compaction will summarize older messages to free space",
+            hint: blockCountExceeded
+              ? "Message count approaching breakpoint lookback limit; compacting to prevent cache fragmentation"
+              : "Context approaching capacity; LLM compaction will summarize older messages to free space",
           },
-          "LLM compaction triggered: context exceeds 85% threshold",
+          blockCountExceeded
+            ? "LLM compaction triggered: message count exceeds cache lookback threshold"
+            : "LLM compaction triggered: context exceeds 85% threshold",
         );
 
         // Step 5: Resolve model

@@ -433,7 +433,9 @@ describe("daemon logs --follow", () => {
       return true;
     });
 
-    const fakeChild = { on: vi.fn(), pid: 999 };
+    const { Readable } = await import("node:stream");
+    const fakeStdout = new Readable({ read() {} });
+    const fakeChild = { on: vi.fn(), pid: 999, stdout: fakeStdout };
     vi.mocked(childProcess.spawn).mockReturnValue(fakeChild as never);
 
     await parseDaemon(["node", "test", "daemon", "logs", "--follow"]);
@@ -451,8 +453,8 @@ describe("daemon logs --follow", () => {
     expect(argsArr).toContain("-n");
     expect(argsArr).toContain("50");
 
-    // Assert stdio inherit for direct terminal streaming
-    expect(opts).toMatchObject({ stdio: "inherit" });
+    // Assert stdout is piped for formatting (stdin ignored, stderr inherited)
+    expect(opts).toMatchObject({ stdio: ["ignore", "pipe", "inherit"] });
 
     // Assert error handler was registered
     expect(fakeChild.on).toHaveBeenCalledWith("error", expect.any(Function));
