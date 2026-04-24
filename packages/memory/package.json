@@ -1,7 +1,7 @@
 {
   "name": "@comis/memory",
   "private": true,
-  "version": "1.0.18",
+  "version": "1.0.19",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "SQLite memory, embeddings, and RAG storage for Comis agents",
