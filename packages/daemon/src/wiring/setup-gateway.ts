@@ -851,6 +851,44 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
   // setup-gateway.ts is in wiring/ subdir, so go up 3 levels: wiring/ -> src/ -> daemon/ -> web/dist
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const webDistPath = resolve(__dirname, "../../../web/dist");
+  const webEnabled = gwConfig.web.enabled;
+
+  let webDeps: Parameters<typeof _createGatewayServer>[0]["webDeps"] | undefined;
+  if (webEnabled) {
+    const distExists = existsSync(webDistPath);
+    if (distExists) {
+      gatewayLogger.info(
+        { webEnabled: true, url: `http://${gwConfig.host}:${gwConfig.port}/app/` },
+        "Web dashboard mounted",
+      );
+      webDeps = {
+        eventBus: container.eventBus,
+        rpcAdapterDeps,
+        webDistPath,
+        suspendedAgents: deps.suspendedAgents,
+      };
+    } else {
+      gatewayLogger.error(
+        {
+          hint: "Reinstall comisai or run 'pnpm --filter @comis/web build'. @comis/web dist directory must exist for the dashboard to mount.",
+          errorKind: "config" as const,
+          webDistPath,
+        },
+        "gateway.web.enabled=true but @comis/web dist is missing",
+      );
+      // Still wire /api + SSE + root redirect so users get a structured 404
+      // from the SPA fallback rather than a silent "gateway is down" — but
+      // omit webDistPath so serveStatic (and its raw Hono warning) never runs.
+      webDeps = {
+        eventBus: container.eventBus,
+        rpcAdapterDeps,
+        webDistPath: undefined,
+        suspendedAgents: deps.suspendedAgents,
+      };
+    }
+  } else {
+    gatewayLogger.debug({ webEnabled: false }, "Web dashboard disabled");
+  }
 
   const gatewayHandle = _createGatewayServer({
     config: gwConfig,
@@ -858,12 +896,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     tokenStore,
     rpcServer,
     wsConnections,
-    webDeps: {
-      eventBus: container.eventBus,
-      rpcAdapterDeps,
-      webDistPath,
-      suspendedAgents: deps.suspendedAgents,
-    },
+    ...(webDeps && { webDeps }),
     fingerprint: {
       instanceId,
       startedAt: new Date(startupStartMs).toISOString(),

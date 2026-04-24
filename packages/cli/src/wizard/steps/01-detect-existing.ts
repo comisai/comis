@@ -99,11 +99,13 @@ function extractStateFromConfig(
     }
 
     if (port !== undefined) {
+      const webRaw = gatewayRaw["web"] as Record<string, unknown> | undefined;
       gateway = {
         port,
         bindMode,
         ...(customIp !== undefined && { customIp }),
         authMethod: "token" as const,
+        webEnabled: typeof webRaw?.["enabled"] === "boolean" ? webRaw["enabled"] : true,
       };
     }
   }

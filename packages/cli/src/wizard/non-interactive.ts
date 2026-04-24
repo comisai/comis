@@ -351,6 +351,7 @@ export function buildNonInteractiveState(
     authMethod: gatewayAuth,
     ...(gatewayToken !== undefined && { token: gatewayToken }),
     ...(gatewayPassword !== undefined && { password: gatewayPassword }),
+    webEnabled: true,
   };
 
   // Data directory

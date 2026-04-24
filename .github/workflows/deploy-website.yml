@@ -43,4 +43,4 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           packageManager: npm
-          command: pages deploy website/dist --project-name=comis-website --branch=${{ github.head_ref || github.ref_name }}
+          command: pages deploy website/dist --project-name=comis --branch=${{ github.head_ref || github.ref_name }}

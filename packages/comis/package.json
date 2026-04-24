@@ -1,6 +1,6 @@
 {
   "name": "comisai",
-  "version": "1.0.16",
+  "version": "1.0.19",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Security-first AI agent platform \u2014 connects AI agents to Discord, Telegram, Slack, WhatsApp, and more",
@@ -112,7 +112,8 @@
     "@comis/agent",
     "@comis/channels",
     "@comis/cli",
-    "@comis/daemon"
+    "@comis/daemon",
+    "@comis/web"
   ],
   "dependencies": {
     "@comis/shared": "workspace:*",
@@ -126,6 +127,7 @@
     "@comis/channels": "workspace:*",
     "@comis/cli": "workspace:*",
     "@comis/daemon": "workspace:*",
+    "@comis/web": "workspace:*",
     "@agentclientprotocol/sdk": "^0.15.0",
     "@clack/core": "^1.1.0",
     "@clack/prompts": "^1.1.0",
