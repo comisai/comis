@@ -64,6 +64,10 @@ function buildGatewayInfo(state: WizardState): string | undefined {
 
   const wsLine = `  WebSocket:  ${brand(`ws://${host}:${state.gateway.port}/ws`)}`;
 
+  const dashboardLine = state.gateway.webEnabled
+    ? `  Dashboard:  ${brand(`http://${host}:${state.gateway.port}/app/`)}`
+    : undefined;
+
   let authLine: string;
   if (state.gateway.authMethod === "password") {
     authLine = "  Auth:       Password auth (in ~/.comis/.env)";
@@ -74,9 +78,10 @@ function buildGatewayInfo(state: WizardState): string | undefined {
     authLine = `  Token:      ${tokenPreview} (in ~/.comis/.env)`;
   }
 
-  const webLine = `  Web App:    ${brand(`http://${host}:${state.gateway.port}`)}`;
-
-  return `${wsLine}\n${webLine}\n${authLine}`;
+  const lines = [wsLine, dashboardLine, authLine].filter(
+    (l): l is string => l !== undefined,
+  );
+  return lines.join("\n");
 }
 
 // ---------- Step Implementation ----------

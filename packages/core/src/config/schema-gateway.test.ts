@@ -5,6 +5,7 @@ import {
   GatewayTlsConfigSchema,
   GatewayTokenSchema,
   GatewayRateLimitSchema,
+  GatewayWebConfigSchema,
 } from "./schema-gateway.js";
 
 // ---------------------------------------------------------------------------
@@ -251,5 +252,40 @@ describe("Trusted proxies validation", () => {
       trustedProxies: ["10.0.0.1", "invalid"],
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GatewayWebConfigSchema / gateway.web field
+// ---------------------------------------------------------------------------
+
+describe("GatewayWebConfigSchema / gateway.web field", () => {
+  it("gateway.web defaults to { enabled: true } when omitted", () => {
+    const result = GatewayConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.web.enabled).toBe(true);
+    }
+  });
+
+  it("accepts explicit gateway.web.enabled=false", () => {
+    const result = GatewayConfigSchema.safeParse({ web: { enabled: false } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.web.enabled).toBe(false);
+    }
+  });
+
+  it("rejects non-boolean gateway.web.enabled (strict boolean)", () => {
+    const result = GatewayConfigSchema.safeParse({ web: { enabled: "yes" } });
+    expect(result.success).toBe(false);
+  });
+
+  it("standalone GatewayWebConfigSchema defaults to { enabled: true }", () => {
+    const result = GatewayWebConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(true);
+    }
   });
 });

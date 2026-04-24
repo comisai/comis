@@ -98,12 +98,18 @@ function extractStateFromConfig(
       customIp = host;
     }
 
+    // Recover gateway.web.enabled (default true) when reloading existing config
+    const webRaw = gatewayRaw["web"] as Record<string, unknown> | undefined;
+    const webEnabled =
+      webRaw && typeof webRaw["enabled"] === "boolean" ? webRaw["enabled"] : true;
+
     if (port !== undefined) {
       gateway = {
         port,
         bindMode,
         ...(customIp !== undefined && { customIp }),
         authMethod: "token" as const,
+        webEnabled,
       };
     }
   }

@@ -47,6 +47,16 @@ export const GatewayRateLimitSchema = z.strictObject({
   });
 
 /**
+ * Web dashboard configuration. Controls whether the @comis/web SPA is mounted
+ * at /app/* alongside the gateway, sharing the same host/port/auth. When
+ * disabled, the daemon skips /app/*, /api, SSE, and the `/` -> `/app/` redirect.
+ */
+export const GatewayWebConfigSchema = z.strictObject({
+    /** Enable the web dashboard SPA (default: true) */
+    enabled: z.boolean().default(true),
+  });
+
+/**
  * Gateway server configuration schema.
  *
  * Controls the Hono HTTPS server, mTLS authentication, bearer tokens,
@@ -65,6 +75,8 @@ export const GatewayConfigSchema = z.strictObject({
     tokens: z.array(GatewayTokenSchema).default([]),
     /** Rate limiting settings */
     rateLimit: GatewayRateLimitSchema.default(() => GatewayRateLimitSchema.parse({})),
+    /** Web dashboard (mounted at /app/*, shares gateway host/port/auth) */
+    web: GatewayWebConfigSchema.default(() => GatewayWebConfigSchema.parse({})),
     /** Maximum JSON-RPC batch size (default: 50) */
     maxBatchSize: z.number().int().positive().default(50),
     /** WebSocket heartbeat interval in milliseconds (default: 30000) */
@@ -92,3 +104,4 @@ export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
 export type GatewayTlsConfig = z.infer<typeof GatewayTlsConfigSchema>;
 export type GatewayToken = z.infer<typeof GatewayTokenSchema>;
 export type GatewayRateLimit = z.infer<typeof GatewayRateLimitSchema>;
+export type GatewayWebConfig = z.infer<typeof GatewayWebConfigSchema>;

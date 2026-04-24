@@ -107,6 +107,18 @@ export const gatewayStep: WizardStep = {
       });
     }
 
+    // 5b. Web dashboard prompt
+    const webEnabled = await prompter.confirm({
+      message: "Enable web dashboard? (served at /app/ on the gateway port)",
+      initialValue: state.gateway?.webEnabled ?? true,
+    });
+
+    if (webEnabled && bindMode === "loopback") {
+      prompter.log.info(
+        "Dashboard will bind to 127.0.0.1 only. For remote access, SSH-tunnel: `ssh -L 4766:localhost:4766 user@host`.",
+      );
+    }
+
     // 6. Build config and update state
     const config: GatewayConfig = {
       port,
@@ -115,6 +127,7 @@ export const gatewayStep: WizardStep = {
       authMethod: authMethod as GatewayConfig["authMethod"],
       ...(token !== undefined && { token }),
       ...(password !== undefined && { password }),
+      webEnabled,
     };
 
     return updateState(state, { gateway: config });
