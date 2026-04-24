@@ -974,12 +974,13 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
         // Estimated cache write cost for the system prompt portion.
         // System prompt is sent as cacheable prefix; on first request it incurs cache write cost.
         const estimatedCacheWriteTokens = Math.ceil(sysPromptChars / CHARS_PER_TOKEN_RATIO);
-        const pricing = resolveModelPricing(config.provider, config.model);
+        const effectiveModelId = resolvedModel?.id ?? config.model;
+        const pricing = resolveModelPricing(config.provider, effectiveModelId);
         if (pricing.input === 0) {
           deps.logger.warn(
             {
               provider: config.provider,
-              model: config.model,
+              model: effectiveModelId,
               hint: "Model not found in pricing catalog; timeout cost estimate is $0 -- actual provider billing may differ",
               errorKind: "config" as const,
             },
@@ -1002,7 +1003,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
           channelId: msg.channelId,
           executionId,
           provider: config.provider,
-          model: config.model,
+          model: effectiveModelId,
           tokens: {
             prompt: estimatedPromptTokens,
             completion: 0,
@@ -1020,7 +1021,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
           cacheWriteTokens: estimatedCacheWriteTokens,
           sessionKey: formatSessionKey(sessionKey),
           savedVsUncached: 0,
-          cacheEligible: getCacheProviderInfo(config.provider).cacheEligible,
+          cacheEligible: getCacheProviderInfo(config.provider, effectiveModelId).cacheEligible,
         });
 
         // Include ghost cost estimate in result for bridge accumulation

@@ -47,8 +47,9 @@ import {
 import type { TruncationSummary } from "./stream-wrappers/tool-result-size-bouncer.js";
 import type { TurnBudgetSummary } from "./stream-wrappers/turn-result-budget-wrapper.js";
 import { resolveToolCallingTemperature } from "./tool-deferral.js";
+import { createStubFilterInjector } from "./stream-wrappers/stub-filter-injector.js";
 import { computeFeatureFlagHash } from "./prompt-assembly.js";
-import { createTtlGuard, getElapsedSinceLastResponse } from "./ttl-guard.js";
+import { createTtlGuard, getElapsedSinceLastResponse, getLastResponseTs } from "./ttl-guard.js";
 import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";
 import type { TtlSplitEstimate } from "../bridge/pi-event-bridge.js";
 import { createGeminiCacheInjector } from "./gemini-cache-injector.js";
@@ -280,6 +281,9 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
         parentCacheRetention: executionOverrides?.spawnPacket?.cacheSafeParams?.cacheRetention,
         getCacheFenceIndex: () => getBreakpointIndex(formattedKey) ?? -1,
         getElapsedSinceLastResponse: () => getElapsedSinceLastResponse(formattedKey),
+        getLastResponseTs: () => getLastResponseTs(formattedKey),
+        promoteRecentZoneOnSlowCadence:
+          config.advancedCacheOptimization?.enableRecentZonePromotion ?? true,
         observationKeepWindow: 25,
         microcompactTokenCeiling: 180_000,
         onContentModification: () => cacheBreakDetector.notifyContentModification(formattedKey),
@@ -401,6 +405,24 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       );
     }
   }
+
+  // MUST be the last wrapper pushed (innermost). Runs its onPayload FIRST in
+  // the chain so all downstream wrappers operate on stub-free tools. Violating
+  // this ordering would (a) include stub schemas in the Anthropic rendered-tool
+  // cache hash, (b) persist stubs into the Gemini CachedContent entry for its
+  // whole lifetime, and (c) cause deferCount > 0 in the DEFER-TOOL block,
+  // unintentionally flipping Anthropic sessions to server-side tool_search.
+  wrappers.push(
+    createStubFilterInjector(
+      {
+        getStubToolNames: () => {
+          if (!deferralResult?.deferredEntries.length) return new Set<string>();
+          return new Set(deferralResult.deferredEntries.map(e => e.name));
+        },
+      },
+      deps.logger,
+    ),
+  );
 
   return {
     wrappers,

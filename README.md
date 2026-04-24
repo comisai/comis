@@ -10,6 +10,7 @@
   <a href="https://github.com/comisai/comis/actions/workflows/ci.yml"><img src="https://github.com/comisai/comis/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <a href="https://www.npmjs.com/package/comisai"><img src="https://img.shields.io/npm/v/comisai?color=06B6D4&style=flat" alt="npm" /></a>
   <a href="https://github.com/comisai/comis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-06B6D4?style=flat" alt="License" /></a>
+  <a href="https://github.com/comisai/comis/stargazers"><img src="https://img.shields.io/github/stars/comisai/comis?style=flat&color=06B6D4" alt="GitHub Stars" /></a>
   <a href="https://discord.gg/FsqgJkpp"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
@@ -19,6 +20,10 @@
   <a href="https://discord.gg/FsqgJkpp">Discord</a> &middot;
   <a href="https://twitter.com/comis_ai">Twitter</a> &middot;
   <a href="#quick-start">Quick Start</a>
+</p>
+
+<p align="center">
+  <a href="#why-comis">Why Comis</a> · <a href="#quick-start">Quick Start</a> · <a href="#features">Features</a> · <a href="#supported-channels">Channels</a> · <a href="#architecture">Architecture</a> · <a href="#security">Security</a> · <a href="#context-engine--cost-optimization">Context & Cost</a> · <a href="#graph-pipelines">Pipelines</a> · <a href="#skills">Skills</a> · <a href="#developer-setup">Dev Setup</a> · <a href="#contributing">Contributing</a>
 </p>
 
 ---
@@ -39,7 +44,7 @@ Comis assumes the LLM will be attacked. 22 independent defense layers intercept 
 
 ### Cost: prompt caching saves 81%
 
-[Anthropic no longer allows subscriptions to cover third-party tool usage](https://www.theregister.com/2026/04/06/anthropic_closes_door_on_subscription/). You now pay per token via API keys or extra usage bundles. At [$5/MTok input for Opus 4.6](https://platform.claude.com/docs/en/about-claude/pricing), costs add up fast without optimization.
+LLM providers charge per token via API keys, and frontier models aren't cheap. At [$5/MTok input for Opus 4.6](https://platform.claude.com/docs/en/about-claude/pricing), costs add up fast without optimization.
 
 Comis has the most advanced prompt cache management available for Anthropic, with 20 dedicated optimizations including adaptive TTL escalation, cache fence protection that prevents the context engine from breaking the cached prefix, sub-agent spawn staggering for pipeline cost sharing, and two-phase cache break detection that attributes every invalidation to its root cause. Gemini gets native CachedContent API integration with SHA-256 content hashing and automatic lifecycle management. OpenAI is supported with completion storage for cost reduction.
 
@@ -78,11 +83,11 @@ Works on macOS and Linux.
 ```bash
 npm install -g comisai
 comis init
-comis configure    # interactive setup wizard
+comis configure    # choose your LLM provider, add API keys, connect a channel
 comis daemon start
 ```
 
-Message your agent. That's it.
+Setup takes about 2 minutes. Message your agent. That's it.
 
 ---
 
@@ -295,9 +300,30 @@ Describe what you want in plain language - the LLM selects node types and builds
 
 ## Skills
 
-Modular prompt packages that give agents specialized knowledge and domain expertise, workflows, persona traits. Define skills as markdown files, configure them in YAML, and Comis loads them at startup.
+Modular prompt packages that give agents specialized knowledge, workflows, and persona traits. A skill is a markdown file with YAML frontmatter:
 
-Runtime eligibility filtering ensures only relevant skills are injected into context. Skills support dynamic context injection, file watching for live reload, and content scanning for security.
+```markdown
+---
+name: deep-research
+description: Conduct systematic, multi-angle web research on any topic.
+---
+
+# Deep Research
+
+Systematic methodology for thorough web research.
+
+## Research Methodology
+
+### Phase 1: Broad Exploration
+1. **Initial survey** -- use `web_search` on the main topic
+2. **Identify dimensions** -- note key subtopics and angles
+3. **Map the territory** -- note different perspectives
+...
+```
+
+Drop a `SKILL.md` file into the skills directory and Comis picks it up automatically. Runtime eligibility filtering ensures only relevant skills are injected into context. File watching enables live reload during development, and all skill content is security-scanned before injection.
+
+[Create your own skill &rarr;](https://docs.comis.ai/skills)
 
 ---
 
@@ -336,7 +362,15 @@ pnpm test:integration  # integration tests (requires build)
 
 ## Contributing
 
-We welcome contributions - bug reports, skills, integrations, docs, and code.
+We welcome contributions — bug reports, skills, channel adapters, docs, and code.
+
+**Getting started:**
+
+1. Fork the repo and create a branch (`feature/my-change` or `fix/my-fix`)
+2. Make your changes and run `pnpm build && pnpm test && pnpm lint:security`
+3. Open a Pull Request against `main`
+
+**Where to help most:** new skills, channel adapters, and documentation improvements. Look for issues labeled [`good first issue`](https://github.com/comisai/comis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) if you're getting started.
 
 [Issues](https://github.com/comisai/comis/issues) &middot; [Pull Requests](https://github.com/comisai/comis/pulls) &middot; [Discussions](https://github.com/comisai/comis/discussions)
 

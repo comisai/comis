@@ -8,6 +8,8 @@ import {
   resolveToolCallingTemperature,
   buildDeferredToolsContext,
   createDiscoverTool,
+  createAutoDiscoveryStubs,
+  DEFERRAL_STUB_MARKER,
   CORE_TOOLS,
   DEFERRAL_RULES,
 } from "./tool-deferral.js";
@@ -2282,5 +2284,155 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
     expect(r1.content[0].text).toContain("already active");
     expect(r1.content[0].text).toContain("mcp__yfinance--get_stock_price");
     expect(r2.content[0].text).toContain("already active");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createAutoDiscoveryStubs
+// ---------------------------------------------------------------------------
+
+describe("createAutoDiscoveryStubs", () => {
+  function makeDeferredEntry(
+    name: string,
+    opts: { label?: string; executeResult?: unknown; executeThrows?: boolean } = {},
+  ): DeferredToolEntry & { original: ToolDefinition & { label?: string } } {
+    const executeFn = opts.executeThrows
+      ? vi.fn().mockRejectedValue(new Error("MCP tool crashed"))
+      : vi.fn().mockResolvedValue(
+          opts.executeResult ?? { content: [{ type: "text", text: "ok" }], isError: false },
+        );
+    const original = {
+      name,
+      description: `Description for ${name}`,
+      parameters: { type: "object" as const, properties: { q: { type: "string" as const } } },
+      execute: executeFn,
+    } as unknown as ToolDefinition & { label?: string };
+    if (opts.label !== undefined) {
+      original.label = opts.label;
+    }
+    return {
+      name,
+      description: `Lean desc for ${name}`,
+      original,
+    };
+  }
+
+  function makeMockDiscoveryTracker() {
+    return {
+      markDiscovered: vi.fn(),
+      markUnavailable: vi.fn(),
+      isDiscovered: vi.fn().mockReturnValue(false),
+      getDiscoveredNames: vi.fn().mockReturnValue(new Set<string>()),
+      restore: vi.fn(),
+    };
+  }
+
+  it("returns stubs with correct name, description, parameters copied from entry.original", () => {
+    const entry = makeDeferredEntry("mcp__yfinance--get_screener");
+    const tracker = makeMockDiscoveryTracker();
+    const logger = createMockLogger();
+
+    const stubs = createAutoDiscoveryStubs([entry], tracker, logger);
+
+    expect(stubs).toHaveLength(1);
+    const stub = stubs[0];
+    expect(stub.name).toBe("mcp__yfinance--get_screener");
+    expect(stub.description).toBe("Lean desc for mcp__yfinance--get_screener");
+    expect(stub.parameters).toBe(entry.original.parameters);
+  });
+
+  it("has DEFERRAL_STUB_MARKER property set to true", () => {
+    const entry = makeDeferredEntry("mcp__test--tool");
+    const tracker = makeMockDiscoveryTracker();
+    const logger = createMockLogger();
+
+    const stubs = createAutoDiscoveryStubs([entry], tracker, logger);
+    const stub = stubs[0] as unknown as Record<string, unknown>;
+
+    expect(stub[DEFERRAL_STUB_MARKER]).toBe(true);
+  });
+
+  it("label falls back to entry.name when original has no label", () => {
+    const entry = makeDeferredEntry("mcp__test--no_label");
+    const tracker = makeMockDiscoveryTracker();
+    const logger = createMockLogger();
+
+    const stubs = createAutoDiscoveryStubs([entry], tracker, logger);
+    const stub = stubs[0] as unknown as Record<string, unknown>;
+
+    expect(stub.label).toBe("mcp__test--no_label");
+  });
+
+  it("label copies from entry.original.label when present", () => {
+    const entry = makeDeferredEntry("mcp__test--labeled", { label: "Custom Label" });
+    const tracker = makeMockDiscoveryTracker();
+    const logger = createMockLogger();
+
+    const stubs = createAutoDiscoveryStubs([entry], tracker, logger);
+    const stub = stubs[0] as unknown as Record<string, unknown>;
+
+    expect(stub.label).toBe("Custom Label");
+  });
+
+  it("execute() forwards all 5 args to entry.original.execute() and returns its result unchanged", async () => {
+    const expectedResult = { content: [{ type: "text", text: "result data" }], isError: false };
+    const entry = makeDeferredEntry("mcp__test--forward", { executeResult: expectedResult });
+    const tracker = makeMockDiscoveryTracker();
+    const logger = createMockLogger();
+
+    const stubs = createAutoDiscoveryStubs([entry], tracker, logger);
+    const stub = stubs[0];
+
+    const signal = new AbortController().signal;
+    const onUpdate = vi.fn();
+    const ctx = { some: "context" };
+
+    const result = await stub.execute("call-123", { q: "test" }, signal, onUpdate, ctx);
+
+    expect(result).toBe(expectedResult);
+    expect(entry.original.execute).toHaveBeenCalledWith(
+      "call-123",
+      { q: "test" },
+      signal,
+      onUpdate,
+      ctx,
+    );
+  });
+
+  it("discoveryTracker.markDiscovered() called with [entry.name] on successful result (isError !== true)", async () => {
+    const entry = makeDeferredEntry("mcp__test--success", {
+      executeResult: { content: [{ type: "text", text: "ok" }], isError: false },
+    });
+    const tracker = makeMockDiscoveryTracker();
+    const logger = createMockLogger();
+
+    const stubs = createAutoDiscoveryStubs([entry], tracker, logger);
+    await stubs[0].execute("call-1", {});
+
+    expect(tracker.markDiscovered).toHaveBeenCalledWith(["mcp__test--success"]);
+  });
+
+  it("discoveryTracker.markDiscovered() NOT called when result.isError === true", async () => {
+    const entry = makeDeferredEntry("mcp__test--error", {
+      executeResult: { content: [{ type: "text", text: "fail" }], isError: true },
+    });
+    const tracker = makeMockDiscoveryTracker();
+    const logger = createMockLogger();
+
+    const stubs = createAutoDiscoveryStubs([entry], tracker, logger);
+    await stubs[0].execute("call-2", {});
+
+    expect(tracker.markDiscovered).not.toHaveBeenCalled();
+  });
+
+  it("discoveryTracker.markDiscovered() NOT called when entry.original.execute() throws (stub lets throw propagate)", async () => {
+    const entry = makeDeferredEntry("mcp__test--throw", { executeThrows: true });
+    const tracker = makeMockDiscoveryTracker();
+    const logger = createMockLogger();
+
+    const stubs = createAutoDiscoveryStubs([entry], tracker, logger);
+
+    await expect(stubs[0].execute("call-3", {})).rejects.toThrow("MCP tool crashed");
+    expect(tracker.markDiscovered).not.toHaveBeenCalled();
   });
 });

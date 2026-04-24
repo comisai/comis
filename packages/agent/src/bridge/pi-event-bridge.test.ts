@@ -90,6 +90,19 @@ function makeTextDeltaEvent(delta: string) {
   };
 }
 
+function makeThinkingDeltaEvent(delta?: string) {
+  return {
+    type: "message_update" as const,
+    message: {} as any,
+    assistantMessageEvent: {
+      type: "thinking_delta",
+      contentIndex: 0,
+      ...(delta !== undefined && { delta }),
+      partial: {} as any,
+    },
+  };
+}
+
 function makeToolExecutionStartEvent(toolName: string, toolCallId: string = "tc-1") {
   return {
     type: "tool_execution_start" as const,
@@ -208,6 +221,48 @@ describe("createPiEventBridge", () => {
       const { listener } = createPiEventBridge(deps);
 
       expect(() => listener(makeTextDeltaEvent("test") as any)).not.toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // message_update / thinking
+  // -------------------------------------------------------------------------
+
+  describe("message_update / thinking", () => {
+    it("thinking_delta event calls onDelta with delta text", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      listener(makeThinkingDeltaEvent("reasoning chunk") as any);
+
+      expect(deps.onDelta).toHaveBeenCalledTimes(1);
+      expect(deps.onDelta).toHaveBeenCalledWith("reasoning chunk");
+    });
+
+    it("thinking_delta does NOT flip textEmitted (reserved for text_delta)", () => {
+      const { listener, getResult } = createPiEventBridge(deps);
+
+      listener(makeThinkingDeltaEvent("thinking only") as any);
+
+      expect(getResult().textEmitted).toBe(false);
+    });
+
+    it("thinking_delta followed by text_delta: onDelta called twice; textEmitted true", () => {
+      const { listener, getResult } = createPiEventBridge(deps);
+
+      listener(makeThinkingDeltaEvent("reasoning") as any);
+      listener(makeTextDeltaEvent("visible text") as any);
+
+      expect(deps.onDelta).toHaveBeenCalledTimes(2);
+      expect(deps.onDelta).toHaveBeenNthCalledWith(1, "reasoning");
+      expect(deps.onDelta).toHaveBeenNthCalledWith(2, "visible text");
+      expect(getResult().textEmitted).toBe(true);
+    });
+
+    it("thinking_delta with undefined delta does not crash and does not call onDelta", () => {
+      const { listener } = createPiEventBridge(deps);
+
+      expect(() => listener(makeThinkingDeltaEvent(undefined) as any)).not.toThrow();
+      expect(deps.onDelta).not.toHaveBeenCalled();
     });
   });
 
@@ -1961,8 +2016,8 @@ describe("createPiEventBridge", () => {
       listener(makeCacheTurnEnd({ cacheRead: 50000, cacheWrite: 10000 }) as any);
       listener(makeCacheTurnEnd({ cacheRead: 30000, cacheWrite: 5000 }) as any);
 
-      // getCurrentModel called once per turn_end for pricing resolution
-      expect(getCurrentModel).toHaveBeenCalledTimes(2);
+      // getCurrentModel called per turn_end for pricing resolution, cost tracker, token_usage event, and cacheEligible
+      expect(getCurrentModel).toHaveBeenCalledTimes(8);
     });
 
     it("onCacheReads callback still fires with cacheReadTokens", () => {

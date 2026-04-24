@@ -198,6 +198,18 @@ export const MCP_DEFERRAL_THRESHOLD = 0.10;
  *  Used by: lookback window enforcement in stream-wrappers.ts. */
 export const CACHE_LOOKBACK_WINDOW = 20;
 
+/** Maximum message blocks before cache-aware compaction trigger.
+ *  With 4 breakpoints (3 Comis + 1 SDK) and a 20-block lookback window,
+ *  optimal coverage spans 4 × 20 = 80 blocks. Trigger when the count
+ *  *exceeds* 60 (i.e. first fires at 61 blocks — 75% of theoretical max)
+ *  to leave headroom for multi-call turns.
+ *
+ *  APPROXIMATION NOTE: `messages.length` (AgentMessage[]) approximates
+ *  Anthropic's request-body `messages[]` block count but is not strictly 1:1.
+ *  Treat 60 as a defensive setpoint, not a calibrated threshold.
+ *  Used by: llm-compaction layer cache-aware trigger. */
+export const CACHE_AWARE_COMPACTION_BLOCK_THRESHOLD = 60;
+
 // ---------------------------------------------------------------------------
 // LLM Compaction (Layer 5: )
 // ---------------------------------------------------------------------------

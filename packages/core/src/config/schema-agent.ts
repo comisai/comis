@@ -695,6 +695,14 @@ export const AgentConfigSchema = z.strictObject({
      *  'auto' resolves to 'single' for direct Anthropic and 'multi-zone' for Bedrock/Vertex.
      *  'multi-zone' places breakpoints across system, tools, and messages. */
     cacheBreakpointStrategy: z.enum(["auto", "multi-zone", "single"]).default("single"),
+    /** Advanced cache optimization options for interactive sessions. */
+    advancedCacheOptimization: z.object({
+      /** When true, the recent-zone message breakpoint may be promoted from
+       *  "short" (5m) to "long" (1h) TTL when observed inter-turn gaps
+       *  consistently exceed 5 minutes. Prevents repeated cache rewrite costs
+       *  in slow-cadence channels like Telegram. Default: true. */
+      enableRecentZonePromotion: z.boolean().default(true),
+    }).default(() => ({ enableRecentZonePromotion: true })),
     /** Gemini explicit cache configuration (CachedContent lifecycle). */
     geminiCache: GeminiCacheConfigSchema.default(() => GeminiCacheConfigSchema.parse({})),
     /** When true, only content inside <final> blocks reaches users (streaming + non-streaming). Default: false. */

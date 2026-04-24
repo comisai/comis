@@ -933,3 +933,66 @@ function cosine(a: number[], b: number[]): number {
   const denom = Math.sqrt(magA) * Math.sqrt(magB);
   return denom === 0 ? 0 : dot / denom;
 }
+
+// ---------------------------------------------------------------------------
+// Auto-discovery stubs
+// ---------------------------------------------------------------------------
+
+export const DEFERRAL_STUB_MARKER = "__comis_deferral_stub__" as const;
+
+export function createAutoDiscoveryStubs(
+  deferredEntries: DeferredToolEntry[],
+  discoveryTracker: DiscoveryTracker,
+  logger: ComisLogger,
+): ToolDefinition[] {
+  return deferredEntries.map(entry => {
+    // `label` is a required field on ToolDefinition
+    // (pi-coding-agent/core/extensions/types.d.ts). Some existing code paths
+    // dereference it (pi-executor.ts mid-turn injection at line ~826), so
+    // copy from the original rather than leave undefined.
+    const originalLabel = (entry.original as unknown as Record<string, unknown>).label as
+      | string
+      | undefined;
+
+    const stub = {
+      name: entry.name,
+      label: originalLabel ?? entry.name,
+      description: entry.description,
+      parameters: entry.original.parameters,
+      [DEFERRAL_STUB_MARKER]: true,
+      async execute(
+        toolCallId: string,
+        params: Record<string, unknown>,
+        signal?: AbortSignal,
+        onUpdate?: unknown,
+        ctx?: unknown,
+      ) {
+        const result = await entry.original.execute(
+          toolCallId,
+          params,
+          signal,
+          onUpdate as Parameters<typeof entry.original.execute>[3],
+          ctx as Parameters<typeof entry.original.execute>[4],
+        );
+
+        // Mark discovered only after a SUCCESSFUL execution. An MCP tool can
+        // return `{ isError: true, content: [...] }` without throwing -- those
+        // results must not promote the tool to the active set, or a broken tool
+        // would persist across turns and keep wasting discovery budget.
+        const isError = (result as unknown as Record<string, unknown>)?.isError === true;
+        if (!isError) {
+          discoveryTracker.markDiscovered([entry.name]);
+        }
+
+        logger.info(
+          { toolName: entry.name, toolCallId, isError },
+          "Auto-discovery stub triggered — forwarding to real tool",
+        );
+
+        return result;
+      },
+    };
+
+    return stub as unknown as ToolDefinition;
+  });
+}

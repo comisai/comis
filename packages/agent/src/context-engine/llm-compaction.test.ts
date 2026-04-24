@@ -424,17 +424,18 @@ describe("createLlmCompactionLayer", () => {
 
     await layer.apply(largeMessages, BUDGET);
 
-    // WARN must be called with the compaction trigger message
+    // WARN must be called with the compaction trigger message.
+    // With 150 messages (> 60 block threshold), the block-count trigger fires first.
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
-        contextTokens: expect.any(Number),
-        thresholdTokens: expect.any(Number),
+        blockThreshold: 60,
+        trigger: "block_count",
         windowTokens: 128_000,
         messageCount: largeMessages.length,
         errorKind: "resource",
-        hint: expect.stringMatching(/compaction/i),
+        hint: expect.stringMatching(/compaction|lookback/i),
       }),
-      "LLM compaction triggered: context exceeds 85% threshold",
+      "LLM compaction triggered: message count exceeds cache lookback threshold",
     );
 
     // DEBUG must NOT have been called with the trigger message

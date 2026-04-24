@@ -1,0 +1,97 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+---
+
+<section class="px-6 py-20 md:py-28">
+  <div class="max-w-5xl mx-auto">
+    <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Cost intelligence</p>
+    <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+      Pay less. Do more.
+    </h2>
+    <p class="text-muted text-lg mb-14 max-w-2xl">
+      Frontier models aren't cheap. Comis has the most advanced prompt cache management available for Anthropic &mdash; 20 dedicated optimizations that cut your bill by 80%+.
+    </p>
+
+    <div class="grid md:grid-cols-3 gap-8">
+      <!-- Stat 1: Cost comparison -->
+      <div class="bg-navy-light border border-white/5 rounded-xl p-8 text-center">
+        <div class="flex items-baseline justify-center gap-2 mb-2">
+          <span class="text-4xl md:text-5xl font-extrabold text-coral">$5</span>
+          <span class="text-muted text-lg line-through">$26</span>
+        </div>
+        <p class="text-sm text-muted mt-3">76-call Opus 4.6 session</p>
+        <p class="text-xs text-muted mt-1">$5.02 cached vs $26.42 uncached</p>
+      </div>
+
+      <!-- Stat 2: Cache hit rate -->
+      <div class="bg-navy-light border border-white/5 rounded-xl p-8 text-center">
+        <div class="mb-2">
+          <span class="text-4xl md:text-5xl font-extrabold text-teal">94%</span>
+        </div>
+        <p class="text-sm text-muted mt-3">Cache hit rate</p>
+        <p class="text-xs text-muted mt-1">Of input tokens served from cache</p>
+      </div>
+
+      <!-- Stat 3: Pipeline cost -->
+      <div class="bg-navy-light border border-white/5 rounded-xl p-8 text-center">
+        <div class="mb-2">
+          <span class="text-4xl md:text-5xl font-extrabold text-white">$2.11</span>
+        </div>
+        <p class="text-sm text-muted mt-3">8-agent trading pipeline</p>
+        <p class="text-xs text-muted mt-1">788K tokens across a full DAG run</p>
+      </div>
+    </div>
+
+    <!-- Break-even analysis -->
+    <div class="mt-14 max-w-3xl mx-auto">
+      <h3 class="text-xl font-bold text-white mb-2">The pricing math nobody talks about</h3>
+      <p class="text-muted text-sm mb-6">
+        <a href="https://platform.claude.com/docs/en/about-claude/pricing" rel="noopener noreferrer" target="_blank" class="text-teal hover:text-teal-dark underline transition-colors">Anthropic charges a write premium</a> to populate cache, then gives you a read discount on hits. The question is: which TTL actually saves money?
+      </p>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left">
+          <thead>
+            <tr class="border-b border-white/10">
+              <th scope="col" class="py-3 pr-6 text-xs font-medium text-muted uppercase tracking-wider">TTL</th>
+              <th scope="col" class="py-3 px-6 text-xs font-medium text-muted uppercase tracking-wider">Write Premium</th>
+              <th scope="col" class="py-3 px-6 text-xs font-medium text-muted uppercase tracking-wider">Read Discount</th>
+              <th scope="col" class="py-3 pl-6 text-xs font-medium text-teal uppercase tracking-wider">Break-Even</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="border-b border-white/5">
+              <td class="py-3.5 pr-6 text-sm font-medium text-white">5 min</td>
+              <td class="py-3.5 px-6 text-sm text-coral">+$1.25/MTok</td>
+              <td class="py-3.5 px-6 text-sm text-teal">-$4.50/MTok</td>
+              <td class="py-3.5 pl-6 text-sm font-semibold text-white">28% read-back</td>
+            </tr>
+            <tr class="border-b border-white/5">
+              <td class="py-3.5 pr-6 text-sm font-medium text-white">1 hour</td>
+              <td class="py-3.5 px-6 text-sm text-coral">+$5.00/MTok</td>
+              <td class="py-3.5 px-6 text-sm text-teal">-$4.50/MTok</td>
+              <td class="py-3.5 pl-6 text-sm font-semibold text-muted/60">111% read-back</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="text-sm text-muted mt-4">
+        1-hour cache writes are <span class="text-white font-medium">mathematically impossible to break even</span> on Opus. Comis uses adaptive 5-minute TTL escalation &mdash; the only strategy that consistently saves money at scale.
+      </p>
+    </div>
+
+    <!-- How it works -->
+    <div class="mt-10 bg-navy-light/50 border border-white/5 rounded-xl p-6 max-w-3xl mx-auto">
+      <p class="text-sm text-muted leading-relaxed">
+        <span class="text-white font-medium">Under the hood:</span> 20 dedicated optimizations including cache fence protection that prevents the context engine from breaking the cached prefix, sub-agent spawn staggering for pipeline cost sharing, and two-phase cache break detection that attributes every invalidation to its root cause. Gemini gets native CachedContent API integration. OpenAI gets completion storage.
+      </p>
+      <a href="/blog/cache-optimization-journey" class="inline-flex items-center gap-2 mt-4 text-teal hover:text-teal-dark text-sm font-medium transition-colors">
+        Read the full cache forensics story
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+        </svg>
+      </a>
+    </div>
+  </div>
+</section>

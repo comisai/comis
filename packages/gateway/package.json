@@ -1,7 +1,7 @@
 {
   "name": "@comis/gateway",
   "private": true,
-  "version": "1.0.15",
+  "version": "1.0.16",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "HTTP, JSON-RPC, and WebSocket gateway for Comis",

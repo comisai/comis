@@ -186,11 +186,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // -----------------------------------------------------------------
         case "message_update": {
           const ame = (event as { assistantMessageEvent?: { type: string; delta?: string } }).assistantMessageEvent;
-          if (ame && ame.type === "text_delta") {
-            m.textEmitted = true; // Track that visible text was produced in some turn
-            if (deps.onDelta) {
+          if (ame && (ame.type === "text_delta" || ame.type === "thinking_delta")) {
+            if (ame.type === "text_delta") {
+              // Track that visible text was produced in some turn.
+              // thinking_delta intentionally excluded — empty-final-turn detection
+              // depends on this flag reflecting user-visible text only.
+              m.textEmitted = true;
+            }
+            if (deps.onDelta && typeof ame.delta === "string") {
               try {
-                deps.onDelta(ame.delta!);
+                deps.onDelta(ame.delta);
               } catch {
                 // Never abort agent due to streaming callback error
               }
@@ -602,7 +607,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 totalTokens: usage.totalTokens,
                 cost,
                 provider: deps.provider,
-                model: deps.model,
+                model: deps.getCurrentModel?.() ?? deps.model,
                 sessionKey: formatSessionKey(deps.sessionKey),
                 operationType: deps.operationType,
               },
@@ -674,7 +679,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               channelId: deps.channelId,
               executionId: deps.executionId,
               provider: deps.provider,
-              model: deps.model,
+              model: deps.getCurrentModel?.() ?? deps.model,
               tokens: {
                 prompt: usage.input,
                 completion: usage.output,
@@ -692,7 +697,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               cacheWriteTokens,
               sessionKey: formatSessionKey(deps.sessionKey),
               savedVsUncached,
-              cacheEligible: getCacheProviderInfo(deps.provider, deps.model).cacheEligible,
+              cacheEligible: getCacheProviderInfo(deps.provider, deps.getCurrentModel?.() ?? deps.model).cacheEligible,
               responseId,
               cacheCreation: effectiveCacheCreation,
             });

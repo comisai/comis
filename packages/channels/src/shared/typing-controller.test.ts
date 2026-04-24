@@ -377,9 +377,12 @@ describe("createTypingController", () => {
   // =========================================================================
 
   describe("TTL (time-to-live)", () => {
-    it("auto-stops after TTL expires (default 60s)", async () => {
+    it("auto-stops after TTL expires (custom ttlMs)", async () => {
+      // Uses ttlMs=500 (< INTERNAL_TTL_REFRESH_MS=30_000) so the TTL
+      // expiry wins the race against the internal liveness timer. This
+      // keeps coverage of the TTL-expiry WARN branch.
       const ctrl = createTypingController(
-        { mode: "thinking", refreshMs: 100 },
+        { mode: "thinking", refreshMs: 100, ttlMs: 500 },
         sendTyping,
         logger,
       );
@@ -388,7 +391,7 @@ describe("createTypingController", () => {
       expect(ctrl.isActive).toBe(true);
 
       // Advance to just before TTL
-      await vi.advanceTimersByTimeAsync(59_999);
+      await vi.advanceTimersByTimeAsync(499);
       expect(ctrl.isActive).toBe(true);
 
       // Cross the TTL boundary
@@ -444,6 +447,88 @@ describe("createTypingController", () => {
       // Advance much more — no further calls
       await vi.advanceTimersByTimeAsync(1000);
       expect(sendTyping.mock.calls.length).toBe(callsAtExpiry);
+    });
+  });
+
+  // =========================================================================
+  // Internal TTL refresh timer (liveness watchdog)
+  // =========================================================================
+
+  describe("internal TTL refresh timer (liveness watchdog)", () => {
+    it("keeps controller alive past ttlMs with no external signals (default config)", async () => {
+      const ctrl = createTypingController(
+        { mode: "thinking", refreshMs: 4000 }, // default ttlMs = 60_000
+        sendTyping,
+        logger,
+      );
+
+      ctrl.start("chat1");
+      expect(ctrl.isActive).toBe(true);
+
+      // Advance past default ttlMs (60_000) — must remain active because the
+      // internal 30s timer refreshes the TTL.
+      await vi.advanceTimersByTimeAsync(60_001);
+      expect(ctrl.isActive).toBe(true);
+      expect(ctrl.isSealed).toBe(false);
+
+      // Advance another full ttlMs window — still alive.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(ctrl.isActive).toBe(true);
+
+      // No TTL-expired WARN should have fired.
+      const ttlWarnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c) => c[1] === "Typing TTL expired");
+      expect(ttlWarnCalls).toHaveLength(0);
+
+      ctrl.stop();
+    });
+
+    it("stop() clears the internal refresh timer — no dangling interval", async () => {
+      const ctrl = createTypingController(
+        { mode: "thinking", refreshMs: 4000 },
+        sendTyping,
+        logger,
+      );
+
+      ctrl.start("chat1");
+      await vi.advanceTimersByTimeAsync(50_000);
+      const callsAtStop = sendTyping.mock.calls.length;
+
+      ctrl.stop();
+      expect(ctrl.isActive).toBe(false);
+      expect(ctrl.isSealed).toBe(true);
+
+      // Advance far beyond the 30s internal interval — no new calls, no warns.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(sendTyping.mock.calls.length).toBe(callsAtStop);
+
+      const ttlWarnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c) => c[1] === "Typing TTL expired");
+      expect(ttlWarnCalls).toHaveLength(0);
+    });
+
+    it("circuit-breaker trip clears the internal refresh timer", async () => {
+      sendTyping.mockRejectedValue(new Error("Network failure"));
+      const ctrl = createTypingController(
+        { mode: "thinking", refreshMs: 100 },
+        sendTyping,
+        logger,
+      );
+
+      ctrl.start("chat1");
+      // 3 failures trip the breaker.
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(ctrl.isSealed).toBe(true);
+
+      const callsAtTrip = sendTyping.mock.calls.length;
+      const warnsAtTrip = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.length;
+
+      // Advance past the 30s internal interval — must not revive anything.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(sendTyping.mock.calls.length).toBe(callsAtTrip);
+      expect((logger.warn as ReturnType<typeof vi.fn>).mock.calls.length).toBe(warnsAtTrip);
     });
   });
 
