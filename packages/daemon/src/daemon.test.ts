@@ -29,6 +29,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         port: 4766,
         tokens: [],
         rateLimit: { windowMs: 60000, maxRequests: 100 },
+        web: { enabled: false },
         maxBatchSize: 50,
         wsHeartbeatMs: 30000,
         ...gatewayOverrides,
