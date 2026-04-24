@@ -96,6 +96,7 @@ export type GatewayConfig = {
   authMethod: "token" | "password";
   token?: string;
   password?: string;
+  webEnabled: boolean;
 };
 
 /** Auth method for providers that support both API keys and OAuth tokens. */

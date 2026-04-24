@@ -119,6 +119,9 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
       gatewayConfig.password = "${COMIS_GATEWAY_PASSWORD}";
     }
 
+    // Web dashboard -- default true; wizard always sets this explicitly
+    gatewayConfig.web = { enabled: state.gateway.webEnabled };
+
     config.gateway = gatewayConfig;
   }
 
