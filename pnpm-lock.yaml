@@ -297,6 +297,9 @@ importers:
       '@comis/skills':
         specifier: workspace:*
         version: link:../skills
+      '@comis/web':
+        specifier: workspace:*
+        version: link:../web
       '@elevenlabs/elevenlabs-js':
         specifier: ^2.38.1
         version: 2.38.1

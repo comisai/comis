@@ -34,6 +34,7 @@ const WORKSPACE_PACKAGES = [
   "channels",
   "cli",
   "daemon",
+  "web",
 ];
 
 // --- Step 1: Bundle workspace packages into node_modules/@comis/ ---
