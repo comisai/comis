@@ -29,6 +29,7 @@ import type {
 import { LAYER_CIRCUIT_BREAKER_THRESHOLD, CHARS_PER_TOKEN_RATIO, DEFAULT_COMPACTION_PREFIX_ANCHOR_TURNS } from "./constants.js";
 import { computeTokenBudget } from "./token-budget.js";
 import { createThinkingBlockCleaner } from "./thinking-block-cleaner.js";
+import { createSignatureReplayScrubber } from "./signature-replay-scrubber.js";
 import { createReasoningTagStripper } from "./reasoning-tag-stripper.js";
 import { createHistoryWindowLayer } from "./history-window.js";
 import { createObservationMaskerLayer } from "./observation-masker.js";
@@ -185,6 +186,7 @@ async function runLayer(
 function getCallbackSnapshot(state: {
   masker: { maskedCount: number; totalChars: number; persistedToDisk: boolean } | null;
   thinking: { blocksRemoved: number; cacheFenceIndex?: number; messagesProtected?: number; totalMessages?: number } | null;
+  signatureReplayScrubber: { dropped: number; signaturesStripped: number; reason?: string } | null;
   reasoningTags: { tagsStripped: number } | null;
   compaction: { fallbackLevel: 1 | 2 | 3; attempts: number; originalMessages: number; keptMessages: number } | null;
   rehydration: { sectionsInjected: number; filesInjected: number; overflowStripped: boolean } | null;
@@ -194,6 +196,7 @@ function getCallbackSnapshot(state: {
   return {
     masker: state.masker,
     thinking: state.thinking,
+    signatureReplayScrubber: state.signatureReplayScrubber,
     reasoningTags: state.reasoningTags,
     compaction: state.compaction,
     rehydration: state.rehydration,
@@ -250,6 +253,7 @@ export function createContextEngine(
   interface CallbackState {
     masker: { maskedCount: number; totalChars: number; persistedToDisk: boolean } | null;
     thinking: { blocksRemoved: number; cacheFenceIndex?: number; messagesProtected?: number; totalMessages?: number } | null;
+    signatureReplayScrubber: { dropped: number; signaturesStripped: number; reason?: string } | null;
     reasoningTags: { tagsStripped: number } | null;
     compaction: { fallbackLevel: 1 | 2 | 3; attempts: number; originalMessages: number; keptMessages: number } | null;
     rehydration: { sectionsInjected: number; filesInjected: number; overflowStripped: boolean } | null;
@@ -259,6 +263,7 @@ export function createContextEngine(
   const callbackState: CallbackState = {
     masker: null,
     thinking: null,
+    signatureReplayScrubber: null,
     reasoningTags: null,
     compaction: null,
     rehydration: null,
@@ -279,6 +284,20 @@ export function createContextEngine(
       deps.getThinkingKeepTurnsOverride,  // Idle thinking clear override
     );
     layers.push(thinkingCleaner);
+  }
+
+  // Signature replay scrubber (Fix #2): activates only when the executor
+  // memoized a `{ drop: true }` drift decision for this execute() call.
+  // NOT gated on `model.reasoning` because Gemini's `thoughtSignature` lives
+  // on toolCall blocks even when the model itself isn't flagged as reasoning.
+  // The layer no-ops when the gate is closed, so unconditional addition is
+  // cheap; opt-in is via the executor providing `getReplayDriftMode`.
+  if (deps.getReplayDriftMode) {
+    const getReplayDriftMode = deps.getReplayDriftMode;
+    layers.push(createSignatureReplayScrubber({
+      getReplayDriftMode,
+      onScrubbed: (stats) => { callbackState.signatureReplayScrubber = stats; },
+    }));
   }
 
   // Reasoning tag stripper: always active (not gated by model.reasoning) because
@@ -404,6 +423,7 @@ export function createContextEngine(
       // Reset callback state for this invocation
       callbackState.masker = null;
       callbackState.thinking = null;
+      callbackState.signatureReplayScrubber = null;
       callbackState.reasoningTags = null;
       callbackState.compaction = null;
       callbackState.rehydration = null;
@@ -680,6 +700,15 @@ export function createContextEngine(
             thinkingFenceIndex: snap.thinking.cacheFenceIndex,
           }),
           ...(snap.reasoningTags && snap.reasoningTags.tagsStripped > 0 ? { reasoningTagsStripped: snap.reasoningTags.tagsStripped } : {}),
+          ...(snap.signatureReplayScrubber && snap.signatureReplayScrubber.dropped > 0
+            ? { signatureReplayScrubberDropped: snap.signatureReplayScrubber.dropped }
+            : {}),
+          ...(snap.signatureReplayScrubber && snap.signatureReplayScrubber.signaturesStripped > 0
+            ? { signatureReplayScrubberSignaturesStripped: snap.signatureReplayScrubber.signaturesStripped }
+            : {}),
+          ...(snap.signatureReplayScrubber?.reason !== undefined
+            ? { signatureReplayScrubberReason: snap.signatureReplayScrubber.reason }
+            : {}),
           budgetUtilization: Math.round(metrics.budgetUtilization * 100) / 100,
           evictionCategories: metrics.evictionCategories,
           rereadCount: metrics.rereadCount,

@@ -106,6 +106,16 @@ export interface ContextEngineDeps {
     contextWindow: number;
     /** Maximum output tokens for the model. */
     maxTokens: number;
+    /** Optional model identifier (e.g. "claude-opus-4-7"). Used by replay
+     *  drift detection downstream of this getter. */
+    id?: string;
+    /** Optional provider name (e.g. "anthropic"). Used by replay drift
+     *  detection downstream of this getter. */
+    provider?: string;
+    /** Optional API family tag (e.g. "anthropic.messages",
+     *  "google.generative_ai.responses"). Used by replay drift detection
+     *  downstream of this getter. */
+    api?: string;
   };
   /** Channel type for history window per-channel overrides (e.g., "dm", "group"). */
   channelType?: string;
@@ -158,6 +168,15 @@ export interface ContextEngineDeps {
    *  static value is used. Used by idle thinking clear to strip all thinking
    *  blocks when the cache is cold (>1h idle). */
   getThinkingKeepTurnsOverride?: () => number | undefined;
+
+  // --- Replay drift detection (Fix #2) ---
+  /** Optional getter for the per-execute() memoized replay drift decision.
+   *  When the getter returns a DriftCheck with `drop: true`, the
+   *  signature-replay-scrubber layer activates for this pipeline run. When
+   *  undefined or `drop: false`, the layer no-ops. The drift result is
+   *  memoized at the executor layer so all pipeline runs within a single
+   *  execute() see a consistent decision. */
+  getReplayDriftMode?: () => import("../executor/replay-drift-detector.js").DriftCheck | undefined;
 }
 
 // ---------------------------------------------------------------------------

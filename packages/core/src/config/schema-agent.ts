@@ -346,6 +346,12 @@ export const ContextEngineConfigSchema = z.strictObject({
 
   /** Number of recent assistant turns that retain thinking blocks (older turns get stripped). */
   thinkingKeepTurns: z.number().int().min(1).max(50).default(10),
+  /** Idle gap (ms) above which signed thinking state is treated as drifted and
+   *  scrubbed pre-send to avoid provider replay-rejection. Default 30 min —
+   *  below long-TTL caches and below the 74-min production incident gap. Also
+   *  triggers on model id / provider / api change (those checks are
+   *  unconditional regardless of this idle threshold). Range: 1 min .. 24 h. */
+  replayDriftIdleMs: z.number().int().min(60_000).max(24 * 60 * 60_000).default(30 * 60_000),
   /** Model for LLM compaction in "provider:modelId" format. Defaults to Haiku for cost efficiency. Empty string falls through to session model. */
   compactionModel: z.string().default("anthropic:claude-haiku-4-5-20250929"),
   /** Minimum age (in tool result positions) before content is eligible for dead content eviction. */
