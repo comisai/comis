@@ -170,13 +170,13 @@ integrations:
   media:
     vision:
       scopeRules:
-        - channelType: telegram
-          chatType: private
+        - channel: telegram
+          chatType: dm
           action: allow        # Allow vision in Telegram DMs
-        - channelType: telegram
+        - channel: telegram
           chatType: group
           action: deny         # Block vision in Telegram groups
-        - channelType: discord
+        - channel: discord
           action: allow        # Allow vision everywhere on Discord
       defaultScopeAction: deny   # Deny everywhere else
 ```
@@ -187,18 +187,18 @@ Each scope rule can use the following fields to match messages:
 
 | Field | Description | Example Values |
 |-------|-------------|----------------|
-| `channelType` | Platform name | `telegram`, `discord`, `slack`, `whatsapp`, `signal` |
-| `chatType` | Type of chat | `private`, `group` |
-| `keyPrefix` | Match by API key prefix (for multi-tenant setups) | Any string prefix |
+| `channel` | Platform name | `telegram`, `discord`, `slack`, `whatsapp`, `signal` |
+| `chatType` | Type of chat | `dm`, `group`, `thread`, `channel`, `forum` |
+| `keyPrefix` | Match the session key by `startsWith` (for multi-tenant setups) | Any string prefix |
 | `action` | What to do when the rule matches | `allow` or `deny` |
 
 Rules are matched in order -- the first rule where all specified fields match
 the incoming message wins. Fields you do not specify in a rule are treated as
 wildcards (they match everything).
 
-For example, a rule with only `channelType: discord` matches all Discord
-messages regardless of chat type. A rule with both `channelType: telegram`
-and `chatType: private` only matches Telegram direct messages.
+For example, a rule with only `channel: discord` matches all Discord
+messages regardless of chat type. A rule with both `channel: telegram`
+and `chatType: dm` only matches Telegram direct messages.
 
 <Warning>
 Without scope rules, vision processes every image in every channel where your

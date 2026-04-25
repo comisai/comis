@@ -23,7 +23,7 @@ All packages use ES modules (`"type": "module"`), strict TypeScript with `compos
 | channels | `@comis/channels` | 10 platform adapters (Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Echo, Email) | Channel adapters, message mappers, media resolvers |
 | cli | `@comis/cli` | Commander.js CLI, JSON-RPC client | CLI commands, RPC client |
 | daemon | `@comis/daemon` | Orchestrator, observability, graph coordinator | `DaemonInstance`, wiring, graph coordinator |
-| comis | `comis` | Umbrella package (namespace re-exports) | Re-exports all packages |
+| comis | `comisai` | Umbrella package (namespace re-exports) and `comis` CLI bin | Namespace re-exports of all sub-packages |
 | web | `@comis/web` | Lit + Vite + Tailwind standalone SPA | Web dashboard views and components |
 
 ### Package Roles Explained
@@ -39,6 +39,10 @@ All packages use ES modules (`"type": "module"`), strict TypeScript with `compos
 **`@comis/daemon`** is the top-level orchestrator. It wires all packages together using the composition root, manages the process lifecycle (startup, shutdown, signal handling), runs the graph coordinator for multi-agent pipelines, and provides observability metrics. This is the only package that depends on all other packages.
 
 **`@comis/web`** is a standalone single-page application built with Lit web components, Vite for bundling, and Tailwind CSS for styling. It communicates with the daemon exclusively through the gateway's HTTP and WebSocket APIs.
+
+<Note>
+The published umbrella package is named `comisai` on npm (the directory is `packages/comis/`). It bundles all `@comis/*` workspace packages and exposes a `comis` CLI binary. Subpath imports such as `comisai/core` or `comisai/agent` are exposed via the umbrella's `exports` map.
+</Note>
 
 ## Dependency Graph
 

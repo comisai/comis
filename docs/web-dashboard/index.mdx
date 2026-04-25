@@ -30,7 +30,7 @@ Once connected, the dashboard is organized into three main areas: a sidebar on t
 
 ### Sidebar
 
-The sidebar is your primary way to navigate between different views. It contains 25 items organized into four sections -- **Home**, **Operate**, **Observe**, and **Configure** -- plus a **Setup** item and **Logout** button below a divider. Each section header is a non-clickable visual label that groups related items together.
+The sidebar is your primary way to navigate between different views. It contains 24 items organized into four sections -- **Home** (1), **Operate** (7), **Observe** (6), and **Configure** (9) -- plus a **Setup** item and **Logout** button below a divider. Each section header is a non-clickable visual label that groups related items together.
 
 #### Home
 
@@ -109,7 +109,7 @@ The **Skills** view lets you browse installed skills per agent with a scope togg
 The Dashboard is the landing page after login (`/dashboard` route). It provides an at-a-glance overview of your entire Comis system, organized into several rows:
 
 - **Stat cards** -- six clickable cards showing Active Agents (ratio of active to total), Sessions, Messages Today, Tokens Today, Cost Today (USD), and Errors. Each card links to its detail view. Messages, Tokens, and Cost cards show trend arrows comparing to previous values.
-- **System Health card** -- displays daemon uptime, gateway status, delivery success rate, and pipeline active count. Links to the Observability Overview.
+- **System Health card** -- displays daemon uptime, memory (RSS), event-loop delay, Node.js version, MCP server count, and an optional CPU progress bar. Links to the Observability Overview.
 - **Context Engine Summary card** -- shows prompt cache hit rate, budget utilization percentage, total evictions, and re-reads count. Links to the Context Engine view.
 - **Sparkline charts** -- two mini charts showing Token Usage (24h) and Cost Trend (7d) with clickable navigation to the Billing view.
 - **Agents section** -- a grid of agent cards, each showing the agent's name, provider, model, status indicator, messages today, tokens today, and per-agent cost badge.
@@ -145,7 +145,7 @@ The palette searches across four categories:
 
 | Category | Source | Examples |
 |----------|--------|---------|
-| **Views** | 25 navigable views from the sidebar and sub-views | Dashboard, Agents, Messages, Billing, Context Engine |
+| **Views** | 24 navigable views from the sidebar and sub-views | Dashboard, Agents, Messages, Billing, Context Engine |
 | **Agents** | Dynamic list from polling | default, research-agent, support-bot |
 | **Sessions** | Dynamic list from polling | telegram:user123:chat456 |
 | **Commands** | Built-in actions | Refresh Data, Toggle Sidebar, Logout, Show Keyboard Shortcuts |

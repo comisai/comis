@@ -71,6 +71,9 @@ matches within the same category do not multiply the weight).
 | `special_tokens` | 0.3 | Special token delimiters (`<\|...\|>` patterns) |
 | `role_markers` | 0.2 | Role boundary markers, assistant role markers |
 
+The 13 categories in the table above are evaluated each scan. Pattern constants
+are imported from `injection-patterns.ts`.
+
 #### Risk Levels and Thresholds
 
 | Risk Level | Score Range | Action |
@@ -104,7 +107,7 @@ backticks) is stripped before pattern matching. This minimizes false positives
 on technical content that legitimately discusses prompt injection or system
 commands.
 
-#### InputGuardConfig Interface
+#### InputSecurityGuardConfig Interface
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -113,7 +116,7 @@ commands.
 | `action` | `"warn"` \| `"block"` | `"warn"` | Action for high-risk detections |
 
 <Info>
-Source: `createInputGuard()` and `PATTERN_WEIGHTS` in `packages/core/src/security/input-guard.ts`
+Source: `createInputSecurityGuard()` and `PATTERN_WEIGHTS` in `packages/core/src/security/input-security-guard.ts`
 </Info>
 
 ### Injection Rate Limiter
@@ -174,7 +177,7 @@ they are replaced with `[[MARKER_SANITIZED]]` before wrapping. This also
 handles fullwidth Unicode equivalents to prevent bypass via character
 substitution.
 
-**Suspicious pattern detection:** Content is scanned against 16 injection
+**Suspicious pattern detection:** Content is scanned against 17 injection
 patterns from `injection-patterns.ts`. When patterns are found, an
 `onSuspiciousContent` callback fires with the source, matched patterns, content
 length, and sender.
@@ -450,7 +453,7 @@ Defense-in-depth regex-based credential scrubbing for log strings. This is a
 second line of defense after Pino's structured field redaction -- it catches
 credentials embedded in free-text log messages.
 
-**16 credential patterns** processed in order (more specific patterns first):
+**17 credential patterns** processed in order (more specific patterns first):
 
 | Pattern | Replacement | Description |
 |---------|-------------|-------------|

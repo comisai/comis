@@ -126,6 +126,12 @@ export interface ChannelPort {
     emoji: string,
   ): Promise<Result<void, Error>>;
 
+  removeReaction(
+    channelId: string,
+    messageId: string,
+    emoji: string,
+  ): Promise<Result<void, Error>>;
+
   deleteMessage(
     channelId: string,
     messageId: string,
@@ -169,6 +175,12 @@ export interface AppContainer {
   readonly config: AppConfig;
   readonly eventBus: TypedEventBus;
   readonly secretManager: SecretManager;
+  /**
+   * Names of secrets referenced by the daemon config (e.g. ANTHROPIC_API_KEY,
+   * TELEGRAM_BOT_TOKEN). The exec tool refuses these as `secretRefs` so agents
+   * cannot exfiltrate platform-managed credentials.
+   */
+  readonly platformSecretNames: ReadonlySet<string>;
   readonly pluginRegistry: PluginRegistry;
   readonly hookRunner: HookRunner;
   shutdown: () => Promise<void>;

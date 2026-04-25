@@ -12,15 +12,17 @@ The Agents view has three sub-views: a list of all agents, a detail page for eac
 
 ### Agent List
 
-The main view is a sortable data grid showing every configured agent. Click any column header to sort by that column. The columns are:
+The main view is a sortable data grid showing every configured agent. Click any column header to sort by that column (the **Actions** column is not sortable). The columns are:
 
 | Column | What It Shows |
 |--------|--------------|
-| **ID** | The unique identifier for the agent |
-| **Name** | The display name you gave the agent |
-| **Model** | The AI model the agent uses (such as Claude or GPT) |
 | **Status** | Current state, shown as a colored tag |
-| **Actions** | Buttons for Configure, Suspend/Resume, and Delete |
+| **Name** | The display name you gave the agent (falls back to the agent ID when no name is set) |
+| **Model** | The AI model the agent uses (such as Claude or GPT) |
+| **Messages** | Messages handled by this agent today |
+| **Cost** | Today's spend for this agent in USD |
+| **Budget** | A bar showing how much of the agent's daily token budget has been used |
+| **Actions** | Icon buttons for Configure, Suspend/Resume, and Delete |
 
 Each agent's status appears as a colored tag:
 

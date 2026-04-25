@@ -39,12 +39,13 @@ WhatsApp, Signal, iMessage, IRC, LINE, or the web dashboard. It does not matter
 which one. Comis normalizes every message into a common format so your agent
 sees them all the same way.
 
-### 2. Queue assigns priority
+### 2. Queue serializes work
 
-Messages enter a queue that controls the order of processing. Direct messages
-typically get higher priority than group chat messages. The queue also handles
-situations where multiple messages arrive at once -- it makes sure your agent
-processes them in a sensible order without getting overwhelmed.
+Messages enter a queue that controls the order of processing. By default the
+queue uses a single global concurrency gate; if `queue.priorityEnabled` is
+turned on, DMs and mentions get assigned to a higher priority lane than
+background work. Either way, the queue makes sure your agent processes
+messages in a sensible order without getting overwhelmed.
 
 See [Message Queue](/agents/queue) for details on priority lanes and queue
 modes.

@@ -63,12 +63,17 @@ These items address the most significant security risks. Complete them before ex
   </Step>
 
   <Step title="Configure gateway authentication">
-    If you expose the HTTP gateway (for the web dashboard, JSON-RPC, or WebSocket), always require authentication tokens:
+    If you expose the HTTP gateway (for the web dashboard, JSON-RPC, or WebSocket), always require authentication tokens. Each token entry needs a unique `id`, a `secret` of at least 32 characters, and the `scopes` it is allowed to use:
 
     ```yaml title="~/.comis/config.yaml"
     gateway:
       tokens:
-        - "your-strong-random-token-here"
+        - id: "dashboard"
+          secret: "your-strong-random-token-here"
+          scopes:
+            - rpc
+            - ws
+            - admin
     ```
 
     Generate a strong token:

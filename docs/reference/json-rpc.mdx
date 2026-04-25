@@ -1,10 +1,10 @@
 ---
 title: "JSON-RPC Methods Reference"
-description: "Complete reference for all 163 JSON-RPC methods across 30 namespaces"
+description: "Complete reference for all 164 JSON-RPC methods across 30 namespaces"
 icon: "code"
 ---
 
-Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 163 methods across 30 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, cross-channel messaging, sub-agent lifecycle, platform actions, notifications, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws`.
+Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 164 methods across 30 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, cross-channel messaging, sub-agent lifecycle, platform actions, notifications, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws`.
 
 ## Scopes
 
@@ -84,15 +84,16 @@ Health check and connectivity testing.
 
 </Accordion>
 
-<Accordion title="agent (3 methods)">
+<Accordion title="agent (4 methods)">
 
-Agent execution for processing user messages through the LLM pipeline, plus cache statistics inspection.
+Agent execution for processing user messages through the LLM pipeline, cache statistics inspection, and per-operation model resolution introspection.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `agent.cacheStats` | `admin` | Get prompt cache statistics for an agent |
 | `agent.execute` | `rpc` | Execute an agent turn (non-streaming) |
 | `agent.stream` | `rpc` | Execute an agent turn with streaming token deltas |
+| `agent.getOperationModels` | `admin` | Show how each agent operation resolves to a concrete model |
 
 ### `agent.cacheStats`
 
@@ -161,7 +162,17 @@ Agent execution for processing user messages through the LLM pipeline, plus cach
 
 ### `agent.stream`
 
-Same parameters as `agent.execute`. Returns streaming token deltas over the WebSocket connection, followed by the final result.
+Same parameters as `agent.execute`. Token-delta streaming over JSON-RPC is not currently implemented -- the gateway logs a warning and falls back to a non-streaming response. For real-time streaming use the SSE endpoint `GET /api/chat/stream` documented in [HTTP Gateway](/reference/http-gateway#sse-endpoints).
+
+### `agent.getOperationModels`
+
+Inspect how each agent operation (chat, classifier, summarizer, etc.) resolves to a concrete provider+model. Returns the agent's primary model and provider family, whether tiered model routing is active, and a per-operation breakdown including the resolved model, source (config or default), per-operation timeout, cross-provider flag, and whether the API key for the resolved provider is configured.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ agentId: string }` |
+| **Returns** | `{ agentId, primaryModel, providerFamily, tieringActive, operations: Array<{ operationType, model, provider, source, tieringActive, timeoutMs, crossProvider, apiKeyConfigured }> }` |
 
 </Accordion>
 
@@ -616,8 +627,10 @@ Session management for agent conversations. Client-facing methods use `rpc` scop
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ key: string }` |
+| **Parameters** | `{ session_key: string }` |
 | **Returns** | Deletion confirmation |
+
+The parameter name is `session_key` (snake_case) — the handler rejects requests that pass `key` instead.
 
 ### `session.search`
 

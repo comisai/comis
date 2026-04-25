@@ -13,6 +13,7 @@ These tools are especially useful for agents in group chats where users share ph
 | Tool | What It Does |
 |------|-------------|
 | `image_analyze` | Analyze images using AI vision (file, URL, base64, or attachment URL) |
+| `image_generate` | Generate an image from a text prompt and deliver it to the current channel |
 | `tts_synthesize` | Generate spoken audio from text |
 | `transcribe_audio` | Convert speech to text |
 | `describe_video` | Describe video content using vision |
@@ -56,14 +57,14 @@ These tools are especially useful for agents in group chats where users share ph
   </Accordion>
 
   <Accordion title="tts_synthesize -- Generate spoken audio from text" icon="volume-high">
-    Use `tts_synthesize` to convert text into spoken audio. The generated audio file is automatically sent as a message attachment in the chat.
+    Use `tts_synthesize` to convert text into spoken audio. The tool returns a workspace file path (under `media/tts/`) along with the MIME type and size. The agent must then send that file via the `message` tool's `attach` action to deliver it to a chat -- TTS itself does not auto-deliver.
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Always `"synthesize"` |
     | `text` | string | Yes | The text to speak |
     | `voice` | string | No | Voice identifier (provider-specific, available voices depend on your configured provider) |
-    | `format` | string | No | Audio format: `"mp3"`, `"opus"`, or `"wav"` (default: from config) |
+    | `format` | string | No | Audio format: `"mp3"`, `"opus"`, or `"wav"` (default: resolved from config and channel; Telegram defaults to opus) |
 
     The TTS provider (OpenAI, ElevenLabs, or Edge TTS) is determined by your `config.yaml` -- there is no per-call `provider` parameter.
 
@@ -72,12 +73,11 @@ These tools are especially useful for agents in group chats where users share ph
     - **ElevenLabs** -- Wide selection of realistic voices with emotion control. Requires an ElevenLabs API key.
     - **Edge TTS** -- Free text-to-speech using Microsoft Edge's built-in voices. No API key required.
 
-    **Example usage:**
-    ```
-    "Read this summary aloud using the 'alloy' voice."
-    ```
+    **Returns:** `{ filePath, mimeType, sizeBytes }`.
 
-    The agent calls `tts_synthesize` with the summary text and the requested voice, then sends the audio file as a chat attachment.
+    **Example two-step usage:**
+    1. `tts_synthesize` with the summary text -> obtain `filePath`.
+    2. `message` action `attach` with `attachment_url: file://{filePath}`, `attachment_type: audio` to deliver the audio file.
   </Accordion>
 
   <Accordion title="transcribe_audio -- Convert speech to text" icon="microphone">
@@ -107,7 +107,8 @@ These tools are especially useful for agents in group chats where users share ph
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `attachment_url` | string | Yes | The URL of the video to describe |
+    | `attachment_url` | string | Yes | The URL of the video to describe (e.g., `tg-file://...`, `discord://...`) |
+    | `prompt` | string | No | Custom analysis prompt to guide the description (defaults to a generic description prompt) |
 
     The tool extracts representative frames from the video, analyzes each frame with AI vision, and returns a coherent description of the video content. This is useful for understanding short clips, tutorials, or screen recordings shared in chat.
 
@@ -132,6 +133,7 @@ These tools are especially useful for agents in group chats where users share ph
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `attachment_url` | string | Yes | The URL of the document to extract text from |
+    | `max_chars` | number | No | Maximum number of characters to extract from the document |
 
     **Supported formats:**
     - **PDF** -- Extracts text from PDF documents
@@ -151,6 +153,17 @@ These tools are especially useful for agents in group chats where users share ph
     <Note>
     Document extraction works best with text-based PDFs. Scanned documents (images of text) may require the `image_analyze` tool instead, since the content is stored as images rather than selectable text.
     </Note>
+  </Accordion>
+
+  <Accordion title="image_generate -- Generate images from text prompts" icon="image">
+    Use `image_generate` to create images from text descriptions. Available only when an image generation provider is configured (API key present). The generated image is delivered directly to the current channel via the daemon.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `prompt` | string | Yes | Text description of the image to generate |
+    | `size` | string | No | Provider-specific size. fal.ai uses presets (`square_hd`, `landscape_16_9`); OpenAI uses pixel dimensions (`1024x1024`, `1792x1024`). Omit for the provider default. |
+
+    The daemon-side handler applies rate limiting, safety checking, and provider execution before delivering the generated image to the current channel.
   </Accordion>
 </AccordionGroup>
 

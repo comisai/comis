@@ -16,15 +16,16 @@ import SecretWarning from '/snippets/secret-warning.mdx';
 |---------|-------|
 | Default path | `~/.comis/config.yaml` |
 | Custom path | Set `COMIS_CONFIG_PATHS=/path/to/config.yaml` |
-| Multiple files | Comma-separated paths -- later files override earlier ones |
+| Multiple files | Colon-separated paths -- later files override earlier ones |
 | Reload | Config is loaded once at startup. Restart the daemon to pick up changes. |
 
 <Info>
 When you set `COMIS_CONFIG_PATHS`, Comis reads config from that path instead of
-the default. You can point to multiple files:
+the default. You can point to multiple files using colon-separated paths
+(same convention as `PATH`):
 
 ```bash
-COMIS_CONFIG_PATHS="/etc/comis/base.yaml,/etc/comis/overrides.yaml"
+COMIS_CONFIG_PATHS="/etc/comis/base.yaml:/etc/comis/overrides.yaml"
 ```
 
 Later files override values from earlier ones.
@@ -338,6 +339,6 @@ For the complete reference of all configuration sections, see
     Understand the security protections built into Comis.
   </Card>
   <Card title="Config Reference" icon="book" href="/reference/config-yaml">
-    Complete reference for all 34 configuration sections.
+    Complete reference for all 37 configuration sections.
   </Card>
 </CardGroup>

@@ -151,16 +151,19 @@ for file changes.
 
 ### Source categories
 
-Skills are organized into four categories based on where they come from:
+Each discovered skill is tagged with a source category derived from its position in the resolved `discoveryPaths` list:
 
-| Category | Location | Description |
-|----------|----------|-------------|
-| **Bundled** | Shipped with Comis | Built-in skills that come with your installation |
-| **Agent workspace** | `~/.comis/workspace-{agentId}/skills/` | Skills private to a specific named agent |
-| **Shared** | `~/.comis/skills/` | Skills available to all agents |
-| **Local** | `./skills` or explicit `discoveryPaths` entries | Skills from configured discovery directories |
+| Category | When assigned | Typical location |
+|----------|---------------|------------------|
+| **bundled** | First entry in `discoveryPaths` (highest priority) | The agent's workspace skills directory, prepended automatically (`~/.comis/workspace-{agentId}/skills/`, or `~/.comis/workspace/skills/` for the default agent) |
+| **workspace** | Any middle entry (when there are 3+ paths) | Custom discovery paths added in your config |
+| **local** | Last entry (when there are 2+ paths) | The configured `./skills` path (resolves to `~/.comis/skills/` by default) |
 
-If two skills have the same name, the first one loaded wins. Agent workspace skills load first, then shared skills, then bundled -- so agent-specific skills override shared ones.
+If two skills have the same name, the first one loaded wins. Because the agent's own workspace skills directory is prepended to `discoveryPaths` at startup, it takes precedence over `~/.comis/skills/` and any other discovery path.
+
+<Info>
+The "shared" pool at `~/.comis/skills/` is not a built-in concept -- it exists because the default `discoveryPaths` is `["./skills"]`, and `./skills` resolves against `~/.comis`. Replacing `discoveryPaths` removes that pool unless you add it back explicitly.
+</Info>
 
 ### File watching
 

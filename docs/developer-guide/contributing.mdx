@@ -100,7 +100,8 @@ The codebase follows five mandatory engineering principles:
 - **Integration tests** live in `test/integration/` and require `pnpm build` first (they import from `dist/`)
 - Integration tests run sequentially (`maxConcurrency: 1`, `pool: "forks"`)
 - Run integration tests: `pnpm test:integration`
-- Run integration tests with mock providers: `pnpm test:integration:mock`
+- Run full E2E orchestration with log validation and JSON report: `pnpm test:orchestrate`
+- Clean up integration test artifacts: `pnpm test:cleanup`
 
 ## Commits and Branches
 

@@ -16,11 +16,14 @@ On the left, the session sidebar lists all of your conversations. Each session s
 
 At the top of the sidebar you will find:
 
-- A **search bar** to filter sessions by name or keyword
-- **Filter dropdowns** for agent and channel type, so you can narrow down to specific conversations
-- A **New Session** button to start a fresh conversation
+- A **New Session** button (labelled "New") that creates a fresh session for the agent currently selected in the message area
+- A **search bar** ("Filter sessions...") that filters the visible session list by session key, agent ID, or channel type as you type
 
 Click any session in the list to load its conversation in the message area.
+
+<Tip>
+For richer filtering -- by agent, channel, or content match across all sessions -- use the [Sessions](/web-dashboard/sessions-view) view instead. The chat console's sidebar is a quick filter, not a full session browser.
+</Tip>
 
 ### Message Area
 
@@ -51,22 +54,20 @@ At the bottom of the screen, a text input lets you type messages to your agent. 
 ## Starting a Conversation
 
 <Steps>
-  <Step title="Click New Session">
-    Click the **New Session** button at the top of the session sidebar.
+  <Step title="Pick the agent you want to talk to">
+    At the top of the message area, use the **agent selector dropdown** to choose which agent the next session will be created for.
   </Step>
-  <Step title="Select an agent">
-    Choose which agent you want to talk to from the dropdown menu.
-  </Step>
-  <Step title="Choose a channel type">
-    Select a channel type for the conversation. This determines which channel context the agent uses.
-  </Step>
-  <Step title="Enter a session key">
-    Type a session key to identify this conversation, or leave the default value. The session key helps you find this conversation later.
+  <Step title="Click New">
+    Click the **New** button at the top of the session sidebar. A fresh session is created for the selected agent on the `web` channel; its session key is auto-generated as `web:<agent>:<uuid>`. The new session is selected immediately.
   </Step>
   <Step title="Send your first message">
-    Type your message in the input area at the bottom and press **Enter** to send it.
+    Type your message in the input area at the bottom and press **Enter** to send it. The conversation streams back word-by-word.
   </Step>
 </Steps>
+
+<Tip>
+The chat console always uses the `web` channel for sessions it creates. To converse with an agent over a real platform (Telegram, Discord, etc.), send a message from that platform — the daemon will create the session there.
+</Tip>
 
 ## During a Conversation
 
@@ -83,7 +84,7 @@ Once you send a message, the agent starts working on a response. Here is what to
 - Press **Shift + Enter** to insert a new line without sending
 - Use the scroll-to-bottom button that appears when you scroll up in a long conversation
 
-You can also type **slash commands** in the message input for quick actions like `/new` (start a new session), `/reset` (reset the current session), `/export` (download the session), `/switch` (change agent), and `/help` (see all commands).
+You can also type **slash commands** in the message input for quick actions: `/new` (start a new session), `/reset` (reset the current session), `/compact` (compact the current session context), `/export` (download the session as JSONL), `/switch` (change agent), and `/help` (see all commands).
 </Tip>
 
 ## Attachments and Voice

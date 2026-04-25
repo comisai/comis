@@ -57,10 +57,10 @@ layers run before your agent processes the message.
   </Accordion>
 
   <Accordion title="Jailbreak Detection" icon="user-secret">
-    **What it does:** Scans messages for manipulation attempts across 17 pattern
-    categories, including "ignore previous instructions" style attacks and
-    creative misspellings of security-sensitive terms (known as typoglycemia
-    detection).
+    **What it does:** Scans messages for manipulation attempts across 13 weighted
+    pattern categories, including "ignore previous instructions" style attacks
+    and creative misspellings of security-sensitive terms (known as
+    typoglycemia detection).
 
     **Why it matters:** Catches attempts to trick your agent into ignoring its
     safety instructions. Even sophisticated multi-step manipulation attempts are
@@ -277,7 +277,7 @@ They are your last line of defense against leaked secrets and prompt extraction.
   </Accordion>
 
   <Accordion title="Log Sanitization" icon="eraser">
-    **What it does:** Scrubs 18 credential patterns from all log output. Works
+    **What it does:** Scrubs 17 credential patterns from all log output. Works
     alongside structured log redaction as an additional defense-in-depth layer.
 
     **Why it matters:** Prevents accidental credential exposure in log files,

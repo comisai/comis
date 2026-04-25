@@ -38,9 +38,13 @@ MCP is an open protocol that standardizes how AI agents communicate with tool se
   </Step>
 
   <Step title="Restart Comis">
-    Comis connects to MCP servers at startup, so you need to restart after changing the configuration:
+    Comis connects to MCP servers at startup, so you need to restart after changing the configuration. Use whichever entry point matches your deployment:
 
     ```bash
+    # pm2 (recommended)
+    pm2 restart comis
+
+    # Direct CLI (if `comis` is on PATH)
     comis daemon stop && comis daemon start
     ```
 
@@ -166,7 +170,7 @@ The `mcp_manage` tool lets your agents (and you, through the dashboard) check an
 | `reconnect` | Disconnect and reconnect to a server (useful after server-side changes) |
 
 <Info>
-These actions are also available through the `skills_manage` supervisor tool and the web dashboard. You do not need to use the agent to manage MCP connections.
+The same actions are also exposed through the web dashboard. You do not need to invoke the agent to manage MCP connections -- but the `skills_manage` tool only handles prompt skills, not MCP servers.
 </Info>
 
 ## Health Monitoring

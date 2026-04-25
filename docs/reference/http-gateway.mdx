@@ -69,7 +69,7 @@ These routes are always available when the gateway is running.
 
 ## REST API
 
-The REST API is mounted at `/api` and provides HTTP endpoints for the web dashboard. These endpoints are available when `gateway.webDashboard` is enabled (or equivalent web dashboard configuration is provided).
+The REST API is mounted at `/api` and provides HTTP endpoints for the web dashboard. These endpoints are available when `gateway.web.enabled` is `true` (the default).
 
 <Info>
 REST API endpoints are available when the web dashboard is enabled. All authenticated REST API endpoints require at least the `rpc` scope.

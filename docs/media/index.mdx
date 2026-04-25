@@ -126,8 +126,10 @@ agent gets consistent results no matter where the message originated.
 
 <Note>
 Some media features are only available on certain platforms. For example,
-rich messages with buttons work on Discord, Telegram, Slack, and LINE, but
-not on IRC or Signal. See each capability page for platform-specific details.
+rich messages with buttons currently render on Discord, Telegram, and Slack;
+LINE and WhatsApp button rendering is not yet wired through `sendMessage`,
+and Signal, iMessage, IRC, and Email do not support buttons. See each
+capability page for platform-specific details.
 </Note>
 
 ## Configuration Overview

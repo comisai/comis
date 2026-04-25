@@ -40,8 +40,10 @@ severe to least:
 | **trace** | 10 | Most granular diagnostic level. Available but not used in the codebase by default. | (no standard examples -- enable for deep protocol debugging) |
 
 <Info>
-  The `silent` value is also accepted in configuration to disable all logging
-  for a module. It is not a severity level -- it simply suppresses output.
+  The `silent` value exists at the logger API layer to suppress output, but the
+  `daemon.logLevels` configuration only accepts `trace`, `debug`, `info`, `warn`,
+  `error`, and `fatal`. To quiet a noisy module, raise its level (for example,
+  set it to `error`) rather than relying on `silent`.
 </Info>
 
 <Tip>
@@ -293,7 +295,7 @@ Comis automatically redacts sensitive information from log output. API keys, tok
 passwords, and other credentials are replaced with `[REDACTED]` before being written
 to the log file or console.
 
-The redaction engine covers 18 field name patterns at 4 nesting depths (top-level
+The redaction engine covers 17 field name patterns at 4 nesting depths (top-level
 through 3 levels of nesting):
 
 | Redacted Fields |

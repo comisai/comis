@@ -19,6 +19,7 @@
 - [Requirements](https://docs.comis.ai/installation/requirements): Hardware, software, and account prerequisites for running Comis
 - [Install on Linux](https://docs.comis.ai/installation/install-linux): Step-by-step installation guide for Ubuntu, Fedora, and Arch Linux
 - [Install with Docker](https://docs.comis.ai/installation/install-docker): Run Comis in a Docker container with Docker Compose
+- [Install on a VPS](https://docs.comis.ai/installation/install-vps): Deploy Comis on Hostinger, DigitalOcean, Hetzner, or any Ubuntu VPS in under 10 minutes
 - [Configuration Guide](https://docs.comis.ai/installation/configuration): Set up your config.yaml with required settings, channels, and customization
 - [Verify Your Installation](https://docs.comis.ai/installation/verify): Confirm that Comis is installed correctly and running as expected
 

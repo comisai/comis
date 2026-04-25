@@ -18,6 +18,8 @@ connect to Comis without modification. The API supports chat completions
 | `GET` | `/v1/models/:id` | Retrieve a single model by ID |
 | `POST` | `/v1/embeddings` | Generate text embeddings |
 
+The gateway also mounts `POST /v1/responses` (OpenAI Responses API). It is listed in the [HTTP Gateway routes](/reference/http-gateway#openai-compatible-endpoints) reference but is intentionally not described here because the OpenAI Responses spec is separate from the Chat Completions spec.
+
 ## Authentication
 
 All endpoints require a valid bearer token configured in `gateway.tokens[]`.

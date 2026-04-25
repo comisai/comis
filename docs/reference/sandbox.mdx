@@ -124,6 +124,7 @@ interface ContentScanFinding {
   description: string;     // Human-readable description
   matchedText: string;     // Matched content (truncated to 100 chars)
   position: number;        // Character offset in content
+  lineNumber: number;      // 1-based line number of the match in the original content
 }
 ```
 
@@ -200,11 +201,13 @@ Tool policies control which tools are available to each agent during skill execu
 
 | Profile | Tools | Use Case |
 |---------|-------|----------|
-| `minimal` | `exec`, `read`, `write` | Basic file operations only |
+| `minimal` | `read`, `write` | Basic file operations only |
 | `coding` | `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process` | Software development tasks |
 | `messaging` | `message`, `session_status` | Communication-only agents |
-| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage` | Administrative agents |
+| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | Administrative agents |
 | `full` | All tools (empty array = unrestricted) | Fully trusted agents |
+| `cron-minimal` | `web_search`, `message`, `read_file`, `write_file`, `list_dir`, `memory_store`, `memory_search`, `cron`, `discover` | Conservative preset for cron jobs (opt-in only) |
+| `heartbeat-minimal` | `message`, `memory_store`, `memory_search`, `discover` | Conservative preset for heartbeat agents (opt-in only) |
 
 ### Resolution Order
 

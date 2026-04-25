@@ -19,7 +19,12 @@ The `web_search` tool queries a search engine and returns results. Comis support
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | string | Yes | The search query |
-| `provider` | string | No | Specific provider to use (defaults to the first available in your configuration) |
+| `count` | number | No | Number of results to return (1-10) |
+| `deepFetch` | number | No | Auto-fetch full content for the top N result pages (0-5, default 0). When > 0, each result includes inline `fullContent` so you can skip a separate `web_fetch` call. |
+| `country` | string | No | 2-letter country code for region-specific results (e.g., `DE`, `US`). Default: `US`. |
+| `search_lang` | string | No | ISO language code for results (e.g., `de`, `en`, `fr`) |
+| `freshness` | string | No | Filter results by discovery time. Shortcuts: `pd` (past day), `pw` (past week), `pm` (past month), `py` (past year). Date range `YYYY-MM-DDtoYYYY-MM-DD` is supported by Brave, Tavily, and Exa. Supported by Brave, DuckDuckGo, Tavily, Exa, and SearXNG; ignored by grok, perplexity, jina. |
+| `provider` | string | No | Override search provider for this call (`brave`, `perplexity`, `grok`, `duckduckgo`, `searxng`, `tavily`, `exa`, `jina`). Defaults to the configured provider with fallback chain. |
 
 ## Search Providers
 
@@ -150,7 +155,9 @@ The `web_fetch` tool retrieves content from a URL and extracts the readable text
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `url` | string | Yes | The URL to fetch |
+| `url` | string | Yes | HTTP or HTTPS URL to fetch |
+| `extractMode` | string | No | Extraction mode: `markdown` (default) or `text` |
+| `maxChars` | number | No | Maximum characters to return (default: 50000, clamped by configured cap) |
 
 ### How It Works
 

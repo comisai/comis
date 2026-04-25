@@ -94,7 +94,7 @@ All actions require the `channel_type` parameter to specify which platform adapt
     | `channel_type` | string | Yes | Channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`) |
     | `channel_id` | string | Yes | The channel containing the message |
     | `message_id` | string | Yes | The ID of the message to react to |
-    | `emoji` | string | Yes | The emoji to add in Unicode format (e.g., `thumbsup`, `check`, `eyes`) |
+    | `emoji` | string | Yes | The emoji to add. Provide the literal Unicode emoji character (e.g., the thumbs-up character) or a platform-recognized shortcode; per-platform translation is handled by the channel adapter. |
 
     **Example -- Acknowledge a request:**
     ```yaml
@@ -213,6 +213,25 @@ For example, a monitoring agent could:
 4. React with a warning emoji on the original message that triggered the check
 
 All of this happens through the same `message` tool with different `channel_type` and `channel_id` values.
+
+## notify_user -- Proactive Notifications
+
+The `notify_user` tool delivers proactive notifications outside the normal request-response flow. The daemon applies rate limiting, dedup, quiet-hours suppression, and channel-resolution guards before enqueueing the notification.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `message` | string | Yes | Notification text to send to the user |
+| `priority` | string | No | One of `low`, `normal` (default), `high`, `critical`. `critical` bypasses quiet hours. |
+| `channel_type` | string | No | Target channel type (e.g., `telegram`, `discord`). Omit for auto-resolution. |
+| `channel_id` | string | No | Target channel/chat ID. Required when `channel_type` is specified. |
+
+**Example -- Critical alert that bypasses quiet hours:**
+```yaml
+message: "Production deploy failed -- rolling back."
+priority: critical
+```
+
+Use `notify_user` for agent-initiated communication (alerts, reminders, task-completion notices) when you want platform-level guards. Use `message` (action: `send`) for direct messaging to a specific channel without the notification guard pipeline.
 
 ## Related
 

@@ -26,18 +26,17 @@ own histories.
 
 ## Session reset policies
 
-By default, sessions last forever until you manually reset them. But you can
-configure automatic resets so conversations start fresh on a schedule. There are
-four reset modes:
+By default, when a `session.resetPolicy` block is configured, sessions reset
+automatically on a schedule. There are four reset modes:
 
-**none** (default) -- Sessions last until you manually reset with `/new` or
-`/reset`. Your agent remembers everything from the entire conversation history.
+**daily** (default when `session.resetPolicy` is set) -- Automatically starts
+a fresh session at a set hour each day. Good for agents that should start each
+day with a clean slate. You can configure which hour the reset happens (default
+is 4 AM) and which timezone to use. For a community support bot, daily resets
+keep each day's questions organized.
 
-**daily** -- Automatically starts a fresh session at a set hour each day.
-Good for agents that should start each day with a clean slate. You can
-configure which hour the reset happens (default is 4 AM) and which timezone
-to use. For a community support bot, daily resets keep each day's questions
-organized.
+**none** -- Sessions last until you manually reset with `/new` or `/reset`.
+Your agent remembers everything from the entire conversation history.
 
 **idle** -- Resets after a period of inactivity. If nobody sends a message for
 a while (default 4 hours), the next message starts a new session. Good for
@@ -138,7 +137,7 @@ management commands.
 
 | Option | Type | Default | What it does |
 |--------|------|---------|--------------|
-| `session.resetPolicy.mode` | string | `"none"` | Reset mode: `none`, `daily`, `idle`, or `hybrid` |
+| `session.resetPolicy.mode` | string | `"daily"` | Reset mode: `none`, `daily`, `idle`, or `hybrid` |
 | `session.resetPolicy.dailyResetHour` | number | `4` | Hour of day for daily reset (0-23) |
 | `session.resetPolicy.dailyResetTimezone` | string | `""` (system local) | IANA timezone for daily reset |
 | `session.resetPolicy.idleTimeoutMs` | number | `14400000` | Idle timeout in milliseconds (default 4 hours) |

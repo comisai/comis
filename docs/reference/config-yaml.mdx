@@ -793,6 +793,12 @@ Hono HTTPS server for JSON-RPC, WebSocket, and REST API access.
 | `maxMessages` | `number` | `60` | Maximum messages per window |
 | `windowMs` | `number` | `60000` | Time window in ms |
 
+**Web Dashboard (gateway.web)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Mount the `@comis/web` SPA at `/app/*` and the REST/SSE API at `/api/*` (sharing gateway host/port/auth). When `false`, the daemon skips `/app/*`, `/api`, SSE, and the `/` → `/app/` redirect. |
+
 ```yaml
 gateway:
   enabled: true

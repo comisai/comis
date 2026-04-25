@@ -71,7 +71,10 @@ enable this.
     - Add Reactions
     - Use Slash Commands
     - Attach Files
-    - Manage Messages (required for editing responses during streaming)
+    - Create Public Threads (only if you want the agent to start native threads)
+    - Manage Messages (only if you want the agent to delete or moderate other
+      users' messages -- not required for editing the bot's own streaming
+      responses)
 
     Copy the generated URL at the bottom of the page and open it in your browser.
     Select the server you want to add the bot to and click **Authorize**.
@@ -140,6 +143,8 @@ Once connected to Discord, your agent can:
 - React to messages with emoji
 - Reply in threads (native Discord threads)
 - Send files and images (up to 25 MB per attachment)
+- Send native voice messages (audio attachments uploaded as Discord voice notes
+  with waveform and duration metadata)
 - Create interactive buttons for user choices
 - Send rich embeds and cards with formatted content
 - Stream responses with live editing (updates every 500 ms)

@@ -23,7 +23,7 @@ Tools fall into three tiers:
 Tool access is controlled by [tool policy](/skills/tool-policy). By default, agents have access to all tools, but you can restrict access per agent using profiles (like `coding` or `messaging`) or fine-grained allow/deny lists.
 
 <Info>
-All tool names use `snake_case` -- for example, `web_search`, `sessions_spawn`, and `memory_store`. When referencing tools in configuration files (such as tool policy allow/deny lists), use these exact names.
+All tool names use `snake_case` -- for example, `web_search`, `sessions_spawn`, and `memory_tool`. When referencing tools in configuration files (such as tool policy allow/deny lists), use these exact names.
 </Info>
 
 ## Master Reference Table
@@ -77,10 +77,7 @@ For example, a lead agent can spawn a researcher sub-agent and a writer sub-agen
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `session_tool` | Unified session management (search, status, history, list) | [Sessions](/agent-tools/sessions) |
-| `session_status` | View current session info (agent, channel, message count) | [Sessions](/agent-tools/sessions) |
-| `sessions_list` | List active sessions with optional filters | [Sessions](/agent-tools/sessions) |
-| `sessions_history` | Browse conversation history for any session | [Sessions](/agent-tools/sessions) |
+| `session_tool` | Unified session management (search, status, history, list -- 4 actions) | [Sessions](/agent-tools/sessions) |
 | `sessions_send` | Send a message into another session (3 modes) | [Sessions](/agent-tools/sessions) |
 | `sessions_spawn` | Spawn sub-agent sessions with workspace isolation | [Sessions](/agent-tools/sessions) |
 | `subagents` | Manage running sub-agents (list, kill, steer) | [Sessions](/agent-tools/sessions) |
@@ -106,10 +103,7 @@ Memory tools give agents access to their long-term memory. Agents automatically 
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `memory_tool` | Unified memory management (get, search, store, manage) | [Sessions](/agent-tools/sessions) |
-| `memory_search` | Semantic memory search using text and vector similarity | [Sessions](/agent-tools/sessions) |
-| `memory_get` | Read specific memory entries by path | [Sessions](/agent-tools/sessions) |
-| `memory_store` | Store a memory entry (with built-in secret detection) | [Sessions](/agent-tools/sessions) |
+| `memory_tool` | Unified memory management with 4 actions: get (read by path), search (semantic search), store (persist with secret detection), manage (admin CRUD) | [Sessions](/agent-tools/sessions) |
 
 ### Context
 
@@ -125,7 +119,7 @@ The gateway tool gives agents control over the Comis configuration and gateway. 
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `gateway` | Configuration management and gateway control (10 actions) | [Infrastructure](/agent-tools/infrastructure) |
+| `gateway` | Configuration management and gateway control (11 actions) | [Infrastructure](/agent-tools/infrastructure) |
 | `background_tasks` | Manage background tasks (status, read output, cancel) | [Infrastructure](/agent-tools/infrastructure) |
 
 ### Supervisor
@@ -176,7 +170,7 @@ Not sure which tool you need? Start here. The table below maps common tasks to t
 | Transcribe a voice message | `transcribe_audio` | [Media](/agent-tools/media) |
 | Search the web | `web_search` | [Web Tools](/agent-tools/web-tools) |
 | Kick a user from Discord | `discord_action` (action: `kick`) | [Platform Actions](/agent-tools/platform-actions) |
-| Remember something for later | `memory_store` | [Sessions](/agent-tools/sessions) |
+| Remember something for later | `memory_tool` (action: `store`) | [Sessions](/agent-tools/sessions) |
 | Read a PDF attachment | `extract_document` | [Media](/agent-tools/media) |
 | Check what's scheduled | `cron` (action: `list`) | [Scheduling](/agent-tools/scheduling) |
 

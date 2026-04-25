@@ -21,7 +21,7 @@ Every action gets classified into one of three levels:
 **Registry locking:** After bootstrap completes, `lockRegistry()` is called to prevent runtime classification downgrades by malicious plugins. Once locked, `registerAction()` throws an error.
 
 <Info>
-  **Source:** `packages/core/src/security/action-classifier.ts` -- SEC-06 requirement. 177 registered actions across 21 categories.
+  **Source:** `packages/core/src/security/action-classifier.ts` -- SEC-06 requirement. 178 registered actions across 21 categories.
 </Info>
 
 ## API
@@ -98,7 +98,7 @@ requiresConfirmation("system.shutdown"); // true
 
 ## Complete Action Registry
 
-All 177 registered actions from `ACTION_REGISTRY`, grouped by category.
+All 178 registered actions from `ACTION_REGISTRY`, grouped by category.
 
 <AccordionGroup>
   <Accordion title="File Operations (4 actions)">
@@ -365,13 +365,14 @@ All 177 registered actions from `ACTION_REGISTRY`, grouped by category.
     | `media.extract_document` | read |
   </Accordion>
 
-  <Accordion title="System and Infrastructure Operations (13 actions)">
+  <Accordion title="System and Infrastructure Operations (14 actions)">
     | Action | Classification |
     |--------|---------------|
     | `status.check` | read |
     | `log.read` | read |
     | `tool.execute` | read |
     | `gateway.status` | read |
+    | `env.list` | read |
     | `daemon.setLogLevel` | mutate |
     | `tts.synthesize` | mutate |
     | `canvas.present` | mutate |
@@ -412,7 +413,7 @@ security:
 
 | Classification | Count | Examples |
 |---------------|-------|---------|
-| `read` | 68 | `file.read`, `memory.search`, `config.read`, `browser.status` |
+| `read` | 69 | `file.read`, `memory.search`, `config.read`, `browser.status` |
 | `mutate` | 67 | `file.write`, `message.send`, `cron.add`, `browser.navigate` |
 | `destructive` | 42 | `file.delete`, `memory.clear`, `system.shutdown`, `discord.ban` |
 

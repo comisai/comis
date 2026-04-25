@@ -8,7 +8,7 @@ The infrastructure tools let agents manage the Comis system itself. The `gateway
 
 ## gateway -- Configuration and Control
 
-The `gateway` tool is the Swiss Army knife for system management, with 10 actions covering configuration, restarts, and environment variables.
+The `gateway` tool is the Swiss Army knife for system management, with 11 actions covering configuration, restarts, and environment variables.
 
 ### Gateway Actions
 
@@ -120,6 +120,16 @@ The `gateway` tool is the Swiss Army knife for system management, with 10 action
     <Warning>
     Setting environment variables requires security approval and user confirmation. The stored value is write-only and cannot be retrieved. Reference it in config as `${VAR_NAME}` (e.g., `GEMINI_API_KEY: ${GEMINI_API_KEY}`). Never write raw API keys into config files.
     </Warning>
+  </Accordion>
+
+  <Accordion title="env_list -- List configured secret names" icon="list">
+    List the names of secrets stored in the daemon's encrypted secret store. Read-only and admin-trust gated -- the values themselves are never returned. Use before asking the user for a key to check whether it is already configured.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"env_list"` |
+    | `filter` | string | No | Glob filter on secret names (e.g., `"GEMINI*"`, `"*_API_KEY"`). Case-insensitive, supports `*` wildcard. |
+    | `limit` | number | No | Maximum names to return (default: 100, max: 500). |
   </Accordion>
 </AccordionGroup>
 

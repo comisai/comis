@@ -1,6 +1,6 @@
 ---
 title: "CLI Reference"
-description: "Complete reference for all 17 command groups, subcommands, and flags"
+description: "Complete reference for all 18 command groups, subcommands, and flags"
 icon: "terminal"
 ---
 
@@ -30,6 +30,7 @@ Agent management commands for listing, creating, updating, and deleting agent co
 | `agent create <name>` | Create a new agent configuration |
 | `agent configure <name>` | Update an existing agent's settings |
 | `agent delete <name>` | Delete an agent configuration |
+| `agent models <agentId>` | Show operation model resolutions for an agent |
 
 #### `agent list`
 
@@ -56,6 +57,14 @@ Agent management commands for listing, creating, updating, and deleting agent co
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-y, --yes` | `boolean` | `false` | Skip confirmation prompt |
+
+#### `agent models <agentId>`
+
+Show how each agent operation resolves to a concrete model: primary model, tiered operation overrides, source (config or default), per-operation timeouts, cross-provider flag, and API-key availability.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `table` \| `json` | `table` | Output format |
 
 ```bash
 # List all agents
@@ -166,7 +175,7 @@ Interactive configuration editor using terminal prompts. Walks through editable 
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-c, --config <path>` | `string` | `~/.comis/config.yaml` | Config file path |
+| `-c, --config <path>` | `string` | `/etc/comis/config.yaml` | Config file path |
 | `--section <section>` | `string` | - | Jump directly to a specific section |
 
 <Info>Requires an interactive terminal (TTY). Use `comis config set` for non-interactive config changes.</Info>
@@ -212,6 +221,7 @@ No additional flags. Checks status via RPC first, then systemd, then PID file.
 |------|------|---------|-------------|
 | `-f, --follow` | `boolean` | `false` | Follow log output in real-time |
 | `-n, --lines <n>` | `string` | `50` | Number of lines to show |
+| `--raw` | `boolean` | `false` | Show raw JSON log records without Pino formatting |
 
 ```bash
 # Start the daemon
@@ -446,13 +456,19 @@ Manage the daemon via pm2 as a cross-platform process supervisor (alternative to
 | `pm2 status` | Show pm2 process status |
 | `pm2 logs` | Stream daemon logs via pm2 |
 
+#### `pm2 setup`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--enable-boot` | `boolean` | `false` | Also register pm2 with the platform boot manager (launchd on macOS, systemd on Linux) so the daemon starts on reboot |
+
 #### `pm2 logs`
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-n, --lines <n>` | `string` | `50` | Number of recent lines to show |
 
-The other pm2 subcommands (`setup`, `start`, `stop`, `restart`, `status`) have no additional flags.
+The other pm2 subcommands (`start`, `stop`, `restart`, `status`) have no additional flags.
 
 ```bash
 # One-time setup
@@ -694,6 +710,28 @@ comis status
 # Machine-readable output
 comis status --format json
 ```
+
+### `comis uninstall`
+
+Remove Comis from the host. Re-invokes `install.sh --uninstall` (downloaded from `comis.ai`) so the installer remains the single source of truth for everything that may have been created during install.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--purge` | `boolean` | `false` | Also delete `~/.comis` and `/etc/comis` (data + config) |
+| `--remove-user` | `boolean` | `false` | Linux+root only: also delete the `comis` system user (implies `--purge`) |
+| `--yes` | `boolean` | `false` | Skip confirmation prompt |
+| `--dry-run` | `boolean` | `false` | Print actions without performing them |
+| `--installer <path>` | `string` | - | Use a local `install.sh` instead of downloading |
+
+```bash
+# Uninstall Comis (keeps data)
+comis uninstall
+
+# Full purge with no prompts
+comis uninstall --purge --yes
+```
+
+---
 
 ## Exit Codes
 

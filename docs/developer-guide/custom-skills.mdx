@@ -56,7 +56,7 @@ interface SkillPermissions {
 
 ## Skill Manifest
 
-The `SkillManifest` type is the internal TypeScript representation of SKILL.md frontmatter. It describes what a skill does, what it needs, and how it should be constrained.
+The `SkillManifest` type in `@comis/core` is the internal TypeScript representation used by `SkillPort` implementations. The on-disk SKILL.md frontmatter is parsed and validated against `SkillManifestSchema` (in `@comis/skills`); the parsed result is then mapped to `SkillManifest` for execution. The two shapes overlap but are not identical -- see the frontmatter field table below for what the parser actually accepts.
 
 ```typescript
 import type { SkillManifest } from "@comis/core";
@@ -93,6 +93,12 @@ Additional manifest fields available in SKILL.md frontmatter:
 | `argumentHint` | string | Hint for the argument format |
 | `inputSchema` | object | JSON Schema for parameters |
 | `permissions` | object | Security permissions: `fsRead`, `fsWrite`, `net`, `env` |
+| `metadata` | object | Arbitrary string-to-string key-value metadata |
+| `comis` | object | Comis-only namespace block: `os`, `requires` (`bins` + `env`), `skill-key`, `primary-env`, `command-dispatch` |
+
+<Info>
+Comis-platform-only fields (`os`, `requires`, `skill-key`, `primary-env`, `command-dispatch`) live exclusively under the `comis:` namespace block in frontmatter. Other pi-coding-agent hosts ignore this block. The full schema is `SkillManifestSchema` in `packages/skills/src/manifest/schema.ts`.
+</Info>
 
 <Info>
 For the user-facing SKILL.md format and examples, see [Skill Manifest Reference](/skills/manifest). This page focuses on the internal TypeScript types and processing pipeline.

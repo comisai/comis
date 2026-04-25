@@ -61,7 +61,7 @@ Audit events are written to the standard Comis log output as structured JSON. Yo
 
 ```bash
 # View recent audit events from the log file
-grep '"audit"' ~/.comis/logs/comis.log | tail -20
+grep '"audit"' ~/.comis/logs/daemon.log | tail -20
 ```
 
 This is useful when you need to search through events on the command line or when the web dashboard is not available.
@@ -102,7 +102,7 @@ When investigating an incident, start with the audit event that caught your atte
 
 ```bash
 # Find all audit events for a specific trace
-grep 'trace-abc-123' ~/.comis/logs/comis.log
+grep 'trace-abc-123' ~/.comis/logs/daemon.log
 ```
 
 This is especially valuable when debugging approval workflows, where a single user action may trigger classification, confirmation, approval, and execution events across multiple agents.

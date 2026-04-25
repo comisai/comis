@@ -49,7 +49,7 @@ async function fetchData(id: string): Promise<Result<Data, Error>> {
 }
 ```
 
-The codebase spans 13 packages, ~1185 source files, and ~944 test files. There are 19 port interfaces, 160 typed events across 4 domain subsystems, and 13 lifecycle hooks for plugin integration.
+The codebase spans 13 packages, ~1185 source files, and ~944 test files. There are 19 port interfaces, 163 typed events across 4 domain subsystems, and 13 lifecycle hooks for plugin integration.
 
 ## Key Patterns
 
@@ -57,7 +57,7 @@ A few patterns appear throughout the codebase and are important to understand be
 
 - **`Result<T, E>`** -- Every function returns a `Result` discriminated union instead of throwing exceptions. Use `ok()` for success and `err()` for failure. This pattern is ESLint-enforced.
 - **Factory functions** -- Prefer `createXxx()` factory functions returning typed interfaces over direct class instantiation (e.g., `createCircuitBreaker()` returns `CircuitBreaker`).
-- **`TypedEventBus`** -- The inter-module communication layer. Packages subscribe to typed events instead of importing each other directly. The `EventMap` interface provides compile-time safety for all 160 events.
+- **`TypedEventBus`** -- The inter-module communication layer. Packages subscribe to typed events instead of importing each other directly. The `EventMap` interface provides compile-time safety for all 163 events.
 - **`AsyncLocalStorage`** -- Request-scoped context is available via `runWithContext()` and `getContext()` in `core/src/context/`, providing trace IDs and agent context without passing them through every function call.
 
 ## Prerequisites
@@ -89,7 +89,7 @@ The primary validation command before any commit is `pnpm build && pnpm test && 
     All 13 packages with roles and dependency graph
   </Card>
   <Card title="Event Bus" icon="tower-broadcast" href="/developer-guide/event-bus">
-    160 typed events across 4 domain subsystems
+    Typed events across 4 domain subsystems (Messaging, Agent, Channel, Infra)
   </Card>
   <Card title="Custom Adapters" icon="plug" href="/developer-guide/custom-adapters">
     Step-by-step channel adapter tutorial

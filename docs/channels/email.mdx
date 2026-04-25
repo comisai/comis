@@ -193,10 +193,11 @@ Email is the only dual-protocol adapter in Comis -- it uses IMAP to receive
 messages and SMTP to send replies.
 
 **Receiving messages (IMAP):** Comis connects to your IMAP server and uses IMAP
-IDLE (RFC 2177) for near-instant inbox monitoring. The IDLE connection restarts
-every 25 minutes per the RFC specification. If your IMAP server does not support
-IDLE, Comis falls back to polling at the interval configured by
-`pollingIntervalMs` (default: 60 seconds).
+IDLE (RFC 2177) for near-instant inbox monitoring. The IDLE connection is
+recycled every 25 minutes -- well within the 29-minute limit recommended by
+RFC 2177 -- to keep the session healthy across NAT and proxy timeouts. If your
+IMAP server does not support IDLE, Comis falls back to polling at the interval
+configured by `pollingIntervalMs` (default: 60 seconds).
 
 **Sending replies (SMTP):** All outbound messages are sent via SMTP with proper
 reply-chain headers (`In-Reply-To`, `References`) to maintain conversation

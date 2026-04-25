@@ -178,6 +178,7 @@ Each node in the `nodes` array accepts the following parameters:
 | `type_id` | `string` | No | Built-in node type: `agent`, `debate`, `vote`, `refine`, `collaborate`, `approval-gate`, or `map-reduce`. If omitted, the node runs as a regular single-agent task. |
 | `type_config` | `object` | No | Type-specific configuration. Required when `type_id` is set. See [Node Types](/developer-guide/pipelines#node-types) for config schemas per type. |
 | `context_mode` | `string` | No | Upstream output verbosity: `full` (default, complete outputs), `summary` (500 chars + shared dir reference), `none` (no automatic injection -- use `{{nodeId.result}}` for explicit data). |
+| `mcp_servers` | `string[]` | No | MCP server names whose tools should be pre-discovered for this node. Example: `["yfinance"]` pre-seeds the yfinance tools so the sub-agent can skip `discover_tools` calls. |
 
 ## Graph settings
 

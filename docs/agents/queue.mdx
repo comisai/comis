@@ -5,8 +5,8 @@ icon: "bars-staggered"
 ---
 
 When messages arrive faster than your agent can respond, Comis queues them up
-and processes them in order. DMs get priority, and if the queue gets too full,
-overflow rules kick in automatically.
+and processes them in order. If the queue gets too full, overflow rules kick
+in automatically.
 
 ## How the queue works
 
@@ -15,8 +15,10 @@ finishes responding to one message before moving on to the next in the same
 conversation. However, multiple conversations can run at the same time (up to
 `maxConcurrentSessions`, which defaults to 10).
 
-DMs typically get higher priority than group messages, so direct questions are
-answered first even when the agent is busy with group conversations.
+When `queue.priorityEnabled` is set to `true` (default `false`), Comis assigns
+each message to a priority lane (high/normal/low) so DMs and mentions get
+processed ahead of background work. With the default disabled setting, all
+messages share a single global concurrency gate.
 
 ## Debouncing
 

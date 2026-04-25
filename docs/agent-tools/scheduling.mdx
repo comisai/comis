@@ -178,36 +178,51 @@ The `heartbeat_manage` tool controls the agent's periodic heartbeat -- a schedul
 
 <AccordionGroup>
   <Accordion title="get -- View heartbeat configuration">
-    Returns the current heartbeat settings, including the interval and the prompt that runs on each beat.
+    Returns the current heartbeat settings (per-agent and effective config), including the interval and the prompt that runs on each beat.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `get` |
+    | `agent_id` | string | No | Agent ID to inspect (defaults to the calling agent) |
   </Accordion>
 
   <Accordion title="update -- Change heartbeat settings">
-    Updates the heartbeat interval and/or the prompt. The prompt tells the agent what to do each time the heartbeat fires.
+    Updates the heartbeat configuration. Pass only the fields you want to change.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `update` |
-    | `interval` | string | No | How often the heartbeat fires (e.g., `5m`, `1h`, `30s`) |
-    | `prompt` | string | No | What the agent should do on each heartbeat |
+    | `agent_id` | string | No | Agent ID to update (defaults to the calling agent) |
+    | `enabled` | boolean | No | Enable or disable the heartbeat |
+    | `interval_ms` | integer | No | Heartbeat interval in milliseconds (e.g., `300000` for 5 min) |
+    | `prompt` | string | No | Custom heartbeat prompt text |
+    | `model` | string | No | Model override for heartbeat LLM calls |
+    | `target_channel_type` | string | No | Delivery target channel type (e.g., `telegram`, `discord`) |
+    | `target_channel_id` | string | No | Delivery target channel identifier |
+    | `target_chat_id` | string | No | Delivery target chat/conversation ID |
+    | `target_is_dm` | boolean | No | Whether the delivery target is a DM conversation |
+    | `light_context` | boolean | No | Use lightweight bootstrap context (HEARTBEAT.md only) |
+    | `show_ok` | boolean | No | Show OK status notifications |
+    | `show_alerts` | boolean | No | Show alert notifications |
+    | `allow_dm` | boolean | No | Allow DM delivery of heartbeat alerts |
+    | `alert_threshold` | integer | No | Consecutive failures before alerting |
+    | `alert_cooldown_ms` | integer | No | Minimum ms between alerts |
+    | `stale_ms` | integer | No | Max ms before stuck detection triggers |
 
     **Example -- Check for new emails every 5 minutes:**
     ```yaml
     action: update
-    interval: "5m"
+    interval_ms: 300000
     prompt: "Check for new emails and summarize any important ones."
     ```
   </Accordion>
 
   <Accordion title="status -- Check heartbeat status">
-    Shows whether the heartbeat is running or stopped, when it last fired, and when it will fire next.
+    Shows runtime heartbeat state across all agents, including last fire time and next scheduled fire.
 
     **Parameters:**
 
@@ -217,13 +232,14 @@ The `heartbeat_manage` tool controls the agent's periodic heartbeat -- a schedul
   </Accordion>
 
   <Accordion title="trigger -- Manually trigger a heartbeat">
-    Immediately fires the heartbeat, running the configured prompt right now.
+    Immediately fires the heartbeat for an agent, running the configured prompt right now.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `trigger` |
+    | `agent_id` | string | No | Agent ID to fire (defaults to the calling agent) |
   </Accordion>
 </AccordionGroup>
 

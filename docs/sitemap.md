@@ -26,6 +26,7 @@ It is not intended to replace individual docs.
     - [Requirements](https://docs.comis.ai/installation/requirements) | Type: Reference | Summary: Hardware, software, and account prerequisites for running Comis | Prerequisites: None | Topics: requirements, prerequisites, node.js
     - [Install on Linux](https://docs.comis.ai/installation/install-linux) | Type: Tutorial | Summary: Step-by-step installation guide for Ubuntu, Fedora, and Arch Linux | Prerequisites: Requirements | Topics: installation, linux, ubuntu, fedora, arch
     - [Install with Docker](https://docs.comis.ai/installation/install-docker) | Type: Tutorial | Summary: Run Comis in a Docker container with Docker Compose | Prerequisites: Requirements | Topics: installation, docker, docker compose
+    - [Install on a VPS](https://docs.comis.ai/installation/install-vps) | Type: Tutorial | Summary: Deploy Comis on Hostinger, DigitalOcean, Hetzner, or any Ubuntu VPS in under 10 minutes | Prerequisites: Requirements | Topics: installation, vps, hostinger, digitalocean, hetzner, ubuntu
     - [Configuration Guide](https://docs.comis.ai/installation/configuration) | Type: Tutorial | Summary: Set up your config.yaml with required settings, channels, and customization | Prerequisites: Installation | Topics: configuration, config.yaml, setup
     - [Verify Your Installation](https://docs.comis.ai/installation/verify) | Type: How-to | Summary: Confirm that Comis is installed correctly and running as expected | Prerequisites: Installation | Topics: verification, health check, troubleshooting
 

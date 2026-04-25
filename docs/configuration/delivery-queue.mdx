@@ -99,6 +99,12 @@ structured fields. Key log lines to monitor:
 | `Message delivery failed, scheduled for retry` | WARN | Transient failure, will retry |
 | `Message delivery permanently failed` | WARN | Non-retriable error (chat not found, bot blocked) |
 | `Delivery queue startup drain complete` | INFO | Startup drain finished |
+| `Delivery cancelled by before_delivery hook` | INFO | A `before_delivery` hook returned cancel; the message was not sent |
+| `Delivery aborted` | INFO | Mid-delivery cancellation via abort signal (partial chunks may have shipped -- see `chunksDelivered` / `totalChunks`) |
+
+Underlying typed event-bus events (for programmatic subscribers):
+`delivery:enqueued`, `delivery:acked`, `delivery:nacked`, `delivery:failed`,
+`delivery:queue_drained`, `delivery:hook_cancelled`, `delivery:aborted`.
 
 Key fields to watch in your log aggregator:
 
