@@ -1,0 +1,161 @@
+---
+title: "ACP Server"
+description: "How IDE extensions and editor plugins talk to your Comis agents using the Agent Communication Protocol"
+sidebarTitle: "ACP Server"
+---
+
+This is how your editor talks to your agents. The ACP server implements the [Agent Communication Protocol](https://agentclientprotocol.org), a standard interface that lets VS Code, JetBrains, Zed, and other ACP-compatible editors connect to Comis as a first-class AI agent — with full conversation history, session continuity, and the same agent executor that powers all your other channels.
+
+## What is ACP?
+
+ACP (Agent Communication Protocol) is an open standard for connecting AI agents to development tools. Instead of each IDE inventing its own chat protocol, ACP defines a common language: how to start a session, send a prompt, and receive a response.
+
+Comis implements the **agent side** of ACP. Your IDE or editor extension acts as the client. When you chat with Comis from your editor, it is running the same agent executor as a Discord message or a Telegram conversation — the ACP transport is just another channel.
+
+<Note>
+The ACP implementation lives in `packages/gateway/src/acp/`. The `startAcpServer` and `createAcpAgent` functions are exported from `@comis/gateway`. The daemon-level entrypoint that wires these together is not yet shipped. The protocol implementation is complete; the integration work to expose it as a daemon command is in progress.
+</Note>
+
+## Transport
+
+ACP communicates over **ndjson (newline-delimited JSON) on stdin/stdout**. Your IDE spawns Comis as a child process. Comis reads ACP messages from stdin and writes responses to stdout. This is standard practice for language-server-style integrations.
+
+<Warning>
+All logging inside the ACP server must go to stderr. If any log output reaches stdout it corrupts the ndjson stream and breaks the connection. This is enforced in the implementation — do not change the logger configuration when running in ACP mode.
+</Warning>
+
+There is no network port, no bearer token, and no TLS required for ACP. The process boundary is the security boundary: only the editor that spawned the process can talk to it.
+
+## Protocol
+
+ACP uses the `@agentclientprotocol/sdk` (version `^0.19.0`). The SDK handles framing, buffering, and partial-read recovery — you do not implement the wire format yourself. Messages are structured JSON objects carried over the ndjson stream.
+
+The five operations the agent side implements:
+
+| Operation | Direction | Purpose |
+|-----------|-----------|---------|
+| `initialize` | IDE → Comis | Handshake. Negotiates protocol version and returns agent identity. |
+| `newSession` | IDE → Comis | Opens a conversation session. Returns a session ID. |
+| `prompt` | IDE → Comis | Sends one or more content blocks to the agent. Comis runs the agent executor and returns when done. |
+| `authenticate` | IDE → Comis | No-op. Local subprocess needs no authentication. |
+| `cancel` | IDE → Comis | Ends a session and removes it from the session map. |
+
+### Content blocks
+
+Prompt messages are arrays of content blocks. Comis extracts all `text`-type blocks and joins them with newlines before passing the text to the agent executor. Non-text blocks (images, resource references) are silently ignored in the current implementation.
+
+```json
+{
+  "prompt": [
+    { "type": "text", "text": "Explain the rate limiting config." },
+    { "type": "text", "text": "Focus on the WebSocket limits." }
+  ]
+}
+```
+
+These two blocks arrive as a single message: `"Explain the rate limiting config.\nFocus on the WebSocket limits."`
+
+## Session model
+
+Each `newSession` call creates a UUID session ID and maps it to a Comis session key with:
+
+- `channelId`: `"acp"` — identifies this as an IDE session, separate from other channels
+- `userId`: `"ide-user"` — fixed identifier for all ACP callers
+- `peerId`: the ACP session UUID
+
+The session key is used to route the conversation through the same memory, context, and history systems as every other channel.
+
+**Session limits.** The server holds up to 1,000 active sessions in memory. When a new session is created at capacity, the oldest session is evicted (LRU by insertion order). Sessions are also removed when the IDE sends a `cancel` notification.
+
+## Initialize response
+
+When your IDE calls `initialize`, Comis responds with:
+
+```json
+{
+  "protocolVersion": 1,
+  "agentInfo": {
+    "name": "comis",
+    "title": "Comis",
+    "version": "1.0.0"
+  },
+  "agentCapabilities": {}
+}
+```
+
+The `protocolVersion` is echoed back from the request. `agentCapabilities` is currently an empty object — capability negotiation will expand as ACP evolves.
+
+## Code example
+
+This example shows how to build an ACP entrypoint that wires `startAcpServer` to a real agent executor. You would build this as a small Node.js script that the IDE configuration points to.
+
+```typescript
+import { startAcpServer } from "@comis/gateway";
+import pino from "pino";
+
+// Logger MUST write to stderr — stdout is reserved for the ndjson protocol.
+const logger = pino({ level: "info" }, pino.destination(2));
+
+await startAcpServer({
+  version: "1.0.0",
+
+  logger: {
+    info: (...args) => logger.info(...args),
+    warn: (...args) => logger.warn(...args),
+    error: (...args) => logger.error(...args),
+  },
+
+  async executeAgent({ message, sessionKey }) {
+    // Plug in your Comis AgentExecutor here.
+    // sessionKey.channelId === "acp"
+    // sessionKey.peerId    === the ACP session UUID
+    const result = await myAgentExecutor.execute({ message, sessionKey });
+    return {
+      response: result.response,
+      tokensUsed: result.tokensUsed,
+      finishReason: result.finishReason,
+    };
+  },
+});
+```
+
+`startAcpServer` blocks until the IDE closes its end of the connection (stdin reaches EOF). It does not return until the session is over.
+
+## Configuration
+
+ACP has no dedicated configuration section in `~/.comis/config.yaml` today. The relevant settings when you build an ACP entrypoint are:
+
+| Setting | Where | Effect |
+|---------|-------|--------|
+| Session capacity | Code — `createAcpSessionMap(maxSessions)` | How many concurrent IDE sessions the server tracks. Default: `1000`. |
+| Agent version | `AcpServerDeps.version` | Version string returned in `initialize`. Defaults to `"0.0.1"`. |
+| Logger destination | Must be stderr (fd `2`) | Any stdout output corrupts the protocol. |
+
+## Security
+
+Because ACP runs over stdio, the security model is different from the HTTP gateway:
+
+- **No network exposure.** There is no port to firewall, no token to rotate, no TLS certificate to manage.
+- **Process isolation.** Only the process that spawned the ACP server can send it messages. The OS enforces this.
+- **No authentication step.** The `authenticate` call is defined by the ACP protocol but is a no-op here — the spawn relationship itself is the proof of authorization.
+- **Logging to stderr.** Any accidental stdout writes would corrupt the protocol stream. The server is built to write only to stderr so secrets and internal state cannot leak into the ndjson channel.
+
+The ACP session runs under `userId: "ide-user"` and `channelId: "acp"`. Memory, tool access, and approval gates apply exactly as they do for any other channel — the agent does not get elevated permissions because it was invoked from an IDE.
+
+## Troubleshooting
+
+**The IDE reports a connection error immediately on launch.**
+
+The most common cause is a process startup error before the ndjson stream is ready. Check stderr output from the spawned process. Look for import errors, missing build artifacts (`dist/` not present), or a missing `COMIS_CONFIG_PATHS` environment variable. Run `pnpm build` first, then try again.
+
+**Messages are received but the agent returns empty responses.**
+
+The prompt may contain only non-text content blocks (images, resource URIs). Comis currently extracts only `type: "text"` blocks. Verify your IDE extension sends at least one text block in every prompt.
+
+**The server stops accepting messages after a while.**
+
+If the ACP session map reaches capacity (default 1,000 sessions) and `cancel` notifications are not being sent, old sessions are evicted silently. If your IDE opens many sessions without closing them, reduce polling frequency or send a `cancel` for each session when the user closes the chat view. You can also increase the limit by passing a larger `maxSessions` value to `createAcpSessionMap` in your entrypoint.
+
+<Tip>
+If you are building an IDE extension that integrates with Comis via ACP, start by calling `initialize` first, then `newSession` once per conversation, and `cancel` when the user closes the chat panel. This keeps session memory usage predictable and ensures history is correctly scoped per conversation.
+</Tip>

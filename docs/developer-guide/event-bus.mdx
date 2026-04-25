@@ -1,6 +1,6 @@
 ---
 title: "Event Bus"
-description: "163 typed events across 4 domain subsystems for cross-module communication"
+description: "Typed events across 4 domain subsystems for cross-module communication"
 icon: "tower-broadcast"
 ---
 
@@ -8,7 +8,7 @@ Comis uses a `TypedEventBus` for cross-module communication. Instead of packages
 
 ## How It Works
 
-The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All 163 events are defined in the `EventMap` interface, which is composed from 4 domain-specific sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`).
+The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All typed events are defined in the `EventMap` interface, which is composed from 4 domain-specific sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`).
 
 API methods include `emit()`, `on()`, `off()`, `once()`, `removeAllListeners()`, `listenerCount()`, and `setMaxListeners()`. All methods are constrained by `EventMap` -- you cannot emit an event name that does not exist in the map, and every payload is type-checked at compile time.
 
@@ -32,7 +32,7 @@ eventBus.emit("tool:executed", {
 
 ## Event Naming Convention
 
-Events follow a `subsystem:action` naming pattern (for example, `message:received`, `tool:executed`, `graph:started`). The 163 events are organized into 4 subsystems:
+Events follow a `subsystem:action` naming pattern (for example, `message:received`, `tool:executed`, `graph:started`). Events are organized into 4 subsystems:
 
 | Subsystem | Event Count | Scope |
 |-----------|-------------|-------|

@@ -63,6 +63,7 @@ It is not intended to replace individual docs.
     - [Models](https://docs.comis.ai/agents/models) | Type: How-to | Summary: Configuring AI providers, model selection, and automatic failover | Prerequisites: Agents | Topics: models, providers, failover, llm
     - [Safety](https://docs.comis.ai/agents/safety) | Type: Conceptual | Summary: How Comis protects you from unexpected costs and runaway agents | Prerequisites: Agents | Topics: safety, budget, circuit breaker, cost control
     - [Resilience](https://docs.comis.ai/agents/resilience) | Type: Conceptual | Summary: How Comis prevents silent failures from provider outages, hung prompts, and stuck sub-agents | Prerequisites: Agents | Topics: resilience, circuit breaker, overflow recovery, degraded mode
+    - [Cache Architecture](https://docs.comis.ai/agents/cache) | Type: Conceptual | Summary: How Comis manages the context cache — adaptive retention, microcompaction, JIT guide injection, and schema stripping | Prerequisites: Agents | Topics: cache, context window, compaction, performance, cost
 
 ---
 
@@ -121,6 +122,7 @@ It is not intended to replace individual docs.
 
 - [Operations](https://docs.comis.ai/operations) | Type: Conceptual | Summary: Running, monitoring, and maintaining your Comis installation | Prerequisites: Installation | Topics: operations, management, production
     - [Daemon](https://docs.comis.ai/operations/daemon) | Type: Conceptual | Summary: How the Comis daemon starts, runs, and shuts down | Prerequisites: Operations | Topics: daemon, process, startup, shutdown
+    - [Data Directory](https://docs.comis.ai/operations/data-directory) | Type: Reference | Summary: Everything Comis stores on disk — config, database, logs, secrets, traces, and workspace files | Prerequisites: Operations | Topics: data directory, files, config, database, logs, backup
     - [Logging](https://docs.comis.ai/operations/logging) | Type: How-to | Summary: Understanding and viewing Comis logs | Prerequisites: Operations | Topics: logging, pino, structured logs
     - [Monitoring](https://docs.comis.ai/operations/monitoring) | Type: How-to | Summary: Health monitoring and system alerts | Prerequisites: Operations | Topics: monitoring, health checks, alerts
     - [Observability](https://docs.comis.ai/operations/observability) | Type: Conceptual | Summary: Token tracking, cost estimation, latency, and delivery tracing | Prerequisites: Operations | Topics: observability, tokens, costs, latency, tracing
@@ -177,3 +179,4 @@ It is not intended to replace individual docs.
 - [OpenAI-Compatible API](https://docs.comis.ai/reference/openai-api) | Type: Reference | Summary: Complete request/response schema reference for /v1/chat/completions, /v1/models, and /v1/embeddings | Prerequisites: HTTP Gateway Reference | Topics: openai api, chat completions, embeddings, compatibility
 - [Webhooks](https://docs.comis.ai/reference/webhooks) | Type: Reference | Summary: Path-routed webhook ingestion with HMAC verification, template engine, and configurable presets | Prerequisites: HTTP Gateway Reference | Topics: webhooks, hmac, ingestion
 - [Rate Limiting](https://docs.comis.ai/reference/rate-limiting) | Type: Reference | Summary: Multi-layer rate limiting reference covering HTTP, WebSocket, config patch, and injection detection layers | Prerequisites: HTTP Gateway Reference | Topics: rate limiting, throttling, injection detection
+- [ACP Server](https://docs.comis.ai/reference/acp-server) | Type: Reference | Summary: Agent Communication Protocol server for IDE and editor integrations over stdio | Prerequisites: HTTP Gateway Reference | Topics: acp, ide integration, stdio, editor

@@ -57,7 +57,7 @@
           { "group": "Conversations", "pages": ["agents/sessions", "agents/subagent-lifecycle", "agents/compaction", "agents/rag", "agents/queue"] },
           { "group": "Orchestration", "pages": ["agents/execution-graphs"] },
           { "group": "Memory", "pages": ["agents/memory", "agents/search", "agents/embeddings"] },
-          { "group": "Advanced", "pages": ["agents/models", "agents/safety", "agents/resilience"] }
+          { "group": "Advanced", "pages": ["agents/models", "agents/safety", "agents/resilience", "agents/cache"] }
         ]
       },
       {
@@ -95,7 +95,7 @@
       {
         "tab": "Operations",
         "groups": [
-          { "group": "Management", "pages": ["operations/index", "operations/daemon", "operations/logging", "operations/monitoring", "operations/observability", "operations/scheduler", "operations/web-ui"] },
+          { "group": "Management", "pages": ["operations/index", "operations/daemon", "operations/logging", "operations/monitoring", "operations/observability", "operations/scheduler", "operations/web-ui", "operations/data-directory"] },
           { "group": "Deployment", "pages": ["operations/systemd", "operations/docker", "operations/pm2", "operations/reverse-proxy"] },
           { "group": "Help", "pages": ["operations/troubleshooting", "operations/faq"] }
         ]
@@ -120,7 +120,7 @@
           { "group": "CLI", "pages": ["reference/cli"] },
           { "group": "Configuration", "pages": ["reference/config-yaml", "reference/environment-variables", "reference/hot-reload", "reference/secret-manager", "configuration/delivery-queue"] },
           { "group": "Security", "pages": ["reference/security-model", "reference/sandbox", "reference/safe-path", "reference/action-classifier", "reference/tool-security", "reference/node-permissions"] },
-          { "group": "Gateway", "pages": ["reference/http-gateway", "reference/json-rpc", "reference/websocket", "reference/openai-api", "reference/webhooks", "reference/rate-limiting"] }
+          { "group": "Gateway", "pages": ["reference/http-gateway", "reference/json-rpc", "reference/websocket", "reference/openai-api", "reference/webhooks", "reference/rate-limiting", "reference/acp-server"] }
         ]
       }
     ],

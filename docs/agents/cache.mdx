@@ -1,0 +1,234 @@
+---
+title: "Context Cache"
+description: "How Comis keeps prompt costs low across long-running agent sessions"
+sidebarTitle: "Cache"
+---
+
+LLM providers charge 10–20x less for cached prompt reads than for cache writes. That difference only shows up when the bytes sent to the provider are identical to what was sent last turn. Comis treats cache stability as a first-class goal — every feature in this document exists to protect that stability across the full lifetime of a conversation.
+
+A 76-call Claude Opus session in production achieved a **16.9x cache read/write ratio**: 94% of input tokens served from cache at \$0.50/MTok instead of \$15/MTok uncached.
+
+---
+
+## How context grows
+
+Each conversation turn adds content to the context window your agent sends to the LLM. Here is what fills it:
+
+- **Conversation turns.** Every user message and assistant reply is stored in a JSONL session file and replayed on the next call.
+- **Tool results.** Every tool invocation appends a result block. A `bash` tool returning 50K characters of log output becomes a permanent fixture unless Comis intervenes.
+- **System prompt.** Identity files (AGENTS.md), security rules, skill manifests, and workspace instructions are assembled once and sent every turn.
+- **Memory retrieval.** Before each call, the RAG layer fetches up to five memory entries and injects them as additional context.
+- **JIT skill guides.** Verbose operational guides for specific tools are withheld from the system prompt and injected on first use.
+
+<Note>
+Comis never silently deletes conversation messages. The full history is always persisted to disk. What changes between turns is how much of that history the context engine chooses to forward to the model.
+</Note>
+
+---
+
+## Adaptive retention
+
+When Comis places a `cache_control` marker on a prompt block, it signals the provider to cache that block. But there are two TTLs to choose from: **short** (5 minutes) and **long** (1 hour). Writing at 1h TTL on a cold session wastes money if the cache entry expires before it is ever read. Adaptive retention solves this.
+
+Here is what is actually happening under the hood:
+
+1. **Cold start.** The first call writes at `"short"` (5m) TTL. This minimizes write cost on sessions that may not continue.
+2. **Escalation check.** After each turn, Comis records the `cacheReadTokens` returned by the provider. Once confirmed reads arrive, the session is "warm."
+3. **Promotion.** After 3 turns of confirmed cache reads (or immediately on turn 2 if the first turn wrote more than 20K cache tokens — a signal of a large system prompt), retention escalates to `"long"` (1h).
+4. **Prefix instability detection.** If cache reads stay at or below the system prompt baseline for 5 consecutive turns, the prefix is unstable and further 1h writes would go to waste. Comis forces retention back to `"short"` until the prefix stabilizes.
+
+<Tip>
+Sub-agents use static `"short"` retention. They complete in under 60 seconds and never accumulate enough cache reads to justify adaptive tracking overhead.
+</Tip>
+
+The config key `adaptiveCacheRetention` (default `true`) controls this behavior. Set it to `false` to use the static value from `cacheRetention` instead.
+
+---
+
+## Cache fence
+
+The context engine pipeline modifies conversation history before each LLM call. Without coordination, those modifications would land inside the cached prefix and invalidate it — defeating the purpose of caching.
+
+The cache fence prevents this. After each call, Comis records the message index of the highest `cache_control` breakpoint as the **fence index**. Any context-engine layer that would normally modify content at or below that index skips those messages instead.
+
+Concretely:
+- The **observation masker** (which replaces old tool results with placeholders) skips messages below the fence.
+- **Schema stripping** (which strips verbose discovery schemas from session history) skips messages below the fence.
+- **Microcompaction** (which offloads oversized tool results to disk) skips messages in the first third of the session.
+
+The fence index is stored in pre-trim space and correctly translated after the history window trims old messages from the front of the session, so protection survives across turns with long histories.
+
+<Warning>
+The cache fence is provider-specific. It applies to Anthropic sessions. Gemini uses explicit CachedContent API instead (see the Gemini section in the configuration table).
+</Warning>
+
+---
+
+## Microcompaction
+
+Microcompaction runs at **write time** — the moment a tool result is appended to the session file, not at the start of the next turn. This is different from the LLM compaction layer, which runs during context assembly.
+
+When a tool result exceeds the per-tool inline threshold, Comis:
+1. Saves the full result to a JSON file on disk.
+2. Writes a compact reference into the session in its place: `[Tool result offloaded to disk: ...]` with a head/tail preview (1,500 and 500 characters respectively).
+3. The agent can recover the full content at any time using the `read` tool with the disk path.
+
+Per-tool inline thresholds:
+
+| Tool | Inline limit |
+|------|-------------|
+| Default tools | 8,000 chars |
+| MCP tools (`mcp__*`) | 15,000 chars |
+| `read` (file read) | 15,000 chars |
+| Hard cap (any tool) | 100,000 chars |
+
+Results below the threshold are never offloaded. Results that are already-offloaded are skipped on subsequent passes. The observation masker recognizes the `[Tool result offloaded to disk:` prefix and also skips those entries.
+
+---
+
+## JIT guide injection
+
+Verbose operational guides for specific tools — like the workspace customization guide for `agents_manage`, or the task delegation section — would consume significant tokens if included in the system prompt for every turn. Most turns never use these tools.
+
+JIT guide injection defers them. The guides sit in memory, indexed by tool name. When a tool produces its first successful result in a session, Comis appends the corresponding guide as a text block at the end of that result:
+
+```
+---
+[Tool Guide - shown once per session]
+<guide content here>
+---
+```
+
+The `deliveredGuides` set tracks which guides have been delivered in the current session. Once delivered, the guide is never injected again. On session reset, the set is cleared.
+
+<Note>
+If a tool call errors on its first invocation, the guide is **not** consumed — the delivery slot stays open so a successful retry can fire it. This was a subtle bug in earlier versions that caused some guides to silently disappear.
+</Note>
+
+Two guide sources exist independently:
+- **Tool guides** — per-tool operational instructions (keyed by exact tool name).
+- **System prompt guides** — deferred system prompt sections triggered by a tool name, such as the privileged tools section which fires once on the first use of any of 10 privileged tools.
+
+---
+
+## Tool deferral and parallelism
+
+### Deferral
+
+With 50+ tools available, sending every schema to the LLM on every call wastes ~81% of the tokens spent on tool definitions. Comis defers non-essential tools using a **BM25-backed discovery tool** (`discover_tools`).
+
+Deferred tools are removed from the `tools` parameter entirely. Their schemas are stored in a `DiscoveryTracker`. When the agent needs a deferred tool, it calls `discover_tools` with a natural-language query. Comis runs BM25 search over the deferred set and re-injects matching tool schemas mid-turn.
+
+Tool deferral is configurable per-agent:
+
+| `deferredTools.mode` | Behavior |
+|---------------------|----------|
+| `"auto"` (default) | Rule + budget heuristics decide what to defer |
+| `"always"` | All non-core tools are deferred |
+| `"never"` | Deferral is disabled |
+
+Use `deferredTools.neverDefer` and `deferredTools.alwaysDefer` to pin specific tools regardless of mode.
+
+### Parallelism
+
+The SDK can execute multiple tool calls concurrently within a single turn. This is safe for read-only tools but unsafe for tools that modify files, databases, or external services — ordering conflicts can corrupt state.
+
+Comis classifies each tool as **read-only** or **mutating**. Read-only tools (file reads, web fetches, memory searches) run concurrently. Mutating tools share an async mutex and run one at a time, even when the SDK fires them in parallel. The classification is a static set; MCP tools default to the serialized path.
+
+---
+
+## Schema stripping
+
+When `discover_tools` loads a set of tools into the active context, it returns a `<functions>` block containing their full JSON schemas. Those schemas can be 1,720 tokens per discovery result. Once the schemas are loaded into the `tools` parameter for subsequent turns, the verbose block in the conversation history is pure redundancy.
+
+After each turn, Comis scans the session history for `discover_tools` tool results containing `<functions>` blocks and replaces them with compact summaries:
+
+```
+[Discovery loaded: 4 tool(s) are now callable]
+- tool_name_1
+- tool_name_2
+- tool_name_3
+- tool_name_4
+```
+
+Already-stripped results (prefixed `[Discovery loaded:`) are detected and skipped. Results without a `<functions>` block pass through unchanged. Stripping respects the cache fence: entries at or below the fence index are not touched.
+
+---
+
+## MCP disconnect cleanup
+
+MCP servers can connect and disconnect at runtime. When a server disconnects, any tools it provided are no longer callable. If those tools remain registered in the `DiscoveryTracker`, the agent may attempt to call them and receive confusing errors.
+
+Comis subscribes to two MCP lifecycle events:
+
+- `mcp:server:disconnected` — removes all tools from the named server from every active session's tracker.
+- `mcp:server:tools_changed` — removes only the specific tools that were removed (not the entire server).
+
+This cleanup runs automatically. You do not need to configure it. The agent's active tool set reflects the current state of connected MCP servers within one turn of a disconnect event.
+
+---
+
+## Configuration
+
+These are the config keys most relevant to cache behavior. All live under the per-agent config block in your `config.yaml`.
+
+### Cache retention
+
+| Key | Default | What it controls |
+|-----|---------|-----------------|
+| `cacheRetention` | `"long"` | Base TTL hint: `"none"`, `"short"` (5m), or `"long"` (1h) |
+| `adaptiveCacheRetention` | `true` | Whether to escalate from short to long after warm-up turns |
+| `cacheBreakpointStrategy` | `"single"` | Breakpoint placement: `"single"`, `"multi-zone"`, or `"auto"` |
+| `cacheRetentionOverrides` | `{}` | Per-model-prefix overrides, e.g. `"claude-haiku": "none"` |
+| `advancedCacheOptimization.enableRecentZonePromotion` | `true` | Promote recent-zone breakpoint from 5m to 1h in slow channels |
+
+### Gemini explicit cache
+
+| Key | Default | What it controls |
+|-----|---------|-----------------|
+| `geminiCache.enabled` | `false` | Enable Gemini CachedContent API |
+| `geminiCache.maxActiveCaches` | `20` | Max simultaneous cached content objects per agent |
+
+<Note>
+For Gemini agents, `cacheRetention` has no effect. Gemini uses the CachedContent API exclusively, managed by `GeminiCacheManager`. TTL is fixed at 3600 seconds with a 50%-interval refresh on active sessions.
+</Note>
+
+### Context engine
+
+| Key | Default | What it controls |
+|-----|---------|-----------------|
+| `contextEngine.observationKeepWindow` | `25` | Tool results kept with full content (observation masker) |
+| `contextEngine.observationTriggerChars` | `120,000` | Chars before observation masking activates |
+| `contextEngine.compactionCooldownTurns` | `5` | Turns between LLM compaction triggers |
+| `contextEngine.compactionPrefixAnchorTurns` | `2` | Head turns preserved during compaction for cache prefix stability |
+| `contextEngine.historyTurns` | `15` | Recent user turns kept verbatim (pipeline mode) |
+
+### Tool lifecycle
+
+| Key | Default | What it controls |
+|-----|---------|-----------------|
+| `toolLifecycle.enabled` | `true` | Whether unused tools are demoted after N turns |
+| `toolLifecycle.demotionThreshold` | `20` | Turns of non-use before a tool is schema-stripped and deferred |
+
+### Compaction (session)
+
+| Key | Default | What it controls |
+|-----|---------|-----------------|
+| `session.compaction.reserveTokens` | `16,384` | Tokens reserved for summary during SDK auto-compaction |
+| `session.compaction.keepRecentTokens` | `32,768` | Recent-message tokens kept after SDK auto-compaction |
+
+---
+
+## Tips for long-running agents
+
+**If your agent drifts after many turns,** the observation masker may be aggressively replacing tool results with placeholders before the model has used them. Try raising `contextEngine.observationKeepWindow` from 25 to 35 or 40.
+
+**If compaction runs too frequently,** raise `contextEngine.compactionCooldownTurns`. The default of 5 turns is conservative. Sessions with slow-moving conversations (e.g., a Telegram channel where messages arrive every 10 minutes) can tolerate 10–15 turns between compactions.
+
+**If you see high cache-write costs on Haiku or Sonnet with small prompts,** set `adaptiveCacheRetention: false` and `cacheRetention: "short"`. This prevents the system from writing expensive 1h TTL entries on sessions that complete in under 5 minutes.
+
+**If your agent has many MCP tools,** leave `deferredTools.mode` at `"auto"` and use `deferredTools.neverDefer` to pin the tools your agent uses on almost every turn. This avoids a `discover_tools` round-trip for high-frequency tools.
+
+**If a tool produces very large results** (build logs, full file contents, API responses), the default 8K microcompaction threshold will offload them automatically. The agent can still read the full content on demand. If the offloaded path is causing confusion, raise `maxToolResultChars` per-agent to keep more content inline.
+
+**For Gemini agents,** enable `geminiCache` once your system prompt stabilizes. The CachedContent API gives explicit per-object lifecycle control and is more predictable than the Anthropic implicit prefix cache for long-lived agents.

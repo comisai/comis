@@ -1,10 +1,10 @@
 ---
 title: "JSON-RPC Methods Reference"
-description: "Complete reference for all 164 JSON-RPC methods across 30 namespaces"
+description: "Complete reference for all 180 JSON-RPC methods across 36 namespaces"
 icon: "code"
 ---
 
-Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 164 methods across 30 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, cross-channel messaging, sub-agent lifecycle, platform actions, notifications, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws`.
+Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 180 methods across 36 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws`.
 
 ## Scopes
 
@@ -303,6 +303,51 @@ Read the current configuration, optionally filtered to a specific section. Secre
 | **Parameters** | `{ sha: string }` -- the version SHA to rollback to |
 | **Returns** | Rollback confirmation |
 
+### `config.get`
+
+Read a raw config section. Unlike `config.read`, this is a core gateway method that returns the section without secret redaction. Use `config.read` from application code; `config.get` exists for internal gateway wiring.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ section?: string }` |
+| **Returns** | `Record<string, unknown>` -- the requested section, or the full sanitized config if no section is given |
+
+### `config.set`
+
+Write a single config value. This is a core gateway method that forwards to `config.patch` internally. For most use cases, `config.patch` gives you more control over the merge behavior.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ section: string, key: string, value: unknown }` |
+| **Returns** | `{ ok: true, previous?: unknown }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "config.set",
+  "params": {
+    "section": "gateway",
+    "key": "port",
+    "value": 4767
+  },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "ok": true,
+    "previous": 4766
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
 </Accordion>
 
 <Accordion title="gateway (2 methods)">
@@ -387,13 +432,87 @@ Observability methods for diagnostics, billing estimation, channel activity trac
 | **Parameters** | `{ category?: string, limit?: number, sinceMs?: number }` |
 | **Returns** | `{ events: DiagnosticEvent[], counts: Record<string, number> }` |
 
+### `obs.billing.total`
+
+Get the total billing estimate across all agents and providers, combining in-memory data from the current daemon session with historical data from the SQLite observability store.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ sinceMs?: number }` |
+| **Returns** | `{ totalCost: number, totalTokens: number, callCount: number, totalCacheSaved: number }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "obs.billing.total",
+  "params": { "sinceMs": 86400000 },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "totalCost": 1.24,
+    "totalTokens": 980000,
+    "callCount": 342,
+    "totalCacheSaved": 0.38
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `obs.billing.usage24h`
+
+Get an hourly breakdown of token usage for the last 24 hours. Returns one bucket per hour-of-day (0–23) with the aggregate token count for that hour.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | None |
+| **Returns** | `Array<{ hour: number, tokens: number }>` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "obs.billing.usage24h",
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": [
+    { "hour": 9,  "tokens": 42000 },
+    { "hour": 10, "tokens": 88000 },
+    { "hour": 11, "tokens": 61000 }
+  ],
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `obs.billing.byProvider`
+
+Get token usage and estimated cost broken down by LLM provider. Combines in-memory data from the current session with historical SQLite data for a complete picture.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ sinceMs?: number }` |
+| **Returns** | `{ providers: Array<{ provider: string, inputTokens: number, outputTokens: number, estimatedCostUsd: number }> }` |
+
 ### `obs.billing.byAgent`
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ agentId: string, sinceMs?: number }` (agentId required) |
-| **Returns** | Agent billing breakdown |
+| **Returns** | `{ totalCost: number, totalTokens: number, callCount: number, totalCacheSaved: number }` |
 
 ### `obs.billing.bySession`
 
@@ -401,7 +520,17 @@ Observability methods for diagnostics, billing estimation, channel activity trac
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ sessionKey: string, sinceMs?: number }` (sessionKey required) |
-| **Returns** | Session billing breakdown |
+| **Returns** | `{ totalCost: number, totalTokens: number, callCount: number, totalCacheSaved: number }` |
+
+### `obs.channels.all`
+
+Get activity data for all channels, merging live in-memory data with historical SQLite snapshots. In-memory data is authoritative for currently-active channels; SQLite fills in channels from previous daemon sessions.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | None |
+| **Returns** | `{ channels: Array<{ channelId, channelType, lastActiveAt, messagesSent, messagesReceived }> }` |
 
 ### `obs.channels.stale`
 
@@ -426,6 +555,38 @@ Observability methods for diagnostics, billing estimation, channel activity trac
 | **Scope** | `admin` |
 | **Parameters** | `{ sinceMs?: number, limit?: number, channelId?: string }` |
 | **Returns** | `{ deliveries: DeliveryTrace[] }` |
+
+### `obs.delivery.stats`
+
+Get aggregate delivery statistics: total messages attempted, successes, failures, and average delivery latency. Combines in-memory counters with the SQLite observability store for a complete picture across daemon restarts.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | None |
+| **Returns** | `{ total: number, successes: number, failures: number, avgLatencyMs: number }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "obs.delivery.stats",
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "total": 1204,
+    "successes": 1198,
+    "failures": 6,
+    "avgLatencyMs": 142
+  },
+  "id": 1
+}
+```
+</CodeGroup>
 
 <CodeGroup>
 ```json Request
@@ -568,7 +729,7 @@ These methods permanently delete observability data. The web console requires ty
 
 </Accordion>
 
-<Accordion title="session (10 methods)">
+<Accordion title="session (11 methods)">
 
 Session management for agent conversations. Client-facing methods use `rpc` scope; administrative operations use `admin` scope.
 
@@ -579,11 +740,87 @@ Session management for agent conversations. Client-facing methods use `rpc` scop
 | `session.status` | `rpc` | Get session status |
 | `session.history` | `rpc` | Get session conversation history |
 | `session.search` | `rpc` | Search session content by query |
+| `session.run_status` | `rpc` | Get live status of a specific sub-agent run |
 | `session.list` | `admin` | List all active sessions |
 | `session.delete` | `admin` | Delete a session |
 | `session.reset` | `admin` | Reset all sessions |
 | `session.export` | `admin` | Export session data |
 | `session.compact` | `admin` | Compact session history |
+
+### `session.status`
+
+Get the current resource usage and configuration summary for the calling agent's session: model, token consumption, steps executed, and the configured step limit.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | None (resolved from the calling agent context) |
+| **Returns** | `{ model: string, agentName: string, tokensUsed: { totalTokens, totalCost }, stepsExecuted: number, maxSteps: number }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "session.status",
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "model": "claude-sonnet-4-5-20250929",
+    "agentName": "Comis",
+    "tokensUsed": { "totalTokens": 48200, "totalCost": 0.14 },
+    "stepsExecuted": 12,
+    "maxSteps": 25
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `session.history`
+
+Retrieve the conversation history for a session. Returns the raw message array stored in the session, including both user and assistant turns.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ channelId?: string }` |
+| **Returns** | `{ messages: Array<{ role: string, content: string, timestamp?: number }> }` |
+
+### `session.list`
+
+List all sessions the daemon knows about, including sessions stored in SQLite, JSONL transcript files, and workspace session files. Optionally filter by recency or session kind.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ kind?: "all" \| "sub-agent" \| "group" \| "dm", since_minutes?: number }` |
+| **Returns** | `{ sessions: Array<{ sessionKey, agentId, messageCount, updatedAt, metadata }> }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "session.list",
+  "params": { "kind": "dm", "since_minutes": 60 },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "sessions": [
+      { "sessionKey": "telegram:user123:chat456", "agentId": "default", "messageCount": 42, "updatedAt": 1773313498000 }
+    ]
+  },
+  "id": 1
+}
+```
+</CodeGroup>
 
 ### `session.send`
 
@@ -601,11 +838,42 @@ Session management for agent conversations. Client-facing methods use `rpc` scop
 | **Parameters** | `{ parentKey: string, task: string, agentId?: string }` |
 | **Returns** | Spawned session info |
 
+### `session.delete`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ session_key: string }` |
+| **Returns** | `{ sessionKey: string, deleted: true, transcript: object }` |
+
+The parameter name is `session_key` (snake_case) — the handler rejects requests that pass `key` instead. The deleted session's transcript is returned in the response so you have a final copy.
+
+### `session.reset`
+
+Clear all messages in a session while preserving the session's metadata (identity, channel association). Useful for giving an agent a clean slate without fully deleting the session record. Also clears any cached approval decisions for the session.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ session_key: string }` |
+| **Returns** | `{ sessionKey: string, reset: true, previousMessageCount: number }` |
+
+### `session.export`
+
+Export a session's full message history and metadata as a JSON object. Useful for archiving, debugging, or migrating sessions between instances.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ session_key: string }` |
+| **Returns** | `{ sessionKey, messages, metadata, messageCount, createdAt, updatedAt }` |
+
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
-  "method": "session.list",
+  "method": "session.export",
+  "params": { "session_key": "telegram:user123:chat456" },
   "id": 1
 }
 ```
@@ -613,24 +881,54 @@ Session management for agent conversations. Client-facing methods use `rpc` scop
 {
   "jsonrpc": "2.0",
   "result": {
-    "sessions": [
-      { "key": "telegram:user123:chat456", "agentId": "default", "messageCount": 42, "lastActivity": 1773313498000 }
-    ]
+    "sessionKey": "telegram:user123:chat456",
+    "messageCount": 42,
+    "createdAt": 1773100000000,
+    "updatedAt": 1773313498000,
+    "metadata": { "agentId": "default", "channelType": "telegram" },
+    "messages": []
   },
   "id": 1
 }
 ```
 </CodeGroup>
 
-### `session.delete`
+### `session.run_status`
+
+Get the live status of a specific sub-agent run by its run ID. Returns timing, the task description, the current status, and — once complete — the response text and token usage.
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ session_key: string }` |
-| **Returns** | Deletion confirmation |
+| **Scope** | `rpc` |
+| **Parameters** | `{ run_id: string }` |
+| **Returns** | `{ runId, status, agentId, task, sessionKey, startedAt, completedAt?, runtimeMs, response?, tokensUsed?, cost?, error? }` |
 
-The parameter name is `session_key` (snake_case) — the handler rejects requests that pass `key` instead.
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "session.run_status",
+  "params": { "run_id": "run_abc123" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "runId": "run_abc123",
+    "status": "completed",
+    "agentId": "researcher",
+    "task": "Summarize recent papers on quantum error correction",
+    "startedAt": 1773313450000,
+    "completedAt": 1773313498000,
+    "runtimeMs": 48000,
+    "response": "Here is a summary of recent papers..."
+  },
+  "id": 1
+}
+```
+</CodeGroup>
 
 ### `session.search`
 
@@ -728,6 +1026,98 @@ Scheduled job management for cron expressions, intervals, and one-time tasks.
 ```
 </CodeGroup>
 
+### `cron.list`
+
+List all scheduled jobs. Returns each job's name, schedule expression, next run time, and whether it is currently enabled.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | None |
+| **Returns** | `{ jobs: Array<{ id, name, scheduleKind, expr?, tz?, everyMs?, nextRunAtMs, enabled, lastRunAtMs?, lastError? }> }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "cron.list",
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "jobs": [
+      {
+        "id": "daily-summary",
+        "name": "daily-summary",
+        "scheduleKind": "cron",
+        "expr": "0 18 * * *",
+        "tz": "America/New_York",
+        "nextRunAtMs": 1773334800000,
+        "enabled": true
+      }
+    ]
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `cron.update`
+
+Update an existing cron job's schedule or message. Only the fields you provide are changed.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ name: string, message?: string, agentId?: string, schedule?: { kind: "cron" \| "interval" \| "once", expr?: string, tz?: string, everyMs?: number, at?: string } }` |
+| **Returns** | Updated job info |
+
+### `cron.status`
+
+Get the current status of a single cron job by name.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ name: string }` |
+| **Returns** | `{ id, name, scheduleKind, nextRunAtMs, enabled, lastRunAtMs?, lastError? }` |
+
+### `cron.runs`
+
+Get the run history for a cron job — timestamps, durations, and whether each run succeeded.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ name: string, limit?: number }` |
+| **Returns** | `{ runs: Array<{ runAt: number, durationMs: number, success: boolean, error?: string }> }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "cron.runs",
+  "params": { "name": "daily-summary", "limit": 5 },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "runs": [
+      { "runAt": 1773248400000, "durationMs": 3200, "success": true },
+      { "runAt": 1773162000000, "durationMs": 4100, "success": true }
+    ]
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
 ### `cron.remove`
 
 | Property | Value |
@@ -738,11 +1128,13 @@ Scheduled job management for cron expressions, intervals, and one-time tasks.
 
 ### `cron.run`
 
+Trigger an immediate manual run of a scheduled job. By default this forces the job to execute regardless of its next scheduled time (`mode: "force"`). Pass `mode: "due"` to run all currently overdue jobs instead.
+
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ name: string }` |
-| **Returns** | Execution result |
+| **Parameters** | `{ name?: string, mode?: "force" \| "due" }` (`name` required when `mode` is `"force"`) |
+| **Returns** | `{ triggered: true, mode: string, jobName?: string }` |
 
 </Accordion>
 
@@ -765,6 +1157,36 @@ Browser automation via Chrome DevTools Protocol (CDP). All methods use `rpc` sco
 | `browser.focus` | `rpc` | Focus a specific tab |
 | `browser.close` | `rpc` | Close a tab |
 | `browser.console` | `rpc` | Get console log entries |
+
+### `browser.status`
+
+Get the current browser session status: whether a session is running, the current URL, and the number of open tabs.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | None |
+| **Returns** | `{ running: boolean, url?: string, tabCount?: number }` |
+
+### `browser.start`
+
+Start a browser session. A headless Chromium instance is launched and connected via CDP. Does nothing if a session is already running.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | None |
+| **Returns** | `{ started: true }` |
+
+### `browser.stop`
+
+Stop the active browser session and close all tabs. Any ongoing automation is interrupted.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | None |
+| **Returns** | `{ stopped: true }` |
 
 ### `browser.navigate`
 
@@ -795,6 +1217,16 @@ Browser automation via Chrome DevTools Protocol (CDP). All methods use `rpc` sco
 ```
 </CodeGroup>
 
+### `browser.snapshot`
+
+Take an accessibility-tree DOM snapshot of the current page. Returns a structured representation of interactive elements — more reliable for automation than raw HTML.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | None |
+| **Returns** | Accessibility tree snapshot object |
+
 ### `browser.screenshot`
 
 | Property | Value |
@@ -803,6 +1235,16 @@ Browser automation via Chrome DevTools Protocol (CDP). All methods use `rpc` sco
 | **Parameters** | `{ fullPage?: boolean }` |
 | **Returns** | `{ data: string }` (base64-encoded PNG) |
 
+### `browser.pdf`
+
+Generate a PDF of the current page and return it as base64-encoded data.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | None |
+| **Returns** | `{ data: string }` (base64-encoded PDF) |
+
 ### `browser.act`
 
 | Property | Value |
@@ -810,6 +1252,56 @@ Browser automation via Chrome DevTools Protocol (CDP). All methods use `rpc` sco
 | **Scope** | `rpc` |
 | **Parameters** | `{ action: string, selector?: string, text?: string, value?: string }` |
 | **Returns** | Action result |
+
+### `browser.tabs`
+
+List all currently open browser tabs with their IDs, URLs, and titles.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | None |
+| **Returns** | `{ tabs: Array<{ id: string, url: string, title: string }> }` |
+
+### `browser.open`
+
+Open a new browser tab, optionally navigating to a URL immediately.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ url?: string }` |
+| **Returns** | `{ tabId: string }` |
+
+### `browser.focus`
+
+Focus a specific tab by its ID, making it the active tab for subsequent commands.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ tabId: string }` |
+| **Returns** | `{ focused: true, tabId: string }` |
+
+### `browser.close`
+
+Close a specific tab by its ID.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ tabId: string }` |
+| **Returns** | `{ closed: true, tabId: string }` |
+
+### `browser.console`
+
+Retrieve console log entries captured since the browser session started. Useful for debugging page-level JavaScript errors during automation.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | None |
+| **Returns** | `{ entries: Array<{ level: string, text: string, timestamp: number }> }` |
 
 </Accordion>
 
@@ -859,7 +1351,7 @@ Returns `{ error: "..." }` if STT is not configured or transcription fails.
 
 </Accordion>
 
-<Accordion title="admin.approval (3 methods)">
+<Accordion title="admin.approval (4 methods)">
 
 Approval gate management for action confirmation workflows.
 
@@ -868,6 +1360,7 @@ Approval gate management for action confirmation workflows.
 | `admin.approval.clearDenialCache` | `admin` | Clear the denial cache for approval gates |
 | `admin.approval.pending` | `admin` | List pending approval requests |
 | `admin.approval.resolve` | `admin` | Approve or deny a pending request |
+| `admin.approval.resolveAll` | `admin` | Bulk-resolve all pending approval requests for a session |
 
 ### `admin.approval.clearDenialCache`
 
@@ -912,6 +1405,39 @@ Approval gate management for action confirmation workflows.
 | **Parameters** | `{ id: string, approved: boolean, reason?: string }` |
 | **Returns** | Resolution confirmation |
 
+### `admin.approval.resolveAll`
+
+Bulk-approve or bulk-deny every pending request at once, optionally scoped to a single session. Useful during incident response when many requests have queued up and you need to unblock or cancel them all in one call.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ approved: boolean, sessionKey?: string, approvedBy?: string, reason?: string }` |
+| **Returns** | `{ resolved: number, requestIds: string[] }` |
+
+`sessionKey` filters to only the requests belonging to that session. Omit it to resolve all pending requests across every session. `approvedBy` defaults to `"operator"` when omitted.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "admin.approval.resolveAll",
+  "params": { "approved": false, "reason": "Cancelled by operator" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "resolved": 3,
+    "requestIds": ["req_a1", "req_b2", "req_c3"]
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
 </Accordion>
 
 <Accordion title="agents (7 methods)">
@@ -927,6 +1453,16 @@ Agent lifecycle management: create, read, update, delete, suspend, and resume ag
 | `agents.delete` | `admin` | Delete an agent |
 | `agents.suspend` | `admin` | Suspend an agent (stop processing) |
 | `agents.resume` | `admin` | Resume a suspended agent |
+
+### `agents.list`
+
+List all configured agent IDs. This is a lightweight call that returns only the IDs — use `agents.get` for full configuration details on a specific agent.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | None |
+| **Returns** | `{ agents: string[] }` |
 
 ### `agents.create`
 
@@ -959,6 +1495,91 @@ Agent lifecycle management: create, read, update, delete, suspend, and resume ag
     "agents": [
       { "id": "default", "name": "Comis", "provider": "anthropic", "model": "claude-sonnet-4-5-20250929" }
     ]
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `agents.update`
+
+Update an existing agent's configuration. Only the fields you provide are changed; everything else stays as-is. The agent continues running with the new settings immediately — no restart required.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ agentId: string, name?: string, provider?: string, model?: string, ...config }` |
+| **Returns** | Updated agent configuration |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "agents.update",
+  "params": {
+    "agentId": "researcher",
+    "model": "claude-opus-4-5-20250929"
+  },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "agentId": "researcher",
+    "updated": true
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `agents.delete`
+
+Permanently remove an agent from the configuration. Any active sessions belonging to the agent are left intact in the session store but will fail to execute new turns after deletion.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ agentId: string }` |
+| **Returns** | `{ agentId: string, deleted: true }` |
+
+### `agents.suspend`
+
+Suspend an agent so it stops accepting new messages. Existing in-flight executions are allowed to finish. Useful for taking an agent offline temporarily without deleting its configuration.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ agentId: string }` |
+| **Returns** | `{ agentId: string, suspended: true }` |
+
+### `agents.resume`
+
+Resume a previously suspended agent, allowing it to accept messages again.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ agentId: string }` |
+| **Returns** | `{ agentId: string, resumed: true }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "agents.suspend",
+  "params": { "agentId": "researcher" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "agentId": "researcher",
+    "suspended": true
   },
   "id": 1
 }
@@ -1037,6 +1658,77 @@ Memory system operations: search, inspect, browse, manage, store, and export. Co
 | **Parameters** | None |
 | **Returns** | Cache statistics (size, hit rate, evictions) |
 
+### `memory.inspect`
+
+Inspect a single memory entry by ID, or retrieve overall memory system statistics when no ID is given.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ id?: string, tenantId?: string }` |
+| **Returns** | `{ entry?: MemoryEntry }` (with `id`) or `{ stats?: object }` (without `id`) |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "memory.inspect",
+  "params": { "id": "mem_abc123" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "entry": {
+      "id": "mem_abc123",
+      "content": "Deploy using pm2 for production...",
+      "memoryType": "semantic",
+      "trustLevel": "high",
+      "score": null,
+      "createdAt": 1773313498000
+    }
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `memory.stats`
+
+Get aggregate statistics for the memory system: total entry count, database size, embedding cache hit rate, and provider information.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | None |
+| **Returns** | `{ totalEntries: number, dbSizeBytes: number, embeddingProvider?: string, cacheHitRate?: number }` |
+
+### `memory.flush`
+
+Delete all memory entries permanently. This is a destructive operation with no undo — all stored memories are wiped from both the vector index and the database.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | None |
+| **Returns** | `{ flushed: true, deletedCount: number }` |
+
+<Warning>
+`memory.flush` is irreversible. Export your memories with `memory.export` before flushing if you want a backup.
+</Warning>
+
+### `memory.export`
+
+Export the entire memory database as a portable JSON snapshot. Useful for backups, migration between instances, or offline analysis.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | None |
+| **Returns** | `{ entries: MemoryEntry[], exportedAt: number, totalEntries: number }` |
+
 ### `memory.store`
 
 | Property | Value |
@@ -1080,13 +1772,69 @@ Model catalog inspection and connectivity testing.
 | `models.list` | `admin` | List available models from all configured providers |
 | `models.test` | `admin` | Test connectivity to a specific model |
 
+### `models.list`
+
+List all models available across your configured LLM providers. Returns the model ID, provider name, and display name for each entry. Use this to discover what models you can assign to agents.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | None |
+| **Returns** | `{ models: Array<{ id: string, provider: string, name: string }> }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "models.list",
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "models": [
+      { "id": "claude-sonnet-4-5-20250929", "provider": "anthropic", "name": "Claude Sonnet 4.5" },
+      { "id": "gpt-4o", "provider": "openai", "name": "GPT-4o" }
+    ]
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
 ### `models.test`
+
+Test connectivity to a specific model by sending a minimal prompt and measuring the round-trip latency. Useful for verifying that your API keys and network path are working before assigning a model to an agent.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ model: string, provider?: string }` |
-| **Returns** | Test result with latency and status |
+| **Returns** | `{ ok: boolean, latencyMs: number, provider: string, error?: string }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "models.test",
+  "params": { "model": "claude-sonnet-4-5-20250929", "provider": "anthropic" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "ok": true,
+    "latencyMs": 312,
+    "provider": "anthropic"
+  },
+  "id": 1
+}
+```
+</CodeGroup>
 
 </Accordion>
 
@@ -1101,21 +1849,15 @@ Gateway token management for API authentication.
 | `tokens.revoke` | `admin` | Revoke a gateway token |
 | `tokens.rotate` | `admin` | Rotate a token (revoke old, create new) |
 
-### `tokens.create`
+### `tokens.list`
+
+List all configured gateway tokens. Token secrets are always redacted — you can see token IDs, scopes, and creation timestamps, but never the raw secret.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ id: string, scopes: string[] }` |
-| **Returns** | Created token with secret (shown once) |
-
-### `tokens.revoke`
-
-| Property | Value |
-|----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ id: string }` |
-| **Returns** | Revocation confirmation |
+| **Parameters** | None |
+| **Returns** | `{ tokens: Array<{ id: string, scopes: string[], createdAt: string }> }` |
 
 <CodeGroup>
 ```json Request
@@ -1130,8 +1872,62 @@ Gateway token management for API authentication.
   "jsonrpc": "2.0",
   "result": {
     "tokens": [
-      { "id": "default", "scopes": ["*"], "createdAt": "2026-01-01T00:00:00Z" }
+      { "id": "default", "scopes": ["*"], "createdAt": "2026-01-01T00:00:00Z" },
+      { "id": "dashboard", "scopes": ["rpc"], "createdAt": "2026-03-15T08:00:00Z" }
     ]
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `tokens.create`
+
+Create a new gateway token. The secret is returned only in this response — it cannot be retrieved again. Store it securely immediately.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ id: string, scopes: string[] }` |
+| **Returns** | `{ id: string, secret: string, scopes: string[] }` |
+
+### `tokens.revoke`
+
+Permanently revoke a gateway token. Any client currently authenticated with this token will be disconnected at their next request.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ id: string }` |
+| **Returns** | `{ id: string, revoked: true }` |
+
+### `tokens.rotate`
+
+Revoke an existing token and create a replacement with the same ID and scopes in a single atomic operation. The new secret is returned once and cannot be retrieved again.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ id: string }` |
+| **Returns** | `{ id: string, secret: string, scopes: string[], rotated: true }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "tokens.rotate",
+  "params": { "id": "dashboard" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "id": "dashboard",
+    "secret": "ctk_newSecretValue",
+    "scopes": ["rpc"],
+    "rotated": true
   },
   "id": 1
 }
@@ -1154,13 +1950,23 @@ Channel adapter management: list, inspect, enable, disable, restart, capabilitie
 | `channels.list` | `admin` | List all configured channels with status |
 | `channels.restart` | `admin` | Restart a channel adapter connection |
 
+### `channels.list`
+
+List all configured channel adapters with their current status. Includes both running adapters and channels that are configured but not currently active.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | None |
+| **Returns** | `{ channels: Array<{ channelType, channelId?, status: "running" \| "stopped" }>, total: number }` |
+
 ### `channels.capabilities`
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | None |
-| **Returns** | Per-channel capability matrix showing supported features |
+| **Parameters** | `{ channel_type: string }` |
+| **Returns** | `{ channelType: string, features: object }` — the feature capability map for the specified channel type |
 
 <CodeGroup>
 ```json Request
@@ -1187,8 +1993,8 @@ Channel adapter management: list, inspect, enable, disable, restart, capabilitie
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channelId: string }` |
-| **Returns** | Channel configuration and connection status |
+| **Parameters** | `{ channel_type: string }` |
+| **Returns** | `{ channelType, channelId?, status: "running" | "stopped", configured?: boolean }` |
 
 ### `channels.health`
 
@@ -1220,13 +2026,57 @@ Channel adapter management: list, inspect, enable, disable, restart, capabilitie
 ```
 </CodeGroup>
 
-### `channels.restart`
+### `channels.enable`
+
+Start a stopped channel adapter. The adapter must already be configured — this restarts its connection without touching the config file. The health monitor is notified automatically.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channelId: string }` |
-| **Returns** | Restart confirmation |
+| **Parameters** | `{ channel_type: string }` |
+| **Returns** | `{ channelType: string, status: "running", message: string }` |
+
+### `channels.disable`
+
+Stop a running channel adapter. The adapter is shut down cleanly and removed from the health monitor. The config file is updated to reflect the new `enabled: false` state.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ channel_type: string }` |
+| **Returns** | `{ channelType: string, status: "stopped", message: string }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "channels.disable",
+  "params": { "channel_type": "telegram" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "channelType": "telegram",
+    "status": "stopped",
+    "message": "Channel adapter stopped"
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `channels.restart`
+
+Stop then immediately restart a channel adapter. Useful when a connection has gone stale and you want to force a clean reconnect without disabling the channel.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ channel_type: string }` |
+| **Returns** | `{ channelType: string, status: "running", message: string }` |
 
 <CodeGroup>
 ```json Request
@@ -1265,13 +2115,65 @@ Model Context Protocol (MCP) server management: list, connect, disconnect, and t
 | `mcp.reconnect` | `admin` | Reconnect to an MCP server |
 | `mcp.test` | `admin` | Test MCP server connectivity |
 
+### `mcp.list`
+
+List all configured MCP servers with their current connection status and tool counts.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | None |
+| **Returns** | `{ servers: Array<{ id: string, status: string, tools: number }> }` |
+
+### `mcp.status`
+
+Get the current connection status of a specific MCP server, including which tools it exposes.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ serverId: string }` |
+| **Returns** | `{ serverId, status, tools: string[], error?: string }` |
+
 ### `mcp.connect`
+
+Connect to an MCP server. If the server is already connected this is a no-op. On success the response includes the list of tool names the server exposes.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ serverId: string }` |
 | **Returns** | Connection result with available tools |
+
+### `mcp.disconnect`
+
+Gracefully disconnect from an MCP server. The server remains in the configuration but will not be used until you reconnect.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ serverId: string }` |
+| **Returns** | `{ serverId: string, disconnected: true }` |
+
+### `mcp.reconnect`
+
+Disconnect then immediately reconnect to an MCP server. Use this to pick up configuration changes or recover from a stale connection without editing the config file.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ serverId: string }` |
+| **Returns** | Reconnection result with refreshed tool list |
+
+### `mcp.test`
+
+Test connectivity to an MCP server without changing its state. Returns the round-trip latency and confirms the server is reachable.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ serverId: string }` |
+| **Returns** | `{ serverId: string, ok: boolean, latencyMs: number, error?: string }` |
 
 <CodeGroup>
 ```json Request
@@ -1296,15 +2198,17 @@ Model Context Protocol (MCP) server management: list, connect, disconnect, and t
 
 </Accordion>
 
-<Accordion title="skills (4 methods)">
+<Accordion title="skills (6 methods)">
 
-Prompt skill management: list, upload, import from GitHub, and delete skills.
+Prompt skill management: list, create, upload, import from GitHub, update, and delete skills.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
 | `skills.list` | `rpc` | List prompt skills for an agent |
+| `skills.create` | `admin` | Create a new skill from SKILL.md content (single-file shortcut) |
 | `skills.upload` | `admin` | Upload a skill folder (files + SKILL.md) |
 | `skills.import` | `admin` | Import a skill from a GitHub repository URL |
+| `skills.update` | `admin` | Update an existing skill's SKILL.md content |
 | `skills.delete` | `admin` | Delete a skill |
 
 ### `skills.list`
@@ -1367,12 +2271,60 @@ Accepts GitHub directory URLs in the format: `https://github.com/{owner}/{repo}/
 
 The optional scope parameter works the same as in skills.upload -- "local" (default) imports to the agent's workspace, "shared" imports to the global directory (default agent only).
 
+### `skills.create`
+
+Create a new skill by providing its full SKILL.md content directly — a convenient shortcut over `skills.upload` when your skill is a single file. The content is security-scanned before being written to disk. Fails if a skill with that name already exists; use `skills.update` to modify an existing skill.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ name: string, content: string, agentId?: string, scope?: "local" \| "shared" }` |
+| **Returns** | `{ ok: true, path: string, name: string }` |
+
+`name` must be 1–64 characters, lowercase alphanumeric with hyphens, no leading/trailing/consecutive hyphens. `content` must be a valid SKILL.md string and passes through the same security scanner as `skills.upload`.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "skills.create",
+  "params": {
+    "name": "haiku-writer",
+    "agentId": "poet",
+    "content": "---\nname: haiku-writer\ndescription: Compose haiku on any topic\n---\nWrite a three-line haiku about the user's topic."
+  },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "ok": true,
+    "path": "/home/user/.comis/workspace-poet/skills/haiku-writer",
+    "name": "haiku-writer"
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `skills.update`
+
+Replace the SKILL.md content of an existing skill. The skill directory must already exist — use `skills.create` or `skills.upload` for new skills. The updated content is security-scanned before being written.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ name: string, content: string, agentId?: string, scope?: "local" \| "shared" }` |
+| **Returns** | `{ ok: true, path: string, name: string }` |
+
 ### `skills.delete`
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ name: string, agentId?: string, scope?: "local" | "shared" }` |
+| **Parameters** | `{ name: string, agentId?: string, scope?: "local" \| "shared" }` |
 | **Returns** | `{ ok: true }` |
 
 When deleting with `scope: "local"` (default), the skill must exist in the agent's workspace directory. Attempting to delete a shared skill with local scope returns an error with guidance to use `scope: "shared"`. Only the default agent can delete shared skills.
@@ -1576,13 +2528,76 @@ Retrieve node output values from a completed or running graph. Uses memory-first
 
 `outputs` is a `Record<string, string | null>` -- `null` means the node has not completed yet. `source` is `"memory"` (from the in-memory coordinator) or `"disk"` (from `*-output.md` files in `graph-runs/<graphId>/`). Output values are truncated at 12,000 characters per node (compared to 500 for `graph.status`).
 
+### `graph.cancel`
+
+Cancel a running graph execution. Nodes that are already in-flight are allowed to finish, but no new nodes will be dispatched after the cancellation is processed.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ graphId: string }` |
+| **Returns** | `{ graphId: string, cancelled: true }` |
+
 ### `graph.save`
+
+Save a graph definition under a human-readable name so you can reload it later with `graph.load`. The `graphId` refers to a graph you have already defined with `graph.define`.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | `{ name: string, graphId: string }` |
-| **Returns** | Save confirmation |
+| **Returns** | `{ name: string, saved: true }` |
+
+### `graph.load`
+
+Load a previously saved named graph definition and return a fresh `graphId` you can execute. This is equivalent to calling `graph.define` with the saved node/edge structure.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ name: string }` |
+| **Returns** | `{ graphId: string, name: string }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "graph.load",
+  "params": { "name": "research-pipeline" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "graphId": "abc-def-123",
+    "name": "research-pipeline"
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `graph.list`
+
+List all saved named graph definitions. Returns the name, creation timestamp, and node count for each entry.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | None |
+| **Returns** | `{ graphs: Array<{ name: string, createdAt: number, nodeCount: number }> }` |
+
+### `graph.delete`
+
+Delete a saved named graph definition. This only removes the saved definition — it does not affect any in-progress executions or stored run artifacts.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ name: string }` |
+| **Returns** | `{ name: string, deleted: true }` |
 
 ### `graph.deleteRun`
 
@@ -2663,6 +3678,464 @@ WhatsApp platform action dispatch. Sends a platform-specific action to the Whats
   "result": {
     "ok": true,
     "action": "send_template"
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+</Accordion>
+
+<Accordion title="delivery (1 method)">
+
+Delivery queue status inspection. Provides a live count of messages at each stage of the outbound delivery pipeline.
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `delivery.queue.status` | `rpc` | Get per-status counts from the outbound delivery queue |
+
+### `delivery.queue.status`
+
+Check how many messages are currently sitting at each stage of the delivery queue. Useful for diagnosing backlogs or verifying that a channel is draining correctly. Optionally filter to a specific channel type.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ channel_type?: string }` |
+| **Returns** | `{ pending: number, inFlight: number, failed: number, delivered: number, expired: number }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "delivery.queue.status",
+  "params": { "channel_type": "telegram" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "pending": 2,
+    "inFlight": 1,
+    "failed": 0,
+    "delivered": 847,
+    "expired": 3
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+</Accordion>
+
+<Accordion title="env (2 methods)">
+
+Runtime secret management. Write secrets to the encrypted store (or `.env` file fallback) and list configured secret names. Values are never returned by any method — only names and metadata.
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `env.set` | `admin` | Write a secret to the encrypted store (triggers daemon restart) |
+| `env.list` | `admin` | List configured secret names (values never returned) |
+
+### `env.set`
+
+Write a secret value to the encrypted secrets store (`~/.comis/secrets.db` via AES-256-GCM) or the `.env` file fallback when no master key is configured. The daemon restarts automatically after a successful write so the new value is available to all subsystems.
+
+Rate-limited to 5 writes per minute. The value is never logged at any level.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ key: string, value: string }` |
+| **Returns** | `{ set: true, key: string, storage: "encrypted" \| "envfile", restarting: true }` |
+
+`key` must start with an uppercase letter and contain only uppercase letters, digits, and underscores (e.g. `OPENAI_API_KEY`). Max length: 256 characters. `value` max length: 8192 characters. Passing the literal string `[REDACTED]` is rejected to prevent session-redaction poisoning.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "env.set",
+  "params": { "key": "OPENAI_API_KEY", "value": "sk-..." },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "set": true,
+    "key": "OPENAI_API_KEY",
+    "storage": "encrypted",
+    "restarting": true
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+<Warning>
+`env.set` triggers a daemon restart (`SIGUSR2`) approximately 200ms after returning. Your WebSocket connection will drop and reconnect. Active sessions are preserved via restart continuations.
+</Warning>
+
+### `env.list`
+
+List the names of all configured secrets. Secret values are never included in the response. Use this before calling `env.set` to check whether a key is already configured.
+
+Rate-limited to 30 calls per minute.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ filter?: string, limit?: number }` |
+| **Returns** | `{ secrets: Array<{ name, source: "encrypted" \| "envfile", provider?, createdAt?, updatedAt?, usageCount? }>, total: number, truncated: boolean }` |
+
+`filter` supports glob-style patterns (e.g. `OPENAI_*`). `limit` defaults to 100, max 500.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "env.list",
+  "params": { "filter": "OPENAI_*" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "secrets": [
+      { "name": "OPENAI_API_KEY", "source": "encrypted", "updatedAt": 1773313498000, "usageCount": 142 }
+    ],
+    "total": 1,
+    "truncated": false
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+</Accordion>
+
+<Accordion title="image (2 methods)">
+
+Image generation and image analysis. `image.generate` produces images from a text prompt; `image.analyze` runs vision analysis on an existing image.
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `image.generate` | `rpc` | Generate an image from a text prompt |
+| `image.analyze` | `rpc` | Analyze an image with the configured vision provider |
+
+### `image.generate`
+
+Generate an image from a text prompt using the configured image generation provider (OpenAI DALL-E, fal.ai, etc.). If a `_callerChannelType` and `_callerChannelId` are available (set automatically when called from an agent tool), the image is delivered directly to the channel. Otherwise it is returned as base64.
+
+Rate-limited per-agent via the `imageGen.maxPerHour` config value.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ prompt: string, size?: string }` |
+| **Returns** | `{ success: true, delivered?: true, imageBase64?: string, mimeType: string }` or `{ success: false, error: string }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "image.generate",
+  "params": {
+    "prompt": "A serene mountain lake at dawn, photorealistic",
+    "size": "1024x1024"
+  },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "success": true,
+    "imageBase64": "iVBORw0KGgo...",
+    "mimeType": "image/png"
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `image.analyze`
+
+Analyze an image using the configured vision provider. Accepts an image from a file path in the agent's workspace, a URL, a base64 data URI, or a channel attachment URL.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ source: string, source_type: "file" \| "url" \| "base64" \| "attachment", prompt?: string, mime_type?: string }` |
+| **Returns** | `{ description: string, provider: string, model: string }` |
+
+`prompt` defaults to `"Describe this image in detail"` when omitted. Vision scope rules configured under `media.vision.scopeRules` may deny analysis for certain channel contexts.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "image.analyze",
+  "params": {
+    "source": "https://example.com/chart.png",
+    "source_type": "url",
+    "prompt": "What does this chart show?"
+  },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "description": "The chart shows monthly revenue growth from January to December...",
+    "provider": "openai",
+    "model": "gpt-4o"
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+</Accordion>
+
+<Accordion title="tts (2 methods)">
+
+Text-to-speech synthesis and auto-trigger checking. Requires a TTS provider configured under `media.tts`.
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `tts.synthesize` | `rpc` | Synthesize speech from text and save to the agent's workspace |
+| `tts.auto_check` | `rpc` | Check whether TTS should auto-trigger for a given response |
+
+### `tts.synthesize`
+
+Convert text to speech using the configured TTS provider. The audio file is written to the agent's workspace under `media/tts/` and the file path is returned. Old files are cleaned up automatically after one hour.
+
+Supports inline TTS directives in the text (e.g. `[[tts:voice=nova]]`) which override the default voice. Output format is resolved automatically based on the calling channel (Opus for Telegram, MP3 otherwise).
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ text: string, voice?: string, format?: string }` |
+| **Returns** | `{ filePath: string, mimeType: string, sizeBytes: number }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "tts.synthesize",
+  "params": {
+    "text": "Good morning! Here is your daily briefing.",
+    "voice": "nova"
+  },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "filePath": "/home/user/.comis/workspace-default/media/tts/tts-abc123.mp3",
+    "mimeType": "audio/mp3",
+    "sizeBytes": 48320
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `tts.auto_check`
+
+Check whether TTS synthesis should be triggered automatically for a given response, based on the configured `tts.autoMode` setting and the presence of inbound audio or media. Used internally by the agent pipeline; exposed here for testing and custom integrations.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ response_text: string, has_inbound_audio?: boolean, has_media_url?: boolean }` |
+| **Returns** | `{ shouldSynthesize: boolean, strippedText: string, mode: string }` |
+
+`strippedText` has any `[[tts:...]]` directives removed. `mode` reflects the configured `autoMode` (`"always"`, `"never"`, `"voice_reply"`, etc.).
+
+</Accordion>
+
+<Accordion title="link (1 method)">
+
+Link content processing for enriching messages that contain URLs.
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `link.process` | `rpc` | Process message text through the link understanding pipeline |
+
+### `link.process`
+
+Run message text through the link processing pipeline. URLs in the text are fetched, article content is extracted, and the enriched text is returned with inline summaries or expansions. Used by the agent pipeline automatically; exposed here for custom preprocessing workflows.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ text: string }` |
+| **Returns** | `{ enrichedText: string, linksProcessed: number, errors: string[] }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "link.process",
+  "params": { "text": "Check this out: https://example.com/article" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "enrichedText": "Check this out: https://example.com/article\n\n[Article: Example Title — A brief summary of the content...]",
+    "linksProcessed": 1,
+    "errors": []
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+</Accordion>
+
+<Accordion title="media (3 agent-facing methods)">
+
+On-demand media processing for agent tools: transcribe audio attachments, describe video attachments, and extract text from document attachments. These methods operate on channel attachment URLs resolved at call time, unlike the `media.test.*` admin methods which accept raw base64 input.
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `media.transcribe` | `rpc` | Transcribe an audio attachment by URL |
+| `media.describe_video` | `rpc` | Describe a video attachment by URL |
+| `media.extract_document` | `rpc` | Extract text from a document attachment by URL |
+
+### `media.transcribe`
+
+Transcribe an audio attachment using the configured STT provider. The attachment URL is resolved by the daemon's attachment resolver (fetches from channel storage), then passed to the transcriber. MIME type is auto-detected from magic bytes.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ attachment_url: string, language?: string }` |
+| **Returns** | `{ text: string, language?: string, durationMs?: number }` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "media.transcribe",
+  "params": { "attachment_url": "https://cdn.example.com/voice/msg_001.ogg" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "text": "Please schedule the meeting for Thursday at three pm.",
+    "language": "en",
+    "durationMs": 3800
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `media.describe_video`
+
+Analyze a video attachment using a vision provider that supports video (e.g. Gemini). Returns a natural-language description.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ attachment_url: string, prompt?: string }` |
+| **Returns** | `{ description: string, provider: string, model: string }` |
+
+`prompt` defaults to `"Describe this video concisely."` when omitted. Returns an error if no video-capable vision provider is configured.
+
+### `media.extract_document`
+
+Extract the text content from a document attachment (PDF, DOCX, etc.) using the configured document extraction service.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ attachment_url: string }` |
+| **Returns** | `{ text: string, fileName?: string, mimeType: string, extractedChars: number, truncated: boolean, durationMs: number }` |
+
+`truncated` is `true` when the document exceeded the extractor's character limit and the text was cut off.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "media.extract_document",
+  "params": { "attachment_url": "https://cdn.example.com/docs/report.pdf" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "text": "Q1 Financial Report\n\nExecutive Summary...",
+    "fileName": "report.pdf",
+    "mimeType": "application/pdf",
+    "extractedChars": 42800,
+    "truncated": false,
+    "durationMs": 1240
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+</Accordion>
+
+<Accordion title="scheduler (1 method)">
+
+Internal scheduler wake signal. Used by webhooks and other triggers to nudge the heartbeat coalescer into running immediately.
+
+| Method | Scope | Description |
+|--------|-------|-------------|
+| `scheduler.wake` | `rpc` | Request an immediate heartbeat coalescer run |
+
+### `scheduler.wake`
+
+Signal the wake coalescer to fire immediately rather than waiting for the next scheduled interval. The coalescer debounces rapid wake calls, so multiple calls within a short window are collapsed into a single run. Returns immediately — the actual heartbeat execution is fire-and-forget.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc` |
+| **Parameters** | `{ source?: string }` |
+| **Returns** | `{ woke: true, source: string }` |
+
+`source` is a free-form label for tracing (e.g. `"webhook"`, `"agent"`). Defaults to `"agent"` when omitted.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "scheduler.wake",
+  "params": { "source": "webhook" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "woke": true,
+    "source": "webhook"
   },
   "id": 1
 }

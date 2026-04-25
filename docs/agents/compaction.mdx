@@ -133,6 +133,93 @@ into the context so it never forgets who it is or how it should behave.
   conversation history through the web dashboard.
 </Note>
 
+## Cost profile and cache savings
+
+Every token in the context window costs money. Here is what that looks like in practice from a production session running a 7-agent NVDA stock analysis pipeline:
+
+| Operation | Cost | Notes |
+|-----------|------|-------|
+| First "Hello" | $0.206 | Cold cache — system prompt write |
+| Second message (arxiv fetch + summary) | $0.052 | Warm cache — 75% cheaper |
+| Subsequent messages | $0.02–0.05 | Stable cache reads |
+| 7-agent pipeline (full NVDA analysis) | ~$1.20 | 4 analysts + 4 debate rounds + trader verdict |
+| Ad-hoc sub-agent query | $0.053 | Single sub-agent spawn |
+
+Without the context engine, the same session would cost 3–5x more — old tool results accumulating in context, system prompt cache misses on every channel switch, and no compaction of growing conversation history.
+
+### Cache-stable prompt architecture
+
+Anthropic's prompt caching can cut costs by 7.5x — but only if the system prompt stays identical across turns. Most frameworks break this by embedding timestamps, message IDs, or channel metadata directly in the system prompt.
+
+Comis separates content into two zones:
+
+| Zone | Content | Cache behavior |
+|------|---------|----------------|
+| **System prompt** (static) | Identity, personality, workspace files, tool definitions, security rules | Cached — paid once at the write rate, then a fraction on every subsequent call |
+| **Dynamic preamble** (per-turn) | Timestamp, sender metadata, channel context, RAG results, active skills, trust entries | Prepended to the user message — never invalidates the cache prefix |
+
+Six categories of content were identified and relocated to the dynamic preamble: date/time, inbound message metadata, channel context, RAG memory results, active skill content, and sender trust entries. Each of these would invalidate the entire cache prefix if left inline.
+
+### Multi-provider cache pricing
+
+Cache pricing varies by provider. Comis tracks per-provider costs using the pi-ai SDK's pricing catalog:
+
+| Provider | Cache read rate | Cache write rate | Net savings pattern |
+|----------|----------------|------------------|---------------------|
+| Anthropic | 10% of input | 125% of input | Turn 1: net cost (write premium); Turn 2+: net savings (read discount) |
+| OpenAI | 50% of input | Same as input | Immediate 50% savings on cached tokens; no write premium |
+| Google | 25% of input | Same as input | Immediate 75% savings on cached tokens; no write premium |
+
+The `savedVsUncached` metric is positive when read discounts exceed write premiums (typically from turn 2 onward), and negative on the first turn when the cache write premium has not yet been offset.
+
+### MCP tool deferral
+
+With many tools registered — some from MCP servers with verbose descriptions — tool definitions alone can consume a significant portion of the context window. When total tool tokens exceed 10% of the context window, Comis defers verbose MCP tool descriptions behind a lightweight discovery tool. Recently-used tools stay visible; rarely-used tools become discoverable on demand.
+
+### Token budget algebra
+
+Every LLM call computes available history tokens using:
+
+```
+Available = Window - SystemPrompt - OutputReserve - SafetyMargin - ContextRotBuffer
+```
+
+The **context rot buffer** (25% of window) accounts for degraded attention quality in long contexts. This prevents the agent from using tokens that the model cannot effectively attend to — avoiding the "lost in the middle" problem while saving money on tokens that would be wasted anyway.
+
+### Three-tier budget guard
+
+Every agent has three budget caps checked before each LLM call:
+
+| Scope | Default | Purpose |
+|-------|---------|---------|
+| Per-execution | 2M tokens | Prevent runaway single calls |
+| Per-hour | 10M tokens | Rate limiting |
+| Per-day | 100M tokens | Daily cost ceiling |
+
+If the estimated token count exceeds any cap, the call is rejected with a diagnostic error before any money is spent.
+
+## Observability
+
+Every pipeline run logs structured metrics so you can see exactly what the context engine did:
+
+```json
+{
+  "tokensLoaded": 28959,
+  "tokensEvicted": 0,
+  "tokensMasked": 0,
+  "tokensCompacted": 0,
+  "thinkingBlocksRemoved": 7,
+  "budgetUtilization": 0.22,
+  "rereadCount": 0,
+  "sessionDepth": 98,
+  "sessionToolResults": 50,
+  "layerCount": 6,
+  "durationMs": 1
+}
+```
+
+`budgetUtilization` of 0.22 means only 22% of available context is in use — the rest is headroom. Events fire on every significant action (`context:masked`, `context:compacted`, `context:evicted`, `context:reread`), feeding into the observability dashboard for real-time cost monitoring.
+
 ## Advanced compaction strategies
 
 Beyond the eight pipeline steps, Comis includes three additional strategies that improve compaction quality and cache efficiency.

@@ -61,7 +61,7 @@ Behind the scenes, the daemon runs through these steps in order:
 1. Loads environment variables from `~/.comis/.env`
 2. Decrypts any stored secrets (API keys, tokens)
 3. Hardens file permissions on the data directory (`~/.comis/`)
-4. Reads configuration from `~/.comis/config.yaml`
+4. Reads configuration from the paths in `COMIS_CONFIG_PATHS` (default: `~/.comis/config.yaml`) — for the full config-path syntax, see [Configuration](/installation/configuration)
 5. Sets up logging (file transport, per-module log levels)
 6. Initializes observability (token tracking, latency recording)
 7. Opens the memory database (SQLite with full-text search)

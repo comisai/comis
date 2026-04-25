@@ -16,7 +16,7 @@ Complete reference for environment variables recognized by Comis. These variable
 | **Format** | Colon-separated file paths |
 | **Default** | `~/.comis/config.yaml:~/.comis/config.local.yaml` |
 
-Specifies which YAML configuration files to load. Files are loaded in order and deep-merged, with later files overriding earlier ones. Non-existent files are silently skipped. The daemon reads this variable at startup to locate config files. The CLI uses it in `config validate` and `pm2 setup` commands.
+Specifies which YAML configuration files to load, as a colon-separated list (like `PATH`). Files are loaded in order and deep-merged, with later files overriding earlier ones. Non-existent files are silently skipped. The daemon reads this variable at startup to locate config files. The CLI uses it in `config validate` and `pm2 setup` commands. For full details on the config-path syntax and merge behavior, see [Configuration](/installation/configuration).
 
 ```bash
 export COMIS_CONFIG_PATHS="$HOME/.comis/config.yaml:$HOME/.comis/config.local.yaml"

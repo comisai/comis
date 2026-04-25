@@ -4,7 +4,7 @@ description: "Master reference for every tool your Comis agents can use"
 icon: "toolbox"
 ---
 
-Comis agents have access to 50+ tools spanning file operations, web access, messaging, scheduling, media processing, browser automation, context management, and administration. This page is the master reference -- every tool listed with its category, description, and link to detailed documentation.
+Comis agents have access to a broad set of tools spanning file operations, web access, messaging, scheduling, media processing, browser automation, context management, and administration. This page is the master reference -- every tool listed with its category, description, and link to detailed documentation.
 
 When an agent receives a message, it decides which tools to use based on what you asked it to do. Need a daily briefing? The agent uses the `cron` tool. Want to send a message to another channel? It uses `message`. Need to analyze an image someone sent? It reaches for `image_analyze`.
 
@@ -17,7 +17,7 @@ Tools fall into three tiers:
 | Tier | Count | Description |
 |------|-------|-------------|
 | **Built-in tools** | 12 | Core capabilities from the coding agent -- file operations, shell commands, web search, and browser automation. Work out of the box. See [Built-in Tools](/skills/built-in-tools). |
-| **Platform tools** | 30+ | Comis-specific capabilities -- messaging, scheduling, sessions, media, infrastructure, and moderation. Documented on this tab. |
+| **Platform tools** | Many | Comis-specific capabilities -- messaging, scheduling, sessions, media, infrastructure, and moderation. Documented on this tab. |
 | **Custom tools** | Unlimited | Your own skills and MCP server tools. You create these to give agents new abilities. See [Skills](/skills/index). |
 
 Tool access is controlled by [tool policy](/skills/tool-policy). By default, agents have access to all tools, but you can restrict access per agent using profiles (like `coding` or `messaging`) or fine-grained allow/deny lists.
@@ -47,7 +47,7 @@ Built-in tools come from the coding agent and handle file operations, shell comm
 | `process` | Manage background processes (list, kill, status, log) | [Built-in Tools](/skills/built-in-tools) |
 | `web_search` | Search the web using 8 providers with automatic fallback | [Web Tools](/agent-tools/web-tools) |
 | `web_fetch` | Fetch web page content with readable text extraction | [Web Tools](/agent-tools/web-tools) |
-| `browser` | Headless browser automation (16 actions) | [Browser](/agent-tools/browser) |
+| `browser` | Headless browser automation | [Browser](/agent-tools/browser) |
 
 ### Scheduling
 
@@ -55,7 +55,7 @@ Scheduling tools let agents create automated tasks that run on a timer. Agents c
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `cron` | Create and manage scheduled jobs (8 actions, 3 schedule types) | [Scheduling](/agent-tools/scheduling) |
+| `cron` | Create and manage scheduled jobs | [Scheduling](/agent-tools/scheduling) |
 | `heartbeat_manage` | Configure agent heartbeat timing and triggers | [Scheduling](/agent-tools/scheduling) |
 
 ### Messaging
@@ -77,12 +77,12 @@ For example, a lead agent can spawn a researcher sub-agent and a writer sub-agen
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `session_tool` | Unified session management (search, status, history, list -- 4 actions) | [Sessions](/agent-tools/sessions) |
+| `session_tool` | Unified session management (search, status, history, list) | [Sessions](/agent-tools/sessions) |
 | `sessions_send` | Send a message into another session (3 modes) | [Sessions](/agent-tools/sessions) |
 | `sessions_spawn` | Spawn sub-agent sessions with workspace isolation | [Sessions](/agent-tools/sessions) |
 | `subagents` | Manage running sub-agents (list, kill, steer) | [Sessions](/agent-tools/sessions) |
 | `agents_list` | List all configured agent IDs | [Sessions](/agent-tools/sessions) |
-| `pipeline` | Execute multi-step DAG workflows (9 actions) | [Sessions](/agent-tools/sessions) |
+| `pipeline` | Execute multi-step DAG workflows | [Sessions](/agent-tools/sessions) |
 
 ### Media
 
@@ -103,7 +103,7 @@ Memory tools give agents access to their long-term memory. Agents automatically 
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `memory_tool` | Unified memory management with 4 actions: get (read by path), search (semantic search), store (persist with secret detection), manage (admin CRUD) | [Sessions](/agent-tools/sessions) |
+| `memory_tool` | Unified memory management: get (read by path), search (semantic search), store (persist with secret detection), manage (admin CRUD) | [Sessions](/agent-tools/sessions) |
 
 ### Context
 
@@ -119,7 +119,7 @@ The gateway tool gives agents control over the Comis configuration and gateway. 
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `gateway` | Configuration management and gateway control (11 actions) | [Infrastructure](/agent-tools/infrastructure) |
+| `gateway` | Configuration management and gateway control | [Infrastructure](/agent-tools/infrastructure) |
 | `background_tasks` | Manage background tasks (status, read output, cancel) | [Infrastructure](/agent-tools/infrastructure) |
 
 ### Supervisor
@@ -146,14 +146,14 @@ Supervisor tools can modify agents, delete sessions, flush memory, and manage ga
 
 Platform action tools perform moderation and administration tasks specific to each messaging platform. Each tool wraps the native API of its platform, letting agents kick users, manage roles, pin messages, create channels, and more -- all from within a conversation.
 
-The available actions vary by platform. Discord has the most actions (19), followed by Telegram (12) and Slack (12), then WhatsApp (11). See the [Platform Actions](/agent-tools/platform-actions) guide for the full list of actions per platform.
+The available actions vary by platform. See the [Platform Actions](/agent-tools/platform-actions) guide for the full list of actions per platform.
 
 | Tool | Actions | Guide |
 |------|---------|-------|
-| `discord_action` | 19 actions (kick, ban, roles, threads, channels, and more) | [Platform Actions](/agent-tools/platform-actions) |
-| `telegram_action` | 12 actions (pin, poll, sticker, ban, promote, and more) | [Platform Actions](/agent-tools/platform-actions) |
-| `slack_action` | 12 actions (pin, topic, archive, channels, invites, and more) | [Platform Actions](/agent-tools/platform-actions) |
-| `whatsapp_action` | 11 actions (group management, participants, settings, and more) | [Platform Actions](/agent-tools/platform-actions) |
+| `discord_action` | Server moderation actions (kick, ban, roles, threads, channels, and more) | [Platform Actions](/agent-tools/platform-actions) |
+| `telegram_action` | Group and channel actions (pin, poll, sticker, ban, promote, and more) | [Platform Actions](/agent-tools/platform-actions) |
+| `slack_action` | Workspace actions (pin, topic, archive, channels, invites, and more) | [Platform Actions](/agent-tools/platform-actions) |
+| `whatsapp_action` | Group actions (group management, participants, settings, and more) | [Platform Actions](/agent-tools/platform-actions) |
 
 ## Quick Access by Use Case
 

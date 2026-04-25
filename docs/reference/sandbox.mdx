@@ -12,7 +12,7 @@ Every custom skill passes through four protection layers before and during execu
 
 <Steps>
   <Step title="Content Scanning">
-    Skill body inspected for 18 dangerous patterns across 6 categories at load time.
+    Skill body inspected for dangerous patterns across 6 categories at load time.
   </Step>
 
   <Step title="Sanitization Pipeline">
@@ -33,7 +33,7 @@ Every custom skill passes through four protection layers before and during execu
 The content scanner inspects skill body content at load time for dangerous patterns. It is a pure function -- callers handle audit emission and blocking decisions.
 
 <Info>
-  **Source:** `packages/skills/src/prompt/content-scanner.ts` -- 18 patterns across 6 categories. Patterns imported from `@comis/core` injection-patterns module.
+  **Source:** `packages/skills/src/prompt/content-scanner.ts` -- patterns across 6 categories. Patterns imported from `@comis/core` injection-patterns module.
 </Info>
 
 ### Scan Categories

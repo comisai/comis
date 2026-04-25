@@ -56,6 +56,7 @@
 - [Models](https://docs.comis.ai/agents/models): Configuring AI providers, model selection, and automatic failover
 - [Safety](https://docs.comis.ai/agents/safety): How Comis protects you from unexpected costs and runaway agents
 - [Resilience](https://docs.comis.ai/agents/resilience): How Comis prevents silent failures from provider outages, hung prompts, and stuck sub-agents
+- [Cache Architecture](https://docs.comis.ai/agents/cache): How Comis manages the context cache — adaptive retention, microcompaction, JIT guide injection, and schema stripping
 
 ## Skills
 
@@ -114,6 +115,7 @@
 
 - [Operations](https://docs.comis.ai/operations): Running, monitoring, and maintaining your Comis installation
 - [Daemon](https://docs.comis.ai/operations/daemon): How the Comis daemon starts, runs, and shuts down
+- [Data Directory](https://docs.comis.ai/operations/data-directory): Everything Comis stores on disk — config, database, logs, secrets, traces, and workspace files
 - [Logging](https://docs.comis.ai/operations/logging): Understanding and viewing Comis logs
 - [Monitoring](https://docs.comis.ai/operations/monitoring): Health monitoring and system alerts
 - [Observability](https://docs.comis.ai/operations/observability): Token tracking, cost estimation, latency, and delivery tracing
@@ -170,3 +172,4 @@
 - [OpenAI-Compatible API](https://docs.comis.ai/reference/openai-api): Complete request/response schema reference for /v1/chat/completions, /v1/models, and /v1/embeddings
 - [Webhooks](https://docs.comis.ai/reference/webhooks): Path-routed webhook ingestion with HMAC verification, template engine, and configurable presets
 - [Rate Limiting](https://docs.comis.ai/reference/rate-limiting): Multi-layer rate limiting reference covering HTTP, WebSocket, config patch, and injection detection layers
+- [ACP Server](https://docs.comis.ai/reference/acp-server): Agent Communication Protocol server for IDE and editor integrations over stdio

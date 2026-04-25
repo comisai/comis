@@ -295,7 +295,7 @@ Comis automatically redacts sensitive information from log output. API keys, tok
 passwords, and other credentials are replaced with `[REDACTED]` before being written
 to the log file or console.
 
-The redaction engine covers 17 field name patterns at 4 nesting depths (top-level
+The redaction engine covers all credential field name patterns across multiple nesting depths (top-level
 through 3 levels of nesting):
 
 | Redacted Fields |

@@ -9,6 +9,26 @@ Each channel connects Comis to a messaging service -- Discord, Telegram, Slack, 
 more -- so your agent can send and receive messages where your community already hangs out.
 One agent can connect to multiple channels at the same time.
 
+## Capability comparison
+
+Not sure which channel to connect first? Here's a quick comparison to help you choose:
+
+| Channel | Text | Voice messages | Media (image/video/file) | Reactions | Threads | Edit/Delete | Rich formatting | Status |
+|---------|------|----------------|--------------------------|-----------|---------|-------------|-----------------|--------|
+| Discord | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Full (embeds, buttons, cards) | Stable |
+| Telegram | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Full (buttons, inline keyboards) | Stable |
+| Slack | ✓ | — | ✓ | ✓ | ✓ | ✓ | Full (Block Kit) | Stable |
+| WhatsApp | ✓ | ✓ | ✓ | ✓ | — | — | Limited (lists, buttons via Business API) | Stable |
+| Signal | ✓ | ✓ | ✓ | — | — | — | None | Stable |
+| iMessage | ✓ | — | ✓ | — | — | — | None | Stable |
+| LINE | ✓ | — | ✓ | — | — | — | None (Flex exists but not wired to rich messages) | Stable |
+| IRC | ✓ | — | — | — | — | — | None (plain text / control codes) | Stable |
+| Email | ✓ | — | ✓ | — | ✓ (threads) | — | HTML/text | Stable |
+
+<Tip>
+Discord and Telegram have the broadest feature support -- they're great choices if you're just getting started.
+</Tip>
+
 ## How channels work
 
 When you enable a channel, Comis starts a **channel adapter** that handles all the
