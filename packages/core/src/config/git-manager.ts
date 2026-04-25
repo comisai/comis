@@ -12,6 +12,7 @@
  * @module
  */
 
+import { resolve as resolvePath } from "node:path";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 
@@ -307,10 +308,20 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
       return ok(undefined);
     }
 
-    // Check if .git already exists by running git status
-    const statusResult = await execGit(["status", "--porcelain"], configDir);
-    if (statusResult.ok) {
-      // Repo already exists and is functional
+    // Probe for an existing git repo whose toplevel IS configDir.
+    // `git status` succeeds whenever any ancestor has a .git directory,
+    // which would silently treat a parent project's repo as ours and
+    // commit config changes onto whatever branch is checked out there.
+    // Use rev-parse --show-toplevel and require an exact path match;
+    // otherwise fall through and `git init` our own nested repo.
+    const toplevelResult = await execGit(
+      ["rev-parse", "--show-toplevel"],
+      configDir,
+    );
+    if (
+      toplevelResult.ok &&
+      resolvePath(toplevelResult.value.trim()) === resolvePath(configDir)
+    ) {
       initialized = true;
       return ok(undefined);
     }

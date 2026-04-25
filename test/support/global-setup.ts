@@ -45,6 +45,16 @@ const TEST_AGENT_WORKSPACES = [
 /** Vitest JSON results file produced by orchestrate.ts. */
 const TEST_RESULTS_FILE = resolve(__dirname, "../.test-results.json");
 
+/**
+ * Test config directory used as configDir by the test daemon.
+ *
+ * The daemon's git-manager creates a nested config-history repo here on
+ * first commit (see packages/core/src/config/git-manager.ts:initRepo).
+ * Without cleanup the nested .git and its .gitignore linger between
+ * runs, dirtying the outer working tree.
+ */
+const TEST_CONFIG_DIR = resolve(__dirname, "../config");
+
 // ---------------------------------------------------------------------------
 // Shared cleanup logic
 // ---------------------------------------------------------------------------
@@ -138,6 +148,19 @@ function cleanTestArtifacts(): void {
     unlinkSync(TEST_RESULTS_FILE);
   } catch {
     // File may not exist
+  }
+
+  // 6. Clean up nested config-history repo created by the test daemon
+  //    in test/config/. Without this, the .git/ and .gitignore linger
+  //    between runs (and the daemon's gitignore template un-ignores
+  //    *.yaml, which makes *.last-good.yaml show as untracked in the
+  //    outer repo via most-specific-gitignore-wins).
+  for (const entry of [".git", ".gitignore"]) {
+    try {
+      rmSync(join(TEST_CONFIG_DIR, entry), { recursive: true, force: true });
+    } catch {
+      // Best-effort
+    }
   }
 }
 

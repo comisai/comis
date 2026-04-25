@@ -41,6 +41,14 @@ interface MockGitRepo {
   workingTree: Map<string, string>;
   stagedFiles: Set<string>;
   dirty: boolean;
+  /**
+   * Override path returned by `git rev-parse --show-toplevel`.
+   *
+   * When set, the mock returns this regardless of `initialized` — used to
+   * simulate the bug where `configDir` lives inside an unrelated parent
+   * repo (e.g. a test config under a project working tree).
+   */
+  toplevel?: string;
 }
 
 function createSha(index: number): string {
@@ -58,6 +66,8 @@ function createMockDeps(opts?: {
   preInitialized?: boolean;
   failCommands?: Map<string, string>;
   writtenFiles?: Map<string, string>;
+  /** Override `git rev-parse --show-toplevel` result; see MockGitRepo.toplevel */
+  toplevel?: string;
 }): {
   deps: GitManagerDeps;
   calls: MockGitCall[];
@@ -73,6 +83,7 @@ function createMockDeps(opts?: {
     workingTree: new Map(opts?.initialFiles ?? []),
     stagedFiles: new Set(),
     dirty: false,
+    toplevel: opts?.toplevel,
   };
 
   // If pre-initialized, create an initial commit
@@ -173,6 +184,20 @@ function createMockDeps(opts?: {
       }
 
       case "rev-parse": {
+        if (args[1] === "--show-toplevel") {
+          // `git rev-parse --show-toplevel` walks ancestors looking for any
+          // .git, so it succeeds even when configDir lives inside a parent
+          // repo. Honor `repo.toplevel` (set by tests simulating the
+          // ancestor-repo bug); otherwise return configDir when initialized,
+          // and fail when not.
+          if (repo.toplevel !== undefined) {
+            return ok(repo.toplevel);
+          }
+          if (!repo.initialized) {
+            return err("fatal: not a git repository");
+          }
+          return ok(cwd);
+        }
         if (!repo.initialized) {
           return err("fatal: not a git repository");
         }
@@ -289,9 +314,10 @@ describe("config/git-manager", () => {
       expect(result.ok).toBe(true);
       expect(repo.initialized).toBe(true);
 
-      // Should have called git status (check existing), git init, git add, git commit
+      // Should have probed via rev-parse (no existing repo), then run git
+      // init, git add, git commit
       const commands = calls.map((c) => c.args[0]);
-      expect(commands).toContain("status");
+      expect(commands).toContain("rev-parse");
       expect(commands).toContain("init");
       expect(commands).toContain("commit");
     });
@@ -330,9 +356,29 @@ describe("config/git-manager", () => {
       const result = await manager.init();
 
       expect(result.ok).toBe(true);
-      // Should only call status (which succeeds) — no init needed
+      // rev-parse --show-toplevel returns configDir → no init needed
       const commands = calls.map((c) => c.args[0]);
       expect(commands).not.toContain("init");
+    });
+
+    it("creates its own nested repo when configDir lives inside an unrelated parent repo", async () => {
+      // Regression: prior code probed with `git status`, which walks
+      // ancestors and silently treated the parent project's .git as ours.
+      // Result: agents.create / agents.delete during integration tests
+      // committed to the project's main branch. configDir is /test/config;
+      // simulate a parent repo at /test by reporting that as toplevel.
+      const { deps, calls } = createMockDeps({ toplevel: "/test" });
+
+      const manager = createConfigGitManager(deps);
+      const result = await manager.init();
+
+      expect(result.ok).toBe(true);
+      const commands = calls.map((c) => c.args[0]);
+      // Probed for an exact-match toplevel...
+      expect(commands).toContain("rev-parse");
+      // ...didn't match, so created a nested repo and seeded it.
+      expect(commands).toContain("init");
+      expect(commands).toContain("commit");
     });
 
     it("is idempotent — second call is a no-op", async () => {

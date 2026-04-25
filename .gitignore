@@ -43,6 +43,10 @@ website/.astro/
 test/.test-results.json
 test/.test-daemon.log
 test/config/*.last-good.yaml
+# Nested config-git repo created by the test daemon's git-manager
+# (configDir = test/config, so initRepo runs `git init` here)
+test/config/.git/
+test/config/.gitignore
 
 # Playwright test results
 **/test-results/
