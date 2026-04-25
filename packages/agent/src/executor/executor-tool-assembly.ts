@@ -350,6 +350,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // -------------------------------------------------------------------
   const resourceLoaderOptions: ConstructorParameters<typeof DefaultResourceLoader>[0] = {
     cwd: deps.workspaceDir,
+    agentDir: deps.agentDir,
     settingsManager,
     noExtensions: true,
     additionalSkillPaths: config.skills?.discoveryPaths ?? [],
