@@ -93,6 +93,29 @@ comis daemon start
 docker run -d --name comis -p 4766:4766 -e ANTHROPIC_API_KEY=your-key comisai/comis:latest-slim
 ```
 
+Once running, verify the daemon is up:
+
+```bash
+curl http://localhost:4766/health
+# {"status":"ok"}
+```
+
+Then configure your channels and LLM provider interactively:
+
+```bash
+docker exec -it comis comis configure
+```
+
+The wizard walks you through selecting a provider, adding channel tokens (Telegram, Discord, Slack, etc.), and connecting your first agent. To persist your configuration across container restarts, mount a data volume:
+
+```bash
+docker run -d --name comis \
+  -p 4766:4766 \
+  -e ANTHROPIC_API_KEY=your-key \
+  -v comis-data:/data \
+  comisai/comis:latest-slim
+```
+
 Setup takes about 2 minutes. Message your agent. That's it.
 
 ---
