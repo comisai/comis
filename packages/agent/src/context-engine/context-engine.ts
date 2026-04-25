@@ -30,6 +30,7 @@ import { LAYER_CIRCUIT_BREAKER_THRESHOLD, CHARS_PER_TOKEN_RATIO, DEFAULT_COMPACT
 import { computeTokenBudget } from "./token-budget.js";
 import { createThinkingBlockCleaner } from "./thinking-block-cleaner.js";
 import { createSignatureReplayScrubber } from "./signature-replay-scrubber.js";
+import { createSignatureSurrogateGuard } from "./signature-surrogate-guard.js";
 import { createReasoningTagStripper } from "./reasoning-tag-stripper.js";
 import { createHistoryWindowLayer } from "./history-window.js";
 import { createObservationMaskerLayer } from "./observation-masker.js";
@@ -187,6 +188,7 @@ function getCallbackSnapshot(state: {
   masker: { maskedCount: number; totalChars: number; persistedToDisk: boolean } | null;
   thinking: { blocksRemoved: number; cacheFenceIndex?: number; messagesProtected?: number; totalMessages?: number } | null;
   signatureReplayScrubber: { dropped: number; signaturesStripped: number; reason?: string } | null;
+  signatureSurrogateGuard: { signaturesStripped: number } | null;
   reasoningTags: { tagsStripped: number } | null;
   compaction: { fallbackLevel: 1 | 2 | 3; attempts: number; originalMessages: number; keptMessages: number } | null;
   rehydration: { sectionsInjected: number; filesInjected: number; overflowStripped: boolean } | null;
@@ -197,6 +199,7 @@ function getCallbackSnapshot(state: {
     masker: state.masker,
     thinking: state.thinking,
     signatureReplayScrubber: state.signatureReplayScrubber,
+    signatureSurrogateGuard: state.signatureSurrogateGuard,
     reasoningTags: state.reasoningTags,
     compaction: state.compaction,
     rehydration: state.rehydration,
@@ -254,6 +257,7 @@ export function createContextEngine(
     masker: { maskedCount: number; totalChars: number; persistedToDisk: boolean } | null;
     thinking: { blocksRemoved: number; cacheFenceIndex?: number; messagesProtected?: number; totalMessages?: number } | null;
     signatureReplayScrubber: { dropped: number; signaturesStripped: number; reason?: string } | null;
+    signatureSurrogateGuard: { signaturesStripped: number } | null;
     reasoningTags: { tagsStripped: number } | null;
     compaction: { fallbackLevel: 1 | 2 | 3; attempts: number; originalMessages: number; keptMessages: number } | null;
     rehydration: { sectionsInjected: number; filesInjected: number; overflowStripped: boolean } | null;
@@ -264,6 +268,7 @@ export function createContextEngine(
     masker: null,
     thinking: null,
     signatureReplayScrubber: null,
+    signatureSurrogateGuard: null,
     reasoningTags: null,
     compaction: null,
     rehydration: null,
@@ -299,6 +304,15 @@ export function createContextEngine(
       onScrubbed: (stats) => { callbackState.signatureReplayScrubber = stats; },
     }));
   }
+
+  // Signature surrogate guard (Fix #3): scrub thinkingSignature from blocks
+  // whose text contains unpaired UTF-16 surrogates so pi-ai's
+  // sanitizeSurrogates() does not produce a sanitized-text-with-original-
+  // signature mismatch on replay. Always active — cost is one walk over
+  // thinking blocks with two regex tests per block, no I/O.
+  layers.push(createSignatureSurrogateGuard({
+    onGuarded: (stats) => { callbackState.signatureSurrogateGuard = stats; },
+  }));
 
   // Reasoning tag stripper: always active (not gated by model.reasoning) because
   // inline tags come from OTHER providers' responses persisted in session history --
@@ -424,6 +438,7 @@ export function createContextEngine(
       callbackState.masker = null;
       callbackState.thinking = null;
       callbackState.signatureReplayScrubber = null;
+      callbackState.signatureSurrogateGuard = null;
       callbackState.reasoningTags = null;
       callbackState.compaction = null;
       callbackState.rehydration = null;
@@ -708,6 +723,9 @@ export function createContextEngine(
             : {}),
           ...(snap.signatureReplayScrubber?.reason !== undefined
             ? { signatureReplayScrubberReason: snap.signatureReplayScrubber.reason }
+            : {}),
+          ...(snap.signatureSurrogateGuard && snap.signatureSurrogateGuard.signaturesStripped > 0
+            ? { signatureSurrogateGuardSignaturesStripped: snap.signatureSurrogateGuard.signaturesStripped }
             : {}),
           budgetUtilization: Math.round(metrics.budgetUtilization * 100) / 100,
           evictionCategories: metrics.evictionCategories,
