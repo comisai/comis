@@ -87,6 +87,37 @@ comis configure    # choose your LLM provider, add API keys, connect a channel
 comis daemon start
 ```
 
+**Or with Docker** (no Node.js required):
+
+```bash
+# Clone the repo for the Compose file and env template
+git clone https://github.com/comisai/comis.git && cd comis
+
+# Configure your API keys
+cp .env.docker.example .env
+# Edit .env and add at minimum: ANTHROPIC_API_KEY or OPENAI_API_KEY
+
+# Pull the official image and start
+COMIS_IMAGE=comisai/comis:latest-slim docker compose up -d
+```
+
+Verify the daemon is running:
+
+```bash
+curl http://localhost:4766/health
+# {"status":"ok"}
+```
+
+Images are published to [Docker Hub](https://hub.docker.com/u/comisai) on every release:
+
+| Image | Description |
+|---|---|
+| `comisai/comis:latest-slim` | Daemon (recommended — minimal base) |
+| `comisai/comis:latest` | Daemon (full base with debugging tools) |
+| `comisai/comis-web:latest` | Web dashboard (Nginx SPA) |
+
+Both `linux/amd64` and `linux/arm64` are supported.
+
 Setup takes about 2 minutes. Message your agent. That's it.
 
 ---
