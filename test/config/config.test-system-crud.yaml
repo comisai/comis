@@ -127,9 +127,6 @@ gateway:
         - rpc
     - id: no-scope-client
       scopes: []
-    - id: comprehensive-test-token
-      scopes:
-        - rpc
   rateLimit:
     windowMs: 60000
     maxRequests: 1000
