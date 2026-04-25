@@ -301,9 +301,20 @@ The dashboard runs on port 8080 with a health check via `wget`.
 
 ## CI/CD
 
-The repository includes `.github/workflows/docker-release.yml` for automated
-Docker image builds. This workflow triggers on releases and handles building and
-publishing the image. See the workflow file for configuration details.
+The repository ships two automated Docker workflows:
+
+| Workflow | Registry | Trigger |
+|----------|----------|---------|
+| `docker-release.yml` | GitHub Container Registry (`ghcr.io`) | Push to `main` or `v*` tag |
+| `dockerhub-release.yml` | Docker Hub (`comisai/comis`) | `v*` tag only |
+
+Both workflows build multi-arch manifests (`linux/amd64` + `linux/arm64`) and
+produce both `default` and `slim` variants. The Docker Hub workflow version tags
+are derived directly from the git tag — pushing `v1.0.19` produces
+`comisai/comis:1.0.19`, `comisai/comis:1.0`, and `comisai/comis:latest`.
+
+For full details on image tags, required secrets, and manual publishing, see the
+[Docker Hub Publishing](/operations/docker-hub) page.
 
 ## Updating
 

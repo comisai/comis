@@ -96,7 +96,7 @@
         "tab": "Operations",
         "groups": [
           { "group": "Management", "pages": ["operations/index", "operations/daemon", "operations/logging", "operations/monitoring", "operations/observability", "operations/scheduler", "operations/web-ui", "operations/data-directory"] },
-          { "group": "Deployment", "pages": ["operations/systemd", "operations/docker", "operations/pm2", "operations/reverse-proxy"] },
+          { "group": "Deployment", "pages": ["operations/systemd", "operations/docker", "operations/docker-hub", "operations/pm2", "operations/reverse-proxy"] },
           { "group": "Help", "pages": ["operations/troubleshooting", "operations/faq"] }
         ]
       },
