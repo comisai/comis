@@ -6,6 +6,24 @@ icon: "messages"
 
 The Sessions view shows every conversation your agents have had. You can search for specific sessions, filter by agent or channel, review full conversation histories, and manage sessions with actions like reset, compact, export, and delete.
 
+**Who it's for:** anyone investigating a single conversation -- whether to audit what an agent did, debug a stuck session, or extract a transcript for analysis.
+
+## Routes
+
+- `/sessions` -- session list
+- `/sessions/:key` -- session detail (URL-encode the session key, which can contain colons and slashes)
+
+## Backing RPC
+
+- `session.list` -- list (filterable by tenant, agent, channel)
+- `session.status(key)` -- detail with messages, token usage, cache metrics
+- `session.delete(key)` -- delete
+- `session.reset(key)` -- clear conversation history
+- `session.compact(key)` -- summarize older messages
+- `session.export(key)` -- JSONL transcript download
+
+Refresh is on demand; the view does not poll.
+
 ## What You See
 
 ### Session List

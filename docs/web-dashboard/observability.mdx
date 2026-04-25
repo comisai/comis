@@ -6,6 +6,23 @@ icon: "chart-line"
 
 The Observe section in the sidebar contains **six sub-views**, each accessible as its own page: Overview, Context Engine, Context DAG, Billing, Delivery, and Diagnostics. These give you a bird's-eye view of everything happening in your Comis installation -- how active your agents are, how much they cost, whether messages are being delivered successfully, and how the context engine is performing.
 
+**Who it's for:** anyone watching costs, debugging delivery failures, or measuring cache effectiveness.
+
+## Where the metrics come from
+
+All Observe data is sourced from Comis's own in-process collectors and persisted to SQLite (in `~/.comis/`) -- there is no external Prometheus, OpenTelemetry, or InfluxDB. The dashboard reads them via JSON-RPC:
+
+| Sub-view | Primary RPC methods |
+|----------|---------------------|
+| Overview | `obs.delivery.stats`, `obs.billing.total`, `obs.billing.usage24h`, `obs.billing.byProvider`, `obs.delivery.recent` |
+| Billing | `obs.billing.byProvider`, `obs.billing.byAgent`, `obs.billing.bySession`, `obs.billing.total`, `obs.billing.usage24h` |
+| Delivery | `obs.delivery.recent`, `obs.delivery.stats`, delivery-tracer detail RPC |
+| Diagnostics | `obs.diagnostics` |
+| Context Engine | `contextEngine.getLastMetrics`, `contextEngine.getLayerConfig` |
+| Context DAG | `context.dag.list`, `context.dag.tree`, `context.dag.search`, `context.dag.node` |
+
+Auto-refresh runs every 30 seconds; SSE event `metrics:update` triggers an extra refresh as soon as new data is recorded. There is no `/metrics` Prometheus endpoint exposed by default.
+
 <Info>
 The Overview page at `/observe/overview` also contains five internal tabs -- **Overview**, **Billing**, **Delivery**, **Channels**, and **Diagnostics** -- that surface the same data as the standalone sub-views (plus a Channels tab unique to this page). The sidebar links route to the standalone components (e.g., `/observe/billing`); the Overview's internal tabs offer a unified view within a single page.
 </Info>

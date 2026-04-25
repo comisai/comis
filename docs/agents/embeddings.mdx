@@ -4,10 +4,30 @@ description: "Setting up meaning-based memory search"
 icon: "microchip"
 ---
 
+**What it does.** Turns each memory into a numerical "fingerprint" so Comis
+can find related memories even when the wording is different.
+
+**Who it is for.** Anyone who wants better recall. The default `auto` provider
+works without any setup; this page is mainly for tuning, switching to local,
+or controlling cost.
+
 Embeddings are what power the "meaning matching" side of memory search. They
 convert text into a numerical representation that lets Comis find memories based
 on meaning, not just matching words. You do not need to understand the math --
 just choose a provider and Comis handles the rest.
+
+## What is wired today
+
+Two embedding implementations ship in `packages/memory`:
+
+- **OpenAI embeddings** (`embedding-provider-openai.ts`) — calls the
+  `text-embedding-3-small` model by default (1536 dimensions).
+- **Local embeddings** (`embedding-provider-local.ts`) — runs a small
+  transformer model entirely on-device using a downloaded GGUF file.
+
+The factory at `packages/memory/src/embedding-provider-factory.ts` chooses
+between them based on the `embedding.provider` setting. The default
+`"auto"` mode tries local first and falls back to OpenAI if loading fails.
 
 ## Why embeddings matter
 
@@ -128,6 +148,33 @@ embedding:
   You can disable this with `autoReindex: false` if you prefer to manage
   re-indexing manually.
 </Note>
+
+## Re-embedding strategy
+
+Switching providers (or models) means existing embeddings no longer match new
+ones — they live in a different vector space. Comis tracks the embedding
+**fingerprint** (provider + model + dimensions) and detects mismatches at
+startup.
+
+When `embedding.autoReindex: true` (the default), a background batch indexer
+re-embeds every existing memory in batches of `embedding.batch.batchSize`
+(default 100) until the database is consistent again. The agent stays
+responsive throughout — re-indexing runs out of band, and search keeps using
+whatever embeddings are valid at any given moment.
+
+The fingerprint manager
+(`packages/memory/src/embedding-fingerprint.ts`) and batch indexer
+(`packages/memory/src/embedding-batch-indexer.ts`) handle this automatically.
+
+## Cost note
+
+OpenAI's `text-embedding-3-small` is cheap: roughly **\$0.02 per 1M tokens**
+of input. A typical memory entry is 50–200 tokens, so embedding 10,000
+memories costs around **\$0.02–\$0.04 total** — and once cached (see
+"Persistent caching" above), re-indexing is free.
+
+The local provider has zero per-call cost but uses ~500 MB of disk and some
+RAM while running.
 
 ## Disabling embeddings
 

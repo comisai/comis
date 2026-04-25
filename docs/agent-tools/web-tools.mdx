@@ -4,11 +4,11 @@ description: "Web search with 8 providers and web page content fetching"
 icon: "globe"
 ---
 
-The web tools give your agents access to the internet. `web_search` queries search engines (with 8 provider options), and `web_fetch` retrieves and reads web page content. Both tools include security protections against accessing internal networks.
+**What it does:** Gives agents internet access -- `web_search` queries search engines, `web_fetch` reads page content. Both tools include security protections against accessing internal networks.
 
-Web tools are among the most commonly used agent capabilities. They let your agent look up current information, read documentation, check prices, verify facts, and stay informed about topics that go beyond its training data.
+**Who it's for:** Pretty much every agent. Web tools are the most commonly used agent capabilities -- they let your agent look up current information, read documentation, check prices, verify facts, and stay informed about topics that go beyond its training data.
 
-Both tools are enabled by default in the `full` tool policy profile.
+Both tools are enabled by default in the `full` tool policy profile and ship in the `cron-minimal` profile so scheduled jobs can call `web_search` out of the box.
 
 ## web_search -- Multi-Provider Web Search
 
@@ -189,6 +189,51 @@ These two tools complement each other:
 Agents often use both tools together: `web_search` to find relevant URLs, then `web_fetch` to read the full content of the best results.
 
 For pages that require JavaScript rendering or interactive navigation (single-page apps, sites behind login screens), use the [Browser](/agent-tools/browser) tool instead -- it provides a full headless browser.
+
+## End-to-end example: fact-check workflow
+
+A common pattern: a user makes a claim and asks the agent to verify it. The agent searches for primary sources, then fetches the most authoritative result for detailed reading.
+
+```
+You: Verify the claim that the EU AI Act took effect on August 1, 2024.
+     Quote the official source.
+```
+
+The agent runs a two-step workflow:
+
+```yaml
+# 1. Search for primary sources
+tool: web_search
+query: "EU AI Act effective date official Commission"
+provider: brave
+freshness: py
+count: 5
+```
+
+The search returns results from europa.eu, EUR-Lex, and a few news outlets. The agent picks the EUR-Lex link because it is the canonical source.
+
+```yaml
+# 2. Fetch the full content of the official document
+tool: web_fetch
+url: "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=OJ:L_202401689"
+extractMode: markdown
+maxChars: 20000
+```
+
+`web_fetch` returns the cleaned Readability extract. The agent quotes the relevant article and entry-into-force clause, links the source, and presents the verified answer to the user.
+
+For sources that need fresh data (rate updates, market prices, breaking news) but are not yet indexed by search engines, set `deepFetch: 3` on the `web_search` call -- the tool will inline the top three results' full content, sparing a separate `web_fetch`.
+
+## SSRF protection
+
+Both `web_fetch` and `web_search` validate URLs against the SSRF guard before sending any HTTP request. The guard rejects:
+
+- `localhost`, `127.0.0.0/8`, `::1`
+- RFC 1918 private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`)
+- Link-local (`169.254.0.0/16`) including AWS / GCP / Azure metadata endpoints
+- IPv6 unique-local (`fc00::/7`) and link-local (`fe80::/10`)
+
+The browser tool applies the same guard on `navigate` and `open`. Comis treats SSRF as a defense-in-depth concern: the network layer and the URL validator both enforce it, so a misconfiguration in one does not bypass the other. See [Security](/get-started/security) for the full picture.
 
 ## Related
 

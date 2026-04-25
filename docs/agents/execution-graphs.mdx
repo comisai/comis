@@ -4,7 +4,19 @@ description: "Multi-agent DAG orchestration -- define, execute, and monitor work
 icon: "diagram-project"
 ---
 
-Execution graphs let your agents coordinate complex, multi-step workflows as directed acyclic graphs (DAGs). Each node in the graph is a sub-agent task. Nodes can run in parallel when they have no dependencies, or wait for upstream nodes to finish before starting. The graph coordinator handles scheduling, result forwarding, timeouts, budget enforcement, and failure cascading automatically.
+Execution graphs let you describe a multi-step workflow as a picture: each
+box is a task an agent will perform, and arrows show which task depends on
+which. Comis runs the graph for you, fanning tasks out in parallel where
+possible and stitching the results back together. You can also ask an agent
+in plain English (for example, "have four analysts research NVDA in
+parallel, then a trader give a verdict") -- the agent translates that
+description into a graph and runs it.
+
+Under the hood, an execution graph is a directed acyclic graph (DAG). Each node
+in the graph is a sub-agent task. Nodes can run in parallel when they have no
+dependencies, or wait for upstream nodes to finish before starting. The graph
+coordinator handles scheduling, result forwarding, timeouts, budget enforcement,
+and failure cascading automatically.
 
 ## When to use execution graphs
 
@@ -146,6 +158,85 @@ Every graph follows the same lifecycle:
 Node status transitions: `pending` -> `ready` -> `running` -> `completed` / `failed` / `skipped`
 
 Graph status values: `running`, `completed`, `failed`, `cancelled`
+
+## Worked example: four-analyst NVDA research team
+
+A common request: "Have four analysts research NVDA in parallel, then have a
+trader read every analysis and give a final verdict." This is a classic
+fan-out / fan-in pattern. Here is the complete graph:
+
+```yaml
+tool: pipeline
+action: execute
+label: "NVDA Research Team"
+on_failure: continue
+budget:
+  max_tokens: 2000000
+  max_cost: 5.00
+nodes:
+  # Fan-out: four analysts run in parallel (no depends_on)
+  - node_id: fundamental
+    task: "Analyze NVDA fundamentals: revenue growth, margins, P/E, balance sheet, key product lines. Cite sources."
+    agent: equity-analyst
+  - node_id: technical
+    task: "Analyze NVDA technicals: 50/200 DMA, RSI, MACD, recent breakouts, volume profile."
+    agent: technical-analyst
+  - node_id: macro
+    task: "Analyze macro context for NVDA: AI capex cycle, GPU demand, geopolitical risks, semi supply chain."
+    agent: macro-analyst
+  - node_id: sentiment
+    task: "Analyze NVDA sentiment: institutional flows, analyst targets, options skew, social mentions."
+    agent: sentiment-analyst
+
+  # Fan-in: the trader waits for all four (barrier_mode: all is the default)
+  - node_id: verdict
+    task: |
+      You are a senior trader. Read four analyses and issue a final verdict
+      (BUY / HOLD / SELL) with reasoning, key risks, and a price target.
+
+      Fundamental analysis:
+      {{fundamental.result}}
+
+      Technical analysis:
+      {{technical.result}}
+
+      Macro context:
+      {{macro.result}}
+
+      Sentiment:
+      {{sentiment.result}}
+    agent: senior-trader
+    depends_on: [fundamental, technical, macro, sentiment]
+    barrier_mode: all
+```
+
+The DAG looks like this:
+
+```text
+        fundamental ─┐
+                     │
+        technical ───┤
+                     ├──► verdict
+        macro ───────┤
+                     │
+        sentiment ───┘
+```
+
+The four analysts run concurrently. Once all four reach a terminal state and
+all succeeded (`barrier_mode: all`), the verdict node fires with their
+outputs templated into its task.
+
+If you set `barrier_mode: majority` on `verdict`, it would fire when any
+three of the four analysts succeed -- useful when you want resilience to a
+single flaky tool. With `best-effort`, it fires as long as one succeeds.
+
+The graph-level `on_failure: continue` means a single analyst failing does
+not cancel the others -- the verdict node decides what to do with whichever
+analyses completed.
+
+You can build this same graph in the [Visual Builder](/web-dashboard/pipelines)
+by dragging four nodes, connecting them all to a fifth node, and pasting the
+task templates.
 
 ## The pipeline tool
 

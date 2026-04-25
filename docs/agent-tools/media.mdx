@@ -4,20 +4,22 @@ description: "Image analysis, text-to-speech, audio transcription, video descrip
 icon: "photo-film"
 ---
 
-The media tools let your agents process images, audio, video, and documents. Agents can analyze images with AI vision, generate spoken audio from text, transcribe voice messages, describe video content, and extract text from PDFs and other documents.
+**What it does:** Gives agents the ability to process images, audio, video, and documents -- analyze, transcribe, synthesize, generate, and extract.
 
-These tools are especially useful for agents in group chats where users share photos, voice notes, documents, and video clips. Instead of ignoring media content, your agent can understand and respond to it.
+**Who it's for:** Agents living in group chats where users share photos, voice notes, documents, and video clips. Instead of ignoring media content, your agent can understand and respond to it.
 
 ## Quick Reference
 
-| Tool | What It Does |
-|------|-------------|
-| `image_analyze` | Analyze images using AI vision (file, URL, base64, or attachment URL) |
-| `image_generate` | Generate an image from a text prompt and deliver it to the current channel |
-| `tts_synthesize` | Generate spoken audio from text |
-| `transcribe_audio` | Convert speech to text |
-| `describe_video` | Describe video content using vision |
-| `extract_document` | Extract text from PDFs, CSVs, and other documents |
+| Tool | What It Does | Provider Categories |
+|------|--------------|--------------------|
+| `image_analyze` | Analyze images using AI vision (file, URL, base64, or attachment URL) | Vision (Anthropic, OpenAI, Google) |
+| `image_generate` | Generate an image from a text prompt and deliver it to the current channel | Image gen (FAL, OpenAI DALL-E) |
+| `tts_synthesize` | Generate spoken audio from text -- returns a workspace file path | TTS (OpenAI, ElevenLabs, Edge) |
+| `transcribe_audio` | Convert speech to text | STT (OpenAI Whisper, Groq, Deepgram) |
+| `describe_video` | Extract key frames and describe video content using vision | Vision (frame-by-frame) |
+| `extract_document` | Extract text from PDFs, CSVs, and other documents | None (local extraction) |
+
+For per-provider setup, model defaults, and configuration, see the [Media & Voice](/media/index) section.
 
 ## Tool Details
 
@@ -178,14 +180,28 @@ Here are some typical ways agents use media tools together:
 
 ## Provider Configuration
 
-Media tools use the AI providers configured in your `config.yaml`. Different tools have different provider requirements:
+Media tools route to providers based on the credentials present in your secret store and the providers listed in `config.yaml`. None of the tools accept a `provider` parameter at call time -- selection is config-driven, not per-call.
 
-- **Vision** (image_analyze, describe_video) -- Requires a model that supports image inputs, such as Claude or GPT-4 with vision.
-- **Text-to-speech** (tts_synthesize) -- Uses your configured TTS provider (OpenAI, ElevenLabs, or Edge TTS).
-- **Transcription** (transcribe_audio) -- Uses your configured speech-to-text provider (OpenAI, Groq, or Deepgram).
-- **Document extraction** (extract_document) -- Works with any configured provider, no special requirements.
+| Capability | Available providers | Auto-selection order | Required env keys |
+|------------|--------------------|--------------------|-------------------|
+| Vision (`image_analyze`, `describe_video`) | OpenAI (gpt-4o), Anthropic (claude-sonnet-4.5), Google Gemini | OpenAI -> Anthropic -> Google (first available) | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` (at least one) |
+| TTS (`tts_synthesize`) | OpenAI TTS, ElevenLabs, Edge | Configured order; `auto-tts` heuristic decides when to use voice | `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` (Edge is free) |
+| STT (`transcribe_audio`) | OpenAI Whisper (gpt-4o-mini-transcribe), Groq Whisper, Deepgram nova-3 | Fallback chain in declared order | `OPENAI_API_KEY`, `GROQ_API_KEY`, `DEEPGRAM_API_KEY` (at least one) |
+| Image generation (`image_generate`) | FAL (flux-pro), OpenAI DALL-E 3 | First with credentials present | `FAL_KEY`, `OPENAI_API_KEY` (optional -- feature disabled silently if missing) |
+| Document extraction (`extract_document`) | Local pdf.js + CSV / text decoders | n/a | None (uses FFmpeg for some audio metadata) |
 
-See the [Media & Voice](/media/index) section for detailed provider setup instructions and configuration options.
+### Cost notes
+
+Media calls bill against your model providers, not Comis itself. Rough rules of thumb:
+
+- **Vision** is significantly more expensive per call than text generation -- a single high-res image can cost 1-5K tokens of input. Use `prompt` to focus the analysis and avoid re-analyzing the same image across turns.
+- **STT** is generally cheap (Groq's whisper-large-v3-turbo is the lowest-latency / lowest-cost option in the fallback chain).
+- **TTS** is priced per character. ElevenLabs is the priciest tier; Edge TTS is free but voice quality is more limited.
+- **Image generation** has the highest per-call cost. The image-gen rate limiter is conservative by default (~1 req/min on OpenAI, ~1 req/sec on FAL).
+
+Comis applies graceful degradation: if no credentials are configured for a capability, the corresponding tool is omitted from the agent's tool catalog rather than failing at call time. Vision falls back to Anthropic by default since most setups already have an Anthropic key for the agent runtime itself.
+
+See the [Media & Voice](/media/index) section for detailed provider setup, the [Vision](/media/vision) page for image flow details, and [Voice](/media/voice) for TTS/STT options.
 
 <Info>
 All media tools process content on your server. Files are not sent to third parties beyond the configured AI provider for analysis.

@@ -4,6 +4,13 @@ description: "How your agent finds relevant memories"
 icon: "magnifying-glass"
 ---
 
+**What it does.** Finds the most relevant memories for a question your agent
+is about to answer, by combining keyword search with meaning-based search.
+
+**Who it is for.** Mostly automatic — every agent reply uses it. You only need
+to read this if you are tuning recall quality or calling search yourself via
+RPC.
+
 When your agent needs to recall something, Comis searches through its memory
 using two complementary approaches: text matching and meaning matching.
 Together, these give your agent the best chance of finding relevant information.
@@ -72,6 +79,62 @@ relevant memories are included.
 You generally do not need to adjust the scoring -- the defaults work well for
 most use cases. If your agent is recalling too many irrelevant memories,
 increase `minScore`. If it is missing important context, lower it.
+
+## Reference: how the two scores are merged
+
+The hybrid search lives in `packages/memory/src/hybrid-search.ts`. Three
+ingredients combine into the final ranking:
+
+1. **FTS5 BM25** — The full-text index (`memory_fts`) returns a BM25 rank
+   per match (lower is better). Stop words are filtered for Latin scripts;
+   Unicode-aware tokenisation handles CJK, Cyrillic, and Arabic without
+   stripping content.
+2. **sqlite-vec cosine KNN** — When embeddings exist for stored memories, a
+   vector KNN query against `vec_memories` returns a similarity-ranked list.
+3. **Reciprocal Rank Fusion (RRF)** — The two lists are merged using the
+   classic RRF formula `score = 1 / (k + rank)`. RRF is robust against the
+   FTS5/cosine score scales being incompatible.
+
+If `sqlite-vec` is not available or the query has no embedding, search falls
+back gracefully to FTS5 only.
+
+### Filters supported
+
+Search results can be filtered by:
+
+- **`tenantId`** — multi-tenant isolation (required, set by the caller).
+- **`agentId`** — restrict to memories owned by one agent.
+- **`trustLevel`** — `system`, `learned`, or `external` (see
+  [Memory](/agents/memory#trust-levels)).
+- **`memoryType`** — `working`, `episodic`, `semantic`, or `procedural`.
+- **`expiresAt`** — already-expired entries are silently excluded.
+
+### Calling search from outside the agent
+
+The web dashboard and external integrations call search through the JSON-RPC
+endpoint. The handler is registered as `memory.search`:
+
+```bash
+curl -X POST http://localhost:7777/rpc \
+  -H "Authorization: Bearer $COMIS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "memory.search",
+    "params": {
+      "query": "what did we decide about the logo?",
+      "limit": 5,
+      "minScore": 0.1,
+      "trustLevels": ["system", "learned"]
+    },
+    "id": 1
+  }'
+```
+
+The response contains the ranked results with their RRF score, source
+(`fts`, `vec`, or `both`), and the underlying memory record. The `memory.browse`
+RPC offers a non-search paginated view of memories when you just want to list
+them by date.
 
 ## Configuration
 

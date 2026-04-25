@@ -4,10 +4,14 @@ description: "Complete request/response schema reference for /v1/chat/completion
 icon: "code"
 ---
 
+**What this is for:** point any OpenAI-API-compatible client at Comis and have it talk to your local agents. **Who it's for:** developers integrating Comis into existing OpenAI-shaped tooling (LangChain, custom GPTs, third-party UIs).
+
 Comis exposes an OpenAI-compatible REST API at the `/v1/` prefix. Any client
 library, proxy, or tool that speaks the OpenAI Chat Completions protocol can
 connect to Comis without modification. The API supports chat completions
-(streaming and non-streaming), model listing, and embeddings.
+(streaming and non-streaming), model listing, embeddings, and the OpenAI
+Responses API. Authentication uses the same gateway bearer tokens as JSON-RPC,
+so a token with `rpc` or `api` scope works.
 
 ## Endpoints
 

@@ -4,7 +4,7 @@ description: "Master reference for every tool your Comis agents can use"
 icon: "toolbox"
 ---
 
-Comis agents have access to a broad set of tools spanning file operations, web access, messaging, scheduling, media processing, browser automation, context management, and administration. This page is the master reference -- every tool listed with its category, description, and link to detailed documentation.
+Comis ships with **58 built-in agent tools** spanning file operations, web access, messaging, scheduling, media processing, browser automation, context management, and administration. This page is the master reference -- every tool listed with its category, description, and link to detailed documentation.
 
 When an agent receives a message, it decides which tools to use based on what you asked it to do. Need a daily briefing? The agent uses the `cron` tool. Want to send a message to another channel? It uses `message`. Need to analyze an image someone sent? It reaches for `image_analyze`.
 
@@ -16,9 +16,9 @@ Tools fall into three tiers:
 
 | Tier | Count | Description |
 |------|-------|-------------|
-| **Built-in tools** | 12 | Core capabilities from the coding agent -- file operations, shell commands, web search, and browser automation. Work out of the box. See [Built-in Tools](/skills/built-in-tools). |
-| **Platform tools** | Many | Comis-specific capabilities -- messaging, scheduling, sessions, media, infrastructure, and moderation. Documented on this tab. |
-| **Custom tools** | Unlimited | Your own skills and MCP server tools. You create these to give agents new abilities. See [Skills](/skills/index). |
+| **Built-in tools** | 58 | Core capabilities shipped with Comis -- file operations, shell commands, web search, browser automation, messaging, scheduling, sessions, media, infrastructure, context, supervisor admin, and platform actions. Available on every agent unless restricted by tool policy. |
+| **MCP tools** | Configurable | External Model Context Protocol servers -- Anthropic's reference servers, community-built MCP servers, and your own. Discovered at runtime and qualified with `mcp:{server}/{tool}` names. See [MCP Management](/web-dashboard/mcp-management). |
+| **Custom skills** | Unlimited | Markdown-defined "mini-programs" with optional tool restrictions and bin/env requirements. Comis ships 7 built-in skills; you can author your own. See [Skills](/skills/index). |
 
 Tool access is controlled by [tool policy](/skills/tool-policy). By default, agents have access to all tools, but you can restrict access per agent using profiles (like `coding` or `messaging`) or fine-grained allow/deny lists.
 
@@ -30,24 +30,35 @@ All tool names use `snake_case` -- for example, `web_search`, `sessions_spawn`, 
 
 Every tool your agents can use, organized by category. Click the guide link in any row to jump to the full documentation for that tool.
 
-### Built-in Tools
+### Files & Code (8 tools)
 
-Built-in tools come from the coding agent and handle file operations, shell commands, web access, and browser automation. They are always available unless explicitly denied by tool policy. These tools can be individually toggled in your `config.yaml` under the `builtinTools` section.
+File and code tools are always available unless explicitly denied by tool policy. They can be individually toggled in `config.yaml` under the `builtinTools` section.
 
 | Tool | Description | Guide |
 |------|-------------|-------|
 | `read` | Read file contents with line numbers and pagination | [Built-in Tools](/skills/built-in-tools) |
 | `write` | Create or overwrite files, auto-creates parent directories | [Built-in Tools](/skills/built-in-tools) |
-| `edit` | Search-and-replace edits on existing files | [Built-in Tools](/skills/built-in-tools) |
+| `edit` | Structured insert/replace/delete edits on existing files | [Built-in Tools](/skills/built-in-tools) |
 | `notebook_edit` | Cell-level Jupyter notebook editing | [Built-in Tools](/skills/built-in-tools) |
-| `grep` | Search file contents using regex patterns | [Built-in Tools](/skills/built-in-tools) |
-| `find` | Find files by glob pattern | [Built-in Tools](/skills/built-in-tools) |
+| `grep` | Search file contents using ripgrep (auto-provisioned) | [Built-in Tools](/skills/built-in-tools) |
+| `find` | Find files using fd (auto-provisioned) or fallback | [Built-in Tools](/skills/built-in-tools) |
 | `ls` | List directory contents | [Built-in Tools](/skills/built-in-tools) |
-| `exec` | Run shell commands with timeout and safety checks | [Built-in Tools](/skills/built-in-tools) |
-| `process` | Manage background processes (list, kill, status, log) | [Built-in Tools](/skills/built-in-tools) |
-| `web_search` | Search the web using 8 providers with automatic fallback | [Web Tools](/agent-tools/web-tools) |
-| `web_fetch` | Fetch web page content with readable text extraction | [Web Tools](/agent-tools/web-tools) |
-| `browser` | Headless browser automation | [Browser](/agent-tools/browser) |
+| `apply_patch` | Apply unified diffs to files | [Built-in Tools](/skills/built-in-tools) |
+
+### Process & Execution (2 tools)
+
+| Tool | Description | Guide |
+|------|-------------|-------|
+| `exec` | Sandboxed shell execution with restricted-binary policy | [Built-in Tools](/skills/built-in-tools) |
+| `process` | Background process lifecycle (spawn, kill, status, logs) | [Built-in Tools](/skills/built-in-tools) |
+
+### Web & Browser (3 tools)
+
+| Tool | Description | Guide |
+|------|-------------|-------|
+| `web_search` | Web search across 8 providers (Brave, DuckDuckGo, Exa, Grok, Jina, Perplexity, SearXNG, Tavily) with optional fallback chain | [Web Tools](/agent-tools/web-tools) |
+| `web_fetch` | Fetch a URL and extract readable content via Readability (SSRF-guarded) | [Web Tools](/agent-tools/web-tools) |
+| `browser` | Headless Chromium automation -- 16 actions, 11 `act` sub-kinds | [Browser](/agent-tools/browser) |
 
 ### Scheduling
 
@@ -69,20 +80,25 @@ Agents can also send messages to channels they are not currently conversing in, 
 | `message` | Send, reply, react, edit, delete, fetch, and attach messages | [Messaging](/agent-tools/messaging) |
 | `notify_user` | Send proactive notifications, alerts, and reminders to the user | [Messaging](/agent-tools/messaging) |
 
-### Sessions
+### Sessions & Sub-Agents
 
-Session tools let agents manage their conversations, communicate with other agents, spawn sub-agents for specialized tasks, and run multi-step pipelines. These are the tools that enable multi-agent coordination.
-
-For example, a lead agent can spawn a researcher sub-agent and a writer sub-agent to work in parallel, then collect their results using the pipeline tool.
+Session tools let agents manage their conversations, communicate with other agents, and spawn sub-agents for specialized tasks. For example, a lead agent can spawn a researcher sub-agent and a writer sub-agent to work in parallel.
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `session_tool` | Unified session management (search, status, history, list) | [Sessions](/agent-tools/sessions) |
-| `sessions_send` | Send a message into another session (3 modes) | [Sessions](/agent-tools/sessions) |
-| `sessions_spawn` | Spawn sub-agent sessions with workspace isolation | [Sessions](/agent-tools/sessions) |
-| `subagents` | Manage running sub-agents (list, kill, steer) | [Sessions](/agent-tools/sessions) |
+| `session_tool` | Unified session management with 4 actions: `search`, `status`, `history`, `list` | [Sessions](/agent-tools/sessions) |
+| `sessions_send` | Send a message into another session in 3 modes (`fire-and-forget`, `wait`, `ping-pong`) | [Sessions](/agent-tools/sessions) |
+| `sessions_spawn` | Spawn a sub-agent session with workspace isolation, artifact refs, and an optional objective | [Sessions](/agent-tools/sessions) |
+| `subagents` | Manage running sub-agents (`list`, `kill`, `steer`) | [Sessions](/agent-tools/sessions) |
 | `agents_list` | List all configured agent IDs | [Sessions](/agent-tools/sessions) |
-| `pipeline` | Execute multi-step DAG workflows | [Sessions](/agent-tools/sessions) |
+
+### Pipelines (Execution Graphs)
+
+The `pipeline` tool defines and runs multi-agent execution graphs (DAGs). Nodes run in parallel when independent, or wait for upstream nodes via `depends_on`. Comis ships **7 built-in node type drivers** -- `agent`, `debate`, `vote`, `refine`, `collaborate`, `approval-gate`, and `map-reduce`.
+
+| Tool | Description | Guide |
+|------|-------------|-------|
+| `pipeline` | Define, execute, save, load, list, delete, monitor, cancel, and read outputs from execution graphs (9 actions) | [Pipelines](/agent-tools/pipelines) |
 
 ### Media
 
@@ -103,24 +119,26 @@ Memory tools give agents access to their long-term memory. Agents automatically 
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `memory_tool` | Unified memory management: get (read by path), search (semantic search), store (persist with secret detection), manage (admin CRUD) | [Sessions](/agent-tools/sessions) |
+| `memory_tool` | Unified memory management with 4 actions: `get` (read by path), `search` (hybrid text + vector), `store` (persist with secret-detection guard), `manage` (admin CRUD: stats, browse, delete, flush, export) | [Sessions](/agent-tools/sessions#memory_tool) |
 
-### Context
+### Context (Conversation DAG)
 
-Context tools give agents access to their conversation DAG (directed acyclic graph), enabling deep search and recall across compressed conversation history. The context tool consolidates search, recall, inspect, and expand operations into a single interface.
+The `context_tool` lets agents inspect their compressed conversation history. Each request the agent processes is stored as a node in a directed acyclic graph; the context tool searches, recalls, inspects, and expands these nodes.
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `context_tool` | Unified context DAG management (search, recall, inspect, expand) | [Sessions](/agent-tools/sessions) |
+| `context_tool` | Unified context DAG management with 4 actions: `search`, `recall`, `inspect`, `expand` | [Agent Context Engine](/agents/context-engine) |
 
 ### Infrastructure
 
-The gateway tool gives agents control over the Comis configuration and gateway. It supports reading, patching, and applying configuration changes, as well as restarting the gateway and managing environment variables. The background tasks tool lets agents manage long-running operations.
+These platform-management tools let agents inspect or modify the running Comis daemon. The `gateway` tool drives configuration and the secret store; `background_tasks` inspects the long-running task queue; `mcp_manage` reaches into the MCP client manager. The deep-dive `browser` automation guide is on its own page.
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `gateway` | Configuration management and gateway control | [Infrastructure](/agent-tools/infrastructure) |
-| `background_tasks` | Manage background tasks (status, read output, cancel) | [Infrastructure](/agent-tools/infrastructure) |
+| `gateway` | Configuration management and gateway control (11 actions: read, patch, apply, restart, schema, status, history, diff, rollback, env_set, env_list) | [Infrastructure](/agent-tools/infrastructure) |
+| `background_tasks` | Inspect and manage background task queue (list, get, cancel, read_output) | [Infrastructure](/agent-tools/infrastructure) |
+| `mcp_manage` | MCP server lifecycle (list, status, connect, disconnect, reconnect) | [Infrastructure](/agent-tools/infrastructure) |
+| `browser` | Orchestrator entry point -- see the [Browser](/agent-tools/browser) deep dive for all 16 actions and 11 `act` sub-kinds | [Browser](/agent-tools/browser) |
 
 ### Supervisor
 
@@ -132,15 +150,15 @@ Supervisor tools can modify agents, delete sessions, flush memory, and manage ga
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `agents_manage` | Agent fleet management (create, update, suspend, resume) | [Infrastructure](/agent-tools/infrastructure) |
-| `obs_query` | Observability and metrics queries (diagnostics, billing) | [Infrastructure](/agent-tools/infrastructure) |
-| `sessions_manage` | Session lifecycle management (delete, reset, export) | [Infrastructure](/agent-tools/infrastructure) |
-| `memory_manage` | Memory lifecycle management (stats, browse, flush) | [Infrastructure](/agent-tools/infrastructure) |
-| `channels_manage` | Channel adapter management (enable, disable, restart) | [Infrastructure](/agent-tools/infrastructure) |
-| `tokens_manage` | Gateway token management (create, revoke, rotate) | [Infrastructure](/agent-tools/infrastructure) |
+| `agents_manage` | Agent fleet management (create, get, update, delete, suspend, resume) | [Infrastructure](/agent-tools/infrastructure) |
+| `obs_query` | Observability and metrics queries (diagnostics, billing, delivery, channels) | [Infrastructure](/agent-tools/infrastructure) |
+| `sessions_manage` | Session lifecycle management (delete, reset, export, compact) | [Infrastructure](/agent-tools/infrastructure) |
+| `memory_manage` | Memory lifecycle management (stats, browse, delete, flush, export) | [Infrastructure](/agent-tools/infrastructure) |
+| `channels_manage` | Channel adapter management (list, get, enable, disable, restart, configure) | [Infrastructure](/agent-tools/infrastructure) |
+| `tokens_manage` | Gateway token management (list, create, revoke, rotate) | [Infrastructure](/agent-tools/infrastructure) |
 | `models_manage` | Model catalog queries (list, test) | [Infrastructure](/agent-tools/infrastructure) |
 | `skills_manage` | Skill lifecycle management (list, import, delete) with per-agent scope | [Infrastructure](/agent-tools/infrastructure) |
-| `mcp_manage` | MCP server management (connect, disconnect, reconnect) | [Infrastructure](/agent-tools/infrastructure) |
+| `heartbeat_manage` | Configure agent heartbeats (get, update, status, trigger) | [Scheduling](/agent-tools/scheduling) |
 
 ### Platform Actions
 
@@ -150,10 +168,28 @@ The available actions vary by platform. See the [Platform Actions](/agent-tools/
 
 | Tool | Actions | Guide |
 |------|---------|-------|
-| `discord_action` | Server moderation actions (kick, ban, roles, threads, channels, and more) | [Platform Actions](/agent-tools/platform-actions) |
-| `telegram_action` | Group and channel actions (pin, poll, sticker, ban, promote, and more) | [Platform Actions](/agent-tools/platform-actions) |
-| `slack_action` | Workspace actions (pin, topic, archive, channels, invites, and more) | [Platform Actions](/agent-tools/platform-actions) |
-| `whatsapp_action` | Group actions (group management, participants, settings, and more) | [Platform Actions](/agent-tools/platform-actions) |
+| `discord_action` | 19 actions: server moderation (kick, ban, role_add/remove, set_topic, set_slowmode, guild/channel info, threadCreate/List/Reply, channelCreate/Edit/Delete/Move, pin/unpin, setPresence) | [Platform Actions](/agent-tools/platform-actions) |
+| `telegram_action` | 12 actions: chat info & moderation (pin/unpin, poll, sticker, chat_info, member_count, get_admins, set_title, set_description, ban/unban, promote) | [Platform Actions](/agent-tools/platform-actions) |
+| `slack_action` | 12 actions: workspace management (pin/unpin, set_topic, set_purpose, archive/unarchive, create_channel, invite, kick, channel_info, members_list, bookmark_add) | [Platform Actions](/agent-tools/platform-actions) |
+| `whatsapp_action` | 11 actions: group management (group_info, group_update_subject/description, group_participants_add/remove, group_promote/demote, group_settings, group_invite_code, profile_status, group_leave) | [Platform Actions](/agent-tools/platform-actions) |
+
+## Channel Messaging Capability Matrix
+
+The `message` tool works across all 9 connected channels, but not every action is supported everywhere. The matrix below summarizes per-channel capabilities -- consult the [Channels Overview](/channels/index) for full per-channel detail.
+
+| Channel | Send | Reply | React | Edit | Delete | Fetch History | Threads | Streaming |
+|---------|------|-------|-------|------|--------|--------------|---------|-----------|
+| Discord | Yes | Yes | Yes | Yes | Yes | Yes | Native | Edit |
+| Telegram | Yes | Yes | Yes | Yes | Yes | No | Forum topics | Edit |
+| Slack | Yes | Yes | Yes | Yes | Yes | Yes | Reply chain | Edit |
+| WhatsApp | Yes | Yes (quoted) | Yes | Yes | Own only | No | None | Block |
+| Signal | Yes | Yes (quoted) | Yes | No | Yes | No | None | Block |
+| iMessage | Yes | No | No | No | No | Yes | None | None |
+| LINE | Yes | Yes (push) | No | No | No | No | None | None |
+| IRC | Yes | Mention only | No | No | No | No | None | None |
+| Email | Yes | Yes (headers) | No | No | No | No | Reply chain | None |
+
+"Streaming" indicates how live agent output is delivered: `Edit` means the agent edits a placeholder message as content streams in; `Block` means the agent buffers and emits complete chunks; `None` means no streaming support (the agent waits for the full reply).
 
 ## Quick Access by Use Case
 
@@ -162,17 +198,27 @@ Not sure which tool you need? Start here. The table below maps common tasks to t
 | I want to... | Use this tool | Guide |
 |--------------|---------------|-------|
 | Send a message to a channel | `message` (action: `send`) | [Messaging](/agent-tools/messaging) |
+| Send an alert that respects quiet hours | `notify_user` | [Messaging](/agent-tools/messaging) |
 | Schedule a daily task | `cron` (action: `add`, schedule_kind: `cron`) | [Scheduling](/agent-tools/scheduling) |
 | Set a one-time reminder | `cron` (action: `add`, schedule_kind: `at`) | [Scheduling](/agent-tools/scheduling) |
+| Run something every N minutes | `cron` (action: `add`, schedule_kind: `every`) | [Scheduling](/agent-tools/scheduling) |
 | Delegate work to another agent | `sessions_spawn` | [Sessions](/agent-tools/sessions) |
-| Run a multi-step workflow | `pipeline` (action: `define` + `execute`) | [Sessions](/agent-tools/sessions) |
+| Run a multi-step workflow | `pipeline` (action: `execute`) | [Pipelines](/agent-tools/pipelines) |
+| Have multiple agents debate or vote | `pipeline` (with `type_id: debate` or `vote`) | [Pipelines](/agent-tools/pipelines) |
 | Analyze an uploaded image | `image_analyze` | [Media](/agent-tools/media) |
+| Generate an image | `image_generate` | [Media](/agent-tools/media) |
 | Transcribe a voice message | `transcribe_audio` | [Media](/agent-tools/media) |
+| Speak a reply with TTS | `tts_synthesize` then `message` action `attach` | [Media](/agent-tools/media) |
 | Search the web | `web_search` | [Web Tools](/agent-tools/web-tools) |
+| Read a single web page | `web_fetch` | [Web Tools](/agent-tools/web-tools) |
+| Scrape a JavaScript-heavy site | `browser` (`navigate`, `snapshot`, `act`) | [Browser](/agent-tools/browser) |
 | Kick a user from Discord | `discord_action` (action: `kick`) | [Platform Actions](/agent-tools/platform-actions) |
-| Remember something for later | `memory_tool` (action: `store`) | [Sessions](/agent-tools/sessions) |
+| Pin the first message of the day | `discord_action` / `telegram_action` / `slack_action` (action: `pin`) | [Platform Actions](/agent-tools/platform-actions) |
+| Remember something for later | `memory_tool` (action: `store`) | [Sessions](/agent-tools/sessions#memory_tool) |
 | Read a PDF attachment | `extract_document` | [Media](/agent-tools/media) |
 | Check what's scheduled | `cron` (action: `list`) | [Scheduling](/agent-tools/scheduling) |
+| Toggle a config value | `gateway` (action: `patch` then `apply`) | [Infrastructure](/agent-tools/infrastructure) |
+| Connect a new MCP server | `mcp_manage` (action: `connect`) | [Infrastructure](/agent-tools/infrastructure) |
 
 ## Tool Guides
 
@@ -186,7 +232,10 @@ Explore each tool category in detail:
     Send, reply, react, edit, and delete messages
   </Card>
   <Card title="Sessions" icon="users" href="/agent-tools/sessions">
-    Sub-agents, pipelines, memory, and session management
+    Sessions, sub-agents, and long-term memory
+  </Card>
+  <Card title="Pipelines" icon="diagram-project" href="/agent-tools/pipelines">
+    Multi-agent execution graphs (DAGs) with 7 node types
   </Card>
   <Card title="Media" icon="photo-film" href="/agent-tools/media">
     Image analysis, text-to-speech, transcription, and documents

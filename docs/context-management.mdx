@@ -1,0 +1,158 @@
+---
+title: "Context Management"
+description: "How Comis fits long conversations into the model's window without losing what matters"
+icon: "layer-group"
+---
+
+**What it does.** Every time your agent is about to call its AI provider, Comis reshapes the conversation so the most relevant parts fit inside the model's context window — without the agent forgetting the task or paying for tokens it does not need.
+
+**Who it is for.** Anyone whose agent runs for more than a few exchanges. If your agent answers one question and goes silent, you can ignore this page. If it lives in a chat channel, schedules its own work, or keeps coming back to the same project for days, this is the system that keeps it sharp.
+
+## The plain-language version
+
+A long conversation is a problem for two reasons:
+
+1. The model has a hard limit on how much text it can read at once (its "context window"). Push past it and the call fails.
+2. Every token you send costs money. Sending the entire chat history on every turn gets expensive fast.
+
+Comis solves both with a small chain of layers that run silently before each LLM call. Each layer does one job — drop reasoning scratch paper, trim old turns, mask old tool results, summarize when things get really long. Most users never look at the layers. They just notice that the agent stays focused, stays affordable, and stays under the limit.
+
+This page explains the pipeline. For the prompt-cache mechanics that keep cached reads stable across these transformations, see [Cache](/agents/cache). For the LLM-backed summarization step in detail, see [Compaction](/agents/compaction).
+
+## The ten layers (pipeline mode)
+
+Pipeline mode is the default. Comis runs ten layers in fixed order before every LLM call. Layers further up the list run first; later layers see whatever the earlier ones produced.
+
+| # | Layer | What it does |
+|---|-------|--------------|
+| 1 | Thinking-block cleaner | Strips reasoning blocks from earlier turns of reasoning models so old "scratch paper" does not pile up. |
+| 2 | Signature replay scrubber | Removes cached signatures when a cache-break-induced replay is happening, so the same content is not re-billed twice. |
+| 3 | Signature surrogate guard | Scrubs UTF-16 surrogate halves out of thinking blocks so provider sanitization does not reject the request. |
+| 4 | Reasoning-tag stripper | Removes inline reasoning XML tags from non-Anthropic providers (e.g. `<thinking>…</thinking>` inside the visible text). |
+| 5 | History window | Keeps the last N turns (15 by default). Earlier turns are dropped wholesale before any other shaping. |
+| 6 | Dead-content evictor | Removes superseded tool results — older copies of the same tool call when a newer one exists. |
+| 7 | Observation masker | When the conversation crosses 120K characters, masks old tool outputs in three tiers: protected (kept), standard (content masked, metadata kept), ephemeral (removed entirely). |
+| 8 | LLM compaction | When the prompt is past ~85% of the model's window, calls the model to summarize older turns into one assistant message. Cooldown of 5 turns prevents thrashing. See [Compaction](/agents/compaction). |
+| 9 | Rehydration | After compaction runs, re-injects critical references (the agent's `AGENTS.md`, files referenced by ID) so the summarized agent does not lose its bearings. |
+| 10 | Objective reinforcement | Always runs last. Re-injects the original objective so the agent never drifts after being summarized. |
+
+<Note>
+The README has historically said "8 layers." The shipped pipeline runs 10. Layers 1–8 are the ones that shape every turn; layers 9–10 only fire after compaction. Either way, all ten are real and instrumented.
+</Note>
+
+### Defaults at a glance
+
+```yaml
+agents:
+  default:
+    contextEngine:
+      enabled: true
+      version: pipeline       # or "dag" — see below
+      thinkingKeepTurns: 5
+      historyTurns: 15
+      evictionMinAge: 15
+      observationKeepWindow: 25
+      observationTriggerChars: 120000
+      ephemeralKeepWindow: 10
+      compactionCooldownTurns: 5
+      compactionPrefixAnchorTurns: 2
+```
+
+You rarely need to change these. The full list is on the [config-yaml reference](/reference/config-yaml).
+
+### Circuit breaker
+
+If any individual layer throws three times in a row inside one session, the engine disables that layer for the rest of the session and keeps going. The circuit-breaker event is logged at `WARN` with `errorKind: "internal"` and a `hint` that tells you which layer tripped.
+
+## Before / after
+
+A common shape: a 60-message Telegram conversation that has been picking up tool results all morning. Without the engine, the prompt would be ~180K characters by lunchtime. With the engine:
+
+**Before any layers run** (raw history):
+
+```
+[60 messages, ~180,000 characters]
+- 12 user messages
+- 12 agent replies
+- 36 tool-call/tool-result pairs (file reads, web searches, command output)
+- 8 thinking blocks from earlier reasoning passes
+```
+
+**After layers 1-7 run** (no compaction needed yet):
+
+```
+[~28 messages, ~95,000 characters]
+- Last 15 turns kept whole
+- 8 old thinking blocks dropped (layer 1)
+- 6 superseded tool results dropped (layer 6)
+- Older tool results before turn -25 masked to "[MASKED_TOOL_RESULT]" (layer 7)
+- Original objective re-injected (layer 10)
+```
+
+**After layers 1-10 run** (long-running, compaction triggered):
+
+```
+[~12 messages, ~45,000 characters]
+- LLM summary of turns 1-50 as one assistant message (layer 8)
+- AGENTS.md and file references re-injected after the summary (layer 9)
+- Last 10 turns kept verbatim
+- Original objective restated at the end (layer 10)
+```
+
+The agent reading the third version still knows what its job is, still has the file references it needs, and the prompt fits comfortably inside Sonnet's 200K window with room for the response.
+
+## DAG mode (opt-in)
+
+Pipeline mode is lossy by design — once a turn is dropped or masked, the agent cannot get it back. DAG mode trades that for full retention: the conversation is stored as a directed acyclic graph and the agent can pull older nodes back via recall tools when it needs them.
+
+Switch with:
+
+```yaml
+agents:
+  default:
+    contextEngine:
+      version: dag
+```
+
+DAG mode is heavier (the model has to decide what to recall) and is currently best suited to long research-style sessions where loss is unacceptable. The pipeline default is right for most chat agents.
+
+## How it interacts with the cache
+
+The context engine and the prompt cache are two systems that have to cooperate or you will pay for it twice.
+
+- The cache wants the prompt prefix to be byte-for-byte identical to last turn.
+- The context engine wants to drop and rewrite older parts of the prompt.
+
+The compromise: the engine tracks a **cache fence index**. Layers 1-10 never modify content before the fence on a turn — they only edit content after it. That means the cached prefix stays stable across turns, and the parts of the prompt that change live entirely after the fence where the provider expects them to vary.
+
+For the full mechanics — adaptive TTL, sub-agent spawn staggering, two-phase break detection, the 15+ shipped optimizations — see [Cache](/agents/cache).
+
+## When something looks wrong
+
+Set `daemon.logLevels.agent: "debug"` and look for these log lines:
+
+| Log line | What it tells you |
+|----------|-------------------|
+| `Context engine pipeline complete` | Total messages in/out, total chars in/out, which layers fired. |
+| `Observation masker masked N messages` | Layer 7 trimmed the oldest tool results. Normal once a session passes 120K chars. |
+| `LLM compaction triggered` | Layer 8 ran. Includes `prunedMessages` count. |
+| `Context layer disabled by circuit breaker` | One layer threw three times. Includes the layer name. Investigate; the rest of the engine keeps running. |
+
+The same metrics show up live in the dashboard at **Observe → Context** (the [Context Engine View](/web-dashboard/observability)).
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Compaction" icon="compress" href="/agents/compaction">
+    The LLM-backed summarization step (layer 8) explained in detail.
+  </Card>
+  <Card title="Cache" icon="bolt" href="/agents/cache">
+    How the cache stays stable across the layers above.
+  </Card>
+  <Card title="Observability" icon="chart-line" href="/operations/observability">
+    Per-turn context-engine metrics and how to read them.
+  </Card>
+  <Card title="Agent Lifecycle" icon="arrows-spin" href="/agents/lifecycle">
+    Where the engine fits in the per-message processing path.
+  </Card>
+</CardGroup>

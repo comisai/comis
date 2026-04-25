@@ -11,6 +11,18 @@ The Message Center lets you interact with messages across all your connected cha
 - `/messages` -- opens the Message Center with the default (first) channel selected
 - `/messages/:type` -- opens the Message Center pre-filtered to a specific channel type (e.g., `messages/discord`, `messages/telegram`)
 
+## Backing RPC
+
+- `channels.list` -- channel picker contents
+- `channels.capabilities(channel_type)` -- determines which actions are available for the selected channel
+- `channels.get(channel_type)` -- bot identity (used to label the operator attribution dialog)
+- `messages.list(channel_type, chat_id, limit?)` -- recent messages
+- `messages.send`, `messages.reply`, `messages.react`, `messages.edit`, `messages.delete` -- compose and modify
+- `messages.sendAttachment` -- multipart upload
+- `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` -- platform-specific actions
+
+Every send/edit/delete action requires a confirmation dialog that explicitly attributes the action to the operator (not the agent), so the audit log records *who* did the action.
+
 ## What You See
 
 ### Channel and Chat Selectors

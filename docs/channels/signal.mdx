@@ -134,16 +134,19 @@ These options go under `channels.signal` in your `config.yaml`:
 
 Once connected to Signal, your agent can:
 
-- Send and delete messages
-- React to messages with emoji
+- Send and delete messages (Signal supports remote-delete; edit is **not**
+  available in the Signal protocol)
+- React to messages with Unicode emoji
 - Send file attachments up to 100 MB
 - Send native voice messages (audio attachments uploaded as Signal voice notes
   via signal-cli)
+- Receive native Signal read receipts -- the agent sees when its messages
+  have been read on the recipient's device
 - Use signal-text-styles formatting (bold, italic, monospace, strikethrough, spoiler)
 - Stream responses as separate message blocks (updates every 500 ms)
 
-Signal does **not** support editing messages, threads, fetching message history,
-buttons, cards/embeds, or mentions.
+Signal does **not** support editing messages, threads, typing indicators,
+fetching message history, buttons, cards/embeds, native polls, or mentions.
 
 ## Platform limits
 

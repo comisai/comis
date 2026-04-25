@@ -24,6 +24,20 @@ the channel, user, and other details. This means if you talk to the same agent
 from two different Discord servers, those are two separate sessions with their
 own histories.
 
+### Session scope key
+
+The internal session key is built from up to five components, in this order:
+
+1. **Tenant** -- isolates multiple deployments running on the same daemon
+2. **Agent ID** -- which agent this conversation belongs to
+3. **Channel type** + **channel ID** -- the platform and specific room
+4. **User ID** -- the participant (in DMs and group chats)
+5. **Thread/topic ID** (optional) -- forum-topic and reply-thread isolation
+
+Sessions are stored as JSONL transcripts in `~/.comis/sessions/`, one file
+per session key. The implementation lives in
+`packages/agent/src/session/session-key-builder.ts`.
+
 ## Session reset policies
 
 By default, when a `session.resetPolicy` block is configured, sessions reset

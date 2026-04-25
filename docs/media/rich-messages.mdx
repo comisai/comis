@@ -4,6 +4,12 @@ description: "Buttons, cards, and effects across Discord, Telegram, Slack, and m
 icon: "rectangle-list"
 ---
 
+**Can my agent send buttons people can click? A poll? A pretty card with an
+image?** On the platforms that support those, yes — your agent describes
+them once in a platform-neutral way and Comis renders them natively
+per-channel. On platforms that do not (IRC, Email, Signal, iMessage), Comis
+falls back to plain text so the message still gets through.
+
 Your agents can send more than just text. Rich messages include interactive
 buttons, styled cards with images and fields, and special effects like spoiler
 text. Comis provides a unified way to create these -- your agent writes them

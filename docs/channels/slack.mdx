@@ -9,8 +9,9 @@ import SecretWarning from '/snippets/secret-warning.mdx';
 
 Connect your Comis agent to Slack workspaces. Slack supports threads, reactions,
 buttons, rich formatting (mrkdwn), file attachments up to 1 GB, and
-live-streaming responses. Choose between Socket Mode (simpler, no public URL
-needed) or HTTP Mode (for production behind a reverse proxy).
+live-streaming responses. Choose between **Socket Mode** (simpler, no public URL
+needed -- uses a WebSocket from `@slack/bolt`) or **HTTP Mode** (for production
+behind a reverse proxy with HMAC-SHA256 signed event subscriptions).
 
 ## Prerequisites
 
@@ -194,18 +195,21 @@ These options go under `channels.slack` in your `config.yaml`:
 Once connected to Slack, your agent can:
 
 - Send, edit, and delete messages in any channel it has been invited to
-- React to messages with emoji
-- Reply in threads (native Slack reply-chain threads)
+- React to messages with emoji shortnames (`thumbsup`, `eyes`, etc.)
+- Reply in threads (Slack reply chains via `thread_ts`)
 - Send files and images (up to 1 GB per attachment)
 - Create interactive buttons for user choices
-- Send rich cards and embeds with formatted content
-- Use mrkdwn formatting (bold, italic, code, links, lists)
+- Send Block Kit sections, contexts, and image blocks for rich formatting
+- Use mrkdwn formatting (bold `*text*`, italic `_text_`, strikethrough `~text~`, code, links, lists)
 - Stream responses with live editing (updates every 400 ms)
-- Mention users and channels
-- Fetch message history for conversation context
+- Mention users and channels (`<@userId>`, `<#channelId>`)
+- Fetch message history for conversation context (`conversations.history`)
+- Pin/unpin messages, set channel topic and purpose, archive or unarchive
+  channels, create new channels, invite or kick members, list members, and
+  add channel bookmarks via [platform actions](/agent-tools/platform-actions)
 
-Slack does **not** natively support typing indicators (Comis skips them for
-Slack automatically).
+Slack does **not** natively support typing indicators, native polls, or
+message effects (Comis skips them automatically for Slack).
 
 ## Platform limits
 
@@ -213,6 +217,71 @@ Slack automatically).
 |---|---|---|
 | Message length | 4,000 characters | Automatically splits long responses into multiple messages at paragraph boundaries |
 | Attachment size | 1,000 MB | Generous limit, rarely hit in practice |
+
+## Complete walkthrough: from zero to first reply
+
+This walks through Socket Mode -- the easiest way to get started.
+
+<Steps>
+  <Step title="Create the Slack app">
+    Open [api.slack.com/apps](https://api.slack.com/apps), click
+    **Create New App** -> **From scratch**. Name it **MyTeamBot** and pick
+    your workspace.
+  </Step>
+
+  <Step title="Add bot scopes">
+    Under **OAuth & Permissions**, add the bot scopes from Step 2 above
+    (`chat:write`, `channels:history`, `groups:history`, `im:history`,
+    `mpim:history`, `reactions:read`, `reactions:write`, `files:read`,
+    `files:write`, `users:read`).
+  </Step>
+
+  <Step title="Enable Socket Mode and event subscriptions">
+    Under **Settings -> Socket Mode**, toggle Socket Mode on, click
+    **Generate**, name the token `myteambot-socket`, and copy the
+    `xapp-...` token.
+
+    Under **Event Subscriptions**, toggle events on and subscribe to
+    `message.channels`, `message.groups`, `message.im`, `message.mpim`,
+    and `app_mention`.
+  </Step>
+
+  <Step title="Install to workspace">
+    Under **Install App**, click **Install to Workspace** and accept.
+    Copy the **Bot User OAuth Token** (`xoxb-...`).
+  </Step>
+
+  <Step title="Wire it into Comis">
+    Add to `~/.comis/.env`:
+
+    ```bash
+    SLACK_BOT_TOKEN=xoxb-your-bot-token
+    SLACK_APP_TOKEN=xapp-your-app-token
+    ```
+
+    Add to `~/.comis/config.yaml`:
+
+    ```yaml
+    channels:
+      slack:
+        enabled: true
+        botToken: "${SLACK_BOT_TOKEN}"
+        appToken: "${SLACK_APP_TOKEN}"
+        mode: "socket"
+    ```
+  </Step>
+
+  <Step title="Restart, invite, and chat">
+    ```bash
+    comis daemon stop && comis daemon start
+    comis daemon logs
+    ```
+
+    Look for `Slack adapter connected`. In a Slack channel, type
+    `/invite @MyTeamBot`, then send a message. The agent replies and edits
+    its message every 400 ms while the response streams in.
+  </Step>
+</Steps>
 
 ## Troubleshooting
 

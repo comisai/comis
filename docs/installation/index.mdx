@@ -5,23 +5,31 @@ icon: "download"
 ---
 
 This section walks you through installing Comis on your server or development
-machine. There are three ways to get started -- pick the one that fits your
+machine. There are four ways to get started -- pick the one that fits your
 workflow best.
 
 ## Quick Install
 
-One-liner -- installs Node.js and everything else:
+One-liner -- installs Node.js, system dependencies, a dedicated `comis` user,
+and registers the daemon as a systemd service:
 
 ```bash
 curl -fsSL https://comis.ai/install.sh | bash
 ```
 
+This is the same script used by the [VPS guide](/installation/install-vps) and
+works on macOS and Linux.
+
 ## Choose Your Setup Method
 
-<CardGroup cols={3}>
-  <Card title="Setup Wizard" icon="wand-magic-sparkles" href="/installation/install-linux">
-    Recommended for most users. The interactive wizard handles Node.js
-    installation, configuration, and startup in a single procedure.
+<CardGroup cols={2}>
+  <Card title="Linux Install" icon="linux" href="/installation/install-linux">
+    Recommended for most users. Step-by-step procedure with `npm install -g comisai`,
+    setup wizard, and `comis daemon start`.
+  </Card>
+  <Card title="VPS Install" icon="server" href="/installation/install-vps">
+    Deploy on Hostinger, DigitalOcean, Hetzner, or any Ubuntu VPS in under 10 minutes
+    using the one-line installer.
   </Card>
   <Card title="Docker" icon="docker" href="/installation/install-docker">
     Run Comis in a container. No system-level Node.js installation needed --
@@ -37,11 +45,12 @@ curl -fsSL https://comis.ai/install.sh | bash
 
 | Method | Best for | Time estimate |
 |---|---|---|
-| Setup Wizard | First-time users, quick start | ~5 minutes |
+| Linux Install | First-time local install | ~5 minutes |
+| VPS Install | Production server with systemd + dedicated user | ~10 minutes |
 | Docker | Container-based workflows, isolation | ~10 minutes |
 | Manual | Custom setups, advanced users | ~15 minutes |
 
-All three methods produce the same result: a running Comis daemon with a web
+All four methods produce the same result: a running Comis daemon with a web
 dashboard at `http://localhost:4766`. The difference is how much the tooling
 handles for you versus how much you configure by hand.
 
@@ -82,8 +91,14 @@ from one AI provider.
   <Card title="Install on Linux" icon="linux" href="/installation/install-linux">
     Step-by-step procedure for Ubuntu, Fedora, and Arch.
   </Card>
+  <Card title="Install on a VPS" icon="server" href="/installation/install-vps">
+    One-line installer for Hostinger, DigitalOcean, Hetzner, and others.
+  </Card>
   <Card title="Install with Docker" icon="docker" href="/installation/install-docker">
     Container-based setup with Docker Compose.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/installation/configuration">
+    Customize `config.yaml` and connect channels.
   </Card>
   <Card title="Verification" icon="circle-check" href="/installation/verify">
     Confirm your installation is healthy.

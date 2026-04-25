@@ -8,8 +8,11 @@ import Prereqs from '/snippets/prereqs.mdx';
 import SecretWarning from '/snippets/secret-warning.mdx';
 
 Connect your Comis agent to Discord servers and DMs. Discord supports threads,
-reactions, embeds, buttons, file attachments up to 25 MB, and live-streaming
+reactions, embeds, buttons, polls, file attachments up to 25 MB, and live-streaming
 responses that update in real time as your agent thinks.
+
+Comis connects via the **Discord Gateway** (a persistent WebSocket maintained
+by `discord.js`) -- no public webhook URL is required.
 
 ## Prerequisites
 
@@ -32,8 +35,9 @@ enable this.
     Go to the [Discord Developer Portal](https://discord.com/developers/applications)
     and sign in with your Discord account.
 
-    Click **New Application** in the top right, give it a name (this will be your
-    bot's display name), and click **Create**.
+    Click **New Application** in the top right, name it (for example,
+    **MyTeamBot** -- this will be the default bot display name), and click
+    **Create**.
 
     In the left sidebar, click **Bot** to open the bot settings page.
   </Step>
@@ -140,16 +144,29 @@ These options go under `channels.discord` in your `config.yaml`:
 Once connected to Discord, your agent can:
 
 - Send, edit, and delete messages in any channel it has access to
-- React to messages with emoji
-- Reply in threads (native Discord threads)
+- React to messages with Unicode and custom guild emoji
+- Reply in threads (native Discord threads, max depth 1)
 - Send files and images (up to 25 MB per attachment)
 - Send native voice messages (audio attachments uploaded as Discord voice notes
   with waveform and duration metadata)
 - Create interactive buttons for user choices
 - Send rich embeds and cards with formatted content
+- Apply message effects (spoiler wrapping)
 - Stream responses with live editing (updates every 500 ms)
 - Read message history for conversation context
 - Participate in forum channels
+- Send native polls (question + answers, with optional multiselect and a
+  duration in hours) via the `poll` [platform action](/agent-tools/platform-actions)
+- Create, list, and reply in threads; create, edit, delete, and move channels;
+  set bot presence; pin or unpin messages; ban, kick, or assign roles to
+  members -- all via platform actions
+
+<Note>
+Discord poll **vote events** (live tallies) are not yet wired into Comis.
+Polls send and render correctly; the agent does not receive incremental vote
+notifications. The final result is visible to the agent the next time it
+fetches the message.
+</Note>
 
 ## Platform limits
 
@@ -159,6 +176,60 @@ Once connected to Discord, your agent can:
 | Attachment size | 25 MB | Files over 25 MB are rejected with a user-friendly error message |
 | Embeds per message | 10 | Multiple embeds are batched to stay within the platform limit |
 | Rate limits | 5 messages per 5 seconds per channel | Comis throttles delivery and retries with exponential backoff if rate-limited |
+
+## Complete walkthrough: from zero to first reply
+
+A start-to-finish run for a fresh server bot named **MyTeamBot**:
+
+<Steps>
+  <Step title="Create the application and copy the token">
+    In the [Discord Developer Portal](https://discord.com/developers/applications),
+    click **New Application** and call it `MyTeamBot`.
+    Open **Bot**, enable **Message Content Intent** under **Privileged Gateway
+    Intents**, click **Save Changes**, then click **Reset Token** and copy the
+    new token (Discord shows it once).
+  </Step>
+
+  <Step title="Invite the bot to your server">
+    Under **OAuth2 -> URL Generator**, check `bot`, then check
+    **Send Messages**, **Read Message History**, **Add Reactions**, and
+    **Attach Files**. Open the generated URL, pick a server you administer,
+    and confirm the invite.
+  </Step>
+
+  <Step title="Wire it into Comis">
+    Add to `~/.comis/.env`:
+
+    ```bash
+    DISCORD_BOT_TOKEN=MTIz.your-token-from-the-portal
+    ```
+
+    Add to `~/.comis/config.yaml`:
+
+    ```yaml
+    channels:
+      discord:
+        enabled: true
+        botToken: "${DISCORD_BOT_TOKEN}"
+    ```
+  </Step>
+
+  <Step title="Restart the daemon and verify">
+    ```bash
+    comis daemon stop && comis daemon start
+    comis daemon logs
+    ```
+
+    Look for `Discord adapter connected`. The bot's status in your server's
+    member list flips from grey to green.
+  </Step>
+
+  <Step title="Send the first message">
+    In any channel where MyTeamBot has access, type `@MyTeamBot hello!`.
+    A typing indicator appears (refreshed every 8 seconds), then the agent's
+    reply streams in with edits every 500 ms.
+  </Step>
+</Steps>
 
 ## Troubleshooting
 

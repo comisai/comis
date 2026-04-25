@@ -281,6 +281,46 @@ providers later if you want specific capabilities like video analysis (which
 requires Google Gemini).
 </Tip>
 
+## Walkthrough: an agent describing a photo
+
+Here is the complete round-trip for a Telegram user sending a photo to an
+agent with vision enabled and the OpenAI provider configured.
+
+<Steps>
+  <Step title="User sends the photo">
+    A user attaches `dashboard-screenshot.png` in Telegram with the caption
+    "is anything broken on this dashboard?"
+  </Step>
+  <Step title="Telegram delivers the message">
+    The Telegram adapter receives the photo, downloads the file via Bot API,
+    and emits a `NormalizedMessage` with the caption and the image as an
+    attachment.
+  </Step>
+  <Step title="Comis preprocesses the image">
+    The image is run through resize / EXIF rotation / compression so it fits
+    within OpenAI's input limits — automatic, no configuration needed.
+  </Step>
+  <Step title="The agent sees the image inline">
+    Because vision is enabled and the chat type passes the scope rules, the
+    image is sent **directly** to GPT-4o as part of the prompt — same as if
+    a person were looking at it. No `image_analyze` call is needed.
+  </Step>
+  <Step title="The agent replies">
+    GPT-4o responds: "Two things stand out: the 'Token usage' card is showing
+    $NaN, and the 'Active sessions' counter is empty. Both look like the
+    metrics endpoint is returning null. Want me to check the daemon logs?"
+  </Step>
+  <Step title="The reply is delivered">
+    Comis sends the reply back through Telegram. The whole round-trip takes
+    2–4 seconds on a typical home connection.
+  </Step>
+</Steps>
+
+If the same image arrived on a channel where vision is denied by scope
+rules, the agent would instead see a hint like
+`[Image attached: dashboard-screenshot.png — use image_analyze to view]`
+and could opt to call the on-demand tool.
+
 ## Related
 
 Explore other media capabilities and tool references:

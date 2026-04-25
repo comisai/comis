@@ -4,7 +4,24 @@ description: "Config and skill hot reload mechanism reference covering SIGUSR1 r
 icon: "rotate"
 ---
 
+**What this is for:** how config and skill changes propagate without a manual restart, and which kinds of changes still require one. **Who it's for:** operators tuning a live deployment and developers building skills or automating config updates.
+
 Comis has two distinct hot reload mechanisms: **config hot reload** uses RPC-based writes followed by a SIGUSR1-triggered process restart, while **skill hot reload** uses chokidar file watchers for discovery directory monitoring. These are completely separate systems.
+
+## What reloads, and how
+
+| Change | How it applies | Drops connections? |
+|--------|---------------|--------------------|
+| `config.patch` / `config.apply` (any section) | Validate → write → 200 ms delayed `SIGUSR1` → process restart | Yes — supervisor (pm2/systemd) restarts the daemon. WS clients reconnect with restart-continuation. |
+| `agents.create` / `agents.update` / `agents.delete` | Same path, but with a 2-second debounced `SIGUSR1` so batches coalesce | Yes |
+| `tokens.create` / `tokens.revoke` / `tokens.rotate` | Same debounced restart path | Yes |
+| `channels.enable` / `channels.disable` | Same debounced restart path | Yes |
+| `gateway.restart` RPC | Direct `SIGUSR1` (200 ms delay to flush response) | Yes |
+| New SKILL.md added to a discovery path | chokidar `add` event → debounced re-discovery, no restart | No |
+| Existing SKILL.md edited or deleted | chokidar `change` / `unlink` event → debounced re-discovery | No |
+| Editing `~/.comis/config.yaml` directly | **Not detected.** Run `comis config validate` then restart manually. | -- |
+
+The takeaway: **everything except skill files goes through a daemon restart.** The restart is graceful (ordered teardown, ~30 s hard timeout) and active sessions are preserved across the bounce via the restart continuation tracker, so end users typically don't notice.
 
 <Warning>
   Config hot reload is NOT file watching. The daemon does not watch config files for changes. Config changes go through the RPC API, which validates, writes, and then sends SIGUSR1 to restart the daemon.

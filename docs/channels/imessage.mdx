@@ -100,12 +100,16 @@ These options go under `channels.imessage` in your `config.yaml`:
 Once connected to iMessage, your agent can:
 
 - Send and receive plain text messages in private and group chats
+- Send and receive image, video, and audio attachments
 - Fetch conversation history from the local Messages database
-- Send file attachments up to 16 MB
+- Surface native iMessage read receipts -- the agent sees when its messages
+  have been read on the recipient's device
+- Send file attachments up to 16 MB (Apple's per-message limit)
 
-iMessage does **not** support reactions, editing or deleting sent messages,
-threads, buttons, cards or embeds, streaming (live-updating responses),
-rich text formatting, or mentions.
+iMessage does **not** support reactions (Tapbacks are not exposed through
+`imsg`), editing or deleting sent messages, threads, typing indicators,
+buttons, cards or embeds, streaming (live-updating responses), native polls,
+rich text formatting, or `@mentions`.
 
 ## Platform limits
 

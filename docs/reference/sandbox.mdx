@@ -1,10 +1,26 @@
 ---
 title: "Sandbox"
-description: "Skill sandboxing implementation reference covering content scanning, sanitization, tool policy, and execution limits"
+description: "Skill sandboxing reference plus exec-tool OS-level sandbox config (bubblewrap / sandbox-exec)"
 icon: "box"
 ---
 
-The sandbox is a multi-layer defense system for custom skill execution. It combines content scanning, input sanitization, tool policy enforcement, and execution limits to prevent malicious or runaway skill behavior.
+The sandbox is a multi-layer defense system for custom skill execution. It combines content scanning, input sanitization, tool policy enforcement, and execution limits to prevent malicious or runaway skill behavior. For the **separate** OS-level kernel namespace that wraps the `system.exec` shell tool, see the dedicated [Exec Sandbox](/security/exec-sandbox) page; this page summarizes its config keys and runtime detection at the bottom.
+
+<Note>
+**Sandbox vocabulary.** Comis uses the word "sandbox" for two distinct
+mechanisms:
+
+- **Skill sandbox** -- the application-level layers documented on this page
+  (content scanning, sanitization, tool policy, execution limits). Always
+  active for every skill.
+- **Exec sandbox** -- the OS-level kernel namespace
+  (bubblewrap / sandbox-exec) that wraps the `system.exec` tool only.
+  Auto-detected at daemon startup; falls back to unsandboxed with a warning
+  if the binary is missing.
+
+The skill sandbox protects every skill regardless of how it executes. The
+exec sandbox protects only `system.exec`. Make sure to enable both.
+</Note>
 
 ## Overview
 
@@ -274,6 +290,32 @@ Hard ceilings: 5 MB max response bytes, 500K max chars. Operator overrides canno
 When enabled, child processes spawned during skill execution run with restricted OS-level permissions. This provides a defense layer beneath application-level controls.
 
 See [Node Permissions](/reference/node-permissions) for full configuration reference.
+
+## Exec Sandbox (OS-Level)
+
+The `system.exec` tool wraps every shell command in a kernel-enforced
+namespace. The provider is selected automatically at daemon startup based on
+`process.platform`:
+
+| Platform | Provider | Module |
+|----------|----------|--------|
+| Linux | `BwrapProvider` (bubblewrap) | `packages/skills/src/builtin/sandbox/bwrap-provider.ts` |
+| macOS (`darwin`) | `SandboxExecProvider` (sandbox-exec) | `packages/skills/src/builtin/sandbox/sandbox-exec-provider.ts` |
+| Anything else | _none -- exec tool runs unsandboxed with a WARN log_ | -- |
+
+`detectSandboxProvider()` first probes the candidate binary's availability
+(`bwrap --version` or `sandbox-exec -h`); if the binary is missing it logs
+a structured warning with the install hint
+(`apt install bubblewrap`) and returns `undefined`, leaving the exec tool
+to run unsandboxed unless the operator has set `execSandbox.enabled:
+"never"` to disable it explicitly.
+
+<Info>
+Source: `detectSandboxProvider()` in `packages/skills/src/builtin/sandbox/detect-provider.ts`
+</Info>
+
+For the full mount table, attack scope, and configuration walkthrough, see
+[Exec Sandbox](/security/exec-sandbox).
 
 ## Configuration Reference
 

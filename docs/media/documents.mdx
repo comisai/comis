@@ -4,12 +4,28 @@ description: "How your agent reads PDFs, spreadsheets, code files, and other doc
 icon: "file-lines"
 ---
 
+**Can my agent read the PDF I attach?** Yes — by default. The same is true
+for spreadsheets, code files, plain text, JSON, YAML, and HTML. Scanned
+PDFs work too once you turn on the vision OCR fallback.
+
 When someone sends a document to your agent -- a PDF report, a CSV
 spreadsheet, a code file, or a plain text file -- Comis extracts the text
 content so your agent can read and understand it. The default MIME whitelist
 covers 14 MIME types (12 file kinds), including scanned PDFs that need OCR.
 Your agent can then answer questions about the document, summarize it, or use
 the content in its responses.
+
+Behind the scenes, Comis ships dedicated extractors per format
+(`packages/skills/src/integrations/document/`):
+
+- **PDFs** — `pdf-extractor.ts` using
+  [pdfjs](https://mozilla.github.io/pdf.js/), with optional vision OCR
+  fallback for scanned pages.
+- **CSV / spreadsheets** — `file-extractor.ts` parses each row inline.
+- **Plain text and code** — `text-decoder.ts` handles UTF-8 / ASCII / other
+  charsets.
+- **Composite auto-detect** — `composite-extractor.ts` picks the right
+  extractor based on MIME magic bytes plus the filename extension.
 
 ## Supported File Types
 

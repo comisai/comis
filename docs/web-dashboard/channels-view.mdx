@@ -6,6 +6,25 @@ icon: "tower-broadcast"
 
 The Channels view shows the status of every connected messaging platform. At a glance you can see which channels are online, which need attention, and how each one is performing.
 
+**Who it's for:** operators triaging a "why isn't Discord answering?" question, and anyone rotating credentials.
+
+## Routes
+
+- `/channels` -- list of all channel adapters
+- `/channels/:type` -- detail page for a specific platform (e.g., `channels/telegram`)
+
+## Backing RPC
+
+- `channels.list` -- list view
+- `channels.get(channel_type)` -- detail (config + capabilities)
+- `channels.capabilities(channel_type)` -- what the platform supports (edit messages, delete, reactions, etc.)
+- `channels.restart(channel_type)` -- reconnect
+- `channels.enable(channel_type)` / `channels.disable(channel_type)` -- toggle
+- `obs.channels.all`, `obs.channels.stale` -- runtime stats and stale-channel detection
+- `config.patch(section: "channels", ...)` -- save credential or feature changes (writes to `config.yaml` and triggers daemon restart)
+
+See the [Channels overview](/channels/index) for the full list of nine adapters (Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email).
+
 ## What You See
 
 ### Platform Cards

@@ -173,6 +173,24 @@ An Ed25519 key pair that uniquely identifies this Comis installation. Generated 
 **Written by:** the daemon on first startup (if it does not exist).
 **Safe to delete?** Technically yes, but the device will get a new identity on next start. Any device-pairing records that reference the old key will become invalid.
 
+---
+
+### `devices/`
+
+Paired-device records, written when another Comis installation pairs with this one. Each file is a small JSON record signed against the device identity above.
+
+**Written by:** the daemon on pairing.
+**Safe to delete?** Yes. The pairing is invalidated and the other side will need to re-pair.
+
+---
+
+### `dead-letters.jsonl`
+
+Append-only JSONL of announcement-delivery failures that exhausted in-process retries (channel down, bot blocked, etc.). The delivery system replays these on provider recovery and expires entries after one hour. Only created when at least one announcement has been dead-lettered.
+
+**Written by:** the announcement delivery subsystem.
+**Safe to delete?** Yes. Pending re-deliveries are dropped; entries auto-expire after one hour anyway.
+
 ## Backing up
 
 To migrate to a new machine, back up these items:
@@ -200,7 +218,7 @@ By default Comis resolves config from `~/.comis/config.yaml` and `~/.comis/confi
 COMIS_CONFIG_PATHS="/etc/comis/config.yaml:/home/me/.comis/config.yaml" node packages/daemon/dist/daemon.js
 ```
 
-The data directory (`~/.comis/`) is separately controlled by `COMIS_DATA_DIR`. See [Configuration](/docs/installation/configuration) for a full reference.
+The data directory (`~/.comis/`) is separately controlled by `COMIS_DATA_DIR`. See [Configuration](/installation/configuration) for a full reference.
 
 ## Permissions
 

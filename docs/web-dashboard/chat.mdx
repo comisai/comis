@@ -6,6 +6,21 @@ icon: "message"
 
 The Chat Console lets you talk to your agents directly from the browser. You can start new conversations, review past sessions, and watch your agents think and respond in real time.
 
+**Who it's for:** anyone testing an agent's behavior before exposing it on a real channel, plus developers debugging tool calls live.
+
+## Routes
+
+- `/chat` -- opens the console without a selected session
+- `/chat/:sessionKey` -- opens directly to a specific session (e.g., `chat/web:default:abc-123`)
+
+## Backing API
+
+- `POST /api/chat` -- sends a new message; body is JSON `{ message, agentId?, sessionKey? }`
+- `GET /api/chat/history` -- loads message history for a session
+- SSE events on the dashboard's event stream drive the streaming response (token-by-token append, tool call status updates, completion)
+
+All requests carry the gateway token as a `Bearer` header (read from `sessionStorage.comis_token`).
+
 ## What You See
 
 The Chat Console is split into two main areas side by side.

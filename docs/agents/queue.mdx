@@ -97,6 +97,35 @@ queue:
 For the full list of queue configuration options including per-channel overrides,
 see [Configuration Reference](/reference/config-yaml).
 
+## How it works (developer detail)
+
+The queue is a per-session lane on top of a global concurrency gate.
+
+- **Per-session ordering** -- Each session has its own FIFO lane. Within a
+  lane, messages are processed strictly in arrival order so the agent never
+  responds to message 3 before message 2.
+- **Global concurrency** -- Up to `maxConcurrentSessions` lanes can be
+  draining at once. Additional lanes wait for a slot.
+- **Priority lanes** -- When `queue.priorityEnabled` is on, each session lane
+  is tagged `high` / `normal` / `low`. Higher-priority lanes get scheduling
+  preference at the global gate.
+- **Backpressure** -- When a lane reaches `maxDepth`, the configured overflow
+  policy (`drop-new`, `drop-old`, or `summarize`) decides which message to
+  shed. Drops fire a `queue:overflow` event so observability dashboards can
+  surface them.
+- **Debouncing** -- The optional debounce buffer coalesces a burst of short
+  messages into one envelope before the lane sees it.
+
+The implementation lives in `packages/agent/src/queue/`. Key files:
+
+| File | Purpose |
+|------|---------|
+| `command-queue.ts` | The session-lane queue itself |
+| `priority-scheduler.ts` | Multi-lane scheduling with priorities |
+| `overflow.ts` | The three overflow policies |
+| `debounce-buffer.ts` | Pre-queue coalescing of rapid messages |
+| `coalescer.ts` | The `summarize` overflow strategy |
+
 <CardGroup cols={2}>
   <Card title="Sessions" icon="comments" href="/agents/sessions">
     How conversations are created and managed.

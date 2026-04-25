@@ -32,6 +32,52 @@ If any stage encounters an error, the pipeline degrades safely rather than
 crashing -- the parent always receives a result, even if it is a structured
 error message.
 
+## Worked example: parent spawns a research subagent
+
+Say a primary agent named **Atlas** is asked to compile a brief on quantum
+computing. Atlas decides it needs background research before writing, so it
+spawns a sub-agent.
+
+The parent invokes the `sessions_spawn` tool:
+
+```json
+{
+  "tool": "sessions_spawn",
+  "agent_id": "researcher",
+  "task": "Search the web and summarize the three biggest quantum-computing breakthroughs of the last 12 months. Return a Markdown bullet list with sources.",
+  "objective": "Provide background facts for a 500-word brief.",
+  "artifact_refs": [],
+  "include_parent_history": "none"
+}
+```
+
+Comis builds a spawn packet (next section), runs the sub-agent in its own
+session, and returns a condensed result like this:
+
+```text
+[Subagent Result: research-quantum-2026-04]
+Status: Completed
+Condensation: Level 1 (passthrough)
+
+- Researchers at Google demonstrated... (source: nature.com/...)
+- IBM unveiled the Heron R2 processor... (source: research.ibm.com/...)
+- A team at Caltech reported... (source: caltech.edu/...)
+
+---
+Runtime: 18.4s | Steps: 4 | Tokens: 6200 | Cost: $0.0186
+Condensation: Level 1 | Original: 6200 tokens | Ratio: 1.00
+Full result: ~/.comis/subagent-results/{session}/{runId}.json
+Session: subagent:researcher:abc123
+```
+
+Atlas then reads the bullet list back into its own context and writes the
+brief. The full unredacted research output is on disk if Atlas needs to look
+back at sources later.
+
+The key benefit: Atlas's main session never carries the raw web search
+transcript. It only carries the curated three-bullet summary, which keeps
+the parent's context budget under control.
+
 ## Spawn packets
 
 A spawn packet is the structured context bundle passed to a sub-agent. When `sessions_spawn` is called,

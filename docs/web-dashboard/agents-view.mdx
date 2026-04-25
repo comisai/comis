@@ -1,10 +1,31 @@
 ---
 title: "Agents View"
-description: "View and manage your AI agents from the web dashboard"
+description: "View, create, edit, and delete your AI agents from the dashboard"
 icon: "robot"
 ---
 
 The Agents view shows all your AI agents at a glance. You can see which agents are active, check their statistics, edit their configuration, and take actions like suspending or deleting an agent -- all from a single screen.
+
+**Who it's for:** anyone who runs more than one agent and wants a single place to see budgets, costs, and health.
+
+## Routes
+
+- `/agents` -- list all agents
+- `/agents/:id` -- agent detail page
+- `/agents/:id/edit` -- agent editor
+- `/agents/:id/workspace` -- workspace manager (covered on its own [page](/web-dashboard/workspace-view))
+
+## Backing RPC
+
+The list, detail, and editor are powered by:
+
+- `agents.list` -- list view
+- `agents.get` -- detail page
+- `agents.create`, `agents.update`, `agents.delete` -- editor and delete actions
+- `agents.suspend`, `agents.resume` -- status actions
+- `agent.getOperationModels` -- shows the resolved primary model and per-operation overrides
+
+Updates persist via `persistToConfig` (writes `agents.<id>` into `config.yaml`, then schedules a daemon restart).
 
 ## What You See
 

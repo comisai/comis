@@ -4,7 +4,7 @@ import Base from "../layouts/Base.astro";
 import Footer from "../components/Footer.astro";
 
 const title = "Context Management - How Comis Cuts LLM Costs by 81%";
-const description = "Deep dive into Comis's 8-layer context engine, cache fence system, TTL monotonicity enforcement, adaptive cold-start retention, sub-agent spawn staggering, progressive tool disclosure, and 20 mechanisms that reduce multi-agent pipeline costs.";
+const description = "Deep dive into Comis's 8-stage context engine (10 implementations), cache fence system, TTL monotonicity enforcement, adaptive cold-start retention, sub-agent spawn staggering, progressive tool disclosure, and the 20+ mechanisms that reduce multi-agent pipeline costs.";
 
 const layers = [
   {
@@ -176,7 +176,7 @@ const realExample = {
           How Comis cuts LLM costs by 81%
         </h1>
         <p class="mt-6 text-lg md:text-xl text-muted max-w-2xl mx-auto leading-relaxed">
-          8-layer context engine, cache fence system, sub-agent spawn staggering, progressive tool disclosure, and 20 mechanisms - so your agents run indefinitely with predictable costs.
+          An 8-stage context engine (10 implementations under the hood), cache fence system, sub-agent spawn staggering, progressive tool disclosure, and 20+ mechanisms - so your agents run indefinitely with predictable costs.
         </p>
       </div>
     </section>
@@ -240,13 +240,13 @@ const realExample = {
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">The solution</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-          8-layer context engine pipeline
+          8-stage context engine pipeline (10 implementations)
         </h2>
         <p class="text-muted text-lg mb-6 max-w-2xl">
-          Every conversation is processed through a composable pipeline of 8 layers before each LLM call. Each layer targets a specific source of token waste.
+          Every conversation is processed through a composable pipeline of 8 categorical stages before each LLM call (10 distinct layer implementations counting signature scrubbing and surrogate guards). Each stage targets a specific source of token waste.
         </p>
         <p class="text-muted text-sm mb-12 max-w-2xl italic">
-          Every layer has a circuit breaker - 3 consecutive failures disables the layer. No single optimization bug can bring down the pipeline.
+          Every stage has a circuit breaker - 3 consecutive failures disables the layer. No single optimization bug can bring down the pipeline.
         </p>
 
         <div class="space-y-4">
@@ -861,7 +861,7 @@ const realExample = {
           The full picture.
         </h2>
         <p class="text-muted text-lg mb-12 text-center max-w-xl mx-auto">
-          20 mechanisms working together to keep costs predictable at any scale.
+          20+ mechanisms working together to keep costs predictable at any scale.
         </p>
 
         <div class="overflow-x-auto">

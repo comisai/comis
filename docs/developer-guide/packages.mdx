@@ -32,7 +32,7 @@ All packages use ES modules (`"type": "module"`), strict TypeScript with `compos
 
 **`@comis/core`** is the heart of the hexagonal architecture. It defines all 19 port interfaces in `src/ports/`, all domain types as Zod schemas in `src/domain/`, the `TypedEventBus` for inter-module communication, security primitives (`SafePath`, `SecretManager`, `ActionClassifier`), 22+ config schemas, and the plugin infrastructure (`PluginRegistry`, `HookRunner`). The composition root `bootstrap()` function lives here and returns an `AppContainer`.
 
-**`@comis/agent`** is the execution engine. It contains the `PiExecutor` that orchestrates LLM calls, tool execution, and response generation. It also manages sessions (conversation state), budgets (token/cost limits), circuit breakers (automatic failure recovery), and RAG (retrieval-augmented generation from memory). It also contains the context engine -- an 8-layer pipeline that manages token budgets and conversation length before each AI call.
+**`@comis/agent`** is the execution engine. It contains the `PiExecutor` that orchestrates LLM calls, tool execution, and response generation. It also manages sessions (conversation state), budgets (token/cost limits), circuit breakers (automatic failure recovery), and RAG (retrieval-augmented generation from memory). It also contains the context engine -- a 10-layer pipeline that manages token budgets and conversation length before each AI call.
 
 **`@comis/channels`** contains the 10 platform adapters. Each adapter lives in its own directory (e.g., `src/telegram/`, `src/discord/`) with a standard file set: adapter, message mapper, media handler, credential validator, media resolver, voice sender, and plugin wrapper.
 

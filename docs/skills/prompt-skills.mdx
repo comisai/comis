@@ -238,6 +238,31 @@ You can manage skills per agent from the [web dashboard](/web-dashboard/index) u
 agent selector and scope toggle in the Skills view.
 </Tip>
 
+## Skills shipped with Comis
+
+Comis comes with seven prompt skills out of the box, in the `/skills/`
+directory at the repo root. They double as working reference manifests --
+copy any of them as a starting point for your own skill. Each declares the
+external prerequisites it needs via `comis.requires`, so the loader skips
+them gracefully when those bins or env vars are missing.
+
+| Skill | What it does | Requires |
+|-------|--------------|----------|
+| `chart-visualization` | Generate 26 chart types (bar, line, pie, sankey, treemap, mind maps...) via a bundled Node script | `bins: [node]` |
+| `deep-research` | Multi-phase web research methodology -- broad exploration, deep dive, source validation | None (uses `web_search` + `web_fetch`) |
+| `find-skills` | Discover and install skills from the open `skills.sh` ecosystem | `bins: [git]` |
+| `image-generation` | Image generation via Gemini (structured prompts, optional reference images, aspect-ratio control) | `bins: [python3]`, `env: [GEMINI_API_KEY]` |
+| `log-troubleshooting` | Parse and summarise NDJSON daemon logs from `~/.comis/logs/` | `bins: [python3]` |
+| `podcast-generation` | Two-host conversational podcast audio via VolcEngine TTS | `bins: [python3]`, `env: [VOLCENGINE_TTS_APPID, VOLCENGINE_TTS_ACCESS_TOKEN]` |
+| `video-generation` | Video generation via Gemini Video API | `bins: [python3]`, `env: [GEMINI_API_KEY]` |
+
+<Tip>
+The fastest way to learn the SKILL.md format is to read one of these. They
+are short, real, and exercised by every Comis install. See
+[Examples](/skills/examples) for a walkthrough that builds on
+`log-troubleshooting`.
+</Tip>
+
 ## Advanced options
 
 Once you are comfortable with the basics, these options give you more control:

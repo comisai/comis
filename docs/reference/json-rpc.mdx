@@ -4,7 +4,68 @@ description: "Complete reference for all 180 JSON-RPC methods across 36 namespac
 icon: "code"
 ---
 
-Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 180 methods across 36 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws`.
+**What this is for:** every JSON-RPC method the daemon exposes — what to send, what comes back, and which scope you need. **Who it's for:** developers building CLIs, dashboards, or external integrations against the Comis gateway.
+
+Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 180 methods across 36 namespaces (counted from `packages/daemon/src/rpc/*-handlers.ts`) covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
+
+## Session-creation walkthrough
+
+The most common end-to-end flow: open a connection, ping for liveness, kick off an agent execution, and check the resulting session. Every step is one JSON-RPC call.
+
+<Steps>
+  <Step title="Connect with a bearer token">
+    Open the WebSocket and authenticate. If the token is invalid, the server closes with code `4001`.
+    ```bash
+    wscat -c ws://localhost:4766/ws -H "Authorization: Bearer $COMIS_GATEWAY_TOKEN"
+    ```
+  </Step>
+  <Step title="Verify liveness">
+    `system.ping` is the cheapest method and a good way to validate auth + transport before sending real work.
+    ```json
+    {"jsonrpc":"2.0","method":"system.ping","id":1}
+    ```
+    Response: `{"jsonrpc":"2.0","result":{"pong":true,"ts":1773313498000},"id":1}`
+  </Step>
+  <Step title="Execute an agent turn">
+    `agent.execute` runs one full turn through the agent pipeline. The first call to a fresh `sessionKey` implicitly creates the session.
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "method": "agent.execute",
+      "params": {
+        "agentId": "default",
+        "message": "Summarize today's commits in two bullet points.",
+        "sessionKey": {
+          "tenantId": "default",
+          "userId": "alice",
+          "channelId": "cli"
+        }
+      },
+      "id": 2
+    }
+    ```
+    Response carries `response`, `tokensUsed`, and `finishReason`.
+  </Step>
+  <Step title="Inspect or list the session">
+    `session.list` enumerates active sessions; `session.history` reads the full message log for one session.
+    ```json
+    {"jsonrpc":"2.0","method":"session.list","id":3}
+    ```
+  </Step>
+  <Step title="Clean up when done">
+    Use `session.delete` (admin) to remove a session. The session entry plus its memory entries are dropped.
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "method": "session.delete",
+      "params": { "key": "default:alice:cli" },
+      "id": 4
+    }
+    ```
+  </Step>
+</Steps>
+
+That same pattern works whether you call over WebSocket or `POST /rpc`. For streaming token deltas use the SSE endpoint `GET /api/chat/stream` documented in [HTTP Gateway](/reference/http-gateway#sse-endpoints).
 
 ## Scopes
 

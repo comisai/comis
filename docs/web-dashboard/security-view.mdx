@@ -1,10 +1,31 @@
 ---
 title: "Security"
-description: "Manage security settings, audit logs, and approval gates from the dashboard"
+description: "Manage security settings, audit logs, approval gates, and gateway tokens"
 icon: "shield-check"
 ---
 
-The Security view is your command center for reviewing what your agents are doing and controlling what they are allowed to do. It combines two areas of the dashboard: the **Security** page (click **Security** in the sidebar) for configuration and audit logs, and the **Approvals** page (click **Approvals** in the sidebar) for reviewing and acting on pending permission requests.
+The Security view is your command center for reviewing what your agents are doing and controlling what they are allowed to do. Approvals, audit, tokens, secrets, and policy all live on this single page -- the dedicated **Approvals** sidebar item now redirects here (the standalone approvals view has been merged in to keep approval rules and the pending queue side-by-side).
+
+**Who it's for:** anyone responsible for "what can the agents see and do?" -- from rotating API tokens to approving a sensitive shell command.
+
+## Routes
+
+- `/security` -- the Security view (default tab: Security Events)
+- `/approvals` -- redirects to the Pending Approvals tab on `/security`
+
+## Backing RPC
+
+- `security.events(...)` -- streaming security event log (SSE-backed)
+- `security.audit(days?, action?)` -- filtered historical audit log
+- `security.permissions` -- role/permission matrix
+- `security.tokens.list` / `security.tokens.create` / `security.tokens.revoke` -- API token CRUD
+- `security.secrets.list` / `security.secrets.update` / `security.secrets.delete` -- secret-store control
+- `security.providerHealth` -- circuit-breaker state per provider
+- `approvals.list` -- pending queue
+- `approvals.respond(approvalId, decision, comment?)` -- approve / deny
+- `approvals.history(...)` -- past decisions
+
+The pending queue subscribes to SSE events `approval:requested` and `approval:resolved` -- new requests appear instantly without refresh.
 
 ## Security Dashboard
 

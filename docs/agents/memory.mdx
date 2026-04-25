@@ -4,10 +4,20 @@ description: "How your agent stores and organizes long-term knowledge"
 icon: "database"
 ---
 
+**What it does.** Stores facts, conversation summaries, and how-to procedures
+your agent picks up over time, so it can recall them in future conversations
+without repeating itself.
+
+**Who it is for.** Anyone who wants their agent to remember things across
+sessions. Configuration is optional — sensible defaults work out of the box.
+
 Your agent does not just forget everything after each conversation. Comis stores
 important information in long-term memory -- facts, conversation summaries,
 instructions, and more. This memory persists across sessions and helps your
-agent get smarter over time.
+agent get smarter over time. Memory is backed by a single SQLite database
+(SQLite + FTS5 full-text index + a vector index when an embedding provider is
+configured) — see [Search](/agents/search) and
+[Embeddings](/agents/embeddings).
 
 ## Memory types
 
@@ -51,6 +61,25 @@ a warning label so the agent knows to verify it before relying on it.
 By default, [memory recall (RAG)](/agents/rag) only includes `system` and
 `learned` memories. You can include `external` memories as well, but the agent
 will always flag them for caution.
+
+## Background learning
+
+Your agent does not have to consciously decide what to remember. A periodic
+**memory review job** runs in the background and extracts likely-useful facts
+from recent conversations:
+
+1. It scans the last N messages of each session (default 50–100).
+2. It asks the LLM to extract preferences, facts, and habits worth keeping.
+3. Each extracted item is stored with `trust_level: "learned"`.
+4. The new memories are queued for embedding (so meaning-based recall works).
+
+This means your agent slowly builds up a personalised picture of you and your
+work without you having to say "remember this." The review runs on a
+configurable schedule and de-duplicates by content hash so repeated facts do
+not clutter the database.
+
+The job is implemented in
+`packages/agent/src/memory/memory-review-job.ts`.
 
 ## Memory operations
 

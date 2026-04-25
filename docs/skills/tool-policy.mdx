@@ -10,6 +10,11 @@ Not every agent needs every tool. A customer service agent should not have shell
 
 A profile is a named set of tools that serves as your starting point. Choose the profile that best matches your agent's role, then fine-tune with allow and deny lists.
 
+### General-purpose profiles
+
+These five profiles cover the vast majority of agent configurations. Pick one
+and customise it with `allow` / `deny`.
+
 | Profile | Tools Included | Best For |
 |---------|---------------|----------|
 | `minimal` | `read`, `write` | Restricted agents with basic file access |
@@ -21,6 +26,25 @@ A profile is a named set of tools that serves as your starting point. Choose the
 <Info>
 The `full` profile is the default. If you do not configure a tool policy, your agent has access to every available tool. For production deployments, consider choosing a more restrictive profile and adding only what your agent needs.
 </Info>
+
+### Specialised "minimal" presets for non-interactive runs
+
+Two extra profiles exist specifically for code paths that fire without a human
+in the loop -- scheduled jobs and periodic heartbeats. They are opt-in
+(`profile: cron-minimal` on a [`CronJob`](/agent-tools/scheduling) or
+`profile: heartbeat-minimal` on heartbeat config) and never apply silently as
+a default.
+
+| Profile | Tools Included | Where it applies |
+|---------|---------------|------------------|
+| `cron-minimal` | `web_search`, `message`, `read_file`, `write_file`, `list_dir`, `memory_store`, `memory_search`, `cron`, `discover` | Set on a `CronJob` to constrain what a scheduled run can do |
+| `heartbeat-minimal` | `message`, `memory_store`, `memory_search`, `discover` | Set on the heartbeat config so the periodic wake-up cannot do much beyond send a message and update memory |
+
+<Tip>
+Both presets are deliberately narrow. Expect to add a few extras per job with
+`allow` -- the `*-minimal` suffix signals "opinionated default, customise per
+caller", not "permanent ceiling".
+</Tip>
 
 ## Tool Groups
 

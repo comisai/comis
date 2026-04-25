@@ -12,6 +12,28 @@ if it crashes, and integrates with standard Linux monitoring tools.
 systemd is **Linux only**. If you are on macOS, use [pm2](/operations/pm2) instead.
 </Warning>
 
+## Two paths
+
+You can get a systemd-managed Comis daemon two ways:
+
+**Recommended: the one-line installer.** The script at `https://comis.ai/install.sh`
+creates the `comis` system user, lays out `/etc/comis`, writes a managed
+`comis.service` unit, sets up sudoers rules so the service user can `start`/`stop`/`restart`
+its own daemon without root, and starts everything. This is the path the official
+[VPS install guide](/installation/install-vps) uses.
+
+```bash
+curl -fsSL https://comis.ai/install.sh | bash
+```
+
+The installed unit file is checksum-tagged with `# managed-by: comis-installer`. If
+you edit it by hand, the installer will refuse to overwrite it on upgrade — so
+manual edits stick around.
+
+**Manual: the steps below.** Use this when you need a unit file under your own
+control (different paths, different hardening, different user). The rest of this
+page walks through that.
+
 ## Prerequisites
 
 Before setting up the systemd service, make sure you have:
@@ -309,8 +331,9 @@ journalctl -u comis -p err
 ```
 
 <Info>
-The daemon also writes logs to `~comis/.comis/daemon.log` if file logging is
-configured. See [Logging](/operations/logging) for details on configuring log
+The daemon also writes logs to `~/.comis/logs/daemon.log` (resolved against the
+service user's home — `/var/lib/comis/.comis/logs/daemon.log` for an installer-managed
+service). See [Logging](/operations/logging) for details on configuring log
 levels and rotation.
 </Info>
 

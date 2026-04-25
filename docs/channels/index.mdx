@@ -13,17 +13,17 @@ One agent can connect to multiple channels at the same time.
 
 Not sure which channel to connect first? Here's a quick comparison to help you choose:
 
-| Channel | Text | Voice messages | Media (image/video/file) | Reactions | Threads | Edit/Delete | Rich formatting | Status |
-|---------|------|----------------|--------------------------|-----------|---------|-------------|-----------------|--------|
-| Discord | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Full (embeds, buttons, cards) | Stable |
-| Telegram | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | Full (buttons, inline keyboards) | Stable |
-| Slack | ✓ | — | ✓ | ✓ | ✓ | ✓ | Full (Block Kit) | Stable |
-| WhatsApp | ✓ | ✓ | ✓ | ✓ | — | — | Limited (lists, buttons via Business API) | Stable |
-| Signal | ✓ | ✓ | ✓ | — | — | — | None | Stable |
-| iMessage | ✓ | — | ✓ | — | — | — | None | Stable |
-| LINE | ✓ | — | ✓ | — | — | — | None (Flex exists but not wired to rich messages) | Stable |
-| IRC | ✓ | — | — | — | — | — | None (plain text / control codes) | Stable |
-| Email | ✓ | — | ✓ | — | ✓ (threads) | — | HTML/text | Stable |
+| Channel | Text | Voice messages | Media (image/video/file) | Reactions | Threads | Edit | Delete | Rich formatting |
+|---------|------|----------------|--------------------------|-----------|---------|------|--------|-----------------|
+| Discord | Yes | Yes | Yes | Yes | Native (max depth 1) | Yes | Yes | Markdown, embeds, buttons, polls |
+| Telegram | Yes | Yes | Yes | Yes | Forum topics | Yes | Yes | HTML, inline buttons, polls, locations |
+| Slack | Yes | Yes | Yes | Yes | Reply chain | Yes | Yes | mrkdwn, Block Kit, buttons |
+| WhatsApp | Yes | Yes | Yes | Yes | None | Yes | Yes (own only) | Buttons, locations, contacts, polls |
+| Signal | Yes | Yes | Yes | Yes | None | No | Yes | Signal text styles |
+| iMessage | Yes | No | Yes | No | None | No | No | Plain text |
+| LINE | Yes | Yes | Yes | No | None | No | No | Flex Messages |
+| IRC | Yes | No | No | No | None | No | No | IRC control codes (bold, color) |
+| Email | Yes | Yes (attachment) | Yes | No | Reply chain | No | No | HTML |
 
 <Tip>
 Discord and Telegram have the broadest feature support -- they're great choices if you're just getting started.
@@ -61,15 +61,15 @@ for your use case, or to understand the differences when connecting multiple pla
 
 | Platform | Chat Types | Streaming | Threads | Reactions | Edit / Delete | Buttons | Formatting |
 |---|---|---|---|---|---|---|---|
-| [Discord](/channels/discord) | DM, group, thread, channel, forum | Edit | Native | Yes | Yes / Yes | Yes | Markdown |
-| [Telegram](/channels/telegram) | DM, group, channel, forum | Edit | Native | Yes | Yes / Yes | Yes | HTML |
-| [Slack](/channels/slack) | DM, group, thread, channel | Edit | Reply-chain | Yes | Yes / Yes | Yes | mrkdwn |
-| [WhatsApp](/channels/whatsapp) | DM, group | Block | No | Yes | Yes / Yes | Yes | None |
-| [Signal](/channels/signal) | DM, group | Block | No | Yes | No / Yes | No | Signal styles |
+| [Discord](/channels/discord) | DM, group, thread, channel, forum | Edit | Native (max depth 1) | Yes | Yes / Yes | Yes | Markdown |
+| [Telegram](/channels/telegram) | DM, group, channel, forum | Edit | Forum topics (native) | Yes | Yes / Yes | Yes | HTML |
+| [Slack](/channels/slack) | DM, group, thread, channel | Edit | Reply chain | Yes | Yes / Yes | Yes | mrkdwn |
+| [WhatsApp](/channels/whatsapp) | DM, group | Block | No | Yes | Yes / Yes (own) | Yes | None |
+| [Signal](/channels/signal) | DM, group | Block | No | Yes | No / Yes | No | Signal text styles |
 | [iMessage](/channels/imessage) | DM, group | None | No | No | No / No | No | None |
-| [LINE](/channels/line) | DM, group | None | No | No | No / No | No | Flex |
-| [IRC](/channels/irc) | DM, channel | None | No | No | No / No | No | IRC codes |
-| [Email](/channels/email) | DM | None | Reply-chain | No | No / No | No | HTML |
+| [LINE](/channels/line) | DM, group | None | No | No | No / No | No | Flex Messages |
+| [IRC](/channels/irc) | DM, channel | None | No | No | No / No | No | IRC control codes |
+| [Email](/channels/email) | DM | None | Reply chain (RFC 5322) | No | No / No | No | HTML |
 
 ### Limits
 
@@ -92,6 +92,17 @@ see the next section for details. When a response exceeds the max message length
 Comis automatically splits it into multiple messages.
 </Tip>
 
+## Sender allowlists
+
+Every channel supports a per-channel `allowFrom` list. When non-empty, only the
+listed sender IDs can talk to the bot; everyone else is silently dropped before
+the agent runs. An empty list (the default) accepts everyone.
+
+Email goes one step further with an `allowMode` setting (`allowlist` by default,
+or `open` to accept all senders) plus automatic filtering of automated mailers
+(addresses like `noreply@`, messages with `Auto-Submitted` or `List-Unsubscribe`
+headers). See the [Email page](/channels/email) for details.
+
 ## Streaming methods
 
 Comis supports three ways to deliver responses as they are generated:
@@ -102,9 +113,10 @@ Comis supports three ways to deliver responses as they are generated:
   (500 ms for Discord, 300 ms for Telegram, 400 ms for Slack) to stay within
   rate limits.
 
-- **Block streaming** (WhatsApp, Signal) -- Comis sends each paragraph as a separate
-  message as the AI generates it. You see multiple messages arriving in sequence.
-  This works well on platforms that do not support message editing.
+- **Block streaming** (WhatsApp, Signal) -- Comis sends each block as a separate
+  message as the agent generates it. You see multiple messages arriving in
+  sequence. This works well on platforms that do not support message editing.
+  WhatsApp throttles at 600 ms; Signal at 500 ms.
 
 - **No streaming** (iMessage, LINE, IRC, Email) -- Comis waits for the full response and sends
   it as a single message (or splits it if the response exceeds the platform limit).

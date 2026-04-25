@@ -227,7 +227,7 @@ registry.registerHook("tool_result_persist", (event, ctx) => {
 
 <Accordion title="before_compaction">
 
-Fires before the context engine's LLM compaction layer runs (the last-resort summarization step). Use this to cancel compaction for specific sessions or log compaction decisions. See [Compaction](/agents/compaction) for how compaction fits into the 8-layer context engine.
+Fires before the context engine's LLM compaction layer runs (the last-resort summarization step). Use this to cancel compaction for specific sessions or log compaction decisions. See [Compaction](/agents/compaction) for how compaction fits into the 10-layer context engine.
 
 **Event payload:**
 - `sessionKey` (SessionKey) -- Session being compacted

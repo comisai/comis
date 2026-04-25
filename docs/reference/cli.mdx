@@ -4,7 +4,67 @@ description: "Complete reference for all command groups, subcommands, and flags"
 icon: "terminal"
 ---
 
-Complete reference for the Comis command-line interface. The CLI connects to the Comis daemon via JSON-RPC over WebSocket. All commands are available via `comis <command>` (if globally installed) or `node packages/cli/dist/cli.js <command>`.
+**What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
+
+Comis ships **50+ leaf commands grouped into 18 command groups** (verified against `packages/cli/src/cli.ts` at version 1.0.20). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
+
+<Snippet file="invocation-modes.mdx" />
+
+<Info>
+For installation and your first run-through, see [Quick Start](/get-started/quickstart) and [Operations](/operations). This page is the exhaustive reference; the Operations section is the friendlier task-oriented guide.
+</Info>
+
+## Your first hour with the CLI
+
+A complete first-time setup, end to end. Each step is one command.
+
+<Steps>
+  <Step title="Initialize the workspace">
+    `comis init` walks you through provider keys, the first agent, and at least one channel. Use `--non-interactive` with flags for CI/Docker.
+    ```bash
+    comis init
+    ```
+  </Step>
+  <Step title="Confirm the daemon is healthy">
+    `comis health` shows only failures and warnings. Exits non-zero in CI when something is wrong.
+    ```bash
+    comis health
+    ```
+  </Step>
+  <Step title="Check the unified status">
+    `comis status` aggregates daemon, gateway, channels, and agents into one view.
+    ```bash
+    comis status
+    ```
+  </Step>
+  <Step title="Tail the daemon logs">
+    `comis daemon logs -f` streams Pino JSON logs with color coding. Useful while debugging your first agent reply.
+    ```bash
+    comis daemon logs -f
+    ```
+  </Step>
+  <Step title="Add a new agent">
+    `comis agent create <name>` creates and persists an agent through the daemon — no manual YAML edits needed.
+    ```bash
+    comis agent create research-bot --provider anthropic --model claude-sonnet-4-5-20250929
+    ```
+  </Step>
+  <Step title="Wire a channel">
+    Channels are added with `comis configure --section channels` (interactive) or by editing `~/.comis/config.yaml` directly. Token values are pulled from `~/.comis/.env` via `${VAR_NAME}` substitution.
+    ```bash
+    comis configure --section channels
+    ```
+  </Step>
+  <Step title="Store secrets safely">
+    `comis secrets set` encrypts API keys with AES-256-GCM into `secrets.db`. `comis secrets audit` flags any plaintext secrets still sitting in your config.
+    ```bash
+    comis secrets set OPENAI_API_KEY
+    comis secrets audit --check
+    ```
+  </Step>
+</Steps>
+
+After this you have a running agent reachable from at least one channel, with secrets encrypted and an auditable config history (`comis config history`).
 
 ## Global Options
 

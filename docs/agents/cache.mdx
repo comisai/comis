@@ -1,16 +1,65 @@
 ---
 title: "Context Cache"
 description: "How Comis keeps prompt costs low across long-running agent sessions"
+icon: "bolt"
 sidebarTitle: "Cache"
 ---
 
-LLM providers charge 10–20x less for cached prompt reads than for cache writes. That difference only shows up when the bytes sent to the provider are identical to what was sent last turn. Comis treats cache stability as a first-class goal — every feature in this document exists to protect that stability across the full lifetime of a conversation.
+**What it does.** Reuses the parts of every prompt that do not change from turn to turn — system prompt, conversation history, tool schemas — so your provider charges the cheap "cached read" rate instead of the full input rate.
 
-A 76-call Claude Opus session in production achieved a **16.9x cache read/write ratio**: 94% of input tokens served from cache at \$0.50/MTok instead of \$15/MTok uncached.
+**Who it is for.** Anyone running long-lived agents in chat. The page leads plain-English; a developer reference table follows.
+
+LLM providers charge 10–20x less for cached prompt reads than for cache writes. That difference only shows up when the bytes sent to the provider are byte-for-byte identical to the previous turn. Comis treats cache stability as a first-class goal — every feature in this document exists to protect that stability across the full lifetime of a conversation.
+
+A 76-call Claude Opus session in production achieved a **16.9x cache read/write ratio**: 94% of input tokens served from cache at \$0.50/MTok instead of \$15/MTok uncached. (Marketing benchmark — see the README for the exact session.) On a typical Claude Sonnet long-running channel agent, that ratio shaves a daily cost from roughly **\$26 uncached → \$5 cached** for the same conversation volume, just by keeping the prefix stable.
+
+<Note>
+README and marketing copy used to advertise "20 cache optimizations." The
+shipped count is **15+** specific optimizations across the executor, context
+engine, and provider adapters. They are listed below.
+</Note>
 
 ---
 
-## How context grows
+## The 15+ optimizations at a glance
+
+Each row is one named mechanism in code. The "Why" column explains what it
+prevents.
+
+| # | Optimization | What it does | Why it matters |
+|---|--------------|-------------|----------------|
+| 1 | **Adaptive TTL escalation** | Starts every session at "short" (5m); promotes to "long" (1h) only after 3+ turns of confirmed cache reads | Avoids paying 1h-write premium on sessions that would have ended in minutes |
+| 2 | **Fast-path large-write escalation** | If turn 1 writes more than 20K cache tokens, escalates to "long" immediately on turn 2 | Big system prompts deserve long retention up front |
+| 3 | **Prefix-instability detection** | If cache reads stay flat at the system-prompt baseline for 5 consecutive turns, forces TTL back to "short" | Stops bleeding 1h writes when something keeps invalidating the prefix |
+| 4 | **Cache fence (lastBreakpointIndex)** | Tracks the index of the highest `cache_control` marker; layers below the fence are skipped on subsequent passes | Prevents context-engine layers from rewriting cached bytes and blowing the cache |
+| 5 | **Sub-agent spawn staggering** | Concurrent sub-agents are started with offsets so they reuse the parent's cached prefix instead of all writing fresh entries | Concurrent fan-out without the N× write cost |
+| 6 | **Two-phase cache-break detection** | Pre-call snapshot of system + tools + metadata; post-call AND-threshold (>5% drop AND >2K tokens) attributes the cause | Differentiates real breaks from normal cache-write noise |
+| 7 | **Cache-break diff writer** | When a real break is detected, writes a JSONL diff to `~/.comis/cache-breaks/` showing exactly what changed | Lets you debug "why did my cache invalidate?" after the fact |
+| 8 | **Cache priming for sub-agents** | Sub-agent spawn packets carry the parent's cached prefix so the child starts warm | Child gets the parent's deal without the parent paying twice |
+| 9 | **Cache-write suppression on sub-agents** | Sub-agents read the parent's cache but do not write fresh long-TTL entries of their own | No double-billing the same prefix |
+| 10 | **Per-zone retention** | The recent-message zone always uses "short"; older zones get "long" after escalation | Recent content churns; older content is stable, so each gets the right TTL |
+| 11 | **Anthropic ephemeral cache** | `cache_control: { type: "ephemeral", ttl: "5m" or "1h" }` markers placed at the right block boundaries | Native Anthropic cache, used by 100% of Claude calls |
+| 12 | **Gemini CachedContent** | Explicit `CachedContent` API with SHA-256 content hashing + 50% TTL refresh on active sessions | Gemini's per-object cache lifecycle, opt-in via `geminiCache.enabled` |
+| 13 | **OpenAI completion-storage flag** | `store: true` on Responses-API requests when `storeCompletions` is set | Lets OpenAI keep generated outputs available for replay/debugging |
+| 14 | **Microcompaction at write time** | Tool results above the per-tool inline threshold are saved to disk and replaced with a tiny reference at the moment they are written | Keeps verbose tool output out of every future turn's prefix |
+| 15 | **Schema stripping** | After `discover_tools` injects a schema block, it is replaced in history with a one-line summary on subsequent turns | Recovers ~1.7K tokens per discovery, which would otherwise sit in the cached prefix forever |
+| 16 | **Tool deferral with discovery** | Non-essential tool schemas are removed from the `tools` array and re-injected only when the agent calls `discover_tools` | Saves ~81% of the tokens the LLM would spend on tool definitions every turn |
+
+The numbered list lives in three files:
+`packages/agent/src/executor/adaptive-cache-retention.ts` (rows 1–3, 10),
+`packages/agent/src/context-engine/context-engine.ts` (row 4),
+`packages/agent/src/spawn/lifecycle-hooks.ts` (rows 5, 8–9),
+`packages/agent/src/executor/cache-break-detection.ts` and `cache-break-diff-writer.ts` (rows 6–7),
+`packages/agent/src/executor/gemini-cache-manager.ts` (row 12),
+`packages/agent/src/executor/stream-wrappers/request-body-injector.ts` (rows 11, 13),
+and `packages/skills/src/builtin/...` (rows 14–16 wire into the executor).
+
+The rest of this page explains the most user-visible of these optimizations
+in detail.
+
+---
+
+## How context grows (and why it costs money)
 
 Each conversation turn adds content to the context window your agent sends to the LLM. Here is what fills it:
 

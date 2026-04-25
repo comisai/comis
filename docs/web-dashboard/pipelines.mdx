@@ -6,6 +6,31 @@ icon: "diagram-project"
 
 Pipelines let you connect multiple agents into automated workflows -- one agent's output feeds into the next, creating chains of intelligent processing. Click **Pipelines** in the sidebar to get started.
 
+**Who it's for:** designers of multi-agent workflows (debate, vote, refine, map-reduce) who would rather draw the graph than write JSON, and operators watching live executions.
+
+## Routes
+
+- `/pipelines` -- the saved-pipelines list
+- `/pipelines/new` -- empty builder canvas
+- `/pipelines/:graphId/edit` -- edit an existing pipeline
+- `/pipelines/:graphId` -- live monitor for a running execution
+- `/pipelines/history` -- list of past executions
+- `/pipelines/history/:graphId` -- detail view of a single past run
+
+## Under the hood
+
+The canvas is a **custom Lit component (`ic-graph-canvas`) rendering SVG by hand** -- there's no React, React Flow, or D3 dependency. It supports:
+
+- Snap-to-grid (24 px)
+- Pan + zoom (range 0.1x to 4x)
+- Cycle detection on drag-connect (rejects edges that would form a loop)
+- Auto-layout via a topological sort (Kahn's algorithm)
+- Graph validation against the same Zod schema the daemon uses
+
+Saves go through `graph.save`; runs through `graph.run(graphId, variables?)`; live updates through SSE events `graph:node:status` and `graph:progress`. Saved graphs are stored on disk so they survive restarts.
+
+For the underlying domain model (node types, barrier modes, retry policy, context modes) see [Execution Graphs](/agents/execution-graphs).
+
 <Warning>
 The Pipeline Builder requires a desktop browser. On mobile devices, you can view pipeline lists and monitor running pipelines, but you cannot use the visual editor.
 </Warning>
@@ -79,6 +104,40 @@ The Pipeline Monitor is a read-only view that shows a running pipeline's progres
   </Step>
   <Step title="Save and run">
     Click **Save** to store the pipeline, then click **Run**. If the pipeline uses variables, a dialog will ask you to fill them in. The view automatically switches to the Monitor so you can watch the execution.
+  </Step>
+</Steps>
+
+### Worked example: a 3-node research pipeline
+
+End-to-end walkthrough of building a "research a topic, vote on conclusions, summarize" pipeline by drag-and-drop.
+
+<Steps>
+  <Step title="Open the builder">
+    Sidebar > **Pipelines** > **New Pipeline**. Dismiss the template picker (we want to learn the pattern from scratch).
+  </Step>
+  <Step title="Add three nodes">
+    Press **N** three times. Three boxes labeled "Untitled Node 1, 2, 3" appear stacked at the canvas origin. Drag them into a left-to-right row.
+  </Step>
+  <Step title="Wire them in series">
+    Drag from the right port of node 1 to the left port of node 2. Drag from the right port of node 2 to the left port of node 3. Two arrows now flow left-to-right.
+  </Step>
+  <Step title="Configure node 1: research">
+    Click node 1. In the editor panel: Type = **Agent**, Agent = `research-bot`, Task = `Research the topic ${TOPIC} and produce a 5-bullet briefing.`. Save the panel.
+  </Step>
+  <Step title="Configure node 2: vote">
+    Click node 2. Type = **Vote**, Voters = `[research-bot, analyst-bot, critic-bot]`, Verdict format = `YES or NO with one-sentence justification`, Task = `Read the briefing in the upstream output. Vote whether the topic warrants a follow-up deep dive.`. Save.
+  </Step>
+  <Step title="Configure node 3: summarize">
+    Click node 3. Type = **Agent**, Agent = `analyst-bot`, Task = `Combine the briefing and the votes into a one-paragraph executive summary.`. Save.
+  </Step>
+  <Step title="Validate">
+    Click **Validate**. All three nodes show green checkmarks: connected, agents assigned, no cycles.
+  </Step>
+  <Step title="Save and run">
+    Click **Save**, name the pipeline "Topic Research Vote", click **Run**. The variable dialog asks for `TOPIC` -- enter `Q3 product roadmap`. The view switches to the Monitor.
+  </Step>
+  <Step title="Watch it execute">
+    Node 1 turns cyan (running), then green (completed) -- the briefing appears when you click it. Node 2 turns cyan, spawns three parallel voter sub-runs (visible in the Sub-Agents view), then turns green with a tally. Node 3 produces the summary. Total runtime ~30-60 seconds.
   </Step>
 </Steps>
 

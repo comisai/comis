@@ -8,6 +8,72 @@ Learn by example. This page provides complete skill walkthroughs you can follow 
 create useful skills for your agents. Each example includes the full SKILL.md file,
 an explanation of how it works, and how to test it.
 
+## Built-in skill walkthrough: log-troubleshooting
+
+Comis ships with seven prompt skills in the repo's `/skills/` directory, and
+the easiest way to understand the format is to read a real one. Here is the
+manifest and body of `log-troubleshooting`, the skill agents reach for when
+the user asks "what went wrong?" or "why is the daemon slow?"
+
+**Live at:** `<repo>/skills/log-troubleshooting/SKILL.md`
+
+```yaml
+---
+name: log-troubleshooting
+description: |
+  Investigate and troubleshoot daemon logs at ~/.comis/logs/. Covers
+  NDJSON log format, Pino level codes, field dictionary, and staged
+  analysis strategies. Use this skill whenever the user asks about logs,
+  errors, warnings, daemon issues, slow operations, debugging daemon
+  behavior, checking what happened, or investigating any kind of
+  platform issue -- even if they don't explicitly mention "logs".
+comis:
+  requires:
+    bins: ["python3"]
+---
+
+# Log Troubleshooting
+
+You have read-only access to the daemon logs directory at `~/.comis/logs/`.
+
+This skill bundles `scripts/log-digest.py` -- a Python CLI that parses
+NDJSON logs and produces structured, context-friendly summaries...
+```
+
+**What this teaches you about SKILL.md authoring:**
+
+- **Two required fields, that is it.** `name` and `description` -- the rest is
+  optional. Notice there is no `allowedTools`, no `permissions`, no
+  `inputSchema`. Most real-world skills are this lean.
+- **The description does the heavy lifting.** Look at the trigger phrases packed
+  into it ("logs", "errors", "warnings", "what happened", "investigating any
+  kind of platform issue"). Comis uses this string to match the user's intent
+  to the right skill -- a vague description like "log helper" would never get
+  selected. Spend time on this field.
+- **`comis.requires.bins`** is how the skill says "I need `python3` on PATH".
+  At load time the runtime eligibility system checks this; if Python is
+  missing, the skill is skipped with a warning rather than silently failing.
+- **The body is just Markdown.** No special syntax beyond standard `{template}`
+  / `$1` placeholders. The skill bundles a Python script next to the manifest
+  in `scripts/log-digest.py`, and the body teaches the agent to call it.
+
+**Test it (after rebuilding):**
+
+```
+> "Can you check the daemon logs and tell me what happened in the last hour?"
+```
+
+The agent automatically loads `log-troubleshooting`, runs
+`python3 scripts/log-digest.py ~/.comis/logs/daemon.log`, and reports the
+top errors, slowest operations, and warnings.
+
+<Tip>
+Read the rest in [`<repo>/skills/log-troubleshooting/SKILL.md`](https://github.com/comisai/comis/tree/main/skills/log-troubleshooting).
+The other six shipped skills (`chart-visualization`, `deep-research`,
+`find-skills`, `image-generation`, `podcast-generation`, `video-generation`)
+follow the same structure -- skim them when picking a template for your own.
+</Tip>
+
 ## Customer support persona
 
 A prompt skill that teaches the agent to respond as a customer support representative

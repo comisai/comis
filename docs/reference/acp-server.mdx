@@ -2,7 +2,10 @@
 title: "ACP Server"
 description: "How IDE extensions and editor plugins talk to your Comis agents using the Agent Communication Protocol"
 sidebarTitle: "ACP Server"
+icon: "code-merge"
 ---
+
+**What this is for:** let an ACP-compatible editor (Claude Code, Cursor, Zed, custom VS Code extensions) talk to your Comis agents directly. **Who it's for:** developers integrating Comis into their IDE workflow.
 
 This is how your editor talks to your agents. The ACP server implements the [Agent Communication Protocol](https://agentclientprotocol.org), a standard interface that lets VS Code, JetBrains, Zed, and other ACP-compatible editors connect to Comis as a first-class AI agent — with full conversation history, session continuity, and the same agent executor that powers all your other channels.
 
@@ -130,6 +133,28 @@ ACP has no dedicated configuration section in `~/.comis/config.yaml` today. The 
 | Session capacity | Code — `createAcpSessionMap(maxSessions)` | How many concurrent IDE sessions the server tracks. Default: `1000`. |
 | Agent version | `AcpServerDeps.version` | Version string returned in `initialize`. Defaults to `"0.0.1"`. |
 | Logger destination | Must be stderr (fd `2`) | Any stdout output corrupts the protocol. |
+
+## Connecting an editor
+
+An ACP-aware editor expects to spawn your agent process directly. The exact configuration UI varies per editor, but the inputs are always the same: a command, optional arguments, and an environment.
+
+<Steps>
+  <Step title="Build an ACP entrypoint">
+    Take the code example above and save it to a small Node.js script (e.g. `~/.comis/acp-entrypoint.js`). It must `import` from `@comis/gateway` and call `startAcpServer`. Make sure `pnpm build` has run so `packages/gateway/dist/` exists.
+  </Step>
+  <Step title="Configure the editor">
+    In Claude Code, Cursor, or another ACP host, point its agent settings at:
+    - **Command:** `node`
+    - **Arguments:** `["/Users/you/.comis/acp-entrypoint.js"]`
+    - **Environment:** must include `COMIS_CONFIG_PATHS` (so the agent can find your `config.yaml`) and any provider keys.
+  </Step>
+  <Step title="Open a chat">
+    The editor calls `initialize` first, then `newSession`. The first prompt you type runs through Comis's agent executor and the response streams back. Conversation history is scoped to the ACP session UUID for the lifetime of the chat panel.
+  </Step>
+  <Step title="Verify it's wired up">
+    Logs (on stderr) should show `"newSession created"` followed by `"prompt received"` whenever you type. If you see no output, double-check stdout isn't capturing logs and that the entrypoint actually starts. ACP errors in the IDE almost always point to one of those two.
+  </Step>
+</Steps>
 
 ## Security
 

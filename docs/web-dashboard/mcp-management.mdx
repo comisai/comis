@@ -10,6 +10,19 @@ The MCP Servers view provides a unified interface for managing your Model Contex
 
 - `/mcp` -- opens the MCP server management view
 
+## Backing RPC
+
+- `mcp.list` -- all configured servers + runtime state + tools
+- `mcp.add(name, transport, ...)` -- register a new server (writes to `mcp.servers` in `config.yaml`)
+- `mcp.remove(name)` -- unregister
+- `mcp.setEnabled(name, enabled)` -- soft-disable in config
+- `mcp.connect(name)` / `mcp.disconnect(name)` / `mcp.reconnect(name)` -- runtime connection control
+- `mcp.test(name)` -- send a ping/list-tools probe
+- `mcp.getToolSchema(name, toolName)` -- full JSON schema for a single tool
+- `mcp.approveToolUse(name, toolName, agentId)` -- tool-level approval gate
+
+Server config persistence flows through `config.patch` -- changes survive restart.
+
 ## What You See
 
 ### Server List
@@ -83,7 +96,7 @@ The view uses a poll-on-action pattern: after any connection change (connect, di
   <Card title="MCP Integration" icon="plug" href="/skills/mcp">
     Learn about the Model Context Protocol and how Comis uses it.
   </Card>
-  <Card title="Skills View" icon="wand-magic-sparkles" href="/web-dashboard/index">
+  <Card title="Skills View" icon="wand-magic-sparkles" href="/web-dashboard/skills">
     Browse installed skills per agent, including MCP-provided tools.
   </Card>
   <Card title="Config Editor" icon="gear" href="/web-dashboard/config-editor">

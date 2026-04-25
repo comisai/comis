@@ -1,21 +1,25 @@
 ---
 title: "Sessions"
-description: "Manage conversations, spawn sub-agents, run pipelines, and search memory"
+description: "Manage conversations, spawn sub-agents, send messages between sessions, and access long-term memory"
 icon: "users"
 ---
 
-Sessions are the conversations your agents have. The session tools let agents view their conversation status, browse other sessions, spawn sub-agents for specialized tasks, send messages between sessions, run multi-step pipelines, and access long-term memory.
+**What it does:** Lets agents inspect or manipulate their own and others' conversations, spawn sub-agents for specialized tasks, route messages between sessions, and reach into long-term memory.
 
-## Session Tools
+**Who it's for:** Anyone building multi-agent setups, delegating work to specialists, or asking the agent to recall something it learned earlier. For multi-agent execution graphs (DAGs), see the dedicated [Pipelines](/agent-tools/pipelines) page -- this page covers the simpler one-shot delegation primitives.
+
+## Session tools
 
 | Tool | What It Does |
 |------|-------------|
-| `session_tool` | Unified session management with 4 actions: `search`, `status`, `history`, `list` |
-| `sessions_send` | Send a message into another session |
-| `sessions_spawn` | Create a sub-agent session |
-| `subagents` | Manage running sub-agents |
-| `agents_list` | List all configured agents |
-| `pipeline` | Run multi-step DAG workflows |
+| `session_tool` | Unified session management with 4 actions: `status`, `list`, `history`, `search` |
+| `sessions_send` | Send a message into another session in 3 modes: `fire-and-forget`, `wait`, `ping-pong` |
+| `sessions_spawn` | Create a sub-agent session with workspace isolation, artifact references, and an optional objective |
+| `subagents` | Manage running sub-agents (`list`, `kill`, `steer`) |
+| `agents_list` | List all configured agents in the fleet |
+| `memory_tool` | Unified long-term memory: `get`, `search`, `store`, `manage` (admin) |
+
+For DAG-style multi-agent workflows (debate, vote, refine, map-reduce, etc.), see [Pipelines](/agent-tools/pipelines) -- the `pipeline` tool is the canonical entry point.
 
 ### session_tool -- Unified Session Management
 
@@ -207,38 +211,10 @@ The `session_tool` consolidates session search, status, history, and listing beh
     Returns the names and IDs of all configured agents in the system.
   </Accordion>
 
-  <Accordion title="pipeline -- DAG pipeline execution">
-    Executes multi-step workflows defined as a directed acyclic graph (DAG). Pipelines let agents orchestrate complex tasks with parallel execution, dependencies between steps, and automatic result passing.
+  <Accordion title="pipeline -- multi-agent execution graphs">
+    For DAG-style multi-agent workflows -- parallel research, debate, vote, sequential refinement, map-reduce, and human approval gates -- use the dedicated `pipeline` tool. It has its own page with the full schema, the 7 built-in node type drivers, and worked examples.
 
-    **Actions:**
-
-    | Action | What It Does |
-    |--------|-------------|
-    | `define` | Create a pipeline from a set of nodes with dependencies |
-    | `execute` | Run a defined pipeline |
-    | `status` | Check the progress of a running pipeline |
-    | `cancel` | Stop a running pipeline |
-    | `save` | Persist a pipeline definition for reuse |
-    | `load` | Load a previously saved pipeline |
-    | `list` | List all saved pipeline definitions |
-    | `delete` | Remove a saved pipeline definition |
-
-    **Example -- Define a simple pipeline:**
-    ```yaml
-    action: define
-    nodes:
-      - node_id: research
-        agent: researcher
-        task: "Research recent AI developments"
-      - node_id: summarize
-        agent: writer
-        task: "Write a summary based on the research: {{research.result}}"
-        depends_on: [research]
-    ```
-
-    Pipelines automatically handle parallel execution for nodes without dependencies and pass results between dependent nodes. For example, if three research tasks have no dependencies on each other, they run simultaneously. The summarize step waits until all its dependencies complete before starting.
-
-    When a pipeline runs, Comis creates a shared data folder that all nodes can read from and write to. Nodes can use this folder to exchange files, reports, and structured data that would be too large for the text-based result passing between nodes. The shared folder is cleaned up automatically when the pipeline completes. See [Pipelines: Shared Data Folder](/developer-guide/pipelines#shared-data-folder) for details.
+    See [Pipelines](/agent-tools/pipelines).
   </Accordion>
 </AccordionGroup>
 
@@ -349,11 +325,16 @@ Spawn multiple sub-agents to work on different parts of a problem simultaneously
 # Collect results when all three complete
 ```
 
-### Pipeline Orchestration
+### When to use `sessions_spawn` vs. `pipeline`
 
-Use the `pipeline` tool to define a DAG of agent tasks with dependencies. The pipeline engine handles execution order, parallelism, and result passing automatically.
+| Use this when... | Reach for | Why |
+|------------------|-----------|-----|
+| One specialist needs to run a single task | `sessions_spawn` | Simpler -- no graph definition needed; sub-agent runs in an isolated workspace and returns its result. |
+| Several agents need to run in parallel and you want their results collected | `pipeline` (with `barrier_mode: all`) | Pipeline engine handles fan-out, fan-in, dependency ordering, and result interpolation via `{{nodeId.result}}`. |
+| You need debate, vote, refine, collaborate, or map-reduce coordination | `pipeline` (with `type_id: debate` / `vote` / etc.) | Built-in node type drivers do the multi-round logic for you. |
+| You need a human approval gate mid-flow | `pipeline` (with `type_id: approval-gate`) | The `approval-gate` driver pauses the graph and resumes on the user's decision. |
 
-This is the most structured approach to multi-agent coordination. Use it when you have a well-defined workflow with clear steps and dependencies between them.
+For all DAG patterns, see the dedicated [Pipelines](/agent-tools/pipelines) page.
 
 ## Related
 
@@ -361,13 +342,13 @@ This is the most structured approach to multi-agent coordination. Use it when yo
   <Card title="Agent Sessions" icon="arrows-spin" href="/agents/sessions">
     How sessions work under the hood
   </Card>
+  <Card title="Pipelines" icon="diagram-project" href="/agent-tools/pipelines">
+    Multi-agent DAG execution -- the deep dive on the `pipeline` tool
+  </Card>
   <Card title="Messaging" icon="paper-plane" href="/agent-tools/messaging">
     Send messages across channels
   </Card>
   <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
     Master reference table of all tools
-  </Card>
-  <Card title="Infrastructure" icon="server" href="/agent-tools/infrastructure">
-    Configuration, gateway control, and fleet management
   </Card>
 </CardGroup>

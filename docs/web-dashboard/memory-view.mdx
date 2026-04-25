@@ -6,6 +6,21 @@ icon: "brain"
 
 The Memory view lets you explore everything your agents have learned and remembered. You can search for specific information, browse all stored entries, filter by type or agent, and export data for backup or analysis.
 
+**Who it's for:** anyone debugging "why did the agent claim X?" by inspecting what's actually in the memory store, plus operators cleaning out stale or sensitive entries.
+
+## Route
+
+- `/memory` -- opens the Memory inspector
+
+## Backing API
+
+- `api-client.searchMemory(query, limit)` -- vector + full-text search
+- `api-client.browseMemory(params)` -- paginated browse with filters
+- `api-client.deleteMemory(id)` and `api-client.deleteMemoryBulk(ids[])` -- delete
+- `memory.inspect` -- single-entry detail and store-wide stats
+
+The view does not subscribe to SSE -- results refresh on demand when you change a filter or paginate.
+
 ## What You See
 
 When you open the Memory view, the top of the page displays four summary cards:

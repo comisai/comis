@@ -4,11 +4,15 @@ description: "Create scheduled jobs and manage agent heartbeat timing"
 icon: "clock"
 ---
 
-The scheduling tools let your agents create automated tasks that run on a schedule. From daily briefings to periodic health checks, agents can set up cron jobs and manage their own heartbeat timing.
+**What it does:** Lets agents create automated tasks that run on a schedule -- daily briefings, periodic health checks, end-of-day summaries, weekly reports.
+
+**Who it's for:** Anyone who wants their agent to wake up on a fixed cadence (or at a specific moment in time) without being prompted. The `cron` tool covers user-defined jobs; `heartbeat_manage` covers the agent's own internal periodic check-in.
 
 ## cron -- Scheduled Jobs
 
-The `cron` tool manages scheduled jobs with 8 actions and 3 schedule types. Agents can create, update, monitor, and remove jobs -- all from within a conversation.
+The `cron` tool manages scheduled jobs with **8 actions** (`add`, `list`, `update`, `remove`, `status`, `runs`, `run`, `wake`) and **3 schedule types** (`cron`, `every`, `at`). Jobs are persisted in `~/.comis/data.db` (SQLite) so they survive daemon restarts -- on startup the scheduler replays missed firings and resumes future schedules. Agents can create, update, monitor, and remove jobs from within a conversation.
+
+Each cron job runs with its own [tool policy](/skills/tool-policy) -- the `cron-minimal` profile is the default, restricting the job to a safe subset (web_search, message, read/write file, list_dir, memory_store/search, cron, discover). Override per job to give a scheduled agent more or fewer tools.
 
 ### Schedule Types
 
@@ -172,7 +176,15 @@ Use `cron` for recurring jobs on a fixed schedule (like "every weekday at 9am").
 
 ## heartbeat_manage -- Agent Heartbeat
 
-The `heartbeat_manage` tool controls the agent's periodic heartbeat -- a scheduled event that triggers the agent to perform routine tasks. Think of it as the agent's internal clock that periodically wakes it up to check on things.
+The `heartbeat_manage` tool controls the agent's periodic heartbeat -- a built-in scheduled event that fires on its own clock (separate from `cron` jobs). The heartbeat runs with the `heartbeat-minimal` tool policy by default (just `message`, `memory_store`, `memory_search`, `discover`) and is intended for lightweight check-ins.
+
+**Heartbeat semantics:**
+
+- The agent runs its heartbeat prompt every `interval_ms` (millisecond resolution).
+- Output is filtered before delivery: a special `HEARTBEAT_OK` token signals "all good" and is silently dropped, so users only see something when there is actually something to report.
+- `light_context: true` boots the heartbeat with just `HEARTBEAT.md` in scope, keeping context tiny.
+- Alert thresholds (`alert_threshold`, `alert_cooldown_ms`) let the agent escalate after N consecutive failures while avoiding alert spam.
+- Stale detection (`stale_ms`) flags an agent whose heartbeats stop landing.
 
 ### Actions
 
@@ -242,6 +254,49 @@ The `heartbeat_manage` tool controls the agent's periodic heartbeat -- a schedul
     | `agent_id` | string | No | Agent ID to fire (defaults to the calling agent) |
   </Accordion>
 </AccordionGroup>
+
+## End-to-end example: daily research summary
+
+A common workflow is to have an agent run an autonomous research pass every weekday morning and post the findings to a Discord channel. You can set this up entirely in chat -- the agent calls `cron` once and the daemon handles the rest:
+
+```
+You: Every weekday at 9am Eastern, research the latest AI infrastructure
+     news from the last 24 hours and post a 3-bullet summary to my
+     #ai-news Discord channel.
+```
+
+The agent translates that into a single `cron` add call:
+
+```yaml
+action: add
+name: ai-news-daily-summary
+schedule_kind: cron
+schedule_expr: "0 9 * * 1-5"            # 9:00 AM, Monday through Friday
+timezone: America/New_York
+payload_kind: agent_turn
+payload_text: >
+  Research the latest AI infrastructure news from the past 24 hours
+  using web_search. Post a 3-bullet summary (sources linked) to the
+  #ai-news Discord channel via the message tool.
+session_strategy: rolling                # Keep last 3 turns for continuity
+max_history_turns: 3
+```
+
+What happens next:
+
+1. The cron entry persists in `~/.comis/data.db` immediately.
+2. At 9:00 ET each weekday the scheduler enqueues an agent turn with the configured payload.
+3. The agent runs against the `cron-minimal` tool policy by default -- enough to call `web_search` and `message`.
+4. Output lands in `#ai-news` as a normal Discord message; the `runs` action shows the per-execution log.
+
+Use `cron action: runs name: ai-news-daily-summary limit: 5` to inspect recent executions, or `cron action: run name: ai-news-daily-summary` to fire it immediately for a sanity check.
+
+## Failure modes
+
+- **Invalid cron expression** -- the `add` action validates the expression up front and returns a structured error before persisting anything.
+- **Missed firings during downtime** -- on daemon restart, the `wake` action replays any jobs whose `schedule_at` or cron tick was missed while the daemon was offline.
+- **Agent turn errors** -- failures are logged with `errorKind` in the run history; alerts fire when `alert_threshold` consecutive failures occur within `alert_cooldown_ms`.
+- **Heartbeat suppression** -- a heartbeat that returns `HEARTBEAT_OK` is silenced before delivery, so users only see meaningful pings.
 
 ## Related
 

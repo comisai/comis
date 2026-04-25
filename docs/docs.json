@@ -54,7 +54,7 @@
         "tab": "Agents",
         "groups": [
           { "group": "Core", "pages": ["agents/index", "agents/lifecycle", "agents/identity", "agents/routing", "agents/slash-commands"] },
-          { "group": "Conversations", "pages": ["agents/sessions", "agents/subagent-lifecycle", "agents/compaction", "agents/rag", "agents/queue"] },
+          { "group": "Conversations", "pages": ["agents/sessions", "agents/subagent-lifecycle", "context-management", "agents/compaction", "agents/rag", "agents/queue"] },
           { "group": "Orchestration", "pages": ["agents/execution-graphs"] },
           { "group": "Memory", "pages": ["agents/memory", "agents/search", "agents/embeddings"] },
           { "group": "Advanced", "pages": ["agents/models", "agents/safety", "agents/resilience", "agents/cache"] }
@@ -88,8 +88,9 @@
         "tab": "Web Dashboard",
         "groups": [
           { "group": "Overview", "pages": ["web-dashboard/index"] },
-          { "group": "Views", "pages": ["web-dashboard/chat", "web-dashboard/agents-view", "web-dashboard/workspace-view", "web-dashboard/channels-view", "web-dashboard/memory-view", "web-dashboard/sessions-view", "web-dashboard/scheduler-view", "web-dashboard/message-center", "web-dashboard/subagents", "web-dashboard/mcp-management", "web-dashboard/media"] },
-          { "group": "Advanced", "pages": ["web-dashboard/observability", "web-dashboard/security-view", "web-dashboard/config-editor", "web-dashboard/pipelines"] }
+          { "group": "Operate", "pages": ["web-dashboard/chat", "web-dashboard/agents-view", "web-dashboard/workspace-view", "web-dashboard/channels-view", "web-dashboard/message-center", "web-dashboard/sessions-view", "web-dashboard/subagents", "web-dashboard/pipelines"] },
+          { "group": "Observe", "pages": ["web-dashboard/observability"] },
+          { "group": "Configure", "pages": ["web-dashboard/skills", "web-dashboard/mcp-management", "web-dashboard/models", "web-dashboard/memory-view", "web-dashboard/scheduler-view", "web-dashboard/security-view", "web-dashboard/media", "web-dashboard/config-editor", "web-dashboard/setup-wizard"] }
         ]
       },
       {

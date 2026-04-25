@@ -9,43 +9,56 @@
       Built for people who care where their data lives.
     </h2>
 
-    <div class="grid md:grid-cols-3 gap-8">
-      <!-- Persona 1: Self-hosters (primary) -->
-      <div class="bg-navy border border-coral/20 rounded-xl p-8 relative">
-        <div class="w-12 h-12 rounded-lg bg-coral/10 flex items-center justify-center mb-6">
+    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <!-- Persona 1: Community managers -->
+      <div class="bg-navy border border-coral/20 rounded-xl p-6">
+        <div class="w-12 h-12 rounded-lg bg-coral/10 flex items-center justify-center mb-5">
           <svg class="w-6 h-6 text-coral" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-        </div>
-        <h3 class="text-lg font-bold text-white mb-3">Self-hosters &amp; privacy-first</h3>
-        <p class="text-muted text-sm leading-relaxed">
-          Runs on your machine. Your data never leaves. Apache-2.0 licensed. Audit every line. No telemetry you didn't ask for.
-        </p>
-      </div>
-
-      <!-- Persona 2: Solo devs -->
-      <div class="bg-navy border border-white/5 rounded-xl p-8">
-        <div class="w-12 h-12 rounded-lg bg-teal/10 flex items-center justify-center mb-6">
-          <svg class="w-6 h-6 text-teal" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-          </svg>
-        </div>
-        <h3 class="text-lg font-bold text-white mb-3">Solo developers</h3>
-        <p class="text-muted text-sm leading-relaxed">
-          Your AI assistant, in your pocket, with real tools and memory that persists. Research, code, automate &mdash; all from the messaging apps you already use.
-        </p>
-      </div>
-
-      <!-- Persona 3: Teams -->
-      <div class="bg-navy border border-white/5 rounded-xl p-8">
-        <div class="w-12 h-12 rounded-lg bg-white/5 flex items-center justify-center mb-6">
-          <svg class="w-6 h-6 text-muted-light" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-3">Community managers</h3>
+        <p class="text-muted text-sm leading-relaxed">
+          Run a Discord server or Telegram group. Comis answers FAQs, moderates conversations, summarizes threads, and remembers regulars - across every channel you operate.
+        </p>
+      </div>
+
+      <!-- Persona 2: Small business owners -->
+      <div class="bg-navy border border-white/5 rounded-xl p-6">
+        <div class="w-12 h-12 rounded-lg bg-teal/10 flex items-center justify-center mb-5">
+          <svg class="w-6 h-6 text-teal" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-3">Small business owners</h3>
+        <p class="text-muted text-sm leading-relaxed">
+          Triage WhatsApp messages, draft email replies, watch your inbox for vendor updates. A team of agents does the front-line work while you focus on customers.
+        </p>
+      </div>
+
+      <!-- Persona 3: Developers -->
+      <div class="bg-navy border border-white/5 rounded-xl p-6">
+        <div class="w-12 h-12 rounded-lg bg-purple-500/10 flex items-center justify-center mb-5">
+          <svg class="w-6 h-6 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+          </svg>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-3">Developers</h3>
+        <p class="text-muted text-sm leading-relaxed">
+          Your AI assistant, in your pocket, with real tools and memory that persists. Research, code, automate - all from the messaging apps you already use, on infra you control.
+        </p>
+      </div>
+
+      <!-- Persona 4: Teams -->
+      <div class="bg-navy border border-white/5 rounded-xl p-6">
+        <div class="w-12 h-12 rounded-lg bg-white/5 flex items-center justify-center mb-5">
+          <svg class="w-6 h-6 text-muted-light" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
         </div>
         <h3 class="text-lg font-bold text-white mb-3">Teams &amp; startups</h3>
         <p class="text-muted text-sm leading-relaxed">
-          A fleet of specialized agents &mdash; research, code review, ops &mdash; coordinated through DAG pipelines with isolated budgets and tool policies.
+          A fleet of specialized agents - research, code review, ops - coordinated through DAG pipelines with isolated budgets, tool policies, and audit trails.
         </p>
       </div>
     </div>

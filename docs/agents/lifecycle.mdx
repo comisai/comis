@@ -165,6 +165,68 @@ result is condensed and formatted before being returned to the parent.
 See [Subagent Context Lifecycle](/agents/subagent-lifecycle) for the complete
 sub-agent flow.
 
+## End-to-end walkthrough
+
+Here is a concrete example: a Telegram user sends "What's the weather in
+Tokyo?" to an agent named Atlas. The conversation goes through these stages,
+and you can verify each one by tailing `~/.comis/logs/comis.log`.
+
+```text
+# 1. Inbound webhook → channel adapter
+INFO  [channel.telegram] message received { chatId: 12345, senderId: 67890, textChars: 28 }
+
+# 2. Queue assigns priority + serializes
+DEBUG [queue.command] enqueued { lane: "normal", sessionKey: "telegram:67890:12345", depth: 0 }
+
+# 3. Router picks the agent
+DEBUG [routing.message-router] resolved agent { agentId: "atlas", binding: "channelType=telegram" }
+
+# 4. Session loaded (or created on first contact)
+INFO  [session.lifecycle] loadOrCreate { sessionKey: "telegram:67890:12345", isNew: false, messageCount: 12 }
+
+# 5. Identity files loaded
+DEBUG [identity.loader] loaded { agents: true, sizeChars: 8842 }
+
+# 6. RAG memory recall
+DEBUG [rag.retriever] retrieved { hits: 3, contextChars: 1240, durationMs: 45 }
+
+# 7-8. Agent thinks → tools → thinks (the loop)
+DEBUG [executor.prompt-runner] runPrompt start { agentId: "atlas", model: "claude-sonnet-4-5-20250929" }
+DEBUG [executor.tool] tool call { toolName: "web_search", args: { query: "Tokyo weather today" } }
+DEBUG [executor.tool] tool result { toolName: "web_search", durationMs: 1340, sizeChars: 2100 }
+DEBUG [executor.prompt-runner] turn complete { tokensIn: 9450, tokensOut: 312, cacheRead: 8800 }
+
+# 9. Response sent to channel
+INFO  [delivery.queue] delivered { channelType: "telegram", chatId: 12345, messageId: "abc", durationMs: 187 }
+
+# 10. Session saved + post-execution
+INFO  [executor.post] execution complete { agentId: "atlas", toolCalls: 1, totalCost: 0.0042, durationMs: 2150 }
+```
+
+Each line corresponds to one stage in the diagram above. Stages 7-8 (the
+thinking loop) repeat once per tool call -- a simple weather lookup uses one
+tool call; a complex research task may use 5-10.
+
+## Behind the scenes
+
+The pipeline is implemented as a series of components in `packages/agent`:
+
+| Stage | Component | Source path |
+|-------|-----------|-------------|
+| Queue | `CommandQueue` | `packages/agent/src/queue/command-queue.ts` |
+| Routing | `MessageRouter` | `packages/agent/src/routing/message-router.ts` |
+| Session | `SessionLifecycle` | `packages/agent/src/session/session-lifecycle.ts` |
+| Identity | `loadIdentityFiles` | `packages/agent/src/identity/identity-loader.ts` |
+| Memory recall | `RagRetriever` | `packages/agent/src/rag/rag-retriever.ts` |
+| Context engine | `setupContextEngine` | `packages/agent/src/executor/executor-context-engine-setup.ts` |
+| Tool assembly | `assembleTools` | `packages/agent/src/executor/executor-tool-assembly.ts` |
+| LLM execution | `runPrompt` (`PiExecutor`) | `packages/agent/src/executor/executor-prompt-runner.ts` |
+| Post-execution | `postExecution` | `packages/agent/src/executor/executor-post-execution.ts` |
+
+You do not need to call these directly -- the daemon wires them up
+automatically when an agent starts. They are listed here so you can find
+the right file when investigating logs or extending behavior.
+
 <CardGroup cols={2}>
   <Card title="Identity" icon="id-card" href="/agents/identity">
     The workspace files that shape your agent's personality.

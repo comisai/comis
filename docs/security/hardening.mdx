@@ -306,6 +306,76 @@ These items provide additional hardening for environments with strict security r
 
     **Why:** Fewer agents with web access means fewer potential SSRF vectors. Even with built-in SSRF protection, defense in depth means reducing unnecessary exposure.
   </Step>
+
+  <Step title="Rotate the SECRETS_MASTER_KEY periodically">
+    Treat the master key like any other production credential -- rotate it on
+    a schedule (every 90 days is a reasonable cadence) and after any
+    suspected exposure. The recommended flow:
+
+    ```bash
+    # 1. Generate the new key
+    openssl rand -hex 32 > /tmp/new-master-key.hex
+
+    # 2. Re-encrypt every secret under the new key
+    SECRETS_MASTER_KEY="$(cat /tmp/new-master-key.hex)" \
+      node packages/cli/dist/cli.js secrets rotate \
+        --old-key="$OLD_SECRETS_MASTER_KEY"
+
+    # 3. Atomically swap the env var in your secret store, restart the daemon
+    pm2 restart comis
+    ```
+
+    **Why:** A compromised master key gives an attacker every secret in the
+    encrypted store. Periodic rotation limits the blast radius and ensures
+    your operational runbook actually works before you need it.
+  </Step>
+
+  <Step title="Lock down the email allowlist">
+    If you enable the email channel, set `allowMode: "allowlist"` and list
+    every legitimate sender. The default closed posture rejects any sender
+    not on the list:
+
+    ```yaml title="~/.comis/config.yaml"
+    channels:
+      email:
+        allowMode: "allowlist"   # never use "open" in production
+        allowFrom:
+          - "alice@example.com"
+          - "bob@example.com"
+          - "ops@example.com"
+    ```
+
+    Comis additionally auto-detects bulk and automated mail (Auto-Submitted
+    headers, Precedence, List-Unsubscribe, noreply addresses) and rejects
+    those even if the sender is listed.
+
+    **Why:** Email is the easiest prompt-injection vector. An open allowlist
+    on a public address is equivalent to letting the internet drive your
+    agent.
+  </Step>
+
+  <Step title="Configure network egress allowlist (allowedNetHosts)">
+    If you enable the Node.js permission model, also restrict outbound
+    network to only the providers your agents actually need:
+
+    ```yaml title="~/.comis/config.yaml"
+    security:
+      permission:
+        enableNodePermissions: true
+        allowedNetHosts:
+          - "api.openai.com"
+          - "api.anthropic.com"
+          - "api.deepgram.com"
+    ```
+
+    Remember to launch the daemon with the matching `--allow-net=...` flag
+    -- the config field alone is a declaration, not enforcement. See
+    [Node Permissions](/reference/node-permissions).
+
+    **Why:** Even with SSRF protection on every web tool, an
+    egress allowlist provides a second layer that limits exfiltration to
+    known good hosts.
+  </Step>
 </Steps>
 
 ## Verification
@@ -333,7 +403,7 @@ Security hardening is not a one-time task. Re-run `comis doctor` periodically, e
 
 <CardGroup cols={2}>
   <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
-    All 18+ security layers explained
+    All 22 categorical layers (24 primitives) explained
   </Card>
   <Card title="Secrets" icon="key" href="/security/secrets">
     Set up the encrypted secrets store

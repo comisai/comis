@@ -4,11 +4,13 @@ description: "Headless browser automation with 16 actions for navigation, intera
 icon: "window-maximize"
 ---
 
-The `browser` tool gives agents control of a headless Chromium browser. Agents can navigate to websites, take screenshots, interact with page elements (click, type, fill forms), read page content via accessibility snapshots, and manage multiple browser tabs and profiles.
+**What it does:** Drives a headless Chromium browser via Playwright -- navigate, click, type, screenshot, read pages via accessibility snapshots, manage tabs and isolated profiles, and run JavaScript.
+
+**Who it's for:** Anyone whose agent needs to interact with sites that don't yield to a simple `web_fetch` -- single-page apps, sites behind logins, dynamic dashboards, file uploads, or workflows that require multiple steps. For static page content, the lighter [`web_fetch`](/agent-tools/web-tools#web_fetch-page-content-fetching) tool is faster and cheaper.
 
 ## Browser Actions
 
-The browser tool supports 16 actions:
+The browser tool supports **16 actions**, verified against `BROWSER_TOOL_ACTIONS` in `packages/skills/src/builtin/platform/browser-tool-schema.ts`:
 
 | Action | What It Does |
 |--------|-------------|
@@ -189,6 +191,65 @@ The browser includes built-in security protections:
 - **Screenshot sanitization** -- Screenshots are processed and sanitized before being stored or sent.
 
 For more details on network security protections, see [Security](/get-started/security).
+
+## End-to-end example: scraping a SPA
+
+A typical multi-step workflow -- visit a JavaScript-rendered dashboard, log in, navigate to a data view, and pull a value the agent can act on. The agent strings together navigate, snapshot, act, and screenshot in sequence:
+
+```yaml
+# 1. Make sure the browser is running
+action: status
+# (start it if not)
+action: start
+
+# 2. Open the target URL in a new tab
+action: open
+targetUrl: "https://app.example.com/login"
+
+# 3. Read the page structure to find the login form
+action: snapshot
+snapshotFormat: ai
+interactive: true
+
+# 4. Fill credentials using the refs from the snapshot
+action: act
+request:
+  kind: fill
+  fields:
+    - { ref: "email-input", value: "agent@example.com" }
+    - { ref: "password-input", value: "${LOGIN_PASSWORD}" }
+# (the value substitution happens at the agent layer; the secret store
+# resolves ${LOGIN_PASSWORD} to the encrypted value)
+
+# 5. Submit the form
+action: act
+request:
+  kind: click
+  ref: "submit-button"
+
+# 6. Wait for the dashboard to render after login
+action: act
+request:
+  kind: wait
+  textGone: "Signing in..."
+
+# 7. Navigate to the data view
+action: navigate
+targetUrl: "https://app.example.com/dashboard/metrics"
+
+# 8. Read the rendered DOM via accessibility tree
+action: snapshot
+snapshotFormat: ai
+maxChars: 5000
+
+# 9. Capture a screenshot for the response
+action: screenshot
+fullPage: true
+```
+
+The agent now has the rendered text in a structured snapshot and a visual screenshot, and can post both back to the user via the `message` tool's `attach` action.
+
+For sites that emit network calls you want to inspect, the agent can pair the browser with `console` (to see JS logs) and `act` `kind: evaluate` (to run JavaScript like `document.querySelector(...).innerText`). For high-throughput scraping that does not need rendered JavaScript, prefer `web_fetch`.
 
 ## Related
 

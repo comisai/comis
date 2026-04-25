@@ -178,14 +178,18 @@ These options go under `channels.email` in your `config.yaml`:
 Once connected to Email, your agent can:
 
 - Send and receive email messages
-- Maintain conversation threads via RFC 5322 reply headers (In-Reply-To, References)
-- Receive and process file attachments
-- Send HTML-formatted responses
-- Filter senders via allowlist or open mode
+- Maintain conversation threads via RFC 5322 reply headers
+  (`In-Reply-To`, `References`)
+- Receive and process file attachments (images, video, audio, documents)
+- Send HTML-formatted responses (Markdown is converted to HTML automatically)
+- Filter senders with `allowMode: "allowlist"` or `allowMode: "open"`
+- Detect and skip automated mailers (`noreply@`, `mailer-daemon@`,
+  `Auto-Submitted` and `Precedence: bulk` headers, `List-Unsubscribe`)
 
-Email does **not** support reactions, editing or deleting sent messages, fetching
-message history, streaming (live-updating responses), buttons, cards/embeds, or
-mentions.
+Email does **not** support reactions, editing or deleting sent messages,
+fetching historical messages on demand, streaming (live-updating responses),
+buttons, cards/embeds, native polls, group chats (To/Cc are flat metadata,
+not grouped conversations), or `@mentions`.
 
 ## How Email works
 
@@ -225,6 +229,65 @@ start, preventing silent failures.
 | Message length | 100,000 characters | Automatically splits long responses into multiple emails at paragraph boundaries |
 | Attachment size | No platform limit | Limited by your email provider's attachment size limit (typically 25 MB for Gmail) |
 | Polling interval | 60 seconds (default) | Configurable via `pollingIntervalMs`; IMAP IDLE provides near-instant delivery when supported |
+
+## Complete walkthrough: from zero to first reply
+
+A start-to-finish run for a Gmail mailbox `bot@your-team.com`:
+
+<Steps>
+  <Step title="Enable IMAP and create an App Password">
+    In Gmail, open **Settings -> See all settings -> Forwarding and POP/IMAP**
+    and enable IMAP.
+    Then visit **Google Account -> Security -> App passwords** (2-Step
+    Verification must be on). Generate a password for "Mail" and copy the
+    16-character value.
+  </Step>
+
+  <Step title="Pick an allowlisted sender">
+    Decide which email address you will reply from for testing -- for
+    example, your personal `you@gmail.com`. Bots default to allowlist mode,
+    so unlisted senders are ignored.
+  </Step>
+
+  <Step title="Wire it into Comis">
+    Add to `~/.comis/.env`:
+
+    ```bash
+    EMAIL_PASSWORD=your-16-char-app-password
+    ```
+
+    Add to `~/.comis/config.yaml`:
+
+    ```yaml
+    channels:
+      email:
+        enabled: true
+        address: "bot@your-team.com"
+        imapHost: "imap.gmail.com"
+        smtpHost: "smtp.gmail.com"
+        botToken: "${EMAIL_PASSWORD}"
+        allowMode: "allowlist"
+        allowFrom:
+          - "you@gmail.com"
+    ```
+  </Step>
+
+  <Step title="Restart and verify">
+    ```bash
+    comis daemon stop && comis daemon start
+    comis daemon logs
+    ```
+
+    You should see `Email adapter started` followed by `IMAP IDLE active`.
+  </Step>
+
+  <Step title="Send the first email">
+    From `you@gmail.com`, send a normal email to `bot@your-team.com` with
+    a plain subject like "Hello". Within a few seconds the agent's reply
+    arrives in your inbox, threaded under your original message via
+    `In-Reply-To`.
+  </Step>
+</Steps>
 
 ## Troubleshooting
 
