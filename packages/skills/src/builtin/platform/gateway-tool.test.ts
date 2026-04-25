@@ -591,6 +591,8 @@ describe("gateway tool", () => {
       const rpcCall = createMockRpcCall();
       const tool = createGatewayTool(rpcCall);
 
+      // Updated for quick-260425-t40: agents now redirects to agents_manage
+      // with the override paths surfaced as the "in-place updates" branch.
       await expect(
         tool.execute("call-imm1", {
           action: "patch",
@@ -598,7 +600,7 @@ describe("gateway tool", () => {
           key: "default",
           value: { model: "gemini-2.0-flash" },
         }),
-      ).rejects.toThrow(/Patchable paths under "agents"/);
+      ).rejects.toThrow(/agents\.default\.model/);
       expect(rpcCall).not.toHaveBeenCalled();
     });
   });
@@ -684,6 +686,89 @@ describe("gateway tool", () => {
           action: "status",
         }),
       ).rejects.toThrow("string error");
+    });
+  });
+
+  // Regression: production failure 2026-04-24 (srv1593437, trace ab7ebba0).
+  // Dash (Opus 4.6) hit gateway/apply then gateway/patch on the agents section,
+  // got dead-end "immutable" errors, hallucinated that agents_manage was
+  // unavailable, and gave up. The redirect hint must (1) name the dedicated
+  // tool, (2) instruct the LLM to call discover_tools to load the schema, and
+  // (3) include a parameter-correct example -- model-agnostic, copy-pasteable.
+  describe("immutability redirect hints (model-agnostic)", () => {
+    it("agents/apply rejection points to agents_manage with a parameter-correct example", async () => {
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall);
+
+      let captured: Error | undefined;
+      try {
+        await tool.execute("call-redir-1", {
+          action: "apply" as "read",
+          section: "agents",
+          value: { coding: { name: "x", model: "y", provider: "anthropic" } },
+        });
+      } catch (e) {
+        captured = e as Error;
+      }
+      expect(captured).toBeDefined();
+      const msg = captured!.message;
+      expect(msg).toContain("[permission_denied]");
+      expect(msg).toContain('Use the "agents_manage" tool');
+      expect(msg).toContain('discover_tools("agents_manage")');
+      expect(msg).toContain('"action":"create"');
+      expect(msg).toContain('"agent_id":"<new-agent-id>"');
+      expect(rpcCall).not.toHaveBeenCalled();
+    });
+
+    it("agents.<newId>/patch rejection points to agents_manage", async () => {
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall);
+
+      let captured: Error | undefined;
+      try {
+        await tool.execute("call-redir-2", {
+          action: "patch",
+          section: "agents",
+          key: "coding",
+          value: { name: "coding-specialist", model: "opus-4-6", provider: "anthropic" },
+        });
+      } catch (e) {
+        captured = e as Error;
+      }
+      expect(captured).toBeDefined();
+      const msg = captured!.message;
+      expect(msg).toContain("[permission_denied]");
+      expect(msg).toContain('Recovery: (1) call discover_tools("agents_manage")');
+      expect(msg).toContain("(2) call agents_manage(");
+      // Mutable override paths are still surfaced for the in-place-update case
+      expect(msg).toContain("agents.coding.model");
+      expect(rpcCall).not.toHaveBeenCalled();
+    });
+
+    it("channels/<type>/<field>/patch rejection points to channels_manage with fullyManaged:false note", async () => {
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall);
+
+      let captured: Error | undefined;
+      try {
+        await tool.execute("call-redir-3", {
+          action: "patch",
+          section: "channels",
+          key: "telegram.allowFrom",
+          value: ["123"],
+        });
+      } catch (e) {
+        captured = e as Error;
+      }
+      expect(captured).toBeDefined();
+      const msg = captured!.message;
+      expect(msg).toContain('Use the "channels_manage" tool');
+      expect(msg).toContain('discover_tools("channels_manage")');
+      // channels_manage is fullyManaged:false — the warning must appear
+      expect(msg).toContain("brand-new platform types still requires operator config edits");
+      // No exampleArgs for channels — Recovery framing absent, fall-back load instruction present
+      expect(msg).not.toContain("Recovery: (1)");
+      expect(rpcCall).not.toHaveBeenCalled();
     });
   });
 });

@@ -12,7 +12,13 @@
  * @module
  */
 
-import { registerToolMetadata, isImmutableConfigPath, getMutableOverridesForSection } from "@comis/core";
+import {
+  registerToolMetadata,
+  isImmutableConfigPath,
+  getMutableOverridesForSection,
+  getManagedSectionRedirect,
+  formatRedirectHint,
+} from "@comis/core";
 import { validateExecCommand } from "../builtin/exec-security.js";
 import { GATEWAY_ACTIONS } from "../builtin/platform/gateway-tool.js";
 
@@ -179,25 +185,40 @@ export function registerAllToolMetadata(): void {
     },
   });
 
-  // Gateway tool -- action enum + immutable path rejection for patch.
+  // Gateway tool -- action enum + immutable path rejection for patch and apply.
   // Whitelist is derived from the tool's exported GATEWAY_ACTIONS tuple so
   // bridge + handler cannot drift (quick-260420-iv2 regression fix).
+  // When the rejected section has a dedicated *_manage tool, the message
+  // includes a parameter-correct redirect via formatRedirectHint() so any
+  // LLM (Opus/Sonnet/Haiku, GPT-5, Gemini, Mistral, etc.) can self-recover
+  // without model-specific prompting (quick-260425-t40).
   registerToolMetadata("gateway", {
     validateInput: (params) => {
       const action = typeof params.action === "string" ? params.action : undefined;
       if (!action || !(GATEWAY_ACTIONS as readonly string[]).includes(action)) {
         return `Invalid action: "${action ?? ""}". Valid: ${GATEWAY_ACTIONS.join(", ")}`;
       }
-      // Only check immutability for patch action (reads must succeed on immutable paths)
+      const section = typeof params.section === "string" ? params.section : undefined;
+      // Only check immutability for mutating actions (reads must succeed on immutable paths).
       if (action === "patch") {
-        const section = typeof params.section === "string" ? params.section : undefined;
         const key = typeof params.key === "string" ? params.key : undefined;
         if (section && isImmutableConfigPath(section, key)) {
           const mutablePaths = getMutableOverridesForSection(section, key);
-          const pathHint = mutablePaths.length > 0
-            ? ` Patchable: ${mutablePaths.join(", ")}`
-            : "";
-          return `Cannot patch immutable config path: ${section}${key ? "." + key : ""}.${pathHint}`;
+          const redirect = getManagedSectionRedirect(section, key);
+          const fullPath = `${section}${key ? "." + key : ""}`;
+          const suffix = redirect
+            ? ` ${formatRedirectHint(redirect, mutablePaths)}`
+            : mutablePaths.length > 0
+              ? ` Patchable: ${mutablePaths.join(", ")}.`
+              : "";
+          return `Cannot patch immutable config path: ${fullPath}.${suffix}`;
+        }
+      }
+      if (action === "apply") {
+        if (section && isImmutableConfigPath(section)) {
+          const redirect = getManagedSectionRedirect(section);
+          const suffix = redirect ? ` ${formatRedirectHint(redirect)}` : "";
+          return `Cannot apply to immutable config section: ${section}.${suffix}`;
         }
       }
       return undefined;

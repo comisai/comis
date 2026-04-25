@@ -724,7 +724,7 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
 // ===========================================================================
 
 describe("tool-metadata-registry -- gateway validateInput patchable path hints", () => {
-  it("includes patchable paths when rejecting immutable agents path", async () => {
+  it("redirects to agents_manage and includes patchable paths when rejecting immutable agents path", async () => {
     const meta = getToolMetadata("gateway");
     expect(meta?.validateInput).toBeDefined();
 
@@ -734,14 +734,18 @@ describe("tool-metadata-registry -- gateway validateInput patchable path hints",
       key: "default",
     });
 
+    // Updated for quick-260425-t40: rejection now points to the dedicated
+    // agents_manage tool with a parameter-correct example AND lists the
+    // override paths for in-place updates of an existing agent.
     expect(error).toBeDefined();
     expect(error).toContain("Cannot patch immutable config path");
-    expect(error).toContain("Patchable:");
+    expect(error).toContain('Use the "agents_manage" tool');
+    expect(error).toContain('discover_tools("agents_manage")');
     expect(error).toContain("agents.default.model");
     expect(error).toContain("agents.default.provider");
   });
 
-  it("returns no patchable hint for section without overrides", async () => {
+  it("returns no redirect or patchable hint for sections without managed tool or overrides", async () => {
     const meta = getToolMetadata("gateway");
     const error = await meta!.validateInput!({
       action: "patch",
@@ -752,6 +756,7 @@ describe("tool-metadata-registry -- gateway validateInput patchable path hints",
     expect(error).toBeDefined();
     expect(error).toContain("Cannot patch immutable config path");
     expect(error).not.toContain("Patchable:");
+    expect(error).not.toContain("Use the");
   });
 
   it("allows patch on mutable override path (no validation error)", async () => {
