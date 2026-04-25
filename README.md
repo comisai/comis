@@ -103,7 +103,7 @@ curl http://localhost:4766/health
 Then configure your channels and LLM provider interactively:
 
 ```bash
-docker exec -it comis comis configure
+docker exec -it comis comis init
 ```
 
 The wizard walks you through selecting a provider, adding channel tokens (Telegram, Discord, Slack, etc.), and connecting your first agent. To persist your configuration across container restarts, mount a data volume:
