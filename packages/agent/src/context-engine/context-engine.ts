@@ -139,8 +139,8 @@ async function runLayer(
     breaker.recordSuccess(layer.name);
     const durationMs = Date.now() - start;
 
-    // Only log layers that actually modify messages or take measurable time
-    if (messagesIn !== result.length || durationMs > 0) {
+    // Only log layers that actually modify messages
+    if (messagesIn !== result.length) {
       logger.debug(
         { layerName: layer.name, messagesIn, messagesOut: result.length, durationMs },
         "Context engine layer applied",

@@ -56,7 +56,7 @@ const UnifiedSessionParams = Type.Object({
   ),
   // history params
   session_key: Type.Optional(
-    Type.String({ description: "Target session key to retrieve history for (action: history)" }),
+    Type.String({ description: "Session key for action: history. Use action 'list' first to discover available keys. Format: {tenantId}:{filename}, e.g. 'default:678314278~peer~678314278'" }),
   ),
   offset: Type.Optional(
     Type.Integer({ description: "Pagination offset (default: 0) (action: history)" }),

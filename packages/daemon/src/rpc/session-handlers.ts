@@ -253,6 +253,33 @@ function loadJsonlSession(filePath: string): { messages: unknown[]; metadata: Re
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Collect available session keys from all sources (SQLite, JSONL, workspace)
+ * for inclusion in "session not found" error messages.
+ */
+function collectAvailableSessionKeys(deps: SessionHandlerDeps): string[] {
+  const keys: string[] = [];
+
+  for (const s of deps.sessionStore.listDetailed()) {
+    keys.push(s.sessionKey);
+  }
+
+  if (deps.defaultWorkspaceDir) {
+    const existing = new Set(keys);
+    for (const ws of scanWorkspaceSessions(deps.defaultWorkspaceDir)) {
+      if (!existing.has(ws.sessionKey)) {
+        keys.push(ws.sessionKey);
+      }
+    }
+  }
+
+  return keys;
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -543,7 +570,11 @@ export function createSessionHandlers(deps: SessionHandlerDeps): Record<string, 
       }
 
       if (!data) {
-        throw new Error(`Session not found: ${sessionKey}`);
+        const available = collectAvailableSessionKeys(deps);
+        const hint = available.length > 0
+          ? `. Available session keys: ${available.join(", ")}`
+          : ". Use action 'list' to discover available session keys";
+        throw new Error(`Session not found: ${sessionKey}${hint}`);
       }
 
       // Parse session key for metadata

@@ -188,7 +188,7 @@
     "playwright-core": "^1.58.2",
     "proper-lockfile": "^4.1.2",
     "sharp": "^0.34.5",
-    "sqlite-vec": "0.1.7-alpha.2",
+    "sqlite-vec": "0.1.9",
     "undici": "^7.24.0",
     "ws": "^8.19.0",
     "yaml": "^2.8.3",
