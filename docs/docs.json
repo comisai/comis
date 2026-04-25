@@ -8,10 +8,10 @@
     "light": "#A78BFA",
     "dark": "#3730A3"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "/favicon.ico",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "/logo/comis-logo.png",
+    "dark": "/logo/comis-logo.png"
   },
   "appearance": { "default": "system" },
   "styling": {
