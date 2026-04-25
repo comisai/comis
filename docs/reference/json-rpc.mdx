@@ -607,7 +607,7 @@ Get activity data for all channels, merging live in-memory data with historical 
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ channelId: string }` (required) |
-| **Returns** | `{ channel: ChannelActivity | null }` |
+| **Returns** | `{ channel: ChannelActivity \| null }` |
 
 ### `obs.delivery.recent`
 
@@ -1055,7 +1055,7 @@ Scheduled job management for cron expressions, intervals, and one-time tasks.
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ name: string, message: string, agentId?: string, schedule: { kind: "cron" | "interval" | "once", expr?: string, tz?: string, everyMs?: number, at?: string } }` |
+| **Parameters** | `{ name: string, message: string, agentId?: string, schedule: { kind: "cron" \| "interval" \| "once", expr?: string, tz?: string, everyMs?: number, at?: string } }` |
 | **Returns** | Created job info |
 
 <CodeGroup>
@@ -2055,7 +2055,7 @@ List all configured channel adapters with their current status. Includes both ru
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ channel_type: string }` |
-| **Returns** | `{ channelType, channelId?, status: "running" | "stopped", configured?: boolean }` |
+| **Returns** | `{ channelType, channelId?, status: "running" \| "stopped", configured?: boolean }` |
 
 ### `channels.health`
 
@@ -2285,7 +2285,7 @@ Prompt skill management: list, create, upload, import from GitHub, update, and d
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ name: string, agentId?: string, scope?: "local" | "shared", files: Array<{ path: string, content: string }> }` |
+| **Parameters** | `{ name: string, agentId?: string, scope?: "local" \| "shared", files: Array<{ path: string, content: string }> }` |
 | **Returns** | `{ ok: true, path: string }` |
 
 The `name` must be 1-64 characters, lowercase alphanumeric with hyphens. The `files` array must include a `SKILL.md` file.
@@ -2325,7 +2325,7 @@ The optional `scope` parameter controls where the skill is written. `"local"` (d
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ url: string, agentId?: string, scope?: "local" | "shared" }` |
+| **Parameters** | `{ url: string, agentId?: string, scope?: "local" \| "shared" }` |
 | **Returns** | `{ ok: true, path: string, name: string, fileCount: number }` |
 
 Accepts GitHub directory URLs in the format: `https://github.com/{owner}/{repo}/tree/{branch}/{path}`
@@ -2559,7 +2559,7 @@ Retrieve node output values from a completed or running graph. Uses memory-first
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | `{ graphId: string }` |
-| **Returns** | `{ graphId: string, outputs: Record<string, string | null>, source: "memory" | "disk" }` |
+| **Returns** | `{ graphId: string, outputs: Record<string, string \| null>, source: "memory" \| "disk" }` |
 
 <CodeGroup>
 ```json Request
@@ -2587,7 +2587,7 @@ Retrieve node output values from a completed or running graph. Uses memory-first
 ```
 </CodeGroup>
 
-`outputs` is a `Record<string, string | null>` -- `null` means the node has not completed yet. `source` is `"memory"` (from the in-memory coordinator) or `"disk"` (from `*-output.md` files in `graph-runs/<graphId>/`). Output values are truncated at 12,000 characters per node (compared to 500 for `graph.status`).
+`outputs` is a `Record<string, string \| null>` -- `null` means the node has not completed yet. `source` is `"memory"` (from the in-memory coordinator) or `"disk"` (from `*-output.md` files in `graph-runs/<graphId>/`). Output values are truncated at 12,000 characters per node (compared to 500 for `graph.status`).
 
 ### `graph.cancel`
 
@@ -2812,8 +2812,8 @@ Context Engine methods for DAG-based context recall and inspection. Used by agen
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ query: string, mode?: "fts" | "regex", scope?: "both" | "messages" | "summaries", limit?: number }` |
-| **Returns** | `{ results: Array<{ id: string, content: string, type: "message" | "summary", rank?: number }>, total: number }` |
+| **Parameters** | `{ query: string, mode?: "fts" \| "regex", scope?: "both" \| "messages" \| "summaries", limit?: number }` |
+| **Returns** | `{ results: Array<{ id: string, content: string, type: "message" \| "summary", rank?: number }>, total: number }` |
 
 <CodeGroup>
 ```json Request
@@ -3016,7 +3016,7 @@ Agent workspace file and git management. Read, write, and delete workspace files
 |----------|-------|
 | **Scope** | `rpc` |
 | **Parameters** | `{ agentId: string, subdir?: string }` |
-| **Returns** | `{ entries: Array<{ name: string, type: "file" | "directory", sizeBytes?: number, modifiedAt: string }> }` |
+| **Returns** | `{ entries: Array<{ name: string, type: "file" \| "directory", sizeBytes?: number, modifiedAt: string }> }` |
 
 ### `workspace.resetFile`
 
