@@ -345,6 +345,14 @@ export { deepMerge, mergeLayered, loadLayered } from "./layered.js";
 // Immutable key guard (runtime config mutation protection)
 export { IMMUTABLE_CONFIG_PREFIXES, MUTABLE_CONFIG_OVERRIDES, isImmutableConfigPath, matchesOverridePattern, getMutableOverridesForSection } from "./immutable-keys.js";
 
+// Managed-section redirects (LLM-readable hints for immutable rejections)
+export {
+  MANAGED_SECTIONS,
+  getManagedSectionRedirect,
+  formatRedirectHint,
+  type ManagedSectionRedirect,
+} from "./managed-sections.js";
+
 // Schema serializer (Zod to JSON Schema conversion)
 export { getConfigSchema, getConfigSections } from "./schema-serializer.js";
 
