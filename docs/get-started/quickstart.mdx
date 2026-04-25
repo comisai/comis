@@ -17,151 +17,235 @@ import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 <Warning>
 Before you begin, make sure you have:
 
-- **Node.js 22 or later** -- check with `node --version` in your terminal. If you
-  need to install it, visit [nodejs.org](https://nodejs.org).
 - **An API key** from an AI provider (Anthropic, OpenAI, or Google). You will need
   this during setup.
 - **A terminal** (command line) -- Terminal on macOS, or any Linux shell.
+- **One of:**
+  - **Node.js 22 or later** -- check with `node --version`. Install at
+    [nodejs.org](https://nodejs.org). Pick this if you want to install Comis
+    directly on your machine or extend it from source.
+  - **Docker Engine 20.10 or later** -- check with `docker --version`. Install at
+    [docker.com/get-started](https://www.docker.com/get-started/). Pick this if
+    you would rather not install Node.js or you are running on a server.
 </Warning>
 
 ## Install and run
 
-<Snippet file="invocation-modes.mdx" />
+<Tabs>
+  <Tab title="npm (recommended)">
+    Run Comis directly on your machine. Best if you already have Node.js or
+    plan to develop against the source.
 
-<Steps>
-  <Step title="Install Comis">
-    Open your terminal and install Comis globally with npm:
+    <Snippet file="invocation-modes.mdx" />
 
-    ```bash
-    npm install -g comisai
-    ```
+    <Steps>
+      <Step title="Install Comis">
+        Open your terminal and install Comis globally with npm:
 
-    Once the installation finishes, verify it worked:
+        ```bash
+        npm install -g comisai
+        ```
 
-    ```bash
-    comis --version
-    ```
+        Once the installation finishes, verify it worked:
 
-    You should see the installed version, for example:
+        ```bash
+        comis --version
+        ```
 
-    ```
-    1.0.20
-    ```
+        You should see the installed version, for example:
 
-    <Tip>
-    If you get a "permission denied" error, you may need to run
-    `sudo npm install -g comisai` or configure npm to use a different directory.
-    See [Installation Details](/installation/index) for alternatives.
-    </Tip>
-  </Step>
+        ```
+        1.0.20
+        ```
 
-  <Step title="Run the setup wizard">
-    Run the interactive setup wizard:
+        <Tip>
+        If you get a "permission denied" error, you may need to run
+        `sudo npm install -g comisai` or configure npm to use a different directory.
+        See [Installation Details](/installation/index) for alternatives.
+        </Tip>
+      </Step>
 
-    ```bash
-    comis init
-    ```
+      <Step title="Run the setup wizard">
+        Run the interactive setup wizard:
 
-    The wizard walks you through three simple questions:
+        ```bash
+        comis init
+        ```
 
-    1. **Which AI provider?** -- Choose from Anthropic (Claude), OpenAI (GPT), Google
-       (Gemini), and others. Pick whichever provider you have an API key for.
-    2. **Your API key** -- Paste the API key from your chosen provider. The wizard
-       stores it securely and never displays it again.
-    3. **A name for your agent** -- Give your agent a name (like "Atlas" or
-       "Helper"), or press Enter to accept the default.
+        The wizard walks you through three simple questions:
 
-    When the wizard finishes, it creates two files in your home directory:
+        1. **Which AI provider?** -- Choose from Anthropic (Claude), OpenAI (GPT), Google
+           (Gemini), and others. Pick whichever provider you have an API key for.
+        2. **Your API key** -- Paste the API key from your chosen provider. The wizard
+           stores it securely and never displays it again.
+        3. **A name for your agent** -- Give your agent a name (like "Atlas" or
+           "Helper"), or press Enter to accept the default.
 
-    - `~/.comis/config.yaml` -- Your agent's configuration (name, provider, settings)
-    - `~/.comis/.env` -- Your API key, stored separately for security
+        When the wizard finishes, it creates two files in your home directory:
 
-    <Accordion title="Non-interactive alternative">
-      If you prefer to skip the wizard (for example, in a CI pipeline or Docker
-      container), you can pass everything on the command line:
+        - `~/.comis/config.yaml` -- Your agent's configuration (name, provider, settings)
+        - `~/.comis/.env` -- Your API key, stored separately for security
 
-      ```bash
-      comis init --non-interactive --provider anthropic --api-key sk-ant-your-key-here
-      ```
+        <Accordion title="Non-interactive alternative">
+          If you prefer to skip the wizard (for example, in a CI pipeline or Docker
+          container), you can pass everything on the command line:
 
-      This creates the same configuration files without prompting for input.
-    </Accordion>
-  </Step>
+          ```bash
+          comis init --non-interactive --provider anthropic --api-key sk-ant-your-key-here
+          ```
 
-  <Step title="Start the daemon">
-    Start the Comis daemon -- the background process that keeps your agents running:
+          This creates the same configuration files without prompting for input.
+        </Accordion>
+      </Step>
 
-    ```bash
-    comis daemon start
-    ```
+      <Step title="Start the daemon">
+        Start the Comis daemon -- the background process that keeps your agents running:
 
-    You should see output similar to:
+        ```bash
+        comis daemon start
+        ```
 
-    ```
-    Comis daemon started
-      Agent:    Atlas
-      Provider: anthropic (claude-sonnet-4-5-20250929)
-      Gateway:  http://localhost:4766
-      Status:   ready
-    ```
+        You should see output similar to:
 
-    The daemon is now running. It manages your agents, handles incoming messages,
-    and serves the web dashboard.
+        ```
+        Comis daemon started
+          Agent:    Atlas
+          Provider: anthropic (claude-sonnet-4-5-20250929)
+          Gateway:  http://localhost:4766
+          Status:   ready
+        ```
 
-    <Tip>
-    The daemon runs in the background. You can close this terminal window and
-    it will keep running. To stop it later, run `comis daemon stop`.
-    </Tip>
-  </Step>
+        The daemon is now running. It manages your agents, handles incoming messages,
+        and serves the web dashboard.
 
-  <Step title="Talk to your agent">
-    When the daemon starts, it also launches a built-in web dashboard. Open your
-    browser and go to:
+        <Tip>
+        The daemon runs in the background. You can close this terminal window and
+        it will keep running. To stop it later, run `comis daemon stop`.
+        </Tip>
+      </Step>
 
-    ```
-    http://localhost:4766
-    ```
+      <Step title="Talk to your agent">
+        When the daemon starts, it also launches a built-in web dashboard. Open your
+        browser and go to:
 
-    The web dashboard provides a chat interface where you can talk directly to
-    your agent. Type a message and press Enter:
+        ```
+        http://localhost:4766
+        ```
 
-    ```
-    You:   Hello! What can you do?
-    Agent: Hi! I'm Atlas, your AI assistant. I can help you with
-           questions, research, writing, scheduling, and more.
-           What would you like to work on?
-    ```
+        The web dashboard provides a chat interface where you can talk directly to
+        your agent. Type a message and press Enter:
 
-    The dashboard also shows your agent's status, memory, and configuration.
-    You can monitor everything from this single page.
+        ```
+        You:   Hello! What can you do?
+        Agent: Hi! I'm Atlas, your AI assistant. I can help you with
+               questions, research, writing, scheduling, and more.
+               What would you like to work on?
+        ```
+
+        The dashboard also shows your agent's status, memory, and configuration.
+        You can monitor everything from this single page.
+
+        <Info>
+        The web dashboard is the recommended way to interact with your agent when
+        getting started. For programmatic access, Comis also provides a JSON-RPC
+        gateway and an OpenAI-compatible API at the same address.
+        </Info>
+      </Step>
+
+      <Step title="Connect a messaging channel (optional)">
+        Your agent is running and you can chat through the web dashboard. But the real
+        power of Comis is putting your agent inside the messaging apps your community
+        already uses.
+
+        To add a messaging channel like Discord, Telegram, or Slack, re-run the
+        setup wizard:
+
+        ```bash
+        comis init
+        ```
+
+        The wizard detects your existing configuration and offers to add channels.
+        Each channel has its own setup -- typically you will need a bot token from
+        the platform.
+
+        See the [Channels](/channels/index) section for step-by-step guides for each
+        platform.
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Docker (no Node.js required)">
+    Run Comis as a container. Best if you would rather not install Node.js or
+    you are deploying to a server.
+
+    <Steps>
+      <Step title="Start the container">
+        Pull and run the slim image. This starts the daemon, exposes the web
+        dashboard on port 4766, and stores configuration and data in a named
+        Docker volume so they survive restarts:
+
+        ```bash
+        docker run -d --name comis -p 4766:4766 -v comis-data:/data comisai/comis:latest-slim
+        ```
+
+        Once running, verify the daemon is up:
+
+        ```bash
+        curl http://localhost:4766/health
+        ```
+
+        You should see:
+
+        ```json
+        {"status":"ok"}
+        ```
+      </Step>
+
+      <Step title="Run the setup wizard">
+        Configure your provider and channels by running the wizard inside the
+        container:
+
+        ```bash
+        docker exec -it comis comis init
+        ```
+
+        The wizard walks you through selecting a provider, adding channel tokens
+        (Telegram, Discord, Slack, etc.), and connecting your first agent. The
+        same three questions apply: which provider, your API key, and a name
+        for your agent.
+
+        Configuration is written to `/data/config.yaml` and `/data/.env` inside
+        the container, which map to the `comis-data` Docker volume. Your keys
+        survive `docker rm` and `docker pull` as long as the volume sticks
+        around.
+      </Step>
+
+      <Step title="Talk to your agent">
+        After the wizard finishes, the daemon picks up the new configuration
+        automatically. Open the web dashboard in your browser:
+
+        ```
+        http://localhost:4766
+        ```
+
+        Type a message in the chat panel and press Enter to chat with your agent.
+
+        <Tip>
+        Stream the daemon's logs with `docker logs -f comis`. Stop the daemon
+        with `docker stop comis` and start it again with `docker start comis` --
+        your data and configuration persist in the `comis-data` volume.
+        </Tip>
+      </Step>
+    </Steps>
 
     <Info>
-    The web dashboard is the recommended way to interact with your agent when
-    getting started. For programmatic access, Comis also provides a JSON-RPC
-    gateway and an OpenAI-compatible API at the same address.
+    For production Docker deployments -- pinned version tags, custom networks,
+    `docker-compose`, the separate `comisai/comis-web` image -- see the full
+    [Docker installation guide](/installation/install-docker) and the
+    [Docker Hub reference](/operations/docker-hub).
     </Info>
-  </Step>
-
-  <Step title="Connect a messaging channel (optional)">
-    Your agent is running and you can chat through the web dashboard. But the real
-    power of Comis is putting your agent inside the messaging apps your community
-    already uses.
-
-    To add a messaging channel like Discord, Telegram, or Slack, re-run the
-    setup wizard:
-
-    ```bash
-    comis init
-    ```
-
-    The wizard detects your existing configuration and offers to add channels.
-    Each channel has its own setup -- typically you will need a bot token from
-    the platform.
-
-    See the [Channels](/channels/index) section for step-by-step guides for each
-    platform.
-  </Step>
-</Steps>
+  </Tab>
+</Tabs>
 
 ## What just happened?
 
