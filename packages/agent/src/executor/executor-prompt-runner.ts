@@ -38,6 +38,7 @@ import { wrapInEnvelope } from "../envelope/message-envelope.js";
 import { runWithModelRetry } from "./model-retry.js";
 import { withPromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
 import { classifyError, classifyPromptTimeout } from "./error-classifier.js";
+import { scrubSignedReplayStateInPlace } from "./signature-block-scrubber.js";
 import { createOverflowRecoveryWrapper } from "./overflow-recovery.js";
 import { isContextOverflowError } from "../safety/context-truncation-recovery.js";
 import {
@@ -436,13 +437,130 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
         }
 
         if (!silent02Recovered && !silentRetryAttempted) {
-          // Client-side validation errors (e.g. Anthropic 400 invalid_request_error
-          // on thinking-block immutability) are deterministic — retrying with the
-          // same message body will reproduce the same failure. Short-circuit before
-          // the strip+retry block to avoid wasting tokens on a repeat request.
+          // Classify the bridge's recorded LLM error to pick the correct path:
+          //   - "client_request_signed_replay": scrub signed thinking state and
+          //     re-enter runWithModelRetry once (provider-agnostic self-heal,
+          //     covers Anthropic, Bedrock-Claude, Gemini, OpenAI Responses,
+          //     OpenAI Completions reasoning, Mistral).
+          //   - "client_request": deterministic; declare terminal failure
+          //     verbatim with the original error wording.
+          //   - default: fall through to the existing strip-empty-turn +
+          //     re-enter retry path below.
           const llmErrSource = earlyBridgeResult.lastLlmErrorMessage ?? "";
           const earlyClassification = classifyError(new Error(llmErrSource));
-          if (earlyClassification.category === "client_request") {
+          if (earlyClassification.category === "client_request_signed_replay") {
+            // Provider-agnostic signed-replay self-heal. Scrub stored signed
+            // thinking / reasoning state in place, then re-enter the full
+            // model retry pipeline once. Mirrors the silent-retry shape but
+            // with a 1s settle (vs 3s for transient overload) since the
+            // failure cause is deterministic state on disk, not a transient
+            // provider condition.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const msgs: unknown[] = (session as any).messages ?? [];
+            const { blocksRemoved, thoughtSignaturesStripped } =
+              scrubSignedReplayStateInPlace(msgs);
+
+            deps.logger.info(
+              {
+                blocksRemoved,
+                thoughtSignaturesStripped,
+                providerError: llmErrSource,
+                hint: "Signed-replay rejection detected; scrubbing thinking state and retrying once",
+                errorKind: "transient" as ErrorKind,
+              },
+              "Signed-replay self-heal: scrubbing and retrying",
+            );
+
+            // Brief settle before retry. Distinct from the 3s silent-retry
+            // delay because signed-replay is a deterministic state error,
+            // not a transient provider condition.
+            await new Promise(r => setTimeout(r, 1_000));
+
+            const retryResult = await runWithModelRetry({
+              session,
+              messageText,
+              promptImages,
+              config: { provider: config.provider, model: config.model },
+              resolvedModel: resolvedModel ? `${resolvedModel.provider}:${resolvedModel.id}` : undefined,
+              timeoutConfig: {
+                promptTimeoutMs: effectiveTimeout.promptTimeoutMs,
+                retryPromptTimeoutMs: effectiveTimeout.retryPromptTimeoutMs,
+              },
+              deps: {
+                eventBus: deps.eventBus,
+                logger: deps.logger,
+                authRotation: deps.authRotation,
+                fallbackModels: deps.fallbackModels,
+                modelRegistry: deps.modelRegistry,
+                agentId,
+                sessionKey: formatSessionKey(sessionKey),
+                providerHealth: deps.providerHealth,
+                onResetTimer: (fn) => { onResetTimer(fn); },
+              },
+            });
+            promptSucceeded = retryResult.succeeded;
+            promptError = retryResult.error;
+
+            // Re-check for empty response after retry; mirror the
+            // silent-retry post-check semantics so the recovery event
+            // reports a faithful succeeded flag.
+            let recovered = promptSucceeded;
+            if (promptSucceeded) {
+              const retryText = session.getLastAssistantText?.() ?? "";
+              if (retryText === "") {
+                const retryBridgeResult = bridge.getResult();
+                if ((retryBridgeResult.llmCalls ?? 0) > 0 && !retryBridgeResult.textEmitted) {
+                  recovered = false;
+                  promptSucceeded = false;
+                  const llmDetail = retryBridgeResult.lastLlmErrorMessage
+                    ? ` — ${retryBridgeResult.lastLlmErrorMessage}`
+                    : "";
+                  promptError = new Error(
+                    `Signed-replay self-heal failed: ${retryBridgeResult.llmCalls} LLM call(s) produced empty response after retry (finishReason: ${retryBridgeResult.finishReason ?? "unknown"})${llmDetail}`,
+                  );
+                }
+              }
+            }
+
+            deps.eventBus.emit("execution:signed_replay_recovered", {
+              agentId: agentId ?? "default",
+              sessionKey: formatSessionKey(sessionKey),
+              blocksRemoved,
+              thoughtSignaturesStripped,
+              succeeded: recovered,
+              timestamp: Date.now(),
+            });
+
+            if (recovered) {
+              deps.logger.info(
+                {
+                  blocksRemoved,
+                  thoughtSignaturesStripped,
+                  recovered: true,
+                },
+                "Signed-replay self-heal succeeded",
+              );
+            } else {
+              deps.logger.warn(
+                {
+                  blocksRemoved,
+                  thoughtSignaturesStripped,
+                  hint: "Signed-replay self-heal retry also failed; declaring terminal failure",
+                  errorKind: "dependency" as ErrorKind,
+                },
+                "Signed-replay self-heal retry failed",
+              );
+            }
+
+            // Close the gate so this branch cannot be re-entered within the
+            // same runPrompt invocation.
+            // eslint-disable-next-line no-useless-assignment
+            silentRetryAttempted = true;
+          } else if (earlyClassification.category === "client_request") {
+            // Plain client_request: deterministic failure (e.g. unprocessable_entity,
+            // bare "cannot be modified" without signature noun). Retrying would
+            // reproduce the same failure. Short-circuit before the strip+retry
+            // block to avoid wasting tokens.
             deps.logger.warn(
               {
                 llmCalls: earlyBridgeResult.llmCalls,

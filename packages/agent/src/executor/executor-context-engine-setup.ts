@@ -30,6 +30,8 @@ import {
   getBreakpointIndexMapSize,
   getSessionLatches,
 } from "./executor-session-state.js";
+import { shouldDropSignedFields, type DriftCheck } from "./replay-drift-detector.js";
+import type { ErrorKind } from "@comis/infra";
 import { readFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
@@ -57,7 +59,7 @@ export interface ContextEngineSetupParams {
   sessionKey: string;
   msg: { channelType?: string; channelId?: string };
   sm: unknown;  // SessionManager -- typed as unknown to avoid SDK type export
-  session: { agent: { state: { model: { reasoning?: boolean; contextWindow?: number; maxTokens?: number; id?: string; provider?: string } | undefined } }; abortCompaction(): void };
+  session: { agent: { state: { model: { reasoning?: boolean; contextWindow?: number; maxTokens?: number; id?: string; provider?: string; api?: string } | undefined } }; abortCompaction(): void };
   resolvedModel: unknown;
   executionOverrides?: ExecutionOverrides;
   /** Cache break detector from stream setup */
@@ -115,6 +117,47 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // contextEngineOverrides removed from ExecutionOverrides -- compaction model resolved via operationModels chain
   const contextEngineConfig = config.contextEngine ?? ContextEngineConfigSchema.parse({});
 
+  // --- Replay drift memo (Fix #2) -----------------------------------------
+  // Memoized per-execute() so all pipeline runs in a single execute() see a
+  // consistent decision (cleaner + scrubber must agree). The closure reads
+  // the latest model identity each time (handles cycleModel mid-execute).
+  let memoizedDrift: DriftCheck | undefined;
+  const computeDriftIfNeeded = (): DriftCheck | undefined => {
+    if (memoizedDrift !== undefined) return memoizedDrift;
+    try {
+      const model = session.agent.state.model;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SessionManager interop
+      const fileEntries = ((sm as any)?.fileEntries ?? []) as ReadonlyArray<unknown>;
+      const idleMs = contextEngineConfig.replayDriftIdleMs ?? 30 * 60_000;
+      // Derive currentApi from model.api when present; otherwise fall back to
+      // the provider family (resolveProviderFamily strips -bedrock / -vertex).
+      const currentApi = model?.api ?? resolveProviderFamily(config.provider);
+      memoizedDrift = shouldDropSignedFields({
+        // Cast: shouldDropSignedFields tolerates malformed entries internally.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        fileEntries: fileEntries as any,
+        currentModel: {
+          id: model?.id,
+          provider: model?.provider ?? config.provider,
+          api: currentApi,
+        },
+        idleMs,
+      });
+      return memoizedDrift;
+    } catch (err) {
+      deps.logger.warn(
+        {
+          err,
+          hint: "Replay drift detection failed; defaulting to no scrub",
+          errorKind: "internal" as ErrorKind,
+        },
+        "Replay drift detection failed",
+      );
+      memoizedDrift = { drop: false };
+      return memoizedDrift;
+    }
+  };
+
   const contextEngine = createContextEngine(contextEngineConfig, {
     logger: deps.logger,
     eventBus: deps.eventBus,
@@ -127,6 +170,11 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         reasoning: model?.reasoning ?? false,
         contextWindow: model?.contextWindow ?? 128_000,
         maxTokens: model?.maxTokens ?? 8192,
+        id: model?.id,
+        provider: model?.provider,
+        // model.api is optional pi-ai metadata. Cast for the optional access
+        // since the structural type does not require it.
+        api: (model as { api?: string } | undefined)?.api,
       };
     },
     channelType: msg.channelType,
@@ -143,8 +191,17 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     getThinkingKeepTurnsOverride: () => {
       const latches = getSessionLatches(formattedKey);
       if (latches?.idleThinkingClear.get()) return 0; // Strip all thinking when idle
+      // When replay drift fires, also clamp keepTurns=0 so the cleaner agrees
+      // with the new signature-replay-scrubber. Defense in depth: the scrubber
+      // drops everything beyond the cache fence, but a future refactor that
+      // narrows the scrubber's scope must not leave the cleaner inconsistent.
+      const drift = computeDriftIfNeeded();
+      if (drift?.drop) return 0;
       return undefined; // Use default keepTurns
     },
+    // Replay drift mode getter (Fix #2): activates the
+    // signature-replay-scrubber pipeline layer when drift is detected.
+    getReplayDriftMode: () => computeDriftIfNeeded(),
 
     // LLM compaction deps
     getCompactionDeps: () => ({

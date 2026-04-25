@@ -19,6 +19,7 @@ describe("ContextEngineConfigSchema", () => {
       version: "pipeline",
       // Shared
       thinkingKeepTurns: 10,
+      replayDriftIdleMs: 30 * 60_000,
       compactionModel: "anthropic:claude-haiku-4-5-20250929",
       evictionMinAge: 15,
       // Pipeline
@@ -86,6 +87,7 @@ describe("ContextEngineConfigSchema", () => {
       enabled: false,
       version: "dag",
       thinkingKeepTurns: 5,
+      replayDriftIdleMs: 30 * 60_000,
       compactionModel: "groq:llama-3.3-70b-versatile",
       evictionMinAge: 20,
       historyTurns: 20,
@@ -114,6 +116,40 @@ describe("ContextEngineConfigSchema", () => {
       annotationTriggerChars: 400_000,
       summaryModel: "anthropic:claude-sonnet-4-5-20250929",
       summaryProvider: "anthropic",
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // replayDriftIdleMs (Fix #2)
+  // -------------------------------------------------------------------------
+
+  describe("replayDriftIdleMs", () => {
+    it("defaults to 30 minutes (1_800_000 ms)", () => {
+      const result = ContextEngineConfigSchema.parse({});
+      expect(result.replayDriftIdleMs).toBe(30 * 60_000);
+    });
+
+    it("accepts boundary values (60_000 and 24h)", () => {
+      const min = ContextEngineConfigSchema.parse({ replayDriftIdleMs: 60_000 });
+      expect(min.replayDriftIdleMs).toBe(60_000);
+
+      const max = ContextEngineConfigSchema.parse({ replayDriftIdleMs: 24 * 60 * 60_000 });
+      expect(max.replayDriftIdleMs).toBe(24 * 60 * 60_000);
+    });
+
+    it("rejects below minimum (59_999 ms)", () => {
+      const result = ContextEngineConfigSchema.safeParse({ replayDriftIdleMs: 59_999 });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects above maximum (24h + 1ms)", () => {
+      const result = ContextEngineConfigSchema.safeParse({ replayDriftIdleMs: 24 * 60 * 60_000 + 1 });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects non-integer", () => {
+      const result = ContextEngineConfigSchema.safeParse({ replayDriftIdleMs: 60_500.5 });
+      expect(result.success).toBe(false);
     });
   });
 
