@@ -89,3 +89,12 @@ After merging a worktree branch back, remove the worktree and its tracking branc
 git worktree remove .claude/worktrees/<name> --force
 git branch -D worktree-<name>
 ```
+
+## Releases
+
+When creating a GitHub release, also update every doc that pins the version string — the bump is incomplete without them. Sweep with:
+```bash
+grep -rn '<old-version>' --include='*.json' --include='*.mdx' --include='*.md' . \
+  | grep -v node_modules | grep -v 'dist/' | grep -v package-lock | grep -v CHANGELOG
+```
+Known version-pinned docs: `docs/installation/install-vps.mdx`, `docs/installation/install-linux.mdx`, `docs/get-started/quickstart.mdx`, `docs/reference/cli.mdx`. All 13 `packages/*/package.json` versions must move together. Bump, validate (`pnpm build && pnpm test && pnpm lint:security`), commit, push, then `gh release create vX.Y.Z`.
