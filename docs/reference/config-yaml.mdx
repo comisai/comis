@@ -4,9 +4,11 @@ description: "Complete reference for all configuration options with types, defau
 icon: "file-code"
 ---
 
+**What this is for:** the single source of truth for everything you can put in `~/.comis/config.yaml`. **Who it's for:** anyone tuning agent behavior, wiring channels, hardening the gateway, or composing layered configs across environments.
+
 Comis uses a single `config.yaml` file (or multiple layered files) to configure every aspect of the system. The configuration contains 37 top-level sections with 54+ nested schemas defining agent behavior, channel adapters, security policies, gateway settings, and more. All schemas use Zod strict validation -- unknown keys are rejected at startup.
 
-Config files are specified via the `COMIS_CONFIG_PATHS` environment variable (comma-separated). See the [Configuration Guide](/installation/configuration) for a step-by-step setup walkthrough.
+Config files are specified via the `COMIS_CONFIG_PATHS` environment variable (colon-separated, like the shell `PATH`). See the [Configuration Guide](/installation/configuration) for a step-by-step setup walkthrough.
 
 ## Config Loading
 
@@ -54,6 +56,101 @@ gateway:
       secret: "${COMIS_GATEWAY_TOKEN}"
       scopes: ["*"]
 ```
+
+### Complete Annotated Example
+
+A realistic single-tenant deployment running one Telegram-connected research assistant with persistent memory, gateway auth, scheduled heartbeat, and approval gates for sensitive actions. Copy this as a starting point and trim anything you don't need — defaults take care of the rest.
+
+```yaml
+# ~/.comis/config.yaml — annotated reference deployment
+tenantId: research-lab            # Used to scope memory and sessions
+logLevel: info                    # trace/debug/info/warn/error/fatal
+dataDir: ""                       # Empty resolves to ~/.comis
+
+# -- One agent: research assistant on Anthropic Sonnet 4.5 --------------------
+agents:
+  research-bot:
+    name: "Research Bot"
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+    maxSteps: 50                  # Reasoning steps per execution
+    cacheRetention: long          # Anthropic prompt cache: long beats short
+    budgets:
+      perExecution: 1000000       # 1M tokens per single run
+      perHour:      5000000
+      perDay:       50000000
+    rag:
+      enabled: true               # Auto-retrieve relevant memory before LLM call
+      maxResults: 8
+      minScore: 0.15
+    skills:
+      toolPolicy:
+        profile: full             # minimal | coding | messaging | supervisor | full
+        deny: ["exec"]            # No shell exec for this agent
+    session:
+      resetPolicy:
+        mode: hybrid              # daily + idle whichever fires first
+        dailyResetHour: 4
+        idleTimeoutMs: 14400000   # 4 hours
+    scheduler:
+      heartbeat:
+        enabled: true             # Proactive check-ins
+        intervalMs: 1800000       # 30 min
+
+# -- One inbound channel ------------------------------------------------------
+channels:
+  telegram:
+    enabled: true
+    botToken: "${TELEGRAM_BOT_TOKEN}"
+    allowFrom: ["123456789"]      # Only this Telegram user can reach the agent
+    mediaProcessing:
+      transcribeAudio: true
+      analyzeImages:   true
+
+# -- Memory: SQLite + local embeddings ---------------------------------------
+memory:
+  dbPath: "memory.db"
+  walMode: true
+  embeddingModel: "text-embedding-3-small"
+  embeddingDimensions: 1536
+  retention:
+    maxAgeDays: 365               # Keep one year of memory entries
+    maxEntries: 0                 # 0 = no count limit
+
+# -- Gateway: HTTP + WebSocket on loopback only ------------------------------
+gateway:
+  enabled: true
+  host: "127.0.0.1"               # 0.0.0.0 only with TLS in front
+  port: 4766
+  tokens:
+    - id: cli-default
+      secret: "${COMIS_GATEWAY_TOKEN}"
+      scopes: ["*"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 200
+
+# -- Approvals: gate destructive actions -------------------------------------
+approvals:
+  enabled: true
+  defaultPolicy: prompt           # prompt | allow | deny
+  rules:
+    - match: { tool: "exec", argMatches: ["rm ", "DROP ", "delete from"] }
+      action: deny
+    - match: { tool: "exec" }
+      action: prompt
+
+# -- Scheduler: cron + heartbeat ---------------------------------------------
+scheduler:
+  cron:
+    enabled: true
+    defaultTimezone: "America/New_York"
+  heartbeat:
+    enabled: true
+    intervalMs: 600000            # 10 min global heartbeat coalescer
+```
+
+The values shown are real (not placeholders). Save it as `~/.comis/config.yaml`, populate `~/.comis/.env` with `TELEGRAM_BOT_TOKEN` and `COMIS_GATEWAY_TOKEN`, and `comis daemon start` will boot a working deployment.
 
 ## Quick Reference
 
@@ -792,6 +889,12 @@ Hono HTTPS server for JSON-RPC, WebSocket, and REST API access.
 |-----|------|---------|-------------|
 | `maxMessages` | `number` | `60` | Maximum messages per window |
 | `windowMs` | `number` | `60000` | Time window in ms |
+
+**Web Dashboard (gateway.web)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `true` | Mount the `@comis/web` SPA at `/app/*` and the REST/SSE API at `/api/*` (sharing gateway host/port/auth). When `false`, the daemon skips `/app/*`, `/api`, SSE, and the `/` → `/app/` redirect. |
 
 ```yaml
 gateway:

@@ -65,6 +65,49 @@ let the agent search, store, and manage memories as part of its reasoning
 process. See [Memory](/agents/memory) for details on the types of memories
 your agent can store and retrieve.
 
+## How retrieval works under the hood
+
+For developers and operators who want to know what is actually happening:
+
+1. **Query formulation** -- The current user message and recent conversation
+   context are used as the search query.
+2. **Hybrid memory search** -- The query goes to the
+   [memory store](/agents/memory) which combines two scoring methods:
+   SQLite FTS5 (BM25 text ranking) and vector similarity (cosine distance
+   over embeddings) when an embedding provider is configured.
+3. **Trust filtering** -- Hits are filtered by `includeTrustLevels`. By
+   default, only `system` and `learned` memories pass; `external` memories
+   (web pages, third-party API responses) are excluded unless you opt in.
+4. **Ranking and dedup** -- Hits are sorted by score, then deduplicated by
+   content fingerprint (first 200 characters) to avoid near-duplicates.
+5. **Budget enforcement** -- Hits are appended to a memory section until
+   `maxResults` or `maxContextChars` is reached. If a single hit would push
+   the section over budget, it is dropped (not truncated).
+6. **Provenance and sanitization** -- Each included memory is formatted
+   with its date, trust level, and source. External content is wrapped in
+   safety markers so the model treats it as untrusted input.
+7. **Injection** -- The formatted memory section is appended to the system
+   prompt as the dynamic preamble (so it never invalidates the cached
+   prefix -- see [Compaction](/agents/compaction#cache-stable-prompt-architecture)).
+
+The implementation is in `packages/agent/src/rag/rag-retriever.ts`, and the
+hybrid search engine lives in `packages/memory/src/hybrid-search.ts`.
+
+## What gets indexed
+
+RAG only retrieves what has been written to memory. Three things write to
+memory automatically:
+
+- **System facts** -- Hardcoded knowledge configured by you or platform admins.
+- **Learned facts** -- Extracted from past conversations by the background
+  memory review job (`packages/agent/src/memory/memory-review-job.ts`).
+- **Tool-stored facts** -- Anything your agent saves via `memory_store`
+  during a conversation.
+
+Web search results, API responses, and other transient content are NOT
+indexed by default. They appear as `external` trust-level entries only if
+your agent explicitly stores them.
+
 ## Configuration
 
 | Option | Type | Default | What it does |

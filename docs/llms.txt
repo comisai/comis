@@ -19,6 +19,7 @@
 - [Requirements](https://docs.comis.ai/installation/requirements): Hardware, software, and account prerequisites for running Comis
 - [Install on Linux](https://docs.comis.ai/installation/install-linux): Step-by-step installation guide for Ubuntu, Fedora, and Arch Linux
 - [Install with Docker](https://docs.comis.ai/installation/install-docker): Run Comis in a Docker container with Docker Compose
+- [Install on a VPS](https://docs.comis.ai/installation/install-vps): Deploy Comis on Hostinger, DigitalOcean, Hetzner, or any Ubuntu VPS in under 10 minutes
 - [Configuration Guide](https://docs.comis.ai/installation/configuration): Set up your config.yaml with required settings, channels, and customization
 - [Verify Your Installation](https://docs.comis.ai/installation/verify): Confirm that Comis is installed correctly and running as expected
 
@@ -45,6 +46,7 @@
 - [Slash Commands](https://docs.comis.ai/agents/slash-commands): All the commands you can type to control your agent
 - [Sessions](https://docs.comis.ai/agents/sessions): How Comis manages conversations between you and your agent
 - [Subagent Context Lifecycle](https://docs.comis.ai/agents/subagent-lifecycle): How Comis prepares, runs, and captures results from sub-agent sessions
+- [Context Management](https://docs.comis.ai/context-management): Plain-language overview of the 10-layer context engine pipeline that keeps conversations in budget
 - [Compaction](https://docs.comis.ai/agents/compaction): How Comis automatically manages conversation length
 - [Memory Recall (RAG)](https://docs.comis.ai/agents/rag): How your agent remembers past conversations when answering new questions
 - [Message Queue](https://docs.comis.ai/agents/queue): How Comis handles multiple messages and ensures orderly processing
@@ -55,6 +57,7 @@
 - [Models](https://docs.comis.ai/agents/models): Configuring AI providers, model selection, and automatic failover
 - [Safety](https://docs.comis.ai/agents/safety): How Comis protects you from unexpected costs and runaway agents
 - [Resilience](https://docs.comis.ai/agents/resilience): How Comis prevents silent failures from provider outages, hung prompts, and stuck sub-agents
+- [Cache Architecture](https://docs.comis.ai/agents/cache): How Comis manages the context cache — adaptive retention, microcompaction, JIT guide injection, and schema stripping
 
 ## Skills
 
@@ -113,6 +116,7 @@
 
 - [Operations](https://docs.comis.ai/operations): Running, monitoring, and maintaining your Comis installation
 - [Daemon](https://docs.comis.ai/operations/daemon): How the Comis daemon starts, runs, and shuts down
+- [Data Directory](https://docs.comis.ai/operations/data-directory): Everything Comis stores on disk — config, database, logs, secrets, traces, and workspace files
 - [Logging](https://docs.comis.ai/operations/logging): Understanding and viewing Comis logs
 - [Monitoring](https://docs.comis.ai/operations/monitoring): Health monitoring and system alerts
 - [Observability](https://docs.comis.ai/operations/observability): Token tracking, cost estimation, latency, and delivery tracing
@@ -120,6 +124,7 @@
 - [Web UI](https://docs.comis.ai/operations/web-ui): Setting up the Comis web dashboard
 - [systemd](https://docs.comis.ai/operations/systemd): Running Comis as a systemd service on Linux
 - [Docker](https://docs.comis.ai/operations/docker): Running Comis in a Docker container for production
+- [Docker Hub](https://docs.comis.ai/operations/docker-hub): Pulling and publishing official Comis images on Docker Hub
 - [pm2](https://docs.comis.ai/operations/pm2): Running Comis with the pm2 process manager
 - [Reverse Proxy](https://docs.comis.ai/operations/reverse-proxy): Putting Comis behind Nginx or Caddy for TLS and domain access
 - [Troubleshooting](https://docs.comis.ai/operations/troubleshooting): Solutions to common Comis issues
@@ -144,7 +149,7 @@
 - [Event Bus](https://docs.comis.ai/developer-guide/event-bus): 160 typed events across 4 domain subsystems for cross-module communication
 - [Delivery Pipeline](https://docs.comis.ai/architecture/delivery-pipeline): How outbound messages flow from agent response through crash-safe persistence to channel delivery
 - [Custom Adapters](https://docs.comis.ai/developer-guide/custom-adapters): Build a channel adapter from the ChannelPort interface to a working platform integration
-- [Plugins](https://docs.comis.ai/developer-guide/plugins): 11 lifecycle hooks and 3 extension registrations for customizing Comis behavior
+- [Plugins](https://docs.comis.ai/developer-guide/plugins): 13 lifecycle hooks (5 modifying, 8 void) and 4 extension registrations for customizing Comis behavior
 - [Custom Skills](https://docs.comis.ai/developer-guide/custom-skills): Advanced skill development with SkillPort, manifests, content scanning, and MCP integration
 - [Pipelines](https://docs.comis.ai/developer-guide/pipelines): Multi-agent execution graphs with DAG validation, dependency resolution, and parallel coordination
 - [Contributing](https://docs.comis.ai/developer-guide/contributing): Development setup, coding standards, testing conventions, and PR process
@@ -169,3 +174,4 @@
 - [OpenAI-Compatible API](https://docs.comis.ai/reference/openai-api): Complete request/response schema reference for /v1/chat/completions, /v1/models, and /v1/embeddings
 - [Webhooks](https://docs.comis.ai/reference/webhooks): Path-routed webhook ingestion with HMAC verification, template engine, and configurable presets
 - [Rate Limiting](https://docs.comis.ai/reference/rate-limiting): Multi-layer rate limiting reference covering HTTP, WebSocket, config patch, and injection detection layers
+- [ACP Server](https://docs.comis.ai/reference/acp-server): Agent Communication Protocol server for IDE and editor integrations over stdio

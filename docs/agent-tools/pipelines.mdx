@@ -4,9 +4,53 @@ description: "The pipeline tool for defining, executing, and managing multi-agen
 icon: "diagram-project"
 ---
 
-The `pipeline` tool lets agents define, execute, and manage multi-agent workflows as execution graphs (DAGs). Each node in a graph is a sub-agent task that runs independently. Nodes can execute in parallel when they have no dependencies, or wait for upstream nodes to complete before starting.
+**What it does:** Lets agents define, run, save, and monitor multi-agent execution graphs (DAGs). Each node is a sub-agent task; independent nodes run in parallel, dependent nodes wait their turn.
 
-For conceptual background on execution graphs, see [Execution Graphs](/agents/execution-graphs).
+**Who it's for:** Anyone who wants to coordinate more than one specialist agent on a single problem -- research teams, code review rotations, debate / vote setups, multi-step content workflows, gated trade execution.
+
+For the conceptual background -- node types, barrier modes, context modes, scheduling, and the architecture of the graph coordinator -- see [Execution Graphs](/agents/execution-graphs). This page is the developer reference for the `pipeline` tool itself.
+
+## From natural language to graph
+
+When a user describes a multi-agent workflow in chat, the agent translates it into a `pipeline` call. For example:
+
+```
+You: Have four analysts research NVDA in parallel, then write a final
+     buy/hold/sell recommendation that incorporates all four reports.
+```
+
+The agent calls `pipeline action: execute` with a 5-node graph. Four research nodes have no `depends_on` (they run in parallel); the final recommendation node depends on all four (`barrier_mode: all`):
+
+```yaml
+tool: pipeline
+action: execute
+label: "NVDA multi-analyst research"
+nodes:
+  - node_id: fundamentals
+    task: "Research NVDA fundamentals: revenue, margins, guidance."
+    agent: equity-analyst
+  - node_id: technicals
+    task: "Analyze NVDA technicals: trend, support/resistance, volume."
+    agent: ta-analyst
+  - node_id: macro
+    task: "Assess NVDA's macro context: AI cycle, capex, geopolitics."
+    agent: macro-analyst
+  - node_id: sentiment
+    task: "Sample NVDA news/social sentiment from the past 7 days."
+    agent: sentiment-analyst
+  - node_id: recommend
+    depends_on: [fundamentals, technicals, macro, sentiment]
+    barrier_mode: all
+    task: |
+      Synthesize a final BUY/HOLD/SELL recommendation for NVDA.
+      Fundamentals: {{fundamentals.result}}
+      Technicals:   {{technicals.result}}
+      Macro:        {{macro.result}}
+      Sentiment:    {{sentiment.result}}
+    agent: lead-pm
+```
+
+The graph coordinator runs the four analysts concurrently, blocks the recommendation node until all four return, then injects each upstream result into the prompt via `{{nodeId.result}}`. You can monitor the run with `pipeline action: status graph_id: <id>` and grab final outputs with `pipeline action: outputs graph_id: <id>`.
 
 ## Prerequisite
 
@@ -178,6 +222,7 @@ Each node in the `nodes` array accepts the following parameters:
 | `type_id` | `string` | No | Built-in node type: `agent`, `debate`, `vote`, `refine`, `collaborate`, `approval-gate`, or `map-reduce`. If omitted, the node runs as a regular single-agent task. |
 | `type_config` | `object` | No | Type-specific configuration. Required when `type_id` is set. See [Node Types](/developer-guide/pipelines#node-types) for config schemas per type. |
 | `context_mode` | `string` | No | Upstream output verbosity: `full` (default, complete outputs), `summary` (500 chars + shared dir reference), `none` (no automatic injection -- use `{{nodeId.result}}` for explicit data). |
+| `mcp_servers` | `string[]` | No | MCP server names whose tools should be pre-discovered for this node. Example: `["yfinance"]` pre-seeds the yfinance tools so the sub-agent can skip `discover_tools` calls. |
 
 ## Graph settings
 

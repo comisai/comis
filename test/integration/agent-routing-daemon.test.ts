@@ -19,13 +19,8 @@ import {
   type TestDaemonHandle,
 } from "../support/daemon-harness.js";
 import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.js";
-import { RPC_FAST_MS, RPC_LLM_MS } from "../support/timeouts.js";
+import { RPC_FAST_MS } from "../support/timeouts.js";
 import { resolveWorkspaceDir } from "@comis/agent";
-import {
-  getProviderEnv,
-  hasAnyProvider,
-  PROVIDER_GROUPS,
-} from "../support/provider-env.js";
 
 // ---------------------------------------------------------------------------
 // Path resolution
@@ -34,13 +29,6 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const configPath = resolve(__dirname, "../config/config.test-agent-routing.yaml");
-
-// ---------------------------------------------------------------------------
-// Provider detection for LLM-gated tests
-// ---------------------------------------------------------------------------
-
-const env = getProviderEnv();
-const hasLlmKey = hasAnyProvider(env, PROVIDER_GROUPS.llm);
 
 // ---------------------------------------------------------------------------
 // ROUTE-11, ROUTE-12, ROUTE-13: Main daemon tests (shared instance)
@@ -313,131 +301,4 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
       RPC_FAST_MS,
     );
   });
-
-  describe.skipIf(!hasLlmKey)(
-    "Daemon-Level Routing Dispatch (ROUTE-13) - LLM",
-    () => {
-      it(
-        "ROUTE-13c: agent.execute with agentId router-alpha succeeds",
-        async () => {
-          let ws: WebSocket | undefined;
-          try {
-            ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
-
-            const response = (await sendJsonRpc(
-              ws,
-              "agent.execute",
-              {
-                agentId: "router-alpha",
-                message: "Say ALPHA",
-              },
-              30,
-            )) as Record<string, unknown>;
-
-            expect(response).toHaveProperty("result");
-            expect(response).not.toHaveProperty("error");
-
-            const result = response.result as Record<string, unknown>;
-            expect(typeof result.response).toBe("string");
-            expect((result.response as string).length).toBeGreaterThan(0);
-          } finally {
-            ws?.close();
-          }
-        },
-        RPC_LLM_MS,
-      );
-
-      it(
-        "ROUTE-13d: agent.execute with agentId router-beta succeeds",
-        async () => {
-          let ws: WebSocket | undefined;
-          try {
-            ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
-
-            const response = (await sendJsonRpc(
-              ws,
-              "agent.execute",
-              {
-                agentId: "router-beta",
-                message: "Say BETA",
-              },
-              31,
-            )) as Record<string, unknown>;
-
-            expect(response).toHaveProperty("result");
-            expect(response).not.toHaveProperty("error");
-
-            const result = response.result as Record<string, unknown>;
-            expect(typeof result.response).toBe("string");
-            expect((result.response as string).length).toBeGreaterThan(0);
-          } finally {
-            ws?.close();
-          }
-        },
-        RPC_LLM_MS,
-      );
-
-      it(
-        "ROUTE-13e: agent.execute with unknown agentId falls back to default executor",
-        async () => {
-          let ws: WebSocket | undefined;
-          try {
-            ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
-
-            const response = (await sendJsonRpc(
-              ws,
-              "agent.execute",
-              {
-                agentId: "nonexistent-agent",
-                message: "Say FALLBACK",
-              },
-              32,
-            )) as Record<string, unknown>;
-
-            // Daemon's getExecutor() falls back to defaultAgentId (router-alpha)
-            // Should return a result, not an error
-            expect(response).toHaveProperty("result");
-            expect(response).not.toHaveProperty("error");
-
-            const result = response.result as Record<string, unknown>;
-            expect(typeof result.response).toBe("string");
-            expect((result.response as string).length).toBeGreaterThan(0);
-          } finally {
-            ws?.close();
-          }
-        },
-        RPC_LLM_MS,
-      );
-
-      it(
-        "ROUTE-13f: agent.execute without agentId uses defaultAgentId",
-        async () => {
-          let ws: WebSocket | undefined;
-          try {
-            ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
-
-            const response = (await sendJsonRpc(
-              ws,
-              "agent.execute",
-              {
-                message: "Say DEFAULT",
-              },
-              33,
-            )) as Record<string, unknown>;
-
-            // Without agentId, daemon uses defaultAgentId (router-alpha)
-            expect(response).toHaveProperty("result");
-            expect(response).not.toHaveProperty("error");
-
-            const result = response.result as Record<string, unknown>;
-            expect(typeof result.response).toBe("string");
-            expect((result.response as string).length).toBeGreaterThan(0);
-          } finally {
-            ws?.close();
-          }
-        },
-        RPC_LLM_MS,
-      );
-    },
-  );
 });

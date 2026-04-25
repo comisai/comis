@@ -145,6 +145,14 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
   let rpcCall: TestDaemonHandle["daemon"]["rpcCall"];
 
   beforeAll(async () => {
+    // Wipe the test dataDir so the daemon does not restore approval cache
+    // entries (restart-approval-cache.json) or pending requests
+    // (restart-approvals.json) from a prior test run -- those would
+    // auto-approve / auto-deny new requests via cache hits and break the
+    // deterministic pending-count and denial-flow assertions below.
+    const { rmSync } = await import("node:fs");
+    rmSync("/tmp/comis-test-approval-gate-e2e", { recursive: true, force: true });
+
     handle = await startTestDaemon({ configPath: CONFIG_PATH });
 
     // Access typed approvalGate directly (exposed via DaemonInstance)
@@ -654,22 +662,28 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
       30_000,
     );
 
-    // Skipped: approval-gate flow for admin trust level changed to auto-approve
-    // without going through the pending queue. The denial path is still covered
-    // by unit tests on the approval-gate module; this E2E variant needs a
-    // redesign to use a non-admin trust level.
-    it.skip(
+    it(
       "TEST-06-09: Tool wrapper triggers approval and returns denial on deny",
+      // Disable vitest's auto-retry. A retry would re-run the test against a
+      // daemon whose denial cache (60s TTL, in-memory only) still holds the
+      // denial from this test's first attempt, causing the second attempt to
+      // be auto-denied without ever creating a pending entry.
+      { retry: 0 },
       async () => {
-        // 1. Create the tool wired to daemon's rpcCall and approvalGate
-        const tool = createAgentsManageTool(rpcCall, approvalGate);
+        // 1. Create the tool wired to daemon's rpcCall and approvalGate.
+        // Wrap rpcCall to inject _trustLevel: "admin" so mutating RPC calls succeed.
+        const adminRpcCall: typeof rpcCall = (method, params) =>
+          rpcCall(method, { ...params, _trustLevel: "admin" });
+        const tool = createAgentsManageTool(adminRpcCall, approvalGate);
 
-        // 2. Start tool execute in a runWithContext scope with admin trust level
+        // 2. Start tool execute in a runWithContext scope with admin trust level.
+        // Use a distinct sessionKey from TEST-06-08 to avoid the batch-approval
+        // cache (keyed by `${sessionKey}::${action}`) auto-approving this request.
         const executePromise = runWithContext(
           {
             tenantId: "test",
             userId: "admin-operator",
-            sessionKey: "test:admin-operator:e2e-channel",
+            sessionKey: "test:admin-operator:e2e-deny-channel",
             traceId: randomUUID(),
             startedAt: Date.now(),
             trustLevel: "admin",
@@ -707,16 +721,20 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
           _trustLevel: "admin",
         });
 
-        // 6. Await the execute promise
-        const result = await executePromise;
-
-        // 7. Assert the result contains an error with denial reason
-        expect(result.content[0]!.text).toContain("Action denied");
-        expect(result.content[0]!.text).toContain("E2E deny test");
-        expect((result.details as { error: string }).error).toBeDefined();
-        expect((result.details as { error: string }).error).toContain(
-          "Action denied",
-        );
+        // 6. Tool wrapper throws on denial (admin-manage-factory.ts calls
+        // throwToolError when resolution.approved is false). Assert the
+        // rejection contains the action name and the denial reason from step 5.
+        let thrown: unknown;
+        try {
+          await executePromise;
+        } catch (err) {
+          thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(Error);
+        const message = (thrown as Error).message;
+        expect(message).toContain("Action denied");
+        expect(message).toContain("agents.create");
+        expect(message).toContain("E2E deny test");
       },
       30_000,
     );

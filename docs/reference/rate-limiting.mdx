@@ -4,6 +4,8 @@ description: "Multi-layer rate limiting reference covering HTTP, WebSocket, conf
 icon: "gauge-high"
 ---
 
+**What this is for:** which limits Comis enforces, where each one fires, and how to tune them. **Who it's for:** operators sizing a deployment and developers diagnosing 429/`-32000` responses.
+
 Comis implements four distinct rate limiting layers, each protecting a different attack surface. These layers operate independently and serve different purposes.
 
 ## Overview

@@ -156,11 +156,12 @@ automatically uses optimal refresh intervals for each platform:
 | Telegram | 4,000 ms | 5 s | 1 s margin before expiry |
 | Discord | 8,000 ms | 10 s | 2 s margin before expiry |
 | WhatsApp | 8,000 ms | ~10 s | Composing presence via Baileys |
-| Signal | 4,000 ms | ~5 s | |
-| LINE | 15,000 ms | 20 s | Uses showLoadingAnimation |
-| iMessage | 4,000 ms | ~5 s | Process-based expiry |
+| Signal | 4,000 ms | ~5 s | `sendTyping` JSON-RPC call to signal-cli |
+| LINE | 15,000 ms | 20 s | Uses `showLoadingAnimation` |
+| iMessage | _(none)_ | _(n/a)_ | No typing API in `imsg` -- defaults to `never` |
 | IRC | _(none)_ | _(n/a)_ | No typing API -- defaults to `never` |
-| Slack | _(none)_ | _(n/a)_ | No typing API -- defaults to `never` |
+| Slack | _(none)_ | _(n/a)_ | Slack does not expose a bot typing API -- defaults to `never` |
+| Email | _(none)_ | _(n/a)_ | Polled inbox, no presence concept -- defaults to `never` |
 
 These defaults are applied automatically. You can override the refresh interval
 per channel with `typingRefreshMs` in the per-channel streaming config.
@@ -329,14 +330,15 @@ each platform's native format before sending:
 
 | Platform | Format | What is preserved |
 |---|---|---|
-| Discord | Markdown | Bold, italic, code blocks, links, lists, headers |
-| Telegram | HTML | Bold, italic, code blocks, links, lists |
-| Slack | mrkdwn | Bold, italic, code blocks, links, lists |
+| Discord | Markdown | Bold, italic, code blocks, links, lists, headers, spoilers |
+| Telegram | HTML | Bold, italic, underline, strikethrough, code blocks, links, blockquotes, spoilers |
+| Slack | mrkdwn | Bold, italic, strikethrough, code blocks, links, lists |
 | WhatsApp | Plain text | Formatting stripped (WhatsApp does not support bot formatting) |
-| Signal | Plain text | Formatting stripped |
+| Signal | Signal text styles | Bold, italic, monospace, strikethrough, spoiler |
 | iMessage | Plain text | Formatting stripped |
-| LINE | Flex Messages | Rich layout when using Flex, otherwise plain text |
-| IRC | Plain text | IRC control codes for bold only |
+| LINE | Flex Messages | Rich layout via Flex; otherwise plain text |
+| IRC | IRC control codes | Bold, italic, color, strikethrough |
+| Email | HTML | Full HTML output with linkified URLs |
 
 ## Delivery hooks
 

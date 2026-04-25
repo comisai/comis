@@ -41,7 +41,40 @@ Here are some of the actions you will see most frequently in your audit logs:
 | `approval.deny` | `mutate` | An operator denied a pending action |
 | `injection.detect` | `read` | A potential jailbreak attempt was detected |
 
-For the complete list of all action classifications, see the [Action Classifier Reference](/reference/action-classifier).
+For the complete list of all action classifications (178 actions across 21 categories), see the [Action Classifier Reference](/reference/action-classifier).
+
+### Example Audit Log Entry
+
+A real (sanitized) audit event from `~/.comis/logs/daemon.log`:
+
+```json
+{
+  "level": 30,
+  "time": "2026-04-25T14:30:00.000Z",
+  "module": "audit",
+  "audit": true,
+  "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+  "tenantId": "default",
+  "agentId": "code-assistant",
+  "userId": "user-123",
+  "actionType": "file.delete",
+  "classification": "destructive",
+  "outcome": "success",
+  "traceId": "trace-7e8f9a0b1c2d",
+  "duration": 142,
+  "metadata": {
+    "toolName": "file_delete",
+    "path": "build/old.tar.gz",
+    "approvalId": "appr-abc-123"
+  },
+  "msg": "Audit event"
+}
+```
+
+Note that the `metadata` object never contains the secret values themselves --
+only the *names* of secrets that were accessed and the paths involved. The
+`msg` field is constant (`"Audit event"`) so structured queries key off the
+`audit` boolean and the typed fields above.
 
 ## Viewing Audit Logs
 
@@ -61,7 +94,7 @@ Audit events are written to the standard Comis log output as structured JSON. Yo
 
 ```bash
 # View recent audit events from the log file
-grep '"audit"' ~/.comis/logs/comis.log | tail -20
+grep '"audit"' ~/.comis/logs/daemon.log | tail -20
 ```
 
 This is useful when you need to search through events on the command line or when the web dashboard is not available.
@@ -80,19 +113,34 @@ Common aggregation patterns include:
 Start with the web dashboard for quick checks. Move to log aggregation when you need historical analysis, alerts, or compliance reporting.
 </Tip>
 
-## Event Aggregation
+## Event Aggregation (Sliding-Window Dedup)
 
-When the same event fires many times in quick succession -- for example, a user repeatedly triggering jailbreak detection -- Comis aggregates these events within 60-second windows. Instead of flooding your logs with hundreds of identical entries, you see a single aggregated event with a count. This keeps your audit log readable without losing information.
+When the same event fires many times in quick succession -- for example, a user repeatedly triggering jailbreak detection -- Comis aggregates these events using a **sliding 60-second window per event source**. Instead of flooding your logs with hundreds of identical entries, you see a single aggregated event with a count. This keeps your audit log readable without losing information.
 
-Aggregated events include:
+Events are bucketed by **source type** -- `user_input`, `tool_output`, `external_content`, `memory_write` -- so a flood of jailbreak detections in user input does not suppress a separate flood in memory writes. The first event in a window opens a bucket and arms a `setTimeout`; subsequent events in the same window increment the count and add their unique patterns (up to 10 per summary). When the timer fires, a single `security:injection_detected` summary event is emitted with the accumulated count and patterns.
 
-- The original event details (agent, action, classification)
-- A count of how many times the event occurred
+Aggregated summaries include:
+
+- The source type (user_input, tool_output, external_content, memory_write)
+- A count of how many times the event occurred in the window
+- Up to 10 unique patterns that triggered the detection
 - The time window over which events were grouped
 
-This deduplication is automatic and requires no configuration. Individual event details are preserved in the detailed log output if you need them.
+Timers use `unref()` so a pending aggregation does not block daemon shutdown, and the aggregator's `flush()` method emits all pending summaries immediately on demand. This deduplication is automatic and requires no configuration.
 
-For example, if the same user triggers jailbreak detection 15 times in 30 seconds, your audit log will show a single aggregated event with a count of 15 rather than 15 separate entries. When the 60-second window closes, any new occurrences start a fresh aggregation window.
+## Storage and Retention
+
+Audit events live in two places:
+
+| Location | Format | Use case |
+|----------|--------|----------|
+| **Daemon log file** (`~/.comis/logs/daemon.log`) | One JSON line per event (Pino) | Default location; persists across restarts; ingested by log-aggregation tools |
+| **In-memory event bus** | TypedEventBus emission | Real-time consumption by the web dashboard, RPC subscribers, and the audit aggregator |
+
+Comis itself does not impose a retention policy on the log file -- rotation
+and retention are handled by your existing log-management stack (logrotate,
+journald, Datadog, etc.). The aggregator's in-memory state is only the
+current sliding window; once a summary fires, the bucket is freed.
 
 ## Trace Correlation
 
@@ -102,7 +150,7 @@ When investigating an incident, start with the audit event that caught your atte
 
 ```bash
 # Find all audit events for a specific trace
-grep 'trace-abc-123' ~/.comis/logs/comis.log
+grep 'trace-abc-123' ~/.comis/logs/daemon.log
 ```
 
 This is especially valuable when debugging approval workflows, where a single user action may trigger classification, confirmation, approval, and execution events across multiple agents.

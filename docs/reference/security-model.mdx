@@ -12,6 +12,35 @@ code.
 For a user-friendly overview of how these layers work together, see
 [Defense in Depth](/security/defense-in-depth).
 
+## Threat Model
+
+Comis operates under a single root assumption: **the LLM is the attack
+surface**. Every other design decision flows from that.
+
+### Trust Boundaries
+
+| Side | What lives there | Trust |
+|------|------------------|-------|
+| **Trusted** | Operator config, the daemon process, secrets in the encrypted store, the action registry, the gateway token store | Authoritative |
+| **Semi-trusted** | The LLM (Anthropic / OpenAI / etc.) | Verified outputs only |
+| **Adversarial** | User messages on chat channels, fetched web pages, emails, MCP tool outputs, RAG memory entries fetched at runtime | Treated as untrusted by default |
+
+Every external input is wrapped, scanned, or filtered before it reaches the
+prompt. Every model output is scanned before it reaches the user. Every tool
+call is classified before it executes. The architecture never assumes any
+single check will catch everything.
+
+### STRIDE Coverage
+
+| Threat | Covered by |
+|--------|------------|
+| **S**poofing | Bearer token + mTLS at gateway; email sender filter |
+| **T**ampering | AES-256-GCM auth tags on encrypted secrets; config redaction |
+| **R**epudiation | Audit aggregator + structured event schema with traceId |
+| **I**nformation disclosure | Output guard, log sanitizer, config redaction, scoped secrets, canary tokens |
+| **D**enial of service | Injection rate limiter, budget guard, circuit breaker, audit aggregator dedup, ReDoS guard on log sanitizer |
+| **E**levation of privilege | Action classifier (fail-closed), approval gate, exec sandbox, exec security validator, safe path, SSRF guard, tool policy |
+
 ---
 
 ## Input Layer
@@ -71,6 +100,9 @@ matches within the same category do not multiply the weight).
 | `special_tokens` | 0.3 | Special token delimiters (`<\|...\|>` patterns) |
 | `role_markers` | 0.2 | Role boundary markers, assistant role markers |
 
+The 13 categories in the table above are evaluated each scan. Pattern constants
+are imported from `injection-patterns.ts`.
+
 #### Risk Levels and Thresholds
 
 | Risk Level | Score Range | Action |
@@ -104,7 +136,7 @@ backticks) is stripped before pattern matching. This minimizes false positives
 on technical content that legitimately discusses prompt injection or system
 commands.
 
-#### InputGuardConfig Interface
+#### InputSecurityGuardConfig Interface
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -113,7 +145,7 @@ commands.
 | `action` | `"warn"` \| `"block"` | `"warn"` | Action for high-risk detections |
 
 <Info>
-Source: `createInputGuard()` and `PATTERN_WEIGHTS` in `packages/core/src/security/input-guard.ts`
+Source: `createInputSecurityGuard()` and `PATTERN_WEIGHTS` in `packages/core/src/security/input-security-guard.ts`
 </Info>
 
 ### Injection Rate Limiter
@@ -174,7 +206,7 @@ they are replaced with `[[MARKER_SANITIZED]]` before wrapping. This also
 handles fullwidth Unicode equivalents to prevent bypass via character
 substitution.
 
-**Suspicious pattern detection:** Content is scanned against 16 injection
+**Suspicious pattern detection:** Content is scanned against 17 injection
 patterns from `injection-patterns.ts`. When patterns are found, an
 `onSuspiciousContent` callback fires with the source, matched patterns, content
 length, and sender.
@@ -205,11 +237,30 @@ decisions.
 | `obfuscated_encoding` | 3 rules | WARN/CRITICAL | Long base64 80+ chars (WARN), long hex 20+ sequences (WARN); base64 decode piped (CRITICAL) |
 | `xml_breakout` | 2 rules | CRITICAL | Closing skill XML tags, system-level message tags (breakout attempts) |
 
-**Total: 18 scan rules** across 6 categories.
+**Total: 18 scan rules** across 6 categories in the skill scanner. (The
+broader injection-pattern library aggregates **65 patterns across 8
+categories** -- see the table below.)
 
 <Info>
 Source: `scanSkillContent()` and `CONTENT_SCAN_RULES` in `packages/skills/src/prompt/content-scanner.ts`
 </Info>
+
+### Injection Pattern Library (cross-cutting)
+
+The injection-pattern library powers multiple layers (input guard, external
+content wrapper, memory write validator, output guard, log sanitizer). It
+totals **65 distinct patterns across 8 categories**:
+
+| Category | Count | Module | Used by |
+|----------|-------|--------|---------|
+| Jailbreak | 17 | `patterns/jailbreak.ts` | Input guard, external content, memory write |
+| Role markers | 6 | `patterns/role-markers.ts` | Input guard |
+| Dangerous commands | 4 | `patterns/dangerous-commands.ts` | Memory write (critical), external content |
+| Secret formats | 5 | `patterns/secret-formats.ts` | Output guard |
+| Prompt extraction | 2 | `patterns/prompt-extraction.ts` | Output guard |
+| Credential logging | 6 | `patterns/credential-log.ts` | Log sanitizer |
+| Invisible chars | 2 | `patterns/invisible-chars.ts` | Sanitization pipeline |
+| Content scanner | 23 | `patterns/content-scanner.ts` | Skill content scanner, workspace scanner |
 
 ### Sanitization Pipeline
 
@@ -248,7 +299,7 @@ to `"destructive"` (fail-closed principle).
 | `mutate` | Modifiable side effects, logged | `file.write`, `memory.store`, `message.send` |
 | `destructive` | Irreversible or high-risk, may require confirmation | `file.delete`, `memory.clear`, `system.shutdown` |
 
-The registry contains 100+ registered actions organized by category. After
+The registry contains **178 registered actions across 21 categories**. After
 bootstrap, the registry is locked via `lockRegistry()` to prevent runtime
 classification downgrades by malicious plugins.
 
@@ -332,6 +383,52 @@ checked against blocked ranges before the actual fetch.
 Source: `validateUrl()`, `BLOCKED_RANGES`, and `CLOUD_METADATA_IPS` in `packages/core/src/security/ssrf-guard.ts`
 </Info>
 
+### Exec Security Validator
+
+Pre-sandbox shell-substitution check applied to every `system.exec` command
+string. Implemented as a quote-aware state machine (`ShellQuoteTracker`) that
+tracks normal / single / double / backtick context.
+
+| Pattern | Behavior |
+|---------|----------|
+| Command substitution `$(...)` | Rejected outside single quotes |
+| Backtick substitution `` `...` `` | Rejected outside single quotes |
+| Process substitution `<(...)` / `>(...)` | Rejected |
+| Zsh process substitution `=(...)` | Rejected |
+| Zsh equals expansion `=cmd` at word boundary | Rejected |
+
+Returns `null` if safe, or an error message describing the dangerous pattern.
+The validator runs **before** the OS sandbox so it never even reaches
+bubblewrap/sandbox-exec. Quote-awareness avoids false positives on legitimate
+strings like `printf '$(echo)'` where the shell does not interpret the
+substitution.
+
+<Info>
+Source: `validateExecCommand()` and `ShellQuoteTracker` in `packages/skills/src/builtin/exec-security.ts`
+</Info>
+
+### Email Sender Filter
+
+Allowlist gating for the email channel.
+
+| Mode | Behavior |
+|------|----------|
+| `allowlist` (default) | Reject every sender not in `allowFrom` (case-insensitive) |
+| `open` | Accept any sender (not recommended for production) |
+
+Independent of the allowlist, `isAutomatedSender()` rejects bulk and
+automated mail by inspecting:
+
+- RFC 3834 `Auto-Submitted` header
+- `Precedence: bulk | junk | list`
+- `List-Unsubscribe` header
+- `X-Auto-Response-Suppress` header
+- `noreply` / `no-reply` address patterns
+
+<Info>
+Source: `isAllowedSender()` and `isAutomatedSender()` in `packages/channels/src/email/sender-filter.ts`
+</Info>
+
 ### Safe Path
 
 Validates file paths to prevent directory traversal attacks. Returns a resolved,
@@ -368,7 +465,7 @@ findings are reported but not redacted.
 
 #### Secret Patterns
 
-**13 critical patterns** (blocked and redacted):
+**Critical patterns** (blocked and redacted):
 
 | Pattern Name | Description | Redaction |
 |-------------|-------------|-----------|
@@ -386,7 +483,7 @@ findings are reported but not redacted.
 | `db_connection_string` | Database connection strings (`postgres://`, etc.) | `[REDACTED:db_connection_string]` |
 | `generic_api_key` | Generic API key assignments | `[REDACTED:generic_api_key]` |
 
-**2 warning patterns** (detected but not redacted):
+**Warning patterns** (detected but not redacted):
 
 | Pattern Name | Description |
 |-------------|-------------|
@@ -395,7 +492,7 @@ findings are reported but not redacted.
 
 #### Prompt Extraction Patterns
 
-**2 patterns** (warning severity, detect-only):
+**Prompt extraction patterns** (warning severity, detect-only):
 
 | Pattern Name | Description |
 |-------------|-------------|
@@ -450,7 +547,13 @@ Defense-in-depth regex-based credential scrubbing for log strings. This is a
 second line of defense after Pino's structured field redaction -- it catches
 credentials embedded in free-text log messages.
 
-**16 credential patterns** processed in order (more specific patterns first):
+Pino's structured-field redactor (the first line of defense) auto-redacts
+the canonical credential field names: `apiKey`, `token`, `password`,
+`secret`, `authorization`, `botToken`, `privateKey`, `cookie`,
+`webhookSecret`. The Log Sanitizer below covers credentials that escape into
+free-text log messages.
+
+**18 credential patterns** processed in order (more specific patterns first):
 
 | Pattern | Replacement | Description |
 |---------|-------------|-------------|
@@ -534,6 +637,31 @@ base64 (44+ chars). Only the first 32 bytes are used.
 Source: `createSecretsCrypto()` and `EncryptedSecret` in `packages/core/src/security/secret-crypto.ts`
 </Info>
 
+### Secret Reference Resolver (SecretRefResolver)
+
+Multi-source resolver for `SecretRef` values in YAML config. Three providers,
+all routed through `SecretManager` for the env case so every credential read
+is auditable.
+
+| Provider | Syntax | Behavior |
+|----------|--------|----------|
+| `env` | `env:provider/KEY_NAME` or `${KEY_NAME}` | Reads via SecretManager |
+| `file` | `file:provider/abs/path` (with optional `#/json/pointer`) | Absolute paths only, regular file check, no symlinks to restricted paths, max 1MB |
+| `exec` | `exec:provider/id` | JSON-RPC credential helper, default 10s timeout, validates `{ protocolVersion: 1, values: { [id]: string } }` |
+
+`resolveConfigSecretRefs()` walks a config recursively over a
+`structuredClone` (never mutates the input) and fails fast on the first
+resolution error.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `fileMaxBytes` | `1_048_576` | Max bytes a file provider will read |
+| `execTimeoutMs` | `10_000` | Max ms an exec provider may run |
+
+<Info>
+Source: `resolveSecretRef()`, `resolveConfigSecretRefs()` in `packages/core/src/security/secret-ref-resolver.ts`
+</Info>
+
 ### Config Redaction
 
 Before config objects are exposed via RPC (`config.read`), secret-bearing
@@ -555,6 +683,47 @@ Source: `redactConfigSecrets()` and `SECRET_FIELD_PATTERN` in `packages/core/src
 </Info>
 
 ---
+
+## Gateway / Transport Layer
+
+The gateway layer authenticates clients before any request enters the
+application.
+
+### Bearer Token Authentication
+
+Maps bearer tokens to client identities and scopes. Uses
+`crypto.timingSafeEqual()` for **constant-time** comparison and compares
+**every** entry in the token store even after a match, to prevent
+timing-based enumeration of valid tokens.
+
+| Component | Behavior |
+|-----------|----------|
+| Comparison | `crypto.timingSafeEqual()`, constant-time |
+| Iteration | All entries scanned even on hit |
+| Wildcard scope | `"*"` grants all scopes |
+| Scope check | `checkScope(token, requested)` returns boolean |
+
+<Info>
+Source: `createTokenStore()`, `checkScope()`, `extractBearerToken()` in `packages/gateway/src/auth/token-auth.ts`
+</Info>
+
+### mTLS Verifier
+
+Validates server certificate, key, and CA at startup; verifies clients
+against the configured CA at connection time. All validation happens via
+Node's built-in `X509Certificate` class -- no third-party crypto.
+
+| Check | When |
+|-------|------|
+| Server cert PEM format and expiry | Daemon startup (fail-fast) |
+| Server key PEM format | Daemon startup |
+| CA cert PEM format and expiry | Daemon startup |
+| Client cert validation | Per connection (Hono TLS layer) |
+| Client CN extraction | Per connection (`extractClientCN`) |
+
+<Info>
+Source: `validateCertificates()`, `extractClientCN()` in `packages/gateway/src/auth/mtls-verifier.ts`
+</Info>
 
 ## Audit
 

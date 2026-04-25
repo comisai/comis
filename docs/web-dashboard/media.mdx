@@ -11,6 +11,15 @@ The Media section provides two views: a **test playground** for verifying media 
 - `/media` -- opens the Media Test playground
 - `/media/config` -- opens the Media Configuration panel
 
+## Backing RPC
+
+- `media.providers` -- which providers are configured for each capability and whether the credentials work
+- `media.transcribe`, `media.synthesize`, `media.analyzeImage`, `media.describeVideo`, `media.extractDocument`, `media.fetchLink` -- one RPC per capability
+- `POST /media/upload` (HTTP, not RPC) -- multipart upload for audio/image/document files
+- `config.patch(section: "media", ...)` -- save provider/model changes via the **Edit in Config Editor** links
+
+Test calls are billed against your provider quota -- they hit the real API and produce real costs.
+
 ## What You See
 
 The Media section is split into two views accessible from the sidebar under a single "Media" item.

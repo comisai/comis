@@ -6,6 +6,25 @@ icon: "clock"
 
 The Scheduler view lets you set up recurring tasks that run automatically on a schedule. You can create and manage cron jobs, monitor their execution history, and check the health of your agents through heartbeat monitoring.
 
+**Who it's for:** operators who want their agents to do work on a clock (daily standup posts, hourly health checks) without writing code.
+
+## Routes
+
+- `/scheduler` -- scheduler view (defaults to Cron Jobs tab)
+- `/scheduler/:jobId` -- opens the same view focused on a specific job's editor
+
+## Backing RPC
+
+- `scheduler.list` -- jobs list
+- `scheduler.get(jobId)` -- single job + history
+- `scheduler.create(config)`, `scheduler.update(jobId, config)`, `scheduler.delete(jobId)` -- CRUD (writes back to `config.yaml` `scheduler` section)
+- `scheduler.run(jobId)` -- trigger immediately
+- `scheduler.history(limit?)` -- recent executions
+- `scheduler.heartbeat.*` -- per-agent heartbeat config and recent alerts/deliveries
+- `tasks.list` / `tasks.complete` / `tasks.dismiss` -- extracted-tasks tab
+
+Refresh is on demand; cards reload after each action.
+
 ## What You See
 
 The Scheduler view is organized into three tabs:

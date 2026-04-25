@@ -24,9 +24,9 @@ The content scanner checks skill bodies for six categories of dangerous patterns
   </Accordion>
 
   <Accordion title="Environment Harvesting" icon="key">
-    **Severity:** CRITICAL
+    **Severity:** WARN
 
-    Detects attempts to read sensitive environment variables where API keys, passwords, and secrets are often stored.
+    Detects attempts to read sensitive environment variables where API keys, passwords, and secrets are often stored. Findings are logged but do not block skill loading by default.
 
     **Examples caught:**
     - `printenv` commands
@@ -46,25 +46,25 @@ The content scanner checks skill bodies for six categories of dangerous patterns
   </Accordion>
 
   <Accordion title="Network Exfiltration" icon="globe">
-    **Severity:** CRITICAL
+    **Severity:** mixed (WARN for piped downloads, CRITICAL for reverse shells)
 
     Detects attempts to send your data to external servers without authorization.
 
     **Examples caught:**
-    - `curl | sh` patterns that download and execute remote code
-    - `wget -O- | bash` download-and-run chains
-    - Reverse shell patterns that open a connection back to an attacker
+    - `curl | sh` patterns that download and execute remote code (WARN)
+    - `wget -O- | bash` download-and-run chains (WARN)
+    - Reverse shell patterns that open a connection back to an attacker (CRITICAL)
   </Accordion>
 
   <Accordion title="Obfuscated Encoding" icon="eye-slash">
-    **Severity:** WARN
+    **Severity:** mixed (WARN for long encoded blobs, CRITICAL for decode-and-execute chains)
 
     Detects suspiciously encoded content that may be hiding malicious instructions. Encoding is not always malicious, but large encoded blocks in a skill body are a red flag.
 
     **Examples caught:**
-    - Unusually long base64-encoded strings
-    - Hex-encoded payloads
-    - `base64 -d | bash` decode-and-execute patterns
+    - Unusually long base64-encoded strings (WARN)
+    - Hex-encoded payloads (WARN)
+    - `base64 -d | bash` decode-and-execute patterns (CRITICAL)
   </Accordion>
 
   <Accordion title="XML Breakout" icon="code">

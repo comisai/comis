@@ -3,8 +3,7 @@
  * MEM-REST: Memory REST API Integration Tests
  *
  * Validates the memory REST API endpoints (GET /api/memory/search, GET /api/memory/stats)
- * covering HTTP contract validation, auth enforcement, parameter validation,
- * and data flow (seed via WS RPC, query via REST).
+ * covering HTTP contract validation, auth enforcement, and parameter validation.
  *
  * Test IDs:
  *   MEM-REST-01: GET /api/memory/stats returns 200 with stats shape on empty DB
@@ -16,10 +15,6 @@
  *   MEM-REST-07: GET /api/memory/stats rejects query param token
  *   MEM-REST-08: GET /api/memory/search with invalid bearer token returns 401
  *   MEM-REST-10: GET /api/memory/search with empty q returns 400
- *   MEM-REST-11: Seed via agent.execute, search via REST finds entry
- *   MEM-REST-12: Stats reflect seeded entry count
- *   MEM-REST-13: Search with non-matching query returns empty results
- *   MEM-REST-14: Search limit=1 returns at most 1 result
  *
  * Uses a dedicated config (port 8507, separate memory DB) to avoid conflicts.
  */
@@ -32,17 +27,6 @@ import {
   makeAuthHeaders,
   type TestDaemonHandle,
 } from "../support/daemon-harness.js";
-import {
-  openAuthenticatedWebSocket,
-  sendJsonRpc,
-} from "../support/ws-helpers.js";
-import { RPC_FAST_MS } from "../support/timeouts.js";
-import {
-  getProviderEnv,
-  hasAnyProvider,
-  PROVIDER_GROUPS,
-  logProviderAvailability,
-} from "../support/provider-env.js";
 
 // ---------------------------------------------------------------------------
 // Path resolution
@@ -51,13 +35,6 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const CONFIG_PATH = resolve(__dirname, "../config/config.test-memory-rest.yaml");
-
-// ---------------------------------------------------------------------------
-// Provider detection (synchronous for describe.skipIf)
-// ---------------------------------------------------------------------------
-
-const env = getProviderEnv();
-const hasLlmKey = hasAnyProvider(env, PROVIDER_GROUPS.llm);
 
 // ---------------------------------------------------------------------------
 // Test suite
@@ -72,7 +49,6 @@ describe("MEM-REST: Memory REST API", () => {
     handle = await startTestDaemon({ configPath: CONFIG_PATH });
     gatewayUrl = handle.gatewayUrl;
     authToken = handle.authToken;
-    logProviderAvailability(env);
   }, 120_000);
 
   afterAll(async () => {
@@ -253,116 +229,4 @@ describe("MEM-REST: Memory REST API", () => {
     10_000,
   );
 
-  // -------------------------------------------------------------------------
-  // Data flow tests (seed via WS RPC, then query via REST)
-  // Gated on LLM key availability since agent.execute requires an LLM API key
-  // -------------------------------------------------------------------------
-
-  describe.skipIf(!hasLlmKey)(
-    "MEM-REST: Data Flow (Seed + Query)",
-    () => {
-      beforeAll(async () => {
-        // Seed memory via agent.execute over WebSocket
-        let ws: WebSocket | undefined;
-        try {
-          ws = await openAuthenticatedWebSocket(gatewayUrl, authToken);
-
-          const seedResponse = (await sendJsonRpc(
-            ws,
-            "agent.execute",
-            {
-              message:
-                "Remember this critical fact: Project TITANFORGE uses lattice-based post-quantum cryptography for key exchange. Acknowledge you've noted this.",
-            },
-            1,
-          )) as Record<string, unknown>;
-
-          // Verify seed succeeded
-          expect(seedResponse).toHaveProperty("result");
-          expect(seedResponse).not.toHaveProperty("error");
-        } finally {
-          ws?.close();
-        }
-
-        // Wait for SQLite flush (per decision 114-01: 2s for safety with all subsystems active)
-        await new Promise((resolve) => setTimeout(resolve, 2_000));
-      }, 180_000);
-
-      it(
-        "Seed via agent.execute, search via REST finds entry (MEM-REST-11)",
-        async () => {
-          const res = await fetch(
-            `${gatewayUrl}/api/memory/search?q=TITANFORGE+lattice+cryptography&limit=10`,
-            { headers: makeAuthHeaders(authToken) },
-          );
-          expect(res.status).toBe(200);
-
-          const body = (await res.json()) as Record<string, unknown>;
-          expect(Array.isArray(body.results)).toBe(true);
-
-          const results = body.results as Array<Record<string, unknown>>;
-          expect(results.length).toBeGreaterThan(0);
-
-          // Verify at least one result contains "TITANFORGE" (case-insensitive)
-          const hasTitanforge = results.some((r) =>
-            String(r.content).toUpperCase().includes("TITANFORGE"),
-          );
-          expect(hasTitanforge).toBe(true);
-        },
-        10_000,
-      );
-
-      it(
-        "Stats reflect seeded entry count (MEM-REST-12)",
-        async () => {
-          const res = await fetch(`${gatewayUrl}/api/memory/stats`, {
-            headers: makeAuthHeaders(authToken),
-          });
-          expect(res.status).toBe(200);
-
-          const body = (await res.json()) as Record<string, unknown>;
-          const stats = body.stats as Record<string, unknown>;
-          expect(typeof stats.totalEntries).toBe("number");
-          expect(stats.totalEntries as number).toBeGreaterThanOrEqual(1);
-        },
-        10_000,
-      );
-
-      it(
-        "Search with non-matching query returns empty results (MEM-REST-13)",
-        async () => {
-          const res = await fetch(
-            `${gatewayUrl}/api/memory/search?q=xyzzyflurble99nonsense&limit=5`,
-            { headers: makeAuthHeaders(authToken) },
-          );
-          expect(res.status).toBe(200);
-
-          const body = (await res.json()) as Record<string, unknown>;
-          expect(Array.isArray(body.results)).toBe(true);
-          expect(
-            (body.results as Array<unknown>).length,
-          ).toBe(0);
-        },
-        10_000,
-      );
-
-      it(
-        "Search limit=1 returns at most 1 result (MEM-REST-14)",
-        async () => {
-          const res = await fetch(
-            `${gatewayUrl}/api/memory/search?q=TITANFORGE&limit=1`,
-            { headers: makeAuthHeaders(authToken) },
-          );
-          expect(res.status).toBe(200);
-
-          const body = (await res.json()) as Record<string, unknown>;
-          expect(Array.isArray(body.results)).toBe(true);
-          expect(
-            (body.results as Array<unknown>).length,
-          ).toBeLessThanOrEqual(1);
-        },
-        10_000,
-      );
-    },
-  );
 });

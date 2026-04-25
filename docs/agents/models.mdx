@@ -4,10 +4,43 @@ description: "Configuring AI providers, model selection, and automatic failover"
 icon: "microchip-ai"
 ---
 
-Comis works with multiple AI providers -- Anthropic (Claude), OpenAI (GPT),
-Google (Gemini), local models via Ollama, and more. You can set a default model
-for all agents, override it per agent, and configure automatic failover so your
-agents keep working even if one provider goes down.
+**What it does.** Picks which AI model answers each message — globally,
+per-agent, or per-task — and falls back to a backup model if the primary
+provider has a hiccup.
+
+**Who it is for.** Anyone setting up an agent. The plain-language section
+covers picking a default; the reference section covers per-agent overrides,
+fallback chains, and key rotation.
+
+Comis works with **13 AI providers**: Anthropic (Claude), OpenAI (GPT),
+Google (Gemini), Mistral, Groq, Ollama, OpenRouter, Together, Cerebras,
+xAI (Grok), DeepSeek, plus enterprise variants Amazon Bedrock and Azure
+OpenAI. You can set a default model for all agents, override it per agent,
+and configure automatic failover so your agents keep working even if one
+provider goes down.
+
+## All 13 providers at a glance
+
+| Provider | Canonical IDs | Typical models | Notes |
+|---|---|---|---|
+| **Anthropic** | `anthropic`, `anthropic-vertex`, `amazon-bedrock` | `claude-sonnet-4-5-20250929`, `claude-opus-4-20250514`, `claude-haiku-4-5` | Native ephemeral prompt cache (5m / 1h TTL); Vertex AI and Bedrock are alternate gateways to the same models |
+| **OpenAI** | `openai`, `azure-openai`, `azure-openai-responses`, `openai-codex` | `gpt-4o`, `gpt-4o-mini`, `gpt-5.4-mini`, `gpt-5.4-nano` | Responses API supports `store: true` completion storage |
+| **Google** | `google`, `google-vertex`, `google-gemini-cli`, `google-antigravity` | `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3-flash` | Explicit `CachedContent` API for prompt caching |
+| **Mistral** | `mistral` | `mistral-large`, `mixtral`, `codestral`, `pixtral`, `devstral`, `ministral` | Strict tool-call ID mode |
+| **Groq** | `groq` | `whisper-large-v3-turbo` (audio); LLM models via registry | Lowest-latency inference |
+| **Ollama** | `ollama` | Whatever you have pulled locally | Fully local; no API key required |
+| **OpenRouter** | `openrouter` | Aggregator — exposes 100+ models | One API key, many models |
+| **Together** | `together` | Open-weights models | |
+| **Cerebras** | `cerebras` | `llama-3.3-70b`, others | Wafer-scale inference |
+| **xAI (Grok)** | `xai` (alias `grok`) | `grok-2`, `grok-3` | Standard tool calls |
+| **DeepSeek** | `deepseek` | `deepseek-chat`, `deepseek-coder` | |
+| **Amazon Bedrock** | `amazon-bedrock` (alias `bedrock`, `aws-bedrock`) | Anthropic models via Bedrock | Anthropic family — see row 1 |
+| **Azure OpenAI** | `azure-openai`, `azure-openai-responses` (alias `azure`) | OpenAI models via Azure | OpenAI family — see row 2 |
+
+The full registry lives in
+`packages/agent/src/provider/capabilities.ts` and `pi-ai`'s static model
+catalog. Run `comis models scan` (or `node packages/cli/dist/cli.js models
+scan`) to live-validate which models your configured keys can actually reach.
 
 ## Choosing a model
 
@@ -60,7 +93,8 @@ use `anthropic/claude-sonnet-4-5-20250929`.
 
 Override the global default for specific agents. This is useful when different
 agents have different needs -- your main conversational agent might use Claude,
-while a code-focused agent uses GPT-4o.
+while a code-focused agent uses GPT-4o, a fast triage agent uses Groq, and a
+local-only agent uses Ollama.
 
 | Option | Type | Default | What it does |
 |--------|------|---------|--------------|
@@ -74,17 +108,29 @@ models:
 
 agents:
   default:
-    model: "default"        # Uses the global default (Claude Sonnet)
+    model: "default"                       # Global default (Claude Sonnet)
     provider: "default"
 
   code-helper:
-    model: "gpt-4o"         # This agent uses GPT-4o instead
+    model: "gpt-4o"                        # Long-context coding agent
     provider: "openai"
 
   quick-lookup:
-    model: "gemini-2.0-flash"  # This agent uses Gemini Flash for speed
+    model: "gemini-2.5-flash"              # Speed for quick answers
     provider: "google"
+
+  triage:
+    model: "llama-3.3-70b"                 # Cerebras for sub-second classification
+    provider: "cerebras"
+
+  private-notes:
+    model: "llama3.1:8b"                   # Local Ollama, no key required
+    provider: "ollama"
 ```
+
+A single Comis instance can mix all five at once — each agent picks
+independently, and key resolution is handled by the
+[Secret Manager](/reference/secret-manager).
 
 ### Level 3: Per-task routes
 
@@ -184,6 +230,29 @@ agents:
 In this example, if the primary Claude model fails, Comis tries GPT-4o next,
 then Gemini Flash. It also has two Anthropic API keys and rotates between them
 if one hits a rate limit.
+
+## Model capability matrix
+
+Different model families support different features. The capability matrix
+governs how Comis builds the request body for each provider.
+
+| Family | Context window (typical) | Prompt cache | Tool use | Vision | Reasoning blocks |
+|---|---|---|---|---|---|
+| Anthropic Claude (Sonnet/Opus/Haiku 4.x) | 200K | Ephemeral 5m / 1h | Yes | Yes | Yes |
+| OpenAI GPT-4o family | 128K | Implicit (provider-managed) | Yes | Yes | No |
+| OpenAI GPT-5.4 family | 200K+ | Implicit | Yes | Yes | Optional |
+| Google Gemini 2.5 / 3 | 1M | Explicit `CachedContent` | Yes | Yes | No |
+| Mistral Large / Codestral | 128K | None | Yes (strict ID mode) | Pixtral only | No |
+| Groq (Llama / Mixtral) | 128K | None | Yes | No | No |
+| Ollama (local) | Varies by model | None | If model supports | If model supports | If model supports |
+| OpenRouter | Per upstream | Per upstream | Per upstream | Per upstream | Per upstream |
+| Cerebras (Llama) | 128K | None | Yes | No | No |
+| xAI Grok | 128K | None | Yes | Limited | No |
+| DeepSeek | 64K-128K | None | Yes | No | No |
+
+The exact context window per concrete model is resolved at runtime by
+`packages/agent/src/model/context-window-resolver.ts`. To see the live
+catalog: `node packages/cli/dist/cli.js models list`.
 
 ## Key rotation
 

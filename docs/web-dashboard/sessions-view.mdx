@@ -6,6 +6,24 @@ icon: "messages"
 
 The Sessions view shows every conversation your agents have had. You can search for specific sessions, filter by agent or channel, review full conversation histories, and manage sessions with actions like reset, compact, export, and delete.
 
+**Who it's for:** anyone investigating a single conversation -- whether to audit what an agent did, debug a stuck session, or extract a transcript for analysis.
+
+## Routes
+
+- `/sessions` -- session list
+- `/sessions/:key` -- session detail (URL-encode the session key, which can contain colons and slashes)
+
+## Backing RPC
+
+- `session.list` -- list (filterable by tenant, agent, channel)
+- `session.status(key)` -- detail with messages, token usage, cache metrics
+- `session.delete(key)` -- delete
+- `session.reset(key)` -- clear conversation history
+- `session.compact(key)` -- summarize older messages
+- `session.export(key)` -- JSONL transcript download
+
+Refresh is on demand; the view does not poll.
+
 ## What You See
 
 ### Session List
@@ -30,11 +48,11 @@ Click any row (not the checkbox) to open the full session detail view.
 
 ## Session Details
 
-When you click a session row, you navigate to the detail view for that session. At the top, a breadcrumb trail lets you navigate back to the session list.
+When you click a session row, you navigate to the detail view for that session. The detail view is organized as a breadcrumb + info bar + actions bar at the top, followed by a **3-tab layout** (Conversation / Context State / Metrics) that lets you focus on the data you care about.
 
 ### Session Info Bar
 
-A summary bar displays key information about the session:
+A summary bar at the top displays key information about the session:
 
 - **Agent** -- which agent handled this conversation.
 - **Channel** -- which platform the conversation took place on.
@@ -51,26 +69,35 @@ Below the info bar, four action buttons let you manage the session:
 - **Export JSONL** -- downloads the full session as a JSONL file for backup or analysis.
 - **Delete** -- permanently removes the session and all its conversation history.
 
-### Conversation History
+### Conversation Tab
 
-A scrollable area shows the full conversation with role-based styling:
+The default tab. A scrollable area shows the full conversation with role-based styling:
 
 - **User messages** appear with a neutral background.
 - **Assistant messages** appear with an accent border on the left.
 - **System messages** appear centered in italics.
-- **Tool calls** appear in a bordered box with the tool name as a header and the input/output below.
+- **Tool calls** appear as expandable cards with the tool name as a header and the input/output below.
+- **Compaction markers** appear inline at points where the context was compacted.
 
 Each message includes a timestamp.
 
-### Session Statistics
+### Context State Tab
 
-At the bottom of the detail view, a stats grid shows:
+Lazy-loaded on first activation. Shows the session's current context state:
+
+- A **token budget segment bar** breaking down how the budget is split across system prompt, tools, context, and messages.
+- A **per-execution pipeline waterfall** with per-layer timing, useful for spotting context-assembly bottlenecks.
+
+### Metrics Tab
+
+Lazy-loaded on first activation. Shows session-level statistics:
 
 - **Input Tokens** -- tokens used by incoming messages.
 - **Output Tokens** -- tokens used by agent responses.
 - **Tool Calls** -- how many tools the agent invoked during this session.
 - **Compactions** -- how many times the session has been compacted.
 - **Resets** -- how many times the session has been reset.
+- **Cost** -- session-level spend rolled up from billing data.
 
 ## Common Tasks
 

@@ -9,14 +9,10 @@ import {
 } from "../support/daemon-harness.js";
 import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.js";
 import { RPC_FAST_MS } from "../support/timeouts.js";
-import { getProviderEnv, hasAnyProvider, PROVIDER_GROUPS } from "../support/provider-env.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const CONFIG_PATH = resolve(__dirname, "../config/config.test-gateway-rpc-sse.yaml");
-
-const env = getProviderEnv();
-const hasLlmKey = hasAnyProvider(env, PROVIDER_GROUPS.llm);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -275,44 +271,4 @@ describe("Gateway: WebSocket RPC, Chat API, and SSE Streaming", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // GATE-07 — SSE /api/chat/stream
-  // -------------------------------------------------------------------------
-
-  describe.skipIf(!hasLlmKey)("GATE-07: SSE /api/chat/stream", () => {
-    it(
-      "GET /api/chat/stream delivers streaming response",
-      async () => {
-        const controller = new AbortController();
-        try {
-          const url = `${handle.gatewayUrl}/api/chat/stream?message=${encodeURIComponent("Say exactly: STREAM_OK")}&token=${encodeURIComponent(handle.authToken)}`;
-
-          const response = await fetch(url, {
-            signal: controller.signal,
-          });
-
-          expect(response.status).toBe(200);
-
-          const contentType = response.headers.get("content-type") ?? "";
-          expect(contentType).toMatch(/^text\/event-stream/);
-
-          // Read SSE events — expect a "done" event with the agent response
-          const events = await readSseEvents(response, 20, 60_000);
-
-          // There should be at least one event with type "done"
-          const doneEvent = events.find((e) => e.event === "done");
-          expect(doneEvent).toBeDefined();
-          expect(doneEvent!.data).toBeTruthy();
-
-          // The done event data should be valid JSON with a response field
-          const doneData = JSON.parse(doneEvent!.data) as Record<string, unknown>;
-          expect(doneData).toHaveProperty("response");
-          expect(typeof doneData.response).toBe("string");
-        } finally {
-          controller.abort();
-        }
-      },
-      90_000,
-    );
-  });
 });

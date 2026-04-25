@@ -16,7 +16,7 @@ const securityRows = [
   {
     label: "Prompt injection",
     them: "No detection. Agents blindly execute instructions embedded in fetched web pages, emails, or user-provided content.",
-    us: "48 attack patterns across 13 weighted categories detected and blocked. External content is marked and isolated. Agents can't be tricked into treating fetched text as instructions.",
+    us: "65 attack patterns across 8 categories with weighted scoring detected and blocked. External content is wrapped with random delimiters and isolated. Agents can't be tricked into treating fetched text as instructions.",
     verdict: "comis",
   },
   {
@@ -91,7 +91,7 @@ const architectureRows = [
   {
     label: "Context management",
     them: "Naive truncation. When the context window fills up, old messages are silently dropped. No compression, no recovery.",
-    us: "8-layer context pipeline with dead content eviction, observation masking, LLM compaction with 3-level fallback, and post-compaction rehydration. DAG mode for hierarchical summarization.",
+    us: "8-stage context pipeline (10 implementations) with dead content eviction, observation masking, LLM compaction with 3-level fallback, and post-compaction rehydration. DAG mode for hierarchical summarization.",
     verdict: "comis",
   },
   {
@@ -109,13 +109,13 @@ const architectureRows = [
   {
     label: "Model support",
     them: "Often locked to one provider or requires significant reconfiguration to switch.",
-    us: "Any model, any provider - Claude, GPT, Gemini, Groq, Ollama, OpenRouter. Different agents can use different models. Switch anytime.",
+    us: "13 LLM providers wired (Anthropic, OpenAI, Google, Mistral, Groq, Ollama, OpenRouter, Together, Cerebras, xAI, DeepSeek, plus Bedrock/Vertex/Azure aliases). Different agents can use different models. Switch anytime.",
     verdict: "comis",
   },
   {
     label: "Tools",
     them: "Built-in tools only, or complex plugin development.",
-    us: "50+ tools via MCP. GitHub, Gmail, Notion, PostgreSQL, browser automation, shell. One-line integration.",
+    us: "58 built-in tools plus the MCP ecosystem - GitHub, Gmail, Notion, PostgreSQL, browser automation, shell. One config line per server.",
     verdict: "comis",
   },
   {

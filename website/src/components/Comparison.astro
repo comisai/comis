@@ -2,7 +2,7 @@
 ---
 const rows = [
   { label: "Authentication", them: "Often missing or optional", us: "Required by default, mTLS support", win: true },
-  { label: "Prompt injection", them: "No detection", us: "48 patterns across 13 weighted categories", win: true },
+  { label: "Prompt injection", them: "No detection", us: "65 patterns across 8 categories, weighted scoring", win: true },
   { label: "Memory safety", them: "Single trust level, poisonable", us: "Trust-partitioned - your words vs. the internet's", win: true },
   { label: "Secrets", them: "Plaintext in config, leaked in logs", us: "AES-256 encrypted, 18 redaction rules", win: true },
   { label: "Tool access", them: "Unchecked - full shell by default", us: "Approval gates, per-agent tool policies, OS-level exec sandbox", win: true },

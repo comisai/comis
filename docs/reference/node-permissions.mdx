@@ -14,7 +14,7 @@ Comis integrates with the Node.js `--permission` flag to provide OS-level sandbo
 
 The Node.js permission model (available in Node.js 22+) restricts what a child process can access at the operating system level. This provides a defense layer beneath application-level controls like tool policies and content scanning.
 
-**Key distinction:** The daemon itself does NOT run with `--permission`. It needs full access to manage channels, databases, and config files. Only child processes spawned for tool execution receive permission restrictions.
+**Key distinction:** Node.js's permission model is a process-level boundary. To enforce restrictions on child processes spawned during tool execution, the daemon process itself must be launched with `--permission` (children inherit via `NODE_OPTIONS`). Comis does not auto-inject these flags from config -- they must be supplied on the daemon command line. See "How It Works" below for the operator-driven flow and the MCP exception that strips `NODE_OPTIONS` for compatibility.
 
 ## Configuration
 
@@ -42,21 +42,42 @@ security:
 
 ## How It Works
 
-When `enableNodePermissions` is `true`, the daemon passes Node.js permission flags to child processes:
+<Warning>
+**Operator-driven enforcement.** Comis exposes the configuration surface
+(`security.permission.*`) but does not itself launch the daemon with
+`--permission`. Node.js applies the permission model only to the process
+that was launched with the `--permission` flag (and any children that
+inherit it via `NODE_OPTIONS`). To enforce these restrictions you must:
 
-1. **File system access:** `allowedFsPaths` controls both `--allow-fs-read` and `--allow-fs-write` flags. Paths not in this list are inaccessible to the child process.
+1. Launch the daemon under Node.js 22+ with `node --permission --allow-fs-read=... --allow-fs-write=... --allow-net=... packages/daemon/dist/daemon.js`.
+2. Mirror the same paths/hosts in `security.permission.allowedFsPaths` and `allowedNetHosts` so audit/security checks (e.g. the SSRF surface check in `packages/cli/src/security/checks/ssrf-surface.ts`) report the surface accurately.
 
-2. **Network access:** `allowedNetHosts` controls the `--allow-net` flag. Only connections to listed hosts are permitted.
+Setting `enableNodePermissions: true` alone does NOT pass `--permission`
+flags — it is a configuration declaration consumed today only by the
+security audit checker and admin UI. Always launch with the flags.
 
-3. **Child process spawning:** The child process inherits the restricted permissions. It cannot spawn further child processes unless explicitly allowed.
+Note: MCP stdio child processes are explicitly wrapped with
+`/usr/bin/env -u NODE_OPTIONS …` (see `packages/skills/src/integrations/mcp-client.ts`)
+to prevent NODE_OPTIONS-propagated permissions from breaking unrelated
+servers; design those MCP servers under the assumption they may run
+unsandboxed.
+</Warning>
+
+When the daemon process is launched with `--permission`:
+
+1. **File system access:** `allowedFsPaths` should mirror the `--allow-fs-read` / `--allow-fs-write` flags supplied to the daemon. Paths not in this list are inaccessible to the daemon and any child processes that inherit `NODE_OPTIONS`.
+
+2. **Network access:** `allowedNetHosts` should mirror `--allow-net`. Only connections to listed hosts are permitted.
+
+3. **Child process spawning:** Child Node processes inherit the daemon's permission flags via `NODE_OPTIONS` unless explicitly stripped (as the MCP launcher does).
 
 ### Permission Flag Mapping
 
 | Config Field | Node.js Flag | Effect |
 |-------------|-------------|--------|
-| `allowedFsPaths` | `--allow-fs-read`, `--allow-fs-write` | Restricts file system access to listed paths |
-| `allowedNetHosts` | `--allow-net` | Restricts outbound network to listed hosts |
-| (implicit) | `--permission` | Enables the permission model on the child process |
+| `allowedFsPaths` | `--allow-fs-read`, `--allow-fs-write` | Restricts file system access to listed paths (operator must pass the flags at daemon launch) |
+| `allowedNetHosts` | `--allow-net` | Restricts outbound network to listed hosts (operator must pass the flag at daemon launch) |
+| (implicit) | `--permission` | Must be set on the daemon launch command; not auto-injected by Comis |
 
 ## Limitations
 

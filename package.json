@@ -21,8 +21,6 @@
     "lint:security": "eslint --config eslint.config.js",
     "test": "vitest",
     "test:integration": "vitest run --config test/vitest.config.ts",
-    "test:integration:mock": "TEST_PROVIDER_MODE=mock vitest run --config test/vitest.config.ts",
-    "test:integration:real": "vitest run --config test/vitest.config.ts",
     "test:orchestrate": "npx tsx test/orchestrate.ts",
     "test:cleanup": "npx tsx test/support/cleanup-test-artifacts.ts"
   },

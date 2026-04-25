@@ -114,6 +114,56 @@ routing:
 Each agent can have its own workspace folder with separate identity files,
 giving it a unique personality and set of instructions.
 
+## Worked example: support agent on Slack, scheduler agent on Discord
+
+Say you want two distinct agents:
+
+- **Helper** answers customer questions in your Slack `#support` channel
+- **Pip** manages reminders and recurring jobs in your team Discord
+
+Here is the complete configuration:
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    name: Atlas
+    model: claude-sonnet-4-5-20250929
+    provider: anthropic
+
+  helper:
+    name: Helper
+    model: claude-sonnet-4-5-20250929
+    provider: anthropic
+    workspacePath: ~/.comis/workspaces/helper
+
+  pip:
+    name: Pip
+    model: claude-sonnet-4-5-20250929
+    provider: anthropic
+    workspacePath: ~/.comis/workspaces/pip
+
+routing:
+  defaultAgentId: default
+  bindings:
+    # Every Slack message goes to Helper
+    - channelType: slack
+      agentId: helper
+
+    # Every Discord message goes to Pip
+    - channelType: discord
+      agentId: pip
+```
+
+When a user posts in Slack `#support`, the router scores the message:
+`channelType=slack` matches the first binding (weight 1) → routed to `helper`.
+A Discord message matches the second binding instead → routed to `pip`. A
+message from a channel with no matching binding (say, the web dashboard)
+falls through to `default`.
+
+Each agent has its own workspace at `~/.comis/workspaces/helper` and
+`~/.comis/workspaces/pip`, so their personalities and operating instructions
+stay independent.
+
 <CardGroup cols={2}>
   <Card title="Identity" icon="id-card" href="/agents/identity">
     The workspace files that shape each agent's personality.

@@ -1,6 +1,6 @@
 ---
 title: "Event Bus"
-description: "160 typed events across 4 domain subsystems for cross-module communication"
+description: "Typed events across 4 domain subsystems for cross-module communication"
 icon: "tower-broadcast"
 ---
 
@@ -8,7 +8,7 @@ Comis uses a `TypedEventBus` for cross-module communication. Instead of packages
 
 ## How It Works
 
-The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All 160 events are defined in the `EventMap` interface, which is composed from 4 domain-specific sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`).
+The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All typed events are defined in the `EventMap` interface, which is composed from 4 domain-specific sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`).
 
 API methods include `emit()`, `on()`, `off()`, `once()`, `removeAllListeners()`, `listenerCount()`, and `setMaxListeners()`. All methods are constrained by `EventMap` -- you cannot emit an event name that does not exist in the map, and every payload is type-checked at compile time.
 
@@ -32,13 +32,13 @@ eventBus.emit("tool:executed", {
 
 ## Event Naming Convention
 
-Events follow a `subsystem:action` naming pattern (for example, `message:received`, `tool:executed`, `graph:started`). The 160 events are organized into 4 subsystems:
+Events follow a `subsystem:action` naming pattern (for example, `message:received`, `tool:executed`, `graph:started`). Events are organized into 4 subsystems:
 
 | Subsystem | Event Count | Scope |
 |-----------|-------------|-------|
-| `MessagingEvents` | 35 | Message lifecycle, sessions, subagent lifecycle, compaction, context, commands, announcements |
+| `MessagingEvents` | 37 | Message lifecycle, sessions, subagent lifecycle, compaction, context, execution control, announcements |
 | `AgentEvents` | 36 | Skills, tools, audit, observability, model selection, security, graphs, cache, SEP |
-| `ChannelEvents` | 43 | Channel lifecycle, queuing, streaming, typing, auto-reply, policies, delivery, steer |
+| `ChannelEvents` | 44 | Channel lifecycle, queuing, streaming, typing, auto-reply, policies, delivery, steer |
 | `InfraEvents` | 46 | Approvals, config, plugins, hooks, auth, diagnostics, media, scheduler, system, MCP, notifications, background tasks |
 
 ## Most Commonly Used Events
@@ -64,7 +64,7 @@ A quick reference for the events developers are most likely to need when buildin
 
 <AccordionGroup>
 
-<Accordion title="MessagingEvents (35 events)">
+<Accordion title="MessagingEvents (37 events)">
 
 Message lifecycle, session management, subagent lifecycle, compaction, context engine lifecycle, context engine metrics, response filtering, execution control, and dead-letter queue events.
 
@@ -86,8 +86,10 @@ Message lifecycle, session management, subagent lifecycle, compaction, context e
 | `context:dag_compacted` | conversationId, agentId, sessionKey, leafSummariesCreated, condensedSummariesCreated, maxDepthReached, totalSummariesCreated, durationMs, timestamp |
 | `context:integrity` | conversationId, agentId, sessionKey, issueCount, repairsApplied, errorsLogged, issueTypes, durationMs, timestamp |
 | `execution:aborted` | sessionKey, reason, agentId, timestamp |
+| `execution:budget_warning` | agentId, sessionKey, totalTokens, llmCallCount, projectedCallsLeft, timestamp |
 | `execution:output_escalated` | agentId, sessionKey, originalMaxTokens, escalatedMaxTokens, timestamp |
 | `execution:prompt_timeout` | agentId, sessionKey, timeoutMs, timestamp |
+| `execution:signed_replay_recovered` | agentId, sessionKey, blocksRemoved, thoughtSignaturesStripped, succeeded, timestamp |
 | `message:received` | message, sessionKey |
 | `message:sent` | channelId, messageId, content |
 | `message:streaming` | channelId, messageId, delta, accumulated |
@@ -178,9 +180,9 @@ Subscribe to this event for driver-level monitoring, logging, or triggering down
 
 </Accordion>
 
-<Accordion title="ChannelEvents (43 events)">
+<Accordion title="ChannelEvents (44 events)">
 
-Channel registration, command queuing, streaming delivery, typing indicators, auto-reply, send policies, debounce, group history, follow-up chains, priority lanes, elevated routing, retry engine, ack reactions, steer lifecycle, block coalescing, unified delivery pipeline, delivery queue, channel health monitoring, delivery hooks, and sub-agent proxy typing events.
+Channel registration, sender blocking, command queuing, streaming delivery, typing indicators, auto-reply, send policies, debounce, group history, follow-up chains, priority lanes, elevated routing, retry engine, ack reactions, steer lifecycle, block coalescing, unified delivery pipeline, delivery queue, channel health monitoring, delivery hooks, and sub-agent proxy typing events.
 
 | Event Name | Key Payload Fields |
 |------------|-------------------|
@@ -216,6 +218,7 @@ Channel registration, command queuing, streaming delivery, typing indicators, au
 | `retry:attempted` | channelId, chatId, attempt, maxAttempts, delayMs, error, timestamp |
 | `retry:exhausted` | channelId, chatId, totalAttempts, finalError, timestamp |
 | `retry:markdown_fallback` | channelId, chatId, originalParseMode, timestamp |
+| `sender:blocked` | channelType, senderId, channelId, timestamp |
 | `sendpolicy:allowed` | channelId, channelType, chatType, reason, timestamp |
 | `sendpolicy:denied` | channelId, channelType, chatType, reason, timestamp |
 | `sendpolicy:override_changed` | sessionKey, override, changedBy, timestamp |

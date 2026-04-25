@@ -30,11 +30,11 @@ below).
 <Steps>
   <Step title="Create a bot with BotFather">
     Open Telegram and search for **@BotFather** (the official bot for creating
-    bots).
+    bots — verified with a blue check).
 
     Send `/newbot` and follow the prompts:
-    1. Choose a display name for your bot (e.g. "My Comis Agent")
-    2. Choose a username ending in `bot` (e.g. `my_comis_agent_bot`)
+    1. Choose a display name for your bot (for example, **MyTeamBot**)
+    2. Choose a username ending in `bot` (for example, `my_team_comis_bot`)
 
     BotFather will confirm creation and display your bot token.
   </Step>
@@ -93,7 +93,8 @@ These options go under `channels.telegram` in your `config.yaml`:
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `enabled` | boolean | `false` | Turns on the Telegram adapter |
-| `botToken` | string / SecretRef | (required) | Bot authentication token from BotFather |
+| `botToken` | string / SecretRef | (required) | Bot authentication token from BotFather (env: `TELEGRAM_BOT_TOKEN`) |
+| `webhookUrl` | string | (optional) | Public webhook URL. When set, Telegram pushes updates over HTTPS instead of long-polling. |
 | `allowFrom` | string[] | `[]` (all) | Restrict to specific Telegram user IDs. Empty means all users can talk to the bot. |
 | `mediaProcessing.transcribeAudio` | boolean | `true` | Transcribe voice messages to text before passing to the agent |
 | `mediaProcessing.analyzeImages` | boolean | `true` | Describe images sent to the bot using AI vision |
@@ -101,22 +102,40 @@ These options go under `channels.telegram` in your `config.yaml`:
 | `mediaProcessing.extractDocuments` | boolean | `true` | Extract text from PDFs, DOCX, and other documents |
 | `mediaProcessing.understandLinks` | boolean | `true` | Fetch and summarize URLs included in messages |
 
+By default the adapter uses **long-polling** (Grammy runner with auto-retry on
+HTTP 429). Set `TELEGRAM_WEBHOOK_SECRET` in your `.env` if you switch to
+webhook delivery -- Comis uses it to verify the `X-Telegram-Bot-Api-Secret-Token`
+header on incoming requests.
+
 ## What your agent can do
 
 Once connected to Telegram, your agent can:
 
 - Send, edit, and delete messages in any chat it has access to
-- React to messages with emoji
+- React to messages with emoji (Telegram limits the supported emoji set)
 - Send inline buttons for user choices
 - Send rich cards with formatted content
-- Use HTML formatting (bold, italic, code, links, spoilers)
+- Use HTML formatting (bold, italic, code, links, spoilers, blockquotes, custom emoji)
 - Apply message effects (spoiler reveal, silent send)
 - Send file attachments up to 50 MB
+- Send native voice messages (audio attachments uploaded as Telegram voice notes)
 - Stream responses with live editing (updates every 300 ms)
 - Mention users in group chats
-- Manage forum topics (create, edit, close, reopen) in supergroups with forums enabled
+- Send native polls and stickers via [platform actions](/agent-tools/platform-actions) (`poll`, `sticker`)
+- Receive location and venue messages -- coordinates appear in the agent's
+  message metadata so the agent can react to "I'm at the office now"
+- Pin and unpin messages, set chat title and description, ban or promote
+  members, and manage forum topics (create, edit, close, reopen)
 
-Telegram supports native forum topics (threads) in supergroups. It does **not** support fetching message history.
+Telegram supports native forum topics (threads) in supergroups. It does **not**
+support fetching message history (Bot API limitation) or read receipts.
+
+<Tip>
+**File reference guard.** Markdown like `config.go` or `README.md` looks like a
+domain name to Telegram's link previewer, which generates broken preview cards.
+Comis automatically wraps such filenames in `<code>` tags before sending so
+your messages never contain phantom link cards. No configuration is needed.
+</Tip>
 
 ## Platform limits
 
@@ -180,6 +199,60 @@ Your agent can create, edit, close, and reopen forum topics using
 conversations programmatically -- for example, creating a new topic for each
 support ticket.
 </Tip>
+
+## Complete walkthrough: from zero to first reply
+
+Here is a top-to-bottom run for a brand-new bot called **MyTeamBot**:
+
+<Steps>
+  <Step title="Create the bot">
+    Open Telegram, message **@BotFather**, send `/newbot`, type **MyTeamBot**
+    as the display name, then `my_team_comis_bot` as the username.
+    BotFather replies with a token like
+    `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`.
+  </Step>
+
+  <Step title="Wire it into Comis">
+    Add to `~/.comis/.env`:
+
+    ```bash
+    TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+    ```
+
+    Add to `~/.comis/config.yaml` under `channels`:
+
+    ```yaml
+    channels:
+      telegram:
+        enabled: true
+        botToken: "${TELEGRAM_BOT_TOKEN}"
+    ```
+  </Step>
+
+  <Step title="Restart the daemon and verify">
+    Restart Comis:
+
+    ```bash
+    comis daemon stop && comis daemon start
+    ```
+
+    Tail the logs:
+
+    ```bash
+    comis daemon logs
+    ```
+
+    You should see a line like
+    `{"level":30,"module":"channel-telegram","msg":"Telegram adapter connected"}`.
+  </Step>
+
+  <Step title="Send the first message">
+    In Telegram, search for `@my_team_comis_bot`, tap **Start**, and send
+    `Hello!`. The bot shows a typing indicator, then replies with whatever
+    your agent's persona dictates -- streamed live with edits every 300 ms
+    until the response is complete.
+  </Step>
+</Steps>
 
 ## Troubleshooting
 

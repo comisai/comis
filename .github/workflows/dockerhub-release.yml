@@ -1,0 +1,213 @@
+name: Docker Hub Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# Secrets required (Settings → Secrets → Actions):
+#   DOCKERHUB_USERNAME — Docker Hub username (comisai)
+#   DOCKERHUB_TOKEN   — Docker Hub access token (Read/Write/Delete)
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build per-platform digests for the daemon image.
+  # amd64 and arm64 each run on ubuntu-latest (arm64 via QEMU emulation).
+  # Both variants (default + slim) are built per runner so the shared build
+  # stage layers are cached and the second variant is near-instant.
+  # ---------------------------------------------------------------------------
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-latest
+
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v4
+        if: matrix.platform == 'linux/arm64'
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # --- default variant ---
+      - uses: docker/build-push-action@v7
+        id: build-default
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: COMIS_VARIANT=default
+          cache-from: type=gha,scope=dh-default-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=dh-default-${{ matrix.platform }}
+          outputs: type=image,name=comisai/comis,push-by-digest=true,name-canonical=true,push=true
+
+      # --- slim variant (reuses cached build stage layers from default) ---
+      - uses: docker/build-push-action@v7
+        id: build-slim
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: COMIS_VARIANT=slim
+          cache-from: |
+            type=gha,scope=dh-slim-${{ matrix.platform }}
+            type=gha,scope=dh-default-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=dh-slim-${{ matrix.platform }}
+          outputs: type=image,name=comisai/comis,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digests
+        run: |
+          mkdir -p /tmp/digests/default /tmp/digests/slim
+          touch "/tmp/digests/default/${DEFAULT_DIGEST#sha256:}"
+          touch "/tmp/digests/slim/${SLIM_DIGEST#sha256:}"
+        env:
+          DEFAULT_DIGEST: ${{ steps.build-default.outputs.digest }}
+          SLIM_DIGEST: ${{ steps.build-slim.outputs.digest }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digests-default-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/default/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digests-slim-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/slim/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Merge per-platform digests into a multi-arch manifest — default variant
+  # Tags: 1.0.19 · 1.0 · latest
+  # ---------------------------------------------------------------------------
+  merge-default:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digests-default-*
+          path: /tmp/digests/default
+          merge-multiple: true
+
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: comisai/comis
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests/default
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
+            $(printf 'comisai/comis@sha256:%s ' *)
+
+  # ---------------------------------------------------------------------------
+  # Merge per-platform digests into a multi-arch manifest — slim variant
+  # Tags: 1.0.19-slim · 1.0-slim · latest-slim
+  # ---------------------------------------------------------------------------
+  merge-slim:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digests-slim-*
+          path: /tmp/digests/slim
+          merge-multiple: true
+
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: comisai/comis
+          flavor: |
+            suffix=-slim,onlatest=true
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests/slim
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') \
+            $(printf 'comisai/comis@sha256:%s ' *)
+
+  # ---------------------------------------------------------------------------
+  # Build and push web dashboard image (multi-arch, single buildx step)
+  # Tags: 1.0.19 · 1.0 · latest
+  # ---------------------------------------------------------------------------
+  build-web:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v6
+        id: web-meta
+        with:
+          images: comisai/comis-web
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.web
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.web-meta.outputs.tags }}
+          labels: ${{ steps.web-meta.outputs.labels }}
+          cache-from: type=gha,scope=dh-web
+          cache-to: type=gha,mode=max,scope=dh-web

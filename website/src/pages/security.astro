@@ -12,7 +12,7 @@ const layers = [
     category: "Perimeter",
     color: "coral",
     threat: "Prompt injection & jailbreaks",
-    how: "Semantic scoring engine with 13 weighted pattern categories, typoglycemia detection for scrambled-letter evasion, and code-block exclusion to avoid false positives. Three risk levels (low/medium/high) with configurable actions: pass, warn, reinforce, or block.",
+    how: "Semantic scoring engine over 65 patterns spanning 8 categories with weighted scoring (jailbreak, role markers, dangerous commands, secret formats, prompt extraction, credential logging, invisible chars, content scanner). Typoglycemia detection catches scrambled-letter evasion; code-block exclusion avoids false positives. Three risk levels (low/medium/high) with configurable actions: pass, warn, reinforce, or block.",
   },
   {
     name: "Output Guard",
@@ -206,10 +206,10 @@ const categories = [
           <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
             <div>
               <p class="text-4xl font-bold text-coral font-mono">22</p>
-              <p class="text-muted text-sm mt-2">Security layers</p>
+              <p class="text-muted text-sm mt-2">Categorical layers <span class="text-muted-light">(24 primitives)</span></p>
             </div>
             <div>
-              <p class="text-4xl font-bold text-white font-mono">40+</p>
+              <p class="text-4xl font-bold text-white font-mono">65</p>
               <p class="text-muted text-sm mt-2">Injection patterns</p>
             </div>
             <div>
@@ -343,10 +343,10 @@ const categories = [
       <div class="max-w-5xl mx-auto">
         <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">Defense in depth</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-          9 defense categories. 22 independent layers.
+          9 defense categories. 22 independent layers (24 primitives).
         </h2>
         <p class="text-muted text-lg mb-12 max-w-2xl">
-          Each layer protects against a specific attack vector. No single layer failing compromises the system.
+          Each layer protects against a specific attack vector. No single layer failing compromises the system. The marketing count of 22 maps to 24 distinct implementation primitives in code.
         </p>
 
         <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -367,9 +367,12 @@ const categories = [
     <section class="px-6 py-16 md:py-24">
       <div class="max-w-5xl mx-auto">
         <p class="text-teal font-semibold text-sm uppercase tracking-widest mb-4">Every layer explained</p>
-        <h2 class="text-3xl md:text-4xl font-bold text-white mb-12">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
           What each layer protects against - and how.
         </h2>
+        <p class="text-muted mb-12 max-w-2xl">
+          The first principle: <span class="text-white font-medium">treat the LLM as the attack surface, not the security boundary.</span> Every defense below works even if the model itself is fully compromised.
+        </p>
 
         <div class="space-y-4">
           {layers.map((layer, i) => (

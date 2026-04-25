@@ -4,22 +4,37 @@ description: "Discord, Telegram, Slack, and WhatsApp moderation and management a
 icon: "gavel"
 ---
 
-Platform action tools give agents moderation and management capabilities specific to each chat platform. Each platform has its own tool (`discord_action`, `telegram_action`, `slack_action`, `whatsapp_action`) with actions tailored to that platform's features.
+**What it does:** Wraps the native moderation and management APIs of Discord, Telegram, Slack, and WhatsApp so agents can kick users, manage roles, pin messages, archive channels, change group settings, and more -- all from inside a conversation.
+
+**Who it's for:** Agents that need to act as moderators or admins in a chat platform. These tools require both Comis [tool policy](/skills/tool-policy) (typically the `group:platform_actions` group) AND the underlying bot permissions on the platform itself. Granting Comis access does not bypass platform permissions; the bot must already have the relevant capability (e.g., "Kick Members" on Discord, group-admin status on Telegram or WhatsApp).
 
 ## Quick Reference
 
-| Platform | Tool Name | Actions |
-|----------|-----------|---------|
-| Discord | `discord_action` | 19 actions |
-| Telegram | `telegram_action` | 12 actions |
-| Slack | `slack_action` | 12 actions |
-| WhatsApp | `whatsapp_action` | 11 actions |
+| Platform | Tool Name | Action count | Guide |
+|----------|-----------|--------------|-------|
+| Discord | `discord_action` | 19 | [Discord Actions](#discord-actions) |
+| Telegram | `telegram_action` | 12 | [Telegram Actions](#telegram-actions) |
+| Slack | `slack_action` | 12 | [Slack Actions](#slack-actions) |
+| WhatsApp | `whatsapp_action` | 11 | [WhatsApp Actions](#whatsapp-actions) |
 
-All platform action tools follow the same pattern: call the tool with an `action` parameter specifying what to do, plus any additional parameters that action requires.
+All platform action tools follow the same pattern: call the tool with an `action` parameter specifying what to do, plus any additional parameters that action requires. The action set per platform reflects what each platform's bot/API actually exposes -- Slack and WhatsApp do not have direct equivalents of Discord's role system, for example, and Telegram's API is the only one that exposes native polls.
+
+## Auth and bot permissions
+
+Each tool reads its credentials from the same place its channel adapter does. There is no separate auth surface for platform actions -- if your bot is connected and can send messages, it can attempt platform actions, subject to the bot's own platform permissions.
+
+| Tool | Reads credentials from | Bot must have |
+|------|----------------------|---------------|
+| `discord_action` | `DISCORD_BOT_TOKEN` (same as the Discord adapter) | Server-side permissions per action: "Kick Members" for `kick`, "Ban Members" for `ban`, "Manage Roles" for role ops, "Manage Channels" for channel ops, "Manage Messages" for `pin/unpin` |
+| `telegram_action` | `TELEGRAM_BOT_TOKEN` | Bot must be a chat administrator with the relevant rights for ban / promote / pin / set_title / set_description |
+| `slack_action` | `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` | Bot scopes per action: `channels:manage`, `pins:write`, `channels:write.invites`, `channels:archive`, `bookmarks:write`, etc. -- configure in the Slack app's OAuth & Permissions screen |
+| `whatsapp_action` | Baileys auth dir (no env keys) | Bot must be a group admin for participant / settings / promote / demote ops |
+
+If a platform rejects the call (insufficient permission, missing scope, target not in scope), the tool returns a structured error with `errorKind: "platform"` and the platform's error message. The action classifier also gates destructive actions (kick, ban, archive, channelDelete, group_leave) behind user confirmation via `_confirmed: true`.
 
 ## Discord Actions
 
-The `discord_action` tool provides 19 actions for managing Discord servers, channels, threads, roles, and member moderation.
+The `discord_action` tool provides actions for managing Discord servers, channels, threads, roles, and member moderation.
 
 <AccordionGroup>
   <Accordion title="pin -- Pin a message" icon="thumbtack">
@@ -209,7 +224,7 @@ The `discord_action` tool provides 19 actions for managing Discord servers, chan
 
 ## Telegram Actions
 
-The `telegram_action` tool provides 12 actions for managing Telegram groups and channels.
+The `telegram_action` tool provides actions for managing Telegram groups and channels.
 
 <AccordionGroup>
   <Accordion title="pin -- Pin a message" icon="thumbtack">
@@ -323,7 +338,7 @@ The `telegram_action` tool provides 12 actions for managing Telegram groups and 
 
 ## Slack Actions
 
-The `slack_action` tool provides 12 actions for managing Slack workspaces and channels.
+The `slack_action` tool provides actions for managing Slack workspaces and channels.
 
 <AccordionGroup>
   <Accordion title="pin -- Pin a message" icon="thumbtack">
@@ -436,7 +451,7 @@ The `slack_action` tool provides 12 actions for managing Slack workspaces and ch
 
 ## WhatsApp Actions
 
-The `whatsapp_action` tool provides 11 actions for managing WhatsApp groups.
+The `whatsapp_action` tool provides actions for managing WhatsApp groups.
 
 <AccordionGroup>
   <Accordion title="group_info -- Get group information" icon="circle-info">
@@ -554,6 +569,53 @@ Platform actions are part of the `group:platform_actions` tool group and can be 
 <Info>
 If a platform action fails with a permissions error, check that your bot has the required permissions on that platform. The error message will typically indicate which permission is missing.
 </Info>
+
+## End-to-end example: auto-pin first message of the day
+
+A community-management workflow: at the start of each day, the agent finds the first user message in a channel and pins it as a "today's kickoff" anchor. This combines `cron`, the `message` tool's `fetch` action, and a platform action `pin` call.
+
+```
+You: Every weekday at 8am Eastern, find the first message posted in
+     #general after midnight today and pin it.
+```
+
+The agent registers a cron job:
+
+```yaml
+tool: cron
+action: add
+name: pin-first-message-of-day
+schedule_kind: cron
+schedule_expr: "0 8 * * 1-5"
+timezone: America/New_York
+payload_kind: agent_turn
+payload_text: >
+  Find the first message posted in #general today (after midnight in
+  America/New_York). Pin it using discord_action. If there are no
+  messages yet today, do nothing.
+```
+
+When the cron fires, the agent runs:
+
+```yaml
+# 1. Fetch recent messages
+tool: message
+action: fetch
+channel_type: discord
+channel_id: "general"
+limit: 100
+```
+
+The agent filters the fetched results client-side for the earliest message after the day boundary, then pins it:
+
+```yaml
+# 2. Pin the first message
+tool: discord_action
+action: pin
+message_id: "<id from step 1>"
+```
+
+If the bot lacks the "Manage Messages" permission, step 2 returns an error and the agent can post a notification asking the admin to grant the permission. For Telegram or Slack the same workflow swaps `discord_action` for `telegram_action` or `slack_action` -- the action name `pin` is identical across all three.
 
 ## Related
 

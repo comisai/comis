@@ -6,9 +6,20 @@ icon: "shield-check"
 
 Comis is designed with security as a priority. Every message, every tool call, and every stored piece of data is protected by multiple layers of defense -- most of which work automatically without any configuration.
 
+<Info>
+**Plain-language summary:** Comis assumes someone will eventually try to trick
+your agent. To make that hard, every message, response, tool call, and saved
+memory passes through 22 independent checks. If any one check is wrong, the
+others still hold. Most of them are on by default -- you don't have to do
+anything.
+</Info>
+
 ## Security at a Glance
 
-Comis uses a **defense-in-depth** approach to security. That means multiple independent protections work together, so if one layer ever fails, the others still keep you safe. Think of it like a castle with walls, a moat, guards, and locked doors -- no single protection is the only thing standing between you and a threat.
+Comis uses a **defense-in-depth** approach to security. 22 independent protections
+work together, so if one layer ever fails, the others still keep you safe. Think
+of it like a castle with walls, a moat, guards, and locked doors -- no single
+protection is the only thing standing between you and a threat.
 
 <AccordionGroup>
   <Accordion title="Encrypted Secrets" icon="lock">
@@ -82,13 +93,37 @@ Comis uses a **defense-in-depth** approach to security. That means multiple inde
 
     **Do I need to configure it?** No -- memory protection is automatic. Trust levels are assigned by source.
   </Accordion>
+
+  <Accordion title="Exec Sandbox" icon="box-archive">
+    **What it does:** Runs every shell command your agent issues inside a kernel-enforced sandbox. On Linux it uses Bubblewrap with full namespace isolation; on macOS it uses Apple's `sandbox-exec`. The sandbox limits what files the command can read or write and blocks network access by default.
+
+    **Why it matters:** Tool-using agents sometimes need to run commands. A sandbox makes sure that even if the agent is fooled into running something unwanted, the damage stays inside a small isolated playground.
+
+    **Do I need to configure it?** No -- the sandbox is automatic on supported platforms. See [Sandbox Reference](/reference/sandbox) to customize allowed paths.
+  </Accordion>
+
+  <Accordion title="Gateway Authentication" icon="key">
+    **What it does:** Protects the gateway -- the front door to your daemon -- with bearer-token authentication and optional mutual TLS (mTLS) for production deployments. Comparisons are timing-safe so attackers cannot guess tokens by measuring response time.
+
+    **Why it matters:** The gateway is how the CLI, web dashboard, and external integrations talk to Comis. Without authentication, anyone who can reach the port could run commands on your agents.
+
+    **Do I need to configure it?** Recommended for any non-localhost setup. The setup wizard generates a token automatically. See [Hardening](/security/hardening) to enable mTLS.
+  </Accordion>
+
+  <Accordion title="Runtime Safeguards" icon="shield-halved">
+    **What it does:** Adds three runtime guards that catch problems as they happen: a **circuit breaker** that pauses calls to a failing AI provider, a **step counter** that limits how many tool calls one message can trigger, and a **tool output sanitizer** that scrubs any leaked credentials from tool results before they reach the model.
+
+    **Why it matters:** Stops cascading failures, prevents runaway loops, and keeps secrets from leaking through chained tools.
+
+    **Do I need to configure it?** No -- runtime safeguards are on by default. See [Agent Safety](/agents/safety) to tune limits.
+  </Accordion>
 </AccordionGroup>
 
 ## Want the Full Picture?
 
 <CardGroup cols={2}>
   <Card title="Defense in Depth" icon="layer-group" href="/security/defense-in-depth">
-    All 15+ security layers explained in detail
+    All 22 defense layers explained in detail
   </Card>
   <Card title="Secrets Management" icon="key" href="/security/secrets">
     Managing your API keys and passwords safely

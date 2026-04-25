@@ -9,8 +9,8 @@ import SecretWarning from '/snippets/secret-warning.mdx';
 
 Connect your Comis agent to IRC servers and channels. IRC is the simplest
 adapter -- just point it at a server and join channels. Supports TLS encryption,
-NickServ authentication, and nick-based mentions. No file attachments or rich
-formatting.
+NickServ authentication, and nick-based mentions. No file attachments and no
+Markdown/HTML formatting (only IRC control codes for bold and color).
 
 ## Prerequisites
 
@@ -109,20 +109,23 @@ These options go under `channels.irc` in your `config.yaml`:
 
 Once connected to IRC, your agent can:
 
-- Send and receive messages in channels and direct messages
-- Respond when mentioned by nick (e.g., `comis-bot what time is it?`)
+- Send and receive messages in channels and direct messages (PRIVMSG)
+- Respond when mentioned by nick (for example, `comis-bot what time is it?`)
+- Format with IRC control codes (bold, italic, color, strikethrough)
+- Join, leave (`part`), and set channel topics via
+  [platform actions](/agent-tools/platform-actions)
 
 IRC does **not** support reactions, editing or deleting sent messages, fetching
-message history, file attachments, threads, buttons, cards or embeds, streaming
-(live-updating responses), or rich text formatting (only IRC control codes for
-bold and color).
+message history, file attachments, threads, typing indicators, buttons, cards
+or embeds, streaming (live-updating responses), or native polls.
 
 ## Platform limits
 
 | Limit | Value | What Comis does about it |
 |---|---|---|
-| Message length | 512 characters | Automatically splits every response into multiple lines with flood protection delays (500 ms between lines) |
+| Message length | 512 characters | Automatically splits every response into multiple lines with a 500 ms flood-protection delay between lines |
 | Attachment size | N/A | IRC does not support file attachments. The bot sends text only. |
+| Message IDs | None | IRC has no message IDs; Comis returns a synthetic `"sent"` identifier so reply-to chaining still works. |
 
 ## Troubleshooting
 

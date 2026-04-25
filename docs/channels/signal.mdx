@@ -46,13 +46,18 @@ enabling the Signal adapter.
     signal-cli -u +1234567890 verify CODE
     ```
 
-    Start the signal-cli REST API daemon:
+    Start the signal-cli HTTP daemon:
 
     ```bash
-    signal-cli -u +1234567890 daemon --json-rpc
+    signal-cli -u +1234567890 daemon --http :8080
     ```
 
-    Verify it is running:
+    The Comis Signal adapter talks to signal-cli over HTTP at this address.
+    If you prefer a containerised setup, the
+    [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api)
+    Docker image exposes a compatible HTTP endpoint on port 8080.
+
+    Verify the daemon is running:
 
     ```bash
     curl http://127.0.0.1:8080/v1/about
@@ -129,14 +134,19 @@ These options go under `channels.signal` in your `config.yaml`:
 
 Once connected to Signal, your agent can:
 
-- Send and delete messages
-- React to messages with emoji
+- Send and delete messages (Signal supports remote-delete; edit is **not**
+  available in the Signal protocol)
+- React to messages with Unicode emoji
 - Send file attachments up to 100 MB
+- Send native voice messages (audio attachments uploaded as Signal voice notes
+  via signal-cli)
+- Receive native Signal read receipts -- the agent sees when its messages
+  have been read on the recipient's device
 - Use signal-text-styles formatting (bold, italic, monospace, strikethrough, spoiler)
 - Stream responses as separate message blocks (updates every 500 ms)
 
-Signal does **not** support editing messages, threads, fetching message history,
-buttons, cards/embeds, or mentions.
+Signal does **not** support editing messages, threads, typing indicators,
+fetching message history, buttons, cards/embeds, native polls, or mentions.
 
 ## Platform limits
 
@@ -153,7 +163,7 @@ buttons, cards/embeds, or mentions.
     a different port.
 
     **How to fix it:** Start signal-cli with
-    `signal-cli -u YOUR_NUMBER daemon --json-rpc` and verify it responds at
+    `signal-cli -u YOUR_NUMBER daemon --http :8080` and verify it responds at
     `http://127.0.0.1:8080/v1/about`. If you changed the port, update `baseUrl`
     in your Comis config to match.
   </Accordion>

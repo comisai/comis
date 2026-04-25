@@ -50,9 +50,9 @@ This page covers the most common issues you might encounter with Comis. Each ent
 
     **How to fix:**
 
-    1. Check that `COMIS_MASTER_KEY` is set in your environment or `.env` file:
+    1. Check that `SECRETS_MASTER_KEY` is set in your environment or `.env` file:
        ```bash
-       grep COMIS_MASTER_KEY ~/.comis/.env
+       grep SECRETS_MASTER_KEY ~/.comis/.env
        ```
     2. If the key was lost, remove the secrets database to start fresh:
        ```bash

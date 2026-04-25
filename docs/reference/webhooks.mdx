@@ -4,11 +4,17 @@ description: "Path-routed webhook ingestion with HMAC verification, template eng
 icon: "webhook"
 ---
 
+**What this is for:** turn arbitrary HTTP events from external services (Gmail, GitHub, CI, custom) into agent messages or wake signals. **Who it's for:** anyone wiring Comis into a broader automation pipeline.
+
 The webhook subsystem receives events from external services and routes them to
 agents or triggers daemon heartbeats. Comis provides two webhook endpoint types:
 a **strict endpoint** with required HMAC verification and a fixed payload schema,
 and **mapped endpoints** with path-based routing and a template engine for
 transforming arbitrary payloads into agent messages.
+
+<Note>
+**Comis-side webhooks vs. channel webhooks.** This page describes the daemon's _own_ HTTP endpoints under `/hooks/*`. Some chat platforms (Telegram, Discord, Slack) also expose their own webhook callbacks. The Comis adapters for those platforms typically connect via long-poll or socket APIs by default; see [Channels](/channels) if you specifically need to expose your bot to a platform's webhook callback.
+</Note>
 
 ## Configuration
 
@@ -370,6 +376,53 @@ webhooks:
       action: "wake"
       wakeMode: "now"
 ```
+
+---
+
+## End-to-end: a GitHub webhook
+
+A complete walkthrough that takes a real GitHub `push` event and turns it into an agent message.
+
+<Steps>
+  <Step title="Enable the webhook subsystem">
+    Add the `github` preset and enable HMAC verification.
+    ```yaml
+    webhooks:
+      enabled: true
+      path: "/hooks"
+      token: "${WEBHOOK_SHARED_SECRET}"
+      presets: ["github"]
+    ```
+    Reload config (`comis config patch ...` or restart) — the daemon now mounts `POST /hooks/github`.
+  </Step>
+  <Step title="Generate the shared secret">
+    Use a 32+ character random string. Store it both in Comis (via `comis secrets set WEBHOOK_SHARED_SECRET`) and in GitHub's webhook UI as the **Secret** field.
+    ```bash
+    openssl rand -hex 32 | xargs -I {} comis secrets set WEBHOOK_SHARED_SECRET --value {}
+    ```
+  </Step>
+  <Step title="Configure the GitHub webhook">
+    Repository → Settings → Webhooks → Add webhook:
+    - **Payload URL:** `https://your-host.example.com/hooks/github`
+    - **Content type:** `application/json`
+    - **Secret:** the value from the previous step
+    - **SSL verification:** enabled
+    - Select the events you want (e.g. just `push`)
+  </Step>
+  <Step title="Verify the signature flow">
+    Trigger a test event from GitHub's webhook page. Comis will compute HMAC-SHA256 over the raw body using your secret and compare against the `x-hub-signature-256` header. A successful 200 response carries `{"received": true, "mapping": "github"}`.
+
+    Tail logs while testing:
+    ```bash
+    comis daemon logs -f | grep webhook
+    ```
+  </Step>
+  <Step title="Troubleshoot 401s">
+    If GitHub shows a 401: re-check the secret matches on both sides, that the header name is `x-hub-signature-256` (configurable via `headerName`), and that no proxy strips signature headers in front of the daemon.
+  </Step>
+</Steps>
+
+The result: every matching GitHub event becomes an agent message keyed by `hook:github:<delivery-id>` so retries are deduplicated automatically by GitHub's redelivery machinery.
 
 ---
 

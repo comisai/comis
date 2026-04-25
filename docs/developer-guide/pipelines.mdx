@@ -45,8 +45,8 @@ const node: GraphNode = {
   timeoutMs: 60_000,                  // Per-node timeout (optional)
   maxSteps: 10,                       // Maximum tool call steps (optional)
   barrierMode: "all",                 // "all" | "majority" | "best-effort"
-  retries: 1,                         // Retry count 0-3 (default: 0)
-  contextMode: "full",                // "full" | "summary" | "none" (default: "full")
+  retries: 1,                         // Retry count 0-3 (default: 1)
+  contextMode: "full",                // "full" | "summary" | "refs" | "none" (default: "full")
 };
 
 // Typed node — uses a built-in driver for multi-agent patterns
@@ -273,7 +273,7 @@ Nodes can be configured to retry automatically on failure using the `retries` fi
 
 | Setting | Type | Range | Default |
 |---------|------|-------|---------|
-| `retries` | integer | 0-3 | 0 (no retries) |
+| `retries` | integer | 0-3 | 1 (one automatic retry on failure) |
 
 When a node fails and has retries remaining, the coordinator waits with exponential backoff (1s, 2s, 4s) before restarting the node from scratch. The node's status transitions back to `ready` during retry, making it visually distinct from permanently failed nodes.
 
@@ -414,7 +414,7 @@ The `graph.status` RPC (called without a `graphId`) returns live concurrency sta
 See the [JSON-RPC reference](/reference/json-rpc) for the full `graph.status` response format.
 
 <Info>
-These limits are configurable via YAML config under `agentToAgent.graphMaxConcurrency`, `agentToAgent.graphMaxParallelSpawns`, and `agentToAgent.graphMaxGlobalSubAgents`.
+The per-graph and global caps are configurable via YAML config under `security.agentToAgent.graphMaxConcurrency` and `security.agentToAgent.graphMaxGlobalSubAgents`. The per-node parallel cap (`maxParallelSpawns`) is currently a coordinator default (10) and is not exposed as a YAML key.
 </Info>
 
 ## Node Types
@@ -593,6 +593,7 @@ The `contextMode` field controls how much upstream output the coordinator includ
 |------|----------|----------|
 | `full` (default) | Complete upstream outputs included in the context envelope | Nodes that need full awareness of upstream results |
 | `summary` | Upstream outputs truncated to 500 characters with a reference to the shared data folder | Nodes that need a brief overview without consuming full token budgets |
+| `refs` | Only file path references to upstream outputs are included | Nodes that read upstream artifacts on demand from the shared data folder |
 | `none` | Upstream output sections are skipped entirely in the envelope | Nodes that use explicit `{{nodeId.result}}` templates and do not need envelope context |
 
 ```typescript

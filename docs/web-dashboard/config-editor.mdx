@@ -1,13 +1,31 @@
 ---
 title: "Config Editor"
-description: "View and edit your Comis configuration from the browser"
+description: "Edit your Comis configuration from the browser -- changes save to disk and survive restarts"
 icon: "sliders"
 ---
 
-The Config Editor lets you view and tweak your Comis settings without opening a text file. Click **Config** in the sidebar to open it.
+The Config Editor lets you view and tweak your Comis settings without opening a text file. It is the in-browser alternative to editing `~/.comis/config.yaml` by hand. Click **Config** in the sidebar to open it.
+
+**Who it's for:** operators who want a guided UI with form controls and validation, plus a safety net (git history + rollback) for every change.
+
+## How saves work
+
+Saves are persistent and atomic. When you click **Save**, the dashboard sends a `config.patch` (single key) or `config.apply` (whole section) RPC to the daemon. The daemon:
+
+1. Validates the patch against the full config schema (Zod).
+2. Deep-merges the change into your local YAML file (last entry of `COMIS_CONFIG_PATHS`, typically `~/.comis/config.yaml`).
+3. Writes atomically (temp file + rename, mode `0o600`).
+4. Records a git commit in the config history (best-effort).
+5. Schedules a `SIGUSR2` daemon restart (200 ms after the response flushes) so every subsystem picks up the new config consistently.
+
+This means:
+- Changes **survive a restart** -- they are written to your YAML file before the response returns.
+- A **brief daemon restart** follows every save (sessions, channels, and queues reconnect on its own).
+- Validation failures **abort the save** -- nothing is written, and the in-memory config is unchanged.
+- Each change is logged to the **History** tab and to the audit log.
 
 <Warning>
-Changes made via the **YAML Editor** and **Gateway** tabs take effect immediately but are **not saved to disk** -- they revert on daemon restart. The **History** tab supports rollback to previous config versions, which triggers a daemon restart to reload the applied configuration. To make permanent changes, edit `config.yaml` directly. See [Configuration](/installation/configuration) for details.
+The Config Editor writes to the **last** path in `COMIS_CONFIG_PATHS`. If your environment overrides this to a read-only path, saves will fail. The default is `~/.comis/config.yaml` -- safe to edit either from the dashboard or by hand.
 </Warning>
 
 ## Tabs
@@ -16,54 +34,84 @@ The Config Editor has four top-level tabs:
 
 <Tabs>
   <Tab title="YAML Editor">
-    The main configuration editing tab. A **section navigation sidebar** on the left lists all config sections (gateway, agents, channels, security, and more). Click any section to load its settings into the editor area.
+    The main configuration editing tab. A **section navigation sidebar** on the left lists all config sections (gateway, agents, channels, security, memory, scheduler, approvals, hooks, mcp). Click any section to load its settings into the editor area.
 
     Within this tab, three **sub-modes** are available via mode buttons at the top:
 
-    - **Form** -- The most user-friendly option. Shows visual controls for each setting: toggles, dropdowns, text fields, array editors, and token management widgets. Simply change the values you want, then click **Save** to apply.
+    - **Form** -- The most user-friendly option. Shows visual controls for each setting: toggles, dropdowns, text fields, array editors, and token management widgets. Change the values you want, then click **Save** to apply.
     - **YAML** -- For users comfortable editing configuration files directly. Shows the raw YAML text for the selected section in a full text editor. Edit the YAML, then click **Save** to apply.
-    - **Schema** -- A read-only reference view showing the structure and validation rules for the selected section. Useful for understanding which fields exist, what types they expect, and any constraints like minimum or maximum values.
+    - **Schema** -- A read-only reference view showing the structure and validation rules for the selected section. Useful for understanding which fields exist, what types they expect, and constraints like minimum or maximum values.
 
-    **Save** and **Reset** buttons apply per-section. Changes are in-memory only (sent via the `config.apply` RPC).
+    Saves go through the `config.apply` RPC: the patched section is validated, merged into your local `config.yaml`, written to disk, and a daemon restart is scheduled.
   </Tab>
   <Tab title="Gateway">
-    A dedicated tab for gateway-specific settings including API tokens, CORS origins, rate limits, and TLS configuration. Individual field changes are sent via the `config.patch` RPC.
+    A dedicated tab for gateway-specific settings including API tokens, CORS origins, rate limits, and TLS configuration. Individual field changes are sent via the `config.patch` RPC -- one key at a time, useful when you only need to flip a single value.
 
-    Changes in this tab are also **in-memory only** and revert on daemon restart.
+    Same persistence semantics as the YAML Editor: each patch is validated, written to disk, git-tracked, then triggers a daemon restart.
   </Tab>
   <Tab title="History">
-    Shows the config change history (retrieved via the `config.history` RPC). Each entry represents a previous configuration state.
+    Shows the config change history pulled from the git-backed config store via `config.history`. Each entry shows the commit SHA, timestamp, summary, and who made the change.
 
-    You can **rollback** to any previous version by clicking it. Rollback calls `config.apply`, which triggers a **daemon restart** to reload from the applied configuration.
+    Click any entry to view its diff. Click **Rollback** to restore that version -- the daemon validates the restored config, writes it back to your YAML file, commits the rollback, and restarts to apply.
+
+    History is the audit trail for everything the dashboard, CLI (`comis config set ...`), or agent tools have changed.
   </Tab>
   <Tab title="Setup Wizard">
-    Renders the setup wizard component inline. This walks you through initial configuration for first-time setup, including provider selection, agent creation, and channel wiring.
+    Renders the same wizard you saw on first install (`comis init`). Use this to re-run guided setup for first-time configuration, including provider selection, agent creation, and channel wiring.
   </Tab>
 </Tabs>
 
 ## Common Tasks
 
+### End-to-end: change a key, see it take effect
+
+This walkthrough demonstrates that saves are persistent.
+
 <Steps>
-  <Step title="Change a setting">
-    Open the **YAML Editor** tab. Select the section from the sidebar (for example, **gateway** or **agents**). Use the **Form** sub-mode for visual controls, the **YAML** sub-mode to edit raw text, or the **Schema** sub-mode to check validation rules. Make your changes and click **Save**.
+  <Step title="Open the editor">
+    Click **Config** in the sidebar.
   </Step>
-  <Step title="Configure gateway settings">
-    Switch to the **Gateway** tab for token management, CORS origins, and rate limit configuration. Changes take effect immediately but are in-memory only.
+  <Step title="Pick a section">
+    Click **gateway** in the section list. The Form sub-mode loads with all gateway fields.
   </Step>
-  <Step title="View or rollback config history">
-    Switch to the **History** tab. Browse previous configuration versions and click one to rollback. Note that rollback restarts the daemon to reload the restored configuration.
+  <Step title="Edit a value">
+    Find the **rateLimit** field. Switch to the **YAML** sub-mode and bump `rateLimit.requestsPerMinute` from `60` to `120`.
   </Step>
-  <Step title="Run initial setup">
-    Switch to the **Setup Wizard** tab for guided first-time configuration. The wizard walks you through provider setup, agent creation, and channel wiring step by step.
+  <Step title="Save">
+    Click **Save**. A toast appears: *"Configuration applied. Daemon restarting."* Within ~2 seconds, the connection dot in the top bar briefly turns yellow (reconnecting), then green again.
   </Step>
-  <Step title="Reset changes">
-    If you have made edits you want to discard in the YAML Editor, click **Reset** to revert the section to its last saved state. This only affects the current section -- other sections are not touched.
+  <Step title="Verify on disk">
+    Open `~/.comis/config.yaml` in any text editor. The new `requestsPerMinute: 120` line is there. The change persisted.
+  </Step>
+  <Step title="Verify in History">
+    Switch to the **History** tab. The latest entry shows your rate limit change with a SHA, timestamp, and diff button.
+  </Step>
+</Steps>
+
+### Other common tasks
+
+<Steps>
+  <Step title="Edit individual gateway settings">
+    Switch to the **Gateway** tab for fast single-field edits (rotate a token, add a CORS origin, tweak TLS). Each field saves on its own.
+  </Step>
+  <Step title="Roll back a bad change">
+    Switch to **History**, click the entry from before the change, click **Rollback**. The daemon writes the older config back, commits the rollback, and restarts.
+  </Step>
+  <Step title="Re-run guided setup">
+    Switch to the **Setup Wizard** tab. The wizard walks through provider setup, agent creation, and channel wiring step by step -- helpful for adding a second channel without learning YAML.
+  </Step>
+  <Step title="Discard unsaved edits">
+    In the YAML Editor, click **Reset** to revert the section to its last saved state. This only affects the current section -- other sections are not touched. (Saved changes can only be undone via History rollback.)
   </Step>
 </Steps>
 
 <Tip>
-Use the Config Editor to test changes quickly, then copy the working values to your `config.yaml` file to make them permanent. The **YAML** sub-mode within the YAML Editor tab is especially handy for this -- you can copy the text directly into your configuration file.
+The Config Editor is safe to use in production. Every save is validated before disk write -- a bad value (e.g. wrong type, out-of-range) is rejected with an error message and the daemon keeps running on the old config.
 </Tip>
+
+<Note>
+The route is `#/config`. RPC methods used: `config.read`, `config.patch`, `config.apply`, `config.history`, `config.diff`, `config.rollback`, `config.schema`. All require admin trust on the gateway token. See [JSON-RPC reference](/reference/json-rpc) for the wire format.
+</Note>
 
 ## Related Pages
 

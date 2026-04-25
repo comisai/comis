@@ -103,6 +103,29 @@ This means you can start using Comis without configuring every media provider
 up front. Add providers later as you need more automatic processing. Your
 agent always knows when media was sent, even without full media configuration.
 
+## Channel × Media Capability Matrix
+
+Not every channel can deliver every media type — that is a platform
+limitation, not a Comis decision. The table below shows what each connected
+channel can actually receive and send.
+
+| Channel | Images in | Voice in (audio attachment) | Voice out (TTS reply) | Video in | Documents in | Link previews |
+|---------|-----------|-----------------------------|----------------------|----------|-------------|---------------|
+| Telegram | Yes | Yes | Yes (opus) | Yes | Yes | Yes |
+| Discord | Yes | Yes | Yes (mp3) | Yes | Yes | Yes |
+| Slack | Yes | Yes | Yes (mp3) | Yes | Yes | Yes |
+| WhatsApp | Yes | Yes | Yes (mp3) | Yes | Yes | No |
+| Signal | Yes | Yes | Yes | Yes | Yes | No |
+| LINE | Yes | Yes | Yes | Yes | No | No |
+| iMessage | Yes | Yes | Yes | Yes | Yes | No |
+| IRC | No | No | No | No | No | No |
+| Email | Yes (inline/attachment) | Yes (audio attachment) | Yes (audio attachment) | Yes (attachment) | Yes (full MIME) | No |
+
+The "voice out" column reflects whether the channel adapter can deliver an
+audio reply when [auto-TTS](/media/voice#auto-reply-modes) is enabled. The
+default audio format per channel is documented in
+[Voice → Per-Channel Audio Formats](/media/voice#per-channel-audio-formats).
+
 ## Cross-Platform Support
 
 Media processing works across all connected chat platforms. The same
@@ -126,8 +149,10 @@ agent gets consistent results no matter where the message originated.
 
 <Note>
 Some media features are only available on certain platforms. For example,
-rich messages with buttons work on Discord, Telegram, Slack, and LINE, but
-not on IRC or Signal. See each capability page for platform-specific details.
+rich messages with buttons currently render on Discord, Telegram, and Slack;
+LINE and WhatsApp button rendering is not yet wired through `sendMessage`,
+and Signal, iMessage, IRC, and Email do not support buttons. See each
+capability page for platform-specific details.
 </Note>
 
 ## Configuration Overview

@@ -4,11 +4,15 @@ description: "Configuration management, gateway control, and supervisor administ
 icon: "server"
 ---
 
-The infrastructure tools let agents manage the Comis system itself. The `gateway` tool provides configuration and gateway control, while supervisor tools handle fleet-wide administration -- managing agents, sessions, memory, channels, tokens, models, skills, and MCP connections.
+**What it does:** Lets agents manage the Comis daemon itself -- read and write configuration, restart, store secrets, inspect long-running tasks, and (for supervisor agents) manage the entire fleet.
+
+**Who it's for:** Admin or supervisor agents that need to operate the platform from inside a conversation. These tools are gated behind the `supervisor` tool policy profile or an explicit allow list -- they should not be exposed to general-purpose agents.
+
+The `browser` tool also lives at the platform-management layer, but it has its own deep-dive page since it has 16 actions and 11 `act` sub-kinds. See [Browser](/agent-tools/browser) for that.
 
 ## gateway -- Configuration and Control
 
-The `gateway` tool is the Swiss Army knife for system management, with 10 actions covering configuration, restarts, and environment variables.
+The `gateway` tool is the Swiss Army knife for system management, with **11 actions** -- `read`, `patch`, `apply`, `restart`, `schema`, `status`, `history`, `diff`, `rollback`, `env_set`, and `env_list` -- covering configuration, daemon restarts, change history, and the encrypted secret store.
 
 ### Gateway Actions
 
@@ -121,7 +125,44 @@ The `gateway` tool is the Swiss Army knife for system management, with 10 action
     Setting environment variables requires security approval and user confirmation. The stored value is write-only and cannot be retrieved. Reference it in config as `${VAR_NAME}` (e.g., `GEMINI_API_KEY: ${GEMINI_API_KEY}`). Never write raw API keys into config files.
     </Warning>
   </Accordion>
+
+  <Accordion title="env_list -- List configured secret names" icon="list">
+    List the names of secrets stored in the daemon's encrypted secret store. Read-only and admin-trust gated -- the values themselves are never returned. Use before asking the user for a key to check whether it is already configured.
+
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | `"env_list"` |
+    | `filter` | string | No | Glob filter on secret names (e.g., `"GEMINI*"`, `"*_API_KEY"`). Case-insensitive, supports `*` wildcard. |
+    | `limit` | number | No | Maximum names to return (default: 100, max: 500). |
+  </Accordion>
 </AccordionGroup>
+
+## background_tasks -- Long-Running Task Queue
+
+The `background_tasks` tool lets agents inspect and manage the daemon's background task queue -- the in-flight execution surface for spawned sub-agents, async pipelines, and long-running tool calls.
+
+| Action | Description |
+|--------|-------------|
+| `list` | List active background tasks with status, age, and task type |
+| `get` | Get full state of a single task by ID |
+| `cancel` | Cancel a running task (destructive; requires `_confirmed`) |
+| `read_output` | Tail recent stdout/stderr output for a task |
+
+Use `background_tasks` to triage a stuck async sub-agent, peek at incremental output without waiting for completion, or kill a runaway job. Permissions are gated to admin-trust agents because cancellation can affect other users' work.
+
+## mcp_manage -- MCP Server Lifecycle
+
+The `mcp_manage` tool controls connections to external Model Context Protocol (MCP) servers. It is also referenced in the [Supervisor](#supervisor-tools) section below; conceptually it sits in both buckets because MCP servers are infrastructure (the daemon's external tool surface) but management is admin-trust gated.
+
+| Action | Description |
+|--------|-------------|
+| `list` | List configured MCP servers with their transport (stdio / SSE / HTTP), URL/command, and enabled flag |
+| `status` | Per-server connection status (connected / connecting / disconnected / error) and last health check |
+| `connect` | Open a connection to a configured server (also discovers tools and qualifies them as `mcp:{server}/{tool}`) |
+| `disconnect` | Close the connection without removing the server config |
+| `reconnect` | Tear down and re-establish the connection (use this when an SSE transport gets wedged) |
+
+Tools discovered from MCP servers are subject to the same [tool policy](/skills/tool-policy) as built-in tools -- per-agent allow/deny lists, group expansion, and the standard `applyToolPolicy` filtering all apply.
 
 ## Supervisor Tools
 

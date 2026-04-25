@@ -6,23 +6,45 @@ icon: "browser"
 
 The web dashboard is your visual control center for everything Comis does. From any browser, you can chat with your agents, check channel connections, review memory, tune configuration, and monitor system health -- all without touching the command line.
 
+**Who it's for:** operators, developers, and team owners who would rather click than YAML.
+
+**Under the hood:** the dashboard is a single-page app built with Lit (web components), Vite, and Tailwind, served by the Comis gateway. It talks to the daemon over JSON-RPC and subscribes to a Server-Sent Events (SSE) stream for real-time updates. There is no separate React/React Flow framework -- pipeline canvases, charts, and trees are all custom Lit components.
+
+<Note>The Comis web dashboard uses a dark theme -- there's no light-mode toggle, so it'll look its best on a dark desktop or browser profile.</Note>
+
 ## Getting Started
 
 <Steps>
   <Step title="Open the dashboard">
-    Navigate to `http://localhost:4766` in your browser. This is the default address where Comis serves the dashboard.
+    Navigate to `http://localhost:4766` in your browser. This is the default address where the gateway serves the dashboard. (Override with `gateway.host` and `gateway.port` in `~/.comis/config.yaml`.)
   </Step>
   <Step title="Enter your gateway token">
-    On the login screen, paste the gateway token from your configuration file. You can find it in `~/.comis/config.yaml` under the `gateway.tokens` section.
+    On the login screen, paste the gateway token from your configuration file. You can find it in `~/.comis/config.yaml` under the `gateway.tokens` section, or generate a new one in **Security > API Tokens** after first login.
   </Step>
   <Step title="Click Connect">
-    After entering your token, click **Connect**. The dashboard loads and you are taken to the main overview.
+    After entering your token, click **Connect**. The dashboard validates the token via `system.ping`, then loads the main dashboard.
   </Step>
 </Steps>
 
 <Tip>
-Your token is stored in session storage, which means it is automatically cleared when you close the browser tab. The next time you open the dashboard, you will need to enter your token again. This is a deliberate security measure to prevent stale sessions.
+Your token is stored in `sessionStorage` under the key `comis_token`. That means it is **automatically cleared when you close the browser tab**, and never persists to disk. The next time you open the dashboard, you will need to paste the token again. This is a deliberate security measure to prevent stale sessions on shared machines and to limit the blast radius of an XSS bug. There is no refresh token -- if your session expires (gateway restart, token revoke), you re-enter the token.
 </Tip>
+
+## Real-time updates
+
+The dashboard listens to an SSE stream at `/sse/subscriptions/<id>` for events the daemon emits as work happens. The most user-facing events are:
+
+| Event | What you see |
+|-------|--------------|
+| `approval:requested` | The Approvals badge in the sidebar increments. A toast appears. |
+| `approval:resolved` | The badge decrements; the Pending Approvals queue updates. |
+| `system:error` | A red toast describing the failure (e.g., a channel disconnected). |
+| `metrics:update` | Stat cards on the Dashboard and Observability views refresh. |
+| `delivery:status` | The Delivery view's trace table updates as messages move through the queue. |
+| `graph:node:status`, `graph:progress` | The Pipeline Monitor turns nodes green/red as they execute. |
+| `subagent:spawned`, `subagent:status` | The Sub-Agents view's run list refreshes. |
+
+Views that are **not** SSE-driven (Memory, Sessions, Scheduler) refresh on demand or via a 30-60 second polling controller. Each view's page documents its update strategy.
 
 ## What You See
 
@@ -30,7 +52,18 @@ Once connected, the dashboard is organized into three main areas: a sidebar on t
 
 ### Sidebar
 
-The sidebar is your primary way to navigate between different views. It contains 25 items organized into four sections -- **Home**, **Operate**, **Observe**, and **Configure** -- plus a **Setup** item and **Logout** button below a divider. Each section header is a non-clickable visual label that groups related items together.
+The sidebar is your primary way to navigate between different views. It contains 23 items organized into four sections -- **Home** (1), **Operate** (7), **Observe** (6), and **Configure** (9) -- plus a **Setup** item and **Logout** button below a divider. Each section header is a non-clickable visual label that groups related items together.
+
+<Info>
+The sidebar shows 23 items, but the underlying SPA actually serves a few more URLs:
+- **Agent detail / editor / workspace** are reachable from the **Agents** view (clicking an agent row).
+- **Channel detail** opens from a **Channels** card.
+- **Session detail** opens from a row in **Sessions**.
+- **Pipeline builder, monitor, history, history detail** are sub-views of **Pipelines**.
+- **Approvals** still has its own sidebar entry but the page now redirects to the **Security > Pending Approvals** tab (the canonical home for approvals).
+
+In total, 38 URL patterns route to 23 distinct view components. This page documents every component you can reach.
+</Info>
 
 #### Home
 
@@ -109,7 +142,7 @@ The **Skills** view lets you browse installed skills per agent with a scope togg
 The Dashboard is the landing page after login (`/dashboard` route). It provides an at-a-glance overview of your entire Comis system, organized into several rows:
 
 - **Stat cards** -- six clickable cards showing Active Agents (ratio of active to total), Sessions, Messages Today, Tokens Today, Cost Today (USD), and Errors. Each card links to its detail view. Messages, Tokens, and Cost cards show trend arrows comparing to previous values.
-- **System Health card** -- displays daemon uptime, gateway status, delivery success rate, and pipeline active count. Links to the Observability Overview.
+- **System Health card** -- displays daemon uptime, memory (RSS), event-loop delay, Node.js version, MCP server count, and an optional CPU progress bar. Links to the Observability Overview.
 - **Context Engine Summary card** -- shows prompt cache hit rate, budget utilization percentage, total evictions, and re-reads count. Links to the Context Engine view.
 - **Sparkline charts** -- two mini charts showing Token Usage (24h) and Cost Trend (7d) with clickable navigation to the Billing view.
 - **Agents section** -- a grid of agent cards, each showing the agent's name, provider, model, status indicator, messages today, tokens today, and per-agent cost badge.
@@ -145,7 +178,7 @@ The palette searches across four categories:
 
 | Category | Source | Examples |
 |----------|--------|---------|
-| **Views** | 25 navigable views from the sidebar and sub-views | Dashboard, Agents, Messages, Billing, Context Engine |
+| **Views** | 24 navigable views from the sidebar and sub-views | Dashboard, Agents, Messages, Billing, Context Engine |
 | **Agents** | Dynamic list from polling | default, research-agent, support-bot |
 | **Sessions** | Dynamic list from polling | telegram:user123:chat456 |
 | **Commands** | Built-in actions | Refresh Data, Toggle Sidebar, Logout, Show Keyboard Shortcuts |
@@ -154,59 +187,88 @@ Use the arrow keys to navigate results, press <kbd>Enter</kbd> to select, and pr
 
 ## Navigation Guide
 
+Each card below links to its own page. The 23 distinct views are grouped by sidebar section.
+
+### Operate
+
 <CardGroup cols={2}>
   <Card title="Chat Console" icon="message" href="/web-dashboard/chat">
     Talk to your agents in real time through the browser.
   </Card>
   <Card title="Agents View" icon="robot" href="/web-dashboard/agents-view">
-    View, configure, and manage your AI agents.
+    Browse, configure, suspend, and delete agents (list + detail + editor).
+  </Card>
+  <Card title="Workspace Manager" icon="folder-open" href="/web-dashboard/workspace-view">
+    Browse and edit each agent's workspace files; commit and roll back via git.
   </Card>
   <Card title="Channels View" icon="tower-broadcast" href="/web-dashboard/channels-view">
-    Monitor and manage your messaging platform connections.
-  </Card>
-  <Card title="Memory View" icon="brain" href="/web-dashboard/memory-view">
-    Search and browse your agents' stored memories.
-  </Card>
-  <Card title="Sessions View" icon="clock-rotate-left" href="/web-dashboard/sessions-view">
-    View conversation histories and session statistics.
-  </Card>
-  <Card title="Scheduler View" icon="calendar-days" href="/web-dashboard/scheduler-view">
-    Manage cron jobs, run history, and heartbeat monitoring.
-  </Card>
-  <Card title="Observability Overview" icon="chart-line" href="/web-dashboard/observability">
-    System metrics summary with stat cards and 24-hour activity chart.
-  </Card>
-  <Card title="Context Engine" icon="share-nodes" href="/web-dashboard/observability">
-    Pipeline metrics, layer waterfall, and DAG visualization.
-  </Card>
-  <Card title="Billing" icon="receipt" href="/web-dashboard/observability">
-    Token usage and cost breakdown by provider and agent.
-  </Card>
-  <Card title="Delivery" icon="paper-plane" href="/web-dashboard/observability">
-    End-to-end message delivery traces and success rates.
-  </Card>
-  <Card title="Diagnostics" icon="stethoscope" href="/web-dashboard/observability">
-    System diagnostic event log with category filtering.
-  </Card>
-  <Card title="Security View" icon="shield-check" href="/web-dashboard/security-view">
-    Audit log, tokens, policies, and gateway settings.
-  </Card>
-  <Card title="Config Editor" icon="gear" href="/web-dashboard/config-editor">
-    Edit your Comis configuration in real time.
-  </Card>
-  <Card title="Pipelines" icon="diagram-project" href="/web-dashboard/pipelines">
-    Build and monitor multi-agent execution graphs visually.
+    Status, restart, configure each messaging platform connection (list + detail).
   </Card>
   <Card title="Message Center" icon="envelope" href="/web-dashboard/message-center">
-    Browse and filter all messages across channels with type-based views.
+    Send, react, edit, delete messages and run platform actions.
+  </Card>
+  <Card title="Sessions View" icon="clock-rotate-left" href="/web-dashboard/sessions-view">
+    View conversation histories, transcripts, context state, and metrics.
   </Card>
   <Card title="Sub-Agents" icon="users" href="/web-dashboard/subagents">
-    Monitor spawned sub-agent tasks, outputs, and parent-child lineage.
+    Monitor spawned sub-agent runs, costs, and parent-child lineage.
+  </Card>
+  <Card title="Pipelines" icon="diagram-project" href="/web-dashboard/pipelines">
+    Build and monitor multi-agent execution graphs (builder + monitor + history).
+  </Card>
+</CardGroup>
+
+### Observe
+
+<CardGroup cols={2}>
+  <Card title="Observability Overview" icon="chart-line" href="/web-dashboard/observability">
+    Stat cards and 24-hour activity chart -- the entry point to all observability tabs.
+  </Card>
+  <Card title="Context Engine" icon="share-nodes" href="/web-dashboard/observability#context-engine">
+    Pipeline metrics, layer waterfall, and cache hit rate.
+  </Card>
+  <Card title="Context DAG Browser" icon="sitemap" href="/web-dashboard/observability#context-dag-browser">
+    Inspect the DAG of context nodes and summaries.
+  </Card>
+  <Card title="Billing" icon="receipt" href="/web-dashboard/observability#billing">
+    Token usage and cost breakdown by provider and agent.
+  </Card>
+  <Card title="Delivery" icon="paper-plane" href="/web-dashboard/observability#delivery">
+    End-to-end message delivery traces and success rates.
+  </Card>
+  <Card title="Diagnostics" icon="stethoscope" href="/web-dashboard/observability#diagnostics">
+    System diagnostic event log with category filtering.
+  </Card>
+</CardGroup>
+
+### Configure
+
+<CardGroup cols={2}>
+  <Card title="Skills" icon="wand-magic-sparkles" href="/web-dashboard/skills">
+    Browse installed prompt skills and built-in tools per agent.
   </Card>
   <Card title="MCP Servers" icon="server" href="/web-dashboard/mcp-management">
     Manage MCP server connections, view tool inventories, and monitor health.
   </Card>
+  <Card title="Models" icon="cube" href="/web-dashboard/models">
+    Configure providers, model catalog, aliases, and defaults.
+  </Card>
+  <Card title="Memory View" icon="brain" href="/web-dashboard/memory-view">
+    Search, browse, and delete memory entries with type/trust filters.
+  </Card>
+  <Card title="Scheduler View" icon="calendar-days" href="/web-dashboard/scheduler-view">
+    Manage cron jobs, run history, and heartbeat monitoring.
+  </Card>
+  <Card title="Security View" icon="shield-check" href="/web-dashboard/security-view">
+    Audit log, tokens, approval rules, secrets, and approval queue.
+  </Card>
   <Card title="Media" icon="photo-film" href="/web-dashboard/media">
-    Test media processing capabilities and configure media providers.
+    Test STT/TTS/Vision/Document/Video/Link processing and configure providers.
+  </Card>
+  <Card title="Config Editor" icon="gear" href="/web-dashboard/config-editor">
+    Edit your Comis configuration -- changes save to disk and survive restart.
+  </Card>
+  <Card title="Setup Wizard" icon="rocket" href="/web-dashboard/setup-wizard">
+    Re-run the guided onboarding flow for first-time configuration.
   </Card>
 </CardGroup>

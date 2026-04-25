@@ -87,6 +87,27 @@ comis configure    # choose your LLM provider, add API keys, connect a channel
 comis daemon start
 ```
 
+**Or with Docker** (no Node.js required):
+
+```bash
+docker run -d --name comis -p 4766:4766 -v comis-data:/data comisai/comis:latest-slim
+```
+
+Once running, verify the daemon is up:
+
+```bash
+curl http://localhost:4766/health
+# {"status":"ok"}
+```
+
+Then run the setup wizard to configure your LLM provider and channels:
+
+```bash
+docker exec -it comis comis init
+```
+
+The wizard walks you through selecting a provider, adding channel tokens (Telegram, Discord, Slack, etc.), and connecting your first agent.
+
 Setup takes about 2 minutes. Message your agent. That's it.
 
 ---

@@ -6,9 +6,40 @@ icon: "heart-pulse"
 
 Comis continuously monitors the health of your system and alerts you if something needs attention. Think of it as a health dashboard that watches the important vital signs — disk space, CPU usage, memory, system services, and more — so you do not have to.
 
+There are three ways to look at "is Comis healthy right now?":
+
+- The **`GET /health` HTTP endpoint** — a one-shot readiness probe used by Docker, systemd, and curl-based scripts.
+- The **`comis health` CLI command** — fail/warn findings only, with an exit code suitable for shell pipelines.
+- The **heartbeat monitoring system** — continuous background checks that fire alerts to your agent (and through it to your chat channels) when thresholds are crossed.
+
+The `/health` endpoint and `comis health` CLI answer "is the daemon up?" right now. The heartbeat system answers "what's been wrong over the last few minutes?" — the rest of this page is about the heartbeat.
+
+## The `/health` HTTP endpoint
+
+The gateway exposes a readiness probe at `/health`:
+
+```bash
+curl http://localhost:4766/health
+# {"status":"ok","timestamp":"2026-04-25T10:00:00.000Z"}
+```
+
+It is unauthenticated (used by orchestrators) and returns `200` with `status: "ok"` once the daemon has finished its bootstrap sequence. The Docker `HEALTHCHECK`, the systemd `Type=notify` ready signal, and the `comis daemon start` wait-loop all check this endpoint.
+
+## The `comis health` CLI
+
+The CLI runs the same checks as `comis doctor` but only prints fail/warn findings, exiting with status `1` if anything failed:
+
+```bash
+node packages/cli/dist/cli.js health
+node packages/cli/dist/cli.js health --all          # also include passing checks
+node packages/cli/dist/cli.js health --format json  # machine-readable output
+```
+
+Use this in CI/CD or in shell scripts that need to gate on Comis being healthy.
+
 ## What Gets Monitored
 
-Comis checks five different health sources. Each source can be enabled or disabled independently.
+Comis checks five different health sources via the heartbeat. Each source can be enabled or disabled independently.
 
 <AccordionGroup>
   <Accordion title="Disk Space">

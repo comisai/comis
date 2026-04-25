@@ -12,7 +12,15 @@
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
-import { tryGetContext, isImmutableConfigPath, MUTABLE_CONFIG_OVERRIDES, matchesOverridePattern, getMutableOverridesForSection } from "@comis/core";
+import {
+  tryGetContext,
+  isImmutableConfigPath,
+  MUTABLE_CONFIG_OVERRIDES,
+  matchesOverridePattern,
+  getMutableOverridesForSection,
+  getManagedSectionRedirect,
+  formatRedirectHint,
+} from "@comis/core";
 import {
   readStringParam,
   throwToolError,
@@ -169,17 +177,18 @@ export function createGatewayTool(rpcCall: RpcCall): AgentTool<typeof GatewayToo
           case "patch": {
             const section = readStringParam(p, "section")!;
             const key = readStringParam(p, "key")!;
-            // Pre-gate immutability check: reject before asking for confirmation
+            // Pre-gate immutability check: reject before asking for confirmation.
+            // When the section has a dedicated *_manage tool, redirect there with
+            // a parameter-correct example call so the LLM can self-recover without
+            // needing model-specific prompting.
             if (isImmutableConfigPath(section, key)) {
               const mutablePaths = getMutableOverridesForSection(section, key);
-              let hint: string;
-              if (mutablePaths.length > 0) {
-                hint = `Patchable paths under "${section}": ${mutablePaths.join(", ")}`;
-              } else if (section === "agents") {
-                hint = `Key must start with the agent ID. Use action="read" section="agents" first to see agent IDs, then patch as e.g. key="<agentId>.model"`;
-              } else {
-                hint = "This section has no runtime-patchable paths.";
-              }
+              const redirect = getManagedSectionRedirect(section, key);
+              const hint = redirect
+                ? formatRedirectHint(redirect, mutablePaths)
+                : mutablePaths.length > 0
+                  ? `Patchable paths under "${section}": ${mutablePaths.join(", ")}.`
+                  : "This section has no runtime-patchable paths and no dedicated management tool.";
               throwToolError(
                 "permission_denied",
                 `Cannot patch immutable config path: ${section}.${key}.`,
@@ -239,12 +248,17 @@ export function createGatewayTool(rpcCall: RpcCall): AgentTool<typeof GatewayToo
 
           case "apply": {
             const section = readStringParam(p, "section");
-            // Pre-gate immutability check: reject before asking for confirmation
+            // Pre-gate immutability check: reject before asking for confirmation.
+            // Redirect to the dedicated *_manage tool when one exists for this section.
             if (isImmutableConfigPath(section!)) {
+              const redirect = getManagedSectionRedirect(section!);
+              const hint = redirect
+                ? formatRedirectHint(redirect)
+                : "Security-sensitive sections cannot be replaced at runtime.";
               throwToolError(
                 "permission_denied",
                 `Cannot apply to immutable config section: ${section}.`,
-                { hint: "Security-sensitive sections cannot be replaced at runtime." },
+                { hint },
               );
             }
             const gate = applyGate(p);

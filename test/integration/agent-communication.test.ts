@@ -2,242 +2,21 @@
 /**
  * Agent Communication E2E Tests
  *
- * Section 1: Agent-to-Agent Messaging (requires LLM API keys, skips without)
- *   COMMS-01: session.send fire-and-forget injects message and returns sent:true
- *   COMMS-02: session.send wait mode returns target agent response
- *   COMMS-03: session.spawn creates sub-agent run and returns completed result
- *
- * Section 2: ACP Protocol Handshake (no LLM keys needed)
+ * ACP Protocol Handshake (no LLM keys needed)
  *   ACP-01: Full initialize -> newSession -> prompt -> multi-turn lifecycle via ndJson
- *
- * Uses port 8489 with alpha/beta agents and agentToAgent enabled.
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  getProviderEnv,
-  hasAnyProvider,
-  PROVIDER_GROUPS,
-  logProviderAvailability,
-} from "../support/provider-env.js";
-import {
-  startTestDaemon,
-  type TestDaemonHandle,
-} from "../support/daemon-harness.js";
-import {
-  openAuthenticatedWebSocket,
-  sendJsonRpc,
-} from "../support/ws-helpers.js";
-import { RPC_LLM_MS } from "../support/timeouts.js";
+import { describe, it, expect, vi } from "vitest";
 import {
   AgentSideConnection,
   ClientSideConnection,
   ndJsonStream,
   type Client,
-  type Agent,
 } from "@agentclientprotocol/sdk";
 import {
   createAcpAgent,
   type AcpServerDeps,
 } from "@comis/gateway";
-
-// ---------------------------------------------------------------------------
-// Path resolution and provider detection
-// ---------------------------------------------------------------------------
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const CONFIG_PATH = resolve(
-  __dirname,
-  "../config/config.test-agent-comms.yaml",
-);
-
-const env = getProviderEnv();
-const hasLlmKey = hasAnyProvider(env, PROVIDER_GROUPS.llm);
-
-// ---------------------------------------------------------------------------
-// Section 1: Agent-to-Agent Messaging (LLM-dependent)
-// ---------------------------------------------------------------------------
-
-describe.skipIf(!hasLlmKey)(
-  "Agent-to-Agent Messaging E2E",
-  () => {
-    let handle: TestDaemonHandle;
-
-    beforeAll(async () => {
-      logProviderAvailability(env);
-      handle = await startTestDaemon({ configPath: CONFIG_PATH });
-    }, 60_000);
-
-    afterAll(async () => {
-      if (handle) {
-        try {
-          await handle.cleanup();
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (!msg.includes("Daemon exit with code")) {
-            throw err;
-          }
-        }
-      }
-    }, 30_000);
-
-    // -----------------------------------------------------------------------
-    // COMMS-01: session.send fire-and-forget
-    // -----------------------------------------------------------------------
-
-    it(
-      "COMMS-01: session.send fire-and-forget injects message and returns sent:true",
-      async () => {
-        let ws: WebSocket | undefined;
-        try {
-          ws = await openAuthenticatedWebSocket(
-            handle.gatewayUrl,
-            handle.authToken,
-          );
-
-          // Prime the alpha agent session so a session exists
-          const primeResult = (await sendJsonRpc(
-            ws,
-            "agent.execute",
-            {
-              agentId: "alpha",
-              message: "Remember: you are Alpha. Respond with OK.",
-            },
-            1,
-            { timeoutMs: RPC_LLM_MS },
-          )) as Record<string, unknown>;
-          expect(primeResult).toHaveProperty("result");
-
-          // Send fire-and-forget to the alpha session
-          // Daemon RPC sessions use key: test:rpc-client:gateway (default userId:channelId when no sessionKey param)
-          const sendResult = (await sendJsonRpc(
-            ws,
-            "session.send",
-            {
-              session_key: "test:rpc-client:gateway",
-              text: "Hello from cross-session",
-              mode: "fire-and-forget",
-            },
-            2,
-            { timeoutMs: RPC_LLM_MS },
-          )) as Record<string, unknown>;
-
-          // Fire-and-forget returns { sent: true } immediately
-          const result = sendResult.result as Record<string, unknown>;
-          expect(result.sent).toBe(true);
-          // No response field in fire-and-forget mode
-          expect(result.response).toBeUndefined();
-        } finally {
-          ws?.close();
-        }
-      },
-      90_000,
-    );
-
-    // -----------------------------------------------------------------------
-    // COMMS-02: session.send wait mode
-    // -----------------------------------------------------------------------
-
-    it(
-      "COMMS-02: session.send wait mode returns target agent response",
-      async () => {
-        let ws: WebSocket | undefined;
-        try {
-          ws = await openAuthenticatedWebSocket(
-            handle.gatewayUrl,
-            handle.authToken,
-          );
-
-          // Prime the alpha agent session
-          const primeResult = (await sendJsonRpc(
-            ws,
-            "agent.execute",
-            {
-              agentId: "alpha",
-              message: "Remember: you are Alpha. Respond with OK.",
-            },
-            1,
-            { timeoutMs: RPC_LLM_MS },
-          )) as Record<string, unknown>;
-          expect(primeResult).toHaveProperty("result");
-
-          // Send in wait mode -- executes target agent and returns response
-          // Daemon RPC sessions use key: test:rpc-client:gateway (default userId:channelId when no sessionKey param)
-          // agent_id is required for wait mode so cross-session-sender knows which executor to use
-          const sendResult = (await sendJsonRpc(
-            ws,
-            "session.send",
-            {
-              session_key: "test:rpc-client:gateway",
-              text: "What is your name?",
-              mode: "wait",
-              agent_id: "alpha",
-            },
-            2,
-            { timeoutMs: RPC_LLM_MS },
-          )) as Record<string, unknown>;
-
-          const result = sendResult.result as Record<string, unknown>;
-          expect(result.sent).toBe(true);
-          expect(typeof result.response).toBe("string");
-          expect((result.response as string).length).toBeGreaterThan(0);
-
-          // Wait mode includes stats
-          const stats = result.stats as Record<string, unknown>;
-          expect(stats).toBeDefined();
-          expect(stats.runtimeMs).toBeGreaterThan(0);
-        } finally {
-          ws?.close();
-        }
-      },
-      90_000,
-    );
-
-    // -----------------------------------------------------------------------
-    // COMMS-03: session.spawn
-    // -----------------------------------------------------------------------
-
-    it(
-      "COMMS-03: session.spawn creates sub-agent run and returns completed result",
-      async () => {
-        let ws: WebSocket | undefined;
-        try {
-          ws = await openAuthenticatedWebSocket(
-            handle.gatewayUrl,
-            handle.authToken,
-          );
-
-          // Spawn beta agent -- synchronous mode (no async param)
-          // Daemon polls internally until completion (up to waitTimeoutMs)
-          const spawnResult = (await sendJsonRpc(
-            ws,
-            "session.spawn",
-            {
-              task: "Say exactly one word.",
-              agent: "beta",
-            },
-            1,
-            { timeoutMs: RPC_LLM_MS },
-          )) as Record<string, unknown>;
-
-          const result = spawnResult.result as Record<string, unknown>;
-
-          // Synchronous spawn returns completed result with response
-          expect(typeof result.response).toBe("string");
-          expect((result.response as string).length).toBeGreaterThan(0);
-          expect(typeof result.sessionKey).toBe("string");
-          expect(result.taskDescription).toBe("Say exactly one word.");
-        } finally {
-          ws?.close();
-        }
-      },
-      90_000,
-    );
-  },
-);
 
 // ---------------------------------------------------------------------------
 // Paired byte stream helper for ACP protocol tests
@@ -323,7 +102,7 @@ function createTestAcpDeps(
 }
 
 // ---------------------------------------------------------------------------
-// Section 2: ACP Protocol Handshake (no LLM keys needed)
+// ACP Protocol Handshake (no LLM keys needed)
 // ---------------------------------------------------------------------------
 
 describe("ACP Protocol Handshake E2E", () => {

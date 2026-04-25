@@ -1,10 +1,26 @@
 ---
 title: "Sandbox"
-description: "Skill sandboxing implementation reference covering content scanning, sanitization, tool policy, and execution limits"
+description: "Skill sandboxing reference plus exec-tool OS-level sandbox config (bubblewrap / sandbox-exec)"
 icon: "box"
 ---
 
-The sandbox is a multi-layer defense system for custom skill execution. It combines content scanning, input sanitization, tool policy enforcement, and execution limits to prevent malicious or runaway skill behavior.
+The sandbox is a multi-layer defense system for custom skill execution. It combines content scanning, input sanitization, tool policy enforcement, and execution limits to prevent malicious or runaway skill behavior. For the **separate** OS-level kernel namespace that wraps the `system.exec` shell tool, see the dedicated [Exec Sandbox](/security/exec-sandbox) page; this page summarizes its config keys and runtime detection at the bottom.
+
+<Note>
+**Sandbox vocabulary.** Comis uses the word "sandbox" for two distinct
+mechanisms:
+
+- **Skill sandbox** -- the application-level layers documented on this page
+  (content scanning, sanitization, tool policy, execution limits). Always
+  active for every skill.
+- **Exec sandbox** -- the OS-level kernel namespace
+  (bubblewrap / sandbox-exec) that wraps the `system.exec` tool only.
+  Auto-detected at daemon startup; falls back to unsandboxed with a warning
+  if the binary is missing.
+
+The skill sandbox protects every skill regardless of how it executes. The
+exec sandbox protects only `system.exec`. Make sure to enable both.
+</Note>
 
 ## Overview
 
@@ -12,7 +28,7 @@ Every custom skill passes through four protection layers before and during execu
 
 <Steps>
   <Step title="Content Scanning">
-    Skill body inspected for 18 dangerous patterns across 6 categories at load time.
+    Skill body inspected for dangerous patterns across 6 categories at load time.
   </Step>
 
   <Step title="Sanitization Pipeline">
@@ -33,7 +49,7 @@ Every custom skill passes through four protection layers before and during execu
 The content scanner inspects skill body content at load time for dangerous patterns. It is a pure function -- callers handle audit emission and blocking decisions.
 
 <Info>
-  **Source:** `packages/skills/src/prompt/content-scanner.ts` -- 18 patterns across 6 categories. Patterns imported from `@comis/core` injection-patterns module.
+  **Source:** `packages/skills/src/prompt/content-scanner.ts` -- patterns across 6 categories. Patterns imported from `@comis/core` injection-patterns module.
 </Info>
 
 ### Scan Categories
@@ -124,6 +140,7 @@ interface ContentScanFinding {
   description: string;     // Human-readable description
   matchedText: string;     // Matched content (truncated to 100 chars)
   position: number;        // Character offset in content
+  lineNumber: number;      // 1-based line number of the match in the original content
 }
 ```
 
@@ -200,11 +217,13 @@ Tool policies control which tools are available to each agent during skill execu
 
 | Profile | Tools | Use Case |
 |---------|-------|----------|
-| `minimal` | `exec`, `read`, `write` | Basic file operations only |
+| `minimal` | `read`, `write` | Basic file operations only |
 | `coding` | `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process` | Software development tasks |
 | `messaging` | `message`, `session_status` | Communication-only agents |
-| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage` | Administrative agents |
+| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | Administrative agents |
 | `full` | All tools (empty array = unrestricted) | Fully trusted agents |
+| `cron-minimal` | `web_search`, `message`, `read_file`, `write_file`, `list_dir`, `memory_store`, `memory_search`, `cron`, `discover` | Conservative preset for cron jobs (opt-in only) |
+| `heartbeat-minimal` | `message`, `memory_store`, `memory_search`, `discover` | Conservative preset for heartbeat agents (opt-in only) |
 
 ### Resolution Order
 
@@ -271,6 +290,32 @@ Hard ceilings: 5 MB max response bytes, 500K max chars. Operator overrides canno
 When enabled, child processes spawned during skill execution run with restricted OS-level permissions. This provides a defense layer beneath application-level controls.
 
 See [Node Permissions](/reference/node-permissions) for full configuration reference.
+
+## Exec Sandbox (OS-Level)
+
+The `system.exec` tool wraps every shell command in a kernel-enforced
+namespace. The provider is selected automatically at daemon startup based on
+`process.platform`:
+
+| Platform | Provider | Module |
+|----------|----------|--------|
+| Linux | `BwrapProvider` (bubblewrap) | `packages/skills/src/builtin/sandbox/bwrap-provider.ts` |
+| macOS (`darwin`) | `SandboxExecProvider` (sandbox-exec) | `packages/skills/src/builtin/sandbox/sandbox-exec-provider.ts` |
+| Anything else | _none -- exec tool runs unsandboxed with a WARN log_ | -- |
+
+`detectSandboxProvider()` first probes the candidate binary's availability
+(`bwrap --version` or `sandbox-exec -h`); if the binary is missing it logs
+a structured warning with the install hint
+(`apt install bubblewrap`) and returns `undefined`, leaving the exec tool
+to run unsandboxed unless the operator has set `execSandbox.enabled:
+"never"` to disable it explicitly.
+
+<Info>
+Source: `detectSandboxProvider()` in `packages/skills/src/builtin/sandbox/detect-provider.ts`
+</Info>
+
+For the full mount table, attack scope, and configuration walkthrough, see
+[Exec Sandbox](/security/exec-sandbox).
 
 ## Configuration Reference
 

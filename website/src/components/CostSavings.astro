@@ -9,7 +9,7 @@
       Pay less. Do more.
     </h2>
     <p class="text-muted text-lg mb-14 max-w-2xl">
-      Frontier models aren't cheap. Comis has the most advanced prompt cache management available for Anthropic &mdash; 20 dedicated optimizations that cut your bill by 80%+.
+      Frontier models aren't cheap. Comis has the most advanced prompt cache management available for Anthropic &mdash; 15+ dedicated optimizations that cut your bill by 80%+.
     </p>
 
     <div class="grid md:grid-cols-3 gap-8">
@@ -84,7 +84,7 @@
     <!-- How it works -->
     <div class="mt-10 bg-navy-light/50 border border-white/5 rounded-xl p-6 max-w-3xl mx-auto">
       <p class="text-sm text-muted leading-relaxed">
-        <span class="text-white font-medium">Under the hood:</span> 20 dedicated optimizations including cache fence protection that prevents the context engine from breaking the cached prefix, sub-agent spawn staggering for pipeline cost sharing, and two-phase cache break detection that attributes every invalidation to its root cause. Gemini gets native CachedContent API integration. OpenAI gets completion storage.
+        <span class="text-white font-medium">Under the hood:</span> 15+ dedicated optimizations including cache fence protection that prevents the context engine from breaking the cached prefix, sub-agent spawn staggering for pipeline cost sharing, and two-phase cache break detection that attributes every invalidation to its root cause. Gemini gets native CachedContent API integration with SHA-256 content hashing. Numbers below come from a real production session &mdash; see <a href="/blog/cache-optimization-journey" class="text-teal hover:text-teal-dark underline">the cache forensics blog post</a> for the methodology.
       </p>
       <a href="/blog/cache-optimization-journey" class="inline-flex items-center gap-2 mt-4 text-teal hover:text-teal-dark text-sm font-medium transition-colors">
         Read the full cache forensics story

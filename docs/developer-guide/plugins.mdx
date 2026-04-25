@@ -1,10 +1,10 @@
 ---
 title: "Plugins"
-description: "13 lifecycle hooks and 3 extension registrations for customizing Comis behavior"
+description: "Lifecycle hooks and extension registrations for customizing Comis behavior"
 icon: "puzzle-piece"
 ---
 
-Plugins extend Comis by hooking into lifecycle events, registering custom tools, adding HTTP routes, and defining config schemas. Every plugin implements the `PluginPort` interface and uses the `PluginRegistryApi` to register its capabilities. The hook system runs at 13 lifecycle points -- 5 modifying hooks (can change behavior) and 8 void hooks (observe only).
+Plugins extend Comis by hooking into lifecycle events, registering custom tools, adding HTTP routes, and defining config schemas. Every plugin implements the `PluginPort` interface and uses the `PluginRegistryApi` to register its capabilities. The hook system runs at every lifecycle point -- 5 modifying hooks (can change behavior) and 8 void hooks (observe only).
 
 ## PluginPort Interface
 
@@ -40,7 +40,7 @@ The `PluginRegistryApi` exposes four methods for extending Comis. Each method is
 registry.registerHook(hookName, handler, options?);
 ```
 
-Subscribe to one of the 13 lifecycle hooks. The `hookName` must be a valid hook name from the `HookName` type. Options include `priority` (number, default `0`, higher runs first, range `-100` to `100`).
+Subscribe to a lifecycle hook. The `hookName` must be a valid hook name from the `HookName` type. Options include `priority` (number, default `0`, higher runs first, range `-100` to `100`).
 
 ### registerTool
 
@@ -98,7 +98,7 @@ Register a plugin-specific configuration section with a Zod schema. The section 
 
 ## Lifecycle Hooks
 
-The hook system is the primary extension mechanism for customizing Comis behavior. All 13 hooks are organized into five domains: Agent, Tool, Compaction, Delivery, Session, and Gateway.
+The hook system is the primary extension mechanism for customizing Comis behavior. Every hook is organized into one of six domains: Agent, Tool, Compaction, Delivery, Session, and Gateway.
 
 | Hook | Type | When It Runs | Can Modify |
 |------|------|-------------|------------|
@@ -227,7 +227,7 @@ registry.registerHook("tool_result_persist", (event, ctx) => {
 
 <Accordion title="before_compaction">
 
-Fires before the context engine's LLM compaction layer runs (the last-resort summarization step). Use this to cancel compaction for specific sessions or log compaction decisions. See [Compaction](/agents/compaction) for how compaction fits into the 8-layer context engine.
+Fires before the context engine's LLM compaction layer runs (the last-resort summarization step). Use this to cancel compaction for specific sessions or log compaction decisions. See [Compaction](/agents/compaction) for how compaction fits into the 10-layer context engine.
 
 **Event payload:**
 - `sessionKey` (SessionKey) -- Session being compacted

@@ -18,7 +18,7 @@ Each adapter handles platform-specific messaging, media, reactions, and threadin
 
 ### Lifecycle Plugins
 
-Hook into 13 lifecycle points to modify behavior, add audit logging, block actions, or inject context. The plugin system provides 5 modifying hooks (where your handler can alter data flowing through the pipeline) and 8 void hooks (where you observe events without modifying them).
+Hook into lifecycle points to modify behavior, add audit logging, block actions, or inject context. The plugin system provides 5 modifying hooks (where your handler can alter data flowing through the pipeline) and 8 void hooks (where you observe events without modifying them).
 
 Beyond lifecycle hooks, plugins can register custom tools that agents can call, add HTTP routes to the gateway, and define custom configuration schema sections. This makes the plugin system the primary extension mechanism for cross-cutting concerns like audit logging, webhook forwarding, or custom authorization.
 
@@ -49,7 +49,7 @@ async function fetchData(id: string): Promise<Result<Data, Error>> {
 }
 ```
 
-The codebase spans 13 packages, ~1185 source files, and ~944 test files. There are 19 port interfaces, 160 typed events across 4 domain subsystems, and 13 lifecycle hooks for plugin integration.
+The codebase spans 13 packages, ~1185 source files, and ~944 test files. There are 19 port interfaces, typed events across 4 domain subsystems, and lifecycle hooks for plugin integration.
 
 ## Key Patterns
 
@@ -57,7 +57,7 @@ A few patterns appear throughout the codebase and are important to understand be
 
 - **`Result<T, E>`** -- Every function returns a `Result` discriminated union instead of throwing exceptions. Use `ok()` for success and `err()` for failure. This pattern is ESLint-enforced.
 - **Factory functions** -- Prefer `createXxx()` factory functions returning typed interfaces over direct class instantiation (e.g., `createCircuitBreaker()` returns `CircuitBreaker`).
-- **`TypedEventBus`** -- The inter-module communication layer. Packages subscribe to typed events instead of importing each other directly. The `EventMap` interface provides compile-time safety for all 160 events.
+- **`TypedEventBus`** -- The inter-module communication layer. Packages subscribe to typed events instead of importing each other directly. The `EventMap` interface provides compile-time safety for all typed events.
 - **`AsyncLocalStorage`** -- Request-scoped context is available via `runWithContext()` and `getContext()` in `core/src/context/`, providing trace IDs and agent context without passing them through every function call.
 
 ## Prerequisites
@@ -89,13 +89,13 @@ The primary validation command before any commit is `pnpm build && pnpm test && 
     All 13 packages with roles and dependency graph
   </Card>
   <Card title="Event Bus" icon="tower-broadcast" href="/developer-guide/event-bus">
-    160 typed events across 4 domain subsystems
+    Typed events across 4 domain subsystems (Messaging, Agent, Channel, Infra)
   </Card>
   <Card title="Custom Adapters" icon="plug" href="/developer-guide/custom-adapters">
     Step-by-step channel adapter tutorial
   </Card>
   <Card title="Plugins" icon="puzzle-piece" href="/developer-guide/plugins">
-    13 lifecycle hooks and 3 extension registrations
+    Lifecycle hooks and extension registrations
   </Card>
   <Card title="Custom Skills" icon="wand-magic-sparkles" href="/developer-guide/custom-skills">
     Advanced skill development beyond prompt skills

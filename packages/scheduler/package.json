@@ -1,7 +1,7 @@
 {
   "name": "@comis/scheduler",
   "private": true,
-  "version": "1.0.19",
+  "version": "1.0.20",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Task scheduling and cron management for Comis",

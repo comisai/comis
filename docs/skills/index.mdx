@@ -44,15 +44,20 @@ with custom capabilities.
 
 ### Built-in Tools
 
-There are 13 built-in tools covering four areas:
+The "built-in tools" page covers the foundational tools that ship with every
+Comis agent -- file operations, shell execution, web access, and browser
+automation. These are the lowest layer in the tool stack: any agent built on
+the underlying coding-agent framework gets them out of the box.
 
-- **File operations** -- read, write, edit, search, and list files
-- **Shell commands** -- execute commands and manage background processes
-- **Web access** -- search the web and fetch page content
-- **Browser automation** -- control a headless browser for page interaction
+- **File operations** -- read, write, edit, search files; apply patches; edit
+  Jupyter notebooks
+- **Shell commands** -- execute commands and manage background processes inside
+  an OS-level sandbox
+- **Web access** -- search the web (8 providers) and fetch page content
+- **Browser automation** -- control a headless Chromium browser (16 actions)
+- **Context tools** -- search and recall content from the current session or
+  the compressed context DAG
 
-These are the fundamental capabilities that come with every Comis agent --
-think of them as the standard toolkit that any coding assistant would need.
 You can enable or disable each one individually through configuration, so an
 agent that should not run shell commands can have `exec` turned off while
 keeping everything else.
@@ -60,9 +65,20 @@ keeping everything else.
 See [Built-in Tools](/skills/built-in-tools) for the complete reference with
 parameters and usage examples.
 
+<Info>
+Across **built-in tools and platform tools combined**, Comis ships **58 tools**
+in total -- the README's "50+" claim is conservative. The 58 break down across
+10 functional categories: web (2), files (8), exec/process (2), memory (4),
+sessions (6), agents (4 including pipeline), messaging (6), scheduling (1),
+media (6), infrastructure/context (4 + 4 context-DAG), and fleet admin (8),
+plus 3 unified-dispatch routers that consolidate the memory, session, and
+context families. See [Built-in Tools](/skills/built-in-tools) and
+[Platform Tools](/skills/platform-tools) for the per-category breakdown.
+</Info>
+
 ### Platform Tools
 
-Platform tools are specific to Comis. There are over 30 tools across
+Platform tools are specific to Comis. There are tools across
 categories including:
 
 - **Scheduling** -- create cron jobs and manage heartbeat timing
@@ -130,14 +146,17 @@ for each agent, controlling exactly which tools it can access. Think of it
 like giving each agent a specific toolbox: a coding agent might have file and
 shell tools, while a customer service agent might have only messaging tools.
 
-Comis ships with five named profiles so you can quickly set the right level
-of access:
+Comis ships with five named profiles plus two specialised "minimal" presets
+for non-interactive runs, so you can quickly set the right level of access:
 
-- **minimal** -- read and write only, for highly restricted agents
-- **coding** -- file operations, shell commands, and process management for development agents
-- **messaging** -- message sending and session status for communication-focused agents
-- **supervisor** -- fleet management tools for administration agents
+- **minimal** -- `read` + `write`, for highly restricted agents
+- **coding** -- file operations, shell, and process management for development agents
+- **messaging** -- `message` + `session_status` for communication-focused agents
+- **supervisor** -- fleet-management tools for administration agents
 - **full** -- all tools with no restrictions (this is the default)
+- **cron-minimal** -- safe subset for scheduled cron jobs (web, message, basic
+  file/memory, cron itself)
+- **heartbeat-minimal** -- even narrower subset for periodic agent heartbeats
 
 See [Tool Policy](/skills/tool-policy) for details on configuring tool access.
 

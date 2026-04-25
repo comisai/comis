@@ -17,6 +17,8 @@ import {
   AppConfigSchema,
   redactConfigSecrets,
   warnSuspiciousEnvValues,
+  getManagedSectionRedirect,
+  formatRedirectHint,
   type AppContainer,
   type ConfigGitManager,
   type GitCommitMetadata,
@@ -467,11 +469,19 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       const ctx = params._context as { agentId?: string; userId?: string; traceId?: string } | undefined;
 
       try {
-        // Check immutable paths
+        // Check immutable paths.
+        // Backstop for direct-RPC clients (web UI, CLI). The gateway tool
+        // pre-flight and bridge metadata validator catch this earlier for
+        // LLM tool calls -- this path is reached when those layers are
+        // bypassed. Emit the same redirect hint so all clients see
+        // identical, model-agnostic recovery instructions (quick-260425-t40).
         if (isImmutableConfigPath(section, key)) {
+          const redirect = getManagedSectionRedirect(section, key);
+          const suffix = redirect
+            ? ` ${formatRedirectHint(redirect)}`
+            : " This setting requires manual operator intervention via config files.";
           throw new Error(
-            `Config path "${key ? `${section}.${key}` : section}" is immutable and cannot be modified at runtime. ` +
-            "This setting requires manual operator intervention via config files."
+            `Config path "${key ? `${section}.${key}` : section}" is immutable and cannot be modified at runtime.${suffix}`,
           );
         }
 
@@ -681,11 +691,16 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
           throw new Error(`Unknown config section: "${section}". Valid sections: ${getConfigSections().join(", ")}.`);
         }
 
-        // Check immutable paths -- entire section is being replaced
+        // Check immutable paths -- entire section is being replaced.
+        // Backstop for direct-RPC clients; LLM tool calls hit the same redirect
+        // earlier via gateway-tool / bridge validator (quick-260425-t40).
         if (isImmutableConfigPath(section)) {
+          const redirect = getManagedSectionRedirect(section);
+          const suffix = redirect
+            ? ` ${formatRedirectHint(redirect)}`
+            : " This section requires manual operator intervention via config files.";
           throw new Error(
-            `Config section "${section}" is immutable and cannot be replaced at runtime. ` +
-            "This section requires manual operator intervention via config files."
+            `Config section "${section}" is immutable and cannot be replaced at runtime.${suffix}`,
           );
         }
 

@@ -271,9 +271,26 @@ interrupted work.
 
 ## How identity loads
 
-When a session starts, Comis reads all workspace files and includes them in
-your agent's context. The agent sees the full content of each file as part of
-its instructions, which is how it knows who it is and how to behave.
+When a session starts, Comis reads **AGENTS.md** from the workspace and
+injects it directly into the agent's system prompt. AGENTS.md is the
+operating manual -- it instructs the agent to read the other workspace files
+(SOUL.md, IDENTITY.md, USER.md, ROLE.md, TOOLS.md) on its own using the
+`read` tool when they are needed.
+
+This split keeps the cached system prompt small and stable -- only AGENTS.md
+is paid for on every turn. The other files are loaded on demand and
+benefit from prompt caching once read. You can confirm this by inspecting
+your agent's first-turn log line:
+
+```text
+DEBUG [identity.loader] loaded { agents: true, sizeChars: 8842 }
+```
+
+Only the `agents` field is populated. SOUL.md, IDENTITY.md, USER.md and the
+rest live on disk in your workspace folder until the agent decides to read
+them.
+
+The implementation is in `packages/agent/src/identity/identity-loader.ts`.
 
 The bootstrap configuration controls how much workspace content is included:
 

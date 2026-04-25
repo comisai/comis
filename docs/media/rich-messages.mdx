@@ -1,18 +1,29 @@
 ---
 title: "Rich Messages"
-description: "Buttons, cards, embeds, and polls across Discord, Telegram, Slack, LINE, and more"
+description: "Buttons, cards, and effects across Discord, Telegram, Slack, and more"
 icon: "rectangle-list"
 ---
 
+**Can my agent send buttons people can click? A poll? A pretty card with an
+image?** On the platforms that support those, yes — your agent describes
+them once in a platform-neutral way and Comis renders them natively
+per-channel. On platforms that do not (IRC, Email, Signal, iMessage), Comis
+falls back to plain text so the message still gets through.
+
 Your agents can send more than just text. Rich messages include interactive
-buttons, styled cards with images and fields, polls for gathering opinions, and
-special effects like spoiler text. Comis provides a unified way to create these
--- your agent writes them once, and Comis renders them correctly on each platform
-using that platform's native features.
+buttons, styled cards with images and fields, and special effects like spoiler
+text. Comis provides a unified way to create these -- your agent writes them
+once, and Comis renders them correctly on each platform using that platform's
+native features.
+
+Polls are also available, but they are dispatched through the
+`platform_action` tool (action: `poll`) rather than as part of a normal
+`message` send. See [Platform Actions](/agent-tools/platform-actions) for the
+full poll parameters.
 
 ## What Your Agent Can Send
 
-Comis supports four types of rich messages:
+Comis supports three types of rich messages plus polls via platform actions:
 
 - **Buttons** -- Clickable actions that appear below a message. Users tap a
   button instead of typing a response. Great for choices like "Yes/No,"
@@ -22,24 +33,24 @@ Comis supports four types of rich messages:
   image, color accent, and structured fields. Think of them like a mini web page
   embedded in the chat.
 
-- **Polls** -- Questions with multiple choice answers. Users vote by clicking an
-  option. Results are visible to everyone.
-
 - **Effects** -- Special delivery modifiers like spoiler (content hidden until
   tapped) and silent (no notification sound).
+
+- **Polls** -- Question + 2-10 options, dispatched via `platform_action` (not
+  the `message` tool). Available on Discord, Telegram, and WhatsApp.
 
 ## Platform Support
 
 Not every platform supports every rich message type. The table below shows what
 works where.
 
-| Feature | Discord | Telegram | Slack | LINE | WhatsApp | Signal | iMessage | IRC |
-|---------|---------|----------|-------|------|----------|--------|----------|-----|
-| Buttons | Yes | Yes | Yes | Yes | Limited | No | No | No |
-| Cards/Embeds | Yes | Styled text | Yes | Flex Messages | No | No | No | No |
-| Polls | Yes | Yes | No | No | No | No | No | No |
-| Spoiler | Yes | Yes | No | No | No | No | No | No |
-| Silent | Yes | Yes | No | No | No | No | No | No |
+| Feature | Discord | Telegram | Slack | LINE | WhatsApp | Signal | iMessage | IRC | Email |
+|---------|---------|----------|-------|------|----------|--------|----------|-----|-------|
+| Buttons | Yes | Yes | Yes | No | Stubbed (text only) | No | No | No | No |
+| Cards/Embeds | Yes | Styled text | Yes | No | No | No | No | No | No |
+| Spoiler | Yes | Yes | No | No | No | No | No | No | No |
+| Silent | Yes | Yes | No | No | No | No | No | No | No |
+| Polls (via `platform_action`) | Yes | Yes | No | No | Yes | No | No | No | No |
 
 <Info>
 When your agent tries to send a rich message to a platform that does not support
@@ -100,15 +111,19 @@ You cannot have both `callback_data` and `url` on the same button.
   </Accordion>
 
   <Accordion title="LINE">
-    Buttons appear as actions in Flex Messages. Labels are truncated to 20
-    characters. Postback data (equivalent to `callback_data`) is limited to 300
-    characters. Supports URL, message, and postback action types.
+    The LINE adapter ships a Flex Message builder (`flex-builder.ts`) for
+    rich-menu actions, but its `sendMessage` path does not currently render
+    `RichButton` rows -- buttons are not delivered when sent through the
+    `message` tool. The plugin self-declares `buttons: false`. The Flex
+    builder limits action labels to 20 characters and postback data to 300
+    characters when used directly through internal APIs.
   </Accordion>
 
   <Accordion title="WhatsApp">
-    Limited interactive button support via the WhatsApp Business API. Fewer
-    customization options than other platforms. Only basic callback and URL
-    buttons are available.
+    The WhatsApp plugin self-declares `buttons: true`, but the current
+    adapter implementation logs button payloads and falls back to plain text
+    -- the buttons themselves are not yet rendered to the WhatsApp Business
+    API. Treat WhatsApp button support as not yet implemented for end users.
   </Accordion>
 </AccordionGroup>
 
@@ -163,26 +178,29 @@ true, fields are displayed side by side rather than stacked vertically.
   </Accordion>
 
   <Accordion title="LINE">
-    Uses Flex Messages with FlexBubble containers. Cards render as structured
-    bubbles with header, body, and footer sections. Carousels (multiple cards) are
-    supported up to 12 bubbles. This is LINE's most flexible layout system and
-    provides a native look.
+    The LINE adapter does not render `RichCard` from the `message` tool today
+    -- the plugin self-declares `cards: false`. Cards sent to LINE fall back to
+    the plain-text equivalent.
   </Accordion>
 </AccordionGroup>
 
-## Polls
+## Polls (via `platform_action`)
 
 Polls let your agent ask a question and collect votes. Users click to select
 their answer, and results are visible to everyone in the chat.
 
-### Poll Properties
+Polls are dispatched through the `platform_action` tool with `action: "poll"`,
+not as part of a normal `message` send. See
+[Platform Actions](/agent-tools/platform-actions) for the full tool reference.
+
+### Poll Input Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `question` | string | The poll question |
+| `question` | string | The poll question (required, non-empty) |
 | `options` | array | 2 to 10 answer choices |
-| `maxSelections` | number | Maximum selections per voter (default: 1) |
-| `durationHours` | number | How long the poll stays open (1 to 168 hours) |
+| `maxSelections` | number | Maximum selections per voter (default: 1, must not exceed number of options) |
+| `durationHours` | number | How long the poll stays open. Clamped to 1-168 hours; defaults to 24 hours when omitted. |
 
 The `maxSelections` property controls whether users can pick one answer or
 multiple answers. Set it to 1 for single-choice polls (like "Which day works
@@ -192,21 +210,29 @@ best?") or higher for multi-select polls (like "Which features do you want?").
 
 <AccordionGroup>
   <Accordion title="Discord">
-    Native poll support. Duration is clamped to 1-168 hours (1 hour to 7 days).
-    Polls appear as a dedicated message type with clickable options and a live
-    vote count.
+    Native poll support via `platform_action` (action: "poll"). Duration is
+    clamped to 1-168 hours (1 hour to 7 days). Polls appear as a dedicated
+    message type with clickable options and a live vote count.
   </Accordion>
 
   <Accordion title="Telegram">
-    Native poll support. Supports multiple answer selection. Polls appear below
-    the message with radio buttons (single-select) or checkboxes (multi-select).
+    Native poll support via `platform_action`. Polls appear below the chat
+    message with radio buttons (single-select) or checkboxes (multi-select).
     Results update in real time as users vote.
   </Accordion>
 
+  <Accordion title="WhatsApp">
+    Polls are sent through the WhatsApp adapter's `platform_action` handler
+    using Baileys' poll-message support. Vote-result normalization is not yet
+    wired (see code TODO), so the agent receives the poll-creation
+    confirmation but does not yet receive vote callbacks.
+  </Accordion>
+
   <Accordion title="Other platforms">
-    Polls are not supported on Slack, LINE, WhatsApp, Signal, iMessage, or IRC.
-    If your agent sends a poll to one of these platforms, the poll will not be
-    delivered. The accompanying text message (if any) is still sent.
+    Polls are not supported on Slack, LINE, Signal, iMessage, IRC, or Email.
+    Calling `platform_action` with `action: "poll"` on these platforms returns
+    an error. The accompanying text message (if any) is still sent through the
+    normal `message` path.
   </Accordion>
 </AccordionGroup>
 
@@ -267,11 +293,11 @@ converts it to the closest plain text equivalent:
 
 | Rich Type | Fallback |
 |-----------|----------|
-| Buttons | Numbered list of button labels |
-| Cards | Formatted text with title, description, and fields |
-| Polls | Not sent (text message still delivered) |
+| Buttons | Plain text only (button rows are dropped on unsupported platforms) |
+| Cards | Plain text only (cards are dropped on unsupported platforms) |
 | Spoiler | Content shown without hiding |
 | Silent | Normal notification behavior |
+| Polls (via `platform_action`) | Action returns an error on unsupported platforms; no fallback message is generated |
 
 This means your agent can always use rich messages without worrying about
 platform compatibility. Users on platforms with full support get the native

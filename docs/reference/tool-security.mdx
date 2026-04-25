@@ -104,15 +104,22 @@ Tool policies control which tools are available to an agent. Policies use named 
 
 ### Built-in Profiles
 
-Five built-in profiles define baseline tool sets:
+Built-in profiles define baseline tool sets. The five general-purpose profiles
+plus two narrow opt-in presets for non-interactive workloads:
 
 | Profile | Tools Included |
 |---------|---------------|
-| `minimal` | `exec`, `read`, `write` |
+| `minimal` | `read`, `write` |
 | `coding` | `read`, `edit`, `write`, `grep`, `find`, `ls`, `apply_patch`, `exec`, `process` |
 | `messaging` | `message`, `session_status` |
-| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage` |
+| `supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` |
 | `full` | All tools (empty array = unrestricted) |
+| `cron-minimal` | `web_search`, `message`, `read_file`, `write_file`, `list_dir`, `memory_store`, `memory_search`, `cron`, `discover` |
+| `heartbeat-minimal` | `message`, `memory_store`, `memory_search`, `discover` |
+
+The `*-minimal` presets are opt-in via `toolPolicy.profile` on a `CronJob` or
+heartbeat config respectively. They are never applied as a silent default --
+operators are expected to widen them per-job via `allow`.
 
 ### Tool Groups
 
@@ -126,9 +133,11 @@ Groups provide convenient bulk operations using `group:xxx` syntax in allow/deny
 | `group:memory` | `memory_search`, `memory_get`, `memory_store` |
 | `group:scheduling` | `cron` |
 | `group:messaging` | `message` |
-| `group:sessions` | `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`, `subagents`, `agents_list`, `pipeline` |
+| `group:sessions` | `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`, `session_search`, `subagents`, `agents_list`, `pipeline` |
 | `group:platform_actions` | `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` |
-| `group:supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage` |
+| `group:supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` |
+| `group:context` | `ctx_search`, `ctx_inspect`, `ctx_recall` |
+| `group:context_expand` | `ctx_expand`, `ctx_inspect` |
 
 ### Resolution Precedence
 
@@ -236,6 +245,7 @@ interface ContentScanFinding {
   description: string;
   matchedText: string;  // truncated to 100 chars
   position: number;     // character offset in content
+  lineNumber: number;   // 1-based line number in the original content
 }
 ```
 

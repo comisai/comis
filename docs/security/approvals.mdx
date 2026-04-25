@@ -22,9 +22,9 @@ Here is what happens when an agent triggers the approval workflow:
 
   <Step title="Comis classifies the action">
     Every action is automatically classified as read (safe), mutate
-    (modifying), or destructive (irreversible). Over 100 actions have specific
-    classifications built in. Any action that is not registered defaults to
-    "destructive" -- Comis fails closed.
+    (modifying), or destructive (irreversible). 178 actions across 21
+    categories have specific classifications built in. Any action that is not
+    registered defaults to "destructive" -- Comis fails closed.
   </Step>
 
   <Step title="Confirmation is checked">
@@ -34,10 +34,16 @@ Here is what happens when an agent triggers the approval workflow:
   </Step>
 
   <Step title="Execution pauses">
-    The agent stops and waits. You see the pending request in the
-    [Security dashboard](/web-dashboard/security-view) or receive a
-    notification with the action details, the requesting agent, and the reason
-    for the action.
+    The agent stops and waits. The pending request surfaces in three places:
+    - The **web dashboard** at `/security` (real-time list with one-click
+      Approve / Deny buttons)
+    - The **JSON-RPC API** via `approvals.list` and `approvals.resolve`
+      methods
+    - **Channel DM** to the operator (when the agent runs on a chat channel
+      and the operator is reachable there)
+
+    The notification includes the action details, the requesting agent, and
+    the reason for the action.
   </Step>
 
   <Step title="You decide">
@@ -45,6 +51,72 @@ Here is what happens when an agent triggers the approval workflow:
     not respond within the timeout period (default: 5 minutes), the action is
     automatically denied. This ensures that unanswered requests never hang
     indefinitely.
+  </Step>
+</Steps>
+
+## Dual-Cache Behavior
+
+The approval gate keeps two short-lived caches so repeated identical requests
+do not flood operators. Both caches are keyed by `(agentId, actionType,
+target)`, so a request for `file.delete /tmp/a` is distinct from
+`file.delete /tmp/b`.
+
+| Cache | Default TTL | Behavior |
+|-------|-------------|----------|
+| **Denial cache** | 60 seconds (`approvals.denialCacheTtlMs`) | A fresh request that you just denied is **auto-denied** without paging you again. After the TTL expires, the next request pages you normally. |
+| **Approval cache** | 30 seconds (`approvals.batchApprovalTtlMs`) | A fresh request that you just approved is **auto-approved** so a retried agent step does not pause. Set to `0` to disable batching entirely. |
+
+In addition, **batch followers** join an already-pending entry: if 5 sub-tasks
+all request `file.delete /var/log/old.log` while you are looking at the first
+one, your single Approve resolves all 5.
+
+The pending approval state serializes/restores on daemon restart, so an
+in-flight approval survives a `pm2 restart`.
+
+## Worked Example: Deleting a Build Artifact
+
+Walk through what happens when a coding agent named `code-assistant` decides
+to delete a stale build artifact.
+
+<Steps>
+  <Step title="The agent issues a tool call">
+    `code-assistant` calls `file.delete` with `path: ~/.comis/workspace-code-assistant/build/old.tar.gz`.
+  </Step>
+
+  <Step title="Action classifier marks it destructive">
+    `classifyAction("file.delete")` returns `"destructive"`. The
+    `requireForDestructive: true` policy triggers an approval request.
+  </Step>
+
+  <Step title="The gate publishes the request">
+    The `ApprovalGate` checks both caches; neither has a hit, so it creates
+    a pending entry, emits an `approval:requested` event, and parks the tool
+    call on a Promise. The agent's tool loop is now blocked.
+  </Step>
+
+  <Step title="You see it on the dashboard">
+    The web dashboard's Security view shows:
+    > **Pending approval** -- agent `code-assistant` wants to run
+    > `file.delete` on `build/old.tar.gz`. *Approve / Deny* (4:58 left).
+  </Step>
+
+  <Step title="You click Approve">
+    The dashboard calls `approvals.resolve` with `approved: true`. The gate
+    writes the entry to the **approval cache** (30s TTL), emits an
+    `approval:resolved` event, and unblocks the tool call. The agent
+    receives the file-delete result and continues.
+  </Step>
+
+  <Step title="A retry within 30 seconds is auto-approved">
+    If `code-assistant` decides 10 seconds later to also delete
+    `build/old.tar.gz` (e.g., because it raced against a sibling agent),
+    the gate finds the cache hit and auto-approves -- you do not see a
+    second prompt.
+  </Step>
+
+  <Step title="At 31+ seconds, normal approval resumes">
+    Past 30 seconds the cache entry expires. A new identical request would
+    page you again.
   </Step>
 </Steps>
 
@@ -116,14 +188,15 @@ classification drives the entire confirmation and approval system.
 | Mutate | Modifies something, reversible | Sending messages, writing files, updating settings |
 | Destructive | Irreversible or high-impact | Deleting files, dropping data, bulk operations |
 
+The action registry contains **178 registered actions across 21 categories**.
 Unknown actions that are not registered default to destructive -- Comis fails
 closed. This means new tools and custom actions are automatically treated as
-high-risk until they are explicitly classified.
+high-risk until they are explicitly classified. The registry is **locked**
+after bootstrap so plugins cannot downgrade classifications at runtime.
 
 <Tip>
-For the complete list of all registered actions and their classifications, see
-[Action Classifier Reference](/reference/action-classifier) (coming in the
-Reference section).
+For the complete list of all 178 registered actions and their classifications,
+see [Action Classifier Reference](/reference/action-classifier).
 </Tip>
 
 ## Approval Modes
@@ -176,6 +249,8 @@ all your agents, with the most recent requests at the top. Expired requests
 | `approvals.enabled` | `false` | Enable the approval workflow |
 | `approvals.defaultMode` | `auto` | Default approval mode (auto, require, deny) |
 | `approvals.defaultTimeoutMs` | `300000` | Timeout in milliseconds (5 minutes, auto-deny) |
+| `approvals.denialCacheTtlMs` | `60000` | Auto-deny window for repeats of a denied request (60s) |
+| `approvals.batchApprovalTtlMs` | `30000` | Auto-approve window for repeats of an approved request (30s, `0` disables) |
 
 <Info>
 The `approvals.enabled` default is `false`. You need to explicitly enable the

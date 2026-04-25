@@ -6,8 +6,25 @@ icon: "chart-line"
 
 The Observe section in the sidebar contains **six sub-views**, each accessible as its own page: Overview, Context Engine, Context DAG, Billing, Delivery, and Diagnostics. These give you a bird's-eye view of everything happening in your Comis installation -- how active your agents are, how much they cost, whether messages are being delivered successfully, and how the context engine is performing.
 
+**Who it's for:** anyone watching costs, debugging delivery failures, or measuring cache effectiveness.
+
+## Where the metrics come from
+
+All Observe data is sourced from Comis's own in-process collectors and persisted to SQLite (in `~/.comis/`) -- there is no external Prometheus, OpenTelemetry, or InfluxDB. The dashboard reads them via JSON-RPC:
+
+| Sub-view | Primary RPC methods |
+|----------|---------------------|
+| Overview | `obs.delivery.stats`, `obs.billing.total`, `obs.billing.usage24h`, `obs.billing.byProvider`, `obs.delivery.recent` |
+| Billing | `obs.billing.byProvider`, `obs.billing.byAgent`, `obs.billing.bySession`, `obs.billing.total`, `obs.billing.usage24h` |
+| Delivery | `obs.delivery.recent`, `obs.delivery.stats`, delivery-tracer detail RPC |
+| Diagnostics | `obs.diagnostics` |
+| Context Engine | `contextEngine.getLastMetrics`, `contextEngine.getLayerConfig` |
+| Context DAG | `context.dag.list`, `context.dag.tree`, `context.dag.search`, `context.dag.node` |
+
+Auto-refresh runs every 30 seconds; SSE event `metrics:update` triggers an extra refresh as soon as new data is recorded. There is no `/metrics` Prometheus endpoint exposed by default.
+
 <Info>
-The Overview page at `/observe/overview` also contains internal tabs (Overview, Billing, Delivery, Channels, Diagnostics) that provide the same data as the standalone sub-views. The sidebar links route to the standalone components (e.g., `/observe/billing`), while the Overview's tabs offer a unified view within a single page.
+The Overview page at `/observe/overview` also contains five internal tabs -- **Overview**, **Billing**, **Delivery**, **Channels**, and **Diagnostics** -- that surface the same data as the standalone sub-views (plus a Channels tab unique to this page). The sidebar links route to the standalone components (e.g., `/observe/billing`); the Overview's internal tabs offer a unified view within a single page.
 </Info>
 
 ## What You See
@@ -16,14 +33,16 @@ The Overview page at `/observe/overview` also contains internal tabs (Overview, 
 
 Route: `/observe/overview` (also the default when clicking "Overview" in the sidebar)
 
-The Overview is your at-a-glance summary. At the top, four stat cards show today's numbers:
+The Overview is your at-a-glance summary. At the top, six stat cards show recent activity numbers:
 
-- **Requests Today** -- how many messages your agents have handled
-- **Tokens Today** -- the total number of AI tokens consumed
+- **Requests/min** -- agent request rate (recent throughput)
+- **Error Rate** -- percentage of failed deliveries, color-coded green/yellow/red
+- **Avg Latency** -- average delivery latency in milliseconds
+- **Active Agents** -- count of agents that are currently running (not suspended)
+- **Tokens (24h)** -- AI tokens consumed in the last 24 hours
 - **Cost Today** -- estimated cost across all providers
-- **Errors Today** -- how many requests failed
 
-Below the stat cards, a **24-hour activity chart** plots token usage over time so you can see when your agents are busiest.
+Below the stat cards, a **24-hour activity chart** plots token usage over time so you can see when your agents are busiest, followed by per-agent and per-channel health grids.
 
 The Overview also includes internal tabs for Billing, Delivery, Channels, and Diagnostics within the same page.
 

@@ -115,7 +115,7 @@ The `comis.requires` fields are checked at startup using the **runtime eligibili
 
 ## Input Schema
 
-For skills that expect structured input, you can define a JSON Schema in the `inputSchema` field. This validates the parameters before the skill runs.
+For skills that expect structured input, you can attach a JSON Schema in the `inputSchema` field. The schema is stored alongside the manifest and surfaced as documentation -- agents can read it to understand what arguments the skill expects.
 
 ```yaml
 ---
@@ -134,7 +134,9 @@ inputSchema:
 Generate a {format} report titled "{title}" from the provided data.
 ```
 
-If someone invokes this skill without specifying a `format`, the validation will reject the request before the skill runs.
+<Info>
+`inputSchema` is currently advisory: it documents the expected shape but is not enforced at invocation time. Treat it as a contract you and the agent agree to honor in the skill body, not a runtime guard.
+</Info>
 
 ## Complete Example
 

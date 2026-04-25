@@ -10,6 +10,13 @@ media, control infrastructure, and perform platform-specific actions. Unlike
 built-in tools (which handle files and web access), platform tools are about
 working within the Comis ecosystem.
 
+<Info>
+Platform tools make up the bulk of Comis's **58 total built-in tools**. The
+[built-in tools page](/skills/built-in-tools) covers the framework-level
+capabilities (file ops, shell, web, browser); everything below is what Comis
+adds on top.
+</Info>
+
 ## Tool Categories
 
 Every platform tool is documented in detail in the [Agent Tools](/agent-tools/index)
@@ -27,7 +34,7 @@ tab. Here is a summary of what is available, organized by category:
 | Context | `session_search`, `ctx_search`, `ctx_inspect`, `ctx_recall`, `ctx_expand`, `context_tool` | Search and recall from current and compressed conversation history | [Context Tools](/skills/built-in-tools#context-tools) |
 | Browser | `browser` | Automate a headless browser with 16 actions | [Browser Guide](/agent-tools/browser) |
 | Background | `background_tasks` | List, inspect, cancel, and read output from background tasks | Below |
-| Fleet Management | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage` | Supervisor-level administration tools | [Infrastructure Guide](/agent-tools/infrastructure) |
+| Fleet Management | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | Supervisor-level administration tools | [Infrastructure Guide](/agent-tools/infrastructure) |
 | Platform Actions | `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` | Platform-specific moderation (54 total actions) | [Platform Actions Guide](/agent-tools/platform-actions) |
 
 ### Scheduling
@@ -122,8 +129,8 @@ Which tools are available is determined by the `contextEngine.version` setting. 
 Fleet management tools are supervisor-level capabilities for managing the
 entire Comis installation:
 
-- `agents_manage` -- create, update, and delete agent configurations (create/delete take effect immediately without daemon restart; update requires restart)
-- `obs_query` -- query observability data (logs, metrics, traces)
+- `agents_manage` -- six actions for agent lifecycle: `create`, `get`, `update`, `delete`, `suspend`, `resume` (create/delete take effect immediately without daemon restart; update requires restart)
+- `obs_query` -- query operational data with the action sub-system: `diagnostics`, `billing`, `delivery`, and `channels` (each action also accepts a `sub_action` for finer queries)
 - `sessions_manage` -- administrative session operations
 - `memory_manage` -- administrative memory operations (bulk delete, export)
 - `channels_manage` -- manage channel connections and settings
@@ -131,6 +138,7 @@ entire Comis installation:
 - `models_manage` -- manage model configurations and API keys
 - `skills_manage` -- manage skill registrations (supports per-agent scope: local or shared)
 - `mcp_manage` -- manage MCP server connections
+- `heartbeat_manage` -- adjust agent heartbeat configuration at runtime
 
 These tools are restricted to supervisor agents. See the section below on
 regular vs supervisor tools for details.
@@ -296,6 +304,7 @@ the tool policy configuration. The supervisor-restricted tools are:
 - `models_manage`
 - `skills_manage`
 - `mcp_manage`
+- `heartbeat_manage`
 
 These are admin-level tools for managing the entire Comis installation -- you
 would not want every agent to have access to them. A typical setup has one

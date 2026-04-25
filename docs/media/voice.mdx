@@ -285,6 +285,45 @@ available.
 This means you can start with just transcription, add TTS later, or use neither
 and rely entirely on the on-demand tools.
 
+## Walkthrough: voice → transcript → reply → TTS
+
+Here is the full round-trip for a WhatsApp voice note when transcription
+(OpenAI) and auto-TTS (`autoMode: inbound`) are both configured.
+
+<Steps>
+  <Step title="User records a voice note">
+    A user holds the microphone in WhatsApp and says: "Can you check whether
+    we have any meetings tomorrow before 10am?" — sends the audio.
+  </Step>
+  <Step title="Comis downloads and transcribes">
+    The WhatsApp adapter pulls the audio, decrypts it via Baileys, and hands
+    it to the transcription factory. OpenAI's `gpt-4o-mini-transcribe`
+    returns: `Can you check whether we have any meetings tomorrow before 10am?`
+  </Step>
+  <Step title="The agent reads the transcript">
+    The agent receives the text plus a metadata flag indicating the source
+    was a voice message. With `autoMode: inbound`, that flag tells Comis to
+    reply by voice as well.
+  </Step>
+  <Step title="The agent calls calendar tools and writes a reply">
+    After looking up the calendar via an MCP tool, the agent writes:
+    "You have one meeting before 10am tomorrow — the standup at 9:30. Nothing
+    else booked until 11."
+  </Step>
+  <Step title="Comis synthesises the reply">
+    Because auto-TTS fired, the OpenAI TTS provider renders the reply with
+    the `alloy` voice into an mp3. The WhatsApp adapter sends it as an
+    `audioMessage` so it appears as a native voice note on the user's phone.
+  </Step>
+  <Step title="The user listens to the reply">
+    Total round-trip on a normal connection: about 3–5 seconds.
+  </Step>
+</Steps>
+
+If TTS were not configured, the reply would still be delivered — just as
+text instead of audio. The `inbound` setting only triggers voice when the
+user spoke first, so written messages always get written replies.
+
 ## Related
 
 <CardGroup cols={2}>

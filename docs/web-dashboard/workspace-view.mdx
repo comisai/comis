@@ -4,7 +4,25 @@ description: "Browse and edit agent workspace files, manage git history from the
 icon: "folder-open"
 ---
 
-The Workspace view lets you browse, edit, and manage an agent's workspace files and git history -- all from the web console.
+The Workspace view lets you browse, edit, and manage an agent's workspace files and git history -- all from the web console. Each agent has its own workspace under `~/.comis/agents/<agentId>/workspace`, and the workspace files (`SOUL.md`, `IDENTITY.md`, `AGENTS.md`, etc.) shape that agent's personality and behavior; see [Identity](/agents/identity) for the concept.
+
+**Who it's for:** authors editing an agent's persona without leaving the dashboard, and operators who need a quick rollback after a bad change.
+
+## Route
+
+- `/agents/:id/workspace` -- opens the workspace manager for the named agent. You arrive here by clicking **Workspace** on the agent detail page.
+
+## Backing RPC
+
+- `workspace.list(agentId, path?)` -- file tree
+- `workspace.read(agentId, filePath)` -- file content
+- `workspace.write(agentId, filePath, content)` -- save
+- `workspace.delete(agentId, filePath)` -- delete
+- `workspace.resetToDefault(agentId, filePath)` -- restore template content
+- `workspace.gitStatus(agentId)` -- branch, changed files
+- `workspace.gitDiff(agentId, filePath?)` -- diff
+- `workspace.gitCommit(agentId, message)` -- commit
+- `workspace.gitRestore(agentId, filePath)` -- discard local edits
 
 ## What You See
 

@@ -1,0 +1,93 @@
+---
+title: "Skills View"
+description: "Browse installed skills and built-in tools per agent"
+icon: "wand-magic-sparkles"
+---
+
+The Skills view shows what tools and prompt skills each of your agents can use. It is a read-and-edit catalog: you can see every built-in tool, every platform tool, and every prompt skill -- including which ones are allowed or denied per agent -- and tweak the policy without leaving the browser.
+
+**Who it's for:** operators tuning what their agents can reach for, and authors checking whether a newly published prompt skill landed in the right agent's workspace.
+
+## Route
+
+- `/skills` -- opens the Skills view
+
+## What You See
+
+At the top of the page, an **agent selector dropdown** lets you pick which agent's skill set you are inspecting. Below that, a **scope toggle** chooses between *agent scope* (only this agent) and *shared scope* (skills available to every agent). The rest of the view is organized into two tabs.
+
+### Built-in Tools tab
+
+Lists Comis's bundled tools, grouped by category:
+
+| Category | Tools |
+|----------|-------|
+| File Operations | read, write, edit, find, ls |
+| Execution | exec, process |
+| Search | grep |
+| Web | webSearch, webFetch, browser |
+
+Below the bundled tools, a **Platform Tools** section lists higher-level building blocks the agent uses to talk to the rest of Comis -- memory, sessions, agents, messaging, media, infrastructure, and fleet management groups (e.g., `memory_search`, `sessions_spawn`, `discord_action`, `image_analyze`, `cron`, `gateway`, `models_manage`).
+
+Each tool card shows:
+
+- The tool's name and one-line description
+- Notable parameter hints (for `webSearch`: freshness, deepFetch, provider override)
+- An enable/disable toggle (controls whether this agent may invoke the tool)
+
+A **Tool Policy** subsection lets you pick a profile (`minimal`, `coding`, `messaging`, `supervisor`, `full`) which sets the base allow-list, then add fine-grained `allow`/`deny` entries on top. Changes are persisted via the `config.patch` RPC and survive a restart.
+
+### Prompt Skills tab
+
+Lists all discovered prompt skills for the selected agent, including:
+
+- The skill name and description
+- Its location (`bundled`, `workspace`, or `local`)
+- Whether the skill is auto-injected or only invokable on demand
+
+You can configure:
+
+- **Max body length** -- the largest skill body the LLM will ingest
+- **Enable dynamic context** -- whether matching context can auto-inject skill bodies
+- **Max auto-inject** -- how many skills can be auto-injected per turn
+- **Allowed / denied skills** -- pin lists for fine-grained control
+
+Recent skill events (executions and rejections, fed by SSE) appear as a small log so you can watch which skills the agent actually reached for during a session.
+
+## Common Tasks
+
+<Steps>
+  <Step title="Switch which agent you are viewing">
+    Click the **Agent** dropdown at the top and pick another agent. The tool toggles, policy, and prompt skills all reload for that agent.
+  </Step>
+  <Step title="Disable a risky tool for one agent">
+    On the **Built-in Tools** tab, find the tool card (for example, `exec`). Click the toggle to off. The change writes to `agents.<agentId>.skills.builtinTools.exec = false` via `config.patch` and takes effect after the daemon restart it triggers.
+  </Step>
+  <Step title="Switch tool profile">
+    In the **Tool Policy** subsection, pick a profile from the dropdown (e.g., `coding`). The allow-list updates to the profile's defaults; you can then add `allow`/`deny` entries for exceptions.
+  </Step>
+  <Step title="Allow only specific prompt skills">
+    On the **Prompt Skills** tab, add skill names to the **Allowed Skills** list. Anything not on the list is implicitly denied.
+  </Step>
+</Steps>
+
+<Tip>
+The Skills view is the closest visual analog to editing the `agents.<agentId>.skills` and `agents.<agentId>.toolPolicy` blocks in `config.yaml`. If you prefer the raw YAML, the [Config Editor](/web-dashboard/config-editor) shows the same data.
+</Tip>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Skills Overview" icon="wand-magic-sparkles" href="/skills/index">
+    Concept guide for skills, tools, and the discovery layer.
+  </Card>
+  <Card title="Built-in Tools" icon="screwdriver-wrench" href="/skills/built-in-tools">
+    Full reference for each bundled tool's parameters and behavior.
+  </Card>
+  <Card title="Tool Policy" icon="shield-halved" href="/skills/tool-policy">
+    Profiles, allow/deny semantics, and security implications.
+  </Card>
+  <Card title="MCP Servers" icon="server" href="/web-dashboard/mcp-management">
+    Manage MCP-provided tools alongside built-in tools.
+  </Card>
+</CardGroup>

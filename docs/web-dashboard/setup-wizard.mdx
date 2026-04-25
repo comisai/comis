@@ -1,0 +1,117 @@
+---
+title: "Setup Wizard"
+description: "Re-run the guided onboarding flow from inside the dashboard"
+icon: "rocket"
+---
+
+The Setup Wizard is the same step-by-step flow you saw the first time you ran `comis init`, but now embedded in the dashboard. Use it to add a new provider, register another agent, or wire up a fresh channel without learning the YAML schema.
+
+**Who it's for:** new operators bringing a fresh installation up to a working agent + channel, and existing users adding their second or third channel.
+
+## Route
+
+- `/setup` -- opens the Setup Wizard standalone
+- The same wizard is also available as a tab inside the [Config Editor](/web-dashboard/config-editor)
+
+## The Five Steps
+
+The wizard guides you through five steps; each step has its own form and a Back/Next pair. You cannot skip ahead, but you can come back later -- the dashboard keeps your in-flight values until you complete or close the wizard.
+
+### 1. Basics
+
+Confirm the workspace identity:
+
+- **Tenant ID** -- a UUID identifying this Comis workspace (defaults to your current tenant if one exists)
+- **Data directory** -- where Comis stores its database and per-agent files (default: `~/.comis`)
+- **Log level** -- `debug`, `info`, `warn`, or `error`
+- **Gateway host / port** -- how the gateway binds (default: `0.0.0.0:4766`)
+
+### 2. Provider
+
+Pick the LLM provider to wire up. Each option in the picker shows the provider name, a one-line description, and whether it needs an API key, base URL, or model id:
+
+- **Anthropic** (recommended) -- Claude models
+- **OpenAI** -- GPT-4o, o1, o3 families
+- **Google** -- Gemini
+- **Groq, Mistral, DeepSeek, xAI, Together, Cerebras, OpenRouter** -- third-party hosts and aggregators
+- **Ollama** / **local** -- self-hosted endpoints
+
+Enter the API key (saved to `~/.comis/.env` or the secrets store, never printed), the base URL if non-default, and the default model id.
+
+### 3. Agent
+
+Configure your first agent (or another one):
+
+- **Agent ID** -- unique handle (e.g., `default`, `research-bot`)
+- **Agent name** -- display name shown in the dashboard
+- **Provider / model** -- can be defaulted from step 2 or overridden
+- **Max steps** -- how many agentic iterations before the run halts (default 100)
+- **Budget per day / per hour** -- token caps to prevent runaway cost
+
+### 4. Channels
+
+Choose which messaging platforms this Comis instance should connect to. For each channel you check, the wizard asks for the credentials it needs:
+
+| Channel | Required credentials |
+|---------|----------------------|
+| Telegram | Bot token (from `@BotFather`) |
+| Discord | Bot token + application ID |
+| Slack | Bot token + signing secret + (optional) app token |
+| WhatsApp | Bot token + phone-number id |
+| LINE | Channel access token + channel secret |
+| Email | IMAP/SMTP host, port, username, password (or OAuth refresh token) |
+| IRC | Server, port, nick, channels |
+| Signal | Phone number (Signal CLI must be configured first) |
+| iMessage | macOS-only -- relay configuration |
+
+You can leave channels unconfigured and add them later by re-running the wizard.
+
+### 5. Review
+
+Shows a summary of every value you entered. Click **Apply** to:
+
+1. Validate the merged config against `AppConfigSchema` (Zod).
+2. Write the values to `~/.comis/config.yaml` via `config.patch`.
+3. Persist secrets to the secret store / env file.
+4. Trigger a daemon restart so all subsystems pick up the new config.
+
+A toast confirms the apply succeeded; the dashboard then redirects to the main Dashboard.
+
+## Common Tasks
+
+<Steps>
+  <Step title="Add a second channel to an existing install">
+    Open `#/setup`. Skip Basics/Provider/Agent (use the existing values) and configure only the Channels step. Apply -- the daemon picks up the new channel after the restart.
+  </Step>
+  <Step title="Re-key a provider">
+    Run the wizard, advance to the Provider step, paste the new API key. Skip the rest. Apply.
+  </Step>
+  <Step title="Fix a misconfigured first run">
+    If your initial `comis init` had a typo, run the wizard again with corrected values. The wizard merges into your existing config -- it does not erase agents or channels you've already set up.
+  </Step>
+</Steps>
+
+<Tip>
+The wizard is the same code path as the CLI's `comis init` command. If you prefer a terminal flow, see [Installation > Configuration](/installation/configuration) for the equivalent steps with `--non-interactive` flags.
+</Tip>
+
+<Warning>
+After **Apply**, the dashboard briefly disconnects (the connection dot turns yellow) while the daemon restarts. You'll see a green dot again within a few seconds. If the dot stays red, check that the daemon is running (`comis daemon status` from a terminal) and that no validation error appeared in the toast.
+</Warning>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/get-started/quickstart">
+    The end-to-end first-run guide.
+  </Card>
+  <Card title="Installation" icon="download" href="/installation/index">
+    Platform-specific install paths and prerequisites.
+  </Card>
+  <Card title="Channels Setup" icon="tower-broadcast" href="/channels/index">
+    Per-channel credential and webhook setup details.
+  </Card>
+  <Card title="Config Editor" icon="gear" href="/web-dashboard/config-editor">
+    Make targeted changes after the wizard, with diff and rollback.
+  </Card>
+</CardGroup>

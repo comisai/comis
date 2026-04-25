@@ -4,13 +4,15 @@ description: "Send, reply, react, edit, and delete messages across channels"
 icon: "paper-plane"
 ---
 
-The `message` tool gives agents the ability to send and manage messages across all connected channels. Agents can send new messages, reply to existing ones, add reactions, edit their messages, delete messages, fetch message history, and attach files.
+**What it does:** Gives agents one unified API to send, reply to, react to, edit, delete, fetch, and attach messages on any connected channel.
+
+**Who it's for:** Anyone building cross-channel agents -- alert routing, notification systems, multi-platform bots. The same `message` tool call works for Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, LINE, and Email.
 
 ## message -- Cross-Channel Messaging
 
-The `message` tool supports 7 actions that cover every aspect of message management. All actions work across every connected channel -- Discord, Telegram, Slack, WhatsApp, Signal, iMessage, IRC, and LINE.
+The `message` tool supports **7 actions** -- `send`, `reply`, `react`, `edit`, `delete`, `fetch`, and `attach`. Comis dispatches each call to the right channel adapter based on `channel_type`. Not every action is supported on every platform (see the [capability matrix](#per-channel-capability-matrix) below); the tool returns a structured error if you ask for something the channel cannot do.
 
-All actions require the `channel_type` parameter to specify which platform adapter handles the request. This is a required string identifying the channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`).
+All actions require the `channel_type` parameter to specify which platform adapter handles the request. This is a required string identifying the channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`, `signal`, `imessage`, `line`, `irc`, `email`).
 
 ### Quick Reference
 
@@ -94,7 +96,7 @@ All actions require the `channel_type` parameter to specify which platform adapt
     | `channel_type` | string | Yes | Channel type (e.g., `telegram`, `discord`, `slack`, `whatsapp`) |
     | `channel_id` | string | Yes | The channel containing the message |
     | `message_id` | string | Yes | The ID of the message to react to |
-    | `emoji` | string | Yes | The emoji to add in Unicode format (e.g., `thumbsup`, `check`, `eyes`) |
+    | `emoji` | string | Yes | The emoji to add. Provide the literal Unicode emoji character (e.g., the thumbs-up character) or a platform-recognized shortcode; per-platform translation is handled by the channel adapter. |
 
     **Example -- Acknowledge a request:**
     ```yaml
@@ -202,17 +204,79 @@ All actions require the `channel_type` parameter to specify which platform adapt
   </Accordion>
 </AccordionGroup>
 
+## Per-channel capability matrix
+
+Channel adapters declare what they can do via a `ChannelCapability` schema, and the `message` tool checks support before dispatching. Asking for an unsupported action returns a structured error with `errorKind: "platform"` -- it does not silently no-op.
+
+| Channel | Send | Reply | React | Edit | Delete | Fetch History | Attachments | Streaming method | Max chars |
+|---------|------|-------|-------|------|--------|--------------|-------------|------------------|-----------|
+| Discord | Yes | Yes | Yes | Yes | Yes | Yes | Yes | edit (500ms) | 2000 |
+| Telegram | Yes | Yes | Yes (limited emoji) | Yes | Yes | No | Yes | edit (300ms) | 4096 |
+| Slack | Yes | Yes (thread_ts) | Yes (shortnames) | Yes | Yes | Yes | Yes | edit (400ms) | 4000 |
+| WhatsApp | Yes | Yes (quoted) | Yes (Unicode) | Yes (overwrite) | Own only | No | Yes | block (600ms) | 65536 |
+| Signal | Yes | Yes (quoted) | Yes (Unicode) | No | Yes | No | Yes | block (500ms) | 65536 |
+| iMessage | Yes | No | No | No | No | Yes | Yes | none | 20000 |
+| LINE | Yes | Yes (push) | No | No | No | No | Yes | none | 5000 |
+| IRC | Yes | Mention prefix | No | No | No | No | No | none | 512 |
+| Email | Yes | Yes (RFC 5322 headers) | No | No | No | No | Yes | none | 100000 |
+
+**Streaming methods:**
+
+- `edit` -- the agent posts a placeholder, then edits it in place as content streams in. Supported on Discord, Telegram, Slack.
+- `block` -- the agent buffers chunks and emits complete blocks (no edit). Used by WhatsApp and Signal where edits are unreliable or unsupported.
+- `none` -- no streaming; the agent waits for the full reply before sending.
+
+The throttle column is the minimum delay between consecutive edits/blocks during streaming, configured per adapter to respect each platform's rate limits.
+
 ## Cross-Channel Messaging
 
 The `message` tool works across all connected channels. The `channel_type` and `channel_id` parameters together identify which channel to target. Agents can send messages to channels they are not currently conversing in -- this is a key capability for building notification systems, alert pipelines, and cross-channel coordination workflows.
 
-For example, a monitoring agent could:
-1. Detect an issue through its heartbeat check
-2. Send an alert to the `#ops-alerts` Discord channel using `channel_type: discord`
-3. Send a summary to the Telegram admin group using `channel_type: telegram`
-4. React with a warning emoji on the original message that triggered the check
+**Example -- mirror an alert to Discord and Email:**
+
+A finance agent watching a market trigger needs to fan out the same alert to two channels at once. The agent makes two consecutive `message` calls with the same body but different targets:
+
+```yaml
+# First call: high-priority Discord notification
+action: send
+channel_type: discord
+channel_id: "ops-alerts"
+text: "ALERT: NVDA crossed below 450 -- review position."
+
+# Second call: email for permanent record
+action: send
+channel_type: email
+channel_id: "trading-team@example.com"
+text: "ALERT: NVDA crossed below 450 -- review position."
+```
+
+For a monitoring agent reacting to its own heartbeat check, the typical pattern is:
+
+1. Detect an issue through its heartbeat check.
+2. Send an alert to the `#ops-alerts` Discord channel using `channel_type: discord`.
+3. Send a summary to the Telegram admin group using `channel_type: telegram`.
+4. React with a warning emoji on the original message that triggered the check.
 
 All of this happens through the same `message` tool with different `channel_type` and `channel_id` values.
+
+## notify_user -- Proactive Notifications
+
+The `notify_user` tool delivers proactive notifications outside the normal request-response flow. The daemon applies rate limiting, dedup, quiet-hours suppression, and channel-resolution guards before enqueueing the notification.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `message` | string | Yes | Notification text to send to the user |
+| `priority` | string | No | One of `low`, `normal` (default), `high`, `critical`. `critical` bypasses quiet hours. |
+| `channel_type` | string | No | Target channel type (e.g., `telegram`, `discord`). Omit for auto-resolution. |
+| `channel_id` | string | No | Target channel/chat ID. Required when `channel_type` is specified. |
+
+**Example -- Critical alert that bypasses quiet hours:**
+```yaml
+message: "Production deploy failed -- rolling back."
+priority: critical
+```
+
+Use `notify_user` for agent-initiated communication (alerts, reminders, task-completion notices) when you want platform-level guards. Use `message` (action: `send`) for direct messaging to a specific channel without the notification guard pipeline.
 
 ## Related
 
@@ -224,7 +288,7 @@ All of this happens through the same `message` tool with different `channel_type
     Sub-agents, pipelines, and session management
   </Card>
   <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
-    Master reference table of all 47 tools
+    Master reference table of all tools
   </Card>
   <Card title="Platform Actions" icon="gavel" href="/agent-tools/platform-actions">
     Moderation actions for Discord, Telegram, Slack, and WhatsApp

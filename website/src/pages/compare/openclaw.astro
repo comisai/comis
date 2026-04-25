@@ -54,7 +54,7 @@ const securityRows: Row[] = [
   {
     label: "Prompt injection",
     comis:
-      "68 patterns across 13 weighted categories with composite 0.0\u20131.0 scoring. Progressive rate limiting and reinforcement actions.",
+      "65 patterns across 8 categories with weighted scoring (composite 0.0\u20131.0). Progressive rate limiting and reinforcement actions.",
     openclaw:
       "Explicitly out of scope per SECURITY.md. Focus on execution boundaries only.",
     verdict: "comis",
@@ -70,7 +70,7 @@ const securityRows: Row[] = [
   {
     label: "Secrets management",
     comis:
-      "SecretManager with frozen snapshots. ESLint-banned process.env access. 68 Pino redaction paths.",
+      "SecretManager with frozen snapshots. ESLint-banned process.env access. AES-256-GCM-ready encryption (HKDF-SHA256), 18 log-sanitizer patterns plus Pino structured field redaction.",
     openclaw:
       "${VAR_NAME} template references with SecretRef type (env/file/exec sources). No secret-specific lint rules.",
     verdict: "comis",
@@ -210,7 +210,7 @@ const agentRows: Row[] = [
   {
     label: "Model providers",
     comis:
-      "22+ providers via pi-ai SDK: Anthropic, OpenAI, Google, AWS, Azure, Groq, Ollama, Together, Replicate, Mistral.",
+      "13 wired providers: Anthropic (incl. Bedrock/Vertex aliases), OpenAI (incl. Azure variants), Google (Gemini, Vertex, Antigravity), Mistral, Groq, Ollama, OpenRouter, Together, Cerebras, xAI/Grok, DeepSeek - all via the pi-ai catalog with live validation.",
     openclaw:
       "34+ providers with auth profile fallback chain, dynamic discovery, and per-profile cooldown.",
     verdict: "tie",
@@ -921,11 +921,11 @@ const sectionMeta = [
               </li>
               <li>
                 <span class="font-semibold text-white">Cache &amp; cost optimization (7&ndash;2&ndash;1):</span>
-                20 prompt cache optimizations including TTL monotonicity enforcement,
+                15+ prompt cache optimizations including TTL monotonicity enforcement,
                 adaptive cold-start retention, 3-zone breakpoint placement with model-specific
                 thresholds, observation masker hysteresis to prevent cache thrashing,
                 tool schema snapshotting, and subagent short-TTL economics. Measured
-                81.5% cache hit rate in production. OpenClaw counters with persistent
+                94% cache hit rate (16.9x read/write ratio) in production. OpenClaw counters with persistent
                 SQLite embedding cache and broader multi-provider cache awareness.
               </li>
               <li>

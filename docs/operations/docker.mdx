@@ -47,15 +47,16 @@ with a health check (60s interval, 10s timeout, 30s start period, 3 retries).
 ### Build args
 
 ```dockerfile
-ARG COMIS_NODE_BOOKWORM_IMAGE="node:22-bookworm@sha256:..."
-ARG COMIS_NODE_BOOKWORM_SLIM_IMAGE="node:22-bookworm-slim@sha256:..."
+ARG COMIS_NODE_BOOKWORM_IMAGE="node:22-bookworm"
+ARG COMIS_NODE_BOOKWORM_SLIM_IMAGE="node:22-bookworm-slim"
 ARG COMIS_VARIANT="slim"
 ARG COMIS_DOCKER_APT_PACKAGES=""
 ```
 
 - **Digest pinning** -- the base image ARGs accept `@sha256:` digests for
-  reproducible builds. Replace the placeholder digests with actual values from
-  `docker inspect --format='{{.RepoDigests}}' node:22-bookworm`.
+  reproducible builds. Override at build time with values resolved from
+  `docker inspect --format='{{.RepoDigests}}' node:22-bookworm`, e.g.
+  `docker build --build-arg COMIS_NODE_BOOKWORM_IMAGE=node:22-bookworm@sha256:<digest> ...`.
 - **Variant selection** -- set `COMIS_VARIANT=default` for the full image with
   debugging tools, or leave as `slim` for production.
 - **Custom packages** -- set `COMIS_DOCKER_APT_PACKAGES` to install additional
@@ -300,9 +301,20 @@ The dashboard runs on port 8080 with a health check via `wget`.
 
 ## CI/CD
 
-The repository includes `.github/workflows/docker-release.yml` for automated
-Docker image builds. This workflow triggers on releases and handles building and
-publishing the image. See the workflow file for configuration details.
+The repository ships two automated Docker workflows:
+
+| Workflow | Registry | Trigger |
+|----------|----------|---------|
+| `docker-release.yml` | GitHub Container Registry (`ghcr.io`) | Push to `main` or `v*` tag |
+| `dockerhub-release.yml` | Docker Hub (`comisai/comis`) | `v*` tag only |
+
+Both workflows build multi-arch manifests (`linux/amd64` + `linux/arm64`) and
+produce both `default` and `slim` variants. The Docker Hub workflow version tags
+are derived directly from the git tag — pushing `v1.0.19` produces
+`comisai/comis:1.0.19`, `comisai/comis:1.0`, and `comisai/comis:latest`.
+
+For full details on image tags, required secrets, and manual publishing, see the
+[Docker Hub Publishing](/operations/docker-hub) page.
 
 ## Updating
 

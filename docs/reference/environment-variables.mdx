@@ -4,7 +4,13 @@ description: "Complete reference for all Comis environment variables"
 icon: "key"
 ---
 
-Complete reference for environment variables recognized by Comis. These variables configure operational behavior of the daemon and CLI. They are separate from config YAML settings, though some overlap -- environment variables override config values where applicable.
+**What this is for:** every environment variable Comis reads — provider API keys, channel tokens, encryption secrets, infrastructure paths. **Who it's for:** anyone wiring API keys, deploying to Docker, or running CI pipelines.
+
+Comis reads 40+ environment variables across encryption, LLM providers, voice/media, web search, channel credentials, and infrastructure. Most variables are **also referenceable from `config.yaml` via `${VAR_NAME}` substitution** — you typically pick one location per credential. The canonical templates are [`/.env.example`](https://github.com/comisai/comis/blob/main/.env.example) (host install) and [`/.env.docker.example`](https://github.com/comisai/comis/blob/main/.env.docker.example) (Docker Compose).
+
+<Tip>
+The interactive setup wizard (`comis init`, `comis configure`) populates the most common variables for you and writes them to `~/.comis/.env`. Manual editing is only needed for advanced or non-interactive setups.
+</Tip>
 
 ## Comis Variables
 
@@ -16,7 +22,7 @@ Complete reference for environment variables recognized by Comis. These variable
 | **Format** | Colon-separated file paths |
 | **Default** | `~/.comis/config.yaml:~/.comis/config.local.yaml` |
 
-Specifies which YAML configuration files to load. Files are loaded in order and deep-merged, with later files overriding earlier ones. Non-existent files are silently skipped. The daemon reads this variable at startup to locate config files. The CLI uses it in `config validate` and `pm2 setup` commands.
+Specifies which YAML configuration files to load, as a colon-separated list (like `PATH`). Files are loaded in order and deep-merged, with later files overriding earlier ones. Non-existent files are silently skipped. The daemon reads this variable at startup to locate config files. The CLI uses it in `config validate` and `pm2 setup` commands. For full details on the config-path syntax and merge behavior, see [Configuration](/installation/configuration).
 
 ```bash
 export COMIS_CONFIG_PATHS="$HOME/.comis/config.yaml:$HOME/.comis/config.local.yaml"
@@ -109,6 +115,34 @@ Overrides the log file path that the `comis daemon logs` command reads from when
 export COMIS_LOG_PATH="/var/log/comis/daemon.log"
 ```
 
+### `COMIS_LOG_LEVEL`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon |
+| **Format** | `trace` \| `debug` \| `info` \| `warn` \| `error` \| `fatal` |
+| **Default** | `info` (or value of `logLevel` in config) |
+
+Overrides the daemon's Pino log level for the current process. Useful when you want a one-off DEBUG dump without editing config and restarting cleanly. The configured `logLevel` in `config.yaml` takes precedence in normal startup; this variable is meant for ad-hoc troubleshooting.
+
+```bash
+COMIS_LOG_LEVEL=debug pm2 restart comis
+```
+
+### `COMIS_OFFLINE`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon, CLI |
+| **Format** | `1` to enable, unset to disable |
+| **Default** | (unset) |
+
+When set to `1`, disables outbound network calls to fetch optional tooling at startup (e.g. binary downloads, model lists, MCP server discovery). Use this for air-gapped deployments. Configured channels and provider APIs continue to work — `COMIS_OFFLINE` only gates _provisioning_ traffic, not runtime LLM/channel calls.
+
+```bash
+export COMIS_OFFLINE=1
+```
+
 ## Secret Variables
 
 ### `SECRETS_MASTER_KEY`
@@ -146,6 +180,117 @@ Standard Node.js environment variable. Affects behavior of some dependencies and
 ```bash
 export NODE_ENV=production
 ```
+
+## LLM Provider Keys
+
+At least one provider key is required. Each provider is detected at startup; missing keys disable the matching provider gracefully. All keys can also be stored encrypted via [`comis secrets set`](/reference/cli#comis-secrets) instead of plaintext in `.env`.
+
+| Variable | Provider | Reference |
+|----------|----------|-----------|
+| `ANTHROPIC_API_KEY` | Anthropic (Claude family) | `sk-ant-...` |
+| `OPENAI_API_KEY` | OpenAI (GPT family, Whisper, DALL-E, embeddings) | `sk-...` |
+| `GOOGLE_API_KEY` | Google AI Studio (Gemini family) | `AIza...` |
+| `GROQ_API_KEY` | Groq (Llama, Whisper) | `gsk_...` |
+| `MISTRAL_API_KEY` | Mistral AI | -- |
+| `DEEPSEEK_API_KEY` | DeepSeek | `sk-...` |
+| `XAI_API_KEY` | xAI (Grok, search) | `xai-...` |
+| `TOGETHER_API_KEY` | Together AI | -- |
+| `CEREBRAS_API_KEY` | Cerebras | `csk-...` |
+| `OPENROUTER_API_KEY` | OpenRouter (multi-provider proxy) | `sk-or-...` |
+
+```bash
+# .env example: pick the providers you actually use
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+```
+
+Some providers reuse a parent key for sub-services: OpenAI Whisper STT and DALL-E image-gen use `OPENAI_API_KEY`; Groq Whisper uses `GROQ_API_KEY`; Grok search uses `XAI_API_KEY`. See [Models](/agents/models) for the wired catalog.
+
+## Voice and Media
+
+Optional. When unset, the matching feature falls back to the provider keys above (e.g. OpenAI for TTS) or is disabled.
+
+| Variable | Used For |
+|----------|----------|
+| `ELEVENLABS_API_KEY` | ElevenLabs premium TTS voices |
+| `DEEPGRAM_API_KEY` | Deepgram Nova-3 speech-to-text |
+
+```bash
+ELEVENLABS_API_KEY=sk_...
+DEEPGRAM_API_KEY=dg-...
+```
+
+## Web Search Providers
+
+Optional. The agent picks an enabled provider when a `web_search` tool runs. Leave them all unset and the agent falls back to a no-op or the LLM's own search capability.
+
+| Variable | Provider |
+|----------|----------|
+| `SEARCH_API_KEY` | Brave Search (`BSA...`) |
+| `PERPLEXITY_API_KEY` | Perplexity AI (`pplx-...`) |
+| `TAVILY_API_KEY` | Tavily AI (`tvly-...`) |
+| `EXA_API_KEY` | Exa neural search |
+| `JINA_API_KEY` | Jina reader/search (`jina_...`) |
+
+## Channel Credentials
+
+Required only for channels you enable in `config.yaml`. Each value can also be stored as a SecretRef and referenced via `${VAR_NAME}` substitution.
+
+### Telegram
+
+| Variable | Purpose |
+|----------|---------|
+| `TELEGRAM_BOT_TOKEN` | Bot token from BotFather (e.g. `123456:ABC-...`) |
+| `TELEGRAM_WEBHOOK_SECRET` | Optional webhook signature verification secret |
+
+### Discord
+
+| Variable | Purpose |
+|----------|---------|
+| `DISCORD_BOT_TOKEN` | Bot token from the Discord developer portal (`MTIz...`) |
+
+### Slack
+
+| Variable | Purpose |
+|----------|---------|
+| `SLACK_BOT_TOKEN` | OAuth bot token (`xoxb-...`) |
+| `SLACK_APP_TOKEN` | App-level token for Socket Mode (`xapp-...`) |
+| `SLACK_SIGNING_SECRET` | Webhook signature verification (HTTP mode) |
+
+### LINE
+
+| Variable | Purpose |
+|----------|---------|
+| `LINE_CHANNEL_ACCESS_TOKEN` | Long-lived channel access token |
+| `LINE_CHANNEL_SECRET` | Channel secret for HMAC verification |
+
+### IRC
+
+| Variable | Purpose |
+|----------|---------|
+| `IRC_NICKSERV_PASSWORD` | NickServ password for nickname identification |
+
+### Email
+
+| Variable | Purpose |
+|----------|---------|
+| `EMAIL_PASSWORD` | IMAP password (basic auth) |
+| `EMAIL_OAUTH_CLIENT_ID` | OAuth2 alternative to password |
+| `EMAIL_OAUTH_CLIENT_SECRET` | OAuth2 client secret |
+| `EMAIL_REFRESH_TOKEN` | OAuth2 refresh token |
+
+WhatsApp, Signal, and iMessage use file-based credentials in their respective auth directories rather than environment variables. See [Channels](/channels) for setup.
+
+## Quick Setup with `comis configure`
+
+Most users never edit `.env` by hand. The interactive flow:
+
+```bash
+comis init                  # First-time setup
+comis configure             # Add or rotate credentials later
+```
+
+Both commands write to `~/.comis/.env` and (optionally) into `secrets.db` if a `SECRETS_MASTER_KEY` is configured. See [`comis configure`](/reference/cli#comis-configure) for non-interactive flags.
 
 ## Config Variable Substitution
 

@@ -1,0 +1,186 @@
+---
+title: "Docker Hub Publishing"
+description: "Publish Comis images to Docker Hub and pull official releases"
+icon: "box-open"
+---
+
+Comis publishes official Docker images to Docker Hub under the
+[comisai](https://hub.docker.com/u/comisai) organization. Releases are built
+automatically on every version tag via GitHub Actions and produce multi-arch
+manifests for `linux/amd64` and `linux/arm64`.
+
+## Available images
+
+| Image | Description |
+|-------|-------------|
+| `comisai/comis` | Daemon + gateway (production, slim base) |
+| `comisai/comis` with `-slim` suffix | Same image, explicit slim variant |
+| `comisai/comis` with no suffix (default variant) | Full `node:22-bookworm` base with debugging tools |
+| `comisai/comis-web` | Nginx-served web dashboard SPA |
+
+## Tag strategy
+
+Every release tag (`v1.0.19`) produces the following tags automatically:
+
+| Tag pattern | Example | Notes |
+|-------------|---------|-------|
+| `{{version}}` | `1.0.19` | Immutable — never changes after push |
+| `{{major}}.{{minor}}` | `1.0` | Moves forward to the latest patch |
+| `latest` | `latest` | Default variant, latest release |
+| `{{version}}-slim` | `1.0.19-slim` | Slim variant, immutable |
+| `{{major}}.{{minor}}-slim` | `1.0-slim` | Slim variant, latest patch |
+| `latest-slim` | `latest-slim` | Slim variant, latest release |
+
+**Variants:**
+
+- **Default** (`comisai/comis:latest`) -- `node:22-bookworm` base. Includes
+  extra system packages useful for debugging in production.
+- **Slim** (`comisai/comis:latest-slim`) -- `node:22-bookworm-slim` base.
+  Smaller image with a reduced attack surface. Recommended for most deployments.
+
+<Tip>
+Pin to an immutable version tag in production (e.g. `comisai/comis:1.0.19`)
+rather than `latest` to avoid unexpected updates.
+</Tip>
+
+## Pulling images
+
+```bash
+# Latest slim daemon (recommended)
+docker pull comisai/comis:latest-slim
+
+# Specific version
+docker pull comisai/comis:1.0.19
+
+# Web dashboard
+docker pull comisai/comis-web:latest
+```
+
+Use with Docker Compose by setting the image environment variables:
+
+```bash
+export COMIS_IMAGE=comisai/comis:latest-slim
+export COMIS_WEB_IMAGE=comisai/comis-web:latest
+docker compose up -d
+```
+
+Or in your `.env` file:
+
+```bash
+COMIS_IMAGE=comisai/comis:latest-slim
+COMIS_WEB_IMAGE=comisai/comis-web:latest
+```
+
+## Automated releases via GitHub Actions
+
+The workflow `.github/workflows/dockerhub-release.yml` runs on every `v*` tag
+push. It builds multi-arch images for both `linux/amd64` and `linux/arm64` using
+per-platform runners that merge into a single manifest — no QEMU emulation for
+the daemon, which keeps build times fast.
+
+### Workflow structure
+
+```
+push tag v* ─┬─► build (amd64) ─┬─► merge-default ──► comisai/comis:x.y.z
+              │                  │                       comisai/comis:x.y
+              │                  │                       comisai/comis:latest
+              │   build (arm64) ─┤
+              │                  └─► merge-slim ────► comisai/comis:x.y.z-slim
+              │                                       comisai/comis:x.y-slim
+              │                                       comisai/comis:latest-slim
+              │
+              └─► build-web ──────────────────────► comisai/comis-web:x.y.z
+                                                     comisai/comis-web:x.y
+                                                     comisai/comis-web:latest
+```
+
+Each `build` job compiles both the default and slim variants. Because the two
+variants share the same build stage layers, the second variant uses the cached
+layers and completes near-instantly.
+
+### Required GitHub secrets
+
+Add these two secrets at **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|--------|-------|
+| `DOCKERHUB_USERNAME` | `comisai` |
+| `DOCKERHUB_TOKEN` | Docker Hub access token (Read/Write/Delete scope) |
+
+To create an access token: Docker Hub → Account Settings → Personal access
+tokens → Generate new token.
+
+### Triggering a release
+
+Pushing a `v*` tag fires the Docker Hub workflow alongside `release.yml`
+(GitHub Release) and `npm-publish.yml` (npm packages) in parallel:
+
+```bash
+git tag v1.0.19
+git push origin v1.0.19
+```
+
+The Docker Hub, GitHub Release, and npm publish all complete from a single
+tag push.
+
+### Caching
+
+Build layers are cached in GitHub Actions cache (`type=gha`) scoped by
+platform and variant:
+
+| Cache key | Scope |
+|-----------|-------|
+| `dh-default-linux/amd64` | Default variant, amd64 |
+| `dh-default-linux/arm64` | Default variant, arm64 |
+| `dh-slim-linux/amd64` | Slim variant, amd64 |
+| `dh-slim-linux/arm64` | Slim variant, arm64 |
+| `dh-web` | Web dashboard |
+
+Subsequent releases reuse cached dependency and build layers, cutting build
+time significantly after the first run.
+
+## Manual publishing
+
+To build and push manually from the repository root:
+
+```bash
+VERSION=1.0.19
+USER=comisai
+
+# Daemon — default variant
+docker build -t $USER/comis:$VERSION -t $USER/comis:latest -f Dockerfile .
+docker push $USER/comis:$VERSION
+docker push $USER/comis:latest
+
+# Daemon — slim variant
+docker build --build-arg COMIS_VARIANT=slim \
+  -t $USER/comis:$VERSION-slim -t $USER/comis:latest-slim -f Dockerfile .
+docker push $USER/comis:$VERSION-slim
+docker push $USER/comis:latest-slim
+
+# Web dashboard
+docker build -t $USER/comis-web:$VERSION -t $USER/comis-web:latest -f Dockerfile.web .
+docker push $USER/comis-web:$VERSION
+docker push $USER/comis-web:latest
+```
+
+For multi-arch builds locally (requires `docker buildx`):
+
+```bash
+docker buildx create --use --name comis-builder   # one-time
+
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t $USER/comis:$VERSION -t $USER/comis:latest \
+  -f Dockerfile --push .
+```
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Docker Operations" icon="docker" href="/operations/docker">
+    Production Dockerfile details, Compose services, and security hardening.
+  </Card>
+  <Card title="Install with Docker" icon="download" href="/installation/install-docker">
+    Quick-start setup using the automated setup script.
+  </Card>
+</CardGroup>

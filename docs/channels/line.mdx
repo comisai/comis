@@ -57,10 +57,13 @@ deploy behind a reverse proxy with HTTPS.
     **Webhook settings**:
 
     - Set the **Webhook URL** to `https://your-domain:port/webhooks/line`
-      (replace `your-domain:port` with your actual server address)
+      (replace `your-domain:port` with your actual gateway address)
     - Enable **Use webhook**
     - Disable **Auto-reply messages** and **Greeting messages** (Comis handles
       responses itself)
+
+    LINE verifies webhook requests with HMAC-SHA256 using your channel secret;
+    Comis enforces this signature check on every incoming event.
   </Step>
 
   <Step title="Configure Comis">
@@ -129,12 +132,23 @@ These options go under `channels.line` in your `config.yaml`:
 Once connected to LINE, your agent can:
 
 - Send and receive messages in private chats and groups
-- Send file attachments (images, video, audio) up to 200 MB
-- Send Flex Messages for rich formatted content
+- Send and receive image, video, and audio messages (up to 200 MB)
+- Send native voice messages (audio uploaded as LINE audio messages)
+- Receive location messages (lat/lon coordinates flow into the agent's metadata)
+- Send Flex Messages for rich formatted content via the
+  `sendFlex` [platform action](/agent-tools/platform-actions) -- you can pass a
+  raw `FlexContainer` JSON or a high-level `FlexTemplate` (header, body, footer,
+  hero image) that the adapter renders for you
 
 LINE does **not** support reactions, editing or deleting sent messages, fetching
-message history, threads, buttons, cards or embeds, streaming (live-updating
-responses), or mentions.
+message history, threads, typing indicators, native polls, traditional buttons
+(use Flex postback actions instead), or `@mentions`.
+
+<Note>
+LINE issues a 30-second reply token for every inbound event. Comis ignores it
+and uses `pushMessage` instead so responses still deliver after long agent
+turns; this consumes from your monthly push-message quota.
+</Note>
 
 ## Platform limits
 

@@ -1,0 +1,102 @@
+---
+title: "Models View"
+description: "Configure AI providers, model catalog, aliases, and per-agent defaults"
+icon: "cube"
+---
+
+The Models view is where you tell Comis which AI providers it can use, which specific models are available, what shorthand aliases point to them, and which model is the default for each agent.
+
+**Who it's for:** anyone deciding which models their agents call -- from "swap Claude Sonnet for GPT-4o" to "configure a self-hosted Ollama endpoint."
+
+## Route
+
+- `/models` -- opens the Models view
+
+## What You See
+
+The view is organized into four tabs:
+
+### Providers tab
+
+Lists every provider entry from the `models.providers` config block. Each card shows:
+
+- **Type** -- `anthropic`, `openai`, `google`, `mistral`, `groq`, `ollama`, `openrouter`, `together`, `cerebras`, `xai`, `deepseek`, or `local`
+- **Name** -- a friendly label
+- **Base URL** -- the endpoint the SDK calls (defaults shown for hosted providers)
+- **API key env name** -- which environment variable holds the key (e.g., `ANTHROPIC_API_KEY`)
+- **Status** -- a connection dot (green = key present and ping succeeded; red = missing or failing)
+- **Timeout / Max retries** -- per-provider transport tuning
+- **Enable toggle** -- soft-disable a provider without removing it
+
+A **Test** button on each card calls `models.test` to run a connectivity check and (when supported) lists which models the provider currently exposes plus which agents are using it.
+
+### Catalog tab
+
+Lists every model the daemon knows about, sourced from `models.list` RPC. Each row shows:
+
+| Field | Description |
+|-------|-------------|
+| **Provider** | Which provider serves the model |
+| **Model ID** | Vendor's canonical id (e.g., `claude-sonnet-4-5-20250929`) |
+| **Display name** | Friendly label for UI |
+| **Context window** | Maximum input tokens |
+| **Max output tokens** | Per-completion cap |
+| **Reasoning** | Whether the model exposes reasoning blocks |
+| **Validated** | Whether Comis has confirmed the id resolves at the provider |
+
+A search input filters the list. Use this tab to check whether a specific model id is available before assigning it.
+
+### Aliases tab
+
+Aliases are shorthand names you can use in agent config (e.g., `model: fast`) instead of the full vendor id. Each row shows:
+
+- **Alias** -- the shorthand
+- **Provider** + **Model ID** -- what it resolves to
+
+Add, edit, or delete aliases here; changes are saved via `config.patch`.
+
+### Defaults tab
+
+Shows each agent's effective model resolution. For every agent you'll see:
+
+- **Agent ID**
+- **Provider** the agent is currently configured to use
+- **Model ID** -- either explicit, or resolved from an alias
+- **Override** controls if you want a per-agent model that differs from the global default
+
+Use this tab when you want to swap one agent to a faster/cheaper model without touching the others.
+
+## Common Tasks
+
+<Steps>
+  <Step title="Add a new provider">
+    Click **Add Provider** on the Providers tab. Pick the type (e.g., `groq`), set a name, paste the API key into your environment file or use the secrets manager, then click **Test** to verify connectivity.
+  </Step>
+  <Step title="Find which agents use Claude Sonnet">
+    On the Providers tab, click **Test** on the Anthropic card. The test result lists every agent currently using an Anthropic model.
+  </Step>
+  <Step title="Create a 'fast' alias">
+    On the Aliases tab, click **Add Alias**. Enter `fast` as the alias, pick `groq` as provider, and `llama-3.3-70b-versatile` as the model id. Save. Now any agent with `model: fast` resolves to that combination.
+  </Step>
+  <Step title="Override one agent's model">
+    On the Defaults tab, find the agent you want to change. Set its provider and model. Save -- the change writes to `agents.<id>.provider` and `agents.<id>.model` and triggers the daemon to reload.
+  </Step>
+</Steps>
+
+<Note>
+This view shows the user-facing slice of model configuration. The full set of provider options (rate limits, fallback chain, cost tracking) lives in the `models` section of `config.yaml` -- see the [Config Editor](/web-dashboard/config-editor) for raw YAML access, or the [models reference](/agents/models) for the schema.
+</Note>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Models Reference" icon="cube" href="/agents/models">
+    Full provider catalog, default models, and pricing.
+  </Card>
+  <Card title="Agent Editor" icon="robot" href="/web-dashboard/agents-view">
+    Set per-agent model overrides from each agent's editor page.
+  </Card>
+  <Card title="Config Editor" icon="gear" href="/web-dashboard/config-editor">
+    Edit the raw `models` section of your YAML.
+  </Card>
+</CardGroup>

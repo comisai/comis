@@ -4,7 +4,11 @@ description: "Complete reference for all HTTP endpoints, authentication, and rat
 icon: "globe"
 ---
 
+**What this is for:** every HTTP route the daemon exposes — JSON-RPC, REST API for the dashboard, OpenAI-compatible endpoints, webhooks, media, and SSE. **Who it's for:** anyone integrating an external system with Comis or building tools on top of the daemon.
+
 Complete reference for the Comis HTTP gateway. The gateway serves HTTP endpoints, WebSocket connections, and optionally a web dashboard. Default port: `4766`. All endpoints require authentication unless noted otherwise.
+
+The gateway is implemented with [Hono](https://hono.dev) and lives in `packages/gateway/src/server/hono-server.ts`. Companion routes are wired in `packages/daemon/src/wiring/setup-gateway-routes.ts` (OpenAI-compatible APIs, media, webhook mappings).
 
 ## Authentication
 
@@ -69,7 +73,7 @@ These routes are always available when the gateway is running.
 
 ## REST API
 
-The REST API is mounted at `/api` and provides HTTP endpoints for the web dashboard. These endpoints are available when `gateway.webDashboard` is enabled (or equivalent web dashboard configuration is provided).
+The REST API is mounted at `/api` and provides HTTP endpoints for the web dashboard. These endpoints are available when `gateway.web.enabled` is `true` (the default).
 
 <Info>
 REST API endpoints are available when the web dashboard is enabled. All authenticated REST API endpoints require at least the `rpc` scope.

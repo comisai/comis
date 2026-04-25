@@ -21,6 +21,7 @@ These pages explain the systems that keep Comis running and how to understand wh
 is happening inside your installation.
 
 - **[Daemon](/operations/daemon)** -- The background process that powers everything. How it starts, runs, and shuts down.
+- **[Data Directory](/operations/data-directory)** -- Every file Comis keeps in `~/.comis/`, what each one does, and what is safe to delete.
 - **[Logging](/operations/logging)** -- Where logs go, what the levels mean, and how to view them.
 - **[Monitoring](/operations/monitoring)** -- Automatic health checks that watch disk space, CPU, memory, and more.
 - **[Observability](/operations/observability)** -- Token tracking, cost estimation, latency, and delivery tracing.
@@ -34,6 +35,7 @@ and reverse proxies.
 
 - **[systemd](/operations/systemd)** -- Running Comis as a Linux system service with automatic restarts and watchdog monitoring.
 - **[Docker](/operations/docker)** -- Production-ready container setup with health checks and volume management.
+- **[Docker Hub](/operations/docker-hub)** -- Pull official images from Docker Hub and the multi-arch tag scheme.
 - **[pm2](/operations/pm2)** -- Using the pm2 process manager for easy start/stop/restart workflows.
 - **[Reverse Proxy](/operations/reverse-proxy)** -- Putting Comis behind Nginx or Caddy with TLS termination.
 
@@ -131,6 +133,9 @@ understand how the background process works. Then visit
   <Card title="Daemon" icon="server" href="/operations/daemon">
     How the background process starts, runs, and shuts down.
   </Card>
+  <Card title="Data Directory" icon="folder-tree" href="/operations/data-directory">
+    Every file in `~/.comis/` and what it does.
+  </Card>
   <Card title="Logging" icon="file-lines" href="/operations/logging">
     Understanding and viewing Comis logs.
   </Card>
@@ -151,6 +156,9 @@ understand how the background process works. Then visit
   </Card>
   <Card title="Docker" icon="docker" href="/operations/docker">
     Production-ready container setup.
+  </Card>
+  <Card title="Docker Hub" icon="box-open" href="/operations/docker-hub">
+    Pull official `comisai/comis` images.
   </Card>
   <Card title="pm2" icon="play" href="/operations/pm2">
     Easy process management with pm2.

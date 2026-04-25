@@ -4,6 +4,15 @@ description: "How Comis prevents silent failures from provider outages, hung pro
 icon: "shield-heart"
 ---
 
+**What it does.** Catches the things that would otherwise leave your agent
+quietly stuck — provider hiccups, hung LLM calls, sub-agents that never
+return — and either recovers automatically or tells the user clearly that
+something failed.
+
+**Who it is for.** Operators of long-running agents. Defaults are designed
+to do the right thing without configuration; you only adjust these knobs if
+you see a specific failure pattern.
+
 Provider outages, hung prompts, and stuck sub-agents can all cause silent
 failures -- your agent stops responding and no one knows why. Comis prevents
 this with a layered defense stack that catches failures at every level, from
@@ -206,6 +215,33 @@ to users.
   announcement to direct channel send
 - **What the user sees:** The same message, delivered through the fallback
   path -- no visible difference
+
+## Reference: circuit breakers, retries, fallbacks
+
+Three circuit breakers run inside Comis, each with its own scope:
+
+| Breaker | Scope | File |
+|---|---|---|
+| **Provider health breaker** | Per LLM provider — opens after consecutive failures, blocks all calls during cooldown | `packages/agent/src/safety/circuit-breaker.ts` |
+| **Tool retry breaker** | Per tool — classifies tool errors and decides whether to retry, fall back, or surface the error | `packages/agent/src/safety/tool-retry-breaker.ts` |
+| **Layer circuit breaker** | Per context-engine layer — disables a layer for the rest of the session after 3 consecutive failures | `packages/agent/src/context-engine/context-engine.ts` |
+
+Two retry mechanisms work alongside the breakers:
+
+- **SDK retries** — exponential-backoff retries inside the LLM provider SDK
+  for transient HTTP errors (rate limits, 5xx, network timeouts).
+- **Per-model fallback chain** — if the primary model fails after retries,
+  Comis tries the next model in `modelFailover.fallbackModels`. Configured
+  on [Models](/agents/models#fallback-models).
+
+Vision requests use a separate fallback chain
+(`packages/agent/src/model/image-router.ts`) — primary → secondary →
+tertiary vision-capable models, so you never lose image understanding to a
+single provider's outage.
+
+Recovery is also automatic: when the provider health monitor emits
+`provider:recovered`, the dead-letter queue drains and the next normal
+request closes the breaker.
 
 ## Configuration
 

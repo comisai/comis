@@ -1,10 +1,31 @@
 ---
 title: "Agents View"
-description: "View and manage your AI agents from the web dashboard"
+description: "View, create, edit, and delete your AI agents from the dashboard"
 icon: "robot"
 ---
 
 The Agents view shows all your AI agents at a glance. You can see which agents are active, check their statistics, edit their configuration, and take actions like suspending or deleting an agent -- all from a single screen.
+
+**Who it's for:** anyone who runs more than one agent and wants a single place to see budgets, costs, and health.
+
+## Routes
+
+- `/agents` -- list all agents
+- `/agents/:id` -- agent detail page
+- `/agents/:id/edit` -- agent editor
+- `/agents/:id/workspace` -- workspace manager (covered on its own [page](/web-dashboard/workspace-view))
+
+## Backing RPC
+
+The list, detail, and editor are powered by:
+
+- `agents.list` -- list view
+- `agents.get` -- detail page
+- `agents.create`, `agents.update`, `agents.delete` -- editor and delete actions
+- `agents.suspend`, `agents.resume` -- status actions
+- `agent.getOperationModels` -- shows the resolved primary model and per-operation overrides
+
+Updates persist via `persistToConfig` (writes `agents.<id>` into `config.yaml`, then schedules a daemon restart).
 
 ## What You See
 
@@ -12,15 +33,17 @@ The Agents view has three sub-views: a list of all agents, a detail page for eac
 
 ### Agent List
 
-The main view is a sortable data grid showing every configured agent. Click any column header to sort by that column. The columns are:
+The main view is a sortable data grid showing every configured agent. Click any column header to sort by that column (the **Actions** column is not sortable). The columns are:
 
 | Column | What It Shows |
 |--------|--------------|
-| **ID** | The unique identifier for the agent |
-| **Name** | The display name you gave the agent |
-| **Model** | The AI model the agent uses (such as Claude or GPT) |
 | **Status** | Current state, shown as a colored tag |
-| **Actions** | Buttons for Configure, Suspend/Resume, and Delete |
+| **Name** | The display name you gave the agent (falls back to the agent ID when no name is set) |
+| **Model** | The AI model the agent uses (such as Claude or GPT) |
+| **Messages** | Messages handled by this agent today |
+| **Cost** | Today's spend for this agent in USD |
+| **Budget** | A bar showing how much of the agent's daily token budget has been used |
+| **Actions** | Icon buttons for Configure, Suspend/Resume, and Delete |
 
 Each agent's status appears as a colored tag:
 

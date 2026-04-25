@@ -29,7 +29,7 @@ Here is the complete list of all 16 commands:
 | `/stop` | Cancel current agent execution | `/stop` |
 | `/fork` | Fork conversation at your latest message | `/fork` |
 | `/branch [list\|target-id]` | List branch points or navigate to one | `/branch list` |
-| `/budget [tokens]` | Set per-execution token budget for the current session | `/budget 500000` |
+| `/budget [amount]` | Set per-execution token budget for the next message (`Nk` or `Nm`) | `/budget 500k` |
 | `/skill:name [args]` | Invoke a prompt skill by name | `/skill:weather London` |
 
 ## Command categories
@@ -191,12 +191,15 @@ branched off, and `/branch [id]` to jump back to any of them.
 
 **Command:** `/budget`
 
-The `/budget` command sets a per-execution token budget for the current session. This overrides the default budget limit for the next agent execution only.
+The `/budget` command sets a per-execution token budget for the next agent run. The amount must be a number with a `k` (thousands) or `m` (millions) suffix; bare integers are not accepted. Valid range is 10k to 10m tokens.
 
 | Usage | Effect |
 |-------|--------|
-| `/budget 500000` | Set the next execution to use at most 500,000 tokens |
-| `/budget` | Show the current budget setting |
+| `/budget 500k` | Set the next execution to use at most 500,000 tokens |
+| `/budget 2m` | Set the next execution to use at most 2,000,000 tokens |
+| `/budget` | Show usage help and the configured range |
+
+You can also use the inline form `+500k` or `+2m` at the start or end of a message (e.g., `+500k research the topic`).
 
 Like `/think` and `/verbose`, `/budget` is a *directive* command -- it modifies how your agent processes the next message rather than being a separate action.
 

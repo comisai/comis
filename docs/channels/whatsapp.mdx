@@ -107,14 +107,26 @@ These options go under `channels.whatsapp` in your `config.yaml`:
 
 Once connected to WhatsApp, your agent can:
 
-- Send, edit, and delete messages
-- React to messages with emoji
-- Send interactive buttons for user choices
+- Send and edit messages; delete its own messages (Baileys cannot delete other
+  users' messages)
+- React to messages with Unicode emoji
+- Send interactive buttons for user choices (text or image-anchored)
 - Send file attachments up to 100 MB
+- Send native voice messages (audio attachments uploaded as WhatsApp voice
+  notes via the Baileys client)
+- Send native polls (single or multi-select), normalized via Comis's poll
+  pipeline so vote results flow back through the agent
+- Send and receive location messages and contact (vCard) cards
+- Read receipts (the Baileys multi-device protocol exposes them natively, so
+  the agent sees when its messages are read)
 - Stream responses as separate message blocks (updates every 600 ms)
+- Manage groups (info, subject, description, participants, promote/demote,
+  invite codes, settings, leave) and update profile status via
+  [platform actions](/agent-tools/platform-actions)
 
-WhatsApp does **not** support threads, fetching message history, rich
-formatting (plain text only), mentions, or cards/embeds.
+WhatsApp does **not** support threads (only quoted-reply chains), fetching
+message history, rich text formatting (plain text only), `@mentions` of
+individual users, or cards/embeds.
 
 ## Platform limits
 
