@@ -250,12 +250,7 @@ describe("Typed Graph Approval-Gate Integration (TEST-07)", () => {
   // Test 2: Approval-gate fails on timeout when no reply arrives
   // =========================================================================
 
-  // Skipped: the graph never reaches a terminal state within 90s under the
-  // new graph coordinator scheduling. The typed-graph approval timeout path
-  // is covered by unit tests in packages/daemon/src/graph/*.test.ts; this E2E
-  // variant needs re-tuning (likely a smaller timeout or a different state
-  // pump).
-  it.skip(
+  it(
     "approval-gate node fails on timeout when no reply arrives",
     async () => {
       // Use daemon's direct rpcCall for submission and polling. This bypasses
@@ -287,7 +282,7 @@ describe("Typed Graph Approval-Gate Integration (TEST-07)", () => {
       // 2. Do NOT emit any reply -- let the gate timeout after ~60s
 
       // 3. Poll until terminal via direct rpcCall (gate should timeout in ~60s)
-      const finalStatus = await pollGraphUntilTerminalDirect(rpcCall, graphId, 90_000);
+      const finalStatus = await pollGraphUntilTerminalDirect(rpcCall, graphId, 170_000);
 
       // 4. Assert: graph failed, gate node failed with timeout error
       expect(finalStatus.status).toBe("failed");
@@ -298,6 +293,6 @@ describe("Typed Graph Approval-Gate Integration (TEST-07)", () => {
       const gateError = finalStatus.nodes["gate-timeout"]!.error ?? "";
       expect(gateError.length).toBeGreaterThan(0);
     },
-    120_000,
+    180_000,
   );
 });

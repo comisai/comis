@@ -263,12 +263,7 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
   // TEST-05-03: SSE stream delivers agent:hot_added event on create
   // -------------------------------------------------------------------------
 
-  // Skipped: agent:hot_added SSE event shape/delivery timing changed -- the
-  // event no longer arrives on the legacy SSE topic within the test's 30s
-  // window. Related agent-create flow is still covered by unit tests in
-  // packages/daemon/src/hot-reload/*.test.ts. This E2E variant needs an
-  // update when the new event routing is documented.
-  it.skip(
+  it(
     "TEST-05-03: SSE stream delivers agent:hot_added event on create",
     async () => {
       const controller = new AbortController();
@@ -282,7 +277,9 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
 
         expect(response.status).toBe(200);
 
-        // Wait 500ms for stream to be established, then create an agent
+        // Wait 1500ms for the SSE stream's event subscriptions to register
+        // (hono streamSSE writes the retry directive then subscribes to events;
+        // give the body callback time to run before firing the create RPC).
         setTimeout(async () => {
           try {
             await rpcCall("agents.create", {
@@ -293,10 +290,12 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
           } catch {
             // Best effort -- event may still propagate
           }
-        }, 500);
+        }, 1500);
 
-        // Read SSE events
-        const events = await readSseEvents(response, 10, 10_000);
+        // Read SSE events. Use a higher cap and a longer window than the
+        // hot_removed test because agents.create + hotAdd (executor wiring,
+        // skill registry, scheduler) takes longer than agents.delete.
+        const events = await readSseEvents(response, 50, 15_000);
 
         // Assert at least one event has event === "agent:hot_added"
         const hotAddedEvents = events.filter((e) => e.event === "agent:hot_added");

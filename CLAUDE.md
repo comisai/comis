@@ -24,7 +24,6 @@ pnpm vitest run src/path/to/file.test.ts
 Integration (requires `pnpm build` first — imports from `dist/`):
 ```bash
 pnpm test:integration
-pnpm test:integration:mock      # TEST_PROVIDER_MODE=mock
 pnpm test:orchestrate           # full E2E + log validation + JSON report
 pnpm test:cleanup               # clean test artifacts
 ```

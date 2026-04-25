@@ -29,12 +29,16 @@ const { CONTENT_SCAN_RULES } = await import(
   resolve(packagesDir, "skills/dist/prompt/content-scanner.js")
 );
 
-// Read and parse the Python validator file. Skip the whole suite when the
-// skill-creator artifact is absent -- the repo has dropped the bundled
-// Python validator in favor of per-skill validators, so drift detection
-// between the Python source and the TS schema is no longer relevant here.
-const pythonPath = resolve(__dirname, "../../skills/skill-creator/scripts/validate-skill.py");
-const pythonSource = existsSync(pythonPath) ? readFileSync(pythonPath, "utf-8") : "";
+// Read and parse the bundled Python validator. The validator is shipped with
+// the daemon under packages/daemon/bundled-skills/skill-creator/.
+const pythonPath = resolve(
+  __dirname,
+  "../../packages/daemon/bundled-skills/skill-creator/scripts/validate-skill.py",
+);
+if (!existsSync(pythonPath)) {
+  throw new Error(`Python validator not found at ${pythonPath}`);
+}
+const pythonSource = readFileSync(pythonPath, "utf-8");
 
 /** Extract a Python integer constant: NAME_MAX = 64 */
 function extractPythonInt(name: string): number {
@@ -68,10 +72,7 @@ function countPythonCriticalPatterns(): number {
   return (section[1].match(/\(r"/g) || []).length;
 }
 
-// Skip the whole suite when the bundled Python validator is absent.
-const describeMaybe = pythonSource ? describe : describe.skip;
-
-describeMaybe("skill-schema-drift", () => {
+describe("skill-schema-drift", () => {
   it("Python NAME_REGEX matches TypeScript SkillNameSchema pattern", () => {
     const pyPattern = extractPythonRegex("NAME_REGEX");
     // The TypeScript schema uses the same regex in .regex()
