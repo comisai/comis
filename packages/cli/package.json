@@ -1,7 +1,7 @@
 {
   "name": "@comis/cli",
   "private": true,
-  "version": "1.0.20",
+  "version": "1.0.21",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Command-line interface for the Comis AI agent platform",
