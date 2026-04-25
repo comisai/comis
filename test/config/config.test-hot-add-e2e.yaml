@@ -81,8 +81,8 @@ agents:
         webSearch: true
         webFetch: true
         browser: false
-  hot-e2e-sse-agent:
-    name: SSE Agent
+  hot-e2e-del-agent:
+    name: Del Agent
     skills:
       builtinTools:
         read: true
