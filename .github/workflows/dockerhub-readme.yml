@@ -1,0 +1,47 @@
+name: Docker Hub Overview Sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docker/README-comis.md"
+      - "docker/README-comis-web.md"
+      - ".github/workflows/dockerhub-readme.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Secrets required (Settings → Secrets → Actions):
+#   DOCKERHUB_USERNAME — Docker Hub username (comisai)
+#   DOCKERHUB_TOKEN   — Docker Hub access token (Read/Write minimum)
+
+jobs:
+  sync-daemon:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: comisai/comis
+          short-description: "Security-first AI agent platform — daemon + gateway"
+          readme-filepath: ./docker/README-comis.md
+
+  sync-web:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: comisai/comis-web
+          short-description: "Comis web dashboard SPA (Nginx + reverse proxy)"
+          readme-filepath: ./docker/README-comis-web.md
