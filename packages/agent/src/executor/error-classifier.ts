@@ -10,6 +10,8 @@
  * @module
  */
 
+import { isSignedReplayError } from "./signed-replay-detector.js";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -21,6 +23,16 @@ export type ErrorCategory =
   | "overloaded"
   | "context_too_long"
   | "content_filtered"
+  /**
+   * Provider-agnostic signed-replay rejection: the model rejected stored
+   * signed thinking / reasoning state on the latest assistant turn during
+   * replay (Anthropic `cannot be modified`, Gemini `thought_signature
+   * mismatch`, OpenAI Responses `reasoning_item not found`, OpenAI
+   * Completions `reasoning_id expired`, Mistral `encrypted_content
+   * verification failed`, etc.). Self-healable: the runner scrubs the
+   * stored signed state in place and re-enters the model retry chain.
+   */
+  | "client_request_signed_replay"
   | "client_request"
   | "prompt_timeout"
   /**
@@ -44,8 +56,12 @@ export interface ClassifiedError {
 // ---------------------------------------------------------------------------
 
 interface ErrorPattern {
-  /** Regex tested against the stringified error message. */
-  test: RegExp;
+  /** Regex (or any object exposing `.test(s) => boolean`) tested against the
+   *  stringified error message. Widened from `RegExp` to `RegExp | { test }`
+   *  so provider-agnostic detectors (e.g. `isSignedReplayError`) can plug in
+   *  without forcing a single mega-regex. Both shapes share the same call
+   *  shape `.test(s) -> boolean` so the dispatch loop is unchanged. */
+  test: RegExp | { test(s: string): boolean };
   category: ErrorCategory;
   userMessage: string;
   retryable: boolean;
@@ -91,6 +107,19 @@ const ERROR_PATTERNS: ErrorPattern[] = [
     userMessage:
       "The conversation has grown too long. Please start a new conversation.",
     retryable: false,
+  },
+  // Provider-agnostic signed-replay rejection: must be tested BEFORE the
+  // plain client_request pattern because every signed-replay error string
+  // also matches `invalid_request_error` / `cannot be modified`. First match
+  // wins, so this more-specific subcategory has to be checked first.
+  // Retryable=true because the runner scrubs signed thinking state in place
+  // and re-enters the model retry chain (see executor-prompt-runner.ts).
+  {
+    test: { test: (s: string) => isSignedReplayError(s) },
+    category: "client_request_signed_replay",
+    userMessage:
+      "Your request couldn't be processed due to a formatting issue. The AI agent will try again automatically.",
+    retryable: true,
   },
   // Client-side validation (Anthropic 400 invalid_request_error, 422, malformed)
   // Placed BEFORE content_filtered so /refus|blocked/ in that rule cannot steal

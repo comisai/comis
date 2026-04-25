@@ -326,6 +326,23 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** Signed-replay self-heal fired: provider rejected stored signed thinking /
+   *  reasoning state on the latest assistant turn (Anthropic `cannot be
+   *  modified`, Gemini `thought_signature mismatch`, OpenAI Responses
+   *  `reasoning_item not found`, OpenAI Completions `reasoning_id expired`,
+   *  Mistral `encrypted_content verification failed`, etc.). The runner in
+   *  `executor-prompt-runner.ts` scrubbed signed thinking state from the
+   *  in-memory message array and re-entered the model retry chain. `succeeded`
+   *  reports whether the retry produced a non-empty response. */
+  "execution:signed_replay_recovered": {
+    agentId: string;
+    sessionKey: string;
+    blocksRemoved: number;
+    thoughtSignaturesStripped: number;
+    succeeded: boolean;
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // Dead-letter queue events
   // -------------------------------------------------------------------------
