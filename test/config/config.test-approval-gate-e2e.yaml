@@ -1,6 +1,6 @@
 tenantId: test
 logLevel: debug
-dataDir: ""
+dataDir: /tmp/comis-test-approval-gate-e2e
 agents:
   default:
     name: TestAgent
@@ -37,29 +37,6 @@ agents:
       halfOpenTimeoutMs: 500
     rag:
       enabled: false
-  tool-test-deny-agent:
-    name: Tool Test Deny Agent
-    model: test-model
-    skills:
-      builtinTools:
-        webSearch: true
-        webFetch: true
-  tool-test-approve-agent:
-    name: Tool Test Agent
-    model: test-model
-    skills:
-      builtinTools:
-        read: true
-        write: true
-        edit: true
-        grep: true
-        find: true
-        ls: true
-        exec: true
-        process: true
-        webSearch: true
-        webFetch: true
-        browser: false
 gateway:
   enabled: true
   host: 127.0.0.1
