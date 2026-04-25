@@ -21,6 +21,66 @@ agents:
     scheduler:
       cron:
         enabled: false
+  hot-e2e-agent-1:
+    name: Hot E2E Agent 1
+    skills:
+      builtinTools:
+        read: true
+        write: true
+        edit: true
+        grep: true
+        find: true
+        ls: true
+        exec: true
+        process: true
+        webSearch: true
+        webFetch: true
+        browser: false
+  hot-e2e-agent-2:
+    name: Hot E2E hot-e2e-agent-2
+    skills:
+      builtinTools:
+        read: true
+        write: true
+        edit: true
+        grep: true
+        find: true
+        ls: true
+        exec: true
+        process: true
+        webSearch: true
+        webFetch: true
+        browser: false
+  hot-e2e-agent-3:
+    name: Hot E2E hot-e2e-agent-3
+    skills:
+      builtinTools:
+        read: true
+        write: true
+        edit: true
+        grep: true
+        find: true
+        ls: true
+        exec: true
+        process: true
+        webSearch: true
+        webFetch: true
+        browser: false
+  hot-e2e-agent-4:
+    name: Hot E2E hot-e2e-agent-4
+    skills:
+      builtinTools:
+        read: true
+        write: true
+        edit: true
+        grep: true
+        find: true
+        ls: true
+        exec: true
+        process: true
+        webSearch: true
+        webFetch: true
+        browser: false
 gateway:
   enabled: true
   host: 127.0.0.1
