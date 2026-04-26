@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  <a href="#why-comis">Why Comis</a> · <a href="#quick-start">Quick Start</a> · <a href="#features">Features</a> · <a href="#supported-channels">Channels</a> · <a href="#architecture">Architecture</a> · <a href="#security">Security</a> · <a href="#context-engine--cost-optimization">Context & Cost</a> · <a href="#graph-pipelines">Pipelines</a> · <a href="#skills">Skills</a> · <a href="#developer-setup">Dev Setup</a> · <a href="#contributing">Contributing</a>
+  <a href="#see-it-in-action">See It</a> · <a href="#why-comis">Why Comis</a> · <a href="#quick-start">Quick Start</a> · <a href="#features">Features</a> · <a href="#supported-channels">Channels</a> · <a href="#architecture">Architecture</a> · <a href="#security">Security</a> · <a href="#context-engine--cost-optimization">Context & Cost</a> · <a href="#graph-pipelines">Pipelines</a> · <a href="#skills">Skills</a> · <a href="#developer-setup">Dev Setup</a> · <a href="#contributing">Contributing</a>
 </p>
 
 ---
@@ -31,6 +31,35 @@
 Comis is a self-hosted, open-source AI assistant platform that lives inside your messaging apps - not a browser tab. Deploy a team of specialized agents with persistent memory, 50+ tools, and DAG-based workflows across 9 platforms. Secured by 22 defense layers and optimized to reduce LLM costs by 80%+.
 
 > **comis** _(Latin)_ - courteous, kind, affable, gracious. That's what an AI assistant should be.
+
+---
+
+## See it in action
+
+<p align="center">
+  <em>"Have four analysts research NVDA in parallel, then run a bull vs bear debate, and let the head trader make the final call."</em>
+</p>
+
+<p align="center">
+  <strong>One sentence. A live 7-node DAG pipeline.</strong>
+</p>
+
+<p align="center">
+  <video src="https://github.com/comisai/comis/raw/main/assets/comis-dag-demo.mp4" poster="assets/comis-dag-demo-poster.jpg" autoplay muted loop playsinline width="100%"></video>
+</p>
+
+<p align="center">
+  <a href="https://github.com/comisai/comis/raw/main/assets/comis-dag-demo.mp4">▶ Watch the demo</a>
+</p>
+
+<table align="center">
+<tr>
+<td align="center"><strong>7 nodes</strong><br/><sub>in one prompt</sub></td>
+<td align="center"><strong>3-tier</strong><br/><sub>concurrency control</sub></td>
+<td align="center"><strong>Barrier</strong><br/><sub>synchronization</sub></td>
+<td align="center"><strong>Zero</strong><br/><sub>YAML required</sub></td>
+</tr>
+</table>
 
 ---
 
@@ -64,7 +93,7 @@ Between sessions, a background learning job reviews past conversations to extrac
 
 > *"Have four analysts research NVDA in parallel, then run a bull vs bear debate, and let the head trader make the final call."*
 
-One sentence creates a 7-node DAG pipeline with parallel fan-out, multi-round debate, and synthesis. No YAML, no scripting. 7 node types, 3-tier concurrency control, and barrier synchronization. Each agent gets isolated memory, budgets, and tool policies.
+One sentence creates a 7-node DAG pipeline with parallel fan-out, multi-round debate, and synthesis. No YAML, no scripting. 7 node types, 3-tier concurrency control, and barrier synchronization. Each agent gets isolated memory, budgets, and tool policies. ([See it in action ↑](#see-it-in-action))
 
 ---
 
