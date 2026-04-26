@@ -45,11 +45,13 @@ Comis is a self-hosted, open-source AI assistant platform that lives inside your
 </p>
 
 <p align="center">
-  <video src="https://github.com/comisai/comis/raw/main/assets/comis-dag-demo.mp4" poster="assets/comis-dag-demo-poster.jpg" autoplay muted loop playsinline width="100%"></video>
+  <a href="https://github.com/comisai/comis/raw/main/assets/comis-dag-demo.mp4">
+    <img src="assets/comis-dag-demo-poster.jpg" alt="Click to watch the DAG pipeline demo" width="100%" />
+  </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/comisai/comis/raw/main/assets/comis-dag-demo.mp4">▶ Watch the demo</a>
+  <a href="https://github.com/comisai/comis/raw/main/assets/comis-dag-demo.mp4">▶ Watch the demo (45s, 3 MB)</a>
 </p>
 
 <table align="center">
