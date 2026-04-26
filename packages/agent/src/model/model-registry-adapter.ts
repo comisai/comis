@@ -14,6 +14,7 @@ import { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { AuthStorage } from "@mariozechner/pi-coding-agent";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import type { SecretManager } from "@comis/core";
 import type { ModelAllowlist } from "./model-allowlist.js";
 
 /** Result of initial model resolution. */
@@ -35,6 +36,159 @@ export interface InitialModelResult {
  */
 export function createModelRegistryAdapter(authStorage: AuthStorage): ModelRegistry {
   return ModelRegistry.inMemory(authStorage);
+}
+
+/**
+ * YAML provider type → pi-ai API identifier. Mirrors the
+ * `OPENAI_COMPATIBLE_TYPES` set in `model-scanner.ts`. Unknown types
+ * default to `openai-completions` so arbitrary OpenAI-compatible
+ * proxies (NVIDIA NIM, Together, ollama, lm-studio, etc.) work without
+ * code changes.
+ */
+const PROVIDER_TYPE_TO_API: Record<string, Api> = {
+  openai: "openai-completions",
+  groq: "openai-completions",
+  mistral: "openai-completions",
+  together: "openai-completions",
+  deepseek: "openai-completions",
+  cerebras: "openai-completions",
+  xai: "openai-completions",
+  openrouter: "openai-completions",
+  anthropic: "anthropic-messages",
+  google: "google-generative-ai",
+};
+
+/** Subset of `ProviderEntry` (from `@comis/core`) we read for pi registration. */
+export interface CustomProviderRegistration {
+  type: string;
+  baseUrl: string;
+  apiKeyName: string;
+  enabled: boolean;
+  headers: Record<string, string>;
+  models: ReadonlyArray<{
+    id: string;
+    name?: string;
+    contextWindow?: number;
+    maxTokens?: number;
+    reasoning?: boolean;
+    input?: ReadonlyArray<"text" | "image">;
+    cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+  }>;
+}
+
+/** Logger surface accepted by `registerCustomProviders`. Subset of Pino. */
+export interface CustomProviderLogger {
+  warn(obj: Record<string, unknown>, msg: string): void;
+  debug(obj: Record<string, unknown>, msg: string): void;
+}
+
+/**
+ * Register YAML `providers.entries.*` with pi-coding-agent's ModelRegistry.
+ *
+ * Without this, custom OpenAI-compatible providers (NVIDIA NIM, Together,
+ * ollama, etc.) are not findable via `registry.find(provider, modelId)`,
+ * which causes pi's `findInitialModel` to silently fall back to whatever
+ * built-in provider has env-var auth (e.g., GEMINI_API_KEY → google).
+ *
+ * Per-entry behavior:
+ *   - Skipped if `enabled === false`.
+ *   - Skipped if no models declared and no `baseUrl` override.
+ *   - On `registerProvider` error (missing baseUrl, missing apiKey, etc.),
+ *     a WARN is logged and the loop continues -- one bad entry must not
+ *     prevent the daemon from starting.
+ *
+ * @returns Number of entries successfully registered.
+ */
+export function registerCustomProviders(
+  registry: ModelRegistry,
+  entries: Record<string, CustomProviderRegistration>,
+  secretManager: SecretManager,
+  logger: CustomProviderLogger,
+): number {
+  let registered = 0;
+  for (const [providerName, entry] of Object.entries(entries)) {
+    if (!entry.enabled) {
+      logger.debug({ providerName }, "Custom provider skipped (disabled)");
+      continue;
+    }
+    const hasModels = entry.models.length > 0;
+    const hasBaseUrlOverride = !!entry.baseUrl;
+    if (!hasModels && !hasBaseUrlOverride) {
+      logger.debug(
+        { providerName },
+        "Custom provider skipped (no models and no baseUrl override)",
+      );
+      continue;
+    }
+
+    const apiKey = entry.apiKeyName ? secretManager.get(entry.apiKeyName) : undefined;
+    if (hasModels && !apiKey) {
+      logger.warn(
+        {
+          providerName,
+          apiKeyName: entry.apiKeyName,
+          hint: "Set the named secret in ~/.comis/.env or remove the provider entry from config.yaml",
+          errorKind: "config",
+        },
+        "Custom provider has models but no API key -- skipping registration",
+      );
+      continue;
+    }
+
+    const api = PROVIDER_TYPE_TO_API[entry.type] ?? "openai-completions";
+    const headersResolved = Object.keys(entry.headers).length > 0 ? entry.headers : undefined;
+
+    try {
+      registry.registerProvider(providerName, {
+        api,
+        baseUrl: entry.baseUrl || undefined,
+        apiKey,
+        headers: headersResolved,
+        // pi's ProviderModelConfig requires concrete values for name/cost/
+        // contextWindow/maxTokens. Comis's UserModelSchema lets users omit
+        // these (defaults to optional/undefined), so we fill in zeros and
+        // a generous default context window. Cost is informational only
+        // and our CostTracker uses pi-ai's own catalog where it can.
+        models: hasModels
+          ? entry.models.map((m) => ({
+              id: m.id,
+              name: m.name ?? m.id,
+              contextWindow: m.contextWindow ?? 128_000,
+              maxTokens: m.maxTokens ?? 4_096,
+              reasoning: m.reasoning ?? false,
+              input: m.input ? [...m.input] : ["text"],
+              cost: {
+                input: m.cost?.input ?? 0,
+                output: m.cost?.output ?? 0,
+                cacheRead: m.cost?.cacheRead ?? 0,
+                cacheWrite: m.cost?.cacheWrite ?? 0,
+              },
+            }))
+          : undefined,
+      });
+      registered += 1;
+      logger.debug(
+        {
+          providerName,
+          api,
+          baseUrl: entry.baseUrl,
+          modelCount: entry.models.length,
+        },
+        "Custom provider registered with pi ModelRegistry",
+      );
+    } catch (error) {
+      logger.warn(
+        {
+          providerName,
+          err: error instanceof Error ? error.message : String(error),
+          hint: "Check providers.entries config: baseUrl required when defining models; apiKey required unless oauth configured",
+          errorKind: "config",
+        },
+        "Custom provider registration failed",
+      );
+    }
+  }
+  return registered;
 }
 
 /**

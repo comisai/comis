@@ -127,4 +127,66 @@ describe("createAuthStorageAdapter", () => {
     expect(DEFAULT_PROVIDER_KEYS.groq).toBe("GROQ_API_KEY");
     expect(DEFAULT_PROVIDER_KEYS.mistral).toBe("MISTRAL_API_KEY");
   });
+
+  it("registers customProviderEntries as runtime API keys via apiKeyName lookup", async () => {
+    const secretManager = createSecretManager({
+      NVIDIA_API_KEY: "nvapi-test-secret",
+    });
+
+    const storage = createAuthStorageAdapter({
+      secretManager,
+      customProviderEntries: {
+        nvidia: { apiKeyName: "NVIDIA_API_KEY", enabled: true },
+      },
+    });
+
+    expect(await storage.getApiKey("nvidia")).toBe("nvapi-test-secret");
+    expect(storage.hasAuth("nvidia")).toBe(true);
+  });
+
+  it("skips disabled custom provider entries", async () => {
+    const secretManager = createSecretManager({
+      NVIDIA_API_KEY: "nvapi-test-secret",
+    });
+
+    const storage = createAuthStorageAdapter({
+      secretManager,
+      customProviderEntries: {
+        nvidia: { apiKeyName: "NVIDIA_API_KEY", enabled: false },
+      },
+    });
+
+    expect(await storage.getApiKey("nvidia")).toBeUndefined();
+  });
+
+  it("skips custom provider entries with empty apiKeyName", async () => {
+    const secretManager = createSecretManager({
+      NVIDIA_API_KEY: "nvapi-test-secret",
+    });
+
+    const storage = createAuthStorageAdapter({
+      secretManager,
+      customProviderEntries: {
+        nvidia: { apiKeyName: "", enabled: true },
+      },
+    });
+
+    expect(await storage.getApiKey("nvidia")).toBeUndefined();
+  });
+
+  it("skips custom provider entries when SecretManager has no value for apiKeyName", async () => {
+    const secretManager = createSecretManager({
+      // NVIDIA_API_KEY intentionally absent
+    });
+
+    const storage = createAuthStorageAdapter({
+      secretManager,
+      customProviderEntries: {
+        nvidia: { apiKeyName: "NVIDIA_API_KEY", enabled: true },
+      },
+    });
+
+    expect(await storage.getApiKey("nvidia")).toBeUndefined();
+    expect(storage.hasAuth("nvidia")).toBe(false);
+  });
 });
