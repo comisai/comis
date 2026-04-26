@@ -336,6 +336,48 @@ You also need to disable the `exec` skill in your agent config, or accept
 that prompt-injected commands can read all daemon state inside the
 container. There is no middle ground.
 
+### Secrets management
+
+Comis supports two secrets-storage modes. **The default for Docker is the
+flat `.env` file -- the encrypted `secrets.db` is opt-in.**
+
+| Mode | When to use | How it works |
+|---|---|---|
+| **`.env` file (legacy mode -- default)** | Single-tenant deployments where credentials are managed by the host operator. The simplest setup, no encryption key to manage. | Provider keys and channel tokens come from compose's `environment:` pass-through (read from your repo `.env`) and from a `<data dir>/.env` file mounted into the container at `/data/.env`. The daemon merges both at startup; values already in `process.env` always win. The daemon does **not** create `secrets.db`. |
+| **Encrypted `secrets.db` (opt-in)** | Multi-tenant or shared-host deployments where you want an encryption boundary on disk and use `SecretRef` pointers in `config.yaml`. | Set `SECRETS_MASTER_KEY` to a 32-byte hex/base64 value. The daemon creates `<data dir>/secrets.db` and decrypts entries on demand. |
+
+#### Important caveat about `secrets.db` inside Docker
+
+Storing both the encrypted database (`/data/secrets.db`) and the master
+key (`SECRETS_MASTER_KEY` env var) inside the same container provides
+**no additional protection** against an in-container compromise -- anyone
+who can read `/proc/<daemon-pid>/environ` or your compose config can
+recover the key and decrypt the DB. The encryption pays off only when:
+
+- You inject `SECRETS_MASTER_KEY` from a host-level secret manager
+  (HashiCorp Vault, AWS Secrets Manager, Docker secrets backed by a
+  tmpfs mount) so it never lives on disk in the container, AND
+- You can rely on the bwrap exec sandbox (see above) to keep the key
+  out of agent-issued processes.
+
+For most Docker deployments, the flat `.env` mode is both simpler and
+no less secure than running `secrets.db` with a co-located key.
+
+#### Adding a credential
+
+```bash
+# Recommended (legacy mode): add to your repo .env (for compose pass-through)
+# OR to the data dir's .env file (read by the daemon at startup)
+echo "TELEGRAM_BOT_TOKEN=12345:abc..." >> ~/.comis/.env
+
+# Then restart the daemon to reload the file
+docker compose restart comis-daemon
+```
+
+The daemon prefers values already in `process.env` (set by compose) over
+values from `<data dir>/.env`, so per-deployment overrides via compose's
+`environment:` block always win.
+
 ### Environment file
 
 Copy `.env.docker.example` from the repository root as your starting point:
