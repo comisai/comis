@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mockBwrapAvailable = vi.fn();
 const mockSbexecAvailable = vi.fn();
+const mockExistsSync = vi.fn<(p: string) => boolean>();
 
 vi.mock("./bwrap-provider.js", () => {
   return {
@@ -28,6 +29,10 @@ vi.mock("./sandbox-exec-provider.js", () => {
   };
 });
 
+vi.mock("node:fs", () => ({
+  existsSync: (p: string) => mockExistsSync(p),
+}));
+
 import { detectSandboxProvider, type DetectLogger } from "./detect-provider.js";
 
 let originalPlatform: PropertyDescriptor | undefined;
@@ -41,18 +46,27 @@ function setPlatform(platform: string) {
   });
 }
 
-function createMockLogger(): DetectLogger & { calls: Array<{ obj: Record<string, unknown>; msg: string }> } {
-  const calls: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+type LogLevel = "info" | "warn";
+
+function createMockLogger(): DetectLogger & {
+  calls: Array<{ level: LogLevel; obj: Record<string, unknown>; msg: string }>;
+} {
+  const calls: Array<{ level: LogLevel; obj: Record<string, unknown>; msg: string }> = [];
   return {
     calls,
+    info(obj: Record<string, unknown>, msg: string) {
+      calls.push({ level: "info", obj, msg });
+    },
     warn(obj: Record<string, unknown>, msg: string) {
-      calls.push({ obj, msg });
+      calls.push({ level: "warn", obj, msg });
     },
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default to "not in container" -- tests that exercise the container path opt in.
+  mockExistsSync.mockReturnValue(false);
   originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 });
 
@@ -82,8 +96,38 @@ describe("detectSandboxProvider", () => {
 
     expect(result).toBeUndefined();
     expect(logger.calls).toHaveLength(1);
+    expect(logger.calls[0]!.level).toBe("warn");
     expect(logger.calls[0]!.msg).toContain("bwrap not found");
     expect(logger.calls[0]!.obj.hint).toContain("bubblewrap");
+  });
+
+  it("returns undefined on linux in a container (Docker), logs INFO not WARN", () => {
+    setPlatform("linux");
+    mockBwrapAvailable.mockReturnValue(false);
+    mockExistsSync.mockImplementation((p: string) => p === "/.dockerenv");
+    const logger = createMockLogger();
+
+    const result = detectSandboxProvider(logger);
+
+    expect(result).toBeUndefined();
+    expect(logger.calls).toHaveLength(1);
+    expect(logger.calls[0]!.level).toBe("info");
+    expect(logger.calls[0]!.msg).toContain("container runtime");
+    expect(logger.calls[0]!.obj.hint).toContain("Container runtime detected");
+    expect(logger.calls[0]!.obj.errorKind).toBeUndefined();
+  });
+
+  it("returns undefined on linux in a Podman container, logs INFO not WARN", () => {
+    setPlatform("linux");
+    mockBwrapAvailable.mockReturnValue(false);
+    mockExistsSync.mockImplementation((p: string) => p === "/run/.containerenv");
+    const logger = createMockLogger();
+
+    const result = detectSandboxProvider(logger);
+
+    expect(result).toBeUndefined();
+    expect(logger.calls).toHaveLength(1);
+    expect(logger.calls[0]!.level).toBe("info");
   });
 
   it("returns SandboxExecProvider on darwin when sandbox-exec is available", () => {
