@@ -319,7 +319,8 @@ export { createAuthStorageAdapter, DEFAULT_PROVIDER_KEYS } from "./model/auth-st
 export type { AuthStorageAdapterOptions } from "./model/auth-storage-adapter.js";
 
 // Model registry adapter (ModelRegistry creation + initial model resolution)
-export { createModelRegistryAdapter, resolveInitialModel } from "./model/model-registry-adapter.js";
+export { createModelRegistryAdapter, registerCustomProviders, resolveInitialModel } from "./model/model-registry-adapter.js";
+export type { CustomProviderRegistration, CustomProviderLogger } from "./model/model-registry-adapter.js";
 
 // Session key mapper (SessionKey to/from filesystem path)
 export { sessionKeyToPath, pathToSessionKey } from "./session/session-key-mapper.js";

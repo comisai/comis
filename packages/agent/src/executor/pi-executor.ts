@@ -559,6 +559,26 @@ export function createPiExecutor(
           "Model ID normalized via shortcut",
         );
       }
+      // Surface the silent-fallback case where pi-coding-agent picks a different
+      // provider than the user configured. When find() returns undefined for an
+      // explicit (non-default) provider/model, pi will silently shop `findInitialModel`
+      // and pick whatever built-in has env-var auth -- e.g., GEMINI_API_KEY → google.
+      // The wiring fix in setup-agents.ts should cover the YAML-provider case; this
+      // log catches stragglers (typos, disabled providers, missing API keys).
+      if (!resolvedModel
+        && config.provider.toLowerCase() !== "default"
+        && config.model.toLowerCase() !== "default") {
+        deps.logger.warn(
+          {
+            agentId,
+            configuredProvider: config.provider,
+            configuredModel: normalizedPrimary.modelId,
+            hint: "Provider not registered in pi ModelRegistry. Check providers.entries.<name> in config.yaml has type/baseUrl/apiKeyName set, the API key resolves via SecretManager, and the provider is enabled. Without a match, pi-coding-agent silently falls back to whatever built-in provider has env-var credentials.",
+            errorKind: "config" as ErrorKind,
+          },
+          "Configured provider/model not found in registry; pi-coding-agent will fall back",
+        );
+      }
       if (executionOverrides?.model) {
         // Model override format: "provider:modelId" (same as compactionModel pattern)
         const parts = executionOverrides.model.split(":");
