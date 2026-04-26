@@ -78,7 +78,7 @@ a profile-based activation model.
 **comis-daemon** (always runs):
 - Gateway port binding via `COMIS_GATEWAY_HOST` and `COMIS_GATEWAY_PORT` env vars
   (default: `127.0.0.1:4766`)
-- Volumes for `/data` (persistent data) and `/etc/comis` (config, read-only)
+- Volumes for `/home/comis/.comis` (persistent data) and `/etc/comis` (config, read-only)
 - Environment variable pass-through for secrets, provider keys, and channel tokens
 - Health check: `curl -sf http://127.0.0.1:4766/health` (60s interval, 10s
   timeout, 30s start period, 3 retries)
@@ -146,10 +146,10 @@ The daemon uses two mount points inside the container:
 
 | Container path | Purpose | Default host path |
 |---------------|---------|-------------------|
-| `/data` | SQLite databases, logs, traces, secrets, `.env` | `~/.comis` |
+| `/home/comis/.comis` | SQLite databases, logs, traces, secrets, `.env` | `~/.comis` |
 | `/etc/comis` | Configuration files (read-only mount) | `~/.comis` |
 
-### Files in `/data`
+### Files in `/home/comis/.comis`
 
 | File | What it contains |
 |------|-----------------|
@@ -160,16 +160,16 @@ The daemon uses two mount points inside the container:
 | `.env` | Runtime environment (token, network settings) |
 
 <Warning>
-If you do not mount a volume for `/data`, you will **lose all agent memory and
+If you do not mount a volume for `/home/comis/.comis`, you will **lose all agent memory and
 configuration** when the container restarts. The Compose file mounts
-`COMIS_DATA_DIR` (default `~/.comis`) to `/data` to ensure persistence.
+`COMIS_DATA_DIR` (default `~/.comis`) to `/home/comis/.comis` to ensure persistence.
 </Warning>
 
 ### Backup
 
 ```bash
 docker compose stop comis-daemon
-docker cp comis-daemon:/data ./comis-backup
+docker cp comis-daemon:/home/comis/.comis ./comis-backup
 docker compose start comis-daemon
 ```
 
@@ -264,9 +264,9 @@ a non-functional bwrap**. Behaviour by environment:
 
 Inside Docker Desktop with the sandbox auto-disabled, agent-issued shell
 commands run as the `comis` user with full read access to everything the
-daemon owns inside the container -- `/data/.env`, the encrypted `secrets.db`,
+daemon owns inside the container -- `/home/comis/.comis/.env`, the encrypted `secrets.db`,
 `/etc/comis/config.yaml`, channel tokens, the `SECRETS_MASTER_KEY`. A single
-prompt-injected `cat /data/.env` exfiltrates them all. **This is why
+prompt-injected `cat /home/comis/.comis/.env` exfiltrates them all. **This is why
 Docker Desktop is dev/testing only.** On a real Linux host the sandbox
 runs unrestricted and these paths are not mounted into the bwrap'd
 process at all.
@@ -301,7 +301,7 @@ two boundaries protect different things:
 | Boundary | What it isolates |
 |---|---|
 | **Docker** | The container from the host kernel and other containers |
-| **bwrap** | Each agent-issued shell command from the daemon's own data inside the container -- `/data/.env`, `/data/secrets.db`, `/etc/comis/config.yaml`, channel tokens, the master encryption key |
+| **bwrap** | Each agent-issued shell command from the daemon's own data inside the container -- `/home/comis/.comis/.env`, `/home/comis/.comis/secrets.db`, `/etc/comis/config.yaml`, channel tokens, the master encryption key |
 
 #### Why this matters
 
@@ -309,7 +309,7 @@ Comis processes user input (chat messages, channel events) through an LLM
 that has tool-use authority. A prompt-injection-style payload can drive the
 `exec` skill to run arbitrary shell commands. Without bwrap, those commands
 run as the `comis` user inside the container -- the same user that owns
-`/data` -- so a single `cat /data/.env` would exfiltrate `SECRETS_MASTER_KEY`,
+`/home/comis/.comis` -- so a single `cat /home/comis/.comis/.env` would exfiltrate `SECRETS_MASTER_KEY`,
 which decrypts every credential ever stored in `secrets.db`. That makes the
 "container is the trust boundary" model unsafe for any deployment that
 accepts untrusted user input *and* stores secrets *and* enables `exec`.
@@ -317,7 +317,7 @@ accepts untrusted user input *and* stores secrets *and* enables `exec`.
 bwrap closes this gap by running each exec'd command under
 `--unshare-all` (new mount/pid/ipc/uts/user namespaces, only network is
 shared) and only mounting the agent's workspace, system binaries
-(read-only), and a fresh `tmpfs` for `/tmp`. `/data`, `/etc/comis`, and
+(read-only), and a fresh `tmpfs` for `/tmp`. `/home/comis/.comis`, `/etc/comis`, and
 `/home/comis` are not mounted into the sandbox -- they don't exist from
 the perspective of an exec'd command.
 
@@ -359,13 +359,13 @@ docker compose logs comis-daemon | grep "Exec sandbox provider detected"
 docker compose exec comis-daemon which bwrap
 
 # Should fail with "Permission denied" or "No such file or directory"
-# (bwrap's mount set excludes /data)
+# (bwrap's mount set excludes /home/comis/.comis)
 docker compose exec comis-daemon bwrap \
   --unshare-all --share-net \
   --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind /lib64 /lib64 \
   --ro-bind /bin /bin --ro-bind /etc/passwd /etc/passwd \
   --tmpfs /tmp \
-  /bin/sh -c 'cat /data/.env'
+  /bin/sh -c 'cat /home/comis/.comis/.env'
 ```
 
 #### Opting out (not recommended)
@@ -398,12 +398,12 @@ flat `.env` file -- the encrypted `secrets.db` is opt-in.**
 
 | Mode | When to use | How it works |
 |---|---|---|
-| **`.env` file (legacy mode -- default)** | Single-tenant deployments where credentials are managed by the host operator. The simplest setup, no encryption key to manage. | Provider keys and channel tokens come from compose's `environment:` pass-through (read from your repo `.env`) and from a `<data dir>/.env` file mounted into the container at `/data/.env`. The daemon merges both at startup; values already in `process.env` always win. The daemon does **not** create `secrets.db`. |
+| **`.env` file (legacy mode -- default)** | Single-tenant deployments where credentials are managed by the host operator. The simplest setup, no encryption key to manage. | Provider keys and channel tokens come from compose's `environment:` pass-through (read from your repo `.env`) and from a `<data dir>/.env` file mounted into the container at `/home/comis/.comis/.env`. The daemon merges both at startup; values already in `process.env` always win. The daemon does **not** create `secrets.db`. |
 | **Encrypted `secrets.db` (opt-in)** | Multi-tenant or shared-host deployments where you want an encryption boundary on disk and use `SecretRef` pointers in `config.yaml`. | Set `SECRETS_MASTER_KEY` to a 32-byte hex/base64 value. The daemon creates `<data dir>/secrets.db` and decrypts entries on demand. |
 
 #### Important caveat about `secrets.db` inside Docker
 
-Storing both the encrypted database (`/data/secrets.db`) and the master
+Storing both the encrypted database (`/home/comis/.comis/secrets.db`) and the master
 key (`SECRETS_MASTER_KEY` env var) inside the same container provides
 **no additional protection** against an in-container compromise -- anyone
 who can read `/proc/<daemon-pid>/environ` or your compose config can
@@ -531,7 +531,7 @@ If using the web dashboard:
 docker compose --profile web up -d --build
 ```
 
-The mounted `/data` volume preserves your data across rebuilds. Only the
+The mounted `/home/comis/.comis` volume preserves your data across rebuilds. Only the
 application code is replaced.
 
 ## Related pages

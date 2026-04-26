@@ -146,7 +146,7 @@ RUN if getent passwd 1000 >/dev/null 2>&1; then \
         groupadd --gid 1000 comis && \
         useradd --uid 1000 --gid comis --shell /bin/bash --create-home comis; \
     fi && \
-    mkdir -p /data && chown comis:comis /data && \
+    mkdir -p /home/comis/.comis && chown comis:comis /home/comis/.comis && \
     mkdir -p /etc/comis && chown comis:comis /etc/comis
 
 # Copy built application
@@ -164,7 +164,7 @@ USER comis
 
 # Default environment
 ENV NODE_ENV=production \
-    COMIS_DATA_DIR=/data \
+    COMIS_DATA_DIR=/home/comis/.comis \
     COMIS_CONFIG_PATHS=/etc/comis/config.yaml
 
 # Expose gateway port

@@ -32,7 +32,7 @@ trade-off:
   every feature that depends on shell execution.
 - ❌ **Security guarantees inside the container are dropped on Docker
   Desktop.** With the sandbox off, agent-issued shell commands can read
-  `/data/.env`, the encrypted `secrets.db`, `/etc/comis/config.yaml`,
+  `/home/comis/.comis/.env`, the encrypted `secrets.db`, `/etc/comis/config.yaml`,
   channel tokens, the `SECRETS_MASTER_KEY`, and anything else the daemon
   user owns. A single prompt injection exfiltrates everything.
 

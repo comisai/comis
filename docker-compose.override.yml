@@ -24,7 +24,7 @@ services:
     # Mount source for hot-reload (requires rebuild)
     volumes:
       - .:/app/src:ro
-      - ${COMIS_DATA_DIR:-~/.comis}:/data
+      - ${COMIS_DATA_DIR:-~/.comis}:/home/comis/.comis
 
     deploy:
       resources:
