@@ -61,3 +61,22 @@
     </div>
   </div>
 </section>
+
+<script is:inline>
+  (function () {
+    function centerVideo(behavior) {
+      var v = document.querySelector('#demo video');
+      if (v) v.scrollIntoView({ block: 'center', behavior: behavior || 'instant' });
+    }
+    function maybeCenter(behavior) {
+      if (window.location.hash === '#demo') centerVideo(behavior);
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { maybeCenter('instant'); });
+    } else {
+      maybeCenter('instant');
+    }
+    window.addEventListener('load', function () { maybeCenter('instant'); });
+    window.addEventListener('hashchange', function () { maybeCenter('smooth'); });
+  })();
+</script>
