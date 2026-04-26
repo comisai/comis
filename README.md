@@ -124,7 +124,7 @@ comis daemon start
 docker run -d --name comis -p 4766:4766 -v comis-data:/data comisai/comis:latest-slim
 ```
 
-> **Production = Linux host only.** macOS / Windows Docker Desktop ships a `linuxkit` VM whose kernel does not allow nested PID-namespace + procfs mounts. That breaks the bubblewrap exec sandbox, so on Docker Desktop the daemon **auto-disables the sandbox** and runs `exec` commands UNSANDBOXED inside the container — the agent works end-to-end for dev/testing, but `/data` (including your `.env` and encrypted `secrets.db`) is reachable from any prompt-injected shell command. Docker Desktop is for **development and local testing only**; production must run on a real Linux host or Linux cloud VM where the kernel actually supports the sandbox. See [docs/operations/docker.mdx → Platform Support](https://docs.comis.ai/operations/docker#platform-support).
+> **Production = Linux host only.** Docker Desktop (macOS / Windows) auto-disables the exec sandbox, so `/data` is reachable from any prompt-injected shell command — fine for dev, **never for production**. See [Platform Support →](https://docs.comis.ai/operations/docker#platform-support).
 
 Once running, verify the daemon is up:
 
