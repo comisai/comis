@@ -1,0 +1,561 @@
+---
+title: "Deploy on Render"
+description: "Deploy Comis to Render.com from Docker Hub — managed Linux host, automatic HTTPS, persistent storage"
+icon: "cloud"
+---
+
+import SecretWarning from '/snippets/secret-warning.mdx';
+
+This guide deploys Comis to [Render.com](https://render.com) using the prebuilt
+Docker Hub image. You get a managed Linux host (so the exec sandbox is fully
+active — unlike Docker Desktop on macOS), automatic HTTPS, a persistent volume
+for memory and configuration, and a public URL within ~5 minutes. No Docker
+installed locally, no server to provision, no kernel to manage.
+
+<Tip>
+**Why Render specifically:** It's the simplest "click-deploy a Docker Hub image
+with a persistent disk and an HTTPS endpoint" PaaS. The same general pattern
+works on Fly.io, Railway, DigitalOcean App Platform, and AWS ECS — adjust the
+service-creation flow but keep the environment variables and disk mount the same.
+</Tip>
+
+## Before you start
+
+| Need | How to get it |
+|---|---|
+| **Render account** | [Sign up](https://render.com) (free, takes 1 minute) |
+| **Anthropic API key** | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
+| **Channel tokens** *(optional)* | Telegram BotFather, Discord Developer Portal, Slack app, etc. |
+| **A 32-byte hex string** | Run `openssl rand -hex 32` locally — you'll use this as the gateway bearer token |
+| **Credit card on Render** | Required for the Starter plan ($7/mo). The free plan **does not work** for Comis — see [Plan choice](#plan-choice) below. |
+
+You **don't** need Docker, Node.js, or anything else installed on your machine.
+Render pulls the image directly from Docker Hub.
+
+<Warning>
+**Plan choice.** Render's free plan has no persistent disk and sleeps after
+15 minutes of inactivity. Comis needs both — without a disk every restart
+wipes your agent's memory and conversations; without always-on the agent
+can't respond to channel events. **Use the $7/mo Starter plan or higher.**
+</Warning>
+
+## Quick deploy (dashboard, ~5 minutes)
+
+<Steps>
+  <Step title="Create a new Web Service">
+    Log into Render → click **New +** in the top right → **Web Service**.
+
+    On the next screen, look for the **"Existing Image"** option (not "Public Git Repository"
+    — we're deploying a prebuilt image, not source). Click it.
+  </Step>
+
+  <Step title="Point at the Comis Docker Hub image">
+    In the **Image URL** field, paste:
+
+    ```
+    docker.io/comisai/comis:latest-slim
+    ```
+
+    <Tip>
+    For production, pin to an immutable version tag instead of `latest-slim` so
+    your service doesn't update under you. Find the latest version on the
+    [Comis Docker Hub page](https://hub.docker.com/r/comisai/comis/tags) and use
+    e.g. `docker.io/comisai/comis:1.0.22-slim`.
+    </Tip>
+
+    Click **Connect** (or "Next" depending on your Render UI version).
+  </Step>
+
+  <Step title="Configure the service">
+    Fill in:
+
+    | Field | Value |
+    |---|---|
+    | **Name** | `comis` (or anything you like — becomes part of your URL) |
+    | **Region** | Pick the one closest to you/your users |
+    | **Instance Type** | **Starter** ($7/mo) — Free won't work, see warning above |
+    | **Branch / Tag** | leave blank (we're using a tag-pinned image) |
+    | **Dockerfile Path** | leave blank |
+    | **Docker Build Context Directory** | leave blank |
+
+    Render will detect the image's exposed port. Comis exposes **4766**.
+  </Step>
+
+  <Step title="Add environment variables">
+    Scroll down to **Environment Variables** and add each of these. Use the
+    "Add Secret File" / "Add" button for each row. Mark each as a **Secret**
+    (lock icon) so the values stay hidden in logs and the dashboard.
+
+    **Required:**
+
+    ```bash
+    COMIS_GATEWAY_HOST=0.0.0.0
+    COMIS_GATEWAY_PORT=4766
+    COMIS_GATEWAY_TOKEN=<paste the openssl rand -hex 32 output here>
+    ANTHROPIC_API_KEY=sk-ant-api03-...
+    ```
+
+    **Optional channel tokens** — add only those you'll use:
+
+    ```bash
+    TELEGRAM_BOT_TOKEN=1234567890:ABC...
+    DISCORD_BOT_TOKEN=...
+    SLACK_BOT_TOKEN=xoxb-...
+    OPENAI_API_KEY=sk-...
+    ```
+
+    <SecretWarning />
+
+    <Tip>
+    Skip `SECRETS_MASTER_KEY` for a default deployment. Comis runs in legacy
+    mode (credentials read directly from these env vars), which is the
+    recommended setup for Render. Only add `SECRETS_MASTER_KEY` if you
+    specifically need the encrypted-secrets-DB feature for `SecretRef` config
+    pointers — see [Secrets management](/operations/docker#secrets-management)
+    for the trade-off.
+    </Tip>
+  </Step>
+
+  <Step title="Add a persistent disk">
+    Still on the create-service screen, scroll to **Advanced** → expand it →
+    look for **Add Disk**. Configure:
+
+    | Field | Value |
+    |---|---|
+    | **Name** | `comis-data` |
+    | **Mount Path** | `/home/comis/.comis` |
+    | **Size** | `1 GB` (you can grow it later) |
+
+    This is where your agent's memory database, logs, secrets store, and
+    workspace live. **Without this disk, every redeploy wipes your data.**
+  </Step>
+
+  <Step title="Set the health check">
+    Scroll to **Health Check Path** and enter:
+
+    ```
+    /health
+    ```
+
+    Render uses this to decide when traffic should start flowing to your
+    container after a deploy. Comis's daemon serves a JSON `{"status":"ok",...}`
+    on this endpoint as soon as the gateway is up.
+  </Step>
+
+  <Step title="Deploy">
+    Click **Create Web Service** at the bottom. Render starts pulling the
+    image, attaching the disk, and starting the container. The deploy takes
+    about 2–3 minutes for the first time (image pull + initial filesystem
+    setup).
+
+    Watch the **Logs** tab — you should eventually see:
+
+    ```json
+    {"level":30,"name":"comis-daemon","msg":"Comis daemon started", ...}
+    ```
+
+    When the service status switches to **Live** at the top of the page,
+    you're done.
+  </Step>
+</Steps>
+
+## Verify the deployment
+
+Render gives your service a public URL like `https://comis-XXXX.onrender.com`.
+Find it on the service's dashboard page (top of the screen, next to the green
+"Live" badge).
+
+Run these from any terminal — they need no Docker or Comis CLI locally:
+
+```bash
+# Replace with your actual values:
+RENDER_URL=https://comis-XXXX.onrender.com
+GATEWAY_TOKEN=<the one you generated with openssl rand -hex 32>
+
+# 1. Health check (no auth needed)
+curl -sf $RENDER_URL/health
+# → {"status":"ok","timestamp":"...","instanceId":"..."}
+
+# 2. Auth check — should return 401
+curl -s -o /dev/null -w "%{http_code}\n" $RENDER_URL/v1/chat/completions \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"model":"default","messages":[{"role":"user","content":"hi"}]}'
+# → 401
+
+# 3. Real chat round-trip
+curl -sS -X POST $RENDER_URL/v1/chat/completions \
+  -H "Authorization: Bearer $GATEWAY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "default",
+    "messages": [{"role":"user","content":"Reply with exactly: hello-from-render"}]
+  }' | jq -r '.choices[0].message.content'
+# → hello-from-render
+```
+
+If all three of those work, you have a fully functional Comis deployment.
+
+## Open the dashboard
+
+In your browser, go to:
+
+```
+https://comis-XXXX.onrender.com/
+```
+
+It redirects to `/app/` and prompts for your gateway token. Paste the same
+`COMIS_GATEWAY_TOKEN` you set in the env vars. From here you can:
+
+- Add agents, configure their model and policies
+- Connect channels (Telegram, Discord, Slack, etc.) — paste each bot token
+- Watch live logs, traces, and memory contents
+- Edit configuration through the UI (writes to `/home/comis/.comis/config.yaml`
+  on the persistent disk)
+
+<Tip>
+**Bringing an existing config from local testing.** If you've been testing
+Comis locally, you already have a `~/.comis/config.yaml` with agents and
+channels configured. The simplest way to seed your Render deployment with
+that config is via Render's [Secret Files](#using-render-secret-files-for-config)
+feature — see below.
+</Tip>
+
+## Reproducible deploys with `render.yaml`
+
+If you'd rather declare the deployment in code (so you can recreate it from
+scratch, version it, or share it with teammates), drop this `render.yaml` at
+the root of any GitHub repo and link Render to it. Render watches the file
+and applies changes automatically.
+
+```yaml
+# render.yaml — Infrastructure as Code for a Comis deployment
+services:
+  - type: web
+    name: comis
+    runtime: image
+    image:
+      url: docker.io/comisai/comis:1.0.22-slim   # pin to an immutable tag
+    plan: starter                                  # $7/mo, has persistent disk
+    region: oregon                                 # closest to your users
+    healthCheckPath: /health
+    autoDeploy: false                              # don't auto-redeploy on every image push
+
+    envVars:
+      # Required networking — let the container listen on all interfaces
+      # so Render's load balancer can route to it
+      - key: COMIS_GATEWAY_HOST
+        value: 0.0.0.0
+      - key: COMIS_GATEWAY_PORT
+        value: 4766
+
+      # Auto-generated — Render creates a strong random value at first deploy
+      # and stores it; the same value is reused on subsequent deploys
+      - key: COMIS_GATEWAY_TOKEN
+        generateValue: true
+
+      # User must set these in the Render dashboard after first deploy
+      # (sync: false means "don't store this value in render.yaml")
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: SLACK_BOT_TOKEN
+        sync: false
+
+    disk:
+      name: comis-data
+      mountPath: /home/comis/.comis
+      sizeGB: 1
+```
+
+Render's docs on this file format: <https://render.com/docs/blueprint-spec>.
+
+## Using Render Secret Files for config
+
+If you have an existing `config.yaml` (e.g. from a local install) and want to
+seed it on Render rather than configure through the dashboard:
+
+<Steps>
+  <Step title="Open Render dashboard for your service">
+    Go to your service's page → **Environment** tab in the left sidebar.
+  </Step>
+
+  <Step title="Add a Secret File">
+    Scroll to **Secret Files** → click **Add Secret File**. Enter:
+
+    | Field | Value |
+    |---|---|
+    | **Filename** | `/etc/comis/config.yaml` |
+    | **File Contents** | Paste your full local `config.yaml` |
+
+    Click **Save**.
+  </Step>
+
+  <Step title="Patch the config for the container">
+    Two changes are needed in the version you paste, compared to a typical
+    local-install config:
+
+    **1. Remove any `dataDir:` line at the top.** Local configs from the
+    install wizard usually have `dataDir: /Users/yourname/.comis` (a host
+    absolute path that doesn't exist inside the container). The image already
+    sets `COMIS_DATA_DIR=/home/comis/.comis` and the persistent disk mounts
+    there — drop the line and the daemon does the right thing.
+
+    **2. Set `gateway.host: 0.0.0.0`** (a typical install has `127.0.0.1`,
+    which means "loopback only" — Render's load balancer can't reach it).
+
+    Example before / after:
+
+    ```diff
+    - dataDir: /Users/yourname/.comis
+      logLevel: info
+      agents:
+        default:
+          name: my-agent
+          provider: anthropic
+          model: default
+      gateway:
+        enabled: true
+    -   host: 127.0.0.1
+    +   host: 0.0.0.0
+        port: 4766
+    ```
+  </Step>
+
+  <Step title="Redeploy">
+    Render auto-restarts the service when you save a Secret File. Watch the
+    Logs tab — you should see your existing channels and agents register on
+    boot.
+  </Step>
+</Steps>
+
+## Updating to a new Comis version
+
+If you pinned a version tag (recommended), updating is a 30-second job:
+
+<Steps>
+  <Step title="Find the latest version">
+    Visit <https://hub.docker.com/r/comisai/comis/tags> or the
+    [Comis releases page](https://github.com/comisai/comis/releases).
+  </Step>
+
+  <Step title="Update the image URL">
+    On Render → your service → **Settings** → scroll to **Image URL** → change
+    `comisai/comis:1.0.22-slim` to the new version → **Save Changes**.
+
+    (Or, if you used `render.yaml`, edit the file in your repo and push — Render
+    picks up the change.)
+  </Step>
+
+  <Step title="Render redeploys automatically">
+    The service goes through a brief downtime (~30s) while Render pulls the
+    new image, runs the health check, and switches traffic over. Your
+    persistent disk is reattached unchanged, so all memory and config carry over.
+  </Step>
+</Steps>
+
+If you're on `latest-slim` instead, click **Manual Deploy** → **Deploy latest commit**.
+
+## Custom domain
+
+Render gives every service a `*.onrender.com` URL with HTTPS for free. To use
+your own domain:
+
+<Steps>
+  <Step title="Add the domain in Render">
+    Service page → **Settings** → **Custom Domains** → **Add Custom Domain** →
+    enter your domain (e.g. `comis.example.com`). Render shows you a CNAME
+    target.
+  </Step>
+
+  <Step title="Set the DNS record">
+    At your DNS provider, create a CNAME record pointing
+    `comis.example.com` → the Render-provided target. Wait for DNS to
+    propagate (usually a few minutes).
+  </Step>
+
+  <Step title="Render provisions TLS">
+    Render auto-issues a Let's Encrypt cert once the CNAME resolves. The
+    custom-domains panel on Render shows the cert status.
+  </Step>
+</Steps>
+
+No Comis-side configuration is needed for custom domains. Render terminates
+TLS at the edge and forwards plain HTTP to your container on port 4766.
+
+## Cost
+
+| Plan | Monthly | Persistent disk | Sleeps when idle? | Comis-suitable |
+|---|---|---|---|---|
+| Free | $0 | ❌ | After 15 min | ❌ |
+| **Starter** | **$7** | ✅ (1 GB included; +$0.25/GB) | Never | ✅ |
+| Standard | $25 | ✅ | Never | ✅ |
+| Pro / Pro Plus | $85+ | ✅ | Never | ✅ (only if you need more CPU/RAM) |
+
+Most personal Comis deployments run comfortably on Starter — the daemon's
+baseline memory is around 200–400 MB and CPU is low except during LLM calls.
+
+The bulk of your spend is **LLM API costs**, not Render. A medium-traffic
+single-user agent typically runs $0.50–$5/mo in Anthropic charges
+(see [Context Engine & Cost Optimization](https://github.com/comisai/comis#context-engine--cost-optimization)
+for cache savings) — much more than Render's $7.
+
+## Common issues
+
+<AccordionGroup>
+  <Accordion title="The service won't start (immediate restart loop)">
+    Open the **Logs** tab and look near the start of the most recent boot.
+    Most common causes:
+
+    - **`FATAL: Bootstrap failed: Config validation failed: gateway.tokens.0.secret: Too small`**
+      You provided a `COMIS_GATEWAY_TOKEN` shorter than 32 characters. Generate
+      a fresh one with `openssl rand -hex 32` (which produces 64 hex chars,
+      well over the 32-char minimum) and update the env var in Render.
+
+    - **`FATAL: EACCES: permission denied, mkdir '/Users/...'`**
+      Your `config.yaml` has a `dataDir:` line pointing at a host absolute path
+      from a local machine. Remove that line — see
+      [Patch the config for the container](#using-render-secret-files-for-config).
+
+    - **Health check timing out**
+      Render's default health check timeout is 30s, and Comis's first boot
+      can take 10–25s while it initializes the SQLite databases on the
+      newly-attached disk. If it consistently times out, bump the health-check
+      timeout in service settings.
+  </Accordion>
+
+  <Accordion title="`/v1/chat/completions` returns 502 Bad Gateway">
+    Render's load balancer returns 502 when it can't reach your container.
+    Almost always: the gateway is bound to `127.0.0.1` (loopback inside the
+    container) instead of `0.0.0.0` (all interfaces).
+
+    **Fix:** Verify both of these are set:
+
+    - Env var **`COMIS_GATEWAY_HOST=0.0.0.0`** (Settings → Environment)
+    - Your `config.yaml` (if you uploaded one) has **`gateway.host: 0.0.0.0`** —
+      not `127.0.0.1`. Config-file value wins over env var.
+
+    After fixing, click **Manual Deploy → Deploy latest commit** to restart.
+  </Accordion>
+
+  <Accordion title="The agent loses memory after every redeploy">
+    You forgot to add the persistent disk, or its mount path is wrong.
+
+    **Fix:** Service → **Settings** → scroll to **Disks** → confirm:
+
+    - There is a disk attached
+    - **Mount Path** is exactly `/home/comis/.comis` (this is the path the daemon
+      reads — anything else gets ignored)
+
+    If you previously deployed without the disk and lost data, that's
+    unrecoverable — but adding the disk now will preserve everything from
+    this point forward.
+  </Accordion>
+
+  <Accordion title="Can the agent use the `exec` skill on Render?">
+    **Yes.** Render runs containers on real Linux kernels, so the bubblewrap
+    exec sandbox is fully active — you'll see
+    `"Exec sandbox provider detected" provider=bwrap` at startup, with no
+    `Exec sandbox DISABLED` warning.
+
+    This is the major difference from Docker Desktop on macOS, where the
+    linuxkit kernel forces the daemon into auto-disabled-sandbox mode. On
+    Render, agent-issued shell commands run in a per-command sandbox that
+    excludes `/home/comis/.comis` from its mount set — prompt-injected exec
+    cannot read your `.env`, `secrets.db`, or config tokens.
+  </Accordion>
+
+  <Accordion title="Logs aren't showing anything I expect">
+    Render's **Logs** tab shows everything the container writes to stdout,
+    which is full Pino JSON. To make it readable in your browser, use Render's
+    built-in filter box at the top of the tab — for example, type
+    `"level":50` to see only ERROR-level lines.
+
+    For richer log analysis (cost summaries, cache hit rates, request
+    timings), download the logs and run them through `jq`:
+
+    ```bash
+    # Download via Render API or copy from the dashboard
+    cat render-logs.txt | grep '^{' | jq -c 'select(.msg=="Execution complete")'
+    ```
+
+    The structured fields include `durationMs`, `tokensIn`, `tokensOut`,
+    `cacheHitRate`, `costUsd` per LLM call.
+  </Accordion>
+
+  <Accordion title="My Telegram bot isn't responding">
+    Common causes, in order of likelihood:
+
+    1. **`TELEGRAM_BOT_TOKEN` env var not set** — the daemon logs
+       `"Channel telegram disabled"` at startup if the token is missing or
+       invalid. Add the var, redeploy.
+    2. **`config.yaml` doesn't have `channels.telegram.enabled: true`** —
+       even if the token is set, the channel must be enabled in config.
+    3. **Telegram bot username collision / wrong token** — easy to mix up
+       tokens between bots if you have several. Test by hitting
+       <https://api.telegram.org/bot>YOUR_TOKEN/getMe — that endpoint returns
+       the bot's identity, so you can confirm the token belongs to the bot
+       you expect.
+    4. **`allowFrom` filtering** — your config may have `channels.telegram.allowFrom`
+       set to a Telegram user ID that doesn't include the sender. The
+       daemon logs the rejected sender at DEBUG level — search the logs for
+       `not in allowFrom`.
+  </Accordion>
+
+  <Accordion title="How do I `exec` into the running container for debugging?">
+    Render → service page → **Shell** tab in the left sidebar. This opens an
+    interactive shell inside the running container, running as the `comis`
+    user. From there you can:
+
+    ```bash
+    # Inspect the daemon's data dir
+    ls -la /home/comis/.comis
+
+    # Tail logs from inside the container
+    tail -f /home/comis/.comis/logs/daemon.1.log
+
+    # Inspect memory.db
+    sqlite3 /home/comis/.comis/memory.db .tables
+
+    # Check what env vars the daemon sees
+    cat /proc/1/environ | tr '\0' '\n' | grep -E '^(COMIS_|ANTHROPIC|TELEGRAM)'
+    ```
+
+    The shell is read-write on the persistent disk, so be careful — anything
+    you change here lasts across deploys.
+  </Accordion>
+
+  <Accordion title="How do I rotate the gateway token?">
+    1. Generate a new one: `openssl rand -hex 32`
+    2. Render → service → **Environment** → update `COMIS_GATEWAY_TOKEN`
+       with the new value
+    3. Click **Save Changes** — Render auto-restarts the container
+    4. Update any clients (the dashboard prompt, your scripts, etc.) to use
+       the new token
+
+    The old token stops working immediately on restart. There's no overlap
+    window — for zero-downtime token rotation you'd need two tokens
+    configured simultaneously (`gateway.tokens` is an array in `config.yaml`),
+    use the new one in clients, then remove the old entry.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration Guide" icon="gear" href="/installation/configuration">
+    Add agents, set policies, configure prompt caching, define channels.
+  </Card>
+  <Card title="Verify Installation" icon="circle-check" href="/installation/verify">
+    Diagnostic commands and expected outputs for a healthy install.
+  </Card>
+  <Card title="Operations: Docker" icon="docker" href="/operations/docker">
+    The full Docker reference — multi-stage build, security model, sandbox
+    behavior, secrets management.
+  </Card>
+  <Card title="Docker Hub Tags" icon="tag" href="/operations/docker-hub">
+    Tag scheme, version pinning, image variants (default vs slim).
+  </Card>
+</CardGroup>
