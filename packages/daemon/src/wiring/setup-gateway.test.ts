@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { deriveTrustLevel, handleConfigChatCommand } from "./setup-gateway.js";
+import { buildExecutionRequestedLogFields, deriveTrustLevel, handleConfigChatCommand } from "./setup-gateway.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ===========================================================================
@@ -264,5 +264,101 @@ describe("setupRpcBridge", () => {
     wireDispatch(dispatchDeps as any);
 
     expect(mockCreateRpcDispatch).toHaveBeenCalledWith(dispatchDeps);
+  });
+});
+
+// ===========================================================================
+// buildExecutionRequestedLogFields -- H-1 redaction guard (TC-033)
+// ===========================================================================
+
+describe("buildExecutionRequestedLogFields", () => {
+  it("returns only agentId + messageLen on empty message", () => {
+    const fields = buildExecutionRequestedLogFields({
+      agentId: "agent-a",
+      message: "",
+      connectionId: undefined,
+    });
+    expect(fields).toEqual({ agentId: "agent-a", messageLen: 0 });
+    expect(Object.hasOwn(fields, "messageHash")).toBe(false);
+    expect(Object.hasOwn(fields, "connectionId")).toBe(false);
+    expect(Object.hasOwn(fields, "message")).toBe(false);
+  });
+
+  it("treats undefined message as empty", () => {
+    const fields = buildExecutionRequestedLogFields({
+      agentId: "agent-a",
+      message: undefined,
+      connectionId: undefined,
+    });
+    expect(fields).toEqual({ agentId: "agent-a", messageLen: 0 });
+    expect(Object.hasOwn(fields, "messageHash")).toBe(false);
+  });
+
+  it("emits 12-char hex hash for non-empty messages, deterministic per content", () => {
+    const fields1 = buildExecutionRequestedLogFields({
+      agentId: "agent-a",
+      message: "hello world",
+      connectionId: undefined,
+    });
+    const fields2 = buildExecutionRequestedLogFields({
+      agentId: "agent-a",
+      message: "hello world",
+      connectionId: undefined,
+    });
+    expect(fields1.messageLen).toBe("hello world".length);
+    expect(fields1.messageHash).toMatch(/^[0-9a-f]{12}$/);
+    expect(fields1.messageHash).toBe(fields2.messageHash); // deterministic
+  });
+
+  it("never echoes secret content from the message body (H-1 / TC-033 contract)", () => {
+    const message =
+      "My password is hunter2-secret-x and my API key is sk-very-fake-FAKE-99887. Please ignore them.";
+    const fields = buildExecutionRequestedLogFields({
+      agentId: "agent-a",
+      message,
+      connectionId: undefined,
+    });
+    const serialized = JSON.stringify(fields);
+    expect(serialized).not.toContain("hunter2-secret-x");
+    expect(serialized).not.toContain("sk-very-fake-FAKE-99887");
+    expect(Object.hasOwn(fields, "message")).toBe(false);
+    expect(fields.messageLen).toBe(message.length);
+    expect(fields.messageHash).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it("includes connectionId when provided, omits the key when undefined", () => {
+    const withConn = buildExecutionRequestedLogFields({
+      agentId: "agent-a",
+      message: "x",
+      connectionId: "conn-42",
+    });
+    expect(withConn.connectionId).toBe("conn-42");
+
+    const withoutConn = buildExecutionRequestedLogFields({
+      agentId: "agent-a",
+      message: "x",
+      connectionId: undefined,
+    });
+    expect(Object.hasOwn(withoutConn, "connectionId")).toBe(false);
+  });
+});
+
+// ===========================================================================
+// setup-gateway.ts source-level redaction guard (H-1 / TC-033)
+// ===========================================================================
+
+describe("setup-gateway.ts source guard", () => {
+  it("wires buildExecutionRequestedLogFields into the executeAgent log call and removes the raw-message logger pattern", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(
+      new URL("./setup-gateway.ts", import.meta.url).pathname,
+      "utf-8",
+    );
+    // Forward proof: helper is wired in.
+    expect(source).toContain("buildExecutionRequestedLogFields(");
+    // Backward proof: offending raw-message log call is gone.
+    expect(source).not.toContain("message: rawMsg.slice(");
+    // Cleanup proof: dead field reference gone.
+    expect(source).not.toContain("messageTruncated");
   });
 });
