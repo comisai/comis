@@ -1,0 +1,567 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+import Base from "../../layouts/Base.astro";
+import Footer from "../../components/Footer.astro";
+
+const title = "How One Sentence Spawned Six Sub-Agents and a Trade Idea";
+const description = "I typed one sentence into Comis: 'Have four analysts research NVDA in parallel, then run a bull vs bear debate, and let the head trader make the final call.' What came back was a 6-node DAG, six isolated sub-agents, 101 tool calls, 64 web searches, and a trade plan with entry tranches and a 4:1 reward-to-risk. Here's how the pipeline orchestration actually works.";
+const publishDate = "April 26, 2026";
+---
+
+<Base title={title} description={description}>
+  <main>
+    <!-- Hero -->
+    <section class="relative overflow-hidden px-6 pt-32 pb-8 md:pt-40 md:pb-12">
+      <div class="absolute inset-0 pointer-events-none">
+        <div class="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-teal/5 rounded-full blur-[150px]"></div>
+      </div>
+
+      <div class="relative max-w-3xl mx-auto">
+        <a href="/blog" class="inline-flex items-center gap-1 text-sm text-muted hover:text-teal transition-colors mb-8">
+          &larr; All Posts
+        </a>
+        <div class="flex items-center gap-3 text-sm text-muted mb-6">
+          <span>By <span class="text-white">Moshe Anconina</span></span>
+          <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+          <span>{publishDate}</span>
+          <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+          <span>11 min read</span>
+          <span class="w-1 h-1 rounded-full bg-muted/50"></span>
+          <span class="text-teal">Engineering</span>
+        </div>
+        <h1 class="text-3xl md:text-5xl font-extrabold tracking-tight leading-[1.15] text-white mb-6">
+          How one sentence spawned six sub-agents and a trade idea
+        </h1>
+        <p class="text-lg md:text-xl text-muted leading-relaxed">
+          I typed one sentence into Comis. It built a 6-node DAG, dispatched <span class="text-teal font-semibold">six isolated sub-agents</span>, fired <span class="text-teal font-semibold">101 tool calls</span>, ran <span class="text-teal font-semibold">64 web searches</span>, and came back with a trade plan that included three entry tranches, a stop, and a <span class="text-coral font-semibold">4:1 reward-to-risk</span>. Here's how the pipeline orchestration actually works.
+        </p>
+      </div>
+    </section>
+
+    <!-- Hero image -->
+    <section class="px-6 pb-12">
+      <div class="max-w-4xl mx-auto">
+        <img
+          src="/images/blog-dag-pipeline-hero.jpg"
+          alt="A single line of glowing prompt text expanding into a constellation of luminous nodes — the multi-agent DAG"
+          class="w-full rounded-2xl border border-white/5"
+          loading="eager"
+        />
+      </div>
+    </section>
+
+    <!-- Article body -->
+    <article class="px-6 pb-24">
+      <div class="max-w-3xl mx-auto">
+
+        <!-- The Prompt -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The prompt: one sentence, taken literally</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Comis's README has a marketing line that sounds like exactly the kind of thing you should be skeptical of:
+          </p>
+
+          <blockquote class="border-l-4 border-teal/60 pl-6 my-8 text-white text-lg italic leading-relaxed">
+            "Have four analysts research NVDA in parallel, then run a bull vs bear debate, and let the head trader make the final call."
+            <span class="block mt-3 text-sm text-muted not-italic">→ One sentence creates a 7-node DAG pipeline with parallel fan-out, multi-round debate, and synthesis. No YAML, no scripting.</span>
+          </blockquote>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            I sent that exact sentence to my running daemon via the OpenAI-compatible <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">/v1/chat/completions</code> endpoint. <strong class="text-white">27 seconds</strong> later the API call returned. In that 27 seconds the agent didn't write a report. It wrote a <em>graph</em>.
+          </p>
+
+          <div class="bg-navy-light/40 border border-white/5 rounded-xl p-5 my-8 font-mono text-sm">
+            <div class="text-muted text-xs mb-2">tool: pipeline.save</div>
+            <pre class="text-muted-light whitespace-pre-wrap leading-relaxed">{`{
+  "id": "stock-deep-dive",
+  "label": "Deep Stock Analysis: Parallel Analysts → Debate → Final Call",
+  "nodes": [
+    {"node_id": "technical",   "task": "You are a technical analyst..."},
+    {"node_id": "fundamental", "task": "You are a fundamental analyst..."},
+    {"node_id": "sentiment",   "task": "You are a sentiment/news analyst..."},
+    {"node_id": "macro",       "task": "You are a macro analyst..."},
+    {"node_id": "debate",      "task": "Bull vs bear synthesis...",       "depends_on": ["technical","fundamental","sentiment","macro"]},
+    {"node_id": "head_trader", "task": "Final call with entry plan...",   "depends_on": ["debate"]}
+  ]
+}`}</pre>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Then it called <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">{`pipeline.execute({"id":"stock-deep-dive","variables":{"TICKER":"NVDA"}})`}</code>, the daemon spawned six sub-agents, and returned a Telegram-style "Pipeline is live ⚡️" acknowledgement to me. That was the chat-API call — done. The actual research was happening in the background, on six separate session keys.
+          </p>
+        </div>
+
+        <!-- The DAG -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">What the agent actually built</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The shape isn't novel. What's interesting is that the LLM produced it from one sentence, including correct dependency ordering, sensible <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">max_steps</code> budgets, and parameterizable variables (so the same pipeline reruns on AAPL, TSLA, MSFT — no second prompt).
+          </p>
+
+          <img
+            src="/images/blog-dag-pipeline-flow.jpg"
+            alt="The 6-node DAG: four analysts in parallel, converging into a debate node, then a head trader final-call node"
+            class="w-full rounded-xl border border-white/5 my-8"
+            loading="lazy"
+          />
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Four analysts at the top fan out in parallel. Each runs in its own sub-agent session — separate memory, separate workspace, separate tool budget. They converge into a debate node that reads all four outputs and runs a multi-round bull-vs-bear synthesis. The debate output flows into a head-trader node that produces the final actionable call.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Each box on that diagram became a real subagent in the daemon log:
+          </p>
+
+          <div class="bg-navy-light/40 border border-white/5 rounded-xl p-5 my-8 font-mono text-xs overflow-x-auto">
+<pre class="text-muted-light whitespace-pre leading-relaxed">{`sub-agent-1903d99a-...   technical analyst
+sub-agent-195c0701-...   fundamental analyst
+sub-agent-6fb4128e-...   sentiment analyst
+sub-agent-f7d0e988-...   macro analyst         (the heavy lifter — see below)
+sub-agent-7badeca0-...   bull vs bear debate
+sub-agent-d3f829c9-...   head trader`}</pre>
+          </div>
+        </div>
+
+        <!-- Sub-agent isolation -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Why each box is its own sub-agent (and why that matters)</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            A sub-agent in Comis isn't a function call. It's a whole new agent session with:
+          </p>
+
+          <ul class="list-disc pl-6 space-y-2 text-muted-light text-base leading-relaxed mb-6">
+            <li><strong class="text-white">Its own session key</strong> — <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">default:sub-agent-f7d0e988-...:sub-agent:f7d0e988-...</code> — completely isolated from the parent's conversation history.</li>
+            <li><strong class="text-white">Its own context window</strong>, with system prompt, tool descriptions, and the analyst's task injected at boot. Nothing else.</li>
+            <li><strong class="text-white">Its own tool budget</strong> — <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">max_steps: 40</code> per analyst, set by the parent at pipeline construction.</li>
+            <li><strong class="text-white">Its own workspace</strong> for in-flight tool ops, at <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">~/.comis/workspace/sessions/default/sub-agent@&lt;id&gt;/</code>. Final node output (the analyst's markdown summary) lands one level up in <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">~/.comis/graph-runs/&lt;graph-id&gt;/&lt;node-id&gt;-output.md</code>, alongside a <code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">_run-metadata.json</code> with per-node stats.</li>
+          </ul>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Why this matters: when four analysts run in parallel, none of them has to wade through the others' search results. The fundamental analyst doesn't see the technical analyst's RSI calculations clogging its context. They each get a clean window to do focused research, then return one coherent summary that flows downstream. The aggregator (debate node) reads <em>all four summaries</em>, not all four conversations.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Without isolation, four parallel analysts would either share one polluted context (token bloat, cross-contamination) or be sequential (no actual parallelism). With isolation, you get fan-out that scales linearly in wall-clock time and degrades gracefully if one analyst times out.
+          </p>
+        </div>
+
+        <!-- Inside one analyst -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Inside the macro analyst: 34 tool calls</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            One sub-agent did the heavy lifting. The macro analyst made <strong class="text-white">34 tool calls across 21 LLM turns</strong> over 128 seconds — more than a third of the total session activity. That's the right shape: macro research means a lot of independent threads to chase, and the parallel-isolation lets this sub-agent grind through them without slowing the others down.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Tool calls it actually fired (from the daemon log):
+          </p>
+
+          <div class="bg-navy-light/40 border border-white/5 rounded-xl p-5 my-8 font-mono text-xs overflow-x-auto">
+<pre class="text-muted-light whitespace-pre leading-relaxed">{`web_search   "NVDA Nvidia stock macroeconomic outlook 2026 interest rates"
+web_search   "AI spending chip demand 2026 Nvidia competition sector trends"
+web_search   "US trade policy tariffs semiconductors China 2026 Nvidia"
+web_search   "Fed monetary policy rate cuts 2026 tech stocks impact"
+web_search   "TSMC capacity AI chip supply 2026"
+web_fetch    https://www.chartmill.com/stock/quote/NVDA/...
+web_fetch    https://altindex.com/ticker/nvda/...
+web_search   "Nvidia competitive position AI chips market share AMD 2026"
+web_search   "hyperscaler capex 2026 cloud infrastructure spend"
+... (25 more)`}</pre>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The analyst pulled real numbers — $700B hyperscaler AI capex in 2026, Fed near-neutral, GDP at 2.2-2.4%, the $5.5B export-control charge, semiconductor revenue crossing $1.3T — and folded them into a "moderately bullish" outlook with specific risk flags (tariff escalation could shave 0.5-1% from GDP). Not regurgitated training data; live web research with the source URLs in the tool-result files.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Across all six sub-agents, the tool-call distribution looked like this:
+          </p>
+
+          <div class="overflow-x-auto mb-8">
+            <table class="w-full text-left text-sm">
+              <thead>
+                <tr class="border-b border-white/10">
+                  <th scope="col" class="py-3 pr-4 text-sm font-medium text-muted">Tool</th>
+                  <th scope="col" class="py-3 px-4 text-sm font-medium text-muted text-right">Calls</th>
+                  <th scope="col" class="py-3 pl-4 text-sm font-medium text-muted">Use</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["web_search",  "43", "research queries (Brave, Tavily, Perplexity)"],
+                  ["web_fetch",   "21", "scraping analysis sites + earnings filings"],
+                  ["read",        "10", "sub-agents reading their own tool-result files"],
+                  ["exec",        "8",  "shell ops in the agent workspace"],
+                  ["pipeline",    "2",  "pipeline.save + pipeline.execute"],
+                  ["memory_tool", "1",  "agent autonomously stored a user fact"],
+                  ["ls",          "1",  "workspace introspection"],
+                  ["grep",        "1",  "text search"],
+                ].map(([tool, calls, use]) => (
+                  <tr class="border-b border-white/5">
+                    <td class="py-3 pr-4 text-sm text-white font-mono">{tool}</td>
+                    <td class="py-3 px-4 text-sm text-teal font-mono text-right">{calls}</td>
+                    <td class="py-3 pl-4 text-sm text-muted-light">{use}</td>
+                  </tr>
+                ))}
+                <tr class="border-b border-white/10">
+                  <td class="py-3 pr-4 text-sm text-white font-bold">total</td>
+                  <td class="py-3 px-4 text-sm text-teal font-mono text-right font-bold">87</td>
+                  <td class="py-3 pl-4 text-sm text-muted">across the six pipeline sub-agents (101 including the parent orchestration calls)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Two of those 101 tool calls failed (a 2% failure rate — typical noise from <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">exec</code> shell ops). Both were caught by the runtime and the agent recovered without aborting. No retries needed at the orchestration layer.
+          </p>
+        </div>
+
+        <!-- Debate -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The debate node: zero tools, pure synthesis</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The bull-vs-bear debate node is the strangest sub-agent in the run. <strong class="text-white">Zero tool calls</strong>. One LLM call. 76 seconds. <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">finishReason: stop</code>.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Why? Because by the time the debate node runs, the four analysts have already done all the research. They each wrote a markdown summary to disk. The debate node's task isn't to research more; it's to <em>argue</em> from the existing material, weighing strengths and surfacing contradictions. That's a pure-reasoning job. Calling more web tools would just dilute it.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The output it produced:
+          </p>
+
+          <div class="bg-navy-light/40 border-l-4 border-teal/60 rounded-r-xl p-5 my-8 text-sm leading-relaxed">
+            <div class="text-teal font-semibold mb-2">🐂 Bull highlights</div>
+            <ul class="list-disc pl-5 space-y-1 text-muted-light mb-4">
+              <li>PEG under 0.4 — paying a value multiple for hypergrowth</li>
+              <li>$700B AI capex supercycle, Blackwell supply-constrained</li>
+              <li>CUDA moat deepening — $97B FCF, 80% share, fortress balance sheet</li>
+              <li>Every analyst Strong Buy, consensus PT $266 (+28%)</li>
+            </ul>
+            <div class="text-coral font-semibold mb-2">🐻 Bear highlights</div>
+            <ul class="list-disc pl-5 space-y-1 text-muted-light mb-4">
+              <li>$5T market cap pricing in perfection — one stumble = massive drawdown (beta 2.34)</li>
+              <li><strong class="text-white">Every single insider selling aggressively, zero buying</strong></li>
+              <li>AI capex could prove cyclical (like crypto mining), not secular (like cloud)</li>
+              <li>Export controls, tariff escalation, hyperscaler custom silicon all chip at the moat</li>
+              <li>Growth decelerating: 100% → 65% → 31% by FY2028</li>
+            </ul>
+            <div class="text-white font-semibold">Core tension: generational compounder, or cyclical peak at $5T market cap?</div>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            That's a useful structure. The model didn't pick a side; it surfaced the actual disagreement and let the next node resolve it. Comis's tool policy left the debate sub-agent with read-only access to upstream tool-result files — it could see what the analysts found, but not run new searches. That constraint was set at pipeline construction, not handed to the LLM as an instruction.
+          </p>
+        </div>
+
+        <!-- Head trader -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Head trader's call</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Five tool calls in this sub-agent — all reads, pulling the four analyst summaries and the debate document. Three LLM calls, 45 seconds. The output:
+          </p>
+
+          <div class="bg-navy-light/40 border border-amber-500/30 rounded-xl p-6 my-8">
+            <div class="flex items-center gap-2 text-sm text-amber-400 mb-4 font-mono">
+              <span>⚡ HEAD TRADER FINAL CALL</span>
+            </div>
+            <div class="text-2xl text-white font-bold mb-2">📌 BUY — ON PULLBACK</div>
+            <div class="text-sm text-muted mb-6">Conviction: MEDIUM-HIGH</div>
+
+            <p class="text-muted-light text-sm leading-relaxed mb-5 italic border-l-2 border-amber-500/40 pl-4">
+              NVDA is the most dominant tech franchise of this decade — 80% AI share, 73% revenue growth, $97B FCF, forward P/E 25x. But it's overbought at $208 against $212 resistance with every insider selling. Buy the dip on a generational compounder — don't chase into resistance.
+            </p>
+
+            <div class="overflow-x-auto mb-5">
+              <table class="w-full text-left text-xs">
+                <thead>
+                  <tr class="border-b border-white/10">
+                    <th class="py-2 pr-3 text-muted font-medium">Tranche</th>
+                    <th class="py-2 px-2 text-muted font-medium">Allocation</th>
+                    <th class="py-2 px-2 text-muted font-medium">Price</th>
+                    <th class="py-2 pl-2 text-muted font-medium">Rationale</th>
+                  </tr>
+                </thead>
+                <tbody class="font-mono">
+                  {[
+                    ["1 (starter)", "30%", "$208", "skin in the game if it breaks out"],
+                    ["2 (core)",    "40%", "$190-196", "20-day SMA / high-probability entry"],
+                    ["3 (gift)",    "30%", "$183-186", "50/200-day SMA cluster"],
+                  ].map(([t, alloc, price, rat]) => (
+                    <tr class="border-b border-white/5">
+                      <td class="py-2 pr-3 text-white">{t}</td>
+                      <td class="py-2 px-2 text-teal">{alloc}</td>
+                      <td class="py-2 px-2 text-amber-400">{price}</td>
+                      <td class="py-2 pl-2 text-muted-light">{rat}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="grid grid-cols-3 gap-4 text-xs">
+              <div>
+                <div class="text-muted">Targets</div>
+                <div class="text-teal font-mono mt-1">$265-275 (12mo)<br/>$310-325 (18mo bull)</div>
+              </div>
+              <div>
+                <div class="text-muted">Stop</div>
+                <div class="text-coral font-mono mt-1">$175<br/>(below 200-day SMA)</div>
+              </div>
+              <div>
+                <div class="text-muted">R/R at $193 avg</div>
+                <div class="text-teal font-mono mt-1">4:1</div>
+              </div>
+            </div>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Note: not investment advice. The point isn't that the call was right; the point is that the agent did the work. Real prices ($208.27, +4.32% Apr 24). Real fundamentals ($215.9B FY2026 revenue). Real insider data (Ajay Puri sold $109M in March; Kress, Stevens, Huang all selling on 10b5-1 plans; zero buying). Real macro context. A coherent synthesis. A concrete plan with stops and tranches and a defensible R/R.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            None of that is in Claude Opus 4.6's training data — the prices are from yesterday. Every number above came from a tool call.
+          </p>
+        </div>
+
+        <!-- Numbers -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The numbers</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Here's the per-sub-agent breakdown for the run, pulled straight from the daemon's <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">"Execution complete"</code> events:
+          </p>
+
+          <div class="overflow-x-auto mb-8">
+            <table class="w-full text-left text-sm">
+              <thead>
+                <tr class="border-b border-white/10">
+                  <th scope="col" class="py-2 pr-3 text-xs font-medium text-muted">Sub-agent</th>
+                  <th scope="col" class="py-2 px-2 text-xs font-medium text-muted text-right">Tools</th>
+                  <th scope="col" class="py-2 px-2 text-xs font-medium text-muted text-right">LLM calls</th>
+                  <th scope="col" class="py-2 px-2 text-xs font-medium text-muted text-right">Duration</th>
+                  <th scope="col" class="py-2 pl-2 text-xs font-medium text-teal text-right">Cache hit</th>
+                </tr>
+              </thead>
+              <tbody class="font-mono text-xs">
+                {[
+                  ["Technical analyst",   "8",  "5",  "46s",   "100%"],
+                  ["Fundamental analyst", "11", "6",  "65s",   "100%"],
+                  ["Sentiment analyst",   "19", "9",  "74s",   "100%"],
+                  ["Macro analyst",       "34", "21", "128s",  "100%"],
+                  ["Bull vs bear debate", "0",  "1",  "76s",   "100%"],
+                  ["Head trader",         "5",  "3",  "45s",   "100%"],
+                ].map(([name, tools, llm, dur, cache]) => (
+                  <tr class="border-b border-white/5">
+                    <td class="py-2 pr-3 text-white">{name}</td>
+                    <td class="py-2 px-2 text-muted-light text-right">{tools}</td>
+                    <td class="py-2 px-2 text-muted-light text-right">{llm}</td>
+                    <td class="py-2 px-2 text-muted-light text-right">{dur}</td>
+                    <td class="py-2 pl-2 text-teal text-right">{cache}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td class="py-3 pr-3 text-white font-bold">Pipeline subtotal</td>
+                  <td class="py-3 px-2 text-teal text-right font-bold">77</td>
+                  <td class="py-3 px-2 text-teal text-right font-bold">45</td>
+                  <td class="py-3 px-2 text-muted-light text-right">434s</td>
+                  <td class="py-3 pl-2 text-teal text-right font-bold">100%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Add the parent orchestration call and a few smaller bookkeeping calls for chat overhead, and the run rolled up to <strong class="text-white">15 Execution events across about 9.8 minutes of total compute time</strong>. Every sub-agent's system prompt and tool-description pack was a 100% cache hit after the first call — the staggered spawn strategy lets all six share the parent's prompt-cache prefix instead of each one writing a fresh cache.
+          </p>
+
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 my-10">
+            <div class="bg-navy-light/40 border border-white/5 rounded-xl p-5 text-center">
+              <p class="text-3xl font-bold text-teal font-mono">6</p>
+              <p class="text-muted text-xs mt-1">sub-agents</p>
+            </div>
+            <div class="bg-navy-light/40 border border-white/5 rounded-xl p-5 text-center">
+              <p class="text-3xl font-bold text-teal font-mono">101</p>
+              <p class="text-muted text-xs mt-1">tool calls</p>
+            </div>
+            <div class="bg-navy-light/40 border border-white/5 rounded-xl p-5 text-center">
+              <p class="text-3xl font-bold text-teal font-mono">100%</p>
+              <p class="text-muted text-xs mt-1">cache hit rate</p>
+            </div>
+            <div class="bg-navy-light/40 border border-white/5 rounded-xl p-5 text-center">
+              <p class="text-3xl font-bold text-teal font-mono">0</p>
+              <p class="text-muted text-xs mt-1">errors / fatals</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- What changed -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">What had to be working under the hood</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Three weeks ago this exact prompt would have failed silently. The agent would have produced a long, well-formatted text response that <em>described</em> what an NVDA pipeline would do, complete with fake-but-plausible numbers it made up from training data, possibly emitting <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">&lt;tool_call&gt;...&lt;/tool_call&gt;</code> markup as plain text. <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">toolCalls=0</code> across the board. Theatre.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The difference is one line of code in <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">pi-executor.ts</code>:
+          </p>
+
+          <div class="bg-navy-light/40 border border-white/5 rounded-xl p-5 my-8 font-mono text-sm overflow-x-auto">
+<pre class="text-muted-light whitespace-pre leading-relaxed">{`- tools: [],
++ tools: mergedCustomTools.map((t) => t.name),`}</pre>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The pi-coding-agent SDK's <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">tools</code> field is an <em>allowlist of tool names</em>, not a list of definitions. An empty array is treated as a non-empty allowlist that allows zero tools — including all customTools — and every Comis tool got filtered out of the SDK's registry. The Anthropic API request went out with no <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">tools: [...]</code> parameter, the model had no structured way to invoke anything, and you got plaintext markup back. Universal: chat API, Telegram, Discord, every entry point.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Passing the customTool names as the explicit allowlist lands every tool in the registry, filters out conflicting SDK built-ins like <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">bash</code> (Comis registers <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">exec</code> instead, with sandbox + audit hooks), and lets Comis's customTools override built-ins for shared names like <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">read</code>/<code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">edit</code>/<code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">write</code>. The SDK gets a populated registry, the Anthropic API gets the structured tool array, the model produces <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">tool_use</code> content blocks, and the runtime executes them. The pipeline you saw above is the immediate downstream consequence.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Two regression tests assert the fix in <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">pi-executor.test.ts</code>:
+          </p>
+
+          <ul class="list-disc pl-6 space-y-2 text-muted-light text-base leading-relaxed mb-6">
+            <li><code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">"passes customTool names as the SDK's tools allowlist"</code> — confirms the array is populated.</li>
+            <li><code class="text-teal font-mono text-sm bg-white/5 px-1 py-0.5 rounded">"does NOT pass an empty tools allowlist when customTools is non-empty"</code> — explicit guard against re-introducing the bug.</li>
+          </ul>
+        </div>
+
+        <!-- The pattern -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">The pattern: orchestration as an emergent capability</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Comis didn't ship a "TradingAgents" feature. It ships a <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">pipeline</code> tool that takes a JSON DAG description, a set of platform-level capabilities (sub-agent spawning, sub-agent isolation, tool-result persistence, multi-channel delivery), and lets the LLM compose them.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The model invented "stock-deep-dive" as a graph ID, decided that 4 analysts was the right fan-out width, picked which dimensions were worth analyzing (technical, fundamental, sentiment, macro — not "earnings, options flow, dark pool, lunar phase"), set <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">max_steps: 40</code> as a sane budget per analyst, parameterized the ticker so the same pipeline reruns on AAPL, parameterized the sub-agent task prompts to encode the analyst persona inline, and ordered dependencies correctly. None of that was hardcoded. None of it required me to write any YAML.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The platform side is small. Six things make it work end-to-end:
+          </p>
+
+          <ul class="list-disc pl-6 space-y-3 text-muted-light text-base leading-relaxed mb-6">
+            <li><strong class="text-white">A graph runtime</strong> that takes the DAG description, computes the dependency order, dispatches independent nodes in parallel via the daemon's task scheduler, and resolves results downstream.</li>
+            <li><strong class="text-white">Sub-agent sessions</strong> with isolated context, isolated memory, and isolated workspace directories.</li>
+            <li><strong class="text-white">A staggered spawn strategy</strong> that delays parallel sub-agent boot by ~1-4 seconds each so they share the parent's prompt-cache prefix instead of each one writing a fresh cache (this is what got the 100% hit rate; it's the main idea in <a href="/blog/cache-optimization-journey" class="text-teal hover:text-teal-dark underline">the cache optimization post</a>).</li>
+            <li><strong class="text-white">A tool-result persistence layer</strong> that writes each sub-agent's output to disk so downstream nodes (and the parent) can read it without holding everything in context.</li>
+            <li><strong class="text-white">A real prompt-cache implementation</strong> — every sub-agent inherits the parent's cached prompt prefix, so the system prompt and tool-description pack are written once and read by all six. 100% cache hit rate after the first call across the whole run.</li>
+            <li><strong class="text-white">A working tool-use API integration</strong> — the bug the SDK fix resolved, without which none of the above produces structured tool calls.</li>
+          </ul>
+        </div>
+
+        <!-- Try it -->
+        <div class="prose-section">
+          <h2 class="text-2xl md:text-3xl font-bold text-white mt-16 mb-6">Try it on your own ticker</h2>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            If you've connected your Comis daemon to Telegram, this is a one-message interaction. Open your bot's chat and send:
+          </p>
+
+          <div class="bg-navy-light/40 border border-teal/30 rounded-xl p-5 my-6">
+            <div class="flex items-center gap-2 text-xs text-teal mb-3 font-mono">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/></svg>
+              <span>You → @your-comis-bot</span>
+            </div>
+            <p class="text-white text-base leading-relaxed font-medium">
+              Have four analysts research <span class="text-teal">&lt;YOUR-TICKER&gt;</span> in parallel, then run a bull vs bear debate, and let the head trader make the final call.
+            </p>
+          </div>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            That's it. Within seconds the bot replies with a <strong class="text-white">"Pipeline is live ⚡️"</strong> acknowledgement and the ASCII diagram of the DAG. Then six sub-agents fan out and go to work in the background. Five to ten minutes later the bot pushes the full report back into the same chat — the four analyst summaries, the bull/bear debate, and the head trader's call — because the Telegram chat <em>is</em> the announce channel for that graph.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            The first invocation has to write the prompt cache from scratch on the parent and on each new sub-agent. Every subsequent ticker on the same daemon instance hits the cache for the entire pipeline scaffold and runs noticeably faster. The daemon also saves the <code class="text-teal font-mono text-sm bg-white/5 px-1.5 py-0.5 rounded">stock-deep-dive</code> graph definition, so on the second invocation the agent doesn't even need to redesign the DAG — it dispatches the saved one.
+          </p>
+
+          <p class="text-muted-light text-base leading-relaxed mb-6">
+            Same prompt works through any channel Comis is connected to: Telegram, Discord, Slack, the dashboard. The chat that received the prompt receives the report. Same DAG. Same six sub-agents. Same isolation.
+          </p>
+        </div>
+
+        <!-- Final stats -->
+        <div class="prose-section">
+          <div class="bg-navy-light/40 border border-teal/20 rounded-2xl p-8 my-10">
+            <h3 class="text-xl font-bold text-white mb-6">Run summary</h3>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-6">
+              <div>
+                <p class="text-2xl font-bold text-teal font-mono">15</p>
+                <p class="text-muted text-xs mt-1">Execution events</p>
+              </div>
+              <div>
+                <p class="text-2xl font-bold text-teal font-mono">101</p>
+                <p class="text-muted text-xs mt-1">Tool calls fired</p>
+              </div>
+              <div>
+                <p class="text-2xl font-bold text-teal font-mono">78</p>
+                <p class="text-muted text-xs mt-1">LLM calls</p>
+              </div>
+              <div>
+                <p class="text-2xl font-bold text-teal font-mono">~9.8 min</p>
+                <p class="text-muted text-xs mt-1">Total compute time</p>
+              </div>
+              <div>
+                <p class="text-2xl font-bold text-teal font-mono">64</p>
+                <p class="text-muted text-xs mt-1">Web searches fired</p>
+              </div>
+              <div>
+                <p class="text-2xl font-bold text-teal font-mono">0</p>
+                <p class="text-muted text-xs mt-1">Errors / fatals</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </article>
+
+    <!-- Post navigation -->
+    <section class="px-6 py-12 border-t border-white/5">
+      <div class="max-w-3xl mx-auto flex items-center justify-between">
+        <div></div>
+        <a href="/blog" class="inline-flex items-center gap-2 text-sm text-muted hover:text-teal transition-colors">
+          All Posts &rarr;
+        </a>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="px-6 py-16 md:py-24 bg-navy-light/50">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+          One sentence. Your own multi-agent pipeline.
+        </h2>
+        <p class="text-muted text-lg mb-10">
+          Fan-out, debate, synthesis. Sub-agent isolation, prompt-cache aware, tool-policy gated. Open source.
+        </p>
+        <div class="flex flex-wrap gap-4 justify-center">
+          <a href="/installation/install-render" class="inline-flex items-center justify-center px-8 py-3.5 bg-coral-btn hover:bg-coral-btn-hover text-white font-semibold rounded-lg transition-colors text-lg">
+            Deploy in 5 minutes
+          </a>
+          <a href="https://github.com/comisai/comis" rel="noopener noreferrer" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-white/10 hover:bg-white/15 text-white font-semibold rounded-lg transition-colors text-lg border border-white/10">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Base>
