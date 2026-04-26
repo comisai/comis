@@ -18,6 +18,24 @@ docker compose version
 ```
 </Warning>
 
+<Warning>
+**Production = Linux host only.** macOS and Windows Docker Desktop run containers
+inside a `linuxkit` VM whose kernel does not allow nested PID-namespace + procfs
+mounts. This breaks the bubblewrap exec sandbox the agent depends on for safe
+shell execution -- the container starts and the dashboard works, but every
+agent-issued shell command fails at runtime, so the agent loses a major part of
+its capability and the credential-isolation guarantee.
+
+- **Development / local testing on a Mac or Windows machine:** fine for exploring
+  the dashboard, channels, memory, and LLM features that don't need `exec`.
+- **Production:** deploy to a real Linux host (bare metal, VPS, or any Linux cloud
+  VM). The bare-metal `install.sh` flow on Linux gets you the same setup with
+  the sandbox actually working.
+
+See [Operations: Docker → Platform Support](/operations/docker#platform-support)
+for the full explanation.
+</Warning>
+
 ## Automated setup
 
 The repository includes a setup script that creates directories, generates a

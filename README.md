@@ -93,6 +93,8 @@ comis daemon start
 docker run -d --name comis -p 4766:4766 -v comis-data:/data comisai/comis:latest-slim
 ```
 
+> **Production = Linux host only.** macOS / Windows Docker Desktop ships a `linuxkit` VM whose kernel does not allow nested PID-namespace + procfs mounts. That breaks the bubblewrap exec sandbox, which means the agent's `exec` skill cannot run safely (and in practice fails outright). Docker Desktop is fine for **development and local testing** of everything that doesn't depend on `exec`, but production deployments must run on a real Linux host or a Linux cloud VM. See [docs/operations/docker.mdx → Platform Support](https://docs.comis.ai/operations/docker#platform-support).
+
 Once running, verify the daemon is up:
 
 ```bash

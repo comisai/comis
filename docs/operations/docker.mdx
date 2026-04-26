@@ -236,6 +236,51 @@ The production setup includes several hardening measures:
 - **CLI hardening** -- the CLI service sets `security_opt: no-new-privileges`
   and drops `NET_RAW` and `NET_ADMIN` capabilities
 
+### Platform Support
+
+**Production deployments must run on a Linux host** -- bare metal, a Linux VPS,
+or any cloud Linux VM. macOS and Windows Docker Desktop are supported for
+development and testing only.
+
+#### Why
+
+Docker Desktop runs containers inside a `linuxkit` VM. Its kernel does not allow
+a nested PID namespace to mount a fresh `procfs` -- the operation EPERMs even
+when the container has `apparmor=unconfined` and `seccomp=unconfined`. The
+bubblewrap exec sandbox always uses `--unshare-pid` paired with `--proc /proc`,
+so on Docker Desktop every `bwrap` invocation aborts at the proc-mount step
+before forking the inner shell.
+
+What that means in practice:
+
+- The container starts cleanly. The daemon, gateway, dashboard, channels,
+  memory, RAG, and all LLM features work normally.
+- The agent's `exec` skill is **non-functional** -- every shell command the
+  agent tries to run returns the kernel error and the inner command never
+  executes. There is no leak (the malicious command also doesn't run), but
+  the agent cannot drive scripts, file operations, or anything else that
+  goes through `exec`.
+- Without `exec`, the agent is significantly less capable. Production-grade
+  testing of agent workflows that involve shell execution must happen on
+  Linux.
+
+On a real Linux host the kernel allows nested-namespace `procfs` mounts, the
+sandbox runs fully, the agent has working `exec`, and the credential
+isolation we describe below is actively enforced.
+
+#### Recommendations for Mac / Windows users
+
+| Use case | Recommendation |
+|---|---|
+| Local development of UI / channels / non-exec features | Docker Desktop is fine -- you'll see the dashboard, can chat with the agent, configure channels, and inspect logs. |
+| Local development that exercises `exec` end-to-end | Use a Linux VM on your Mac (Lima, Colima with VZ, OrbStack with a Linux distro, UTM). The container kernel inside those is a real Linux kernel and bubblewrap runs unrestricted. |
+| Production / multi-user deployment | Deploy to a Linux host (any major cloud VM, a self-hosted server, or a single-board computer running Linux). |
+| Just trying Comis out before committing | Docker Desktop is the fastest path. You can always migrate the data directory (`~/.comis`) to a Linux host later. |
+
+The startup logs include a clear WARN when bubblewrap is installed but
+non-functional on the running kernel, so you don't have to guess whether
+the sandbox is active. Look for `bwrap installed but smoke test failed`.
+
 ### Per-command exec sandbox (bubblewrap)
 
 The Docker image ships **bubblewrap (`bwrap`)** and the daemon uses it as a
