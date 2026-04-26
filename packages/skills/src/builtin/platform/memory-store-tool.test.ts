@@ -74,7 +74,7 @@ describe("memory_store tool", () => {
     const tool = createMemoryStoreTool(rpcCall);
 
     const result = await tool.execute("call-6", {
-      content: "Here is my Gemini API key AIzaSyCe8FynsFS4XSnMdShiJuuujxVhViwSh_I",
+      content: "Here is my Gemini API key AIzaFAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_X",
     });
 
     // Should still store it
