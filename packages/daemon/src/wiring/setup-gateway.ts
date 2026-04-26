@@ -40,11 +40,56 @@ import {
   type GatewayServerHandle,
   type RpcAdapterDeps,
 } from "@comis/gateway";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RpcDispatchDeps } from "../rpc/rpc-dispatch.js";
 import { createRpcDispatch, classifyRpcError } from "../rpc/rpc-dispatch.js";
+
+// ===========================================================================
+// Execution-request log redaction helper
+// ===========================================================================
+
+/**
+ * Build the structured log fields for the gateway "Agent execution requested"
+ * INFO line. Replaces the previous behavior of logging the first 200 chars
+ * of the raw user message, which violated AGENTS.md §2.2 (no message bodies
+ * in logs at any level). Emits message length plus a short SHA-256 prefix
+ * for correlation, never the body itself.
+ *
+ * @param input.agentId       Resolved agent ID (already trust-derived).
+ * @param input.message       Raw user message (may be empty / undefined).
+ * @param input.connectionId  Optional WebSocket connection ID.
+ * @returns Object suitable for `logger.info(obj, "Agent execution requested")`.
+ */
+export function buildExecutionRequestedLogFields(input: {
+  agentId: string;
+  message: string | undefined;
+  connectionId: string | undefined;
+}): {
+  agentId: string;
+  messageLen: number;
+  messageHash?: string;
+  connectionId?: string;
+} {
+  const raw = input.message ?? "";
+  const fields: {
+    agentId: string;
+    messageLen: number;
+    messageHash?: string;
+    connectionId?: string;
+  } = {
+    agentId: input.agentId,
+    messageLen: raw.length,
+  };
+  if (raw.length > 0) {
+    fields.messageHash = createHash("sha256").update(raw).digest("hex").slice(0, 12);
+  }
+  if (input.connectionId !== undefined) {
+    fields.connectionId = input.connectionId;
+  }
+  return fields;
+}
 
 // ===========================================================================
 // RPC Bridge (deferred dispatch wiring)
@@ -476,14 +521,14 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
         { scopes: params.scopes, trustLevel, agentId: execAgentId },
         "Trust level derived from token scopes"
       );
-      const rawMsg = params.message ?? "";
-      const truncated = rawMsg.length > 200;
-      gatewayLogger.info({
-        agentId: execAgentId,
-        message: rawMsg.slice(0, 200),
-        ...(truncated && { messageTruncated: true }),
-        ...(connectionId && { connectionId }),
-      }, "Agent execution requested");
+      gatewayLogger.info(
+        buildExecutionRequestedLogFields({
+          agentId: execAgentId,
+          message: params.message,
+          connectionId,
+        }),
+        "Agent execution requested",
+      );
 
       // Link understanding preprocessing: enrich message text with fetched URL content
       const enrichedText = await preprocessMessageText(params.message);
