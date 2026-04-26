@@ -989,13 +989,22 @@ export function createPiExecutor(
             const postActiveNames = session.getActiveToolNames?.() ?? [];
             if (postActiveNames.length < mergedToolNames.length) {
               const rejected = mergedToolNames.filter(n => !postActiveNames.includes(n));
+              const allRejected = postActiveNames.length === 0 && rejected.length === mergedToolNames.length;
               deps.logger.warn(
                 {
                   rejected,
-                  hint: "SDK filtered some tools that Comis registered; check tool name collisions with SDK built-ins",
+                  rejectedCount: rejected.length,
+                  registeredCount: mergedToolNames.length,
+                  postActiveCount: postActiveNames.length,
+                  allRejected,
+                  hint: allRejected
+                    ? "SDK has 0 active tools after setActiveToolsByName -- not a name collision (empty active list, every Comis tool dropped). Indicates the SDK ResourceLoader / agent.tools handoff is broken; the LLM will receive no structured tool definitions and may emit `<tool_call>` markup as plaintext instead of using tool_use content blocks."
+                    : "SDK filtered some Comis tools; likely name collisions with SDK built-ins (e.g. SDK reserves `bash`, `read_file`, etc.). Rename or omit the listed tools to avoid the conflict.",
                   errorKind: "validation" as ErrorKind,
                 },
-                "SDK rejected some tool registrations",
+                allRejected
+                  ? "SDK rejected ALL tool registrations -- agent will run with no tools"
+                  : "SDK rejected some tool registrations",
               );
             }
           } catch (toolMgmtError) {

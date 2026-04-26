@@ -3321,10 +3321,43 @@ describe("PiExecutor", () => {
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           rejected: ["custom_tool"],
-          hint: "SDK filtered some tools that Comis registered; check tool name collisions with SDK built-ins",
+          rejectedCount: 1,
+          registeredCount: 3,
+          postActiveCount: 2,
+          allRejected: false,
+          hint: expect.stringContaining("name collisions with SDK built-ins"),
           errorKind: "validation",
         }),
         "SDK rejected some tool registrations",
+      );
+    });
+
+    it("logs distinct message + hint when SDK rejects ALL tools (registration failure)", async () => {
+      const customTools = [
+        { name: "exec", description: "Exec", parameters: {} },
+        { name: "read", description: "Read", parameters: {} },
+      ];
+      // SDK ends up with 0 active tools after setActiveToolsByName.
+      mockGetActiveToolNames
+        .mockReturnValueOnce(["exec", "read"])
+        .mockReturnValueOnce([]);
+
+      const deps = createMockDeps({ customTools: customTools as any });
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-1");
+
+      expect(deps.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rejected: ["exec", "read"],
+          rejectedCount: 2,
+          registeredCount: 2,
+          postActiveCount: 0,
+          allRejected: true,
+          hint: expect.stringContaining("0 active tools"),
+          errorKind: "validation",
+        }),
+        "SDK rejected ALL tool registrations -- agent will run with no tools",
       );
     });
 
