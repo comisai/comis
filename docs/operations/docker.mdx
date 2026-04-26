@@ -236,42 +236,6 @@ The production setup includes several hardening measures:
 - **CLI hardening** -- the CLI service sets `security_opt: no-new-privileges`
   and drops `NET_RAW` and `NET_ADMIN` capabilities
 
-### Trust boundary: the container
-
-The Docker image intentionally **does not include bubblewrap (`bwrap`)**, the
-per-command exec sandbox used in the bare-metal/systemd installer. The Docker
-security model treats the container itself as the trust boundary: the daemon
-runs as a non-root user inside namespaces/cgroups isolation, with a read-only
-config mount and capability restrictions on the CLI service.
-
-At daemon startup you will see one WARN log line in this configuration:
-
-```
-"bwrap not found -- exec tool will run without OS sandbox"
-```
-
-This is expected. The agent `exec` tool runs unsandboxed inside the container;
-isolation from the host is provided by Docker. If your threat model requires
-intra-container sandboxing of agent-issued shell commands -- for example, if
-you want to prevent the agent from reading files under `/data` -- add
-`bubblewrap` via the build arg and run with relaxed host confinement:
-
-```yaml
-# docker-compose.override.yml or your own overlay
-services:
-  comis-daemon:
-    build:
-      args:
-        COMIS_DOCKER_APT_PACKAGES: "bubblewrap"
-    security_opt:
-      - apparmor=unconfined
-      - seccomp=unconfined
-```
-
-The `apparmor=unconfined` / `seccomp=unconfined` opt-outs are required on
-Ubuntu 23.10+ hosts because the host's default AppArmor profile blocks
-unprivileged user-namespace creation by the in-container `bwrap` binary.
-
 ### Environment file
 
 Copy `.env.docker.example` from the repository root as your starting point:

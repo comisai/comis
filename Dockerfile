@@ -96,16 +96,10 @@ ARG COMIS_DOCKER_APT_PACKAGES=""
 WORKDIR /app
 
 # Install runtime system dependencies.
-# Tracks `install_build_tools_linux` in website/public/install.sh, with these
-# intentional exclusions for the container runtime:
-#   - build-essential, make, g++, cmake — build-time only (handled in build stage)
-#   - libsystemd-dev — no systemd in container; restart is handled by Docker
-#   - bubblewrap — Docker security model treats the container as the trust
-#     boundary; per-command bwrap sandboxing is redundant with the container
-#     namespaces/cgroups isolation and would require host AppArmor/seccomp
-#     opt-outs (`security_opt: apparmor=unconfined`) to function on Ubuntu
-#     23.10+ hosts. Users who want intra-container exec sandboxing can add
-#     `bubblewrap` via COMIS_DOCKER_APT_PACKAGES and configure the host.
+# Mirrors `install_build_tools_linux` in website/public/install.sh so the same
+# config.yaml works identically under systemd and Docker. Build-only tools
+# (build-essential, make, g++, cmake) and systemd-only bits (libsystemd-dev)
+# are intentionally excluded — not needed at runtime inside a container.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -122,6 +116,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         python3-pip \
         # Media processing — TTS, audio/video skills
         ffmpeg \
+        # Sandbox for agent-issued exec
+        bubblewrap \
         # Optional user-specified packages
         ${COMIS_DOCKER_APT_PACKAGES} \
     && rm -rf /var/cache/apt/archives/*.deb
