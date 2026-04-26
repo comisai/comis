@@ -729,6 +729,24 @@ export function createPiExecutor(
           const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
           await resourceLoader.reload();
 
+          // The SDK's `tools` is an allowlist of tool *names* (not definitions).
+          // An empty array is treated as a non-empty allowlist that allows zero
+          // tools, including all customTools — which is why the agent ran
+          // tool-less from every entry point (chat API, SSE, Telegram, etc.):
+          // every Comis tool was filtered out of the SDK's tool registry, the
+          // Anthropic API request went out with `tools: []`, and the model
+          // emitted `<tool_call>...</tool_call>` markup as plaintext that
+          // Comis's loop never parsed back.
+          //
+          // Pass our customTool names as the explicit allowlist so:
+          //   1. All customTools land in the SDK's tool registry (their names
+          //      pass `isAllowedTool`).
+          //   2. SDK built-ins like `bash` that conflict with Comis's policy
+          //      controls are filtered out (Comis uses `exec` instead, with
+          //      its own sandbox/audit hooks).
+          //   3. Where names overlap (read/edit/write), Comis's customTools
+          //      override the SDK built-ins via Map.set() in the registry
+          //      build (`agent-session.js:1810-1813` in pi-coding-agent@0.68.0).
           const sessionOptions: CreateAgentSessionOptions = {
             cwd: deps.workspaceDir,
             authStorage: deps.authStorage,
@@ -737,7 +755,7 @@ export function createPiExecutor(
             sessionManager: sm,
             settingsManager,
             resourceLoader,
-            tools: [],
+            tools: mergedCustomTools.map((t) => t.name),
             customTools: mergedCustomTools,
           };
           const { session, modelFallbackMessage } = await createAgentSession(sessionOptions);
