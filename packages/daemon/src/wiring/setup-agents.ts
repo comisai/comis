@@ -28,6 +28,7 @@ import {
   cleanupStaleLocks,
   createAuthStorageAdapter,
   createModelRegistryAdapter,
+  registerCustomProviders,
   createProviderHealthMonitor,
   setSanitizeLogger,
   setToolNormalizationLogger,
@@ -205,9 +206,29 @@ export async function setupSingleAgent(
   });
   agentLogger.debug({ agentId, allowPatterns: agentSecrets.allow }, "Per-agent ScopedSecretManager created");
 
-  // Per-agent auth + model registry (moved from shared to per-agent for credential isolation)
-  const piAuthStorage = createAuthStorageAdapter({ secretManager: scopedManager });
+  // Per-agent auth + model registry (moved from shared to per-agent for credential isolation).
+  // Custom YAML providers under `providers.entries.*` are wired into both auth (runtime API
+  // key overrides) and the registry (so `find(provider, modelId)` succeeds) -- without this,
+  // pi-coding-agent silently falls back to whatever built-in provider has env-var auth (e.g.,
+  // GEMINI_API_KEY → google), bypassing the configured provider entirely.
+  const customProviderEntries = container.config.providers?.entries ?? {};
+  const piAuthStorage = createAuthStorageAdapter({
+    secretManager: scopedManager,
+    customProviderEntries,
+  });
   const piModelRegistry = createModelRegistryAdapter(piAuthStorage);
+  const customProviderCount = registerCustomProviders(
+    piModelRegistry,
+    customProviderEntries,
+    scopedManager,
+    agentLogger,
+  );
+  if (customProviderCount > 0) {
+    agentLogger.debug(
+      { agentId, customProviderCount },
+      "Custom YAML providers registered with pi ModelRegistry",
+    );
+  }
 
   // Create JSONL session adapter for this agent
   const lockDir = safePath(dir, ".locks");
