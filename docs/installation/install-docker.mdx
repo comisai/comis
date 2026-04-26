@@ -18,6 +18,35 @@ docker compose version
 ```
 </Warning>
 
+<Warning>
+**Production = Linux host only.** macOS and Windows Docker Desktop run containers
+inside a `linuxkit` VM whose kernel does not allow nested PID-namespace + procfs
+mounts. This breaks the bubblewrap exec sandbox.
+
+On Docker Desktop the daemon detects this at startup and **automatically
+disables the exec sandbox** so the agent is functional for development. The
+trade-off:
+
+- ✅ **Dev/testing UX on Mac and Windows:** the agent runs end-to-end. You
+  can drive `exec` commands, run scripts in the workspace, and exercise
+  every feature that depends on shell execution.
+- ❌ **Security guarantees inside the container are dropped on Docker
+  Desktop.** With the sandbox off, agent-issued shell commands can read
+  `/home/comis/.comis/.env`, the encrypted `secrets.db`, `/etc/comis/config.yaml`,
+  channel tokens, the `SECRETS_MASTER_KEY`, and anything else the daemon
+  user owns. A single prompt injection exfiltrates everything.
+
+This is fine for **development and local testing only**. For production,
+deploy to a real Linux host (bare metal, VPS, or any Linux cloud VM)
+where the kernel actually allows the sandbox to run — the same image and
+compose files Just Work, you don't need a code change.
+
+See [Operations: Docker → Platform Support](/operations/docker#platform-support)
+for the full explanation, including local Linux-VM alternatives
+(Lima / Colima `vz` driver / OrbStack / UTM) that get you a working
+sandbox on a Mac.
+</Warning>
+
 ## Automated setup
 
 The repository includes a setup script that creates directories, generates a

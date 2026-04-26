@@ -39,7 +39,7 @@
       {
         "tab": "Installation",
         "groups": [
-          { "group": "Setup", "pages": ["installation/index", "installation/requirements", "installation/install-linux", "installation/install-vps", "installation/install-docker", "installation/configuration", "installation/verify"] }
+          { "group": "Setup", "pages": ["installation/index", "installation/requirements", "installation/install-linux", "installation/install-vps", "installation/install-docker", "installation/install-render", "installation/configuration", "installation/verify"] }
         ]
       },
       {

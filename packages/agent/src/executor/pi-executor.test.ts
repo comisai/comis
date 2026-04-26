@@ -468,6 +468,44 @@ describe("PiExecutor", () => {
       );
     });
 
+    // Regression test: the SDK's `tools` field is an allowlist of tool *names*.
+    // Empty array disables ALL tools (including customTools), which left the
+    // agent tool-less from every entry point — fixed by passing customTool
+    // names so the SDK whitelists exactly Comis's customTools and filters out
+    // built-ins like `bash` that conflict with our policy controls.
+    // See pi-executor.ts above the createAgentSession call for the full chain.
+    it("passes customTool names as the SDK's tools allowlist (regression)", async () => {
+      const customTools = [
+        { name: "exec", description: "Run shell commands", parameters: {} },
+        { name: "read", description: "Read a file", parameters: {} },
+        { name: "memory_store", description: "Store memory", parameters: {} },
+      ];
+      const deps = createMockDeps({ customTools: customTools as any });
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const call = (createAgentSession as Mock).mock.calls[0]![0]!;
+      // Allowlist must be the exact set of customTool names (order-independent).
+      expect(call.tools).toEqual(expect.arrayContaining(["exec", "read", "memory_store"]));
+      expect(call.tools).toHaveLength(customTools.length);
+    });
+
+    it("does NOT pass an empty tools allowlist when customTools is non-empty (regression)", async () => {
+      const customTools = [
+        { name: "exec", description: "Run shell commands", parameters: {} },
+      ];
+      const deps = createMockDeps({ customTools: customTools as any });
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const call = (createAgentSession as Mock).mock.calls[0]![0]!;
+      // Empty array would mean "allow zero tools" to the SDK — the bug we fixed.
+      expect(call.tools).not.toEqual([]);
+      expect(call.tools.length).toBeGreaterThan(0);
+    });
+
     it("calls session.prompt with message text (includes dynamic preamble)", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
@@ -3321,10 +3359,43 @@ describe("PiExecutor", () => {
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           rejected: ["custom_tool"],
-          hint: "SDK filtered some tools that Comis registered; check tool name collisions with SDK built-ins",
+          rejectedCount: 1,
+          registeredCount: 3,
+          postActiveCount: 2,
+          allRejected: false,
+          hint: expect.stringContaining("name collisions with SDK built-ins"),
           errorKind: "validation",
         }),
         "SDK rejected some tool registrations",
+      );
+    });
+
+    it("logs distinct message + hint when SDK rejects ALL tools (registration failure)", async () => {
+      const customTools = [
+        { name: "exec", description: "Exec", parameters: {} },
+        { name: "read", description: "Read", parameters: {} },
+      ];
+      // SDK ends up with 0 active tools after setActiveToolsByName.
+      mockGetActiveToolNames
+        .mockReturnValueOnce(["exec", "read"])
+        .mockReturnValueOnce([]);
+
+      const deps = createMockDeps({ customTools: customTools as any });
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-1");
+
+      expect(deps.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rejected: ["exec", "read"],
+          rejectedCount: 2,
+          registeredCount: 2,
+          postActiveCount: 0,
+          allRejected: true,
+          hint: expect.stringContaining("0 active tools"),
+          errorKind: "validation",
+        }),
+        "SDK rejected ALL tool registrations -- agent will run with no tools",
       );
     });
 

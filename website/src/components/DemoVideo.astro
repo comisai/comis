@@ -1,0 +1,63 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+---
+---
+
+<section class="relative overflow-hidden px-6 py-20 md:py-28">
+  <!-- Background glow -->
+  <div class="absolute inset-0 pointer-events-none">
+    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[500px] bg-coral/5 rounded-full blur-[140px]"></div>
+    <div class="absolute top-1/3 right-1/4 w-[420px] h-[420px] bg-teal/5 rounded-full blur-[110px]"></div>
+  </div>
+
+  <div class="relative max-w-6xl mx-auto">
+    <div class="text-center mb-10 md:mb-14">
+      <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">See it in action</p>
+      <h2 class="text-4xl md:text-5xl lg:text-6xl font-extrabold text-white tracking-tight leading-[1.1]">
+        One sentence.<br class="md:hidden" />
+        <span class="bg-gradient-to-r from-coral to-teal bg-clip-text text-transparent"> A live pipeline.</span>
+      </h2>
+      <p class="text-muted text-lg md:text-xl max-w-2xl mx-auto mt-6">
+        A full DAG - parallel fan-out, multi-round debate, barrier sync, synthesis - built and running from a single natural-language prompt. No YAML. No scripting.
+      </p>
+    </div>
+
+    <!-- Video frame with gradient border -->
+    <div class="relative rounded-2xl p-[2px] bg-gradient-to-br from-coral/50 via-coral/10 to-teal/50 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)]">
+      <div class="rounded-[14px] overflow-hidden bg-navy ring-1 ring-white/5">
+        <video
+          class="w-full block"
+          autoplay
+          muted
+          loop
+          playsinline
+          preload="metadata"
+          poster="/images/comis-dag-demo-poster.jpg"
+          aria-label="Demo: a DAG pipeline being created and executed from a single natural-language sentence"
+        >
+          <source src="/images/comis-dag-demo.webm" type="video/webm" />
+          <source src="/images/comis-dag-demo.mp4" type="video/mp4" />
+        </video>
+      </div>
+    </div>
+
+    <!-- Caption row -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8 mt-10 md:mt-12 text-center">
+      <div>
+        <div class="text-2xl md:text-3xl font-bold text-white">7 nodes</div>
+        <div class="text-sm text-muted mt-1">in one prompt</div>
+      </div>
+      <div>
+        <div class="text-2xl md:text-3xl font-bold text-white">3-tier</div>
+        <div class="text-sm text-muted mt-1">concurrency control</div>
+      </div>
+      <div>
+        <div class="text-2xl md:text-3xl font-bold text-white">Barrier</div>
+        <div class="text-sm text-muted mt-1">synchronization</div>
+      </div>
+      <div>
+        <div class="text-2xl md:text-3xl font-bold text-white">Zero</div>
+        <div class="text-sm text-muted mt-1">YAML required</div>
+      </div>
+    </div>
+  </div>
+</section>

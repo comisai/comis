@@ -16,32 +16,71 @@ concurrency:
 # Secrets required (Settings → Secrets → Actions):
 #   DOCKERHUB_USERNAME — Docker Hub username (comisai)
 #   DOCKERHUB_TOKEN   — Docker Hub access token (Read/Write minimum)
+#
+# Implemented inline with curl + jq instead of a third-party action so the
+# repo's actions allowlist (actions/*, docker/*, cloudflare/*, pnpm/*,
+# softprops/*) does not need to grow another trusted author.
 
 jobs:
-  sync-daemon:
+  sync:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: comisai/comis
+            readme: docker/README-comis.md
+            short: "Security-first AI agent platform — daemon + gateway"
+          - repo: comisai/comis-web
+            readme: docker/README-comis-web.md
+            short: "Comis web dashboard SPA (Nginx + reverse proxy)"
     steps:
       - uses: actions/checkout@v6
-      - uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: comisai/comis
-          short-description: "Security-first AI agent platform — daemon + gateway"
-          readme-filepath: ./docker/README-comis.md
 
-  sync-web:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-      - uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: comisai/comis-web
-          short-description: "Comis web dashboard SPA (Nginx + reverse proxy)"
-          readme-filepath: ./docker/README-comis-web.md
+      - name: Sync overview to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          REPO: ${{ matrix.repo }}
+          README: ${{ matrix.readme }}
+          SHORT: ${{ matrix.short }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "$README" ]; then
+            echo "Readme not found at $README" >&2
+            exit 1
+          fi
+
+          # Acquire JWT — DOCKERHUB_TOKEN may be a PAT or an account password.
+          token=$(curl -fsSL -X POST https://hub.docker.com/v2/users/login \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -nc --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" \
+                       '{username:$u, password:$p}')" \
+            | jq -r .token)
+
+          if [ -z "$token" ] || [ "$token" = "null" ]; then
+            echo "Docker Hub login failed for $DOCKERHUB_USERNAME" >&2
+            exit 1
+          fi
+
+          payload=$(jq -nc \
+            --rawfile body "$README" \
+            --arg short "$SHORT" \
+            '{full_description:$body, description:$short}')
+
+          status=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+            -X PATCH "https://hub.docker.com/v2/repositories/$REPO/" \
+            -H "Authorization: Bearer $token" \
+            -H 'Content-Type: application/json' \
+            --data "$payload")
+
+          echo "PATCH $REPO -> HTTP $status"
+          if [ "$status" != "200" ]; then
+            cat /tmp/resp.json >&2
+            exit 1
+          fi
+
+          echo "Synced $REPO from $README"

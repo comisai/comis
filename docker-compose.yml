@@ -28,19 +28,25 @@ services:
       - "${COMIS_GATEWAY_HOST:-127.0.0.1}:${COMIS_GATEWAY_PORT:-4766}:4766"
 
     volumes:
-      # Persistent data: SQLite DBs, logs, traces, secrets
-      - ${COMIS_DATA_DIR:-~/.comis}:/data
+      # Persistent data: SQLite DBs, logs, traces, secrets, workspace.
+      # Mounted at /home/comis/.comis (the comis user's home/.comis) so the
+      # daemon's two path-resolution mechanisms — config.dataDir / COMIS_DATA_DIR
+      # *and* os.homedir() + "/.comis" — converge on the same host directory.
+      # Mounting at /data instead used to silently split the daemon's data
+      # across two paths inside the container (logs/workspace stayed
+      # container-only at /home/comis/.comis while memory.db went to /data).
+      - ${COMIS_DATA_DIR:-~/.comis}:/home/comis/.comis
 
       # Config files (read-only mount recommended)
       - ${COMIS_CONFIG_DIR:-~/.comis}:/etc/comis:ro
 
       # Optional: mount .env for secret injection
-      - ${COMIS_ENV_FILE:-~/.comis/.env}:/data/.env:ro
+      - ${COMIS_ENV_FILE:-~/.comis/.env}:/home/comis/.comis/.env:ro
 
     environment:
       # Core configuration
       - NODE_ENV=production
-      - COMIS_DATA_DIR=/data
+      - COMIS_DATA_DIR=/home/comis/.comis
       - COMIS_CONFIG_PATHS=/etc/comis/config.yaml
 
       # Gateway binding — MUST be 0.0.0.0 inside container
@@ -62,6 +68,19 @@ services:
 
       # Gateway Auth
       - COMIS_GATEWAY_TOKEN=${COMIS_GATEWAY_TOKEN:-}
+
+    # Allow bubblewrap (the agent exec sandbox) to create user namespaces.
+    # Ubuntu 23.10+ hosts set kernel.apparmor_restrict_unprivileged_userns=1,
+    # and Docker's default seccomp profile blocks the unshare(2) flags bwrap
+    # needs. Without these opt-outs the in-container `bwrap` fails with
+    # "setting up uid map: Permission denied" and the daemon falls back to
+    # running agent-issued shell commands unsandboxed — which lets a
+    # prompt-injected exec read /home/comis/.comis/.env,
+    # /etc/comis/config.yaml, and the encrypted secrets store inside the
+    # same container.
+    security_opt:
+      - apparmor=unconfined
+      - seccomp=unconfined
 
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:4766/health"]
@@ -129,12 +148,12 @@ services:
     network_mode: "service:comis-daemon"
 
     volumes:
-      - ${COMIS_DATA_DIR:-~/.comis}:/data
+      - ${COMIS_DATA_DIR:-~/.comis}:/home/comis/.comis
       - ${COMIS_CONFIG_DIR:-~/.comis}:/etc/comis:ro
 
     environment:
       - NODE_ENV=production
-      - COMIS_DATA_DIR=/data
+      - COMIS_DATA_DIR=/home/comis/.comis
       - COMIS_CONFIG_PATHS=/etc/comis/config.yaml
       - COMIS_GATEWAY_TOKEN=${COMIS_GATEWAY_TOKEN:-}
 

@@ -729,6 +729,24 @@ export function createPiExecutor(
           const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
           await resourceLoader.reload();
 
+          // The SDK's `tools` is an allowlist of tool *names* (not definitions).
+          // An empty array is treated as a non-empty allowlist that allows zero
+          // tools, including all customTools — which is why the agent ran
+          // tool-less from every entry point (chat API, SSE, Telegram, etc.):
+          // every Comis tool was filtered out of the SDK's tool registry, the
+          // Anthropic API request went out with `tools: []`, and the model
+          // emitted `<tool_call>...</tool_call>` markup as plaintext that
+          // Comis's loop never parsed back.
+          //
+          // Pass our customTool names as the explicit allowlist so:
+          //   1. All customTools land in the SDK's tool registry (their names
+          //      pass `isAllowedTool`).
+          //   2. SDK built-ins like `bash` that conflict with Comis's policy
+          //      controls are filtered out (Comis uses `exec` instead, with
+          //      its own sandbox/audit hooks).
+          //   3. Where names overlap (read/edit/write), Comis's customTools
+          //      override the SDK built-ins via Map.set() in the registry
+          //      build (`agent-session.js:1810-1813` in pi-coding-agent@0.68.0).
           const sessionOptions: CreateAgentSessionOptions = {
             cwd: deps.workspaceDir,
             authStorage: deps.authStorage,
@@ -737,7 +755,7 @@ export function createPiExecutor(
             sessionManager: sm,
             settingsManager,
             resourceLoader,
-            tools: [],
+            tools: mergedCustomTools.map((t) => t.name),
             customTools: mergedCustomTools,
           };
           const { session, modelFallbackMessage } = await createAgentSession(sessionOptions);
@@ -989,13 +1007,22 @@ export function createPiExecutor(
             const postActiveNames = session.getActiveToolNames?.() ?? [];
             if (postActiveNames.length < mergedToolNames.length) {
               const rejected = mergedToolNames.filter(n => !postActiveNames.includes(n));
+              const allRejected = postActiveNames.length === 0 && rejected.length === mergedToolNames.length;
               deps.logger.warn(
                 {
                   rejected,
-                  hint: "SDK filtered some tools that Comis registered; check tool name collisions with SDK built-ins",
+                  rejectedCount: rejected.length,
+                  registeredCount: mergedToolNames.length,
+                  postActiveCount: postActiveNames.length,
+                  allRejected,
+                  hint: allRejected
+                    ? "SDK has 0 active tools after setActiveToolsByName -- not a name collision (empty active list, every Comis tool dropped). Indicates the SDK ResourceLoader / agent.tools handoff is broken; the LLM will receive no structured tool definitions and may emit `<tool_call>` markup as plaintext instead of using tool_use content blocks."
+                    : "SDK filtered some Comis tools; likely name collisions with SDK built-ins (e.g. SDK reserves `bash`, `read_file`, etc.). Rename or omit the listed tools to avoid the conflict.",
                   errorKind: "validation" as ErrorKind,
                 },
-                "SDK rejected some tool registrations",
+                allRejected
+                  ? "SDK rejected ALL tool registrations -- agent will run with no tools"
+                  : "SDK rejected some tool registrations",
               );
             }
           } catch (toolMgmtError) {

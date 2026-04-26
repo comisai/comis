@@ -342,7 +342,7 @@ describe("sanitizeSessionSecrets", () => {
               type: "toolCall",
               name: "mcp__nano-banana--configure_gemini_token",
               id: "tc1",
-              arguments: { apiKey: "AIzaSyCe8FynsFS4XSnMdShiJuuujxVhViwSh_I" },
+              arguments: { apiKey: "AIzaFAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_X" },
             },
           ],
         },
@@ -394,7 +394,7 @@ describe("sanitizeSessionSecrets", () => {
               name: "exec",
               id: "tc1",
               arguments: {
-                command: 'curl -s "https://api.example.com?key=AIzaSyCe8FynsFS4XSnMdShiJuuujxVhViwSh_I"',
+                command: 'curl -s "https://api.example.com?key=AIzaFAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_X"',
               },
             },
           ],
@@ -470,7 +470,7 @@ describe("sanitizeSessionSecrets", () => {
               type: "toolCall",
               name: "mcp__tool1",
               id: "tc1",
-              arguments: { apiKey: "AIzaSyCe8FynsFS4XSnMdShiJuuujxVhViwSh_I" },
+              arguments: { apiKey: "AIzaFAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_X" },
             },
             {
               type: "toolCall",
@@ -493,7 +493,7 @@ describe("sanitizeSessionSecrets", () => {
 
 describe("looksLikeApiKey", () => {
   it("detects Google API keys", () => {
-    expect(looksLikeApiKey("AIzaSyCe8FynsFS4XSnMdShiJuuujxVhViwSh_I")).toBe(true);
+    expect(looksLikeApiKey("AIzaFAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_X")).toBe(true);
   });
 
   it("detects OpenAI keys", () => {

@@ -11,8 +11,11 @@ services:
       args:
         COMIS_VARIANT: default  # Full image with debugging tools
 
-    # Bind to all interfaces for development access
-    ports:
+    # Bind to all interfaces for development access.
+    # `!override` replaces the base file's `127.0.0.1:4766:4766` mapping
+    # instead of appending — without it Compose keeps both bindings and
+    # they collide on the same host port.
+    ports: !override
       - "0.0.0.0:4766:4766"
 
     environment:
@@ -21,7 +24,7 @@ services:
     # Mount source for hot-reload (requires rebuild)
     volumes:
       - .:/app/src:ro
-      - ${COMIS_DATA_DIR:-~/.comis}:/data
+      - ${COMIS_DATA_DIR:-~/.comis}:/home/comis/.comis
 
     deploy:
       resources:

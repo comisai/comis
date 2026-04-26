@@ -9,6 +9,16 @@ const description = "Technical deep dives, architecture decisions, and lessons l
 // Add new posts here - newest first
 const posts = [
   {
+    slug: "anatomy-of-a-dag-pipeline",
+    title: "How One Sentence Spawned Six Sub-Agents and a Trade Idea",
+    description: "I typed one sentence into Comis. It built a 6-node DAG, dispatched six isolated sub-agents, fired 101 tool calls, ran 64 web searches, and came back with a trade plan that included three entry tranches, a stop, and a 4:1 reward-to-risk. Here's how the pipeline orchestration actually works.",
+    date: "April 26, 2026",
+    author: "Moshe Anconina",
+    readTime: "11 min",
+    tag: "Engineering",
+    image: "/images/blog-dag-pipeline-hero.jpg",
+  },
+  {
     slug: "cache-optimization-journey",
     title: "How I Cut Our Multi-Agent Pipeline Cost by 64% with Cache Forensics",
     description: "The story of debugging Anthropic's prompt cache behavior in production, discovering three root causes, building a cache fence system, and uncovering a TTL monotonicity violation - ultimately achieving 81% cost reduction.",

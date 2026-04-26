@@ -247,14 +247,21 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // instead of cascading into a systemd restart loop.
   await _preflightDoctor(exitFn);
 
-  // 0. Load secrets from .env
-  const envPath = safePath(safePath(os.homedir(), ".comis"), ".env");
-  loadEnvFile(envPath);
-
-  // 0.5. Decrypt secrets, merge with env, scrub process.env
+  // 0. Resolve data directory, then load secrets from <dataDir>/.env.
+  // The env file always lives alongside the data dir, so it follows
+  // COMIS_DATA_DIR — set to /data inside the Docker container (matches
+  // the compose mount of ${COMIS_ENV_FILE:-~/.comis/.env}:/data/.env:ro),
+  // unset on bare-metal so it falls back to ~/.comis/.env. This is what
+  // makes the legacy "credentials in a flat .env file" workflow the
+  // default for both deployment modes; secrets.db is opt-in via
+  // SECRETS_MASTER_KEY.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager is initialized
   const dataDir = process.env["COMIS_DATA_DIR"]
     ?? safePath(os.homedir(), ".comis");
+  const envPath = safePath(dataDir, ".env");
+  loadEnvFile(envPath);
+
+  // 0.5. Decrypt secrets, merge with env, scrub process.env
 
   // Scan and correct permissions on known sensitive files
   const permissionCorrections = hardenDataDirPermissions(dataDir);

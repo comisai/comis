@@ -5,7 +5,7 @@ icon: "download"
 ---
 
 This section walks you through installing Comis on your server or development
-machine. There are four ways to get started -- pick the one that fits your
+machine. There are five ways to get started -- pick the one that fits your
 workflow best.
 
 ## Quick Install
@@ -35,6 +35,10 @@ works on macOS and Linux.
     Run Comis in a container. No system-level Node.js installation needed --
     everything runs inside Docker.
   </Card>
+  <Card title="Render.com" icon="cloud" href="/installation/install-render">
+    Deploy from Docker Hub to Render in ~5 minutes. Managed Linux host,
+    automatic HTTPS, persistent disk, public URL. No server to provision.
+  </Card>
   <Card title="Manual Configuration" icon="gear" href="/installation/configuration">
     Full control over every setting. For experienced users who want to build
     their config.yaml from scratch.
@@ -48,6 +52,7 @@ works on macOS and Linux.
 | Linux Install | First-time local install | ~5 minutes |
 | VPS Install | Production server with systemd + dedicated user | ~10 minutes |
 | Docker | Container-based workflows, isolation | ~10 minutes |
+| Render.com | Hosted deploy from Docker Hub, no server admin | ~5 minutes |
 | Manual | Custom setups, advanced users | ~15 minutes |
 
 All four methods produce the same result: a running Comis daemon with a web
@@ -96,6 +101,9 @@ from one AI provider.
   </Card>
   <Card title="Install with Docker" icon="docker" href="/installation/install-docker">
     Container-based setup with Docker Compose.
+  </Card>
+  <Card title="Deploy on Render.com" icon="cloud" href="/installation/install-render">
+    Hosted deploy from Docker Hub with persistent disk and HTTPS.
   </Card>
   <Card title="Configuration" icon="gear" href="/installation/configuration">
     Customize `config.yaml` and connect channels.

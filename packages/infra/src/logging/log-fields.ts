@@ -157,10 +157,10 @@ export interface LogFields {
   closeReason: string;
   /** Semantic categorization of the WebSocket close code (e.g., "normal", "abnormal", "no-status"). */
   closeType: string;
-  /** Whether the logged message text was truncated from the original. */
-  messageTruncated: boolean;
   /** Input message character length. */
   messageLen: number;
+  /** First 12 hex chars of SHA-256 of input message; omitted when empty. Stable per content. */
+  messageHash: string;
   /** Output response character length. */
   responseLen: number;
   /** Flat input token count for easy aggregation. */
