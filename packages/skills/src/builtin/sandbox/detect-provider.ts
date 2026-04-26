@@ -69,12 +69,36 @@ export function detectSandboxProvider(logger?: DetectLogger): SandboxProvider | 
     if (bwrap.available()) {
       if (!bwrapSmokeTest()) {
         // bwrap is on PATH but the kernel rejects the isolation flags
-        // (typically Docker Desktop's linuxkit on macOS/Windows). The daemon
-        // returns the provider regardless so exec calls fail loudly via
-        // bwrap's stderr rather than silently running unsandboxed.
+        // (typically Docker Desktop's linuxkit on macOS/Windows). Behaviour
+        // diverges by environment:
+        //
+        //  - Inside a container: the project already declares macOS/Windows
+        //    Docker Desktop as dev/testing only (CLAUDE.md, README, docs).
+        //    Returning bwrap would just make every exec call fail and
+        //    leave the agent useless for local testing. We disable the
+        //    sandbox so exec runs unsandboxed inside the container,
+        //    accepting the documented trust-boundary trade-off, and warn
+        //    loudly. /data and /etc/comis are reachable from agent exec
+        //    in this mode — never use it in production.
+        //
+        //  - Bare metal: a non-functional bwrap is a real misconfiguration
+        //    (rare on stock Linux). Surface it loudly and return the
+        //    provider so exec fails via bwrap's stderr until the operator
+        //    fixes the kernel/userns config — never silently degrade
+        //    sandboxing on a bare-metal host.
+        if (isContainer()) {
+          logger?.warn(
+            {
+              hint: "Kernel rejected --unshare-pid + --proc /proc (typically Docker Desktop linuxkit on macOS/Windows). Sandbox auto-disabled so agent exec is functional for development. PRODUCTION DEPLOYMENTS MUST USE A REAL LINUX HOST — see docs/operations/docker.mdx → Platform Support.",
+              errorKind: "config",
+            },
+            "Exec sandbox DISABLED (kernel limitation; container host) -- shell commands will run UNSANDBOXED. Dev/testing only.",
+          );
+          return undefined;
+        }
         logger?.warn(
           {
-            hint: "Kernel rejected --unshare-pid + --proc /proc (typically Docker Desktop linuxkit on macOS/Windows). Agent `exec` calls will fail at runtime — see docs/operations/docker.mdx → Platform Support. For production, deploy to a real Linux host.",
+            hint: "Kernel rejected --unshare-pid + --proc /proc on a bare-metal host. Check `kernel.unprivileged_userns_clone` and AppArmor's `apparmor_restrict_unprivileged_userns`. Exec calls will fail until bwrap can run.",
             errorKind: "config",
           },
           "bwrap installed but smoke test failed -- exec sandbox is non-functional on this kernel",

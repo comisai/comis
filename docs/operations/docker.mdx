@@ -251,35 +251,45 @@ bubblewrap exec sandbox always uses `--unshare-pid` paired with `--proc /proc`,
 so on Docker Desktop every `bwrap` invocation aborts at the proc-mount step
 before forking the inner shell.
 
-What that means in practice:
+To keep the agent functional for local testing despite this kernel limitation,
+the daemon detects the failure mode at startup (via a one-shot smoke test) and
+**automatically disables the exec sandbox when running inside a container with
+a non-functional bwrap**. Behaviour by environment:
 
-- The container starts cleanly. The daemon, gateway, dashboard, channels,
-  memory, RAG, and all LLM features work normally.
-- The agent's `exec` skill is **non-functional** -- every shell command the
-  agent tries to run returns the kernel error and the inner command never
-  executes. There is no leak (the malicious command also doesn't run), but
-  the agent cannot drive scripts, file operations, or anything else that
-  goes through `exec`.
-- Without `exec`, the agent is significantly less capable. Production-grade
-  testing of agent workflows that involve shell execution must happen on
-  Linux.
+| Environment | Sandbox state | `exec` works? | Trust boundary |
+|---|---|---|---|
+| Linux host (bare metal, VPS, cloud VM) | bwrap active | yes, sandboxed | per-command bwrap mount-set isolation |
+| Docker Desktop on macOS / Windows | **auto-disabled** | yes, **unsandboxed** | the container itself (effectively none, see below) |
+| Bare-metal Linux with broken bwrap (rare) | bwrap returned anyway | no, fails at runtime | n/a -- operator must fix kernel/userns config |
 
-On a real Linux host the kernel allows nested-namespace `procfs` mounts, the
-sandbox runs fully, the agent has working `exec`, and the credential
-isolation we describe below is actively enforced.
+Inside Docker Desktop with the sandbox auto-disabled, agent-issued shell
+commands run as the `comis` user with full read access to everything the
+daemon owns inside the container -- `/data/.env`, the encrypted `secrets.db`,
+`/etc/comis/config.yaml`, channel tokens, the `SECRETS_MASTER_KEY`. A single
+prompt-injected `cat /data/.env` exfiltrates them all. **This is why
+Docker Desktop is dev/testing only.** On a real Linux host the sandbox
+runs unrestricted and these paths are not mounted into the bwrap'd
+process at all.
+
+You can confirm the active mode in the daemon's startup logs:
+
+```bash
+docker compose logs comis-daemon | grep -E "Exec sandbox|smoke test"
+```
+
+| Log line | Meaning |
+|---|---|
+| `Exec sandbox provider detected` `provider=bwrap` | Sandbox is active. |
+| `Exec sandbox DISABLED ... shell commands will run UNSANDBOXED` | Auto-disabled fallback. **Do not use this configuration in production.** |
+| `bwrap installed but smoke test failed -- exec sandbox is non-functional on this kernel` | Bare-metal kernel rejected bwrap. Investigate and fix; do not deploy. |
 
 #### Recommendations for Mac / Windows users
 
 | Use case | Recommendation |
 |---|---|
-| Local development of UI / channels / non-exec features | Docker Desktop is fine -- you'll see the dashboard, can chat with the agent, configure channels, and inspect logs. |
-| Local development that exercises `exec` end-to-end | Use a Linux VM on your Mac (Lima, Colima with VZ, OrbStack with a Linux distro, UTM). The container kernel inside those is a real Linux kernel and bubblewrap runs unrestricted. |
-| Production / multi-user deployment | Deploy to a Linux host (any major cloud VM, a self-hosted server, or a single-board computer running Linux). |
-| Just trying Comis out before committing | Docker Desktop is the fastest path. You can always migrate the data directory (`~/.comis`) to a Linux host later. |
-
-The startup logs include a clear WARN when bubblewrap is installed but
-non-functional on the running kernel, so you don't have to guess whether
-the sandbox is active. Look for `bwrap installed but smoke test failed`.
+| Local development / quick try-out | Docker Desktop is the fastest path. Sandbox is auto-disabled -- treat the container's data dir as untrusted, never put real production secrets in `~/.comis-docker/.env`. |
+| Local development that exercises `exec` with a real sandbox | Use a Linux VM on your Mac instead of Docker Desktop: [Lima](https://lima-vm.io/), [Colima with the `vz` VM type](https://github.com/abiosoft/colima), [OrbStack](https://orbstack.dev/) with a Linux distro, or [UTM](https://mac.getutm.app/). The container kernel inside those is a real Linux kernel and bubblewrap runs unrestricted. |
+| Production / multi-user deployment | Deploy to a real Linux host: any major cloud VM, a self-hosted Linux server, or a single-board computer running Linux. The same image and compose files work without changes. |
 
 ### Per-command exec sandbox (bubblewrap)
 

@@ -115,7 +115,32 @@ describe("detectSandboxProvider", () => {
     expect(args).toContain("--proc");
   });
 
-  it("returns BwrapProvider but WARNs when smoke test fails (e.g. linuxkit kernel)", () => {
+  it("returns BwrapProvider but WARNs when smoke test fails on a bare-metal host", () => {
+    setPlatform("linux");
+    mockBwrapAvailable.mockReturnValue(true);
+    mockSpawnSync.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "bwrap: Creating new namespace failed: Operation not permitted",
+    });
+    // Default mockExistsSync is false → not a container.
+    const logger = createMockLogger();
+
+    const result = detectSandboxProvider(logger);
+
+    // Bare-metal: keep the provider so exec fails loudly via bwrap stderr.
+    // We do NOT silently disable the sandbox on bare metal — that would
+    // be a real security regression on a production host.
+    expect(result).toBeDefined();
+    expect(result!.name).toBe("bwrap");
+    expect(logger.calls).toHaveLength(1);
+    expect(logger.calls[0]!.level).toBe("warn");
+    expect(logger.calls[0]!.msg).toContain("smoke test failed");
+    expect(logger.calls[0]!.obj.hint).toContain("bare-metal host");
+    expect(logger.calls[0]!.obj.errorKind).toBe("config");
+  });
+
+  it("returns undefined inside a container when smoke test fails (auto-disable for dev/testing)", () => {
     setPlatform("linux");
     mockBwrapAvailable.mockReturnValue(true);
     mockSpawnSync.mockReturnValue({
@@ -123,18 +148,21 @@ describe("detectSandboxProvider", () => {
       stdout: "",
       stderr: "bwrap: Can't mount proc on /newroot/proc: Operation not permitted",
     });
+    // Container detected → Docker Desktop linuxkit case.
+    mockExistsSync.mockImplementation((p: string) => p === "/.dockerenv");
     const logger = createMockLogger();
 
     const result = detectSandboxProvider(logger);
 
-    // Provider is still returned so exec calls fail loudly via bwrap stderr
-    // rather than silently running unsandboxed.
-    expect(result).toBeDefined();
-    expect(result!.name).toBe("bwrap");
+    // Sandbox is auto-disabled inside a container so dev/testing exec is
+    // functional. WARN must be loud because we have just dropped the
+    // intra-container exec sandbox.
+    expect(result).toBeUndefined();
     expect(logger.calls).toHaveLength(1);
     expect(logger.calls[0]!.level).toBe("warn");
-    expect(logger.calls[0]!.msg).toContain("smoke test failed");
-    expect(logger.calls[0]!.obj.hint).toContain("Platform Support");
+    expect(logger.calls[0]!.msg).toContain("Exec sandbox DISABLED");
+    expect(logger.calls[0]!.msg).toContain("UNSANDBOXED");
+    expect(logger.calls[0]!.obj.hint).toContain("PRODUCTION DEPLOYMENTS MUST USE A REAL LINUX HOST");
     expect(logger.calls[0]!.obj.errorKind).toBe("config");
   });
 
