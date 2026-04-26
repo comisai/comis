@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const mockBwrapAvailable = vi.fn();
 const mockSbexecAvailable = vi.fn();
 const mockExistsSync = vi.fn<(p: string) => boolean>();
+const mockSpawnSync = vi.fn<(cmd: string, args: string[], opts: object) => { status: number; stdout: string; stderr: string }>();
 
 vi.mock("./bwrap-provider.js", () => {
   return {
@@ -31,6 +32,10 @@ vi.mock("./sandbox-exec-provider.js", () => {
 
 vi.mock("node:fs", () => ({
   existsSync: (p: string) => mockExistsSync(p),
+}));
+
+vi.mock("node:child_process", () => ({
+  spawnSync: (cmd: string, args: string[], opts: object) => mockSpawnSync(cmd, args, opts),
 }));
 
 import { detectSandboxProvider, type DetectLogger } from "./detect-provider.js";
@@ -67,6 +72,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Default to "not in container" -- tests that exercise the container path opt in.
   mockExistsSync.mockReturnValue(false);
+  // Default the bwrap smoke test to success -- tests that simulate a kernel
+  // that rejects --unshare-pid + --proc /proc opt in by overriding this.
+  mockSpawnSync.mockReturnValue({ status: 0, stdout: "", stderr: "" });
   originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 });
 
@@ -85,6 +93,49 @@ describe("detectSandboxProvider", () => {
 
     expect(result).toBeDefined();
     expect(result!.name).toBe("bwrap");
+  });
+
+  it("returns BwrapProvider with NO log when bwrap smoke test passes", () => {
+    setPlatform("linux");
+    mockBwrapAvailable.mockReturnValue(true);
+    mockSpawnSync.mockReturnValue({ status: 0, stdout: "", stderr: "" });
+    const logger = createMockLogger();
+
+    const result = detectSandboxProvider(logger);
+
+    expect(result).toBeDefined();
+    expect(result!.name).toBe("bwrap");
+    expect(logger.calls).toHaveLength(0);
+    // Smoke probe must run with the actual production isolation flags so we
+    // catch kernels that reject the combo BwrapProvider.buildArgs() relies on.
+    expect(mockSpawnSync).toHaveBeenCalledTimes(1);
+    const [cmd, args] = mockSpawnSync.mock.calls[0]!;
+    expect(cmd).toBe("bwrap");
+    expect(args).toContain("--unshare-pid");
+    expect(args).toContain("--proc");
+  });
+
+  it("returns BwrapProvider but WARNs when smoke test fails (e.g. linuxkit kernel)", () => {
+    setPlatform("linux");
+    mockBwrapAvailable.mockReturnValue(true);
+    mockSpawnSync.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "bwrap: Can't mount proc on /newroot/proc: Operation not permitted",
+    });
+    const logger = createMockLogger();
+
+    const result = detectSandboxProvider(logger);
+
+    // Provider is still returned so exec calls fail loudly via bwrap stderr
+    // rather than silently running unsandboxed.
+    expect(result).toBeDefined();
+    expect(result!.name).toBe("bwrap");
+    expect(logger.calls).toHaveLength(1);
+    expect(logger.calls[0]!.level).toBe("warn");
+    expect(logger.calls[0]!.msg).toContain("smoke test failed");
+    expect(logger.calls[0]!.obj.hint).toContain("Platform Support");
+    expect(logger.calls[0]!.obj.errorKind).toBe("config");
   });
 
   it("returns undefined on linux when bwrap is NOT available, logs WARN with hint", () => {
