@@ -207,6 +207,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   /** Per-agent ProcessRegistry instances for background process lifecycle management. */
   const processRegistries = new Map<string, ProcessRegistry>();
 
+  /** Agents we've already logged the no-sandbox WARN for. Per-agent assembly
+   * runs on every session/heartbeat/cron tick; without this guard the WARN
+   * repeats on every LLM call even though the underlying state is fixed at
+   * daemon startup (detectSandboxProvider runs once). */
+  const warnedNoSandboxAgents = new Set<string>();
+
   function getOrCreateRegistry(agentId: string): ProcessRegistry {
     let registry = processRegistries.get(agentId);
     if (!registry) {
@@ -452,10 +458,20 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           : undefined;
 
       if (!sandboxCfg && skillsConfig.execSandbox.enabled === "always") {
-        skillsLogger.warn(
-          { agentId, hint: "Sandbox enabled in config but no provider available -- exec tool will run without OS sandbox", errorKind: "config" },
-          "Exec tool running without OS sandbox",
-        );
+        if (warnedNoSandboxAgents.has(agentId)) {
+          // Already warned for this agent at WARN level — drop to DEBUG so
+          // every per-call assembly doesn't re-log the same fact.
+          skillsLogger.debug(
+            { agentId },
+            "Exec tool running without OS sandbox (already warned at startup; per-call DEBUG)",
+          );
+        } else {
+          skillsLogger.warn(
+            { agentId, hint: "Sandbox enabled in config but no provider available -- exec tool will run without OS sandbox", errorKind: "config" },
+            "Exec tool running without OS sandbox",
+          );
+          warnedNoSandboxAgents.add(agentId);
+        }
       }
 
       // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering
