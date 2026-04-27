@@ -6,10 +6,17 @@
 .git
 .gitignore
 
-# Build artifacts (rebuilt in container)
+# Build artifacts (rebuilt in container).
+# `node_modules` patterns must cover BOTH the workspace root AND every
+# nested `packages/*/node_modules/` — `node_modules/` alone matches only
+# the top level. Without `**/node_modules/`, the host's per-package
+# node_modules (with symlinks pointing at host-resolved peer-dep variants
+# like @types/node@24.12.2) gets copied into the build, overwriting the
+# fresh symlinks created by the in-container `pnpm install` step. That
+# corrupts resolution and breaks `vite build` for the web package.
 packages/*/dist/
 packages/*/*.tsbuildinfo
-node_modules/
+**/node_modules/
 
 # IDE & editor
 .vscode/
