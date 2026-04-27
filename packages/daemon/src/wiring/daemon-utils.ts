@@ -109,6 +109,36 @@ export function detectMimeFromMagicBytes(buffer: Buffer): string | undefined {
 }
 
 /**
+ * Operational env-var overrides for gateway binding.
+ *
+ * Two env vars bridge container/systemd/pm2 deployments to gateway config
+ * without requiring a config.yaml:
+ *   COMIS_GATEWAY_HOST → overrides gateway.host (e.g. "0.0.0.0" inside Docker)
+ *   COMIS_GATEWAY_PORT → overrides gateway.port
+ *
+ * Mirrors the COMIS_DATA_DIR / COMIS_CONFIG_PATHS pattern used at daemon
+ * bootstrap. Empty strings, non-numeric ports, and out-of-range ports are
+ * dropped so a typo never silently relocates the daemon — schema default wins.
+ */
+export function resolveGatewayEnvOverrides(
+  env: { COMIS_GATEWAY_HOST?: string | undefined; COMIS_GATEWAY_PORT?: string | undefined },
+): { host?: string; port?: number } {
+  const result: { host?: string; port?: number } = {};
+  const rawHost = env.COMIS_GATEWAY_HOST;
+  if (typeof rawHost === "string" && rawHost.length > 0) {
+    result.host = rawHost;
+  }
+  const rawPort = env.COMIS_GATEWAY_PORT;
+  if (typeof rawPort === "string" && rawPort.length > 0) {
+    const parsed = Number.parseInt(rawPort, 10);
+    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 65_535) {
+      result.port = parsed;
+    }
+  }
+  return result;
+}
+
+/**
  * Map audio MIME type to file extension.
  */
 export function mimeToExtension(mimeType: string): string {

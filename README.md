@@ -121,10 +121,10 @@ comis daemon start
 **Or with Docker** (no Node.js required):
 
 ```bash
-docker run -d --name comis -p 4766:4766 -v comis-data:/data comisai/comis:latest-slim
+docker run -d --name comis -p 4766:4766 -v comis-data:/home/comis/.comis comisai/comis:latest-slim
 ```
 
-> **Production = Linux host only.** Docker Desktop (macOS / Windows) auto-disables the exec sandbox, so `/data` is reachable from any prompt-injected shell command — fine for dev, **never for production**. See [Platform Support →](https://docs.comis.ai/operations/docker#platform-support).
+> **Production = Linux host only.** Docker Desktop (macOS / Windows) auto-disables the exec sandbox, so the data dir is reachable from any prompt-injected shell command — fine for dev, **never for production**. See [Platform Support →](https://docs.comis.ai/operations/docker#platform-support).
 
 Once running, verify the daemon is up:
 

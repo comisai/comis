@@ -8,6 +8,7 @@ export {
   guessMimeFromExtension,
   detectMimeFromMagicBytes,
   mimeToExtension,
+  resolveGatewayEnvOverrides,
 } from "./daemon-utils.js";
 export { setupLogging, type LoggingResult } from "./setup-logging.js";
 export { setupObservability, type ObservabilityResult } from "./setup-observability.js";

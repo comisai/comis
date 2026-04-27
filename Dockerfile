@@ -162,10 +162,21 @@ RUN ln -sf /app/packages/cli/dist/cli.js /usr/local/bin/comis && \
 # Switch to non-root user
 USER comis
 
-# Default environment
+# Default environment.
+# COMIS_GATEWAY_HOST=0.0.0.0 — the container's network namespace is isolated, so
+# binding to all interfaces inside the container is the standard pattern (postgres,
+# redis, nginx images do the same). External exposure is still gated by `docker run -p`
+# / compose `ports:`. Without this, the daemon would default to 127.0.0.1 and
+# `docker run -p 4766:4766` would connection-reset because nothing listens on the
+# container's external interface.
 ENV NODE_ENV=production \
     COMIS_DATA_DIR=/home/comis/.comis \
-    COMIS_CONFIG_PATHS=/etc/comis/config.yaml
+    COMIS_CONFIG_PATHS=/etc/comis/config.yaml \
+    COMIS_GATEWAY_HOST=0.0.0.0
+
+# Declare the data volume so `docker image inspect` documents the persistence
+# path and anonymous volumes are auto-created when users skip `-v`.
+VOLUME ["/home/comis/.comis"]
 
 # Expose gateway port
 EXPOSE 4766
