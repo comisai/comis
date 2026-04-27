@@ -132,7 +132,7 @@
     "@clack/core": "^1.1.0",
     "@clack/prompts": "^1.1.0",
     "@elevenlabs/elevenlabs-js": "^2.38.1",
-    "@fal-ai/client": "1.9.5",
+    "@fal-ai/client": "1.9.6",
     "@google/genai": "1.50.1",
     "@grammyjs/auto-retry": "^2.0.2",
     "@grammyjs/files": "^1.2.0",
