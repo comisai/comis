@@ -1,7 +1,7 @@
 {
   "name": "@comis/agent",
   "private": true,
-  "version": "1.0.24",
+  "version": "1.0.25",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "AI agent executor, budget control, and session management for Comis",
