@@ -36,7 +36,7 @@
     "@comis/core": "workspace:*",
     "@comis/shared": "workspace:*",
     "@elevenlabs/elevenlabs-js": "^2.38.1",
-    "@fal-ai/client": "1.9.5",
+    "@fal-ai/client": "1.9.6",
     "@mariozechner/pi-agent-core": "0.68.0",
     "@mariozechner/pi-coding-agent": "0.68.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
