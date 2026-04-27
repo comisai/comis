@@ -32,7 +32,6 @@ import {
   setupDeliveryMirror,
   setupNotifications,
   setupBackgroundTasks,
-  resolveGatewayEnvOverrides,
 } from "./wiring/index.js";
 import { setupSingleAgent } from "./wiring/setup-agents.js";
 import { createActiveRunRegistry, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry } from "@comis/agent";
@@ -1235,17 +1234,10 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   wireDispatch(rpcDispatchDeps);
 
   // 7. Gateway
-  // Apply COMIS_GATEWAY_HOST / COMIS_GATEWAY_PORT env overrides so Docker
-  // and systemd/pm2 deployments can bind without a config.yaml. The Docker
-  // image ships COMIS_GATEWAY_HOST=0.0.0.0 so port-mapping reaches the daemon
-  // (default 127.0.0.1 only listens inside the container's loopback).
-  // eslint-disable-next-line no-restricted-syntax -- operational env vars; same pattern as COMIS_DATA_DIR / COMIS_CONFIG_PATHS at bootstrap
-  const gatewayEnvOverrides = resolveGatewayEnvOverrides(process.env);
-  const gwConfig: typeof container.config.gateway = {
-    ...container.config.gateway,
-    ...(gatewayEnvOverrides.host !== undefined ? { host: gatewayEnvOverrides.host } : {}),
-    ...(gatewayEnvOverrides.port !== undefined ? { port: gatewayEnvOverrides.port } : {}),
-  };
+  // gateway.host / .port are resolved through the layered config in bootstrap:
+  // schema defaults < env layer (COMIS_GATEWAY_HOST/PORT) < config.yaml.
+  // See packages/core/src/config/env-layer.ts.
+  const gwConfig = container.config.gateway;
   const { gatewayHandle, activeExecutions, getActiveConnectionCount, wsConnections } = await setupGateway({
     container, gwConfig, webhooksConfig: container.config.webhooks, agents, defaultAgentId,
     configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS, gatewayLogger,

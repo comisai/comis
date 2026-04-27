@@ -8,6 +8,7 @@ import type { SecretManager } from "./security/index.js";
 import type { PluginRegistry } from "./hooks/plugin-registry.js";
 import type { HookRunner } from "./hooks/hook-runner.js";
 import { loadLayered } from "./config/layered.js";
+import { buildGatewayEnvLayer } from "./config/env-layer.js";
 import { TypedEventBus } from "./event-bus/index.js";
 import { createSecretManager, safePath } from "./security/index.js";
 import { createPluginRegistry } from "./hooks/plugin-registry.js";
@@ -93,12 +94,16 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   // Wrap getSecret to record every name referenced by the config — the set
   // becomes container.platformSecretNames and is used by the exec tool to
   // refuse secretRefs access to platform-managed credentials.
+  // envLayer projects operational env vars (COMIS_GATEWAY_HOST/PORT) into
+  // the config layer stack at lower priority than YAML files, so explicit
+  // user config wins over env — see config/env-layer.ts.
   const referencedNames = new Set<string>();
   const configResult = loadLayered(options.configPaths, {
     getSecret: (key) => {
       referencedNames.add(key);
       return secretManager.get(key);
     },
+    envLayer: buildGatewayEnvLayer(env),
   });
   if (!configResult.ok) {
     return err(configResult.error);

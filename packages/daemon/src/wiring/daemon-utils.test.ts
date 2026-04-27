@@ -2,8 +2,7 @@
 /**
  * Tests for daemon-utils pure utility functions.
  * Covers resolveAdapter, authorizeChannelAccess, buildCronSchedule,
- * guessMimeFromExtension, detectMimeFromMagicBytes, mimeToExtension,
- * resolveGatewayEnvOverrides.
+ * guessMimeFromExtension, detectMimeFromMagicBytes, mimeToExtension.
  */
 
 import { describe, it, expect } from "vitest";
@@ -14,7 +13,6 @@ import {
   guessMimeFromExtension,
   detectMimeFromMagicBytes,
   mimeToExtension,
-  resolveGatewayEnvOverrides,
 } from "./daemon-utils.js";
 import type { ChannelPort } from "@comis/core";
 
@@ -185,53 +183,5 @@ describe("mimeToExtension", () => {
 
   it("returns mp3 for unknown MIME type", () => {
     expect(mimeToExtension("audio/unknown")).toBe("mp3");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// resolveGatewayEnvOverrides
-// ---------------------------------------------------------------------------
-
-describe("resolveGatewayEnvOverrides", () => {
-  it("returns empty object when no env vars set", () => {
-    expect(resolveGatewayEnvOverrides({})).toEqual({});
-  });
-
-  it("returns host when COMIS_GATEWAY_HOST set (Docker default 0.0.0.0)", () => {
-    expect(resolveGatewayEnvOverrides({ COMIS_GATEWAY_HOST: "0.0.0.0" })).toEqual({
-      host: "0.0.0.0",
-    });
-  });
-
-  it("returns port when COMIS_GATEWAY_PORT is a valid numeric string", () => {
-    expect(resolveGatewayEnvOverrides({ COMIS_GATEWAY_PORT: "8080" })).toEqual({
-      port: 8080,
-    });
-  });
-
-  it("returns both fields when both env vars set", () => {
-    expect(
-      resolveGatewayEnvOverrides({ COMIS_GATEWAY_HOST: "::", COMIS_GATEWAY_PORT: "9000" }),
-    ).toEqual({ host: "::", port: 9000 });
-  });
-
-  it("ignores empty-string host so schema default wins", () => {
-    expect(resolveGatewayEnvOverrides({ COMIS_GATEWAY_HOST: "" })).toEqual({});
-  });
-
-  it("ignores non-numeric port (typo never silently relocates daemon)", () => {
-    expect(resolveGatewayEnvOverrides({ COMIS_GATEWAY_PORT: "not-a-number" })).toEqual({});
-  });
-
-  it("ignores out-of-range ports (port 0 and >65535 rejected)", () => {
-    expect(resolveGatewayEnvOverrides({ COMIS_GATEWAY_PORT: "0" })).toEqual({});
-    expect(resolveGatewayEnvOverrides({ COMIS_GATEWAY_PORT: "65536" })).toEqual({});
-    expect(resolveGatewayEnvOverrides({ COMIS_GATEWAY_PORT: "-1" })).toEqual({});
-  });
-
-  it("treats undefined env values as unset", () => {
-    expect(
-      resolveGatewayEnvOverrides({ COMIS_GATEWAY_HOST: undefined, COMIS_GATEWAY_PORT: undefined }),
-    ).toEqual({});
   });
 });

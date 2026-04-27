@@ -251,5 +251,51 @@ agents:
         expect(result.value.tenantId).toBe("solo");
       }
     });
+
+    it("envLayer fills in fields not set by any file (schema default < env)", () => {
+      const dir = makeTmpDir();
+      const file = writeYaml(dir, "no-gateway.yaml", "tenantId: docker-bare\n");
+
+      const result = loadLayered([file], { envLayer: { gateway: { host: "0.0.0.0" } } });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        // No file set gateway.host → env layer wins over schema default 127.0.0.1
+        expect(result.value.gateway.host).toBe("0.0.0.0");
+      }
+    });
+
+    it("config file wins over envLayer (explicit user config never silently broadened)", () => {
+      const dir = makeTmpDir();
+      const file = writeYaml(
+        dir,
+        "explicit.yaml",
+        `
+tenantId: prod
+gateway:
+  host: 127.0.0.1
+`,
+      );
+
+      const result = loadLayered([file], { envLayer: { gateway: { host: "0.0.0.0" } } });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        // File explicitly pinned 127.0.0.1 — env's 0.0.0.0 must NOT override.
+        // This is the security contract: an inherited COMIS_GATEWAY_HOST can
+        // never silently broaden a bind the operator pinned in config.yaml.
+        expect(result.value.gateway.host).toBe("127.0.0.1");
+      }
+    });
+
+    it("empty envLayer is ignored (no spurious layer pushed)", () => {
+      const dir = makeTmpDir();
+      const file = writeYaml(dir, "single.yaml", "tenantId: solo\n");
+
+      const result = loadLayered([file], { envLayer: {} });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        // Schema default still wins when neither env nor file sets it.
+        expect(result.value.gateway.host).toBe("127.0.0.1");
+      }
+    });
   });
 });

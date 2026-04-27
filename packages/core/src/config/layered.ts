@@ -94,12 +94,27 @@ export function mergeLayered(layers: Record<string, unknown>[]): Result<AppConfi
  * This supports the common pattern: defaults.yaml < config.yaml < config.local.yaml
  *
  * If any file fails to load, returns the error immediately.
+ *
+ * `envLayer` (when provided) is prepended to the layer sequence so it sits
+ * between Zod schema defaults and YAML files in precedence order:
+ *   defaults < envLayer < config files
+ * Explicit user config in YAML always wins over env-derived values, which
+ * preserves secure-by-default semantics for security-sensitive fields like
+ * `gateway.host` — an inherited env var can never silently broaden a bind
+ * the operator pinned in config.yaml.
  */
 export function loadLayered(
   configPaths: string[],
-  options?: { getSecret?: (key: string) => string | undefined },
+  options?: {
+    getSecret?: (key: string) => string | undefined;
+    envLayer?: Record<string, unknown>;
+  },
 ): Result<AppConfig, ConfigError> {
   const layers: Record<string, unknown>[] = [];
+
+  if (options?.envLayer && Object.keys(options.envLayer).length > 0) {
+    layers.push(options.envLayer);
+  }
 
   for (const configPath of configPaths) {
     const result = loadConfigFile(configPath, options?.getSecret ? { getSecret: options.getSecret } : undefined);
