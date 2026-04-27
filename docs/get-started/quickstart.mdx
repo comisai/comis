@@ -185,7 +185,7 @@ Before you begin, make sure you have:
         Docker volume so they survive restarts:
 
         ```bash
-        docker run -d --name comis -p 4766:4766 -v comis-data:/data comisai/comis:latest-slim
+        docker run -d --name comis -p 4766:4766 -v comis-data:/home/comis/.comis comisai/comis:latest-slim
         ```
 
         Once running, verify the daemon is up:
@@ -214,10 +214,10 @@ Before you begin, make sure you have:
         same three questions apply: which provider, your API key, and a name
         for your agent.
 
-        Configuration is written to `/data/config.yaml` and `/data/.env` inside
-        the container, which map to the `comis-data` Docker volume. Your keys
-        survive `docker rm` and `docker pull` as long as the volume sticks
-        around.
+        Configuration is written to `/home/comis/.comis/config.yaml` and
+        `/home/comis/.comis/.env` inside the container, which map to the
+        `comis-data` Docker volume. Your keys survive `docker rm` and
+        `docker pull` as long as the volume sticks around.
       </Step>
 
       <Step title="Talk to your agent">
