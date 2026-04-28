@@ -56,8 +56,35 @@ const AgentsManageToolParams = Type.Object({
                 "Workspace profile controlling platform instruction verbosity. " +
                 "Valid values: full (~9K tokens, user-facing agents on channels), " +
                 "specialist (~800 tokens, task workers and fleet sub-agents). " +
-                "Default: full. Can be changed later via update action.",
+                "Default: full. Can be changed later via update action. " +
+                "Alternative shape: nested workspace.profile (see `workspace` field).",
             }),
+          ),
+          // 260428-oyc: declare nested workspace shape explicitly. The LLM
+          // sometimes emits `workspace: {profile: "specialist"}` directly
+          // (mirroring the downstream Zod schema-agent.ts:733-738 shape).
+          // Without this declaration, the unknown nested object slipped past
+          // TypeBox structurally but the enum was never validated -- invalid
+          // values would only be caught later at the Zod layer with a less
+          // actionable error path. Declaring it here makes both shapes
+          // first-class and gates the enum at the tool-validation boundary.
+          workspace: Type.Optional(
+            Type.Object(
+              {
+                profile: Type.Union(
+                  [Type.Literal("full"), Type.Literal("specialist")],
+                  {
+                    description:
+                      "Workspace profile (alternative to flat workspace_profile). Valid: full | specialist.",
+                  },
+                ),
+              },
+              {
+                description:
+                  "Nested workspace configuration. Use this OR the flat workspace_profile field, not both.",
+                additionalProperties: false,
+              },
+            ),
           ),
           skills: Type.Optional(
             Type.Object(
@@ -105,15 +132,28 @@ const VALID_ACTIONS = ["create", "get", "update", "delete", "suspend", "resume"]
 /**
  * Map flat workspace_profile param to nested workspace.profile config.
  * Mutates config in place.
+ *
+ * 260428-oyc: precedence is "flat wins" -- when both flat workspace_profile
+ * and nested workspace.profile are present, the flat field overwrites the
+ * nested one. This matches the existing spread semantics
+ * (`{...existing, profile}`) and keeps a single deterministic rule. When only
+ * nested is present (no `workspace_profile` key), this is a no-op and the
+ * nested shape flows through unchanged to the downstream Zod validator.
  */
 function mapWorkspaceProfile(config: Record<string, unknown> | undefined): void {
-  if (config && "workspace_profile" in config) {
-    const wp = config as Record<string, unknown>;
-    const profile = wp.workspace_profile;
-    delete wp.workspace_profile;
-    if (typeof profile === "string") {
-      wp.workspace = { ...(wp.workspace as Record<string, unknown> ?? {}), profile };
-    }
+  if (!config) return;
+  if (!("workspace_profile" in config)) {
+    // Nested-only or no workspace fields -- nothing to map. Downstream Zod
+    // (PerAgentConfigSchema.workspace) validates the nested shape directly.
+    return;
+  }
+  const profile = config.workspace_profile;
+  delete config.workspace_profile;
+  if (typeof profile === "string") {
+    config.workspace = {
+      ...((config.workspace as Record<string, unknown>) ?? {}),
+      profile,
+    };
   }
 }
 

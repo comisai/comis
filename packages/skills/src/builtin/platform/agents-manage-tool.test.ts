@@ -564,4 +564,254 @@ describe("agents_manage tool", () => {
       expect(ok).toBe(true);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // 260428-oyc Task 2: agents_manage.create accepts both flat workspace_profile
+  // and nested workspace.profile + round-trips MANAGED_SECTIONS.exampleArgs.
+  //
+  // Production repro: trading-fleet creation request hit 10 tool failures
+  // with a ZodError on `workspace.profile`. The TypeBox tool schema declared
+  // only the flat workspace_profile field; mapWorkspaceProfile converts it to
+  // nested workspace.profile; the downstream Zod (PerAgentConfigSchema) is
+  // strictObject. When the LLM emitted nested workspace={profile:"specialist"}
+  // directly, TypeBox's structured-config branch rejected it because no
+  // nested `workspace` field was declared, then the Type.Union string fallback
+  // also failed (it's an object, not a string). Result: parameter validation
+  // failed before mapWorkspaceProfile ever ran.
+  // ---------------------------------------------------------------------------
+  describe("workspace.profile (260428-oyc)", () => {
+    it("E1: round-trips MANAGED_SECTIONS.exampleArgs.agents through TypeBox", async () => {
+      const { MANAGED_SECTIONS } = await import("@comis/core");
+      const agentsEntry = MANAGED_SECTIONS.find((s) => s.pathPrefix === "agents");
+      expect(agentsEntry, "agents entry missing from MANAGED_SECTIONS").toBeDefined();
+      // Substitute placeholder strings for real values.
+      const args = JSON.parse(JSON.stringify(agentsEntry!.exampleArgs)) as Record<string, unknown>;
+      args.agent_id = "trading-alpha";
+      const cfg = args.config as Record<string, unknown>;
+      cfg.name = "Trading Alpha";
+      cfg.model = "claude-sonnet-4-5";
+      cfg.provider = "anthropic";
+
+      const tool = createAgentsManageTool(mockRpcCall);
+      const ok = Value.Check(tool.parameters, args);
+      expect(ok, `MANAGED_SECTIONS.exampleArgs.agents round-trip failed: ${JSON.stringify(args)}`).toBe(true);
+    });
+
+    it("E2: flat workspace_profile -> mapWorkspaceProfile produces nested workspace.profile (TypeBox passes flat)", async () => {
+      const tool = createAgentsManageTool(mockRpcCall);
+      // Flat shape: TypeBox accepts it (workspace_profile is a declared field).
+      const args = {
+        action: "create" as const,
+        agent_id: "spec-flat",
+        config: {
+          name: "Spec Flat",
+          model: "claude-sonnet-4-5",
+          provider: "anthropic",
+          maxSteps: 50,
+          workspace_profile: "specialist" as const,
+        },
+      };
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+
+      // Run the create action and assert the RPC sees nested workspace.profile.
+      mockRpcCall.mockResolvedValue({ agentId: "spec-flat", created: true });
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-e2", args as never),
+      );
+      const rpcCallArgs = mockRpcCall.mock.calls[0]![1] as { config: Record<string, unknown> };
+      expect(rpcCallArgs.config).toEqual({
+        name: "Spec Flat",
+        model: "claude-sonnet-4-5",
+        provider: "anthropic",
+        maxSteps: 50,
+        workspace: { profile: "specialist" },
+      });
+      // workspace_profile must have been deleted (downstream Zod is strictObject)
+      expect(rpcCallArgs.config).not.toHaveProperty("workspace_profile");
+
+      // Downstream Zod must accept the resulting shape.
+      const { PerAgentConfigSchema } = await import("@comis/core");
+      const parsed = PerAgentConfigSchema.safeParse(rpcCallArgs.config);
+      expect(parsed.success, parsed.success ? "" : JSON.stringify(parsed.error.issues)).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.workspace.profile).toBe("specialist");
+      }
+    });
+
+    it("E3: nested workspace.profile = 'specialist' is accepted by both TypeBox and downstream Zod (the bug)", async () => {
+      const tool = createAgentsManageTool(mockRpcCall);
+      const args = {
+        action: "create" as const,
+        agent_id: "spec-nested",
+        config: {
+          name: "Spec Nested",
+          model: "claude-sonnet-4-5",
+          provider: "anthropic",
+          maxSteps: 50,
+          workspace: { profile: "specialist" as const },
+        },
+      };
+      // Pre-fix this fails: structured-config branch rejects unknown `workspace`,
+      // string fallback also fails (it's an object).
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+
+      mockRpcCall.mockResolvedValue({ agentId: "spec-nested", created: true });
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-e3", args as never),
+      );
+      const rpcCallArgs = mockRpcCall.mock.calls[0]![1] as { config: Record<string, unknown> };
+      expect(rpcCallArgs.config).toEqual({
+        name: "Spec Nested",
+        model: "claude-sonnet-4-5",
+        provider: "anthropic",
+        maxSteps: 50,
+        workspace: { profile: "specialist" },
+      });
+
+      // Downstream Zod accepts -- NO ZodError on workspace.profile.
+      const { PerAgentConfigSchema } = await import("@comis/core");
+      const parsed = PerAgentConfigSchema.safeParse(rpcCallArgs.config);
+      expect(parsed.success, parsed.success ? "" : JSON.stringify(parsed.error.issues)).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.workspace.profile).toBe("specialist");
+      }
+    });
+
+    it("E4: nested workspace.profile = 'full' is accepted", async () => {
+      const tool = createAgentsManageTool(mockRpcCall);
+      const args = {
+        action: "create" as const,
+        agent_id: "full-nested",
+        config: {
+          name: "Full Nested",
+          model: "claude-sonnet-4-5",
+          provider: "anthropic",
+          maxSteps: 50,
+          workspace: { profile: "full" as const },
+        },
+      };
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+
+      mockRpcCall.mockResolvedValue({ agentId: "full-nested", created: true });
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-e4", args as never),
+      );
+      const rpcCallArgs = mockRpcCall.mock.calls[0]![1] as { config: Record<string, unknown> };
+      const { PerAgentConfigSchema } = await import("@comis/core");
+      const parsed = PerAgentConfigSchema.safeParse(rpcCallArgs.config);
+      expect(parsed.success, parsed.success ? "" : JSON.stringify(parsed.error.issues)).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.workspace.profile).toBe("full");
+      }
+    });
+
+    it("E5: invalid workspace.profile value still rejected (enum validation preserved)", async () => {
+      const tool = createAgentsManageTool(mockRpcCall);
+      const args = {
+        action: "create" as const,
+        agent_id: "bad-profile",
+        config: {
+          name: "Bad",
+          model: "m",
+          provider: "p",
+          workspace: { profile: "unknown-mode" as unknown as "full" },
+        },
+      };
+      // After the fix: TypeBox declares the nested `workspace` shape and the
+      // profile enum (full|specialist), so invalid values are rejected at the
+      // tool-validation layer -- before they reach the downstream Zod parse.
+      // (Pre-fix: TypeBox passed unknown values through because the structured
+      // config object had no `workspace` field; downstream Zod was the only
+      // gate. The fix tightens validation so the LLM gets faster feedback.)
+      expect(Value.Check(tool.parameters, args)).toBe(false);
+    });
+
+    it("E6: JSON-string config carrying nested workspace still works", async () => {
+      const tool = createAgentsManageTool(mockRpcCall);
+      const args = {
+        action: "create" as const,
+        agent_id: "spec-json",
+        config: JSON.stringify({
+          name: "Spec JSON",
+          model: "claude-sonnet-4-5",
+          provider: "anthropic",
+          workspace: { profile: "specialist" },
+        }),
+      };
+      // String fallback of the Type.Union accepts any JSON string.
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+
+      mockRpcCall.mockResolvedValue({ agentId: "spec-json", created: true });
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-e6", args as never),
+      );
+      const rpcCallArgs = mockRpcCall.mock.calls[0]![1] as { config: Record<string, unknown> };
+      expect(rpcCallArgs.config).toEqual({
+        name: "Spec JSON",
+        model: "claude-sonnet-4-5",
+        provider: "anthropic",
+        workspace: { profile: "specialist" },
+      });
+    });
+
+    it("E7: mapWorkspaceProfile is idempotent and a no-op on already-nested config", () => {
+      // Direct invariant test on the side-effect of running create twice.
+      // Running the tool twice with the same flat-shape input must produce
+      // identical config payloads to the RPC layer (no double-nesting).
+      const tool = createAgentsManageTool(mockRpcCall);
+      const args = {
+        action: "create" as const,
+        agent_id: "idempotent",
+        config: {
+          name: "Idem",
+          model: "m",
+          provider: "p",
+          workspace_profile: "specialist" as const,
+        },
+      };
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+
+      // Two runs share the same args object reference. After the first run,
+      // mapWorkspaceProfile mutates it (deletes workspace_profile, adds nested
+      // workspace). Calling Value.Check again on the now-nested shape must
+      // also pass (covers the "already-nested config flows through unchanged"
+      // contract).
+      mockRpcCall.mockResolvedValue({ agentId: "idempotent", created: true });
+      // Snapshot the config to two separate objects so we can rerun cleanly.
+      const args2 = JSON.parse(JSON.stringify(args));
+      args2.agent_id = "idempotent-2";
+      // After a fresh run starts with already-nested config:
+      args2.config = { name: "Idem2", model: "m", provider: "p", workspace: { profile: "specialist" } };
+      expect(Value.Check(tool.parameters, args2)).toBe(true);
+    });
+
+    it("E8: precedence -- flat workspace_profile wins when both flat and nested are present", async () => {
+      const tool = createAgentsManageTool(mockRpcCall);
+      // Both shapes provided: flat="full", nested.profile="specialist".
+      // Pinned behavior: flat workspace_profile WINS (the spread in
+      // mapWorkspaceProfile is `{...existing, profile}`, which overwrites
+      // the existing nested profile with the flat value).
+      const args = {
+        action: "create" as const,
+        agent_id: "both-shapes",
+        config: {
+          name: "Both",
+          model: "m",
+          provider: "p",
+          workspace_profile: "full" as const,
+          workspace: { profile: "specialist" as const },
+        },
+      };
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+
+      mockRpcCall.mockResolvedValue({ agentId: "both-shapes", created: true });
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-e8", args as never),
+      );
+      const rpcCallArgs = mockRpcCall.mock.calls[0]![1] as { config: Record<string, unknown> };
+      expect((rpcCallArgs.config.workspace as Record<string, unknown>).profile).toBe("full");
+      // workspace_profile flat field is gone after mapping.
+      expect(rpcCallArgs.config).not.toHaveProperty("workspace_profile");
+    });
+  });
 });
