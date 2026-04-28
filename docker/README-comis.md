@@ -45,11 +45,14 @@ docker pull comisai/comis:latest-slim
 
 docker run -d \
   --name comis \
+  --restart unless-stopped \
   -p 127.0.0.1:4766:4766 \
   -v comis-data:/home/comis/.comis \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   comisai/comis:latest-slim
 ```
+
+The `--restart unless-stopped` flag is required — the wizard and any agent-initiated config change (`gateway.restart`, `gateway.env_set`, `gateway.patch`) signal the daemon to reload, and Docker's restart policy is what brings the container back with the new config.
 
 Verify:
 

@@ -185,8 +185,10 @@ Before you begin, make sure you have:
         Docker volume so they survive restarts:
 
         ```bash
-        docker run -d --name comis -p 4766:4766 -v comis-data:/home/comis/.comis comisai/comis:latest-slim
+        docker run -d --name comis --restart unless-stopped -p 4766:4766 -v comis-data:/home/comis/.comis comisai/comis:latest-slim
         ```
+
+        The `--restart unless-stopped` flag is required — the wizard and any agent-initiated config change (`gateway.restart`, `gateway.env_set`, `gateway.patch`) signal the daemon to reload, and Docker's restart policy is what brings the container back with the new config.
 
         Once running, verify the daemon is up:
 
