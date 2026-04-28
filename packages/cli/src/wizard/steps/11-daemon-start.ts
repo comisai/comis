@@ -27,6 +27,7 @@ import {
 import * as os from "node:os";
 import { promisify } from "node:util";
 import { safePath } from "@comis/core";
+import { isDocker } from "@comis/infra";
 
 const exec = promisify(execFile);
 import type {
@@ -286,19 +287,6 @@ async function runHealthCheck(
 // ---------- Service manager detection ----------
 
 type ServiceManager = "systemd" | "systemd-user" | "direct";
-
-/**
- * Detect whether we are running inside a Docker container.
- *
- * Inside a container the daemon is owned by PID 1 (dumb-init in the
- * official image), so the wizard's direct-spawn flow is wrong: signalling
- * the in-container daemon process exits PID 1 and Docker's restart policy
- * picks up the new config. Bringing up a second daemon is what produces
- * the EADDRINUSE + "comis status: offline" symptom.
- */
-function isDocker(): boolean {
-  return existsSync("/.dockerenv");
-}
 
 /**
  * Find the comis daemon PID inside the container.
