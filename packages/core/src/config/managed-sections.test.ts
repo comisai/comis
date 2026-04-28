@@ -72,14 +72,19 @@ describe("getManagedSectionRedirect", () => {
 });
 
 describe("formatRedirectHint", () => {
-  it("emits two-step Recovery framing for fullyManaged entries", () => {
+  // 260428-oyc Task 1.4: rephrased Recovery wording -- single-step "Recovery: call <tool>(<example>)."
+  // (the discover_tools clause is dropped; on Anthropic Sonnet/Opus 4.x the model never has a
+  // discover_tools tool to call, and on every provider the dedicated tool auto-loads on first
+  // direct invocation).
+  it("emits single-step Recovery framing for fullyManaged entries", () => {
     const redirect = getManagedSectionRedirect("agents")!;
     const hint = formatRedirectHint(redirect);
     expect(hint).toContain('Use the "agents_manage" tool');
-    expect(hint).toContain('Recovery: (1) call discover_tools("agents_manage")');
-    expect(hint).toContain("(2) call agents_manage(");
+    expect(hint).toContain("Recovery: call agents_manage(");
     expect(hint).toContain('"action":"create"');
     expect(hint).toContain('"agent_id":"<new-agent-id>"');
+    // The literal "discover_tools" must NOT appear -- regression pin for 260428-oyc.
+    expect(hint).not.toContain("discover_tools");
   });
 
   it("includes mutable paths when provided", () => {
@@ -100,11 +105,13 @@ describe("formatRedirectHint", () => {
     );
   });
 
-  it("omits Recovery example when redirect has no exampleArgs", () => {
+  it("emits 'Call <tool> directly' when redirect has no exampleArgs (no discover_tools mention)", () => {
     const redirect = getManagedSectionRedirect("channels", "telegram.allowFrom")!;
     const hint = formatRedirectHint(redirect);
-    expect(hint).not.toContain("Recovery: (1)");
-    expect(hint).toContain("Load it via discover_tools");
+    expect(hint).not.toContain("Recovery: call");
+    expect(hint).toContain("Call channels_manage directly");
+    expect(hint).toContain("auto-load on first invocation");
+    expect(hint).not.toContain("discover_tools");
   });
 
   it("MCP example uses flat parameter shape (not nested config)", () => {
@@ -121,6 +128,85 @@ describe("formatRedirectHint", () => {
     expect(hint).toContain('"action":"create"');
     expect(hint).toContain('"token_id":"<token-id>"');
     expect(hint).toContain('"scopes":["rpc","ws"]');
+  });
+
+  // -------------------------------------------------------------------------
+  // 260428-oyc Task 1.5: D1-D5 regression tests (drop discover_tools from
+  // every formatRedirectHint output path).
+  // -------------------------------------------------------------------------
+
+  it("D1: NO MANAGED_SECTIONS entry produces a hint containing 'discover_tools'", () => {
+    for (const entry of MANAGED_SECTIONS) {
+      const hint = formatRedirectHint(entry);
+      expect(hint, `entry pathPrefix=${entry.pathPrefix}`).not.toContain("discover_tools");
+      // Also test the mutablePaths variant.
+      const hintWithPaths = formatRedirectHint(entry, [`${entry.pathPrefix}.someField`]);
+      expect(hintWithPaths, `entry pathPrefix=${entry.pathPrefix} (with mutablePaths)`).not.toContain(
+        "discover_tools",
+      );
+    }
+  });
+
+  it("D2: WITH exampleArgs -> 'Recovery: call <tool>(<example>).' single-step framing (no parenthesized numbering)", () => {
+    for (const entry of MANAGED_SECTIONS) {
+      if (!entry.exampleArgs) continue;
+      const hint = formatRedirectHint(entry);
+      expect(hint, `entry ${entry.pathPrefix}`).toContain(`Recovery: call ${entry.tool}(`);
+      // No "(1)" / "(2)" parenthesized step numbering.
+      expect(hint, `entry ${entry.pathPrefix}`).not.toContain("(1)");
+      expect(hint, `entry ${entry.pathPrefix}`).not.toContain("(2)");
+      expect(hint, `entry ${entry.pathPrefix}`).not.toContain("then");
+    }
+  });
+
+  it("D3: WITHOUT exampleArgs -> 'Call <tool> directly; it will auto-load on first invocation.'", () => {
+    const channelsRedirect = getManagedSectionRedirect("channels", "telegram.allowFrom")!;
+    expect(channelsRedirect.exampleArgs).toBeUndefined();
+    const hint = formatRedirectHint(channelsRedirect);
+    expect(hint).toContain("Call channels_manage directly");
+    expect(hint).toContain("auto-load on first invocation");
+  });
+
+  it("D4: schemaFragment lines (Tool actions / Required fields) still emitted on agents entry", () => {
+    const redirect = getManagedSectionRedirect("agents")!;
+    const hint = formatRedirectHint(redirect);
+    expect(hint).toContain(
+      "Tool actions: create, get, update, delete, suspend, resume",
+    );
+    expect(hint).toContain("Required fields for `create`: agent_id, config");
+  });
+
+  it("D5: JSON-stringified exampleArgs round-trips through formatted output", () => {
+    for (const entry of MANAGED_SECTIONS) {
+      if (!entry.exampleArgs) continue;
+      const hint = formatRedirectHint(entry);
+      // Extract the JSON object inside `Recovery: call <tool>(...).`. The example
+      // is the largest balanced { ... } in the hint; a regex that captures
+      // everything between the first '{' after the tool name and the matching '})' is sufficient.
+      const recoveryToken = `Recovery: call ${entry.tool}(`;
+      const start = hint.indexOf(recoveryToken);
+      expect(start, `entry ${entry.pathPrefix}: Recovery prefix missing`).toBeGreaterThanOrEqual(0);
+      const jsonStart = start + recoveryToken.length;
+      // Walk forward to find the matching ')' that closes the call (after the JSON object).
+      // Since the JSON is compact JSON.stringify output, brace-counting is sufficient.
+      let depth = 0;
+      let jsonEnd = -1;
+      for (let i = jsonStart; i < hint.length; i++) {
+        const ch = hint[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) {
+            jsonEnd = i + 1;
+            break;
+          }
+        }
+      }
+      expect(jsonEnd, `entry ${entry.pathPrefix}: balanced JSON not found`).toBeGreaterThan(0);
+      const jsonText = hint.slice(jsonStart, jsonEnd);
+      const parsed = JSON.parse(jsonText);
+      expect(parsed, `entry ${entry.pathPrefix}: round-trip mismatch`).toEqual(entry.exampleArgs);
+    }
   });
 });
 
@@ -233,7 +319,8 @@ describe("schemaFragment (Bug B)", () => {
   it("formatRedirectHint positions schema fragment AFTER Recovery example and BEFORE mutablePaths block", () => {
     const redirect = getManagedSectionRedirect("agents")!;
     const hint = formatRedirectHint(redirect, ["agents.coding.model"]);
-    const recoveryIdx = hint.indexOf("Recovery: (1)");
+    // 260428-oyc: Recovery is now a single-step "Recovery: call <tool>(<example>)." line.
+    const recoveryIdx = hint.indexOf("Recovery: call agents_manage(");
     const actionsIdx = hint.indexOf("Tool actions:");
     const mutableIdx = hint.indexOf("entry that ALREADY exists");
     expect(recoveryIdx).toBeGreaterThanOrEqual(0);

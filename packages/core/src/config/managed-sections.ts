@@ -187,10 +187,26 @@ export function getManagedSectionRedirect(
 /**
  * Format an LLM-readable hint for an immutability rejection.
  *
- * The output uses an explicit two-step "Recovery:" framing because smaller
- * models (Haiku 4.5, Gemini Flash, GPT-OSS-20b) parse numbered steps more
- * reliably than prose. The example call is JSON-stringified compactly so it
- * can be copy-pasted into the next tool invocation.
+ * Output is a single-step "Recovery: call <tool>(<example>)." line: the
+ * dedicated `*_manage` tool auto-loads on first direct invocation under
+ * every supported provider path:
+ *
+ * - Anthropic Sonnet/Opus 4.x: request-body-injector strips client-side
+ *   `discover_tools` from the payload and marks deferred tools
+ *   `defer_loading: true`; calling the tool by name auto-loads it.
+ * - Anthropic Haiku / OpenAI / xAI / Google: tools surface via the
+ *   client-side `discover_tools` corpus, but a stub-filter wraps deferred
+ *   entries so that calling the tool by name still works first try (the
+ *   stub forwards to the real tool and registers it as discovered).
+ *
+ * Naming `discover_tools` in the hint actively misleads Anthropic
+ * Sonnet/Opus 4.x because that tool is not in their payload (260428-oyc
+ * production repro: agent saw "Recovery: (1) call discover_tools(...)" and
+ * gave up, reporting "I don't have a discover_tools function"). The
+ * single-step framing works on every provider.
+ *
+ * The example call is JSON-stringified compactly so it can be copy-pasted
+ * verbatim into the next tool invocation.
  *
  * @param redirect - The matched managed-section entry
  * @param mutablePaths - Optional override paths for in-place patching of
@@ -206,12 +222,10 @@ export function formatRedirectHint(
 
   if (redirect.exampleArgs) {
     const example = JSON.stringify(redirect.exampleArgs);
-    parts.push(
-      `Recovery: (1) call discover_tools("${redirect.tool}") to load the schema, then (2) call ${redirect.tool}(${example}).`,
-    );
+    parts.push(`Recovery: call ${redirect.tool}(${example}).`);
   } else {
     parts.push(
-      `Load it via discover_tools("${redirect.tool}") if not yet available.`,
+      `Call ${redirect.tool} directly; it will auto-load on first invocation.`,
     );
   }
 

@@ -714,7 +714,9 @@ describe("gateway tool", () => {
       const msg = captured!.message;
       expect(msg).toContain("[permission_denied]");
       expect(msg).toContain('Use the "agents_manage" tool');
-      expect(msg).toContain('discover_tools("agents_manage")');
+      // 260428-oyc: discover_tools clause dropped from Recovery framing.
+      expect(msg).toContain("Recovery: call agents_manage(");
+      expect(msg).not.toContain("discover_tools");
       expect(msg).toContain('"action":"create"');
       expect(msg).toContain('"agent_id":"<new-agent-id>"');
       expect(rpcCall).not.toHaveBeenCalled();
@@ -738,8 +740,10 @@ describe("gateway tool", () => {
       expect(captured).toBeDefined();
       const msg = captured!.message;
       expect(msg).toContain("[permission_denied]");
-      expect(msg).toContain('Recovery: (1) call discover_tools("agents_manage")');
-      expect(msg).toContain("(2) call agents_manage(");
+      // 260428-oyc: single-step Recovery framing -- "Recovery: call <tool>(<example>)."
+      expect(msg).toContain("Recovery: call agents_manage(");
+      // No discover_tools mention anywhere in the redirect hint after 260428-oyc.
+      expect(msg).not.toContain("discover_tools");
       // Mutable override paths are still surfaced for the in-place-update case
       expect(msg).toContain("agents.coding.model");
       expect(rpcCall).not.toHaveBeenCalled();
@@ -763,11 +767,14 @@ describe("gateway tool", () => {
       expect(captured).toBeDefined();
       const msg = captured!.message;
       expect(msg).toContain('Use the "channels_manage" tool');
-      expect(msg).toContain('discover_tools("channels_manage")');
+      // 260428-oyc: no-exampleArgs branch now says "Call <tool> directly; it will auto-load on first invocation."
+      expect(msg).toContain("Call channels_manage directly");
+      expect(msg).toContain("auto-load on first invocation");
+      expect(msg).not.toContain("discover_tools");
       // channels_manage is fullyManaged:false — the warning must appear
       expect(msg).toContain("brand-new platform types still requires operator config edits");
-      // No exampleArgs for channels — Recovery framing absent, fall-back load instruction present
-      expect(msg).not.toContain("Recovery: (1)");
+      // No exampleArgs for channels — single-step Recovery framing absent
+      expect(msg).not.toContain("Recovery: call");
       expect(rpcCall).not.toHaveBeenCalled();
     });
   });
@@ -799,7 +806,10 @@ describe("gateway tool", () => {
       expect(captured).toBeDefined();
       const msg = captured!.message;
       expect(msg).toContain("agents_manage");
-      expect(msg).toContain("discover_tools(");
+      // 260428-oyc: discover_tools clause was dropped from the rejection hint.
+      // The Recovery framing now points at agents_manage directly.
+      expect(msg).toContain("Recovery: call agents_manage(");
+      expect(msg).not.toContain("discover_tools");
       expect(msg).toContain("Tool actions:");
       expect(msg).toContain("create");
       // Required fields appear so the LLM knows which params it must supply.

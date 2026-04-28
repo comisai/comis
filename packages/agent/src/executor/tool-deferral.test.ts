@@ -12,6 +12,7 @@ import {
   DEFERRAL_STUB_MARKER,
   CORE_TOOLS,
   DEFERRAL_RULES,
+  supportsToolSearch,
 } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult, DeferredToolEntry } from "./tool-deferral.js";
 import type { EmbeddingPort } from "@comis/core";
@@ -1795,6 +1796,93 @@ describe("buildDeferredToolsContext", () => {
     const output = buildDeferredToolsContext(entries);
     expect(output).toContain('discover_tools("yfinance")');
     expect(output).toContain("search by keyword or server name");
+  });
+
+  // -------------------------------------------------------------------------
+  // 260428-oyc Task 1: model-aware preamble (useToolSearch option)
+  // -------------------------------------------------------------------------
+
+  it("A1: 1-arg call preserves discover_tools teaching (useToolSearch defaults false)", () => {
+    const entries: DeferredToolEntry[] = [
+      { name: "toolA", description: "descA", original: makeTool("toolA") },
+    ];
+    const output = buildDeferredToolsContext(entries);
+    expect(output).toContain("discover_tools");
+    expect(output).toContain("Call discover_tools to search by keyword or server name");
+  });
+
+  it("A1b: explicit useToolSearch:false preserves discover_tools teaching", () => {
+    const entries: DeferredToolEntry[] = [
+      { name: "toolA", description: "descA", original: makeTool("toolA") },
+    ];
+    const output = buildDeferredToolsContext(entries, { useToolSearch: false });
+    expect(output).toContain("Call discover_tools to search by keyword or server name");
+  });
+
+  it("A2: useToolSearch:true emits tool_search_tool_regex preamble and drops discover_tools teaching", () => {
+    const entries: DeferredToolEntry[] = [
+      { name: "agents_manage", description: "Manage agents", original: makeTool("agents_manage") },
+      { name: "mcp__yfinance--get_price", description: "Get stock price", original: makeTool("mcp__yfinance--get_price") },
+    ];
+    const output = buildDeferredToolsContext(entries, { useToolSearch: true });
+
+    // Block structure preserved
+    expect(output).toContain("<deferred-tools>");
+    expect(output).toContain("</deferred-tools>");
+    expect(output).toContain("The following tools are available but not loaded.");
+
+    // Tool-search-aware teaching
+    expect(output).toContain("tool_search_tool_regex");
+    expect(output).toContain("auto-load");
+    // call them directly by name -- the model is told it can invoke deferred
+    // tools without a separate discovery round-trip on Anthropic tool-search.
+    expect(output.toLowerCase()).toContain("call them directly");
+
+    // Tool listings still emitted (block format unchanged)
+    expect(output).toContain("agents_manage -- Manage agents");
+    expect(output).toContain("[yfinance] (1 tools): get_price");
+
+    // Critically: the literal "discover_tools" must NOT appear when tool-search is on.
+    expect(output).not.toContain("discover_tools");
+  });
+
+  it("A3: empty entries with useToolSearch:true still returns empty string", () => {
+    expect(buildDeferredToolsContext([], { useToolSearch: true })).toBe("");
+    expect(buildDeferredToolsContext([], { useToolSearch: false })).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 17b: supportsToolSearch (260428-oyc Task 1.1)
+// ---------------------------------------------------------------------------
+
+describe("supportsToolSearch", () => {
+  it("A4: returns true for Anthropic Sonnet/Opus 4.x model ids", () => {
+    expect(supportsToolSearch("claude-sonnet-4-5")).toBe(true);
+    expect(supportsToolSearch("claude-opus-4-1")).toBe(true);
+    expect(supportsToolSearch("claude-opus-4-6")).toBe(true);
+    expect(supportsToolSearch("anthropic/claude-sonnet-4")).toBe(true);
+    // Mixed-case and provider prefixes still resolve correctly (lowercase normalize).
+    expect(supportsToolSearch("Claude-Sonnet-4-5")).toBe(true);
+    expect(supportsToolSearch("bedrock/anthropic.claude-opus-4")).toBe(true);
+  });
+
+  it("A4: returns false for Haiku (Anthropic, no defer_loading support)", () => {
+    expect(supportsToolSearch("claude-haiku-4-5")).toBe(false);
+    expect(supportsToolSearch("anthropic/claude-haiku-4-5")).toBe(false);
+  });
+
+  it("A4: returns false for non-Anthropic providers", () => {
+    expect(supportsToolSearch("gpt-5")).toBe(false);
+    expect(supportsToolSearch("gpt-4o")).toBe(false);
+    expect(supportsToolSearch("gemini-2.5-pro")).toBe(false);
+    expect(supportsToolSearch("google/gemini-3-flash")).toBe(false);
+    expect(supportsToolSearch("grok-4")).toBe(false);
+    expect(supportsToolSearch("mistral-large")).toBe(false);
+  });
+
+  it("A4: returns false for empty string", () => {
+    expect(supportsToolSearch("")).toBe(false);
   });
 });
 

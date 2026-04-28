@@ -174,6 +174,25 @@ export function resolveToolCallingTemperature(modelTier: ModelTier): number {
   return modelTier === "small" ? 0.0 : 0.1;
 }
 
+/**
+ * Anthropic models that support server-side tool_search_tool_regex
+ * (defer_loading). Sonnet 4.x+, Opus 4.x+; NOT Haiku.
+ *
+ * When this returns true, request-body-injector strips client-side
+ * `discover_tools` from the API payload and appends `tool_search_tool_regex`
+ * instead -- so any model-facing teaching string about `discover_tools`
+ * contradicts the actual tool list and must be suppressed (260428-oyc).
+ *
+ * Lowercase-normalize so provider-prefixed model ids
+ * (`anthropic/claude-sonnet-4`, `bedrock/anthropic.claude-opus-4`) resolve
+ * correctly.
+ */
+export function supportsToolSearch(modelId: string): boolean {
+  const lower = modelId.toLowerCase();
+  if (lower.includes("haiku")) return false;
+  return lower.includes("sonnet") || lower.includes("opus");
+}
+
 // ---------------------------------------------------------------------------
 // Recently-used tool extraction
 // ---------------------------------------------------------------------------
@@ -234,13 +253,37 @@ export function resolveToolDescription(tool: ToolDefinition): string {
 /**
  * Build a `<deferred-tools>` XML block for dynamic preamble injection.
  * Lists deferred tool names and descriptions so the LLM knows what's
- * available behind discover_tools.
+ * available behind a discovery mechanism.
+ *
+ * The third line (the instruction line) is conditional on `useToolSearch`:
+ *
+ * - `useToolSearch=false` (default, every non-Anthropic provider + Haiku):
+ *   teaches the model to call the client-side `discover_tools` tool, which
+ *   IS present in those payloads.
+ *
+ * - `useToolSearch=true` (Anthropic Sonnet/Opus 4.x): the API payload no
+ *   longer contains a client-side `discover_tools` tool -- the
+ *   request-body-injector replaces it with the server-side
+ *   `tool_search_tool_regex` and marks deferred tools `defer_loading: true`,
+ *   meaning Anthropic auto-loads them on first direct invocation. The
+ *   teaching string therefore points at direct invocation + tool-search by
+ *   regex, never at `discover_tools`. Without this conditional, the model
+ *   reads its own preamble ("call discover_tools") against a tool list that
+ *   doesn't contain that tool and gives up (260428-oyc production repro).
  *
  * @param entries - Deferred tool entries (remaining after discovery re-inclusion)
+ * @param options - Optional flags. `useToolSearch=true` switches the third
+ *   line to the tool-search-aware variant. Defaults to false (backward-
+ *   compatible with the discover_tools teaching).
  * @returns XML block string, or empty string when no entries
  */
-export function buildDeferredToolsContext(entries: DeferredToolEntry[]): string {
+export function buildDeferredToolsContext(
+  entries: DeferredToolEntry[],
+  options?: { useToolSearch?: boolean },
+): string {
   if (entries.length === 0) return "";
+
+  const useToolSearch = options?.useToolSearch === true;
 
   // Separate MCP tools (group by server) from non-MCP tools (individual listing)
   const mcpByServer = new Map<string, DeferredToolEntry[]>();
@@ -271,10 +314,14 @@ export function buildDeferredToolsContext(entries: DeferredToolEntry[]): string 
     lines.push(`[${server}] (${tools.length} tools): ${shortNames.join(", ")}`);
   }
 
+  const instruction = useToolSearch
+    ? "These tools auto-load on first invocation -- call them directly by name with the right arguments. To preview a tool's schema before calling, use tool_search_tool_regex with a regex matching the tool name (e.g., tool_search_tool_regex(pattern: \"agents_manage\"))."
+    : "Call discover_tools to search by keyword or server name (e.g., discover_tools(\"yfinance\")).";
+
   return [
     "<deferred-tools>",
     "The following tools are available but not loaded.",
-    "Call discover_tools to search by keyword or server name (e.g., discover_tools(\"yfinance\")).",
+    instruction,
     "",
     ...lines,
     "</deferred-tools>",

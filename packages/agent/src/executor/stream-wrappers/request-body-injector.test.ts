@@ -3078,6 +3078,19 @@ describe("createRequestBodyInjector — defer_loading injection", () => {
     // discover_tools must be preserved (client-side fallback still needed)
     expect(tools.find(t => t.name === "discover_tools")).toBeDefined();
   });
+
+  // 260428-oyc Task 1.1: source-level regression that the local supportsToolSearch
+  // helper was removed in favor of the shared export from tool-deferral.ts.
+  it("does NOT declare its own `function supportsToolSearch` (uses shared helper)", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.join(here, "request-body-injector.ts"), "utf8");
+    expect(src).not.toMatch(/function\s+supportsToolSearch\s*\(/);
+    // Imported via the shared tool-deferral module instead.
+    expect(src).toMatch(/from\s+["']\.\.\/tool-deferral\.js["']/);
+  });
 });
 
 describe("skipCacheWrite for sub-agent spawns", () => {

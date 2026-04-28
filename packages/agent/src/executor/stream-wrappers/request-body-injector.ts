@@ -25,6 +25,7 @@ import { MIN_CACHEABLE_TOKENS, DEFAULT_MIN_CACHEABLE_TOKENS, CHARS_PER_TOKEN_RAT
 import { estimateContextChars } from "../../safety/token-estimator.js";
 import { computeHash, djb2 } from "../cache-break-detection.js";
 import type { BlockStabilityTracker } from "../block-stability-tracker.js";
+import { supportsToolSearch } from "../tool-deferral.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -376,15 +377,6 @@ export function addCacheControlToLastBlock(
 
   // Edge case: no cacheable block found -- place on last block as fallback
   (content[content.length - 1] as Record<string, unknown>).cache_control = cacheControl;
-}
-
-/** DEFER-TOOL: Check if a model supports Anthropic's tool search (defer_loading).
- *  Supported: Sonnet 4.x+, Opus 4.x+. NOT supported: Haiku. */
-function supportsToolSearch(modelId: string): boolean {
-  const lower = modelId.toLowerCase();
-  if (lower.includes("haiku")) return false;
-  // Sonnet 4.x and Opus 4.x support tool search
-  return lower.includes("sonnet") || lower.includes("opus");
 }
 
 /** Options for cache breakpoint placement. */

@@ -737,10 +737,13 @@ describe("tool-metadata-registry -- gateway validateInput patchable path hints",
     // Updated for quick-260425-t40: rejection now points to the dedicated
     // agents_manage tool with a parameter-correct example AND lists the
     // override paths for in-place updates of an existing agent.
+    // Updated for 260428-oyc: discover_tools clause dropped from Recovery framing
+    // (Anthropic Sonnet/Opus 4.x payloads no longer contain that tool).
     expect(error).toBeDefined();
     expect(error).toContain("Cannot patch immutable config path");
     expect(error).toContain('Use the "agents_manage" tool');
-    expect(error).toContain('discover_tools("agents_manage")');
+    expect(error).toContain("Recovery: call agents_manage(");
+    expect(error).not.toContain("discover_tools");
     expect(error).toContain("agents.default.model");
     expect(error).toContain("agents.default.provider");
   });
