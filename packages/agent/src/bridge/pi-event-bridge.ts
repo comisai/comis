@@ -41,7 +41,7 @@ import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { extractMcpServerName, classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { checkStepLimit, emitStepLimitAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
-import { computeThinkingBlockHashes, assertThinkingBlocksUnchanged } from "./thinking-block-hash-invariant.js";
+import { computeThinkingBlockHashes, type ThinkingBlockHash } from "./thinking-block-hash-invariant.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -135,12 +135,16 @@ export interface PiEventBridgeDeps {
    *  on each API call, read by the bridge on turn_end for per-TTL cost calculation.
    *  The bridge normalizes these estimates against the actual SDK-reported cacheWriteTokens. */
   ttlSplit?: TtlSplitEstimate;
-  /** Bug A diagnostic accessor: returns the current session message transcript
-   *  (typically `session.agent.state.messages`). Called once per turn_end to
-   *  re-hash any prior assistant messages with stored hashes and detect
-   *  cross-turn mutation of signed thinking blocks. Optional -- when omitted,
-   *  the diagnostic is silently disabled (e.g., for unit tests that don't
-   *  drive a full agent session). */
+  /** 260428-hoy pre-call hook: invoked once per `turn_start` event, BEFORE
+   *  pi-ai serializes the next request. The closure (defined in pi-executor)
+   *  walks `session.agent.state.messages`, asserts the cross-turn
+   *  hash-invariant per assistant message with a stored hash entry (logs
+   *  ERROR on mutation), then runs the canonical-restore helper against the
+   *  canonical store (heals any mutation in-place by writing the result
+   *  back to `session.agent.state.messages`). The return value is unused by
+   *  the bridge -- the side effect is the heal write-back. Optional: when
+   *  omitted, both the diagnostic and the heal are silently disabled
+   *  (e.g., unit tests that don't drive a full agent session). */
   getSessionMessages?: () => ReadonlyArray<unknown> | undefined;
 }
 
@@ -160,6 +164,16 @@ export interface PiEventBridgeResult {
   getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string }>; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; sessionCostUsd?: number; sessionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
   /** Accumulate estimated cost from a timed-out API request. */
   addGhostCost: (estimated: GhostCostEstimate) => void;
+  /** 260428-hoy: ReadonlyMap views of the per-responseId hash store and
+   *  canonical-snapshot store, both populated at stream-close in lockstep.
+   *  The executor's pre-LLM-call closure reads both stores to drive the
+   *  hash-invariant assertion plus the canonical restore helper. Returns
+   *  ReadonlyMap views to preserve internal-state encapsulation -- the
+   *  underlying `m` object is never exported. */
+  getThinkingBlockStores: () => {
+    hashes: ReadonlyMap<string, ReadonlyArray<ThinkingBlockHash>>;
+    canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;
+  };
 }
 
 // Re-export helper functions for backward compatibility with existing imports
@@ -400,43 +414,31 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         }
 
         // -----------------------------------------------------------------
+        // LLM turn about to start (pre-serialize hook for assert+restore)
+        // -----------------------------------------------------------------
+        case "turn_start": {
+          // 260428-hoy: Run the executor-supplied pre-call closure once per
+          // turn, before pi-ai reads `session.agent.state.messages` to
+          // serialize the next API request. The closure performs the
+          // assert-then-restore pass over the live transcript and writes the
+          // healed array back into session state when at least one swap
+          // happens, so the bytes Anthropic sees match the canonical
+          // stream-close snapshot. The closure swallows its own throws; the
+          // wrapper here is belt-and-braces.
+          if (deps.getSessionMessages) {
+            try {
+              deps.getSessionMessages();
+            } catch {
+              // Pre-call hook must NEVER abort agent flow.
+            }
+          }
+          break;
+        }
+
+        // -----------------------------------------------------------------
         // LLM turn completed
         // -----------------------------------------------------------------
         case "turn_end": {
-          // Bug A diagnostic -- pinpoints the layer mutating thinking blocks
-          // between turns. Logs only; never alters request flow.
-          //
-          // Walk the session transcript NOW (before processing the new turn's
-          // message) and re-hash any prior assistant messages that have
-          // captured hashes. Anthropic's signed-replay rejection happens at
-          // the API call that produced THIS turn_end, so any mutation
-          // observable here happened between the prior turn_end (capture) and
-          // this turn's serialize step.
-          if (deps.getSessionMessages && m.thinkingBlockHashes.size > 0) {
-            try {
-              const sessionMessages = deps.getSessionMessages();
-              if (Array.isArray(sessionMessages)) {
-                for (const sessMsg of sessionMessages) {
-                  if (!sessMsg || typeof sessMsg !== "object") continue;
-                  const sm = sessMsg as { role?: string; responseId?: string; content?: unknown };
-                  if (sm.role !== "assistant") continue;
-                  if (typeof sm.responseId !== "string") continue;
-                  const prior = m.thinkingBlockHashes.get(sm.responseId);
-                  if (!prior) continue;
-                  const currentContent = Array.isArray(sm.content)
-                    ? (sm.content as Array<Record<string, unknown>>)
-                    : [];
-                  assertThinkingBlocksUnchanged(prior, currentContent, sm.responseId, {
-                    logger: deps.logger,
-                  });
-                }
-              }
-            } catch {
-              // Diagnostic must never abort agent flow even if the messages
-              // accessor itself misbehaves.
-            }
-          }
-
           m.llmCallCount++;
 
           const turnEvent = event as { message: unknown };
@@ -479,20 +481,37 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 "Assistant message block accounting at stream close",
               );
 
-              // Bug A diagnostic: capture hashes for cross-turn mutation
-              // detection. Stored hashes are recompared at the START of each
-              // subsequent turn_end (see top of this case branch).
+              // Bug A diagnostic + 260428-hoy heal: capture hashes AND a
+              // canonical (pre-mutation) snapshot of the full content array,
+              // keyed by responseId, in lockstep across both stores. The
+              // hash store powers the assertion ERROR log (mutation
+              // diagnostic); the canonical store powers the pre-call
+              // restore pass that heals cross-turn mutation before the next
+              // API serialize. Both stores are FIFO-evicted at 32 entries
+              // in lockstep so they always share the same keyset.
               if (typeof responseIdForLog === "string") {
                 const hashes = computeThinkingBlockHashes(blocks);
                 if (hashes.length > 0) {
-                  // FIFO eviction: cap at 32 entries to bound memory on
-                  // long-running sessions or pathological tool loops.
                   while (m.thinkingBlockHashes.size >= 32) {
                     const oldestKey = m.thinkingBlockHashes.keys().next().value;
                     if (oldestKey === undefined) break;
                     m.thinkingBlockHashes.delete(oldestKey);
+                    m.thinkingBlockCanonical.delete(oldestKey);
                   }
                   m.thinkingBlockHashes.set(responseIdForLog, hashes);
+                  // 260428-hoy: capture canonical (pre-mutation) full
+                  // content array so the pre-LLM-call restore pass can heal
+                  // any cross-turn mutation before pi-ai serializes the
+                  // next request. structuredClone is a Node 22 global; the
+                  // try/catch is defensive against rare exotic input shapes.
+                  try {
+                    const canonical = Object.freeze(structuredClone(blocks)) as ReadonlyArray<unknown>;
+                    m.thinkingBlockCanonical.set(responseIdForLog, canonical);
+                  } catch {
+                    // Canonical capture failure is non-fatal: the hash store
+                    // still fires the assertion diagnostic on resend; only
+                    // the heal step degrades to no-op for this responseId.
+                  }
                 }
               }
             }
@@ -1114,5 +1133,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
     m.timedOutRequests += 1;
   };
 
-  return { listener, getResult, addGhostCost };
+  // 260428-hoy: typed ReadonlyMap accessor for the executor's pre-call
+  // closure. Returns views over the live maps -- the executor never receives
+  // the mutable `m` object itself.
+  const getThinkingBlockStores = (): {
+    hashes: ReadonlyMap<string, ReadonlyArray<ThinkingBlockHash>>;
+    canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;
+  } => ({
+    hashes: m.thinkingBlockHashes,
+    canonical: m.thinkingBlockCanonical,
+  });
+
+  return { listener, getResult, addGhostCost, getThinkingBlockStores };
 }

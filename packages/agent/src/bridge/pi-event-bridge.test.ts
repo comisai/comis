@@ -3415,4 +3415,156 @@ describe("createPiEventBridge", () => {
       expect(executionPlan.current).toBeUndefined();
     });
   });
+
+  // ------------------------------------------------------------------
+  // 260428-hoy: stream-close canonical capture + turn_start pre-call hook
+  // + lockstep FIFO eviction across hash and canonical stores.
+  // ------------------------------------------------------------------
+  describe("260428-hoy: thinking-block canonical capture and pre-call hook", () => {
+    /** Build a turn_end event whose assistant message contains the given content blocks. */
+    function makeTurnEndWithContent(
+      content: ReadonlyArray<Record<string, unknown>>,
+      responseId?: string,
+    ) {
+      return {
+        type: "turn_end" as const,
+        message: {
+          role: "assistant" as const,
+          content,
+          api: "anthropic-messages",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5-20250929",
+          usage: {
+            input: 100,
+            output: 50,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 150,
+            cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+          },
+          stopReason: "stop",
+          timestamp: Date.now(),
+          ...(responseId !== undefined && { responseId }),
+        },
+        toolResults: [],
+      };
+    }
+
+    function thinkingBlock(text: string, sig: string): Record<string, unknown> {
+      return { type: "thinking", thinking: text, thinkingSignature: sig };
+    }
+
+    it("populates BOTH thinkingBlockHashes AND thinkingBlockCanonical with the same key on stream close", () => {
+      const { listener, getThinkingBlockStores } = createPiEventBridge(deps);
+      listener(
+        makeTurnEndWithContent(
+          [thinkingBlock("first-thought", "sig-1"), { type: "text", text: "ok" }],
+          "resp-A",
+        ) as any,
+      );
+      const stores = getThinkingBlockStores();
+      expect(stores.hashes.has("resp-A")).toBe(true);
+      expect(stores.canonical.has("resp-A")).toBe(true);
+      // Canonical contains the full content array snapshot (frozen, structuredCloned).
+      const canonical = stores.canonical.get("resp-A");
+      expect(Array.isArray(canonical)).toBe(true);
+      expect(canonical).toHaveLength(2);
+      // Frozen guarantees pre-mutation snapshot integrity.
+      expect(Object.isFrozen(canonical)).toBe(true);
+    });
+
+    it("evicts oldest entry from BOTH stores in lockstep at the 32-entry FIFO cap", () => {
+      const { listener, getThinkingBlockStores } = createPiEventBridge(deps);
+      // Seed 33 distinct responseIds.
+      for (let i = 0; i < 33; i++) {
+        listener(
+          makeTurnEndWithContent(
+            [thinkingBlock(`thought-${i}`, `sig-${i}`)],
+            `resp-${i}`,
+          ) as any,
+        );
+      }
+      const stores = getThinkingBlockStores();
+      // Cap holds.
+      expect(stores.hashes.size).toBe(32);
+      expect(stores.canonical.size).toBe(32);
+      // Oldest key evicted from BOTH stores.
+      expect(stores.hashes.has("resp-0")).toBe(false);
+      expect(stores.canonical.has("resp-0")).toBe(false);
+      // Newest key present in BOTH stores.
+      expect(stores.hashes.has("resp-32")).toBe(true);
+      expect(stores.canonical.has("resp-32")).toBe(true);
+      // Keysets identical (lockstep invariant).
+      expect([...stores.hashes.keys()]).toEqual([...stores.canonical.keys()]);
+    });
+
+    it("getThinkingBlockStores returns ReadonlyMap views with identical keysets after each capture", () => {
+      const { listener, getThinkingBlockStores } = createPiEventBridge(deps);
+      listener(
+        makeTurnEndWithContent([thinkingBlock("a", "sig-a")], "resp-A") as any,
+      );
+      listener(
+        makeTurnEndWithContent([thinkingBlock("b", "sig-b")], "resp-B") as any,
+      );
+      const stores = getThinkingBlockStores();
+      expect([...stores.hashes.keys()]).toEqual([...stores.canonical.keys()]);
+    });
+
+    it("invokes deps.getSessionMessages on every turn_start (pre-call hook)", () => {
+      const getSessionMessages = vi.fn().mockReturnValue([]);
+      const localDeps = createMockDeps({ getSessionMessages });
+      const { listener } = createPiEventBridge(localDeps);
+      listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any);
+      expect(getSessionMessages).toHaveBeenCalledTimes(1);
+      listener({ type: "turn_start", turnIndex: 1, timestamp: Date.now() } as any);
+      expect(getSessionMessages).toHaveBeenCalledTimes(2);
+    });
+
+    it("turn_start handler swallows getSessionMessages throws (never aborts agent flow)", () => {
+      const getSessionMessages = vi.fn().mockImplementation(() => {
+        throw new Error("synthetic-pre-call-error");
+      });
+      const localDeps = createMockDeps({ getSessionMessages });
+      const { listener } = createPiEventBridge(localDeps);
+      expect(() =>
+        listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any),
+      ).not.toThrow();
+    });
+
+    it("does NOT call assertion-style ERROR logger from inside turn_end (assertion path moved out of bridge)", () => {
+      // Source-shape regression: there should be zero `assertThinkingBlocksUnchanged`
+      // call sites in pi-event-bridge.ts after 260428-hoy. The runtime check here
+      // exercises the path: a turn_end with a stored hash entry must NOT log any
+      // hash-invariant ERROR (the old dead branch is gone). The new diagnostic
+      // path runs at turn_start via the pre-call closure (executor-level).
+      const error = vi.fn();
+      const localDeps = createMockDeps({
+        logger: {
+          debug: vi.fn(),
+          info: vi.fn(),
+          warn: vi.fn(),
+          error,
+          child: vi.fn().mockReturnThis(),
+          fatal: vi.fn(),
+          trace: vi.fn(),
+        } as any,
+      });
+      const { listener } = createPiEventBridge(localDeps);
+      // Capture a baseline.
+      listener(
+        makeTurnEndWithContent([thinkingBlock("orig", "sig-1")], "resp-X") as any,
+      );
+      // Fire another turn_end -- the OLD code would assert here. Under 260428-hoy
+      // the bridge no longer asserts at turn_end, so no hash-invariant ERROR
+      // appears even though a stored hash exists.
+      listener(
+        makeTurnEndWithContent([thinkingBlock("orig", "sig-1")], "resp-X-second") as any,
+      );
+      // No ERROR with module agent.bridge.hash-invariant should have fired from
+      // the bridge listener itself.
+      const hashInvariantErrors = (error.mock.calls as Array<[Record<string, unknown>, string]>)
+        .filter((c) => (c[0] as { module?: string })?.module === "agent.bridge.hash-invariant");
+      expect(hashInvariantErrors).toHaveLength(0);
+    });
+  });
 });

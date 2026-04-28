@@ -234,10 +234,6 @@ export function assertThinkingBlocksUnchanged(
 
 const RESTORE_MODULE_FIELD = "agent.bridge.canonical-restore";
 
-const RESTORE_HINT =
-  "Replaced cross-turn-mutated thinking blocks with their canonical " +
-  "stream-close snapshots so pi-ai serializes a request Anthropic accepts.";
-
 const RESTORE_WARN_HINT =
   "Canonical restore aborted on malformed input; in-memory messages " +
   "returned unchanged. Inspect prior context-engine layers for shape drift.";
