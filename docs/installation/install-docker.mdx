@@ -155,6 +155,86 @@ gateway at `127.0.0.1:4766` without extra configuration.
 | Update | `git pull && docker compose up -d --build` |
 | View logs | `docker compose logs -f comis-daemon` |
 
+## Deploying on a VPS
+
+The local-machine examples above use `-p 4766:4766` for convenience, which
+binds the gateway to `0.0.0.0:4766` on the host. **On a VPS that's the
+public internet** — anyone on the network can reach the gateway. Pick one
+of the two safer postures below.
+
+<Warning>
+The wizard's "LAN mode" sets `gateway.host: 0.0.0.0` *inside the container*.
+That's correct — the daemon must bind all interfaces so Docker port-forwarding
+can reach it. The exposure decision is made on the **host side** by the `-p`
+mapping (or Compose `ports:`). Confusing the two is the #1 way to accidentally
+expose a daemon publicly.
+</Warning>
+
+### Recommended: loopback bind + reverse proxy
+
+Bind the host port to loopback only and put nginx (or Caddy/Traefik) in front
+to terminate TLS:
+
+```bash
+docker run -d \
+  --name comis \
+  --restart unless-stopped \
+  -p 127.0.0.1:4766:4766 \
+  -v comis-data:/home/comis/.comis \
+  -e COMIS_CONFIG_PATHS=/home/comis/.comis/config.yaml \
+  comisai/comis:latest-slim
+```
+
+Or in `docker-compose.yml`:
+
+```yaml
+ports:
+  - "127.0.0.1:4766:4766"
+```
+
+Then point your reverse proxy at `http://127.0.0.1:4766` (HTTP) and
+`http://127.0.0.1:4766/ws` (WebSocket). See
+[Operations: Reverse Proxy](/operations/reverse-proxy) for full nginx /
+Caddy snippets with WebSocket upgrade headers.
+
+### Acceptable: direct exposure + token auth + firewall
+
+If you don't want a reverse proxy, you can expose the gateway directly,
+but you **must** combine three controls:
+
+1. **Token auth on the gateway.** The init wizard enables this by default
+   (`Authentication method → Token`). Verify your `~/.comis/config.yaml`
+   contains a `gateway.tokens:` section and `~/.comis/.env` has a
+   `COMIS_GATEWAY_TOKEN`.
+2. **Firewall to trusted IPs only.** On Ubuntu/Debian:
+   ```bash
+   sudo ufw allow from <your-trusted-ip> to any port 4766
+   sudo ufw enable
+   ```
+3. **TLS.** Without TLS, the bearer token crosses the wire in cleartext.
+   Either run with `gateway.tls.cert` configured (see
+   [Configuration: TLS](/installation/configuration#tls)) or front it
+   with a reverse proxy that does TLS for you (in which case use the
+   recommended posture above instead).
+
+### `comis status` from your laptop against a remote VPS
+
+The CLI's `comis status` defaults to reading `~/.comis/config.yaml` on the
+machine where it runs. Copying the VPS's config to your laptop won't work
+on its own — `gateway.host: 0.0.0.0` is a *bind* address that the CLI
+remaps to local loopback, not the VPS's public IP.
+
+Set `COMIS_GATEWAY_URL` (and the matching token) on your laptop instead:
+
+```bash
+export COMIS_GATEWAY_URL=wss://comis.example.com/ws
+export COMIS_GATEWAY_TOKEN=<the-token-from-the-VPS>
+comis status
+```
+
+Use `wss://` (TLS) when the gateway is reachable over the public internet.
+Use `ws://` only over a trusted network (VPN, SSH tunnel).
+
 ## Common issues
 
 <AccordionGroup>
@@ -167,14 +247,19 @@ gateway at `127.0.0.1:4766` without extra configuration.
   </Accordion>
 
   <Accordion title="Cannot access dashboard from host">
-    **Symptom:** `curl http://localhost:4766/health` returns "connection refused"
-    even though the container is running.
+    **Symptom:** `curl http://127.0.0.1:4766/health` returns "connection refused"
+    or "connection reset by peer" even though the container is reported `healthy`.
 
-    **Fix:** Verify these settings:
+    **Fix:** Two distinct binds are involved — get them in the right place:
 
-    1. The `COMIS_GATEWAY_HOST` in your `.env` file controls which host IP the port binds to (`127.0.0.1` for localhost only, `0.0.0.0` for all interfaces)
-    2. The container is running and healthy: `docker compose ps`
-    3. No firewall is blocking the port
+    1. **Host-side bind (which interface the host listens on):** controlled by the left side of `-p` / Compose `ports:` (e.g. `127.0.0.1:4766:4766` vs `0.0.0.0:4766:4766`).
+    2. **Container-side bind (which interface the daemon listens on inside the container):** controlled by `COMIS_GATEWAY_HOST` in `.env`. **Must be `0.0.0.0`** so Docker port-forwarding can reach the daemon. Setting it to `127.0.0.1` is what produces the "connection reset" symptom — Docker forwards into the container's `eth0` IP, where nothing is listening. Since 1.0.25 the image defaults to `0.0.0.0`; on older images set it explicitly.
+
+    Other things to check:
+
+    - The container is running and healthy: `docker compose ps`
+    - No firewall is blocking the port
+    - If you mount a `config.yaml` with `gateway.host: 127.0.0.1`, that overrides the env var (since 1.0.25). Set `gateway.host: 0.0.0.0` in the mounted config or remove the entry.
   </Accordion>
 
   <Accordion title="Container exits immediately">
@@ -188,9 +273,33 @@ gateway at `127.0.0.1:4766` without extra configuration.
 
     Common causes:
 
-    - **Invalid config.yaml** -- check YAML syntax and required fields
+    - **Invalid config.yaml** -- check YAML syntax and required fields. The daemon writes a recovery snapshot at `~/.comis/config.last-good.yaml`; run `cp ~/.comis/config.last-good.yaml ~/.comis/config.yaml` to restore the previous-known-good config, then `docker compose restart`.
     - **Missing API key** -- verify the `.env` file has the correct variable name
     - **Port already in use** -- another process is using port 4766 on the host
+  </Accordion>
+
+  <Accordion title="Daemon can't write to .env (`Is a directory` error)">
+    **Symptom:** Bringing up Compose without first running `docker-setup.sh`,
+    the daemon fails to persist credentials and you see
+    `cannot create /home/comis/.comis/.env: Is a directory` in the logs.
+
+    **Cause:** Docker bind-mounts `${COMIS_ENV_FILE:-~/.comis/.env}` into the
+    container. If the host path doesn't exist, Docker silently creates it
+    as a **directory** instead of a file, then every write fails.
+
+    **Fix:** create the file before `docker compose up`:
+
+    ```bash
+    mkdir -p ~/.comis
+    touch ~/.comis/.env
+    chmod 600 ~/.comis/.env
+    ```
+
+    If `.env` already exists as a directory, remove it first:
+    `rmdir ~/.comis/.env && touch ~/.comis/.env`.
+
+    The repo's `docker-setup.sh` handles this automatically — this only
+    affects manual `docker compose up`.
   </Accordion>
 </AccordionGroup>
 

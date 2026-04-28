@@ -37,11 +37,23 @@ services:
       # container-only at /home/comis/.comis while memory.db went to /data).
       - ${COMIS_DATA_DIR:-~/.comis}:/home/comis/.comis
 
-      # Config files (read-only mount recommended)
-      - ${COMIS_CONFIG_DIR:-~/.comis}:/etc/comis:ro
+      # Config files. Mounted read-write so the daemon can write its
+      # config.last-good.yaml snapshot next to config.yaml — required
+      # for the recovery path printed on bootstrap failure.
+      - ${COMIS_CONFIG_DIR:-~/.comis}:/etc/comis
 
-      # Optional: mount .env for secret injection
-      - ${COMIS_ENV_FILE:-~/.comis/.env}:/home/comis/.comis/.env:ro
+      # Optional: override the .env source path. Mounted read-write so the
+      # daemon's env.set RPC (used by the agent's `gateway` env_set action,
+      # `comis configure`, etc.) can persist new credentials in legacy mode.
+      # If you point COMIS_ENV_FILE at an externally-managed file you don't
+      # want the daemon to modify, change this to :ro yourself.
+      #
+      # PREREQUISITE: the source path MUST exist as a file before `up`.
+      # Docker silently creates a directory at the host path otherwise,
+      # which then fails every write. The repo's `docker-setup.sh` handles
+      # this; if you bring up manually, run first:
+      #     mkdir -p ~/.comis && touch ~/.comis/.env && chmod 600 ~/.comis/.env
+      - ${COMIS_ENV_FILE:-~/.comis/.env}:/home/comis/.comis/.env
 
     environment:
       # Core configuration
@@ -149,7 +161,7 @@ services:
 
     volumes:
       - ${COMIS_DATA_DIR:-~/.comis}:/home/comis/.comis
-      - ${COMIS_CONFIG_DIR:-~/.comis}:/etc/comis:ro
+      - ${COMIS_CONFIG_DIR:-~/.comis}:/etc/comis
 
     environment:
       - NODE_ENV=production
