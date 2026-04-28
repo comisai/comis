@@ -157,3 +157,107 @@ export function shouldDropSignedFields(input: DriftCheckInput): DriftCheck {
 
   return { drop: false };
 }
+
+// ---------------------------------------------------------------------------
+// 260428-k8d: Tool-set drift dimension
+// ---------------------------------------------------------------------------
+// Anthropic validates signed thinking-block signatures against the request's
+// tools + system prompt; mid-conversation `discover_tools` mutates the tools
+// array and invalidates the signed prefix. This dimension extends the existing
+// drift detector by comparing the active tool name set on the next API call
+// against per-responseId snapshots captured at signature-mint time.
+//
+// Pure function: no I/O, no async, no throws — defensive null-tolerant helpers
+// only. Combined at the call site by OR-ing `drop` flags so the existing
+// closed `DriftCheck.reason` union remains untouched.
+// ---------------------------------------------------------------------------
+
+/** Input to `shouldDropSignedFieldsForToolSet`. */
+export interface ToolSetDriftInput {
+  /** Active tool name set that will be in the NEXT API call's tools array. */
+  currentActiveTools: ReadonlySet<string>;
+  /** Snapshots keyed by responseId of the active tool set at signature-mint time. */
+  snapshots: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+/** Result of `shouldDropSignedFieldsForToolSet`. */
+export interface ToolSetDriftResult {
+  /** True iff at least one snapshot diverges from the current set. */
+  shouldDrop: boolean;
+  /** ResponseIds whose snapshot did not equal the current set, in iteration order. */
+  mismatchedResponseIds: string[];
+  /** Most-specific reason across all mismatched snapshots (priority: changed > shrank > grew). */
+  reason: "tool_set_grew" | "tool_set_shrank" | "tool_set_changed" | "no_drift";
+}
+
+/**
+ * Decide whether signed thinking state should be scrubbed because the active
+ * tool set differs from the snapshot captured at signature-mint time.
+ *
+ * Per-snapshot classification:
+ *   snapshot ⊂ current  → tool_set_grew  (current added tools)
+ *   current ⊂ snapshot  → tool_set_shrank
+ *   neither subset      → tool_set_changed
+ *   sets equal          → no contribution (skipped)
+ *
+ * Aggregate priority (most specific wins): changed > shrank > grew > no_drift.
+ * `mismatchedResponseIds` collects every non-equal snapshot regardless of
+ * which reason category wins, so observability covers all divergences.
+ *
+ * Pure: no async, no I/O, no throws.
+ */
+export function shouldDropSignedFieldsForToolSet(
+  input: ToolSetDriftInput,
+): ToolSetDriftResult {
+  const { currentActiveTools, snapshots } = input;
+  if (snapshots.size === 0) {
+    return { shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" };
+  }
+  const mismatched: string[] = [];
+  let sawChanged = false;
+  let sawShrank = false;
+  let sawGrew = false;
+  for (const [responseId, snap] of snapshots) {
+    // Equality short-circuit: same size and every snap entry present in current.
+    if (snap.size === currentActiveTools.size) {
+      let allMatch = true;
+      for (const name of snap) {
+        if (!currentActiveTools.has(name)) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) continue;
+    }
+    // Classify direction of divergence.
+    let snapHasExtra = false; // names in snap not in current → shrank-or-changed
+    let currentHasExtra = false; // names in current not in snap → grew-or-changed
+    for (const name of snap) {
+      if (!currentActiveTools.has(name)) {
+        snapHasExtra = true;
+        break;
+      }
+    }
+    for (const name of currentActiveTools) {
+      if (!snap.has(name)) {
+        currentHasExtra = true;
+        break;
+      }
+    }
+    if (snapHasExtra && currentHasExtra) sawChanged = true;
+    else if (snapHasExtra) sawShrank = true;
+    else if (currentHasExtra) sawGrew = true;
+    mismatched.push(responseId);
+  }
+  if (mismatched.length === 0) {
+    return { shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" };
+  }
+  const reason: ToolSetDriftResult["reason"] = sawChanged
+    ? "tool_set_changed"
+    : sawShrank
+      ? "tool_set_shrank"
+      : sawGrew
+        ? "tool_set_grew"
+        : "no_drift";
+  return { shouldDrop: true, mismatchedResponseIds: mismatched, reason };
+}

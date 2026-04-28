@@ -30,7 +30,11 @@ import {
   getBreakpointIndexMapSize,
   getSessionLatches,
 } from "./executor-session-state.js";
-import { shouldDropSignedFields, type DriftCheck } from "./replay-drift-detector.js";
+import {
+  shouldDropSignedFields,
+  shouldDropSignedFieldsForToolSet,
+  type DriftCheck,
+} from "./replay-drift-detector.js";
 import type { ErrorKind } from "@comis/infra";
 import { readFileSync } from "node:fs";
 
@@ -74,6 +78,16 @@ export interface ContextEngineSetupParams {
   onAnchorReset: () => void;
   /** Current discovery tracker (if active) */
   currentDiscoveryTracker?: DiscoveryTracker;
+  /** 260428-k8d: returns the active tool name set for the next API call.
+   *  Same closure passed to PiEventBridgeDeps.getActiveToolNames so bridge +
+   *  detector see a consistent view per execute() turn. Optional — when
+   *  unwired (e.g., unit tests), the toolset-drift dimension is disabled. */
+  getActiveToolNames?: () => ReadonlySet<string>;
+  /** 260428-k8d: returns the bridge's signedThinkingToolSnapshot store.
+   *  Lazy getter because the bridge is created after `setupContextEngine` in
+   *  the executor; the closure reads `bridge.getThinkingBlockStores().toolSnapshot`
+   *  on demand. Optional — when unwired, the toolset-drift dimension is disabled. */
+  getToolSnapshotStore?: () => ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 /** Result of context engine setup. */
@@ -110,6 +124,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     contextEngineRef,
     getCachedSystemTokensEstimate, getTokenAnchor, onAnchorReset,
     currentDiscoveryTracker,
+    getActiveToolNames,
+    getToolSnapshotStore,
   } = params;
 
   const agentId = deps.agentId;
@@ -121,6 +137,14 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // Memoized per-execute() so all pipeline runs in a single execute() see a
   // consistent decision (cleaner + scrubber must agree). The closure reads
   // the latest model identity each time (handles cycleModel mid-execute).
+  //
+  // 260428-k8d: extended to OR-combine the existing identity/idle drift with
+  // the new tool-set-changed dimension. Combined `drop` flag drives the
+  // signature-replay-scrubber (which gates only on `drop`); the existing
+  // closed `reason` union stays untouched — when only toolset drift fires
+  // we leave `reason` undefined and surface the toolset reason via a single
+  // INFO log emitted at the call site (gated behind `toolDriftLogged`).
+  let toolDriftLogged = false;
   let memoizedDrift: DriftCheck | undefined;
   const computeDriftIfNeeded = (): DriftCheck | undefined => {
     if (memoizedDrift !== undefined) return memoizedDrift;
@@ -132,7 +156,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       // Derive currentApi from model.api when present; otherwise fall back to
       // the provider family (resolveProviderFamily strips -bedrock / -vertex).
       const currentApi = model?.api ?? resolveProviderFamily(config.provider);
-      memoizedDrift = shouldDropSignedFields({
+      const existingDrift = shouldDropSignedFields({
         // Cast: shouldDropSignedFields tolerates malformed entries internally.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         fileEntries: fileEntries as any,
@@ -143,6 +167,59 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         },
         idleMs,
       });
+
+      // 260428-k8d: tool-set drift (Anthropic invalidates signed thinking
+      // signatures when the request's tools array differs from the one
+      // present at signature-mint time — discover_tools mid-conversation
+      // is the common trigger). Defensive: must never throw past this
+      // boundary, so wrap the call in its own try/catch.
+      let toolSetDrift: ReturnType<typeof shouldDropSignedFieldsForToolSet> = {
+        shouldDrop: false,
+        mismatchedResponseIds: [],
+        reason: "no_drift",
+      };
+      if (getActiveToolNames && getToolSnapshotStore) {
+        try {
+          toolSetDrift = shouldDropSignedFieldsForToolSet({
+            currentActiveTools: getActiveToolNames(),
+            snapshots: getToolSnapshotStore(),
+          });
+        } catch {
+          toolSetDrift = {
+            shouldDrop: false,
+            mismatchedResponseIds: [],
+            reason: "no_drift",
+          };
+        }
+      }
+
+      // ONE INFO log per execute() when tool-set drift triggers. The flag
+      // gate prevents duplicates across re-entry; memoization further
+      // ensures `computeDriftIfNeeded` only runs the body once per turn.
+      if (toolSetDrift.shouldDrop && !toolDriftLogged && getActiveToolNames && getToolSnapshotStore) {
+        toolDriftLogged = true;
+        deps.logger.info(
+          {
+            module: "agent.context-engine.replay-drift",
+            reason: toolSetDrift.reason,
+            mismatchedResponseIds: toolSetDrift.mismatchedResponseIds,
+            currentToolCount: getActiveToolNames().size,
+            snapshotCount: getToolSnapshotStore().size,
+          },
+          "Replay drift detected: active tool set changed since signature mint",
+        );
+      }
+
+      // Combine: drop wins on either dimension. Preserve existing reason
+      // when set; the scrubber (signature-replay-scrubber.ts:67-72) gates
+      // only on `drift.drop`, and the existing DriftCheck.reason union is
+      // closed — so we surface the toolset reason via the dedicated INFO
+      // log above rather than expanding the type union.
+      memoizedDrift = {
+        drop: existingDrift.drop || toolSetDrift.shouldDrop,
+        reason: existingDrift.reason,
+        detail: existingDrift.detail,
+      };
       return memoizedDrift;
     } catch (err) {
       deps.logger.warn(

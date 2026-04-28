@@ -104,6 +104,16 @@ export interface BridgeMetricsState {
    *  hash store. Used by the pre-LLM-call restoration pass to heal cross-turn
    *  mutation of signed thinking blocks before pi-ai serializes the next request. */
   thinkingBlockCanonical: Map<string, ReadonlyArray<unknown>>;
+
+  /**
+   * 260428-k8d: Active tool name set captured at the moment an assistant message
+   * with signed thinking blocks completed streaming. Keyed by responseId, FIFO
+   * 32-cap, evicted in lockstep with thinkingBlockHashes + thinkingBlockCanonical.
+   * Used by replay-drift-detector to detect tool-set changes between turns —
+   * Anthropic invalidates signed thinking-block validations when the request's
+   * tools array differs from the one present at signature-mint time.
+   */
+  signedThinkingToolSnapshot: Map<string, ReadonlySet<string>>;
 }
 
 /**
@@ -150,6 +160,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     budgetWarningEmitted: false,
     thinkingBlockHashes: new Map(),
     thinkingBlockCanonical: new Map(),
+    signedThinkingToolSnapshot: new Map(),
   };
 }
 

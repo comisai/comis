@@ -3510,6 +3510,105 @@ describe("createPiEventBridge", () => {
       expect([...stores.hashes.keys()]).toEqual([...stores.canonical.keys()]);
     });
 
+    // ----------------------------------------------------------------
+    // 260428-k8d: signedThinkingToolSnapshot capture and lockstep eviction.
+    // ----------------------------------------------------------------
+    describe("260428-k8d: signedThinkingToolSnapshot", () => {
+      it("captures the active tool name set at stream close keyed by responseId", () => {
+        const localDeps = createMockDeps({
+          getActiveToolNames: () => new Set(["file_read", "fetch"]),
+        });
+        const { listener, getThinkingBlockStores } = createPiEventBridge(localDeps);
+        listener(
+          makeTurnEndWithContent(
+            [thinkingBlock("first-thought", "sig-1")],
+            "resp-tool-A",
+          ) as any,
+        );
+        const stores = getThinkingBlockStores();
+        expect(stores.toolSnapshot.has("resp-tool-A")).toBe(true);
+        const snap = stores.toolSnapshot.get("resp-tool-A")!;
+        expect([...snap].sort()).toEqual(["fetch", "file_read"]);
+      });
+
+      it("falls back to an empty Set when getActiveToolNames is undefined (no throw)", () => {
+        // No getActiveToolNames in deps → empty-set fallback path.
+        const { listener, getThinkingBlockStores } = createPiEventBridge(deps);
+        expect(() =>
+          listener(
+            makeTurnEndWithContent(
+              [thinkingBlock("a", "sig-a")],
+              "resp-tool-B",
+            ) as any,
+          ),
+        ).not.toThrow();
+        const stores = getThinkingBlockStores();
+        expect(stores.toolSnapshot.has("resp-tool-B")).toBe(true);
+        expect(stores.toolSnapshot.get("resp-tool-B")!.size).toBe(0);
+      });
+
+      it("evicts the oldest entry from ALL THREE maps in lockstep at the 32-cap", () => {
+        // Snapshot value carries the responseId so we can verify which entry
+        // actually survives — not just that the map size is right.
+        const localDeps = createMockDeps({
+          getActiveToolNames: () => new Set(["t-baseline"]),
+        });
+        const { listener, getThinkingBlockStores } = createPiEventBridge(localDeps);
+        for (let i = 0; i < 33; i++) {
+          listener(
+            makeTurnEndWithContent(
+              [thinkingBlock(`thought-${i}`, `sig-${i}`)],
+              `resp-k8d-${i}`,
+            ) as any,
+          );
+        }
+        const stores = getThinkingBlockStores();
+        // Cap holds across all three maps.
+        expect(stores.hashes.size).toBe(32);
+        expect(stores.canonical.size).toBe(32);
+        expect(stores.toolSnapshot.size).toBe(32);
+        // Oldest evicted from ALL three.
+        expect(stores.hashes.has("resp-k8d-0")).toBe(false);
+        expect(stores.canonical.has("resp-k8d-0")).toBe(false);
+        expect(stores.toolSnapshot.has("resp-k8d-0")).toBe(false);
+        // Newest present in ALL three.
+        expect(stores.hashes.has("resp-k8d-32")).toBe(true);
+        expect(stores.canonical.has("resp-k8d-32")).toBe(true);
+        expect(stores.toolSnapshot.has("resp-k8d-32")).toBe(true);
+        // Lockstep keyset invariant across all three.
+        expect([...stores.hashes.keys()]).toEqual([...stores.toolSnapshot.keys()]);
+        expect([...stores.canonical.keys()]).toEqual([...stores.toolSnapshot.keys()]);
+      });
+
+      it("captures whatever set the closure returns at the moment of stream close (live snapshot)", () => {
+        // Mutating the underlying set after capture must not retroactively
+        // change a stored snapshot — the bridge stores the reference returned
+        // by the closure. We verify by returning a FRESH Set per call.
+        let returned: Set<string> = new Set(["a"]);
+        const localDeps = createMockDeps({
+          getActiveToolNames: () => returned,
+        });
+        const { listener, getThinkingBlockStores } = createPiEventBridge(localDeps);
+        listener(
+          makeTurnEndWithContent(
+            [thinkingBlock("p", "sig-p")],
+            "resp-live-1",
+          ) as any,
+        );
+        // Swap to a different set for the second responseId.
+        returned = new Set(["a", "b"]);
+        listener(
+          makeTurnEndWithContent(
+            [thinkingBlock("q", "sig-q")],
+            "resp-live-2",
+          ) as any,
+        );
+        const stores = getThinkingBlockStores();
+        expect([...stores.toolSnapshot.get("resp-live-1")!]).toEqual(["a"]);
+        expect([...stores.toolSnapshot.get("resp-live-2")!].sort()).toEqual(["a", "b"]);
+      });
+    });
+
     it("invokes deps.getSessionMessages on every turn_start (pre-call hook)", () => {
       const getSessionMessages = vi.fn().mockReturnValue([]);
       const localDeps = createMockDeps({ getSessionMessages });

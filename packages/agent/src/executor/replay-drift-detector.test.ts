@@ -7,7 +7,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { shouldDropSignedFields } from "./replay-drift-detector.js";
+import {
+  shouldDropSignedFields,
+  shouldDropSignedFieldsForToolSet,
+} from "./replay-drift-detector.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -308,5 +311,138 @@ describe("shouldDropSignedFields", () => {
       now: FIXED_NOW,
     });
     expect(r.drop).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 260428-k8d: Tool-set drift dimension
+// ---------------------------------------------------------------------------
+
+describe("shouldDropSignedFieldsForToolSet", () => {
+  it("returns no_drift for an empty snapshots map", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(["a", "b"]),
+      snapshots: new Map(),
+    });
+    expect(r).toEqual({ shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" });
+  });
+
+  it("returns no_drift when a single snapshot equals the current set", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(["a", "b"]),
+      snapshots: new Map([["resp1", new Set(["a", "b"])]]),
+    });
+    expect(r).toEqual({ shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" });
+  });
+
+  it("returns tool_set_grew when current strictly adds tools (snap ⊂ current)", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(["a", "b", "c"]),
+      snapshots: new Map([["resp1", new Set(["a", "b"])]]),
+    });
+    expect(r.shouldDrop).toBe(true);
+    expect(r.reason).toBe("tool_set_grew");
+    expect(r.mismatchedResponseIds).toEqual(["resp1"]);
+  });
+
+  it("returns tool_set_shrank when current strictly removes tools (current ⊂ snap)", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(["a"]),
+      snapshots: new Map([["resp1", new Set(["a", "b"])]]),
+    });
+    expect(r.shouldDrop).toBe(true);
+    expect(r.reason).toBe("tool_set_shrank");
+    expect(r.mismatchedResponseIds).toEqual(["resp1"]);
+  });
+
+  it("returns tool_set_changed when sets diverge in both directions", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(["a", "c"]),
+      snapshots: new Map([["resp1", new Set(["a", "b"])]]),
+    });
+    expect(r.shouldDrop).toBe(true);
+    expect(r.reason).toBe("tool_set_changed");
+    expect(r.mismatchedResponseIds).toEqual(["resp1"]);
+  });
+
+  it("priority: shrank wins over grew when both fire across snapshots", () => {
+    // resp1 grew (snap subset of current), resp2 shrank (current subset of snap).
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(["a", "b"]),
+      snapshots: new Map([
+        ["resp1", new Set(["a"])],          // current adds "b" → grew
+        ["resp2", new Set(["a", "b", "c"])], // current drops "c" → shrank
+      ]),
+    });
+    expect(r.shouldDrop).toBe(true);
+    expect(r.reason).toBe("tool_set_shrank");
+    expect(r.mismatchedResponseIds).toEqual(["resp1", "resp2"]);
+  });
+
+  it("priority: changed wins over shrank and grew when all three fire", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(["a", "b"]),
+      snapshots: new Map([
+        ["resp1", new Set(["a"])],          // grew
+        ["resp2", new Set(["a", "b", "c"])], // shrank
+        ["resp3", new Set(["c"])],          // changed (both directions)
+      ]),
+    });
+    expect(r.shouldDrop).toBe(true);
+    expect(r.reason).toBe("tool_set_changed");
+    expect(r.mismatchedResponseIds).toEqual(["resp1", "resp2", "resp3"]);
+  });
+
+  it("collects mismatchedResponseIds in iteration order regardless of reason category", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(["a", "b"]),
+      snapshots: new Map([
+        ["respA", new Set(["a", "b"])],     // equal → no contribution
+        ["respB", new Set(["a"])],          // grew
+        ["respC", new Set(["a", "b"])],     // equal → no contribution
+        ["respD", new Set(["a", "b", "c"])], // shrank
+      ]),
+    });
+    expect(r.shouldDrop).toBe(true);
+    expect(r.mismatchedResponseIds).toEqual(["respB", "respD"]);
+  });
+
+  it("treats empty current + non-empty snapshot as tool_set_shrank", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(),
+      snapshots: new Map([["resp1", new Set(["a"])]]),
+    });
+    expect(r.shouldDrop).toBe(true);
+    expect(r.reason).toBe("tool_set_shrank");
+    expect(r.mismatchedResponseIds).toEqual(["resp1"]);
+  });
+
+  it("treats empty snapshot + non-empty current as tool_set_grew", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(["a"]),
+      snapshots: new Map([["resp1", new Set()]]),
+    });
+    expect(r.shouldDrop).toBe(true);
+    expect(r.reason).toBe("tool_set_grew");
+    expect(r.mismatchedResponseIds).toEqual(["resp1"]);
+  });
+
+  it("returns no_drift when both current and a single snapshot are empty", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(),
+      snapshots: new Map([["resp1", new Set()]]),
+    });
+    expect(r).toEqual({ shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" });
+  });
+
+  it("returns no_drift when every snapshot equals the current set", () => {
+    const r = shouldDropSignedFieldsForToolSet({
+      currentActiveTools: new Set(["a", "b"]),
+      snapshots: new Map([
+        ["resp1", new Set(["a", "b"])],
+        ["resp2", new Set(["b", "a"])], // order-insensitive
+      ]),
+    });
+    expect(r).toEqual({ shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" });
   });
 });

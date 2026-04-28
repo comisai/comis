@@ -926,6 +926,22 @@ export function createPiExecutor(
             deps.logger,
           );
 
+          // 260428-k8d: shared closure for active-tool-name snapshot, used by
+          // BOTH the bridge (capture at stream close) and the replay-drift
+          // detector (compare against snapshots). Bound here so a single
+          // execute() turn always sees a consistent view of the live SDK
+          // active-tools list, even mid-conversation `discover_tools`.
+          const getActiveToolNamesForDrift = (): ReadonlySet<string> =>
+            new Set<string>(session.getActiveToolNames?.() ?? []);
+
+          // 260428-k8d: lazy ref so the context engine's drift detector can
+          // reach into the bridge's signedThinkingToolSnapshot store. The
+          // bridge is created AFTER setupContextEngine in this file, so the
+          // ref's `current` field is populated post-creation and read on
+          // demand by the memoized computeDriftIfNeeded() closure. The ref
+          // object itself is never reassigned (only its `current` field).
+          const bridgeRef: { current?: { getThinkingBlockStores: () => { toolSnapshot: ReadonlyMap<string, ReadonlySet<string>> } } } = { current: undefined };
+
           // Context engine: transformContext hook
           // Runs BEFORE convertToLlm in the SDK pipeline (pre-LLM-call context management).
           // Same runtime override pattern as streamFn above.
@@ -940,6 +956,13 @@ export function createPiExecutor(
             getTokenAnchor: () => tokenAnchor,
             onAnchorReset: () => { tokenAnchor = null; },
             currentDiscoveryTracker,
+            // 260428-k8d: tool-set drift wiring. Both getters are no-ops when
+            // bridgeRef.current is unset (e.g., during the brief window before
+            // bridge creation completes), so the detector defaults to no_drift
+            // — matches the "snapshots empty" branch of the pure helper.
+            getActiveToolNames: getActiveToolNamesForDrift,
+            getToolSnapshotStore: () =>
+              bridgeRef.current?.getThinkingBlockStores().toolSnapshot ?? new Map(),
           });
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK internal: no public type for agent.transformContext
           (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;
@@ -1248,6 +1271,11 @@ export function createPiExecutor(
             // governs read/write of the file, so safePath / sessionKey routing
             // is reused (sessionKeyToPath -> safePath under the hood).
             getSessionJsonlPath: () => sessionAdapter.getSessionPath(sessionKey),
+            // 260428-k8d: capture the active tool name set at stream close so
+            // the replay-drift detector can compare it against the live set
+            // on the next turn. Same closure passed into setupContextEngine
+            // above so bridge + detector see a consistent view per turn.
+            getActiveToolNames: getActiveToolNamesForDrift,
             // Budget trajectory warning: shared ref and per-execution cap
             perExecutionBudgetCap: config.budgets?.perExecution,
             budgetWarningRef,
@@ -1315,6 +1343,11 @@ export function createPiExecutor(
                 }
               : undefined,
           });
+
+          // 260428-k8d: populate the lazy bridge ref so the context engine's
+          // memoized drift detector (created above) can read the live
+          // signedThinkingToolSnapshot store on demand.
+          bridgeRef.current = bridge;
 
           const unsubscribe = session.subscribe(bridge.listener);
 

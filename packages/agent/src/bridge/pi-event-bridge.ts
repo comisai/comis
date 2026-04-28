@@ -159,6 +159,12 @@ export interface PiEventBridgeDeps {
    *  occurred AFTER the bridge's restoration hook. Optional — when
    *  omitted, the wire-edge diagnostic is a silent no-op. */
   getSessionJsonlPath?: () => string | null;
+  /** 260428-k8d: returns the active tool name set that will be sent on the next
+   *  API call. Captured at stream close keyed by responseId; the executor
+   *  cross-checks against the live current set on each subsequent turn to
+   *  detect tool-set drift (which invalidates Anthropic signed thinking blocks).
+   *  Optional — falls back to empty set when not wired (sub-agent paths). */
+  getActiveToolNames?: () => ReadonlySet<string>;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -182,10 +188,15 @@ export interface PiEventBridgeResult {
    *  The executor's pre-LLM-call closure reads both stores to drive the
    *  hash-invariant assertion plus the canonical restore helper. Returns
    *  ReadonlyMap views to preserve internal-state encapsulation -- the
-   *  underlying `m` object is never exported. */
+   *  underlying `m` object is never exported.
+   *
+   *  260428-k8d: extended with `toolSnapshot` — the active tool name set at
+   *  signature-mint time per responseId, used by the replay-drift detector
+   *  to detect tool-set drift between turns. */
   getThinkingBlockStores: () => {
     hashes: ReadonlyMap<string, ReadonlyArray<ThinkingBlockHash>>;
     canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;
+    toolSnapshot: ReadonlyMap<string, ReadonlySet<string>>;
   };
 }
 
@@ -572,6 +583,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     if (oldestKey === undefined) break;
                     m.thinkingBlockHashes.delete(oldestKey);
                     m.thinkingBlockCanonical.delete(oldestKey);
+                    // 260428-k8d: lockstep eviction across the toolset snapshot
+                    // store so all three maps share an identical keyset.
+                    m.signedThinkingToolSnapshot.delete(oldestKey);
                   }
                   m.thinkingBlockHashes.set(responseIdForLog, hashes);
                   // 260428-hoy: capture canonical (pre-mutation) full
@@ -587,6 +601,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     // still fires the assertion diagnostic on resend; only
                     // the heal step degrades to no-op for this responseId.
                   }
+                  // 260428-k8d: capture the active tool name set at
+                  // signature-mint time. Anthropic invalidates signed
+                  // thinking-block validations when the request's tools
+                  // array differs from the one present at signature-mint
+                  // time; the replay-drift detector compares this snapshot
+                  // against the live set on the next turn to decide whether
+                  // the scrubber should drop signed state. Empty-set
+                  // fallback when callback unwired (e.g., sub-agent harness
+                  // that doesn't expose a tool list).
+                  const activeToolNames = deps.getActiveToolNames?.() ?? new Set<string>();
+                  m.signedThinkingToolSnapshot.set(responseIdForLog, activeToolNames);
                 }
               }
             }
@@ -1349,12 +1374,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
   // 260428-hoy: typed ReadonlyMap accessor for the executor's pre-call
   // closure. Returns views over the live maps -- the executor never receives
   // the mutable `m` object itself.
+  // 260428-k8d: extended with toolSnapshot view for the replay-drift detector.
   const getThinkingBlockStores = (): {
     hashes: ReadonlyMap<string, ReadonlyArray<ThinkingBlockHash>>;
     canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;
+    toolSnapshot: ReadonlyMap<string, ReadonlySet<string>>;
   } => ({
     hashes: m.thinkingBlockHashes,
     canonical: m.thinkingBlockCanonical,
+    toolSnapshot: m.signedThinkingToolSnapshot,
   });
 
   return { listener, getResult, addGhostCost, getThinkingBlockStores };
