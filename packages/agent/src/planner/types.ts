@@ -34,8 +34,6 @@ export interface ExecutionPlan {
   steps: PlanStep[];
   /** Number of steps marked "done". */
   completedCount: number;
-  /** Whether the completeness nudge has been injected. */
-  nudged: boolean;
   /** Timestamp of plan creation. */
   createdAtMs: number;
 }

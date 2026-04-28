@@ -352,14 +352,15 @@ export interface AgentEvents {
     timestamp: number;
   };
 
-  /** SEP plan completed (all steps resolved) */
+  /** SEP plan completed (all steps resolved). Observability-only post-L4 —
+   *  the legacy enforcement nudge was replaced by the post-batch
+   *  continuation handler. */
   "sep:plan_completed": {
     agentId: string;
     sessionKey: string;
     stepsPlanned: number;
     stepsCompleted: number;
     stepsSkipped: number;
-    nudgeTriggered: boolean;
     durationMs: number;
     timestamp: number;
   };

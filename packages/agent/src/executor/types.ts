@@ -60,13 +60,22 @@ export interface ExecutionResult {
     /** Stop reason from tracker (budget_reached | diminishing_returns | max_continuations | under_budget). */
     stopReason: string;
   };
-  /** Silent Execution Planner metrics (undefined if SEP inactive). */
+  /** Silent Execution Planner metrics (undefined if SEP inactive).
+   *  SEP is observability-only post-L4: plan extraction + step counting
+   *  remain; the legacy enforcement nudge was replaced by the post-batch
+   *  continuation handler. */
   plannerMetrics?: {
     stepsPlanned: number;
     stepsCompleted: number;
     stepsSkipped: number;
-    nudgeTriggered: boolean;
     planExtractionTurn: number;
+  };
+  /** Post-batch continuation handler outcome (undefined when handler did
+   *  not run, e.g., guardrail failed before reaching it). */
+  continuationMetrics?: {
+    fired: boolean;
+    attempts: number;
+    outcome: "recovered" | "still_empty" | "max_attempts_exhausted" | "disabled" | "no_match";
   };
 }
 

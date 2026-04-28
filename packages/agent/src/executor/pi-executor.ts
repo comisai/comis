@@ -102,10 +102,7 @@ import {
   clearSessionCacheSavings,
 } from "./executor-session-state.js";
 import { validateInput } from "./executor-input-guard.js";
-import {
-  scanWithOutputGuard,
-  // recoverEmptyFinalResponse, extractExecutionPlan, generateCompletenessNudge moved to executor-prompt-runner.ts
-} from "./executor-response-filter.js";
+import { scanWithOutputGuard } from "./executor-response-filter.js";
 import { normalizeModelCompat } from "../provider/model-compat.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";

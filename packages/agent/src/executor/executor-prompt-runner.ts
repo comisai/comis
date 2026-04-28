@@ -45,8 +45,8 @@ import {
   scanWithOutputGuard,
   recoverEmptyFinalResponse,
   extractExecutionPlan,
-  generateCompletenessNudge,
 } from "./executor-response-filter.js";
+import { runPostBatchContinuation } from "./post-batch-continuation.js";
 import { getVisibleAssistantText } from "./phase-filter.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { resolveModelPricing } from "../model/model-catalog.js";
@@ -888,23 +888,47 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
       );
     }
 
-    // SEP: Completeness nudge (extracted to executor-response-filter.ts)
-    if (executionPlanRef.current?.active && !executionPlanRef.current.nudged) {
-      const nudgeText = generateCompletenessNudge({
-        plan: executionPlanRef.current,
-        verificationNudge: config.sep?.verificationNudge !== false,
+    // L4: Post-batch continuation (replaces the deleted SEP one-shot nudge).
+    // Detects empty final assistant turn after a successful tool batch within
+    // the current execution window and fires a directive followUp with multi-
+    // shot retry. Falls through to L3 synthesis (recoverEmptyFinalResponse) on
+    // exhaustion. SEP plan extraction + step counting remain intact for
+    // observability — see pi-event-bridge.ts:949-1024.
+    {
+      const continuationConfig = config.contextEngine?.postBatchContinuation
+        ?? { enabled: true, maxRetries: 2 };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sessionMessages: unknown[] = (session as any).messages ?? [];
+      const continuationResult = await runPostBatchContinuation({
+        session,
+        messages: sessionMessages,
+        config: continuationConfig,
+        logger: deps.logger,
+        agentId,
+        getVisibleAssistantText,
       });
-      if (nudgeText) {
-        executionPlanRef.current.nudged = true;
-        deps.logger.info(
-          { agentId, remainingSteps: executionPlanRef.current.steps.filter(s => s.status === "pending" || s.status === "in_progress").length },
-          "SEP completeness nudge triggered",
-        );
-        await session.followUp(nudgeText);
-        const nudgeResponse = getVisibleAssistantText(session);
-        if (nudgeResponse) {
-          result.response = nudgeResponse;
+      if (continuationResult.ok) {
+        const v = continuationResult.value;
+        if (v.recovered && v.response) {
+          result.response = v.response;
         }
+        // Stash outcome metrics for executor-post-execution.ts to emit in the
+        // Execution complete log.
+        result.continuationMetrics = {
+          fired: v.outcome !== "no_match" && v.outcome !== "disabled",
+          attempts: v.attempts,
+          outcome: v.outcome,
+        };
+      } else {
+        deps.logger.warn(
+          {
+            err: continuationResult.error.cause,
+            hint: "Post-batch continuation followUp failed; preserving response collected so far",
+            errorKind: "internal" as ErrorKind,
+          },
+          "Post-batch continuation error",
+        );
+        result.continuationMetrics = { fired: false, attempts: 0, outcome: "still_empty" };
       }
     }
 

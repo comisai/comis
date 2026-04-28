@@ -21,7 +21,6 @@ import {
 import type { ComisLogger, ErrorKind } from "@comis/infra";
 import type { ExecutionPlan } from "../planner/types.js";
 import { extractPlanFromResponse } from "../planner/plan-extractor.js";
-import { formatChecklistForInjection } from "../planner/checklist-formatter.js";
 import { stripReasoningTagsFromText } from "../response-filter/reasoning-tags.js";
 import { isVisibleTextBlock } from "./phase-filter.js";
 
@@ -416,7 +415,6 @@ export function extractExecutionPlan(params: {
       request: messageText.slice(0, 200),
       steps,
       completedCount: 0,
-      nudged: false,
       createdAtMs: Date.now(),
     };
     logger.info(
@@ -434,32 +432,3 @@ export function extractExecutionPlan(params: {
   return undefined;
 }
 
-// ---------------------------------------------------------------------------
-// SEP completeness nudge (extracted from execute() success path)
-// ---------------------------------------------------------------------------
-
-/**
- * Generate a completeness nudge when the LLM stopped but steps remain.
- * Returns the nudge text or undefined if no nudge is needed.
- */
-export function generateCompletenessNudge(params: {
-  plan: ExecutionPlan;
-  verificationNudge: boolean;
-}): string | undefined {
-  const { plan, verificationNudge } = params;
-
-  if (!plan.active || plan.nudged) return undefined;
-
-  const remaining = plan.steps.filter(
-    s => s.status === "pending" || s.status === "in_progress",
-  );
-
-  if (remaining.length > 0 && plan.completedCount > 0) {
-    const checklist = formatChecklistForInjection(plan, verificationNudge);
-    return checklist
-      ? `${checklist}\n\nPlease continue with the remaining steps. If any step is no longer needed, explain why.`
-      : `You indicated completion but ${remaining.length} step(s) remain:\n${remaining.map(s => `- ${s.description}`).join("\n")}\nPlease continue. If these steps are no longer needed, explain why.`;
-  }
-
-  return undefined;
-}

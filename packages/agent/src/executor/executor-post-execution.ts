@@ -336,14 +336,15 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     }
   }
 
-  // SEP: Attach planner metrics to result
+  // SEP: Attach planner metrics to result (observability-only post-L4 — the
+  // legacy enforcement nudge was replaced by the post-batch continuation
+  // handler; see post-batch-continuation.ts).
   if (executionPlanRef.current?.active) {
     const plan = executionPlanRef.current;
     result.plannerMetrics = {
       stepsPlanned: plan.steps.length,
       stepsCompleted: plan.completedCount,
       stepsSkipped: plan.steps.filter(s => s.status === "skipped").length,
-      nudgeTriggered: plan.nudged,
       planExtractionTurn: 1,
     };
 
@@ -356,7 +357,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         stepsPlanned: plan.steps.length,
         stepsCompleted: plan.completedCount,
         stepsSkipped: plan.steps.filter(s => s.status === "skipped").length,
-        nudgeTriggered: plan.nudged,
         durationMs: Date.now() - plan.createdAtMs,
         timestamp: Date.now(),
       });
@@ -439,7 +439,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       ...(result.plannerMetrics && {
         sepStepsPlanned: result.plannerMetrics.stepsPlanned,
         sepStepsCompleted: result.plannerMetrics.stepsCompleted,
-        sepNudgeTriggered: result.plannerMetrics.nudgeTriggered,
+      }),
+      ...(result.continuationMetrics && {
+        postBatchContinuationFired: result.continuationMetrics.fired,
+        postBatchContinuationAttempts: result.continuationMetrics.attempts,
+        postBatchContinuationOutcome: result.continuationMetrics.outcome,
       }),
       // 1.5 + 3.2: Thinking token tracking (conditional -- only when thinking tokens detected)
       ...(bridgeResult.thinkingTokens != null && bridgeResult.thinkingTokens > 0 && {

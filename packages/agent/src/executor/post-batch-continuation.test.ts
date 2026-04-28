@@ -107,17 +107,18 @@ function emptyAfterToolBatch(toolCallCount: number, isError = false): any[] {
       })),
     ],
   };
-  const toolResults = {
-    role: "user",
-    content: Array.from({ length: toolCallCount }, (_, i) => ({
-      type: "tool_result",
-      tool_use_id: `t${i + 1}`,
-      content: [{ type: "text", text: isError ? "error: failed" : "ok" }],
-      is_error: isError,
-    })),
-  };
+  // pi-coding-agent session shape uses role: "toolResult" (NOT role: "user"
+  // with tool_result blocks). See executor-response-filter.test.ts for the
+  // canonical fixture pattern.
+  const toolResults = Array.from({ length: toolCallCount }, (_, i) => ({
+    role: "toolResult",
+    toolCallId: `t${i + 1}`,
+    toolName: "agents_manage",
+    content: [{ type: "text", text: isError ? "error: failed" : "ok" }],
+    isError,
+  }));
   const emptyFinal = { role: "assistant", content: [] };
-  return [userMsg, assistantToolCalls, toolResults, emptyFinal];
+  return [userMsg, assistantToolCalls, ...toolResults, emptyFinal];
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 

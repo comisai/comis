@@ -425,6 +425,22 @@ export const ContextEngineConfigSchema = z.strictObject({
   summaryModel: z.string().optional(),
   /** Optional provider override for DAG summary generation. */
   summaryProvider: z.string().optional(),
+
+  // --- Post-batch continuation (L4 — replaces SEP nudge enforcement) ---
+
+  /** Post-batch continuation handler: when the LLM emits an empty final
+   *  turn after a successful tool batch, fire a directive followUp with
+   *  multi-shot retry. Replaces the legacy SEP one-shot completeness nudge
+   *  (whose enforcement role was superseded; SEP plan extraction + step
+   *  counting remain intact for observability). */
+  postBatchContinuation: z.strictObject({
+    /** Master toggle. When false, handler returns
+     *  {recovered: false, outcome: "disabled"} without calling followUp. */
+    enabled: z.boolean().default(true),
+    /** Maximum directive followUp attempts before falling through to L3
+     *  synthesis. 0 = disabled. */
+    maxRetries: z.number().int().min(0).max(5).default(2),
+  }).default({ enabled: true, maxRetries: 2 }),
 });
 
 export type ContextEngineConfig = z.infer<typeof ContextEngineConfigSchema>;

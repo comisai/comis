@@ -47,6 +47,8 @@ describe("ContextEngineConfigSchema", () => {
       largeFileTokenThreshold: 25_000,
       annotationKeepWindow: 15,
       annotationTriggerChars: 200_000,
+      // Post-batch continuation (L4 — replaces SEP nudge enforcement)
+      postBatchContinuation: { enabled: true, maxRetries: 2 },
     });
   });
 
@@ -116,6 +118,21 @@ describe("ContextEngineConfigSchema", () => {
       annotationTriggerChars: 400_000,
       summaryModel: "anthropic:claude-sonnet-4-5-20250929",
       summaryProvider: "anthropic",
+      // Post-batch continuation defaults (not overridden in this test)
+      postBatchContinuation: { enabled: true, maxRetries: 2 },
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // postBatchContinuation
+  // -------------------------------------------------------------------------
+
+  describe("postBatchContinuation", () => {
+    it("rejects maxRetries > 5", () => {
+      const result = ContextEngineConfigSchema.safeParse({
+        postBatchContinuation: { enabled: true, maxRetries: 6 },
+      });
+      expect(result.success).toBe(false);
     });
   });
 

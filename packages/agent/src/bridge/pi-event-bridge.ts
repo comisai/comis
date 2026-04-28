@@ -967,7 +967,6 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   request: (deps.sepMessageText ?? "").slice(0, 200),
                   steps,
                   completedCount: 0,
-                  nudged: false,
                   createdAtMs: Date.now(),
                 };
                 deps.executionPlan.current = plan;
