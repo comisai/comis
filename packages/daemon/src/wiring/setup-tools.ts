@@ -374,7 +374,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         createTranscribeAudioTool(agentRpc),
         createDescribeVideoTool(agentRpc),
         createExtractDocumentTool(agentRpc),
-        createGatewayTool(agentRpc),
+        createGatewayTool(agentRpc, skillsLogger),
         createAgentsManageTool(agentRpc, approvalGate, {
           onMutationStart: enterConfigMutationFence,
           onMutationEnd: leaveConfigMutationFence,

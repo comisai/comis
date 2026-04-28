@@ -1,6 +1,45 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// `isDocker` is consumed at gateway-tool module scope inside the restart
+// branch. Mock the whole `@comis/infra` surface up front and flip the return
+// per-test via `mockedIsDocker.mockReturnValue(...)`. Default is `false` so
+// existing (non-Docker) tests are unaffected. `vi.hoisted` keeps the mock
+// reference alive across the hoisting `vi.mock` performs.
+const { mockedIsDocker } = vi.hoisted(() => ({ mockedIsDocker: vi.fn(() => false) }));
+vi.mock("@comis/infra", () => ({
+  isDocker: mockedIsDocker,
+}));
+
 import { createGatewayTool } from "./gateway-tool.js";
+import type { ComisLogger } from "@comis/infra";
+
+/**
+ * Build a Pino-shaped mock logger compatible with `ComisLogger`. The gateway
+ * tool only calls `warn(obj, msg)` today, but we stub the full surface so a
+ * future call to (e.g.) `info` doesn't blow up the test harness.
+ */
+function makeMockLogger() {
+  const logger = {
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    audit: vi.fn(),
+    child: vi.fn(function (this: unknown) { return this; }),
+  };
+  return logger as typeof logger & ComisLogger;
+}
+
+let mockLogger = makeMockLogger();
+
+beforeEach(() => {
+  mockLogger = makeMockLogger();
+  mockedIsDocker.mockReset();
+  mockedIsDocker.mockReturnValue(false);
+});
 
 function createMockRpcCall() {
   return vi.fn(async (method: string, params: Record<string, unknown>) => {
@@ -55,7 +94,7 @@ function createMockRpcCall() {
 describe("gateway tool", () => {
   it("has correct name and label", () => {
     const rpcCall = createMockRpcCall();
-    const tool = createGatewayTool(rpcCall);
+    const tool = createGatewayTool(rpcCall, mockLogger);
 
     expect(tool.name).toBe("gateway");
     expect(tool.label).toBe("Gateway Control");
@@ -63,7 +102,7 @@ describe("gateway tool", () => {
 
   it("has lean description mentioning key capabilities", () => {
     const rpcCall = createMockRpcCall();
-    const tool = createGatewayTool(rpcCall);
+    const tool = createGatewayTool(rpcCall, mockLogger);
 
     expect(tool.description).toContain("config");
     expect(tool.description).toContain("restart");
@@ -75,7 +114,7 @@ describe("gateway tool", () => {
   describe("read action", () => {
     it("calls rpcCall with config.read and section param", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-1", {
         action: "read",
@@ -90,7 +129,7 @@ describe("gateway tool", () => {
 
     it("calls rpcCall with config.read and undefined section for full read", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await tool.execute("call-1b", { action: "read" });
 
@@ -101,7 +140,7 @@ describe("gateway tool", () => {
   describe("patch action", () => {
     it("patch is gated as destructive (requiresConfirmation)", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-2", {
         action: "patch",
@@ -121,7 +160,7 @@ describe("gateway tool", () => {
 
     it("patch with _confirmed bypasses gate and calls RPC", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-2c", {
         action: "patch",
@@ -144,7 +183,7 @@ describe("gateway tool", () => {
   describe("restart action", () => {
     it("calls rpcCall with gateway.restart", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-3", { action: "restart" });
 
@@ -161,12 +200,77 @@ describe("gateway tool", () => {
         expect(details).toEqual(expect.objectContaining({ restarted: true }));
       }
     });
+
+    // 260428-qrn: when the daemon is in Docker, agent-invoked restart relies
+    // on the container's restart policy to bring it back. We surface that as
+    // a structured Pino WARN so docker logs leaves a breadcrumb pointing the
+    // operator at `--restart unless-stopped`.
+    it("inside Docker -> emits structured WARN with unless-stopped hint, tool result unchanged", async () => {
+      mockedIsDocker.mockReturnValue(true);
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      // Baseline result (no Docker, no logger warn): captures the canonical
+      // shape so we can prove the Docker branch did not regress the schema.
+      mockedIsDocker.mockReturnValue(false);
+      const baselineLogger = makeMockLogger();
+      const baselineRpc = createMockRpcCall();
+      const baselineTool = createGatewayTool(baselineRpc, baselineLogger);
+      const baseline = await baselineTool.execute("call-baseline", {
+        action: "restart",
+        _confirmed: true,
+      } as never);
+
+      // Docker branch: same call, same _confirmed bypass, same RPC mock.
+      mockedIsDocker.mockReturnValue(true);
+      const result = await tool.execute("call-docker", {
+        action: "restart",
+        _confirmed: true,
+      } as never);
+
+      // (a) WARN fires exactly once with the required structured fields.
+      expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+      const [fields, msg] = mockLogger.warn.mock.calls[0]!;
+      expect(fields).toMatchObject({
+        module: "skill.gateway",
+        errorKind: "config",
+      });
+      expect((fields as { hint: string }).hint).toContain("unless-stopped");
+      expect(typeof msg).toBe("string");
+
+      // (b) Tool-result schema is byte-identical to the non-Docker baseline.
+      // Stripping the per-call `id` / `toolCallId` fields is unnecessary --
+      // createMultiActionDispatchTool returns the same content[] shape and
+      // we did not touch the action-handler's return value.
+      expect(result.content).toEqual(baseline.content);
+      expect(typeof result.details).toBe(typeof baseline.details);
+
+      // (c) RPC was actually invoked (not gated) -- proves the WARN is on
+      // the real-execution path, not the confirmation-gate path.
+      expect(rpcCall).toHaveBeenCalledWith("gateway.restart", { _trustLevel: "guest" });
+    });
+
+    it("outside Docker -> no WARN, tool result unchanged", async () => {
+      mockedIsDocker.mockReturnValue(false);
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      const result = await tool.execute("call-no-docker", {
+        action: "restart",
+        _confirmed: true,
+      } as never);
+
+      expect(mockLogger.warn).not.toHaveBeenCalled();
+      expect(rpcCall).toHaveBeenCalledWith("gateway.restart", { _trustLevel: "guest" });
+      const details = result.details as Record<string, unknown>;
+      expect(details).toEqual(expect.objectContaining({ restarted: true }));
+    });
   });
 
   describe("schema action", () => {
     it("calls rpcCall with config.schema and section param", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-4", {
         action: "schema",
@@ -181,7 +285,7 @@ describe("gateway tool", () => {
 
     it("calls config.schema with undefined section for full schema", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await tool.execute("call-4b", { action: "schema" });
 
@@ -192,7 +296,7 @@ describe("gateway tool", () => {
   describe("status action", () => {
     it("calls rpcCall with gateway.status", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-5", { action: "status" });
 
@@ -206,7 +310,7 @@ describe("gateway tool", () => {
   describe("history action", () => {
     it("calls rpcCall with config.history and section/limit params", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-h1", {
         action: "history",
@@ -226,7 +330,7 @@ describe("gateway tool", () => {
 
     it("calls config.history with default params when no section/limit provided", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await tool.execute("call-h2", { action: "history" });
 
@@ -237,7 +341,7 @@ describe("gateway tool", () => {
   describe("diff action", () => {
     it("calls rpcCall with config.diff and sha param", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-d1", {
         action: "diff",
@@ -252,7 +356,7 @@ describe("gateway tool", () => {
 
     it("calls config.diff with undefined sha for default diff", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await tool.execute("call-d2", { action: "diff" });
 
@@ -263,7 +367,7 @@ describe("gateway tool", () => {
   describe("apply action", () => {
     it("apply is gated as destructive (requiresConfirmation)", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-a1", {
         action: "apply" as "read",
@@ -282,7 +386,7 @@ describe("gateway tool", () => {
 
     it("returns requiresConfirmation with config.apply action type", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-a2", {
         action: "apply" as "read",
@@ -299,7 +403,7 @@ describe("gateway tool", () => {
 
     it("rejects apply to immutable config section before gate", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await expect(
         tool.execute("call-a-imm", {
@@ -314,7 +418,7 @@ describe("gateway tool", () => {
 
     it("apply with _confirmed bypasses gate and calls RPC", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-a3", {
         action: "apply" as "read",
@@ -335,7 +439,7 @@ describe("gateway tool", () => {
   describe("rollback action", () => {
     it("rollback is gated as destructive (requiresConfirmation)", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-r1", {
         action: "rollback",
@@ -361,7 +465,7 @@ describe("gateway tool", () => {
 
     it("returns requiresConfirmation with config.rollback action type", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-r2", {
         action: "rollback",
@@ -379,7 +483,7 @@ describe("gateway tool", () => {
 
     it("rollback with _confirmed bypasses gate and calls RPC", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-r3", {
         action: "rollback",
@@ -398,7 +502,7 @@ describe("gateway tool", () => {
   describe("env_set action", () => {
     it("requires confirmation when not confirmed", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-e1", {
         action: "env_set" as "read",
@@ -417,7 +521,7 @@ describe("gateway tool", () => {
 
     it("delegates to env.set RPC when confirmed", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-e2", {
         action: "env_set" as "read",
@@ -441,7 +545,7 @@ describe("gateway tool", () => {
       const rpcCall = vi.fn(async () => ({
         set: true, key: "MY_KEY", storage: "encrypted", value: "leaked-secret",
       }));
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-e3", {
         action: "env_set" as "read",
@@ -460,7 +564,7 @@ describe("gateway tool", () => {
 
     it("throws when env_key parameter missing", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await expect(
         tool.execute("call-e4", {
@@ -473,7 +577,7 @@ describe("gateway tool", () => {
 
     it("throws when env_value parameter missing", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await expect(
         tool.execute("call-e5", {
@@ -486,7 +590,7 @@ describe("gateway tool", () => {
 
     it("rejects literal [REDACTED] placeholder without calling env.set", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-e6", {
         action: "env_set" as "read",
@@ -504,7 +608,7 @@ describe("gateway tool", () => {
 
     it("rejects bracketed redaction variants", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-e7", {
         action: "env_set" as "read",
@@ -523,7 +627,7 @@ describe("gateway tool", () => {
   describe("env_list action", () => {
     it("delegates to env.list RPC with filter and limit", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-el1", {
         action: "env_list" as "read",
@@ -543,7 +647,7 @@ describe("gateway tool", () => {
 
     it("delegates to env.list with undefined filter/limit when omitted", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await tool.execute("call-el2", { action: "env_list" as "read" } as any);
 
@@ -556,7 +660,7 @@ describe("gateway tool", () => {
 
     it("does NOT require confirmation (read-only action)", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-el3", { action: "env_list" as "read" } as any);
 
@@ -576,7 +680,7 @@ describe("gateway tool", () => {
         total: 1,
         truncated: false,
       }));
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-el4", { action: "env_list" as "read" } as any);
       const serialized = JSON.stringify(result.details);
@@ -589,7 +693,7 @@ describe("gateway tool", () => {
   describe("patch action -- immutability error with patchable paths", () => {
     it("includes patchable paths hint when rejecting immutable path", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       // Updated for quick-260425-t40: agents now redirects to agents_manage
       // with the override paths surfaced as the "in-place updates" branch.
@@ -608,7 +712,7 @@ describe("gateway tool", () => {
   describe("patch action -- mutable override bypass", () => {
     it("mutable override path skips confirmation gate entirely", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-mut1", {
         action: "patch",
@@ -631,7 +735,7 @@ describe("gateway tool", () => {
 
     it("non-mutable non-immutable path still requires confirmation (regression)", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-reg1", {
         action: "patch",
@@ -650,7 +754,7 @@ describe("gateway tool", () => {
   describe("unknown action", () => {
     it("throws [invalid_action] for unknown action", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await expect(
         tool.execute("call-6", {
@@ -666,7 +770,7 @@ describe("gateway tool", () => {
       const rpcCall = vi.fn(async () => {
         throw new Error("Gateway service unavailable");
       });
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await expect(
         tool.execute("call-7", {
@@ -679,7 +783,7 @@ describe("gateway tool", () => {
       const rpcCall = vi.fn(async () => {
         throw "string error";
       });
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       await expect(
         tool.execute("call-8", {
@@ -698,7 +802,7 @@ describe("gateway tool", () => {
   describe("immutability redirect hints (model-agnostic)", () => {
     it("agents/apply rejection points to agents_manage with a parameter-correct example", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       let captured: Error | undefined;
       try {
@@ -724,7 +828,7 @@ describe("gateway tool", () => {
 
     it("agents.<newId>/patch rejection points to agents_manage", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       let captured: Error | undefined;
       try {
@@ -751,7 +855,7 @@ describe("gateway tool", () => {
 
     it("channels/<type>/<field>/patch rejection points to channels_manage with fullyManaged:false note", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       let captured: Error | undefined;
       try {
@@ -786,7 +890,7 @@ describe("gateway tool", () => {
   describe("immutability schema-fragment hints (Bug B)", () => {
     it("agents/patch rejection includes agents_manage, discover_tools, and Tool actions: with create literal", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       let captured: Error | undefined;
       try {
@@ -818,7 +922,7 @@ describe("gateway tool", () => {
 
     it("agents/apply rejection includes the schema fragment too", async () => {
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       let captured: Error | undefined;
       try {
@@ -843,7 +947,7 @@ describe("gateway tool", () => {
       // section redirect, the rejection hint omits the `Tool actions:` line.
       // `security` is in IMMUTABLE_CONFIG_PREFIXES but not in MANAGED_SECTIONS.
       const rpcCall = createMockRpcCall();
-      const tool = createGatewayTool(rpcCall);
+      const tool = createGatewayTool(rpcCall, mockLogger);
 
       let captured: Error | undefined;
       try {

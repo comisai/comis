@@ -732,6 +732,9 @@ importers:
       '@comis/core':
         specifier: workspace:*
         version: link:../core
+      '@comis/infra':
+        specifier: workspace:*
+        version: link:../infra
       '@comis/shared':
         specifier: workspace:*
         version: link:../shared

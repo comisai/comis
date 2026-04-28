@@ -56,6 +56,7 @@ import { setupChannelHealthLogging } from "./observability/channel-health-logger
 import { registerGracefulShutdown } from "./process/graceful-shutdown.js";
 import { createProcessMonitor } from "./process/process-monitor.js";
 import { startWatchdog } from "./health/watchdog.js";
+import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
 import { randomUUID, createHmac } from "node:crypto";
 import { existsSync, chmodSync, statSync, mkdirSync, readFileSync, unlinkSync, cpSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
@@ -1526,6 +1527,11 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
       },
     },
   }, "Comis daemon started");
+
+  // Docker-only: surface restart-policy requirement immediately after the
+  // startup banner. No-op outside containers. Wired here so the WARN lands
+  // in `docker logs` next to the banner, where operators look first.
+  emitDockerRestartPolicyWarn(daemonLogger);
 
   // Snapshot current config as last-known-good after successful startup
   if (configPaths.length > 0) {

@@ -31,6 +31,11 @@ vi.mock("node:fs", () => ({
   openSync: vi.fn(() => 99),
   closeSync: vi.fn(),
   accessSync: vi.fn(),
+  // 260428-qrn: `findContainerDaemonPid` walks /proc via dynamic
+  // `await import("node:fs")`. Default to an empty proc so most tests
+  // skip the SIGTERM branch; the dedicated Docker-restart test overrides.
+  readdirSync: vi.fn(() => [] as unknown as string[]),
+  readFileSync: vi.fn(() => "" as string),
   constants: { X_OK: 1, W_OK: 2 },
 }));
 
@@ -51,7 +56,7 @@ vi.mock("@comis/core", async (importOriginal) => {
 });
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
 import { daemonStartStep } from "./11-daemon-start.js";
 
@@ -262,6 +267,73 @@ describe("daemonStartStep", () => {
       ([msg]) => typeof msg === "string" && msg.includes("docker"),
     );
     expect(warnedAboutDockerRestart).toBe(true);
+  });
+
+  // 260428-qrn: when the wizard is about to SIGTERM the in-container daemon,
+  // it must first emit a WARN naming `--restart unless-stopped` so the user
+  // gets a breadcrumb before the daemon disappears. Asserted via invocation
+  // call order: warn() must run BEFORE process.kill().
+  it("inside Docker -> emits pre-SIGTERM WARN naming `unless-stopped` BEFORE process.kill", async () => {
+    // /.dockerenv present + every other path exists (including the
+    // /proc/<pid>/cmdline + status reads inside findContainerDaemonPid).
+    vi.mocked(existsSync).mockReturnValue(true);
+    // Stub /proc walk: one pid 42 owned by PID 1, cmdline contains "daemon.js".
+    vi.mocked(readdirSync).mockReturnValue(["1", "42"] as unknown as ReturnType<typeof readdirSync>);
+    vi.mocked(readFileSync).mockImplementation(((p: unknown) => {
+      const path = String(p);
+      if (path === "/proc/42/cmdline") return "node\0/app/packages/daemon/dist/daemon.js\0";
+      if (path === "/proc/42/status") return "Name:\tnode\nPPid:\t1\n";
+      return "";
+    }) as never);
+
+    // Gateway responds OK -> daemonRunning=true -> "Restart" branch.
+    // After SIGTERM, the waitForRestart probe should report down-then-up so
+    // the wizard reports success (not the fall-through warning). We do that
+    // by failing the first few fetches then succeeding.
+    let fetchCount = 0;
+    vi.stubGlobal("fetch", vi.fn(() => {
+      fetchCount++;
+      if (fetchCount <= 1) {
+        // initial daemonRunning probe
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok" }) });
+      }
+      if (fetchCount <= 3) {
+        // post-kill: gateway down phase
+        return Promise.reject(new Error("ECONNREFUSED"));
+      }
+      // gateway back up
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "ok" }) });
+    }));
+
+    // Capture process.kill ordering without actually signalling the test runner.
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((() => true) as never);
+
+    const prompter = createMockPrompter({ select: ["restart"] });
+    const warnSpy = prompter.log.warn as ReturnType<typeof vi.fn>;
+
+    await daemonStartStep.execute(stateWithGateway(), prompter);
+
+    // process.kill must have been invoked with SIGTERM on our fake PID 42.
+    expect(killSpy).toHaveBeenCalledWith(42, "SIGTERM");
+    expect(killSpy.mock.invocationCallOrder.length).toBeGreaterThan(0);
+
+    // The pre-SIGTERM WARN must mention both `unless-stopped` AND `docker restart`.
+    const unlessStoppedCall = warnSpy.mock.calls.findIndex(
+      ([msg]) => typeof msg === "string"
+        && msg.includes("unless-stopped")
+        && msg.includes("docker restart"),
+    );
+    expect(unlessStoppedCall).toBeGreaterThanOrEqual(0);
+
+    // Order assertion: the WARN must fire BEFORE process.kill.
+    const warnOrder = warnSpy.mock.invocationCallOrder[unlessStoppedCall]!;
+    const killOrder = killSpy.mock.invocationCallOrder[0]!;
+    expect(warnOrder).toBeLessThan(killOrder);
+
+    // Buggy direct-spawn must still not run.
+    expect(spawn).not.toHaveBeenCalled();
+
+    killSpy.mockRestore();
   });
 
   it("daemon binary not found -> warns user, no spawn", async () => {

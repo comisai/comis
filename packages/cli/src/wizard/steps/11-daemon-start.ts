@@ -499,6 +499,13 @@ export const daemonStartStep: WizardStep = {
         dockerSpinner.start("Signalling container daemon to restart...");
         const targetPid = await findContainerDaemonPid();
         if (targetPid) {
+          // 260428-qrn: Prime the user BEFORE the SIGTERM so they have a
+          // breadcrumb pointing at the missing `--restart unless-stopped`
+          // flag. This is a heads-up, not an abort -- the existing
+          // waitForRestart detector still handles the failure path below.
+          prompter.log.warn(
+            "Restarting daemon via SIGTERM. The container must have been started with `--restart unless-stopped` (or equivalent compose `restart: unless-stopped`). If the container exits and stays exited, run `docker restart <container-name>` from your host.",
+          );
           try { process.kill(targetPid, "SIGTERM"); } catch { /* already gone */ }
           // Wait for the gateway to disappear, then for it to come back
           // (Docker restart policy respawns the container).
