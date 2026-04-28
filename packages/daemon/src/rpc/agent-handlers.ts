@@ -24,6 +24,11 @@ import {
   DEFAULT_PROVIDER_KEYS,
 } from "@comis/agent";
 import { persistToConfig, type PersistToConfigDeps } from "./persist-to-config.js";
+import {
+  writeInlineWorkspaceFiles,
+  type AgentInlineWorkspaceResult,
+  type AgentInlineWorkspaceError,
+} from "./agent-inline-workspace.js";
 
 import type { RpcHandler } from "./types.js";
 
@@ -71,6 +76,17 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       if (deps.agents[agentId] !== undefined) {
         throw new Error(`Agent already exists: ${agentId}`);
       }
+
+      // 260428-vyf L2: extract inlineContent BEFORE config processing.
+      // role/identity are write-once side-effects (ROLE.md / IDENTITY.md
+      // file writes), NOT durable state — they NEVER enter the persisted
+      // config patch. The L1 tool boundary is responsible for stripping
+      // them from `config.workspace` before this RPC is called; this
+      // handler only consumes the dedicated top-level `inlineContent`
+      // field. If a (mis)caller leaves them inside config.workspace, the
+      // downstream Zod strict-object will reject them — that's an
+      // explicit failure mode, not a silent drop.
+      const inlineContent = (params.inlineContent as { role?: string; identity?: string } | undefined) ?? undefined;
 
       const config = (params.config as Partial<PerAgentConfig>) ?? {};
       // Strip workspacePath so new agents always get the auto-computed
@@ -129,7 +145,58 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         }
       }
 
-      return { agentId, config: parsedConfig, created: true, workspaceDir: resolveWorkspaceDir(parsedConfig, agentId) };
+      const workspaceDir = resolveWorkspaceDir(parsedConfig, agentId);
+
+      // 260428-vyf L2: best-effort inline ROLE.md / IDENTITY.md write.
+      // Only invoke when inlineContent has at least one populated field
+      // AND the persistDeps logger is available (the helper requires a
+      // structured logger; the in-memory-only test path skips it).
+      let inlineWritesResult:
+        | AgentInlineWorkspaceResult
+        | { ok: false; error: AgentInlineWorkspaceError }
+        | undefined;
+      if (
+        deps.persistDeps?.logger
+        && inlineContent
+        && (inlineContent.role !== undefined || inlineContent.identity !== undefined)
+      ) {
+        const writeResult = await writeInlineWorkspaceFiles(
+          { logger: deps.persistDeps.logger },
+          { workspaceDir, agentId, role: inlineContent.role, identity: inlineContent.identity },
+        );
+        if (writeResult.ok) {
+          inlineWritesResult = writeResult.value;
+        } else {
+          // Best-effort: don't fail the create. The helper has already
+          // emitted a structured WARN for io / path_traversal. For the
+          // oversize branch the helper does NOT log (the schema layer
+          // is the canonical gate) — emit a defensive WARN here so the
+          // daemon-side surface is not silent.
+          if (writeResult.error.kind === "oversize") {
+            deps.persistDeps.logger.warn(
+              {
+                method: "agents.create",
+                agentId,
+                file: writeResult.error.file,
+                limit: writeResult.error.limit,
+                actual: writeResult.error.actual,
+                hint: "Inline content exceeded size limit at helper layer (schema should have caught this); agent exists with template files.",
+                errorKind: "validation" as const,
+              },
+              "Inline workspace content oversize",
+            );
+          }
+          inlineWritesResult = { ok: false, error: writeResult.error };
+        }
+      }
+
+      return {
+        agentId,
+        config: parsedConfig,
+        created: true,
+        workspaceDir,
+        ...(inlineWritesResult !== undefined ? { inlineWritesResult } : {}),
+      };
     },
 
     "agents.get": async (params) => {
