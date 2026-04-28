@@ -45,6 +45,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { readFile as fsReadFile } from "node:fs/promises";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -470,4 +471,247 @@ function blockHash(block: unknown): string {
   const redacted = readField(block, "redacted");
   const input = buildHashInput(type, thinking, signature, redacted);
   return createHash("sha256").update(input).digest("hex");
+}
+
+// ---------------------------------------------------------------------------
+// 260428-iag: Wire-edge diagnostic — diff in-memory thinking blocks against
+// persisted JSONL canonical.
+//
+// Fires from the pi-event-bridge LLM-error path when Anthropic returns 400
+// with a "thinking blocks ... cannot be modified" signature, even after the
+// 260428-hoy canonical-restore layer ran pre-serialize. The persisted JSONL
+// is the only truly immutable record of the assistant message — written
+// byte-for-byte from Anthropic's stream at receipt time. A divergence between
+// in-memory content and persisted canonical at this point implies the
+// mutation occurred AFTER the bridge restoration hook (likely inside pi-ai's
+// `sanitizeSurrogates` during request serialization).
+//
+// Behavior contract (mirrors the rest of this module):
+// - NEVER throws. Every code path returns normally.
+// - Read errors / parse errors / responseId-not-found degrade to ONE WARN log
+//   and an empty result. The diagnostic must NEVER abort agent flow.
+// - Caller passes a resolved `jsonlPath`; this helper does not compose paths.
+// ---------------------------------------------------------------------------
+
+const WIRE_DIFF_MODULE_FIELD = "agent.bridge.wire-diff";
+
+const WIRE_DIFF_HINT_FILE_MISSING =
+  "JSONL session file unreadable; wire-edge diff skipped. " +
+  "Confirm session path resolution and filesystem permissions.";
+
+const WIRE_DIFF_HINT_NOT_FOUND =
+  "responseId not present in persisted JSONL session file; " +
+  "wire-edge diff skipped. The assistant message may not have been " +
+  "persisted yet, or the responseId was rotated.";
+
+const WIRE_DIFF_HINT_INTERNAL =
+  "Wire-edge diff aborted on unexpected internal error; in-memory " +
+  "shape passed through unchanged. Inspect prior context-engine layers.";
+
+/** A single divergent block found by `diffThinkingBlocksAgainstPersisted`. */
+export interface PersistedDiffEntry {
+  /** Position within the thinking-only stream (matches computeThinkingBlockHashes blockIndex). */
+  blockIndex: number;
+  /** SHA-256 hash of the persisted (canonical) block. */
+  persistedHash: string;
+  /** SHA-256 hash of the in-memory block, or null when the block is missing entirely. */
+  inMemoryHash: string | null;
+  /** First 32 chars of persisted thinking text. */
+  persistedText: { firstChars: string };
+  /** First 32 chars of in-memory thinking text; empty string when block missing. */
+  inMemoryText: { firstChars: string };
+  /** Length of the persisted thinkingSignature. */
+  persistedSigLen: number;
+  /** Length of the in-memory thinkingSignature; 0 when block missing. */
+  inMemorySigLen: number;
+}
+
+/** Logger + readFile dependency injection for `diffThinkingBlocksAgainstPersisted`.
+ *
+ *  Both fields optional. When `readFile` is omitted, the module-level
+ *  `node:fs/promises` readFile is used. When `logger` is omitted, the helper
+ *  silently skips all log calls (used by tests + by silent-failure paths). */
+export interface DiffDeps {
+  logger?: {
+    warn: (obj: Record<string, unknown>, msg: string) => void;
+    error?: (obj: Record<string, unknown>, msg: string) => void;
+  };
+  /** Inject for test isolation. Returns the JSONL file contents as a UTF-8 string. */
+  readFile?: (path: string, encoding: "utf-8") => Promise<string>;
+}
+
+/** Best-effort wire-diff log -- swallows logger errors. */
+function safeWireDiffLog(
+  deps: DiffDeps | undefined,
+  level: "warn",
+  payload: Record<string, unknown>,
+  msg: string,
+): void {
+  const logger = deps?.logger;
+  if (!logger) return;
+  try {
+    if (level === "warn") logger.warn(payload, msg);
+  } catch {
+    // Diagnostic must NEVER abort agent flow even if the logger itself fails.
+  }
+}
+
+/**
+ * Diff in-memory thinking blocks against the persisted JSONL canonical.
+ *
+ * Reads the persisted JSONL session file, locates the FIRST assistant message
+ * matching `responseId`, and compares its content (canonical, written from
+ * Anthropic's stream at receipt time) against `inMemoryContent` using the
+ * existing `computeThinkingBlockHashes` primitive.
+ *
+ * Returns an array of `PersistedDiffEntry` -- one per divergent thinking
+ * block. When everything matches positionally, returns `[]`. When in-memory
+ * has fewer thinking blocks than persisted, each missing index produces an
+ * entry with `inMemoryHash: null`, empty `inMemoryText.firstChars`, and
+ * `inMemorySigLen: 0`.
+ *
+ * Behavior contract:
+ * - NEVER throws. Read errors, parse errors, or responseId-not-found degrade
+ *   to ONE WARN log + `[]`.
+ * - When TWO assistant messages share the same responseId in the JSONL,
+ *   uses the FIRST match (matches the bridge's "trust the first persisted
+ *   state" semantic).
+ * - Malformed lines (invalid JSON) are skipped silently; scanning continues.
+ *
+ * @param inMemoryContent - The in-memory content array of the assistant
+ *   message (the same shape pi-ai is about to serialize).
+ * @param responseId - The responseId of the assistant message to look up.
+ * @param jsonlPath - Resolved absolute path to the JSONL session file. Path
+ *   composition is the caller's responsibility (this helper does no
+ *   safePath / sessionKey routing).
+ * @param deps - Optional logger + readFile injection.
+ */
+export async function diffThinkingBlocksAgainstPersisted(
+  inMemoryContent: ReadonlyArray<Record<string, unknown>> | undefined | null,
+  responseId: string,
+  jsonlPath: string,
+  deps?: DiffDeps,
+): Promise<PersistedDiffEntry[]> {
+  try {
+    // Step 1: Read the persisted JSONL file.
+    const reader = deps?.readFile ?? fsReadFile;
+    let text: string;
+    try {
+      // jsonlPath is resolved upstream via sessionKeyToPath -> safePath, so
+      // the file path is traversal-safe by construction. Lint isn't triggered
+      // here because `reader` is a polymorphic variable; doc kept for review.
+      text = await reader(jsonlPath, "utf-8");
+    } catch (readErr) {
+      safeWireDiffLog(
+        deps,
+        "warn",
+        {
+          module: WIRE_DIFF_MODULE_FIELD,
+          errorKind: ERROR_KIND,
+          hint: WIRE_DIFF_HINT_FILE_MISSING,
+          jsonlPath,
+          responseId,
+          err: readErr instanceof Error ? readErr.message : String(readErr),
+        },
+        "Persisted JSONL not readable; wire-edge diff skipped",
+      );
+      return [];
+    }
+
+    // Step 2: Walk lines, find the FIRST assistant message with matching responseId.
+    let persistedContent: ReadonlyArray<Record<string, unknown>> | null = null;
+    const lines = text.split("\n");
+    for (const line of lines) {
+      if (line.length === 0) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        // Malformed line -- skip silently and continue scanning.
+        continue;
+      }
+      if (parsed === null || typeof parsed !== "object") continue;
+      const entry = parsed as { type?: unknown; message?: unknown };
+      if (entry.type !== "message") continue;
+      const message = entry.message;
+      if (message === null || typeof message !== "object") continue;
+      const msg = message as { role?: unknown; responseId?: unknown; content?: unknown };
+      if (msg.role !== "assistant") continue;
+      if (msg.responseId !== responseId) continue;
+      // First match wins.
+      persistedContent = Array.isArray(msg.content)
+        ? (msg.content as ReadonlyArray<Record<string, unknown>>)
+        : [];
+      break;
+    }
+
+    if (persistedContent === null) {
+      safeWireDiffLog(
+        deps,
+        "warn",
+        {
+          module: WIRE_DIFF_MODULE_FIELD,
+          errorKind: ERROR_KIND,
+          hint: WIRE_DIFF_HINT_NOT_FOUND,
+          jsonlPath,
+          responseId,
+        },
+        "responseId not found in persisted JSONL; wire-edge diff skipped",
+      );
+      return [];
+    }
+
+    // Step 3: Compute per-side hashes and diff positionally.
+    const persistedHashes = computeThinkingBlockHashes(persistedContent);
+    const inMemoryHashes = computeThinkingBlockHashes(inMemoryContent ?? []);
+    const byIndex = new Map<number, ThinkingBlockHash>();
+    for (const h of inMemoryHashes) byIndex.set(h.blockIndex, h);
+
+    const entries: PersistedDiffEntry[] = [];
+    for (const persisted of persistedHashes) {
+      const now = byIndex.get(persisted.blockIndex);
+      if (!now) {
+        entries.push({
+          blockIndex: persisted.blockIndex,
+          persistedHash: persisted.hash,
+          inMemoryHash: null,
+          persistedText: { firstChars: persisted.textFirstChars },
+          inMemoryText: { firstChars: "" },
+          persistedSigLen: persisted.sigLen,
+          inMemorySigLen: 0,
+        });
+        continue;
+      }
+      if (now.hash !== persisted.hash) {
+        entries.push({
+          blockIndex: persisted.blockIndex,
+          persistedHash: persisted.hash,
+          inMemoryHash: now.hash,
+          persistedText: { firstChars: persisted.textFirstChars },
+          inMemoryText: { firstChars: now.textFirstChars },
+          persistedSigLen: persisted.sigLen,
+          inMemorySigLen: now.sigLen,
+        });
+      }
+    }
+    return entries;
+  } catch (unexpectedErr) {
+    // Defensive last-resort: if anything else throws (parse internals,
+    // computeThinkingBlockHashes against malformed input, etc.), degrade
+    // to WARN + empty result.
+    safeWireDiffLog(
+      deps,
+      "warn",
+      {
+        module: WIRE_DIFF_MODULE_FIELD,
+        errorKind: ERROR_KIND,
+        hint: WIRE_DIFF_HINT_INTERNAL,
+        jsonlPath,
+        responseId,
+        err: unexpectedErr instanceof Error ? unexpectedErr.message : String(unexpectedErr),
+      },
+      "Wire-edge diff aborted on unexpected error",
+    );
+    return [];
+  }
 }

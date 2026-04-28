@@ -120,6 +120,17 @@ export interface ComisSessionManager {
    * Fire-and-forget -- metadata write failure must not affect execution.
    */
   writeSessionMetadata(sessionKey: SessionKey, metadata: SessionMetadata): void;
+
+  /**
+   * 260428-iag: Resolve the absolute JSONL session file path for a session key.
+   *
+   * Thin synchronous wrapper around `sessionKeyToPath(sessionKey, deps.sessionBaseDir)`
+   * that exposes the path resolver to the wire-edge diagnostic in pi-event-bridge.
+   * Pure delegation -- no I/O, no logging, no side effects. Path composition is
+   * delegated to `sessionKeyToPath`, which uses `safePath` for traversal-safe
+   * resolution.
+   */
+  getSessionPath(sessionKey: SessionKey): string;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +186,12 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
         );
         try { await rmdir(sessionDir); } catch { /* non-empty or already gone */ }
       }, { retries: 10, retryMinTimeout: 500 });
+    },
+
+    getSessionPath(sessionKey: SessionKey): string {
+      // 260428-iag wire-edge diagnostic: pure delegation to sessionKeyToPath
+      // (which uses safePath internally). No I/O, no logging.
+      return sessionKeyToPath(sessionKey, deps.sessionBaseDir);
     },
 
     writeSessionMetadata(sessionKey: SessionKey, metadata: SessionMetadata): void {

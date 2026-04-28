@@ -24,6 +24,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertThinkingBlocksUnchanged,
   computeThinkingBlockHashes,
+  diffThinkingBlocksAgainstPersisted,
   restoreCanonicalThinkingBlocks,
   type ThinkingBlockHash,
 } from "./thinking-block-hash-invariant.js";
@@ -607,6 +608,248 @@ describe("restoreCanonicalThinkingBlocks", () => {
     expect(result.messages[0]).toBe(headlessMsg);
     // healable was replaced with a new message reference
     expect(result.messages[1]).not.toBe(healable);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// diffThinkingBlocksAgainstPersisted (260428-iag wire-edge diagnostic)
+// ---------------------------------------------------------------------------
+
+describe("diffThinkingBlocksAgainstPersisted", () => {
+  // Helper: build a JSONL string from an array of entries. Each entry is wrapped
+  // as { type: "message", message: { role: "assistant", responseId, content } }.
+  const buildJsonl = (
+    messages: ReadonlyArray<{ responseId: string; content: ReadonlyArray<unknown> }>,
+    extras: ReadonlyArray<string> = [],
+  ): string => {
+    const lines = messages.map((m) =>
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", responseId: m.responseId, content: m.content },
+      }),
+    );
+    return [...extras, ...lines].join("\n");
+  };
+
+  // Helper: stub readFile that returns the given JSONL contents on any path.
+  const stubReadFile = (jsonl: string) => vi.fn().mockResolvedValue(jsonl);
+
+  it("returns [] and emits no logs when persisted matches in-memory exactly", async () => {
+    const blocks = [blockA(), blockB()];
+    const jsonl = buildJsonl([{ responseId: "resp_1", content: blocks }]);
+    const warn = vi.fn();
+    const readFile = stubReadFile(jsonl);
+    const result = await diffThinkingBlocksAgainstPersisted(
+      blocks,
+      "resp_1",
+      "/test/session.jsonl",
+      { logger: { warn }, readFile },
+    );
+    expect(result).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("returns ONE entry with populated firstChars on both sides when text differs at index 0", async () => {
+    const persisted = [blockA(), blockB()];
+    const inMemory = [blockA({ thinking: TEXT_A + "_MUTATED" }), blockB()];
+    const jsonl = buildJsonl([{ responseId: "resp_1", content: persisted }]);
+    const warn = vi.fn();
+    const result = await diffThinkingBlocksAgainstPersisted(
+      inMemory,
+      "resp_1",
+      "/test/session.jsonl",
+      { logger: { warn }, readFile: stubReadFile(jsonl) },
+    );
+    expect(result).toHaveLength(1);
+    const entry = result[0]!;
+    expect(entry.blockIndex).toBe(0);
+    expect(entry.persistedText.firstChars).toBe(TEXT_A.slice(0, 32));
+    expect(entry.inMemoryText.firstChars).toBe((TEXT_A + "_MUTATED").slice(0, 32));
+    expect(entry.persistedSigLen).toBe(SIG_A.length);
+    expect(entry.inMemorySigLen).toBe(SIG_A.length); // same sig
+    expect(entry.inMemoryHash).not.toBeNull();
+    expect(entry.persistedHash).not.toBe(entry.inMemoryHash);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("returns ONE entry with distinct sigLen when only signature differs at index 1", async () => {
+    const persisted = [blockA(), blockB()];
+    const inMemory = [blockA(), blockB({ thinkingSignature: SIG_B + "_extra" })];
+    const jsonl = buildJsonl([{ responseId: "resp_2", content: persisted }]);
+    const result = await diffThinkingBlocksAgainstPersisted(
+      inMemory,
+      "resp_2",
+      "/test/session.jsonl",
+      { logger: { warn: vi.fn() }, readFile: stubReadFile(jsonl) },
+    );
+    expect(result).toHaveLength(1);
+    const entry = result[0]!;
+    expect(entry.blockIndex).toBe(1);
+    expect(entry.persistedSigLen).toBe(SIG_B.length);
+    expect(entry.inMemorySigLen).toBe((SIG_B + "_extra").length);
+    expect(entry.persistedSigLen).not.toBe(entry.inMemorySigLen);
+  });
+
+  it("returns ONE entry with inMemoryHash:null when in-memory has fewer thinking blocks", async () => {
+    const persisted = [blockA(), blockB()];
+    const inMemory = [blockA()]; // missing index 1
+    const jsonl = buildJsonl([{ responseId: "resp_3", content: persisted }]);
+    const result = await diffThinkingBlocksAgainstPersisted(
+      inMemory,
+      "resp_3",
+      "/test/session.jsonl",
+      { logger: { warn: vi.fn() }, readFile: stubReadFile(jsonl) },
+    );
+    expect(result).toHaveLength(1);
+    const entry = result[0]!;
+    expect(entry.blockIndex).toBe(1);
+    expect(entry.inMemoryHash).toBeNull();
+    expect(entry.inMemoryText.firstChars).toBe("");
+    expect(entry.inMemorySigLen).toBe(0);
+    expect(entry.persistedText.firstChars).toBe(TEXT_B.slice(0, 32));
+    expect(entry.persistedSigLen).toBe(SIG_B.length);
+  });
+
+  it("returns [] when both sides only contain redacted thinking blocks (mirrors compute skip rule)", async () => {
+    const redactedBlocks = [
+      { type: "thinking", redacted: true, thinkingSignature: "redacted-sig-1" },
+      { type: "thinking", redacted: true, thinkingSignature: "redacted-sig-2" },
+    ];
+    const jsonl = buildJsonl([{ responseId: "resp_4", content: redactedBlocks }]);
+    const warn = vi.fn();
+    const result = await diffThinkingBlocksAgainstPersisted(
+      redactedBlocks,
+      "resp_4",
+      "/test/session.jsonl",
+      { logger: { warn }, readFile: stubReadFile(jsonl) },
+    );
+    expect(result).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("returns [] and emits ONE warn (module='agent.bridge.wire-diff') when responseId not found", async () => {
+    const jsonl = buildJsonl([{ responseId: "resp_other", content: [blockA()] }]);
+    const warn = vi.fn();
+    const result = await diffThinkingBlocksAgainstPersisted(
+      [blockA()],
+      "resp_missing",
+      "/test/session.jsonl",
+      { logger: { warn }, readFile: stubReadFile(jsonl) },
+    );
+    expect(result).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [payload, msg] = warn.mock.calls[0]!;
+    expect(payload).toMatchObject({
+      module: "agent.bridge.wire-diff",
+      errorKind: "internal",
+      responseId: "resp_missing",
+      jsonlPath: "/test/session.jsonl",
+    });
+    expect(typeof payload.hint).toBe("string");
+    expect((payload.hint as string).length).toBeGreaterThan(0);
+    expect(typeof msg).toBe("string");
+    expect((msg as string).length).toBeGreaterThan(0);
+  });
+
+  it("returns [] and emits ONE warn when readFile rejects with ENOENT", async () => {
+    const warn = vi.fn();
+    const enoent = Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
+    const readFile = vi.fn().mockRejectedValue(enoent);
+    const result = await diffThinkingBlocksAgainstPersisted(
+      [blockA()],
+      "resp_5",
+      "/test/missing.jsonl",
+      { logger: { warn }, readFile },
+    );
+    expect(result).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [payload] = warn.mock.calls[0]!;
+    expect(payload).toMatchObject({
+      module: "agent.bridge.wire-diff",
+      errorKind: "internal",
+      jsonlPath: "/test/missing.jsonl",
+      responseId: "resp_5",
+    });
+    expect(typeof payload.hint).toBe("string");
+  });
+
+  it("skips malformed JSONL lines silently and still finds the matching message", async () => {
+    const blocks = [blockA()];
+    const goodLine = JSON.stringify({
+      type: "message",
+      message: { role: "assistant", responseId: "resp_6", content: blocks },
+    });
+    const jsonl = ["{this is not valid json", "null", "{}", goodLine, "{also broken"].join("\n");
+    const warn = vi.fn();
+    const result = await diffThinkingBlocksAgainstPersisted(
+      blocks,
+      "resp_6",
+      "/test/session.jsonl",
+      { logger: { warn }, readFile: stubReadFile(jsonl) },
+    );
+    expect(result).toEqual([]);
+    // No WARN — match was found despite malformed lines.
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("uses the FIRST match when JSONL contains two assistant messages with the same responseId", async () => {
+    // First persisted entry MATCHES in-memory; second persisted entry has divergent text.
+    // The helper must use the FIRST match -> expect [] (no divergence).
+    const inMemory = [blockA()];
+    const jsonl = buildJsonl([
+      { responseId: "resp_7", content: [blockA()] }, // FIRST -- matches
+      { responseId: "resp_7", content: [blockA({ thinking: "DIVERGENT" })] }, // SECOND -- ignored
+    ]);
+    const result = await diffThinkingBlocksAgainstPersisted(
+      inMemory,
+      "resp_7",
+      "/test/session.jsonl",
+      { logger: { warn: vi.fn() }, readFile: stubReadFile(jsonl) },
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("works when deps argument omits logger entirely (silent path on read error, no throw)", async () => {
+    const readFile = vi.fn().mockRejectedValue(new Error("ENOENT"));
+    // No logger -- helper must complete without throwing and return [].
+    const result = await diffThinkingBlocksAgainstPersisted(
+      [blockA()],
+      "resp_8",
+      "/test/missing.jsonl",
+      { readFile }, // no logger
+    );
+    expect(result).toEqual([]);
+    // Sanity: also works when deps argument is omitted entirely (uses real fs,
+    // which will reject because the path doesn't exist on disk).
+    const result2 = await diffThinkingBlocksAgainstPersisted(
+      [blockA()],
+      "resp_8",
+      "/test/definitely/does/not/exist.jsonl",
+    );
+    expect(result2).toEqual([]);
+  });
+
+  it("ignores non-message and non-assistant JSONL entries", async () => {
+    const blocks = [blockA()];
+    const headerLine = JSON.stringify({ type: "header", version: 1 });
+    const userLine = JSON.stringify({
+      type: "message",
+      message: { role: "user", responseId: "resp_9", content: [{ type: "text", text: "hi" }] },
+    });
+    const matchingLine = JSON.stringify({
+      type: "message",
+      message: { role: "assistant", responseId: "resp_9", content: blocks },
+    });
+    const jsonl = [headerLine, userLine, matchingLine].join("\n");
+    const warn = vi.fn();
+    const result = await diffThinkingBlocksAgainstPersisted(
+      blocks,
+      "resp_9",
+      "/test/session.jsonl",
+      { logger: { warn }, readFile: stubReadFile(jsonl) },
+    );
+    expect(result).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

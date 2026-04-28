@@ -55,5 +55,13 @@ export function createEphemeralComisSessionManager(cwd: string): ComisSessionMan
     writeSessionMetadata() {
       // No-op: no companion file for in-memory sessions
     },
+
+    getSessionPath() {
+      // 260428-iag wire-edge diagnostic: ephemeral sub-agent sessions never
+      // persist a JSONL file, so there is no path to return. Empty string
+      // signals "no persisted file"; the bridge's wire-diff hook short-circuits
+      // when jsonlPath.length === 0.
+      return "";
+    },
   };
 }

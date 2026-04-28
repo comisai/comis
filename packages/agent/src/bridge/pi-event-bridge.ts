@@ -41,7 +41,7 @@ import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { extractMcpServerName, classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { checkStepLimit, emitStepLimitAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
-import { computeThinkingBlockHashes, type ThinkingBlockHash } from "./thinking-block-hash-invariant.js";
+import { computeThinkingBlockHashes, diffThinkingBlocksAgainstPersisted, type ThinkingBlockHash } from "./thinking-block-hash-invariant.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -146,6 +146,13 @@ export interface PiEventBridgeDeps {
    *  omitted, both the diagnostic and the heal are silently disabled
    *  (e.g., unit tests that don't drive a full agent session). */
   getSessionMessages?: () => ReadonlyArray<unknown> | undefined;
+  /** 260428-iag wire-edge diagnostic: returns the absolute path to the
+   *  per-session JSONL on disk. The bridge invokes this only when the LLM
+   *  error path detects the signed-replay rejection signature, then
+   *  diff'd against the persisted canonical to surface mutation that
+   *  occurred AFTER the bridge's restoration hook. Optional — when
+   *  omitted, the wire-edge diagnostic is a silent no-op. */
+  getSessionJsonlPath?: () => string | null;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -1097,6 +1104,97 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             },
             "LLM call returned error",
           );
+          // 260428-iag wire-edge diagnostic: when the LLM error matches the
+          // Anthropic signed-replay rejection signature ("thinking blocks ...
+          // cannot be modified"), diff the in-memory content against the
+          // persisted JSONL canonical and emit one ERROR per divergent block.
+          // Fully async / fire-and-forget — never blocks the existing error
+          // path. Silent no-op when the signature doesn't match or when
+          // either getSessionMessages / getSessionJsonlPath is unwired.
+          //
+          // The signature regex matches Anthropic's actual 400 message:
+          // "messages.N.content.M: thinking blocks cannot be modified"
+          // and the redacted_thinking variant. Both `thinking|redacted_thinking`
+          // AND `modif|cannot` must be present to avoid false positives on
+          // unrelated 400s (rate limits, auth, schema errors).
+          {
+            const errMsg = m.lastLlmErrorMessage;
+            const isSignedReplayRejection =
+              typeof errMsg === "string" &&
+              /thinking|redacted_thinking/.test(errMsg) &&
+              /modif|cannot/.test(errMsg);
+            if (
+              isSignedReplayRejection &&
+              deps.getSessionMessages &&
+              deps.getSessionJsonlPath
+            ) {
+              const live = deps.getSessionMessages();
+              const jsonlPath = deps.getSessionJsonlPath();
+              if (Array.isArray(live) && typeof jsonlPath === "string" && jsonlPath.length > 0) {
+                // Snapshot the last <=3 candidate messages now (sync) -- the
+                // async dispatch below uses these snapshots, never touches
+                // the live array.
+                type Candidate = { responseId: string; content: ReadonlyArray<Record<string, unknown>> };
+                const candidates: Candidate[] = [];
+                for (let i = live.length - 1; i >= 0 && candidates.length < 3; i--) {
+                  // eslint-disable-next-line security/detect-object-injection -- numeric loop index
+                  const msg = live[i] as { role?: string; responseId?: string; content?: unknown };
+                  if (!msg || typeof msg !== "object") continue;
+                  if (msg.role !== "assistant") continue;
+                  if (typeof msg.responseId !== "string") continue;
+                  if (!Array.isArray(msg.content)) continue;
+                  const blocks = msg.content as Array<Record<string, unknown>>;
+                  const hasSigned = blocks.some(
+                    (b) =>
+                      b.type === "thinking" &&
+                      typeof b.thinkingSignature === "string" &&
+                      (b.thinkingSignature as string).length > 0 &&
+                      b.redacted !== true,
+                  );
+                  if (!hasSigned) continue;
+                  candidates.push({ responseId: msg.responseId, content: blocks });
+                }
+                if (candidates.length > 0) {
+                  const capturedJsonlPath = jsonlPath;
+                  // Async non-blocking dispatch -- never blocks the error path.
+                  void Promise.resolve().then(async () => {
+                    try {
+                      for (const c of candidates) {
+                        const entries = await diffThinkingBlocksAgainstPersisted(
+                          c.content,
+                          c.responseId,
+                          capturedJsonlPath,
+                          { logger: deps.logger },
+                        );
+                        for (const entry of entries) {
+                          deps.logger.error(
+                            {
+                              module: "agent.bridge.wire-diff",
+                              responseId: c.responseId,
+                              blockIndex: entry.blockIndex,
+                              persistedHash: entry.persistedHash,
+                              inMemoryHash: entry.inMemoryHash,
+                              persistedText: entry.persistedText,
+                              inMemoryText: entry.inMemoryText,
+                              persistedSigLen: entry.persistedSigLen,
+                              inMemorySigLen: entry.inMemorySigLen,
+                              errorKind: "internal" as const,
+                              hint:
+                                "Mutation occurred between bridge restoration hook and " +
+                                "pi-ai serialization — likely inside pi-ai or its dependencies",
+                            },
+                            "Wire-edge thinking-block divergence vs persisted JSONL",
+                          );
+                        }
+                      }
+                    } catch {
+                      // Diagnostic must NEVER abort the error path.
+                    }
+                  });
+                }
+              }
+            }
+          }
           deps.circuitBreaker.recordFailure();
           deps.providerHealth?.recordFailure(deps.provider, deps.agentId);
           // If circuit breaker just opened, abort mid-execution

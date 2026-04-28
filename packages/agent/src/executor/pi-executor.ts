@@ -1241,6 +1241,13 @@ export function createPiExecutor(
               }
               return live;
             },
+            // 260428-iag wire-edge diagnostic: resolves the per-session JSONL
+            // path on demand. The bridge invokes this only after detecting the
+            // signed-replay rejection signature on a 400 — never on the happy
+            // path. Path comes from the same sessionAdapter that already
+            // governs read/write of the file, so safePath / sessionKey routing
+            // is reused (sessionKeyToPath -> safePath under the hood).
+            getSessionJsonlPath: () => sessionAdapter.getSessionPath(sessionKey),
             // Budget trajectory warning: shared ref and per-execution cap
             perExecutionBudgetCap: config.budgets?.perExecution,
             budgetWarningRef,
