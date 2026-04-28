@@ -1190,6 +1190,10 @@ export function createPiExecutor(
                 timestamp: Date.now(),
               };
             },
+            // Bug A diagnostic: expose live session transcript so the bridge
+            // can recompare prior assistant-message thinking-block hashes at
+            // each turn_end. Logs only -- never alters request flow.
+            getSessionMessages: () => session.agent.state.messages,
             // Budget trajectory warning: shared ref and per-execution cap
             perExecutionBudgetCap: config.budgets?.perExecution,
             budgetWarningRef,

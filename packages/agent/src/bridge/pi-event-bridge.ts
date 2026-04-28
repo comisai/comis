@@ -41,6 +41,7 @@ import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { extractMcpServerName, classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { checkStepLimit, emitStepLimitAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
+import { computeThinkingBlockHashes, assertThinkingBlocksUnchanged } from "./thinking-block-hash-invariant.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -134,6 +135,13 @@ export interface PiEventBridgeDeps {
    *  on each API call, read by the bridge on turn_end for per-TTL cost calculation.
    *  The bridge normalizes these estimates against the actual SDK-reported cacheWriteTokens. */
   ttlSplit?: TtlSplitEstimate;
+  /** Bug A diagnostic accessor: returns the current session message transcript
+   *  (typically `session.agent.state.messages`). Called once per turn_end to
+   *  re-hash any prior assistant messages with stored hashes and detect
+   *  cross-turn mutation of signed thinking blocks. Optional -- when omitted,
+   *  the diagnostic is silently disabled (e.g., for unit tests that don't
+   *  drive a full agent session). */
+  getSessionMessages?: () => ReadonlyArray<unknown> | undefined;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -395,6 +403,40 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // LLM turn completed
         // -----------------------------------------------------------------
         case "turn_end": {
+          // Bug A diagnostic -- pinpoints the layer mutating thinking blocks
+          // between turns. Logs only; never alters request flow.
+          //
+          // Walk the session transcript NOW (before processing the new turn's
+          // message) and re-hash any prior assistant messages that have
+          // captured hashes. Anthropic's signed-replay rejection happens at
+          // the API call that produced THIS turn_end, so any mutation
+          // observable here happened between the prior turn_end (capture) and
+          // this turn's serialize step.
+          if (deps.getSessionMessages && m.thinkingBlockHashes.size > 0) {
+            try {
+              const sessionMessages = deps.getSessionMessages();
+              if (Array.isArray(sessionMessages)) {
+                for (const sessMsg of sessionMessages) {
+                  if (!sessMsg || typeof sessMsg !== "object") continue;
+                  const sm = sessMsg as { role?: string; responseId?: string; content?: unknown };
+                  if (sm.role !== "assistant") continue;
+                  if (typeof sm.responseId !== "string") continue;
+                  const prior = m.thinkingBlockHashes.get(sm.responseId);
+                  if (!prior) continue;
+                  const currentContent = Array.isArray(sm.content)
+                    ? (sm.content as Array<Record<string, unknown>>)
+                    : [];
+                  assertThinkingBlocksUnchanged(prior, currentContent, sm.responseId, {
+                    logger: deps.logger,
+                  });
+                }
+              }
+            } catch {
+              // Diagnostic must never abort agent flow even if the messages
+              // accessor itself misbehaves.
+            }
+          }
+
           m.llmCallCount++;
 
           const turnEvent = event as { message: unknown };
@@ -436,6 +478,23 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 },
                 "Assistant message block accounting at stream close",
               );
+
+              // Bug A diagnostic: capture hashes for cross-turn mutation
+              // detection. Stored hashes are recompared at the START of each
+              // subsequent turn_end (see top of this case branch).
+              if (typeof responseIdForLog === "string") {
+                const hashes = computeThinkingBlockHashes(blocks);
+                if (hashes.length > 0) {
+                  // FIFO eviction: cap at 32 entries to bound memory on
+                  // long-running sessions or pathological tool loops.
+                  while (m.thinkingBlockHashes.size >= 32) {
+                    const oldestKey = m.thinkingBlockHashes.keys().next().value;
+                    if (oldestKey === undefined) break;
+                    m.thinkingBlockHashes.delete(oldestKey);
+                  }
+                  m.thinkingBlockHashes.set(responseIdForLog, hashes);
+                }
+              }
             }
           }
 
