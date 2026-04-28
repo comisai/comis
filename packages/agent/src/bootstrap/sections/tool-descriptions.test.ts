@@ -114,6 +114,36 @@ describe("TOOL_GUIDES", () => {
   it("exec guide adds Sandbox-Forbidden Paths section header", () => {
     expect(TOOL_GUIDES.exec).toMatch(/## Sandbox-Forbidden Paths/);
   });
+
+  // -------------------------------------------------------------------------
+  // 260428-rrr Bug B: prescriptive 2-step creation flow + workspace.profile
+  // enum guardrail. Production trace f099bac9 (session 678314278) showed
+  // 18 fleet-creation failures across 9 agents because the LLM:
+  //   (a) embedded persona/role text inside the create config (Zod
+  //       unrecognized_keys rejection on z.strictObject), and
+  //   (b) probed for non-enum workspace.profile values like "minimal" /
+  //       "none" (Zod enum rejection).
+  // The TOOL_GUIDES rewrite leads with a prescriptive "Two-step creation
+  // flow (REQUIRED)" block that names ROLE.md as the persona destination
+  // and pins the enum to "full"|"specialist" only.
+  // -------------------------------------------------------------------------
+  describe("TOOL_GUIDES.agents_manage (260428-rrr: prescriptive 2-step flow)", () => {
+    it("contains a 'Two-step creation flow' leading block", () => {
+      expect(TOOL_GUIDES.agents_manage).toContain("Two-step creation flow");
+    });
+
+    it("names ROLE.md as the file for persona/role/identity", () => {
+      expect(TOOL_GUIDES.agents_manage).toContain("ROLE.md");
+    });
+
+    it("explicitly forbids passing persona in create config", () => {
+      expect(TOOL_GUIDES.agents_manage).toContain("Do NOT pass persona");
+    });
+
+    it("pins workspace.profile enum guardrail", () => {
+      expect(TOOL_GUIDES.agents_manage).toContain("Workspace.profile values");
+    });
+  });
 });
 
 describe("key set parity", () => {

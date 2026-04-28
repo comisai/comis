@@ -55,7 +55,7 @@ const AgentsManageToolParams = Type.Object({
               description:
                 "Workspace profile controlling platform instruction verbosity. " +
                 "Valid values: full (~9K tokens, user-facing agents on channels), " +
-                "specialist (~800 tokens, task workers and fleet sub-agents). " +
+                "specialist (~800 tokens, task workers and fleet sub-agents) ONLY. NO other values accepted. " +
                 "Default: full. Can be changed later via update action. " +
                 "Alternative shape: nested workspace.profile (see `workspace` field).",
             }),
@@ -75,7 +75,7 @@ const AgentsManageToolParams = Type.Object({
                   [Type.Literal("full"), Type.Literal("specialist")],
                   {
                     description:
-                      "Workspace profile (alternative to flat workspace_profile). Valid: full | specialist.",
+                      "Workspace profile (alternative to flat workspace_profile). Valid: full | specialist ONLY. NO other values accepted.",
                   },
                 ),
               },

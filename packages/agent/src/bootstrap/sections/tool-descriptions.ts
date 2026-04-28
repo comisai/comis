@@ -261,7 +261,12 @@ export const TOOL_ORDER: string[] = [
  * Not all tools need guides -- most are self-explanatory from their lean description.
  */
 export const TOOL_GUIDES: Record<string, string> = {
-  agents_manage: `## Workspace Customization Guide
+  agents_manage: `## Two-step creation flow (REQUIRED)
+Step 1 — call agents_manage({action:"create", agent_id, config:{name, model, provider, maxSteps, workspace?:{profile:"full"|"specialist"}, skills?:{...}}}). Only those fields are accepted; the schema is z.strictObject so unknown keys are rejected. Do NOT pass persona/role/description/prompt/instructions in create config.
+Step 2 — call write({path: "~/.comis/workspace-{agent_id}/ROLE.md", content: "...persona/role/behavioral guidance..."}) to set the agent's role and identity. Use IDENTITY.md for name/creature/vibe/emoji.
+
+Workspace.profile values: "full" or "specialist" ONLY. No "none", "minimal", "compact", or other values.
+## Workspace Customization Guide
 Each agent gets a workspace at ~/.comis/workspace-{agentId}/ with these files:
 IDENTITY.md (CRITICAL): Set Name, Creature, Vibe, Emoji. A filled Name auto-skips onboarding.
 ROLE.md (CRITICAL): Agent role, behavioral guidelines, domain conventions.

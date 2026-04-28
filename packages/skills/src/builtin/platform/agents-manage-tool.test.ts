@@ -814,4 +814,75 @@ describe("agents_manage tool", () => {
       expect(rpcCallArgs.config).not.toHaveProperty("workspace_profile");
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // 260428-rrr Bug B: workspace_profile and nested workspace.profile
+  // descriptions must spell out the enum is "full" | "specialist" ONLY.
+  //
+  // Production trace f099bac9 saw the LLM probing values like "minimal" and
+  // "none" for workspace.profile because the description string only listed
+  // valid values without explicitly closing the door on others. The runtime
+  // enum (TypeBox Type.Union(Type.Literal("full"), Type.Literal("specialist")))
+  // already enforces this; we are just making the description match the
+  // enforcement so the LLM stops trying invalid values up front.
+  //
+  // Source-level structural assertion (read the file as text, scope to the
+  // relevant declaration block) is the simpler and more robust approach --
+  // it avoids fighting TypeBox's Symbol-keyed metadata layout.
+  // ---------------------------------------------------------------------------
+  describe("AgentsManageToolParams description guardrails (260428-rrr)", () => {
+    /**
+     * Find the substring scoped to a `<field>: Type.Optional(...)` declaration
+     * in the source file, using paren-balanced extraction so nested
+     * `Type.Union(...)` / `Type.Object(...)` bodies are included. Returns the
+     * slice from the first character of `<field>:` up to and including the
+     * matching close-paren of the outer Type.Optional.
+     */
+    function extractOptionalBlock(src: string, fieldDecl: string): string {
+      const start = src.indexOf(fieldDecl);
+      expect(start, `field declaration not found: ${fieldDecl}`).toBeGreaterThan(-1);
+      const openParen = src.indexOf("(", start);
+      let depth = 1;
+      let i = openParen + 1;
+      for (; i < src.length; i++) {
+        const ch = src[i];
+        if (ch === "(") depth++;
+        else if (ch === ")") {
+          depth--;
+          if (depth === 0) {
+            i++; // include the closing ')'
+            break;
+          }
+        }
+      }
+      expect(depth, `unbalanced parens for ${fieldDecl}`).toBe(0);
+      return src.slice(start, i);
+    }
+
+    it("workspace_profile description spells out the enum is ONLY full|specialist", async () => {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const url = await import("node:url");
+      const here = path.dirname(url.fileURLToPath(import.meta.url));
+      const src = fs.readFileSync(
+        path.resolve(here, "agents-manage-tool.ts"),
+        "utf-8",
+      );
+      const wpBlock = extractOptionalBlock(src, "workspace_profile: Type.Optional");
+      expect(wpBlock).toContain("ONLY");
+    });
+
+    it("nested workspace.profile description spells out the enum is ONLY full|specialist", async () => {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const url = await import("node:url");
+      const here = path.dirname(url.fileURLToPath(import.meta.url));
+      const src = fs.readFileSync(
+        path.resolve(here, "agents-manage-tool.ts"),
+        "utf-8",
+      );
+      const wsBlock = extractOptionalBlock(src, "workspace: Type.Optional");
+      expect(wsBlock).toContain("ONLY");
+    });
+  });
 });
