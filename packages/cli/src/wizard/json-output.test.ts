@@ -62,7 +62,7 @@ describe("buildJsonOutput", () => {
       expect(result.gateway?.url).toBe("ws://127.0.0.1:4766");
     });
 
-    it("computes lan URL as ws://0.0.0.0:PORT", () => {
+    it("computes lan URL as ws://127.0.0.1:PORT (lan binds 0.0.0.0; printed URL is a connect hint)", () => {
       const state = makeState({
         gateway: {
           port: 9000,
@@ -71,7 +71,7 @@ describe("buildJsonOutput", () => {
         },
       });
       const result = buildJsonOutput(state);
-      expect(result.gateway?.url).toBe("ws://0.0.0.0:9000");
+      expect(result.gateway?.url).toBe("ws://127.0.0.1:9000");
     });
 
     it("computes custom URL as ws://CUSTOM_IP:PORT", () => {

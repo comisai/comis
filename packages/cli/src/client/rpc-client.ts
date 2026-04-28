@@ -154,8 +154,13 @@ function resolveFromConfig(): { url: string; token: string | undefined; tls: boo
       }
     }
 
+    // gateway.host is a *bind* address. As a *connect* host, the wildcard
+    // values (0.0.0.0 / ::) aren't valid — remap to loopback so the CLI
+    // can reach a daemon that's binding all interfaces (the default for
+    // LAN / Docker deployments).
+    const connectHost = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "::1" : host;
     const protocol = tls ? "wss" : "ws";
-    return { url: `${protocol}://${host}:${port}/ws`, token, tls };
+    return { url: `${protocol}://${connectHost}:${port}/ws`, token, tls };
   } catch {
     return { url: FALLBACK_GATEWAY_URL, token: undefined, tls: false };
   }
