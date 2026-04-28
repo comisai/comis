@@ -2,13 +2,17 @@
 /**
  * Tests for the signature replay scrubber context engine layer.
  *
- * Verifies the always-on latest-message-preserving scrub policy: every
- * assistant message older than the most recent assistant turn has its
- * thinkingSignature cleared and its toolCall thoughtSignature stripped;
- * the latest assistant message is preserved untouched; redacted_thinking
- * blocks are never modified; cache fence is respected; immutability
- * guarantees hold; INFO log is emitted exactly once per apply() when at
- * least one older assistant message was scrubbed.
+ * Verifies the always-on, latest-included scrub policy: every assistant
+ * message (latest included) has its thinkingSignature cleared and its
+ * toolCall thoughtSignature stripped; redacted_thinking blocks are never
+ * modified; cache fence is respected; immutability guarantees hold; INFO
+ * log is emitted exactly once per apply() when at least one assistant
+ * message was scrubbed.
+ *
+ * 260428-nzp: the previous "preserve latest" carve-out was removed —
+ * cross-turn signature validation invalidates the latest's signatures too
+ * because the surrounding context (system + tools + history) drifts
+ * turn-to-turn under comis's dynamic context engine.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -109,10 +113,10 @@ describe("createSignatureReplayScrubber", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Single assistant: untouched, no INFO log
+  // Single assistant: latest IS scrubbed (260428-nzp)
   // -------------------------------------------------------------------------
 
-  it("single assistant message: signatures preserved, no scrub, no INFO log", async () => {
+  it("single assistant message: signature cleared on the latest (no carve-out)", async () => {
     const logger = makeLoggerMock();
     const onScrubbed = vi.fn();
     const layer = createSignatureReplayScrubber({ logger, onScrubbed });
@@ -120,27 +124,43 @@ describe("createSignatureReplayScrubber", () => {
       makeAssistantMsg([makeSignedThinkingBlock("t", "sig-1"), makeTextBlock("a")]),
     ];
     const result = await layer.apply(messages, stubBudget);
-    expect(result).toBe(messages); // zero-alloc same-ref return
-    expect(result[0]).toBe(messages[0]);
-    expect(logger.info).not.toHaveBeenCalled();
-    // onScrubbed still fires so snapshot stays consistent on zero-touch turns.
+
+    // Latest is now scrubbed: thinkingSignature cleared (property kept as "").
+    expect(result).not.toBe(messages);
+    const m0 = result[0] as { content: Array<Record<string, unknown>> };
+    expect(m0.content).toHaveLength(2);
+    expect(m0.content[0]).toMatchObject({ type: "thinking", thinking: "t", thinkingSignature: "" });
+    expect(m0.content[1]).toEqual(makeTextBlock("a"));
+
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith(
+      {
+        module: "agent.context-engine.signature-replay-scrub",
+        scrubbedAssistantMessages: 1,
+        blocksAffected: 1,
+        toolCallsAffected: 0,
+        latestAssistantIdx: 0,
+      },
+      "Dropped thinking signatures from all assistant messages (cross-turn replay)",
+    );
+
     expect(onScrubbed).toHaveBeenCalledTimes(1);
     expect(onScrubbed).toHaveBeenCalledWith({
-      scrubbedAssistantMessages: 0,
-      blocksAffected: 0,
+      scrubbedAssistantMessages: 1,
+      blocksAffected: 1,
       toolCallsAffected: 0,
       latestAssistantIdx: 0,
-      dropped: 0,
+      dropped: 1,
       signaturesStripped: 0,
       reason: undefined,
     });
   });
 
   // -------------------------------------------------------------------------
-  // Two assistants: older scrubbed, latest preserved
+  // Two assistants: BOTH scrubbed (latest no longer preserved)
   // -------------------------------------------------------------------------
 
-  it("two assistant messages: signatures cleared on the older, preserved on the latest", async () => {
+  it("two assistant messages: signatures cleared on BOTH (older + latest)", async () => {
     const logger = makeLoggerMock();
     const onScrubbed = vi.fn();
     const layer = createSignatureReplayScrubber({ logger, onScrubbed });
@@ -156,44 +176,52 @@ describe("createSignatureReplayScrubber", () => {
     ];
     const result = await layer.apply(messages, stubBudget);
 
-    // Older assistant scrubbed: thinkingSignature cleared (property kept as "").
+    // Older assistant scrubbed.
     const m1 = result[1] as { content: Array<Record<string, unknown>> };
     expect(m1.content).toHaveLength(2);
     expect(m1.content[0]).toMatchObject({ type: "thinking", thinking: "old", thinkingSignature: "" });
     expect(m1.content[1]).toEqual(makeTextBlock("a"));
 
-    // Latest assistant: untouched, same reference preserved.
-    expect(result[3]).toBe(messages[3]);
+    // Latest assistant ALSO scrubbed (no carve-out).
+    expect(result[3]).not.toBe(messages[3]);
+    const m3 = result[3] as { content: Array<Record<string, unknown>> };
+    expect(m3.content).toHaveLength(2);
+    expect(m3.content[0]).toMatchObject({ type: "thinking", thinking: "new", thinkingSignature: "" });
+    expect(m3.content[1]).toEqual(makeTextBlock("b"));
 
-    // INFO log emitted exactly once with the right counters.
+    // User messages preserved as same references.
+    expect(result[0]).toBe(messages[0]);
+    expect(result[2]).toBe(messages[2]);
+
+    // INFO log: total counts across BOTH scrubbed messages.
     expect(logger.info).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalledWith(
       {
         module: "agent.context-engine.signature-replay-scrub",
-        scrubbedAssistantMessages: 1,
-        blocksAffected: 1,
+        scrubbedAssistantMessages: 2,
+        blocksAffected: 2,
         toolCallsAffected: 0,
         latestAssistantIdx: 3,
       },
-      "Dropped thinking signatures from non-latest assistant messages",
+      "Dropped thinking signatures from all assistant messages (cross-turn replay)",
     );
 
     expect(onScrubbed).toHaveBeenCalledWith({
-      scrubbedAssistantMessages: 1,
-      blocksAffected: 1,
+      scrubbedAssistantMessages: 2,
+      blocksAffected: 2,
       toolCallsAffected: 0,
       latestAssistantIdx: 3,
-      dropped: 1,
+      dropped: 2,
       signaturesStripped: 0,
       reason: undefined,
     });
   });
 
   // -------------------------------------------------------------------------
-  // N-1 earlier assistants scrubbed; only the Nth preserved
+  // ALL assistants scrubbed (including the latest)
   // -------------------------------------------------------------------------
 
-  it("N-1 earlier assistant messages all scrubbed; only the Nth preserved", async () => {
+  it("ALL assistant messages scrubbed: thinking signatures cleared and tool_call signatures stripped on every turn", async () => {
     const logger = makeLoggerMock();
     const layer = createSignatureReplayScrubber({ logger });
 
@@ -209,76 +237,85 @@ describe("createSignatureReplayScrubber", () => {
     ];
     const result = await layer.apply(messages, stubBudget);
 
-    for (const idx of [1, 3, 5]) {
+    // Every assistant turn (1, 3, 5, 7) — INCLUDING the latest at index 7 — is scrubbed.
+    for (const idx of [1, 3, 5, 7]) {
       const m = result[idx] as { content: Array<Record<string, unknown>> };
       expect(m.content[0]).toMatchObject({ type: "thinking", thinkingSignature: "" });
       expect(m.content[1]).not.toHaveProperty("thoughtSignature");
       expect(m.content[1]).toMatchObject({ type: "tool_call", toolCallId: "call-1", toolName: "test_tool" });
+      // Different reference from the original (since it was rewritten).
+      expect(result[idx]).not.toBe(messages[idx]);
     }
-
-    // Latest assistant (index 7) untouched, same reference.
-    expect(result[7]).toBe(messages[7]);
 
     expect(logger.info).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalledWith(
       {
         module: "agent.context-engine.signature-replay-scrub",
-        scrubbedAssistantMessages: 3,
-        blocksAffected: 3,
-        toolCallsAffected: 3,
+        scrubbedAssistantMessages: 4,
+        blocksAffected: 4,
+        toolCallsAffected: 4,
         latestAssistantIdx: 7,
       },
-      "Dropped thinking signatures from non-latest assistant messages",
+      "Dropped thinking signatures from all assistant messages (cross-turn replay)",
     );
   });
 
   // -------------------------------------------------------------------------
-  // Redacted thinking blocks left untouched
+  // Redacted thinking blocks left untouched (everywhere, latest included)
   // -------------------------------------------------------------------------
 
-  it("redacted_thinking blocks are left untouched in older assistant messages", async () => {
+  it("redacted_thinking blocks are left untouched in older AND latest assistant messages", async () => {
     const logger = makeLoggerMock();
     const layer = createSignatureReplayScrubber({ logger });
-    const redacted = makeRedactedThinkingBlock();
+    const olderRedacted = makeRedactedThinkingBlock();
+    const latestRedacted = makeRedactedThinkingBlock();
 
     const olderAssistant = makeAssistantMsg([
-      makeSignedThinkingBlock("signed", "sig-s"),
-      redacted,
-      makeTextBlock("after"),
+      makeSignedThinkingBlock("signed-o", "sig-o"),
+      olderRedacted,
+      makeTextBlock("after-o"),
     ]);
-    const latestAssistant = makeAssistantMsg([makeTextBlock("latest")]);
+    const latestAssistant = makeAssistantMsg([
+      makeSignedThinkingBlock("signed-l", "sig-l"),
+      latestRedacted,
+      makeTextBlock("after-l"),
+    ]);
     const messages: AgentMessage[] = [olderAssistant, latestAssistant];
 
     const result = await layer.apply(messages, stubBudget);
 
+    // Older assistant: signed cleared, redacted byte-identical.
     const m0 = result[0] as { content: Array<Record<string, unknown>> };
     expect(m0.content).toHaveLength(3);
-    // Signed thinking: signature cleared, property kept as "".
-    expect(m0.content[0]).toMatchObject({ type: "thinking", thinking: "signed", thinkingSignature: "" });
-    // Redacted thinking: byte-identical (same reference).
-    expect(m0.content[1]).toBe(redacted);
-    // Trailing text untouched.
-    expect(m0.content[2]).toEqual(makeTextBlock("after"));
+    expect(m0.content[0]).toMatchObject({ type: "thinking", thinking: "signed-o", thinkingSignature: "" });
+    expect(m0.content[1]).toBe(olderRedacted);
+    expect(m0.content[2]).toEqual(makeTextBlock("after-o"));
 
-    // Latest preserved as same reference.
-    expect(result[1]).toBe(messages[1]);
+    // Latest assistant: signed cleared, redacted byte-identical.
+    const m1 = result[1] as { content: Array<Record<string, unknown>> };
+    expect(m1.content).toHaveLength(3);
+    expect(m1.content[0]).toMatchObject({ type: "thinking", thinking: "signed-l", thinkingSignature: "" });
+    expect(m1.content[1]).toBe(latestRedacted);
+    expect(m1.content[2]).toEqual(makeTextBlock("after-l"));
   });
 
   // -------------------------------------------------------------------------
-  // toolCall thoughtSignature stripped
+  // toolCall thoughtSignature stripped on the latest too
   // -------------------------------------------------------------------------
 
-  it("thoughtSignature stripped from toolCall in older assistant messages, other fields preserved", async () => {
+  it("thoughtSignature stripped from toolCall on the LATEST assistant message", async () => {
     const logger = makeLoggerMock();
     const onScrubbed = vi.fn();
     const layer = createSignatureReplayScrubber({ logger, onScrubbed });
 
+    // Single-assistant history: the only assistant IS the latest. Verifies the
+    // carve-out is gone — its tool_call signature still gets stripped.
     const messages: AgentMessage[] = [
       makeAssistantMsg([makeToolCallBlock({ thoughtSignature: "sig-A" })]),
-      makeAssistantMsg([makeTextBlock("latest")]),
     ];
     const result = await layer.apply(messages, stubBudget);
 
+    expect(result).not.toBe(messages);
     const m0 = result[0] as { content: Array<Record<string, unknown>> };
     expect(m0.content).toHaveLength(1);
     expect(m0.content[0]).not.toHaveProperty("thoughtSignature");
@@ -293,7 +330,7 @@ describe("createSignatureReplayScrubber", () => {
       scrubbedAssistantMessages: 1,
       blocksAffected: 0,
       toolCallsAffected: 1,
-      latestAssistantIdx: 1,
+      latestAssistantIdx: 0,
       dropped: 0,
       signaturesStripped: 1,
       reason: undefined,
@@ -301,7 +338,7 @@ describe("createSignatureReplayScrubber", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Pass-through cases
+  // Pass-through cases (no-op zero-allocation preserved)
   // -------------------------------------------------------------------------
 
   it("messages without any thinking blocks pass through unchanged (zero-alloc)", async () => {
@@ -329,12 +366,13 @@ describe("createSignatureReplayScrubber", () => {
     });
   });
 
-  it("user and toolResult messages pass through; assistant signatures preserved on latest", async () => {
+  it("user and toolResult messages pass through; latest assistant with no signed state is byte-identical", async () => {
     const logger = makeLoggerMock();
     const layer = createSignatureReplayScrubber({ logger });
     const userMsg = makeUserMsg("hello");
     const toolResult = { role: "toolResult", content: [{ type: "text", text: "result" }] } as AgentMessage;
-    const latestAssistant = makeAssistantMsg([makeSignedThinkingBlock("t", "sig-X"), makeTextBlock("a")]);
+    // Latest assistant has plain (unsigned) thinking — nothing to do.
+    const latestAssistant = makeAssistantMsg([makeThinkingBlock("plain"), makeTextBlock("a")]);
     const messages: AgentMessage[] = [userMsg, toolResult, latestAssistant];
     const result = await layer.apply(messages, stubBudget);
     expect(result).toBe(messages);
@@ -345,10 +383,10 @@ describe("createSignatureReplayScrubber", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Cache fence
+  // Cache fence (still respected — fenced messages untouched even now)
   // -------------------------------------------------------------------------
 
-  it("respects budget.cacheFenceIndex: messages at/below fence untouched even if older than latest", async () => {
+  it("respects budget.cacheFenceIndex: messages at/below fence untouched; latest still scrubbed", async () => {
     const logger = makeLoggerMock();
     const onScrubbed = vi.fn();
     const layer = createSignatureReplayScrubber({ logger, onScrubbed });
@@ -356,8 +394,8 @@ describe("createSignatureReplayScrubber", () => {
     const messages: AgentMessage[] = [
       makeAssistantMsg([makeSignedThinkingBlock("t0", "s0"), makeTextBlock("a0")]), // index 0 — fenced
       makeAssistantMsg([makeSignedThinkingBlock("t1", "s1"), makeTextBlock("a1")]), // index 1 — fenced
-      makeAssistantMsg([makeSignedThinkingBlock("t2", "s2"), makeTextBlock("a2")]), // index 2 — older + past fence → scrubbed
-      makeAssistantMsg([makeSignedThinkingBlock("t3", "s3"), makeTextBlock("a3")]), // index 3 — latest, untouched
+      makeAssistantMsg([makeSignedThinkingBlock("t2", "s2"), makeTextBlock("a2")]), // index 2 — past fence → scrubbed
+      makeAssistantMsg([makeSignedThinkingBlock("t3", "s3"), makeTextBlock("a3")]), // index 3 — latest, ALSO scrubbed
     ];
 
     const fencedBudget: TokenBudget = { ...stubBudget, cacheFenceIndex: 1 };
@@ -366,19 +404,22 @@ describe("createSignatureReplayScrubber", () => {
     // Fenced messages: same references, untouched.
     expect(result[0]).toBe(messages[0]);
     expect(result[1]).toBe(messages[1]);
-    // Older + past fence: signature cleared.
+    // Past fence: signature cleared.
     const m2 = result[2] as { content: Array<Record<string, unknown>> };
     expect(m2.content[0]).toMatchObject({ type: "thinking", thinking: "t2", thinkingSignature: "" });
     expect(m2.content[1]).toEqual(makeTextBlock("a2"));
-    // Latest assistant: untouched.
-    expect(result[3]).toBe(messages[3]);
+    // Latest assistant: ALSO scrubbed now (no carve-out).
+    expect(result[3]).not.toBe(messages[3]);
+    const m3 = result[3] as { content: Array<Record<string, unknown>> };
+    expect(m3.content[0]).toMatchObject({ type: "thinking", thinking: "t3", thinkingSignature: "" });
+    expect(m3.content[1]).toEqual(makeTextBlock("a3"));
 
     expect(onScrubbed).toHaveBeenCalledWith({
-      scrubbedAssistantMessages: 1,
-      blocksAffected: 1,
+      scrubbedAssistantMessages: 2,
+      blocksAffected: 2,
       toolCallsAffected: 0,
       latestAssistantIdx: 3,
-      dropped: 1,
+      dropped: 2,
       signaturesStripped: 0,
       reason: undefined,
     });
@@ -388,7 +429,7 @@ describe("createSignatureReplayScrubber", () => {
   // Immutability
   // -------------------------------------------------------------------------
 
-  it("immutability: deep-frozen input does not throw, original blocks unchanged", async () => {
+  it("immutability: deep-frozen input does not throw, original blocks unchanged (latest scrubbed too)", async () => {
     const logger = makeLoggerMock();
     const layer = createSignatureReplayScrubber({ logger });
 
@@ -397,7 +438,10 @@ describe("createSignatureReplayScrubber", () => {
       makeTextBlock("a1"),
       makeToolCallBlock({ thoughtSignature: "sig-tc" }),
     ]);
-    const latestAssistant = makeAssistantMsg([makeTextBlock("latest")]);
+    const latestAssistant = makeAssistantMsg([
+      makeSignedThinkingBlock("t-latest", "sig-latest"),
+      makeTextBlock("latest"),
+    ]);
     const inputMessages: AgentMessage[] = [olderAssistant, latestAssistant];
 
     // Deep-freeze input
@@ -413,22 +457,28 @@ describe("createSignatureReplayScrubber", () => {
     const result = await layer.apply(inputMessages, stubBudget);
 
     // Originals still intact.
-    const orig = inputMessages[0] as { content: Array<Record<string, unknown>> };
-    expect(orig.content).toHaveLength(3);
-    expect(orig.content[0]).toMatchObject({ type: "thinking", thinkingSignature: "sig-orig" });
-    expect(orig.content[2]).toHaveProperty("thoughtSignature", "sig-tc");
+    const orig0 = inputMessages[0] as { content: Array<Record<string, unknown>> };
+    expect(orig0.content).toHaveLength(3);
+    expect(orig0.content[0]).toMatchObject({ type: "thinking", thinkingSignature: "sig-orig" });
+    expect(orig0.content[2]).toHaveProperty("thoughtSignature", "sig-tc");
 
-    // Result reflects the scrub.
-    const scrubbed = result[0] as { content: Array<Record<string, unknown>> };
-    expect(scrubbed.content[0]).toMatchObject({ type: "thinking", thinkingSignature: "" });
-    expect(scrubbed.content[2]).not.toHaveProperty("thoughtSignature");
+    const orig1 = inputMessages[1] as { content: Array<Record<string, unknown>> };
+    expect(orig1.content[0]).toMatchObject({ type: "thinking", thinkingSignature: "sig-latest" });
+
+    // Result reflects the scrub on BOTH older and latest.
+    const scrubbed0 = result[0] as { content: Array<Record<string, unknown>> };
+    expect(scrubbed0.content[0]).toMatchObject({ type: "thinking", thinkingSignature: "" });
+    expect(scrubbed0.content[2]).not.toHaveProperty("thoughtSignature");
+
+    const scrubbed1 = result[1] as { content: Array<Record<string, unknown>> };
+    expect(scrubbed1.content[0]).toMatchObject({ type: "thinking", thinkingSignature: "" });
   });
 
   // -------------------------------------------------------------------------
   // INFO log shape (explicit assertion of exact payload)
   // -------------------------------------------------------------------------
 
-  it("INFO log shape and counters", async () => {
+  it("INFO log shape and counters reflect TOTAL counts across all scrubbed messages (latest included)", async () => {
     const logger = makeLoggerMock();
     const layer = createSignatureReplayScrubber({ logger });
     const messages: AgentMessage[] = [
@@ -440,35 +490,38 @@ describe("createSignatureReplayScrubber", () => {
         makeSignedThinkingBlock("o2", "s2"),
         makeToolCallBlock({ thoughtSignature: "ts2" }),
       ]),
-      makeAssistantMsg([makeTextBlock("latest")]),
+      makeAssistantMsg([
+        makeSignedThinkingBlock("latest", "s3"),
+        makeToolCallBlock({ thoughtSignature: "ts3" }),
+      ]),
     ];
     await layer.apply(messages, stubBudget);
 
     expect(logger.info).toHaveBeenCalledWith(
       {
         module: "agent.context-engine.signature-replay-scrub",
-        scrubbedAssistantMessages: 2,
-        blocksAffected: 2,
-        toolCallsAffected: 2,
+        scrubbedAssistantMessages: 3,
+        blocksAffected: 3,
+        toolCallsAffected: 3,
         latestAssistantIdx: 2,
       },
-      "Dropped thinking signatures from non-latest assistant messages",
+      "Dropped thinking signatures from all assistant messages (cross-turn replay)",
     );
   });
 
   // -------------------------------------------------------------------------
-  // Already-empty signature pass-through
+  // Already-empty signature pass-through (no double-scrub)
   // -------------------------------------------------------------------------
 
-  it("thinking block with empty thinkingSignature is left untouched (no double-scrub)", async () => {
+  it("thinking block with empty thinkingSignature is left untouched (no double-scrub) — latest included", async () => {
     const logger = makeLoggerMock();
     const onScrubbed = vi.fn();
     const layer = createSignatureReplayScrubber({ logger, onScrubbed });
 
     const blockWithEmptySig = { type: "thinking" as const, thinking: "t", thinkingSignature: "" };
-    const olderAssistant = makeAssistantMsg([blockWithEmptySig, makeTextBlock("a")]);
-    const latestAssistant = makeAssistantMsg([makeTextBlock("latest")]);
-    const messages: AgentMessage[] = [olderAssistant, latestAssistant];
+    // Single assistant (which is also the latest) — empty sig means nothing to do.
+    const onlyAssistant = makeAssistantMsg([blockWithEmptySig, makeTextBlock("a")]);
+    const messages: AgentMessage[] = [onlyAssistant];
 
     const result = await layer.apply(messages, stubBudget);
     // No work to do: zero-alloc same-ref return.
@@ -478,7 +531,7 @@ describe("createSignatureReplayScrubber", () => {
       scrubbedAssistantMessages: 0,
       blocksAffected: 0,
       toolCallsAffected: 0,
-      latestAssistantIdx: 1,
+      latestAssistantIdx: 0,
       dropped: 0,
       signaturesStripped: 0,
       reason: undefined,
@@ -489,12 +542,13 @@ describe("createSignatureReplayScrubber", () => {
   // Plain-thinking (no signature) untouched
   // -------------------------------------------------------------------------
 
-  it("thinking block with NO thinkingSignature property is left untouched", async () => {
+  it("thinking block with NO thinkingSignature property is left untouched (older + latest)", async () => {
     const logger = makeLoggerMock();
     const layer = createSignatureReplayScrubber({ logger });
-    const plainBlock = makeThinkingBlock("plain");
-    const olderAssistant = makeAssistantMsg([plainBlock]);
-    const latestAssistant = makeAssistantMsg([makeTextBlock("latest")]);
+    const olderPlain = makeThinkingBlock("plain-o");
+    const latestPlain = makeThinkingBlock("plain-l");
+    const olderAssistant = makeAssistantMsg([olderPlain]);
+    const latestAssistant = makeAssistantMsg([latestPlain]);
     const messages: AgentMessage[] = [olderAssistant, latestAssistant];
 
     const result = await layer.apply(messages, stubBudget);

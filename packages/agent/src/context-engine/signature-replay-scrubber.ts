@@ -2,26 +2,29 @@
 /**
  * Signature replay scrubber context engine layer.
  *
- * Always-on policy: clears `thinkingSignature` from every assistant message
- * older than the most recent assistant turn, and strips `thoughtSignature`
- * from `toolCall` / `tool_call` blocks in the same older messages. The
- * latest assistant message is preserved untouched so Anthropic's
- * extended-thinking continuation can validate the immediate next call's
- * prefix. `redacted_thinking` blocks are never modified, anywhere.
+ * Always-on policy: clears `thinkingSignature` from EVERY assistant message
+ * (latest included) and strips `thoughtSignature` from `toolCall` /
+ * `tool_call` blocks in the same messages. `redacted_thinking` blocks are
+ * never modified, anywhere.
  *
  * Rationale: Anthropic's signed-thinking validation operates on the full
  * (system + tools + history) prefix. After 8 quick tasks of progressively
  * narrower drift detection (gj6 → kvl) we proved targeted detection is
  * intractable; trace 679c8927 had stable tools (49138 bytes across 4 turns)
- * but the system prompt grew +1824 bytes and the 400 fired anyway. Switch
- * from detection to prevention: older signatures cost nothing to drop —
- * they cannot be revalidated against any prefix the model will actually
- * re-emit. Latest-turn signatures stay live for the immediate continuation.
+ * but the system prompt grew +1824 bytes and the 400 fired anyway.
+ *
+ * 260428-lm6 introduced an unconditional drop that preserved the LATEST
+ * assistant message's signatures, on the theory that the immediate-next
+ * continuation could still validate them. 260428-nzp's repro proved that
+ * carve-out doesn't work: cross-turn signature validation covers the whole
+ * request body (system + tools + history) and comis's dynamic context
+ * guarantees the surrounding context changes turn-to-turn. So the latest's
+ * signatures get invalidated too. Drop them all.
  *
  * Provider coverage: NOT gated on `model.reasoning` because Gemini's
  * `thoughtSignature` lives on toolCall blocks even when the model itself
- * is not flagged as reasoning. Cost is one walk over older assistant
- * messages, no I/O.
+ * is not flagged as reasoning. Cost is one walk over assistant messages,
+ * no I/O.
  *
  * Immutability: never mutates input messages or arrays. Returns new arrays
  * and shallow-copied messages only when changes are needed. When the
@@ -103,14 +106,6 @@ export function createSignatureReplayScrubber(
         // eslint-disable-next-line security/detect-object-injection -- numeric index
         const original = messages[i];
 
-        // Latest assistant message: untouched (signatures preserved).
-        // Trailing user/toolResult messages (i > latestIdx): untouched.
-        if (i >= latestIdx) {
-          // eslint-disable-next-line security/detect-object-injection -- numeric index
-          result[i] = original;
-          continue;
-        }
-
         // Cache fence: messages at or below the fence must not be modified.
         if (i <= budget.cacheFenceIndex) {
           // eslint-disable-next-line security/detect-object-injection -- numeric index
@@ -125,7 +120,8 @@ export function createSignatureReplayScrubber(
           continue;
         }
 
-        // Older assistant message past the fence — walk content blocks.
+        // Assistant message past the fence — walk content blocks. Latest
+        // included: cross-turn signature validation invalidates it too.
         const content = msg.content as unknown[];
         let messageChanged = false;
         const newContent: unknown[] = new Array(content.length);
@@ -215,8 +211,8 @@ export function createSignatureReplayScrubber(
         reason: undefined,
       });
 
-      // Emit INFO once per execute() when at least one older assistant
-      // message was actually scrubbed. Pino object-first; no string interp.
+      // Emit INFO once per execute() when at least one assistant message
+      // was actually scrubbed. Pino object-first; no string interp.
       if (scrubbedAssistantMessages > 0) {
         deps.logger.info(
           {
@@ -226,7 +222,7 @@ export function createSignatureReplayScrubber(
             toolCallsAffected,
             latestAssistantIdx: latestIdx,
           },
-          "Dropped thinking signatures from non-latest assistant messages",
+          "Dropped thinking signatures from all assistant messages (cross-turn replay)",
         );
       }
 
