@@ -4,6 +4,7 @@ import { Value } from "@sinclair/typebox/value";
 import { createAgentsManageTool } from "./agents-manage-tool.js";
 import { runWithContext } from "@comis/core";
 import type { RequestContext, ApprovalGate } from "@comis/core";
+import type { ComisLogger } from "@comis/infra";
 
 // Mock @comis/core: preserve real implementations, override safePath
 vi.mock("@comis/core", async (importOriginal) => {
@@ -42,6 +43,28 @@ function createMockApprovalGate(): ApprovalGate {
   };
 }
 
+/**
+ * Build a Pino-shaped mock logger compatible with `ComisLogger`.
+ * Mirrors the gateway-tool.test.ts:22-34 pattern. The agents-manage tool
+ * calls `logger.info(obj, msg)` from the `create` action override; we stub
+ * the full surface so future calls (e.g. `warn`) don't blow up the harness.
+ */
+function makeMockLogger() {
+  const logger = {
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    audit: vi.fn(),
+    child: vi.fn(function (this: unknown) {
+      return this;
+    }),
+  };
+  return logger as typeof logger & ComisLogger;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -49,12 +72,14 @@ function createMockApprovalGate(): ApprovalGate {
 describe("agents_manage tool", () => {
   let mockRpcCall: ReturnType<typeof vi.fn<RpcCall>>;
   let mockApprovalGate: ApprovalGate;
+  let mockLogger: ReturnType<typeof makeMockLogger>;
 
   beforeEach(() => {
     mockRpcCall = vi.fn(async (_method: string, _params: Record<string, unknown>) => ({
       stub: true,
     }));
     mockApprovalGate = createMockApprovalGate();
+    mockLogger = makeMockLogger();
   });
 
   // -----------------------------------------------------------------------
@@ -62,7 +87,7 @@ describe("agents_manage tool", () => {
   // -----------------------------------------------------------------------
 
   it("has correct name and label", () => {
-    const tool = createAgentsManageTool(mockRpcCall);
+    const tool = createAgentsManageTool(mockRpcCall, mockLogger);
     expect(tool.name).toBe("agents_manage");
     expect(tool.label).toBe("Agent Management");
   });
@@ -73,7 +98,7 @@ describe("agents_manage tool", () => {
 
   describe("trust guard", () => {
     it("throws when trust level is below admin (guest)", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       await expect(
         runWithContext(makeContext("guest"), () =>
@@ -84,7 +109,7 @@ describe("agents_manage tool", () => {
     });
 
     it("throws when trust level is below admin (user)", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       await expect(
         runWithContext(makeContext("user"), () =>
@@ -95,7 +120,7 @@ describe("agents_manage tool", () => {
     });
 
     it("allows execution when trust level is admin", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-3", { action: "get", agent_id: "bot-1" } as never),
@@ -118,7 +143,7 @@ describe("agents_manage tool", () => {
       });
       mockRpcCall.mockResolvedValue({ agentId: "new-bot", created: true });
 
-      const tool = createAgentsManageTool(mockRpcCall, mockApprovalGate);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger, mockApprovalGate);
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-c1", { action: "create", agent_id: "new-bot", config: { name: "New" } } as never),
@@ -147,7 +172,7 @@ describe("agents_manage tool", () => {
         reason: "test denied",
       });
 
-      const tool = createAgentsManageTool(mockRpcCall, mockApprovalGate);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger, mockApprovalGate);
 
       await expect(
         runWithContext(makeContext("admin"), () =>
@@ -160,7 +185,7 @@ describe("agents_manage tool", () => {
     it("calls rpcCall without approval gate when approvalGate is undefined", async () => {
       mockRpcCall.mockResolvedValue({ agentId: "new-bot", created: true });
 
-      const tool = createAgentsManageTool(mockRpcCall); // no approval gate
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger); // no approval gate, no callbacks
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-c3", { action: "create", agent_id: "new-bot" } as never),
@@ -188,7 +213,7 @@ describe("agents_manage tool", () => {
       });
       const onAgentCreated = vi.fn(async () => {});
 
-      const tool = createAgentsManageTool(mockRpcCall, undefined, { onAgentCreated });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger, undefined, { onAgentCreated });
 
       await runWithContext(makeContext("admin"), () =>
         tool.execute("call-c4", { action: "create", agent_id: "new-bot" } as never),
@@ -205,7 +230,7 @@ describe("agents_manage tool", () => {
       mockRpcCall.mockResolvedValue({ agentId: "new-bot", created: true });
       const onAgentCreated = vi.fn(async () => {});
 
-      const tool = createAgentsManageTool(mockRpcCall, undefined, { onAgentCreated });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger, undefined, { onAgentCreated });
 
       await runWithContext(makeContext("admin"), () =>
         tool.execute("call-c5", { action: "create", agent_id: "new-bot" } as never),
@@ -219,7 +244,7 @@ describe("agents_manage tool", () => {
       mockRpcCall.mockRejectedValue(new Error("rpc failure"));
       const onAgentCreated = vi.fn(async () => {});
 
-      const tool = createAgentsManageTool(mockRpcCall, undefined, { onAgentCreated });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger, undefined, { onAgentCreated });
 
       await expect(
         runWithContext(makeContext("admin"), () =>
@@ -240,7 +265,7 @@ describe("agents_manage tool", () => {
         throw new Error("tracker blew up");
       });
 
-      const tool = createAgentsManageTool(mockRpcCall, undefined, { onAgentCreated });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger, undefined, { onAgentCreated });
 
       // Must NOT throw -- callback failure is a non-fatal optimization.
       const result = await runWithContext(makeContext("admin"), () =>
@@ -251,6 +276,219 @@ describe("agents_manage tool", () => {
         expect.objectContaining({ agentId: "new-bot", created: true }),
       );
       expect(onAgentCreated).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 260428-sw2 Layer 1: post-create next-step contract emitted in tool_result.
+  //
+  // Production trace 1a8b0d91 turn 13 (17:24:26.932 UTC) was completely empty
+  // (0 text, 0 thinking, 0 tools) after the LLM created 9 sub-agents in
+  // parallel: TOOL_GUIDE prescriptive text was crowded out under high
+  // parallel-tool-call load. Fix: emit the next-step contract on the
+  // freshest, uncached surface -- the tool_result text block itself, read
+  // by the LLM on every turn.
+  //
+  // Pins:
+  //  - Case A (workspaceDir present): full contract with anchor strings
+  //    "✓ Agent ... created", workspaceDir echoed twice (at-line + ROLE.md
+  //    path), ROLE.md mentioned ≥2 times, IDENTITY.md, "Next required
+  //    action", "NOT ready until ROLE.md is customized", literal
+  //    `write({path:` directive.
+  //  - Case B (workspaceDir absent, defensive fallback): shorter contract
+  //    pinning "Customize {agentId}'s workspace ROLE.md" + IDENTITY.md.
+  //  - Structured fields preserved: result.details = raw RPC return,
+  //    result.content has exactly 2 text blocks (contract first,
+  //    JSON.stringify(rpcReturn, null, 2) second).
+  //  - Structured Pino INFO log emitted once with module/action/agentId/
+  //    workspaceDir/contractEmitted fields and the canonical message.
+  //  - Non-create actions (get/update/delete/suspend/resume) MUST NOT emit
+  //    the contract NOR the structured INFO log.
+  // ---------------------------------------------------------------------------
+  describe("create next-step contract (260428-sw2)", () => {
+    it("Case A: with workspaceDir, emits full contract as first text block", async () => {
+      const rpcReturn = {
+        agentId: "ta-fundamentals",
+        config: { name: "TA Fundamentals" },
+        created: true,
+        workspaceDir: "/home/comis/.comis/workspace-ta-fundamentals",
+      };
+      mockRpcCall.mockResolvedValue(rpcReturn);
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-sw2-a", {
+          action: "create",
+          agent_id: "ta-fundamentals",
+        } as never),
+      );
+
+      expect(result.content[0]!.type).toBe("text");
+      const contract = (result.content[0] as { type: "text"; text: string }).text;
+
+      // Anchor strings
+      expect(contract).toContain("✓ Agent ta-fundamentals created");
+      expect(contract).toContain("Next required action");
+      expect(contract).toContain("NOT ready until ROLE.md is customized");
+      expect(contract).toContain("IDENTITY.md");
+      // workspaceDir echoed at least twice (at-line + ROLE.md path)
+      const wsdMatches = contract.match(/workspace-ta-fundamentals/g) ?? [];
+      expect(wsdMatches.length).toBeGreaterThanOrEqual(2);
+      // ROLE.md mentioned at least twice
+      const roleMatches = contract.match(/ROLE\.md/g) ?? [];
+      expect(roleMatches.length).toBeGreaterThanOrEqual(2);
+      // Exact write() directive substring with the workspaceDir/ROLE.md path
+      expect(contract).toContain(
+        'call write({path: "/home/comis/.comis/workspace-ta-fundamentals/ROLE.md", content: "..."})',
+      );
+    });
+
+    it("Case B: without workspaceDir, emits fallback contract", async () => {
+      mockRpcCall.mockResolvedValue({ agentId: "ta-bear", created: true });
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-sw2-b", {
+          action: "create",
+          agent_id: "ta-bear",
+        } as never),
+      );
+
+      expect(result.content[0]!.type).toBe("text");
+      const contract = (result.content[0] as { type: "text"; text: string }).text;
+
+      expect(contract).toContain("✓ Agent ta-bear created");
+      expect(contract).toContain("Customize ta-bear's workspace ROLE.md");
+      expect(contract).toContain("IDENTITY.md");
+      // Case-A-only anchor must NOT be present
+      expect(contract).not.toContain("NOT ready until");
+    });
+
+    it("structured fields preserved: details = raw RPC return; second text block = JSON view", async () => {
+      const rpcReturn = {
+        agentId: "ta-fundamentals",
+        config: { name: "TA Fundamentals", model: "claude-sonnet-4-5" },
+        created: true,
+        workspaceDir: "/home/comis/.comis/workspace-ta-fundamentals",
+      };
+      mockRpcCall.mockResolvedValue(rpcReturn);
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-sw2-c", {
+          action: "create",
+          agent_id: "ta-fundamentals",
+        } as never),
+      );
+
+      // details preserved verbatim (existing assertions on result.details still pass)
+      expect(result.details).toEqual(rpcReturn);
+      // exactly 2 text blocks
+      expect(result.content.length).toBe(2);
+      expect(result.content[1]!.type).toBe("text");
+      const jsonBlock = (result.content[1] as { type: "text"; text: string }).text;
+      expect(jsonBlock).toBe(JSON.stringify(rpcReturn, null, 2));
+    });
+
+    it("emits structured INFO log with exact field shape on successful create (with workspaceDir)", async () => {
+      const rpcReturn = {
+        agentId: "ta-fundamentals",
+        config: { name: "TA Fundamentals" },
+        created: true,
+        workspaceDir: "/home/comis/.comis/workspace-ta-fundamentals",
+      };
+      mockRpcCall.mockResolvedValue(rpcReturn);
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-sw2-d", {
+          action: "create",
+          agent_id: "ta-fundamentals",
+        } as never),
+      );
+
+      expect(mockLogger.info).toHaveBeenCalledTimes(1);
+      const [fields, msg] = mockLogger.info.mock.calls[0]!;
+      expect(fields).toEqual({
+        module: "skill.agents-manage",
+        action: "create",
+        agentId: "ta-fundamentals",
+        workspaceDir: "/home/comis/.comis/workspace-ta-fundamentals",
+        contractEmitted: true,
+      });
+      expect(msg).toMatch(/agents_manage\.create succeeded.*next-step contract emitted/);
+    });
+
+    it("emits INFO log with workspaceDir: null when RPC return omits workspaceDir", async () => {
+      mockRpcCall.mockResolvedValue({ agentId: "ta-bear", created: true });
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-sw2-e", {
+          action: "create",
+          agent_id: "ta-bear",
+        } as never),
+      );
+
+      expect(mockLogger.info).toHaveBeenCalledTimes(1);
+      const [fields] = mockLogger.info.mock.calls[0]!;
+      expect(fields).toEqual({
+        module: "skill.agents-manage",
+        action: "create",
+        agentId: "ta-bear",
+        workspaceDir: null,
+        contractEmitted: true,
+      });
+    });
+
+    it("non-create actions emit NEITHER the contract NOR the structured INFO log", async () => {
+      // Parameterized loop covers all 5 non-create actions in one block.
+      const cases: Array<{
+        action: "get" | "update" | "delete" | "suspend" | "resume";
+        callId: string;
+        rpcReturn: Record<string, unknown>;
+        approval: boolean;
+      }> = [
+        { action: "get", callId: "call-sw2-neg-get", rpcReturn: { agentId: "bot-x", suspended: false }, approval: false },
+        { action: "update", callId: "call-sw2-neg-update", rpcReturn: { agentId: "bot-x", updated: true }, approval: false },
+        { action: "delete", callId: "call-sw2-neg-delete", rpcReturn: { agentId: "bot-x", deleted: true }, approval: true },
+        { action: "suspend", callId: "call-sw2-neg-suspend", rpcReturn: { agentId: "bot-x", suspended: true }, approval: false },
+        { action: "resume", callId: "call-sw2-neg-resume", rpcReturn: { agentId: "bot-x", resumed: true }, approval: false },
+      ];
+
+      for (const c of cases) {
+        // Reset per-iteration so the assertions about call-counts stay clean.
+        mockRpcCall = vi.fn(async () => c.rpcReturn);
+        mockLogger = makeMockLogger();
+        if (c.approval) {
+          (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>) = vi
+            .fn()
+            .mockResolvedValue({ approved: true, approvedBy: "operator" });
+        }
+
+        const tool = createAgentsManageTool(mockRpcCall, mockLogger, mockApprovalGate);
+        const result = await runWithContext(makeContext("admin"), () =>
+          tool.execute(c.callId, { action: c.action, agent_id: "bot-x" } as never),
+        );
+
+        // Pre-fix shape: single JSON text block.
+        expect(result.content.length, `action ${c.action}: content length`).toBe(1);
+        expect(result.content[0]!.type, `action ${c.action}: content[0].type`).toBe("text");
+        const text = (result.content[0] as { type: "text"; text: string }).text;
+        expect(text, `action ${c.action}: must NOT contain contract`).not.toContain(
+          "Next required action",
+        );
+
+        // No call to logger.info with module=skill.agents-manage + contractEmitted.
+        const sw2Calls = mockLogger.info.mock.calls.filter(
+          (call) =>
+            typeof call[0] === "object" &&
+            call[0] !== null &&
+            (call[0] as Record<string, unknown>).module === "skill.agents-manage" &&
+            (call[0] as Record<string, unknown>).contractEmitted === true,
+        );
+        expect(sw2Calls, `action ${c.action}: contractEmitted INFO must not fire`).toEqual([]);
+      }
     });
   });
 
@@ -266,7 +504,7 @@ describe("agents_manage tool", () => {
         suspended: false,
       });
 
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-g1", { action: "get", agent_id: "bot-1" } as never),
@@ -291,7 +529,7 @@ describe("agents_manage tool", () => {
         updated: true,
       });
 
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-u1", {
@@ -324,7 +562,7 @@ describe("agents_manage tool", () => {
       });
       mockRpcCall.mockResolvedValue({ agentId: "temp-bot", deleted: true });
 
-      const tool = createAgentsManageTool(mockRpcCall, mockApprovalGate);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger, mockApprovalGate);
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-d1", { action: "delete", agent_id: "temp-bot" } as never),
@@ -349,7 +587,7 @@ describe("agents_manage tool", () => {
         reason: "not authorized",
       });
 
-      const tool = createAgentsManageTool(mockRpcCall, mockApprovalGate);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger, mockApprovalGate);
 
       await expect(
         runWithContext(makeContext("admin"), () =>
@@ -368,7 +606,7 @@ describe("agents_manage tool", () => {
     it("calls rpcCall('agents.suspend', { agentId }) and returns result", async () => {
       mockRpcCall.mockResolvedValue({ agentId: "bot-1", suspended: true });
 
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-s1", { action: "suspend", agent_id: "bot-1" } as never),
@@ -389,7 +627,7 @@ describe("agents_manage tool", () => {
     it("calls rpcCall('agents.resume', { agentId }) and returns result", async () => {
       mockRpcCall.mockResolvedValue({ agentId: "bot-1", resumed: true });
 
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-r1", { action: "resume", agent_id: "bot-1" } as never),
@@ -410,7 +648,7 @@ describe("agents_manage tool", () => {
     it("re-throws when rpcCall throws Error", async () => {
       mockRpcCall.mockRejectedValue(new Error("Agent service unavailable"));
 
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       await expect(
         runWithContext(makeContext("admin"), () =>
@@ -422,7 +660,7 @@ describe("agents_manage tool", () => {
     it("wraps non-Error throws in Error", async () => {
       mockRpcCall.mockRejectedValue("string error");
 
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       await expect(
         runWithContext(makeContext("admin"), () =>
@@ -444,7 +682,7 @@ describe("agents_manage tool", () => {
       });
       mockRpcCall.mockResolvedValue({ agentId: "str-bot", created: true });
 
-      const tool = createAgentsManageTool(mockRpcCall, mockApprovalGate);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger, mockApprovalGate);
 
       await runWithContext(makeContext("admin"), () =>
         tool.execute("call-cs1", {
@@ -464,7 +702,7 @@ describe("agents_manage tool", () => {
     it("coerces JSON string config to object in update action", async () => {
       mockRpcCall.mockResolvedValue({ agentId: "str-bot", updated: true });
 
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       await runWithContext(makeContext("admin"), () =>
         tool.execute("call-cs2", {
@@ -488,7 +726,7 @@ describe("agents_manage tool", () => {
       });
       mockRpcCall.mockResolvedValue({ agentId: "obj-bot", created: true });
 
-      const tool = createAgentsManageTool(mockRpcCall, mockApprovalGate);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger, mockApprovalGate);
 
       await runWithContext(makeContext("admin"), () =>
         tool.execute("call-cs3", {
@@ -506,7 +744,7 @@ describe("agents_manage tool", () => {
     });
 
     it("rejects invalid JSON string config (fails at mapWorkspaceProfile)", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       // Invalid JSON string falls through coerceConfig as raw string,
       // then mapWorkspaceProfile throws because 'in' operator requires object
@@ -529,7 +767,7 @@ describe("agents_manage tool", () => {
 
   describe("invalid action", () => {
     it("throws [invalid_value] for unknown action", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
 
       await expect(
         runWithContext(makeContext("admin"), () =>
@@ -545,7 +783,7 @@ describe("agents_manage tool", () => {
   // objects, before coerceConfig() in execute() gets a chance to parse it.
   describe("schema accepts both object and string config", () => {
     it("parameters TypeBox validates for object config", () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const ok = Value.Check(tool.parameters, {
         action: "create",
         agent_id: "bot-obj",
@@ -555,7 +793,7 @@ describe("agents_manage tool", () => {
     });
 
     it("parameters TypeBox validates for stringified config (LLM fallback path)", () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const ok = Value.Check(tool.parameters, {
         action: "create",
         agent_id: "bot-str",
@@ -592,13 +830,13 @@ describe("agents_manage tool", () => {
       cfg.model = "claude-sonnet-4-5";
       cfg.provider = "anthropic";
 
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const ok = Value.Check(tool.parameters, args);
       expect(ok, `MANAGED_SECTIONS.exampleArgs.agents round-trip failed: ${JSON.stringify(args)}`).toBe(true);
     });
 
     it("E2: flat workspace_profile -> mapWorkspaceProfile produces nested workspace.profile (TypeBox passes flat)", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       // Flat shape: TypeBox accepts it (workspace_profile is a declared field).
       const args = {
         action: "create" as const,
@@ -639,7 +877,7 @@ describe("agents_manage tool", () => {
     });
 
     it("E3: nested workspace.profile = 'specialist' is accepted by both TypeBox and downstream Zod (the bug)", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const args = {
         action: "create" as const,
         agent_id: "spec-nested",
@@ -678,7 +916,7 @@ describe("agents_manage tool", () => {
     });
 
     it("E4: nested workspace.profile = 'full' is accepted", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const args = {
         action: "create" as const,
         agent_id: "full-nested",
@@ -706,7 +944,7 @@ describe("agents_manage tool", () => {
     });
 
     it("E5: invalid workspace.profile value still rejected (enum validation preserved)", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const args = {
         action: "create" as const,
         agent_id: "bad-profile",
@@ -727,7 +965,7 @@ describe("agents_manage tool", () => {
     });
 
     it("E6: JSON-string config carrying nested workspace still works", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const args = {
         action: "create" as const,
         agent_id: "spec-json",
@@ -758,7 +996,7 @@ describe("agents_manage tool", () => {
       // Direct invariant test on the side-effect of running create twice.
       // Running the tool twice with the same flat-shape input must produce
       // identical config payloads to the RPC layer (no double-nesting).
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       const args = {
         action: "create" as const,
         agent_id: "idempotent",
@@ -786,7 +1024,7 @@ describe("agents_manage tool", () => {
     });
 
     it("E8: precedence -- flat workspace_profile wins when both flat and nested are present", async () => {
-      const tool = createAgentsManageTool(mockRpcCall);
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
       // Both shapes provided: flat="full", nested.profile="specialist".
       // Pinned behavior: flat workspace_profile WINS (the spread in
       // mapWorkspaceProfile is `{...existing, profile}`, which overwrites
