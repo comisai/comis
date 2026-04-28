@@ -646,4 +646,16 @@ describe("recoverEmptyFinalResponse — tool-call synthesis (L3)", () => {
     const source = fs.readFileSync(sourcePath, "utf8");
     expect(source).not.toContain("pre-tool-commentary");
   });
+
+  it("source no longer contains generateCompletenessNudge symbol (260428-ur1 regression)", async () => {
+    const fs = await import("node:fs");
+    const url = await import("node:url");
+    const sourcePath = url.fileURLToPath(new URL("./executor-response-filter.ts", import.meta.url));
+    const source = fs.readFileSync(sourcePath, "utf8");
+    expect(source).not.toContain("generateCompletenessNudge");
+    // The formatChecklistForInjection import was only used by
+    // generateCompletenessNudge; with the function deleted, the import is
+    // also gone (no remaining consumer in this module).
+    expect(source).not.toContain("formatChecklistForInjection");
+  });
 });

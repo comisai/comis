@@ -980,6 +980,135 @@ describe("PiExecutor", () => {
       );
       expect(bookendCall![0].durationMs).toBeGreaterThanOrEqual(0);
     });
+
+    // -----------------------------------------------------------------------
+    // 260428-ur1 — L4 post-batch continuation integration
+    // -----------------------------------------------------------------------
+
+    it("Test 10 — emits postBatchContinuation log fields when handler fires after empty-final-after-tool-batch", async () => {
+      // Conversation ending with an empty assistant turn after agents_manage
+      // succeeded. pi-coding-agent session shape: tool results live in
+      // role: "toolResult" entries (NOT role: "user" with tool_result blocks).
+      mockSession.messages = [
+        { role: "user", content: [{ type: "text", text: "create 1 agent" }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I'll create it." },
+            { type: "toolCall", id: "t1", name: "agents_manage", arguments: { action: "create", agent_id: "x" } },
+          ],
+        },
+        { role: "toolResult", toolCallId: "t1", toolName: "agents_manage", content: [{ type: "text", text: "ok" }], isError: false },
+        { role: "assistant", content: [] }, // EMPTY final turn — triggers L4
+      ];
+
+      // Bridge result tuned so the upstream silent-failure handlers
+      // at executor-prompt-runner.ts:394-436 (silent-02 recovery) and
+      // ~821 (all-thinking continuation) BOTH skip — letting L4 be the
+      // one that fires:
+      //   - textEmitted: true   → silent-02 skips (treats empty final after
+      //                            text in earlier turns as expected).
+      //   - stepsExecuted: 0    → all-thinking continuation skips.
+      //   - llmCalls: 1, finishReason: "stop" → not stuck-session.
+      // L4's detection reads session.messages directly (not the bridge
+      // step counter), so the toolCall in our pre-populated messages still
+      // triggers detection.
+      mockGetResult.mockReturnValue({
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.01 },
+        stepsExecuted: 0,
+        llmCalls: 1,
+        finishReason: "stop",
+        textEmitted: true,
+      });
+
+      // First read returns "" (triggers L4); after followUp pushes the
+      // recovered turn, getVisibleAssistantText reads it directly from
+      // session.messages (since the latest assistant has a visible text
+      // block, phase-filter's getVisibleAssistantText returns it).
+      mockGetLastAssistantText.mockReturnValue("");
+      mockFollowUp.mockImplementationOnce(async () => {
+        mockSession.messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: "done!" }],
+        });
+        // Bump the SDK getter so post-followUp reads see "done!".
+        mockGetLastAssistantText.mockReturnValue("done!");
+      });
+
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-l4");
+
+      const infoCalls = (deps.logger.info as Mock).mock.calls;
+      const bookendCall = infoCalls.find(
+        ([_fields, msg]: [any, string]) => msg === "Execution complete",
+      );
+      expect(bookendCall).toBeDefined();
+      const fields = bookendCall![0];
+
+      expect(fields).toMatchObject({
+        postBatchContinuationFired: true,
+        postBatchContinuationAttempts: 1,
+        postBatchContinuationOutcome: "recovered",
+      });
+      expect(mockFollowUp).toHaveBeenCalledTimes(1);
+    });
+
+    it("Test 11 — emits sepStepsPlanned/sepStepsCompleted; does NOT emit sepNudgeTriggered (SEP observability after L4 downgrade)", async () => {
+      // Inject a synthetic SEP plan into executionPlanRef.current via the
+      // bridge mock. executor-post-execution.ts:339 reads the ref to
+      // populate result.plannerMetrics, which feeds the bookend log.
+      (createPiEventBridge as Mock).mockImplementationOnce((opts: any) => {
+        if (opts.executionPlan) {
+          opts.executionPlan.current = {
+            active: true,
+            request: "do work",
+            steps: [
+              { index: 1, description: "Step A", status: "done" },
+              { index: 2, description: "Step B", status: "done" },
+              { index: 3, description: "Step C", status: "pending" },
+            ],
+            completedCount: 2,
+            createdAtMs: Date.now(),
+          };
+        }
+        return {
+          listener: mockBridgeListener,
+          getResult: mockGetResult,
+          addGhostCost: vi.fn(),
+        };
+      });
+
+      // Normal flow: assistant emits visible text, no L4 trigger.
+      mockSession.messages = [
+        { role: "user", content: [{ type: "text", text: "do work" }] },
+        { role: "assistant", content: [{ type: "text", text: "Done." }] },
+      ];
+      mockGetLastAssistantText.mockReturnValue("Done.");
+
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-sep");
+
+      const infoCalls = (deps.logger.info as Mock).mock.calls;
+      const bookendCall = infoCalls.find(
+        ([_fields, msg]: [any, string]) => msg === "Execution complete",
+      );
+      expect(bookendCall).toBeDefined();
+      const fields = bookendCall![0];
+
+      // POSITIVE pin (observability preserved):
+      expect(fields).toMatchObject({
+        sepStepsPlanned: 3,
+        sepStepsCompleted: 2,
+      });
+
+      // ABSENCE pin (enforcement-mode field gone):
+      expect("sepNudgeTriggered" in fields).toBe(false);
+    });
   });
 
   // -------------------------------------------------------------------------
