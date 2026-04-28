@@ -7,10 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  shouldDropSignedFields,
-  shouldDropSignedFieldsForToolDefs,
-} from "./replay-drift-detector.js";
+import { shouldDropSignedFields } from "./replay-drift-detector.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -311,65 +308,5 @@ describe("shouldDropSignedFields", () => {
       now: FIXED_NOW,
     });
     expect(r.drop).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 260428-kvl: Tool-DEFINITIONS drift dimension
-// ---------------------------------------------------------------------------
-
-describe("shouldDropSignedFieldsForToolDefs", () => {
-  // Hash equality is binary, so any string works as a fixture -- the function
-  // only checks string equality. Use short readable names for clarity.
-  const HASH_A = "hash-a";
-  const HASH_B = "hash-b";
-  const HASH_C = "hash-c";
-
-  it("returns no_drift for an empty snapshots map", () => {
-    const r = shouldDropSignedFieldsForToolDefs({
-      currentHash: HASH_A,
-      snapshots: new Map(),
-    });
-    expect(r).toEqual({ shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" });
-  });
-
-  it("returns no_drift when every snapshot equals the current hash", () => {
-    const r = shouldDropSignedFieldsForToolDefs({
-      currentHash: HASH_A,
-      snapshots: new Map([
-        ["resp1", HASH_A],
-        ["resp2", HASH_A],
-      ]),
-    });
-    expect(r).toEqual({ shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" });
-  });
-
-  it("returns tool_defs_changed with the single mismatched responseId when one snapshot differs", () => {
-    const r = shouldDropSignedFieldsForToolDefs({
-      currentHash: HASH_A,
-      snapshots: new Map([
-        ["resp1", HASH_A],
-        ["resp2", HASH_B], // mismatched
-        ["resp3", HASH_A],
-      ]),
-    });
-    expect(r.shouldDrop).toBe(true);
-    expect(r.reason).toBe("tool_defs_changed");
-    expect(r.mismatchedResponseIds).toEqual(["resp2"]);
-  });
-
-  it("collects ALL mismatched responseIds in iteration order when multiple differ", () => {
-    const r = shouldDropSignedFieldsForToolDefs({
-      currentHash: HASH_A,
-      snapshots: new Map([
-        ["respA", HASH_B], // mismatched
-        ["respB", HASH_A], // equal
-        ["respC", HASH_C], // mismatched
-        ["respD", HASH_B], // mismatched
-      ]),
-    });
-    expect(r.shouldDrop).toBe(true);
-    expect(r.reason).toBe("tool_defs_changed");
-    expect(r.mismatchedResponseIds).toEqual(["respA", "respC", "respD"]);
   });
 });

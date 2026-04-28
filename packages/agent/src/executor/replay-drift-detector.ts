@@ -61,7 +61,7 @@ export interface DriftCheck {
   /** True when the caller should scrub signed thinking state pre-send. */
   drop: boolean;
   /** Human-readable reason; populated only when drop===true. */
-  reason?: "idle" | "model_change" | "provider_change" | "api_change" | "tool_defs_changed";
+  reason?: "idle" | "model_change" | "provider_change" | "api_change";
   /** Diagnostic detail for logger / event payload. */
   detail?: {
     idleGapMs?: number;
@@ -156,67 +156,4 @@ export function shouldDropSignedFields(input: DriftCheckInput): DriftCheck {
   }
 
   return { drop: false };
-}
-
-// ---------------------------------------------------------------------------
-// 260428-kvl: Tool-DEFINITIONS drift dimension
-// ---------------------------------------------------------------------------
-// Anthropic validates signed thinking-block signatures against the FULL
-// tools array (definitions, not just names). The JIT-guide injection
-// layer expands a deferred tool's schema into one turn's tools array
-// and then contracts it on the next -- this passes name-only equality
-// but fails signature validation. We hash the entire definitions array
-// per turn and compare hashes; mismatch -> drop.
-//
-// Pure function: no I/O, no async, no throws. Hash equality is binary,
-// so the result has a single non-trivial reason ("tool_defs_changed").
-// Combined at the call site by OR-ing `drop` flags.
-// ---------------------------------------------------------------------------
-
-/** Input to `shouldDropSignedFieldsForToolDefs`. */
-export interface ToolDefsDriftInput {
-  /** SHA-256 hex hash of the FULL tool definitions array that will be
-   *  sent on the NEXT API call, in serialization order. */
-  currentHash: string;
-  /** Snapshots keyed by responseId of the tool-definitions hash at
-   *  signature-mint time. */
-  snapshots: ReadonlyMap<string, string>;
-}
-
-/** Result of `shouldDropSignedFieldsForToolDefs`. */
-export interface ToolDefsDriftResult {
-  /** True iff at least one snapshot's hash diverges from the current hash. */
-  shouldDrop: boolean;
-  /** ResponseIds whose stored hash did not equal currentHash, in iteration order. */
-  mismatchedResponseIds: string[];
-  /** Hash equality is binary, so reason is either "tool_defs_changed" or "no_drift". */
-  reason: "tool_defs_changed" | "no_drift";
-}
-
-/**
- * Decide whether signed thinking state should be scrubbed because the active
- * tool DEFINITIONS hash differs from the snapshot captured at
- * signature-mint time.
- *
- * Pure: no async, no I/O, no throws.
- */
-export function shouldDropSignedFieldsForToolDefs(
-  input: ToolDefsDriftInput,
-): ToolDefsDriftResult {
-  const { currentHash, snapshots } = input;
-  if (snapshots.size === 0) {
-    return { shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" };
-  }
-  const mismatched: string[] = [];
-  for (const [responseId, snapHash] of snapshots) {
-    if (snapHash !== currentHash) mismatched.push(responseId);
-  }
-  if (mismatched.length === 0) {
-    return { shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" };
-  }
-  return {
-    shouldDrop: true,
-    mismatchedResponseIds: mismatched,
-    reason: "tool_defs_changed",
-  };
 }

@@ -30,13 +30,8 @@ import {
   getBreakpointIndexMapSize,
   getSessionLatches,
 } from "./executor-session-state.js";
-import {
-  shouldDropSignedFields,
-  shouldDropSignedFieldsForToolDefs,
-  type DriftCheck,
-} from "./replay-drift-detector.js";
+import { shouldDropSignedFields, type DriftCheck } from "./replay-drift-detector.js";
 import type { ErrorKind } from "@comis/infra";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
@@ -79,18 +74,6 @@ export interface ContextEngineSetupParams {
   onAnchorReset: () => void;
   /** Current discovery tracker (if active) */
   currentDiscoveryTracker?: DiscoveryTracker;
-  /** 260428-kvl: returns the full active tool DEFINITIONS array for the next
-   *  API call (post-deferral, post-JIT-guide injection). Same closure passed
-   *  to PiEventBridgeDeps.getActiveToolDefinitions so bridge + detector see
-   *  a consistent view per execute() turn. The detector hashes this array
-   *  and compares against per-responseId snapshots. Optional — when unwired
-   *  (e.g., unit tests), the tool-defs-drift dimension is disabled. */
-  getActiveToolDefinitions?: () => ReadonlyArray<unknown>;
-  /** 260428-kvl: returns the bridge's signedThinkingToolDefHash store.
-   *  Lazy getter because the bridge is created after `setupContextEngine` in
-   *  the executor; the closure reads `bridge.getThinkingBlockStores().toolDefHash`
-   *  on demand. Optional — when unwired, the tool-defs-drift dimension is disabled. */
-  getToolDefHashStore?: () => ReadonlyMap<string, string>;
 }
 
 /** Result of context engine setup. */
@@ -127,8 +110,6 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     contextEngineRef,
     getCachedSystemTokensEstimate, getTokenAnchor, onAnchorReset,
     currentDiscoveryTracker,
-    getActiveToolDefinitions,
-    getToolDefHashStore,
   } = params;
 
   const agentId = deps.agentId;
@@ -140,14 +121,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // Memoized per-execute() so all pipeline runs in a single execute() see a
   // consistent decision (cleaner + scrubber must agree). The closure reads
   // the latest model identity each time (handles cycleModel mid-execute).
-  //
-  // 260428-kvl: extended to OR-combine the existing identity/idle drift with
-  // the new tool-DEFINITIONS-changed dimension. Combined `drop` flag drives
-  // the signature-replay-scrubber (which gates only on `drop`); the existing
-  // closed `reason` union stays untouched — when only tool-defs drift fires
-  // we leave `reason` undefined and surface the toolset reason via a single
-  // INFO log emitted at the call site (gated behind `toolDriftLogged`).
-  let toolDriftLogged = false;
+  // Returns the identity/idle drift only — the kvl tool-defs dimension was
+  // removed in 260428-lm6 in favor of the unconditional latest-message
+  // preserving scrub in signature-replay-scrubber.
   let memoizedDrift: DriftCheck | undefined;
   const computeDriftIfNeeded = (): DriftCheck | undefined => {
     if (memoizedDrift !== undefined) return memoizedDrift;
@@ -171,69 +147,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         idleMs,
       });
 
-      // 260428-kvl: tool-DEFINITIONS drift. Anthropic signed-thinking
-      // validation covers the FULL tools array (definitions, not just names).
-      // The JIT-guide injector expands a deferred tool's schema into one
-      // turn's tools array and contracts it on the next; that passes name
-      // equality but fails signature validation. Hash the full definitions
-      // array and compare to per-responseId snapshots captured at
-      // signature-mint time. Defensive: must never throw past this boundary,
-      // so wrap the call in its own try/catch (and additionally swallow any
-      // JSON.stringify failure inside).
-      let toolDefsDrift: ReturnType<typeof shouldDropSignedFieldsForToolDefs> = {
-        shouldDrop: false,
-        mismatchedResponseIds: [],
-        reason: "no_drift",
-      };
-      let currentHash = "";
-      if (getActiveToolDefinitions && getToolDefHashStore) {
-        try {
-          const defs = getActiveToolDefinitions();
-          currentHash = createHash("sha256").update(JSON.stringify(defs)).digest("hex");
-          toolDefsDrift = shouldDropSignedFieldsForToolDefs({
-            currentHash,
-            snapshots: getToolDefHashStore(),
-          });
-        } catch {
-          toolDefsDrift = {
-            shouldDrop: false,
-            mismatchedResponseIds: [],
-            reason: "no_drift",
-          };
-        }
-      }
-
-      // ONE INFO log per execute() when tool-defs drift triggers. The flag
-      // gate prevents duplicates across re-entry; memoization further
-      // ensures `computeDriftIfNeeded` only runs the body once per turn.
-      // Log only the first 16 chars of currentHash + snapshot count -- never
-      // raw tool definitions or names (strictly less leaky than the prior
-      // names-based version that logged the full active-tool count).
-      if (toolDefsDrift.shouldDrop && !toolDriftLogged && getActiveToolDefinitions && getToolDefHashStore) {
-        toolDriftLogged = true;
-        deps.logger.info(
-          {
-            module: "agent.context-engine.replay-drift",
-            reason: toolDefsDrift.reason,
-            mismatchedResponseIds: toolDefsDrift.mismatchedResponseIds,
-            currentHash: currentHash.slice(0, 16) + "...",
-            snapshotCount: getToolDefHashStore().size,
-          },
-          "Replay drift detected: tool definitions changed since signature mint",
-        );
-      }
-
-      // Combine: drop wins on either dimension. Preserve existing reason
-      // when set; the scrubber (signature-replay-scrubber.ts:67-72) gates
-      // only on `drift.drop`. The DriftCheck.reason union now includes
-      // "tool_defs_changed" but we leave `reason` undefined here so the
-      // existing log paths for idle/model/provider/api remain undisturbed --
-      // the toolset reason is surfaced via the dedicated INFO log above.
-      memoizedDrift = {
-        drop: existingDrift.drop || toolDefsDrift.shouldDrop,
-        reason: existingDrift.reason,
-        detail: existingDrift.detail,
-      };
+      memoizedDrift = existingDrift;
       return memoizedDrift;
     } catch (err) {
       deps.logger.warn(

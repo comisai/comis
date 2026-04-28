@@ -291,17 +291,19 @@ export function createContextEngine(
     layers.push(thinkingCleaner);
   }
 
-  // Signature replay scrubber (Fix #2): activates only when the executor
-  // memoized a `{ drop: true }` drift decision for this execute() call.
-  // NOT gated on `model.reasoning` because Gemini's `thoughtSignature` lives
-  // on toolCall blocks even when the model itself isn't flagged as reasoning.
-  // The layer no-ops when the gate is closed, so unconditional addition is
-  // cheap; opt-in is via the executor providing `getReplayDriftMode`.
+  // Signature replay scrubber: drops thinking signatures (and toolCall
+  // thoughtSignatures) from every assistant message OLDER than the
+  // most recent one. Always-on — no drift-mode gate. The latest
+  // assistant message keeps its signatures so Anthropic's
+  // extended-thinking continuation can validate the immediate next
+  // call's prefix. (Replaces 260428-kvl detection-based approach;
+  // see .planning/quick/260428-lm6 for rationale.)
   if (deps.getReplayDriftMode) {
     const getReplayDriftMode = deps.getReplayDriftMode;
     layers.push(createSignatureReplayScrubber({
       getReplayDriftMode,
       onScrubbed: (stats) => { callbackState.signatureReplayScrubber = stats; },
+      logger: deps.logger,
     }));
   }
 
