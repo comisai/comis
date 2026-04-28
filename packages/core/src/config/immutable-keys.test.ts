@@ -256,16 +256,13 @@ describe("isImmutableConfigPath", () => {
     expect(isImmutableConfigPath("agents", "default.maxSteps")).toBe(false);
   });
 
-  it("allows agents.default.persona (mutable override)", () => {
-    expect(isImmutableConfigPath("agents", "default.persona")).toBe(false);
-  });
-
-  it("allows agents.default.persona.name (child of mutable override)", () => {
-    expect(isImmutableConfigPath("agents", "default.persona.name")).toBe(false);
-  });
-
-  it("allows agents.default.persona.tone (child of mutable override)", () => {
-    expect(isImmutableConfigPath("agents", "default.persona.tone")).toBe(false);
+  // 260428-rrr regression: persona is no longer a mutable override (Bug A);
+  // it was a dead reference -- PerAgentConfigSchema is z.strictObject and has
+  // no `persona` field, so the override entry only leaked a misleading
+  // capability hint to LLMs. With the entry removed, the agents immutable
+  // prefix wins and these paths are now rejected.
+  it("rejects agents.default.persona (260428-rrr: dead override removed)", () => {
+    expect(isImmutableConfigPath("agents", "default.persona")).toBe(true);
   });
 
   // Mutable overrides: promptTimeout runtime tuning
@@ -336,8 +333,9 @@ describe("isImmutableConfigPath", () => {
 });
 
 describe("MUTABLE_CONFIG_OVERRIDES", () => {
-  it("contains exactly 12 override patterns", () => {
-    expect(MUTABLE_CONFIG_OVERRIDES).toHaveLength(12);
+  it("contains exactly 11 override patterns", () => {
+    // 260428-rrr Bug A: down from 12 (dead "agents.*.persona" removed).
+    expect(MUTABLE_CONFIG_OVERRIDES).toHaveLength(11);
   });
 
   it("agent/channel patterns use * wildcard for second segment", () => {
@@ -352,20 +350,20 @@ describe("MUTABLE_CONFIG_OVERRIDES", () => {
 });
 
 describe("matchesOverridePattern", () => {
+  // Note: tests use agents.*.maxSteps as the wildcard fixture (a real entry in
+  // MUTABLE_CONFIG_OVERRIDES). The function is generic; the pattern choice is
+  // illustrative only. (Previously these tests used agents.*.persona; that
+  // entry was removed in 260428-rrr Bug A.)
   it("matches exact path to pattern", () => {
-    expect(matchesOverridePattern("agents.default.persona", "agents.*.persona")).toBe(true);
-  });
-
-  it("matches child path of pattern", () => {
-    expect(matchesOverridePattern("agents.default.persona.name", "agents.*.persona")).toBe(true);
+    expect(matchesOverridePattern("agents.default.maxSteps", "agents.*.maxSteps")).toBe(true);
   });
 
   it("rejects path shorter than pattern", () => {
-    expect(matchesOverridePattern("agents.default", "agents.*.persona")).toBe(false);
+    expect(matchesOverridePattern("agents.default", "agents.*.maxSteps")).toBe(false);
   });
 
   it("rejects path with wrong literal segment", () => {
-    expect(matchesOverridePattern("agents.default.model", "agents.*.persona")).toBe(false);
+    expect(matchesOverridePattern("agents.default.model", "agents.*.maxSteps")).toBe(false);
   });
 
   it("wildcard matches any single segment", () => {
@@ -374,7 +372,7 @@ describe("matchesOverridePattern", () => {
   });
 
   it("rejects path missing intermediate segment", () => {
-    expect(matchesOverridePattern("agents.persona", "agents.*.persona")).toBe(false);
+    expect(matchesOverridePattern("agents.maxSteps", "agents.*.maxSteps")).toBe(false);
   });
 });
 
@@ -386,7 +384,6 @@ describe("getMutableOverridesForSection", () => {
       "agents.default.skills.watchDebounceMs",
       "agents.default.skills.discoveryPaths",
       "agents.default.maxSteps",
-      "agents.default.persona",
       "agents.default.promptTimeout.promptTimeoutMs",
       "agents.default.promptTimeout.retryPromptTimeoutMs",
       "agents.default.operationModels",
@@ -408,5 +405,27 @@ describe("getMutableOverridesForSection", () => {
   it("returns empty array for non-immutable section", () => {
     const paths = getMutableOverridesForSection("memory");
     expect(paths).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 260428-rrr Bug A regression: dead "agents.*.persona" override removed.
+// PerAgentConfigSchema is z.strictObject and has no `persona` field, so the
+// override entry could never produce a successful patch -- it only leaked a
+// misleading capability hint to LLMs (formatRedirectHint emitted "you can
+// also patch agents.<id>.persona") which the LLM echoed back as
+// `persona:` in agents_manage.create config, triggering Zod
+// unrecognized_keys rejection (18 fleet-creation failures in production).
+// ---------------------------------------------------------------------------
+describe("MUTABLE_CONFIG_OVERRIDES (260428-rrr regression: persona removed)", () => {
+  it("does NOT contain the dead 'agents.*.persona' override", () => {
+    expect(MUTABLE_CONFIG_OVERRIDES).not.toContain("agents.*.persona");
+  });
+
+  it("getMutableOverridesForSection('agents', <id>) yields no persona-bearing path", () => {
+    const paths = getMutableOverridesForSection("agents", "ta-fundamentals");
+    for (const p of paths) {
+      expect(p).not.toMatch(/persona/);
+    }
   });
 });

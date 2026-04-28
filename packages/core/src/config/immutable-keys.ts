@@ -23,7 +23,12 @@ export const MUTABLE_CONFIG_OVERRIDES: readonly string[] = [
   "agents.*.skills.watchDebounceMs",
   "agents.*.skills.discoveryPaths",
   "agents.*.maxSteps",
-  "agents.*.persona",
+  // 260428-rrr Bug A: removed dead "agents.*.persona" entry. PerAgentConfigSchema
+  // is z.strictObject and has no `persona` field, so the override could never
+  // produce a successful patch -- it only leaked a misleading capability hint
+  // to LLMs (formatRedirectHint emitted "you can also patch agents.<id>.persona")
+  // which the LLM echoed back as `persona:` in agents_manage.create config,
+  // triggering Zod unrecognized_keys rejection.
   "agents.*.promptTimeout.promptTimeoutMs",      // Allow runtime tuning
   "agents.*.promptTimeout.retryPromptTimeoutMs",  // Allow runtime tuning
   "agents.*.operationModels",                     // Allow runtime model tiering tuning
@@ -41,8 +46,8 @@ export const MUTABLE_CONFIG_OVERRIDES: readonly string[] = [
  * path segments, the path is considered a match (equal to or a child of the
  * pattern).
  *
- * @param fullPath - Full dot-notation config path (e.g., "agents.default.persona.name")
- * @param pattern - Override pattern with `*` wildcards (e.g., "agents.*.persona")
+ * @param fullPath - Full dot-notation config path (e.g., "agents.default.maxSteps")
+ * @param pattern - Override pattern with `*` wildcards (e.g., "agents.*.maxSteps")
  * @returns true if the path matches or is a child of the pattern
  */
 export function matchesOverridePattern(fullPath: string, pattern: string): boolean {

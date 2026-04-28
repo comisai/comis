@@ -5,6 +5,7 @@ import {
   getManagedSectionRedirect,
   formatRedirectHint,
 } from "./managed-sections.js";
+import { getMutableOverridesForSection } from "./immutable-keys.js";
 
 describe("MANAGED_SECTIONS", () => {
   it("entries are ordered longest-prefix-first", () => {
@@ -91,10 +92,23 @@ describe("formatRedirectHint", () => {
     const redirect = getManagedSectionRedirect("agents")!;
     const hint = formatRedirectHint(redirect, [
       "agents.coding.model",
-      "agents.coding.persona",
+      "agents.coding.maxSteps",
     ]);
     expect(hint).toContain("agents.coding.model");
     expect(hint).toContain("entry that ALREADY exists");
+  });
+
+  // 260428-rrr Bug A regression: with the dead "agents.*.persona" override
+  // removed, the consumer-level hint must no longer mention persona. Pinned
+  // to getMutableOverridesForSection so any future re-introduction of a
+  // persona override (whether real or accidental) flips this test red.
+  it("260428-rrr: hint does NOT mention persona (dead override removed)", () => {
+    const redirect = getManagedSectionRedirect("agents")!;
+    const hint = formatRedirectHint(
+      redirect,
+      getMutableOverridesForSection("agents", "ta-fundamentals"),
+    );
+    expect(hint).not.toContain("persona");
   });
 
   it("warns when the tool is not fullyManaged", () => {
