@@ -24,6 +24,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertThinkingBlocksUnchanged,
   computeThinkingBlockHashes,
+  restoreCanonicalThinkingBlocks,
   type ThinkingBlockHash,
 } from "./thinking-block-hash-invariant.js";
 
@@ -258,6 +259,354 @@ describe("assertThinkingBlocksUnchanged", () => {
     assertThinkingBlocksUnchanged(prior, blocks, "resp_test_9", { logger: { error } });
     expect(prior).toEqual(priorClone);
     expect(blocks).toEqual(blocksClone);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// restoreCanonicalThinkingBlocks
+// ---------------------------------------------------------------------------
+
+describe("restoreCanonicalThinkingBlocks", () => {
+  // Helper: build an assistant message with content blocks + responseId.
+  const asstMsg = (responseId: string, content: ReadonlyArray<unknown>) => ({
+    role: "assistant" as const,
+    responseId,
+    content,
+  });
+
+  it("returns input ref + zero count when canonical store is empty", () => {
+    const messages = [asstMsg("resp_1", [blockA(), blockB()])];
+    const store = new Map<string, ReadonlyArray<unknown>>();
+    const info = vi.fn();
+    const warn = vi.fn();
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info, warn } });
+    expect(result.messages).toBe(messages);
+    expect(result.restoredCount).toBe(0);
+    expect(result.affectedResponseIds).toEqual([]);
+    expect(info).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("returns input ref + zero count when canonical matches in-memory exactly (idempotent)", () => {
+    const blocks = [blockA(), blockB()];
+    const messages = [asstMsg("resp_1", blocks)];
+    const store = new Map<string, ReadonlyArray<unknown>>([
+      ["resp_1", [blockA(), blockB()]],
+    ]);
+    const info = vi.fn();
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info, warn: vi.fn() } });
+    expect(result.messages).toBe(messages);
+    expect(result.restoredCount).toBe(0);
+    expect(result.affectedResponseIds).toEqual([]);
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it("running the restore twice = running once (idempotence)", () => {
+    const mutated = [blockA({ thinking: "MUTATED" }), blockB()];
+    const messages = [asstMsg("resp_1", mutated)];
+    const canonical = [blockA(), blockB()];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", canonical]]);
+    const info = vi.fn();
+    const first = restoreCanonicalThinkingBlocks(messages, store, { logger: { info, warn: vi.fn() } });
+    expect(first.restoredCount).toBe(1);
+    // Second pass against now-healed messages: no further swaps.
+    const info2 = vi.fn();
+    const second = restoreCanonicalThinkingBlocks(first.messages, store, { logger: { info: info2, warn: vi.fn() } });
+    expect(second.restoredCount).toBe(0);
+    expect(second.messages).toBe(first.messages);
+    expect(info2).not.toHaveBeenCalled();
+  });
+
+  it("replaces a mutated thinking block with its canonical counterpart and emits ONE INFO log", () => {
+    const mutated = [blockA({ thinking: "MUTATED-text" })];
+    const messages = [asstMsg("resp_1", mutated)];
+    const canonical = [blockA()];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", canonical]]);
+    const info = vi.fn();
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info, warn: vi.fn() } });
+    expect(result.restoredCount).toBe(1);
+    expect(result.affectedResponseIds).toEqual(["resp_1"]);
+    expect(result.messages).not.toBe(messages);
+    const healedContent = (result.messages[0] as { content: ReadonlyArray<Record<string, unknown>> }).content;
+    expect(healedContent[0]?.thinking).toBe(TEXT_A);
+    expect(healedContent[0]?.thinkingSignature).toBe(SIG_A);
+    expect(info).toHaveBeenCalledTimes(1);
+    const [payload, msg] = info.mock.calls[0]!;
+    expect(payload).toMatchObject({
+      module: "agent.bridge.canonical-restore",
+      restoredCount: 1,
+      affectedResponseIds: ["resp_1"],
+    });
+    expect(typeof msg).toBe("string");
+    expect((msg as string).length).toBeGreaterThan(0);
+  });
+
+  it("returns NEW top-level array AND NEW content array on swap; does not mutate input arrays", () => {
+    const inputBlocks = [blockA({ thinking: "MUTATED" }), blockB()];
+    const inputBlocksRef = inputBlocks; // capture
+    const messages = [asstMsg("resp_1", inputBlocks)];
+    const messagesRef = messages; // capture
+    const canonical = [blockA(), blockB()];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", canonical]]);
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info: vi.fn(), warn: vi.fn() } });
+    // New top-level + new content reference
+    expect(result.messages).not.toBe(messagesRef);
+    const healedMsg = result.messages[0] as { content: ReadonlyArray<unknown> };
+    expect(healedMsg.content).not.toBe(inputBlocksRef);
+    // Original arrays untouched (Object.is references preserved, contents intact).
+    expect(messagesRef[0]?.content).toBe(inputBlocksRef);
+    expect(inputBlocksRef[0]).toEqual(blockA({ thinking: "MUTATED" }));
+    expect(inputBlocksRef[1]).toEqual(blockB());
+  });
+
+  it("ignores text blocks, tool_use, tool_result, and redacted_thinking blocks", () => {
+    const liveBlocks = [
+      { type: "text", text: "preface" },
+      blockA({ thinking: "MUTATED-A" }),
+      { type: "tool_use", id: "toolu_1", name: "exec", input: { cmd: "ls" } },
+      { type: "thinking", redacted: true, thinkingSignature: "redacted-sig" },
+      { type: "tool_result", tool_use_id: "toolu_1", content: "ok" },
+    ];
+    const canonical = [
+      { type: "text", text: "preface" },
+      blockA(),
+      { type: "tool_use", id: "toolu_1", name: "exec", input: { cmd: "ls" } },
+      { type: "thinking", redacted: true, thinkingSignature: "redacted-sig" },
+      { type: "tool_result", tool_use_id: "toolu_1", content: "ok" },
+    ];
+    const messages = [asstMsg("resp_1", liveBlocks)];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", canonical]]);
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info: vi.fn(), warn: vi.fn() } });
+    expect(result.restoredCount).toBe(1); // only the thinking block was healed
+    const healed = (result.messages[0] as { content: ReadonlyArray<Record<string, unknown>> }).content;
+    // text/tool blocks unchanged (object identity preserved when no swap on that index)
+    expect(healed[0]).toBe(liveBlocks[0]);
+    expect(healed[2]).toBe(liveBlocks[2]);
+    expect(healed[3]).toBe(liveBlocks[3]); // redacted_thinking left alone
+    expect(healed[4]).toBe(liveBlocks[4]);
+    // thinking block swapped
+    expect(healed[1]?.thinking).toBe(TEXT_A);
+  });
+
+  it("does NOT swap when positional types disagree (live=thinking, canonical=text)", () => {
+    const liveBlocks = [blockA({ thinking: "MUTATED" })];
+    const canonical = [{ type: "text", text: "different shape" }];
+    const messages = [asstMsg("resp_1", liveBlocks)];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", canonical]]);
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info: vi.fn(), warn: vi.fn() } });
+    expect(result.restoredCount).toBe(0);
+    expect(result.messages).toBe(messages);
+  });
+
+  it("leaves messages with no responseId untouched", () => {
+    const liveBlocks = [blockA({ thinking: "MUTATED" })];
+    const messages = [{ role: "assistant", content: liveBlocks }]; // no responseId
+    const canonical = [blockA()];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", canonical]]);
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info: vi.fn(), warn: vi.fn() } });
+    expect(result.restoredCount).toBe(0);
+    expect(result.messages).toBe(messages);
+  });
+
+  it("leaves messages whose responseId is not in the store untouched", () => {
+    const liveBlocks = [blockA({ thinking: "MUTATED" })];
+    const messages = [asstMsg("resp_unknown", liveBlocks)];
+    const canonical = [blockA()];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", canonical]]);
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info: vi.fn(), warn: vi.fn() } });
+    expect(result.restoredCount).toBe(0);
+    expect(result.messages).toBe(messages);
+  });
+
+  it("ignores user / system / tool messages — only walks role==='assistant'", () => {
+    const userMsg = { role: "user", responseId: "resp_1", content: [blockA({ thinking: "MUTATED" })] };
+    const systemMsg = { role: "system", responseId: "resp_1", content: [blockA({ thinking: "MUTATED" })] };
+    const toolMsg = { role: "tool", responseId: "resp_1", content: [blockA({ thinking: "MUTATED" })] };
+    const messages = [userMsg, systemMsg, toolMsg];
+    const canonical = [blockA()];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", canonical]]);
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info: vi.fn(), warn: vi.fn() } });
+    expect(result.restoredCount).toBe(0);
+    expect(result.messages).toBe(messages);
+  });
+
+  it("returns accurate restoredCount and affectedResponseIds across multiple messages", () => {
+    const m1 = asstMsg("resp_1", [blockA({ thinking: "MUTATED-A" }), blockB({ thinking: "MUTATED-B" })]);
+    const m2 = asstMsg("resp_2", [blockA()]); // unchanged
+    const m3 = asstMsg("resp_3", [blockA({ thinking: "MUTATED-A" })]);
+    const messages = [m1, m2, m3];
+    const store = new Map<string, ReadonlyArray<unknown>>([
+      ["resp_1", [blockA(), blockB()]],
+      ["resp_2", [blockA()]],
+      ["resp_3", [blockA()]],
+    ]);
+    const info = vi.fn();
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info, warn: vi.fn() } });
+    expect(result.restoredCount).toBe(3); // 2 in m1 + 0 in m2 + 1 in m3
+    expect(result.affectedResponseIds).toEqual(["resp_1", "resp_3"]);
+    expect(info).toHaveBeenCalledTimes(1);
+    const [payload] = info.mock.calls[0]!;
+    expect(payload).toMatchObject({
+      module: "agent.bridge.canonical-restore",
+      restoredCount: 3,
+      affectedResponseIds: ["resp_1", "resp_3"],
+    });
+  });
+
+  it("emits NO log when restoredCount === 0", () => {
+    const messages = [asstMsg("resp_1", [blockA(), blockB()])];
+    const store = new Map<string, ReadonlyArray<unknown>>([
+      ["resp_1", [blockA(), blockB()]],
+    ]);
+    const info = vi.fn();
+    const warn = vi.fn();
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info, warn } });
+    expect(result.restoredCount).toBe(0);
+    expect(info).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("never throws on malformed canonical entry (non-array store value); emits ONE WARN with errorKind:'internal'", () => {
+    const messages = [asstMsg("resp_1", [blockA({ thinking: "MUTATED" })])];
+    const store = new Map<string, ReadonlyArray<unknown>>([
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- exercising defensive path
+      ["resp_1", "not-an-array" as any],
+    ]);
+    const warn = vi.fn();
+    const info = vi.fn();
+    expect(() =>
+      restoreCanonicalThinkingBlocks(messages, store, { logger: { info, warn } }),
+    ).not.toThrow();
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info, warn } });
+    expect(result.restoredCount).toBe(0);
+    expect(result.affectedResponseIds).toEqual([]);
+    expect(result.messages).toBe(messages);
+    // No INFO (zero swaps); no WARN either because non-array canonical is treated
+    // as "no canonical for this responseId" -- not a malformed-input error.
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it("never throws when the messages walk hits a malformed block; returns input ref + WARN", () => {
+    // Construct an input that causes the internal walk to encounter unexpected
+    // shapes. The helper's outer try/catch must swallow any error.
+    const liveBlocks: ReadonlyArray<unknown> = [blockA({ thinking: "MUTATED" })];
+    const messages = [asstMsg("resp_1", liveBlocks)];
+    // canonical[0] is non-object — when the walker tries to read .type it
+    // returns undefined; that's a soft no-swap, not a throw. To force the
+    // try/catch path we need a value whose `.type` getter throws.
+    const trapBlock = new Proxy({}, {
+      get() {
+        throw new Error("synthetic-trap");
+      },
+    });
+    const canonical: ReadonlyArray<unknown> = [trapBlock];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", canonical]]);
+    const warn = vi.fn();
+    const info = vi.fn();
+    let result;
+    expect(() => {
+      result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info, warn } });
+    }).not.toThrow();
+    expect(result!.restoredCount).toBe(0);
+    expect(result!.affectedResponseIds).toEqual([]);
+    expect(result!.messages).toBe(messages);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [payload] = warn.mock.calls[0]!;
+    expect(payload).toMatchObject({
+      module: "agent.bridge.canonical-restore",
+      errorKind: "internal",
+    });
+    expect(typeof payload.hint).toBe("string");
+    expect((payload.hint as string).length).toBeGreaterThan(0);
+  });
+
+  it("returns empty array when messages input is not an array (no log)", () => {
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", [blockA()]]]);
+    const info = vi.fn();
+    const warn = vi.fn();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- exercising defensive path
+    const r1 = restoreCanonicalThinkingBlocks(null as any, store, { logger: { info, warn } });
+    expect(r1.messages).toEqual([]);
+    expect(r1.restoredCount).toBe(0);
+    expect(info).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- exercising defensive path
+    const r2 = restoreCanonicalThinkingBlocks(undefined as any, store, { logger: { info, warn } });
+    expect(r2.messages).toEqual([]);
+    expect(r2.restoredCount).toBe(0);
+  });
+
+  it("works when deps argument omits logger entirely (silent path, no throw)", () => {
+    const messages = [asstMsg("resp_1", [blockA({ thinking: "MUTATED" })])];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", [blockA()]]]);
+    expect(() => restoreCanonicalThinkingBlocks(messages, store)).not.toThrow();
+    expect(() => restoreCanonicalThinkingBlocks(messages, store, {})).not.toThrow();
+    const result = restoreCanonicalThinkingBlocks(messages, store);
+    expect(result.restoredCount).toBe(1);
+  });
+
+  it("integration: assertion-then-restore order produces ERROR followed by healed messages", () => {
+    // Set up: capture hashes of canonical, then mutate the live copy.
+    const canonicalBlocks = [blockA(), blockB()];
+    const priorHashes = computeThinkingBlockHashes(canonicalBlocks);
+    // Live (mutated) copy
+    const mutatedBlocks = [blockA({ thinking: TEXT_A + "_MUTATED" }), blockB()];
+    const messages = [asstMsg("resp_test_int", mutatedBlocks)];
+
+    // Step 1: assertion fires ERROR log identifying the mutation.
+    const error = vi.fn();
+    assertThinkingBlocksUnchanged(priorHashes, mutatedBlocks, "resp_test_int", { logger: { error } });
+    expect(error).toHaveBeenCalledTimes(1);
+    const [errPayload] = error.mock.calls[0]!;
+    expect(errPayload).toMatchObject({
+      module: "agent.bridge.hash-invariant",
+      blockIndex: 0,
+      responseId: "resp_test_int",
+    });
+
+    // Step 2: restoration heals the in-memory shape using the canonical store.
+    const store = new Map<string, ReadonlyArray<unknown>>([
+      ["resp_test_int", canonicalBlocks],
+    ]);
+    const info = vi.fn();
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info, warn: vi.fn() } });
+    expect(result.restoredCount).toBe(1);
+    const healed = (result.messages[0] as { content: ReadonlyArray<Record<string, unknown>> }).content;
+    expect(healed[0]?.thinking).toBe(TEXT_A); // restored canonical text
+    expect(healed[0]?.thinkingSignature).toBe(SIG_A); // signature intact
+    // Expected log shape distinct from assertion: module differs.
+    expect(info).toHaveBeenCalledTimes(1);
+    const [infoPayload] = info.mock.calls[0]!;
+    expect(infoPayload).toMatchObject({
+      module: "agent.bridge.canonical-restore",
+      restoredCount: 1,
+      affectedResponseIds: ["resp_test_int"],
+    });
+  });
+
+  it("dedupes affectedResponseIds in walk order (multiple swaps for same responseId count once)", () => {
+    const messages = [
+      asstMsg("resp_1", [blockA({ thinking: "MUTATED-A" }), blockB({ thinking: "MUTATED-B" })]),
+    ];
+    const store = new Map<string, ReadonlyArray<unknown>>([
+      ["resp_1", [blockA(), blockB()]],
+    ]);
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info: vi.fn(), warn: vi.fn() } });
+    expect(result.restoredCount).toBe(2);
+    expect(result.affectedResponseIds).toEqual(["resp_1"]); // one entry, not two
+  });
+
+  it("preserves assistant messages without responseId AFTER a heal happens (copy-on-write boundary)", () => {
+    const headlessMsg = { role: "assistant", content: [{ type: "text", text: "no responseId" }] };
+    const healable = asstMsg("resp_1", [blockA({ thinking: "MUTATED" })]);
+    const messages = [headlessMsg, healable];
+    const store = new Map<string, ReadonlyArray<unknown>>([["resp_1", [blockA()]]]);
+    const result = restoreCanonicalThinkingBlocks(messages, store, { logger: { info: vi.fn(), warn: vi.fn() } });
+    expect(result.restoredCount).toBe(1);
+    // headlessMsg passes through with its original reference
+    expect(result.messages[0]).toBe(headlessMsg);
+    // healable was replaced with a new message reference
+    expect(result.messages[1]).not.toBe(healable);
   });
 });
 
