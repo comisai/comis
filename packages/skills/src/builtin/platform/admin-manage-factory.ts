@@ -67,6 +67,30 @@ export interface AdminManageDescriptor<T extends TSchema = TSchema> {
 }
 
 // ---------------------------------------------------------------------------
+// AgentToolResult pass-through guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect when an actionOverride has already produced a fully-formed
+ * `AgentToolResult` (multi-block content + typed `details`), so the factory
+ * passes it through verbatim instead of re-wrapping via `jsonResult`.
+ *
+ * Used by `agents_manage.create` (260428-sw2 Layer 1) to emit a 2-text-block
+ * tool_result: a high-attention next-step contract first, the JSON-rendered
+ * RPC fields second. The 7 sibling admin manage tools (cron/heartbeat/
+ * sessions/tokens/etc.) keep returning plain objects from their overrides --
+ * they hit the `jsonResult` branch unchanged. Additive, zero-impact change.
+ */
+function isAgentToolResult(value: unknown): value is AgentToolResult<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { content?: unknown }).content) &&
+    "details" in (value as object)
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -154,7 +178,10 @@ export function createAdminManageTool<T extends TSchema>(
             { agentId: ctx?.userId, trustLevel: _trustLevel },
           );
           if (result !== undefined) {
-            return jsonResult(result);
+            // Pass through pre-built AgentToolResult shapes (e.g. the
+            // multi-text-block contract emitted by agents_manage.create);
+            // wrap plain values via jsonResult as before.
+            return isAgentToolResult(result) ? result : jsonResult(result);
           }
           // Fall through to default dispatch if override returns undefined
         }

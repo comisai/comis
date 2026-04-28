@@ -10,9 +10,10 @@
  * @module
  */
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import type { ApprovalGate } from "@comis/core";
+import type { ComisLogger } from "@comis/infra";
 import { readStringParam } from "./tool-helpers.js";
 import { createAdminManageTool } from "./admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
@@ -157,6 +158,37 @@ function mapWorkspaceProfile(config: Record<string, unknown> | undefined): void 
   }
 }
 
+/**
+ * Build the post-create next-step contract emitted as the FIRST text block
+ * of the `agents_manage.create` tool_result. The freshest, uncached surface
+ * the LLM reads on every turn -- pinned here to fix the silent-termination
+ * bug where TOOL_GUIDE prescriptive text gets crowded out under high
+ * parallel-tool-call load (production session 1a8b0d91 turn 13: 9 sub-agents
+ * created in parallel, then a 0-text 0-thinking 0-tool turn).
+ *
+ * Pure string composition. No I/O, no Result<T,E> needed (per AGENTS.md
+ * §2.1: Result is for fallible paths only; this is infallible).
+ *
+ * Case A (workspaceDir present): full contract — at-line, file paths with
+ * intent, "Next required action" with the literal write({path:..., content:..})
+ * directive, and an explicit "NOT ready until ROLE.md is customized" gate.
+ *
+ * Case B (workspaceDir absent — defensive fallback): shorter form pinning
+ * "Customize {agentId}'s workspace ROLE.md and IDENTITY.md before using."
+ */
+function buildCreateContract(agentId: string, workspaceDir: string | undefined): string {
+  if (workspaceDir !== undefined) {
+    return [
+      `✓ Agent ${agentId} created at ${workspaceDir}.`,
+      `⚠ Workspace files are TEMPLATES — not yet operationally configured. Customize before use:`,
+      `  • ${workspaceDir}/ROLE.md      — purpose, behavioral guidelines, domain conventions`,
+      `  • ${workspaceDir}/IDENTITY.md  — name, creature, vibe, emoji`,
+      `Next required action for this agent: call write({path: "${workspaceDir}/ROLE.md", content: "..."}). This agent is NOT ready until ROLE.md is customized.`,
+    ].join("\n");
+  }
+  return `✓ Agent ${agentId} created. Customize ${agentId}'s workspace ROLE.md and IDENTITY.md before using.`;
+}
+
 /** Coerce config from JSON string to object if LLM double-encoded it. */
 function coerceConfig(p: Record<string, unknown>): Record<string, unknown> | undefined {
   const raw = p.config;
@@ -187,11 +219,16 @@ function coerceConfig(p: Record<string, unknown>): Record<string, unknown> | und
  * - **resume** -- Resume a suspended agent
  *
  * @param rpcCall - RPC call function for delegating to the daemon backend
+ * @param logger - Required structured logger. Used to emit a per-create
+ *   INFO log pinning the next-step contract emission (260428-sw2 Layer 1).
+ *   Mirrors the gateway-tool required-logger position; no overload-with-
+ *   default-logger compat shim (per `feedback_no_backward_compat.md`).
  * @param approvalGate - Optional approval gate for create/delete actions
  * @returns AgentTool implementing the agent management interface
  */
 export function createAgentsManageTool(
   rpcCall: RpcCall,
+  logger: ComisLogger,
   approvalGate?: ApprovalGate,
   callbacks?: {
     onMutationStart?: () => void;
@@ -225,14 +262,30 @@ export function createAgentsManageTool(
           callbacks?.onMutationStart?.();
           try {
             const result = await rpcCall("agents.create", { agentId, config, _trustLevel: ctx.trustLevel });
+            // agentId is guaranteed non-undefined by readStringParam(required=true) above.
+            const aid = agentId as string;
+            const workspaceDir = (result as { workspaceDir?: string } | undefined)?.workspaceDir;
+
+            // 260428-sw2 Layer 1: emit the next-step contract on the
+            // freshest, uncached surface the LLM reads each turn (the
+            // tool_result text). One structured INFO log pins this happened.
+            const contractText = buildCreateContract(aid, workspaceDir);
+            logger.info(
+              {
+                module: "skill.agents-manage",
+                action: "create",
+                agentId: aid,
+                workspaceDir: workspaceDir ?? null,
+                contractEmitted: true,
+              },
+              "agents_manage.create succeeded — next-step contract emitted",
+            );
+
             // Best-effort seed registration hook. Fires only on successful
             // RPC return. Callback failures are swallowed — the agent was
             // created; tracker registration is an optimization, not a gate.
             if (callbacks?.onAgentCreated) {
               try {
-                const workspaceDir = (result as { workspaceDir?: string } | undefined)?.workspaceDir;
-                // agentId is guaranteed non-undefined by readStringParam(required=true) above.
-                const aid = agentId as string;
                 await callbacks.onAgentCreated(
                   workspaceDir !== undefined ? { agentId: aid, workspaceDir } : { agentId: aid },
                 );
@@ -240,7 +293,21 @@ export function createAgentsManageTool(
                 /* non-fatal */
               }
             }
-            return result;
+
+            // Return a 2-text-block AgentToolResult passed through verbatim
+            // by admin-manage-factory's isAgentToolResult guard:
+            //  - block 0: the next-step contract (high-attention text)
+            //  - block 1: the JSON-rendered RPC fields (preserves the
+            //    structured view existing pin/regression tests assert)
+            // `details` is the raw RPC return so result.details assertions
+            // continue to pass unchanged.
+            return {
+              content: [
+                { type: "text", text: contractText },
+                { type: "text", text: JSON.stringify(result, null, 2) },
+              ],
+              details: result,
+            } satisfies AgentToolResult<typeof result>;
           } finally {
             callbacks?.onMutationEnd?.();
           }

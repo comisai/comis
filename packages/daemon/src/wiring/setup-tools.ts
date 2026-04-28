@@ -375,7 +375,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         createDescribeVideoTool(agentRpc),
         createExtractDocumentTool(agentRpc),
         createGatewayTool(agentRpc, skillsLogger),
-        createAgentsManageTool(agentRpc, approvalGate, {
+        createAgentsManageTool(agentRpc, skillsLogger, approvalGate, {
           onMutationStart: enterConfigMutationFence,
           onMutationEnd: leaveConfigMutationFence,
           // After agents.create seeds the new workspace's template files
