@@ -169,9 +169,16 @@ USER comis
 # / compose `ports:`. Without this, the daemon would default to 127.0.0.1 and
 # `docker run -p 4766:4766` would connection-reset because nothing listens on the
 # container's external interface.
+#
+# COMIS_CONFIG_PATHS is intentionally NOT set here. Without it, the daemon falls
+# back to its built-in default search path: ~/.comis/config.yaml (i.e.
+# /home/comis/.comis/config.yaml inside this image), which is the standard mount
+# point for `docker run -v comis-data:/home/comis/.comis`. Compose deployments
+# that prefer /etc/comis/config.yaml set COMIS_CONFIG_PATHS explicitly in the
+# compose file. Setting it here would silently override the home-dir default
+# and ignore the user's mounted config when /etc/comis isn't mounted.
 ENV NODE_ENV=production \
     COMIS_DATA_DIR=/home/comis/.comis \
-    COMIS_CONFIG_PATHS=/etc/comis/config.yaml \
     COMIS_GATEWAY_HOST=0.0.0.0
 
 # Declare the data volume so `docker image inspect` documents the persistence
