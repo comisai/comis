@@ -22,7 +22,10 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 vi.mock("node:fs", () => ({
-  existsSync: vi.fn(() => true),
+  // Default to true for daemon binary / pid file checks, but report
+  // /.dockerenv as absent so the wizard takes the host (non-Docker)
+  // branch. Docker-branch tests opt in by overriding existsSync.
+  existsSync: vi.fn((p: string) => p !== "/.dockerenv"),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
   openSync: vi.fn(() => 99),
@@ -111,7 +114,9 @@ function stateWithGateway(): WizardState {
 describe("daemonStartStep", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(existsSync).mockReturnValue(true);
+    // Default: every path exists EXCEPT /.dockerenv, so isDocker() is false
+    // for the host (non-Docker) branch. Docker-branch tests can override.
+    vi.mocked(existsSync).mockImplementation((p) => String(p) !== "/.dockerenv");
 
     // Mock global.fetch for health check
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
@@ -227,6 +232,36 @@ describe("daemonStartStep", () => {
       ([msg]) => typeof msg === "string" && msg.includes("Health check results"),
     );
     expect(healthResultCalls).toHaveLength(0);
+  });
+
+  it("inside Docker (/.dockerenv present) -> does NOT spawn a sibling daemon", async () => {
+    // Pretend we're in a container — /.dockerenv exists, plus the usual paths.
+    vi.mocked(existsSync).mockReturnValue(true);
+
+    // Daemon detection: gateway responds, so the wizard sees daemonRunning=true
+    // and offers Restart/Leave-running. Choose Restart.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ status: "healthy" }),
+    }));
+
+    const prompter = createMockPrompter({
+      select: ["restart"],
+    });
+
+    await daemonStartStep.execute(stateWithGateway(), prompter);
+
+    // Critical: the buggy direct-spawn path must NOT run inside Docker.
+    expect(spawn).not.toHaveBeenCalled();
+
+    // The Docker branch can't actually find the daemon process in this
+    // unit-test sandbox (no /proc mock), so it should fall back to
+    // instructing the user to run `docker restart`.
+    const warnCalls = vi.mocked(prompter.log.warn).mock.calls;
+    const warnedAboutDockerRestart = warnCalls.some(
+      ([msg]) => typeof msg === "string" && msg.includes("docker"),
+    );
+    expect(warnedAboutDockerRestart).toBe(true);
   });
 
   it("daemon binary not found -> warns user, no spawn", async () => {
