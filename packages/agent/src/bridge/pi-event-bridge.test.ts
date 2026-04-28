@@ -3511,12 +3511,15 @@ describe("createPiEventBridge", () => {
     });
 
     // ----------------------------------------------------------------
-    // 260428-k8d: signedThinkingToolSnapshot capture and lockstep eviction.
+    // 260428-kvl: signedThinkingToolDefHash capture and lockstep eviction.
     // ----------------------------------------------------------------
-    describe("260428-k8d: signedThinkingToolSnapshot", () => {
-      it("captures the active tool name set at stream close keyed by responseId", () => {
+    describe("260428-kvl: signedThinkingToolDefHash", () => {
+      const toolDefA = { name: "file_read", description: "Read a file", parameters: { path: "string" } };
+      const toolDefB = { name: "fetch", description: "HTTP fetch", parameters: { url: "string" } };
+
+      it("captures a 64-char lowercase-hex SHA-256 hash at stream close keyed by responseId", () => {
         const localDeps = createMockDeps({
-          getActiveToolNames: () => new Set(["file_read", "fetch"]),
+          getActiveToolDefinitions: () => [toolDefA, toolDefB],
         });
         const { listener, getThinkingBlockStores } = createPiEventBridge(localDeps);
         listener(
@@ -3526,13 +3529,13 @@ describe("createPiEventBridge", () => {
           ) as any,
         );
         const stores = getThinkingBlockStores();
-        expect(stores.toolSnapshot.has("resp-tool-A")).toBe(true);
-        const snap = stores.toolSnapshot.get("resp-tool-A")!;
-        expect([...snap].sort()).toEqual(["fetch", "file_read"]);
+        expect(stores.toolDefHash.has("resp-tool-A")).toBe(true);
+        const storedHash = stores.toolDefHash.get("resp-tool-A")!;
+        expect(storedHash).toMatch(/^[0-9a-f]{64}$/);
       });
 
-      it("falls back to an empty Set when getActiveToolNames is undefined (no throw)", () => {
-        // No getActiveToolNames in deps → empty-set fallback path.
+      it("falls back to hashing an empty array when getActiveToolDefinitions is undefined (no throw)", () => {
+        // No getActiveToolDefinitions in deps → empty-array fallback path.
         const { listener, getThinkingBlockStores } = createPiEventBridge(deps);
         expect(() =>
           listener(
@@ -3543,22 +3546,21 @@ describe("createPiEventBridge", () => {
           ),
         ).not.toThrow();
         const stores = getThinkingBlockStores();
-        expect(stores.toolSnapshot.has("resp-tool-B")).toBe(true);
-        expect(stores.toolSnapshot.get("resp-tool-B")!.size).toBe(0);
+        expect(stores.toolDefHash.has("resp-tool-B")).toBe(true);
+        // Empty-array hash is still a valid 64-char hex SHA-256.
+        expect(stores.toolDefHash.get("resp-tool-B")!).toMatch(/^[0-9a-f]{64}$/);
       });
 
       it("evicts the oldest entry from ALL THREE maps in lockstep at the 32-cap", () => {
-        // Snapshot value carries the responseId so we can verify which entry
-        // actually survives — not just that the map size is right.
         const localDeps = createMockDeps({
-          getActiveToolNames: () => new Set(["t-baseline"]),
+          getActiveToolDefinitions: () => [toolDefA],
         });
         const { listener, getThinkingBlockStores } = createPiEventBridge(localDeps);
         for (let i = 0; i < 33; i++) {
           listener(
             makeTurnEndWithContent(
               [thinkingBlock(`thought-${i}`, `sig-${i}`)],
-              `resp-k8d-${i}`,
+              `resp-kvl-${i}`,
             ) as any,
           );
         }
@@ -3566,27 +3568,25 @@ describe("createPiEventBridge", () => {
         // Cap holds across all three maps.
         expect(stores.hashes.size).toBe(32);
         expect(stores.canonical.size).toBe(32);
-        expect(stores.toolSnapshot.size).toBe(32);
+        expect(stores.toolDefHash.size).toBe(32);
         // Oldest evicted from ALL three.
-        expect(stores.hashes.has("resp-k8d-0")).toBe(false);
-        expect(stores.canonical.has("resp-k8d-0")).toBe(false);
-        expect(stores.toolSnapshot.has("resp-k8d-0")).toBe(false);
+        expect(stores.hashes.has("resp-kvl-0")).toBe(false);
+        expect(stores.canonical.has("resp-kvl-0")).toBe(false);
+        expect(stores.toolDefHash.has("resp-kvl-0")).toBe(false);
         // Newest present in ALL three.
-        expect(stores.hashes.has("resp-k8d-32")).toBe(true);
-        expect(stores.canonical.has("resp-k8d-32")).toBe(true);
-        expect(stores.toolSnapshot.has("resp-k8d-32")).toBe(true);
+        expect(stores.hashes.has("resp-kvl-32")).toBe(true);
+        expect(stores.canonical.has("resp-kvl-32")).toBe(true);
+        expect(stores.toolDefHash.has("resp-kvl-32")).toBe(true);
         // Lockstep keyset invariant across all three.
-        expect([...stores.hashes.keys()]).toEqual([...stores.toolSnapshot.keys()]);
-        expect([...stores.canonical.keys()]).toEqual([...stores.toolSnapshot.keys()]);
+        expect([...stores.hashes.keys()]).toEqual([...stores.toolDefHash.keys()]);
+        expect([...stores.canonical.keys()]).toEqual([...stores.toolDefHash.keys()]);
       });
 
-      it("captures whatever set the closure returns at the moment of stream close (live snapshot)", () => {
-        // Mutating the underlying set after capture must not retroactively
-        // change a stored snapshot — the bridge stores the reference returned
-        // by the closure. We verify by returning a FRESH Set per call.
-        let returned: Set<string> = new Set(["a"]);
+      it("produces the SAME hash for the same definitions array across captures, and a DIFFERENT hash when definitions change", () => {
+        // Same definitions twice → same hash.
+        let returnedDefs: ReadonlyArray<unknown> = [toolDefA, toolDefB];
         const localDeps = createMockDeps({
-          getActiveToolNames: () => returned,
+          getActiveToolDefinitions: () => returnedDefs,
         });
         const { listener, getThinkingBlockStores } = createPiEventBridge(localDeps);
         listener(
@@ -3595,17 +3595,26 @@ describe("createPiEventBridge", () => {
             "resp-live-1",
           ) as any,
         );
-        // Swap to a different set for the second responseId.
-        returned = new Set(["a", "b"]);
         listener(
           makeTurnEndWithContent(
             [thinkingBlock("q", "sig-q")],
             "resp-live-2",
           ) as any,
         );
+        // Different definitions for the third capture.
+        returnedDefs = [toolDefA, { ...toolDefB, description: "MUTATED HTTP fetch" }];
+        listener(
+          makeTurnEndWithContent(
+            [thinkingBlock("r", "sig-r")],
+            "resp-live-3",
+          ) as any,
+        );
         const stores = getThinkingBlockStores();
-        expect([...stores.toolSnapshot.get("resp-live-1")!]).toEqual(["a"]);
-        expect([...stores.toolSnapshot.get("resp-live-2")!].sort()).toEqual(["a", "b"]);
+        const h1 = stores.toolDefHash.get("resp-live-1")!;
+        const h2 = stores.toolDefHash.get("resp-live-2")!;
+        const h3 = stores.toolDefHash.get("resp-live-3")!;
+        expect(h1).toBe(h2); // determinism: same defs → same hash
+        expect(h1).not.toBe(h3); // a description change produces a different hash
       });
     });
 

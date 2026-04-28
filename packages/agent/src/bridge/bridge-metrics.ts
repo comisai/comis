@@ -106,14 +106,18 @@ export interface BridgeMetricsState {
   thinkingBlockCanonical: Map<string, ReadonlyArray<unknown>>;
 
   /**
-   * 260428-k8d: Active tool name set captured at the moment an assistant message
-   * with signed thinking blocks completed streaming. Keyed by responseId, FIFO
-   * 32-cap, evicted in lockstep with thinkingBlockHashes + thinkingBlockCanonical.
-   * Used by replay-drift-detector to detect tool-set changes between turns —
-   * Anthropic invalidates signed thinking-block validations when the request's
-   * tools array differs from the one present at signature-mint time.
+   * 260428-kvl: SHA-256 hex hash of the FULL active tool DEFINITIONS array
+   * captured at the moment an assistant message with signed thinking blocks
+   * completed streaming. Keyed by responseId, FIFO 32-cap, evicted in lockstep
+   * with thinkingBlockHashes + thinkingBlockCanonical. Replaces the
+   * names-only snapshot from 260428-k8d because Anthropic's signed-thinking
+   * validation operates on the full tools array (definitions, not just names);
+   * the JIT-guide injector can expand a deferred tool's schema into one turn
+   * and contract it on the next, which passes name equality but fails
+   * signature validation. The replay-drift detector compares this hash
+   * against the live current-turn hash to detect tool-DEFINITIONS drift.
    */
-  signedThinkingToolSnapshot: Map<string, ReadonlySet<string>>;
+  signedThinkingToolDefHash: Map<string, string>;
 }
 
 /**
@@ -160,7 +164,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     budgetWarningEmitted: false,
     thinkingBlockHashes: new Map(),
     thinkingBlockCanonical: new Map(),
-    signedThinkingToolSnapshot: new Map(),
+    signedThinkingToolDefHash: new Map(),
   };
 }
 

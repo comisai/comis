@@ -24,7 +24,7 @@ import {
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { suppressError } from "@comis/shared";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { resolveModelPricing } from "../model/model-catalog.js";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
 import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-break-detection.js";
@@ -159,12 +159,17 @@ export interface PiEventBridgeDeps {
    *  occurred AFTER the bridge's restoration hook. Optional — when
    *  omitted, the wire-edge diagnostic is a silent no-op. */
   getSessionJsonlPath?: () => string | null;
-  /** 260428-k8d: returns the active tool name set that will be sent on the next
-   *  API call. Captured at stream close keyed by responseId; the executor
-   *  cross-checks against the live current set on each subsequent turn to
-   *  detect tool-set drift (which invalidates Anthropic signed thinking blocks).
-   *  Optional — falls back to empty set when not wired (sub-agent paths). */
-  getActiveToolNames?: () => ReadonlySet<string>;
+  /** 260428-kvl: returns the full active tool DEFINITIONS array that will be
+   *  serialized into the next API request (post-deferral, post-JIT-guide
+   *  injection). The bridge captures a SHA-256 hash of this array at stream
+   *  close keyed by responseId; the executor cross-checks the live current-
+   *  turn hash on each subsequent turn to detect tool-DEFINITIONS drift,
+   *  which invalidates Anthropic signed thinking blocks. Replaces 260428-k8d's
+   *  names-only set: the JIT-guide injector can expand/contract one tool's
+   *  schema between turns in a way that passes name equality but fails
+   *  signature validation. Optional — falls back to empty array when not
+   *  wired (sub-agent paths). */
+  getActiveToolDefinitions?: () => ReadonlyArray<unknown>;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -190,13 +195,15 @@ export interface PiEventBridgeResult {
    *  ReadonlyMap views to preserve internal-state encapsulation -- the
    *  underlying `m` object is never exported.
    *
-   *  260428-k8d: extended with `toolSnapshot` — the active tool name set at
-   *  signature-mint time per responseId, used by the replay-drift detector
-   *  to detect tool-set drift between turns. */
+   *  260428-kvl: extended with `toolDefHash` — a SHA-256 hex hash of the
+   *  full active tool DEFINITIONS array at signature-mint time per
+   *  responseId, used by the replay-drift detector to detect tool-DEFINITIONS
+   *  drift between turns (Anthropic signed-thinking validation covers full
+   *  definitions, not just names). */
   getThinkingBlockStores: () => {
     hashes: ReadonlyMap<string, ReadonlyArray<ThinkingBlockHash>>;
     canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;
-    toolSnapshot: ReadonlyMap<string, ReadonlySet<string>>;
+    toolDefHash: ReadonlyMap<string, string>;
   };
 }
 
@@ -583,9 +590,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     if (oldestKey === undefined) break;
                     m.thinkingBlockHashes.delete(oldestKey);
                     m.thinkingBlockCanonical.delete(oldestKey);
-                    // 260428-k8d: lockstep eviction across the toolset snapshot
+                    // 260428-kvl: lockstep eviction across the tool-defs hash
                     // store so all three maps share an identical keyset.
-                    m.signedThinkingToolSnapshot.delete(oldestKey);
+                    m.signedThinkingToolDefHash.delete(oldestKey);
                   }
                   m.thinkingBlockHashes.set(responseIdForLog, hashes);
                   // 260428-hoy: capture canonical (pre-mutation) full
@@ -601,17 +608,37 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     // still fires the assertion diagnostic on resend; only
                     // the heal step degrades to no-op for this responseId.
                   }
-                  // 260428-k8d: capture the active tool name set at
-                  // signature-mint time. Anthropic invalidates signed
-                  // thinking-block validations when the request's tools
-                  // array differs from the one present at signature-mint
-                  // time; the replay-drift detector compares this snapshot
-                  // against the live set on the next turn to decide whether
-                  // the scrubber should drop signed state. Empty-set
-                  // fallback when callback unwired (e.g., sub-agent harness
-                  // that doesn't expose a tool list).
-                  const activeToolNames = deps.getActiveToolNames?.() ?? new Set<string>();
-                  m.signedThinkingToolSnapshot.set(responseIdForLog, activeToolNames);
+                  // 260428-kvl: capture a SHA-256 hash of the full active
+                  // tool DEFINITIONS array at signature-mint time. Anthropic
+                  // signed-thinking validation covers the FULL tools array
+                  // (definitions, not just names); the JIT-guide injector
+                  // can expand a deferred tool's schema in one turn and
+                  // contract it on the next, which passes name equality but
+                  // fails signature validation. Hashing the full array
+                  // catches that bug. Empty-array fallback when the callback
+                  // is unwired (e.g., sub-agent harness without a tool list).
+                  //
+                  // Determinism note: JSON.stringify is deterministic for
+                  // arrays IF the array order is stable. The executor's tool
+                  // assembly produces a stable order per turn so we do NOT
+                  // sort here — sorting would MASK reordering, which is
+                  // itself a signature-validation concern.
+                  //
+                  // Defensive: never throw from the bridge listener. On
+                  // stringify failure (e.g., a circular reference reaching
+                  // through to the SDK ToolDefinition shape) fall back to a
+                  // sentinel hash that will never equal a real hash, which
+                  // guarantees drift fires on the next turn (safe-fail
+                  // toward dropping signatures rather than replaying
+                  // possibly-invalid blocks).
+                  const defs = deps.getActiveToolDefinitions?.() ?? [];
+                  let defHash: string;
+                  try {
+                    defHash = createHash("sha256").update(JSON.stringify(defs)).digest("hex");
+                  } catch {
+                    defHash = "stringify-failed";
+                  }
+                  m.signedThinkingToolDefHash.set(responseIdForLog, defHash);
                 }
               }
             }
@@ -1374,15 +1401,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
   // 260428-hoy: typed ReadonlyMap accessor for the executor's pre-call
   // closure. Returns views over the live maps -- the executor never receives
   // the mutable `m` object itself.
-  // 260428-k8d: extended with toolSnapshot view for the replay-drift detector.
+  // 260428-kvl: extended with toolDefHash view for the replay-drift detector.
   const getThinkingBlockStores = (): {
     hashes: ReadonlyMap<string, ReadonlyArray<ThinkingBlockHash>>;
     canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;
-    toolSnapshot: ReadonlyMap<string, ReadonlySet<string>>;
+    toolDefHash: ReadonlyMap<string, string>;
   } => ({
     hashes: m.thinkingBlockHashes,
     canonical: m.thinkingBlockCanonical,
-    toolSnapshot: m.signedThinkingToolSnapshot,
+    toolDefHash: m.signedThinkingToolDefHash,
   });
 
   return { listener, getResult, addGhostCost, getThinkingBlockStores };

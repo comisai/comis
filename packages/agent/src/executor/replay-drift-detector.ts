@@ -61,7 +61,7 @@ export interface DriftCheck {
   /** True when the caller should scrub signed thinking state pre-send. */
   drop: boolean;
   /** Human-readable reason; populated only when drop===true. */
-  reason?: "idle" | "model_change" | "provider_change" | "api_change";
+  reason?: "idle" | "model_change" | "provider_change" | "api_change" | "tool_defs_changed";
   /** Diagnostic detail for logger / event payload. */
   detail?: {
     idleGapMs?: number;
@@ -159,105 +159,64 @@ export function shouldDropSignedFields(input: DriftCheckInput): DriftCheck {
 }
 
 // ---------------------------------------------------------------------------
-// 260428-k8d: Tool-set drift dimension
+// 260428-kvl: Tool-DEFINITIONS drift dimension
 // ---------------------------------------------------------------------------
-// Anthropic validates signed thinking-block signatures against the request's
-// tools + system prompt; mid-conversation `discover_tools` mutates the tools
-// array and invalidates the signed prefix. This dimension extends the existing
-// drift detector by comparing the active tool name set on the next API call
-// against per-responseId snapshots captured at signature-mint time.
+// Anthropic validates signed thinking-block signatures against the FULL
+// tools array (definitions, not just names). The JIT-guide injection
+// layer expands a deferred tool's schema into one turn's tools array
+// and then contracts it on the next -- this passes name-only equality
+// but fails signature validation. We hash the entire definitions array
+// per turn and compare hashes; mismatch -> drop.
 //
-// Pure function: no I/O, no async, no throws — defensive null-tolerant helpers
-// only. Combined at the call site by OR-ing `drop` flags so the existing
-// closed `DriftCheck.reason` union remains untouched.
+// Pure function: no I/O, no async, no throws. Hash equality is binary,
+// so the result has a single non-trivial reason ("tool_defs_changed").
+// Combined at the call site by OR-ing `drop` flags.
 // ---------------------------------------------------------------------------
 
-/** Input to `shouldDropSignedFieldsForToolSet`. */
-export interface ToolSetDriftInput {
-  /** Active tool name set that will be in the NEXT API call's tools array. */
-  currentActiveTools: ReadonlySet<string>;
-  /** Snapshots keyed by responseId of the active tool set at signature-mint time. */
-  snapshots: ReadonlyMap<string, ReadonlySet<string>>;
+/** Input to `shouldDropSignedFieldsForToolDefs`. */
+export interface ToolDefsDriftInput {
+  /** SHA-256 hex hash of the FULL tool definitions array that will be
+   *  sent on the NEXT API call, in serialization order. */
+  currentHash: string;
+  /** Snapshots keyed by responseId of the tool-definitions hash at
+   *  signature-mint time. */
+  snapshots: ReadonlyMap<string, string>;
 }
 
-/** Result of `shouldDropSignedFieldsForToolSet`. */
-export interface ToolSetDriftResult {
-  /** True iff at least one snapshot diverges from the current set. */
+/** Result of `shouldDropSignedFieldsForToolDefs`. */
+export interface ToolDefsDriftResult {
+  /** True iff at least one snapshot's hash diverges from the current hash. */
   shouldDrop: boolean;
-  /** ResponseIds whose snapshot did not equal the current set, in iteration order. */
+  /** ResponseIds whose stored hash did not equal currentHash, in iteration order. */
   mismatchedResponseIds: string[];
-  /** Most-specific reason across all mismatched snapshots (priority: changed > shrank > grew). */
-  reason: "tool_set_grew" | "tool_set_shrank" | "tool_set_changed" | "no_drift";
+  /** Hash equality is binary, so reason is either "tool_defs_changed" or "no_drift". */
+  reason: "tool_defs_changed" | "no_drift";
 }
 
 /**
  * Decide whether signed thinking state should be scrubbed because the active
- * tool set differs from the snapshot captured at signature-mint time.
- *
- * Per-snapshot classification:
- *   snapshot ⊂ current  → tool_set_grew  (current added tools)
- *   current ⊂ snapshot  → tool_set_shrank
- *   neither subset      → tool_set_changed
- *   sets equal          → no contribution (skipped)
- *
- * Aggregate priority (most specific wins): changed > shrank > grew > no_drift.
- * `mismatchedResponseIds` collects every non-equal snapshot regardless of
- * which reason category wins, so observability covers all divergences.
+ * tool DEFINITIONS hash differs from the snapshot captured at
+ * signature-mint time.
  *
  * Pure: no async, no I/O, no throws.
  */
-export function shouldDropSignedFieldsForToolSet(
-  input: ToolSetDriftInput,
-): ToolSetDriftResult {
-  const { currentActiveTools, snapshots } = input;
+export function shouldDropSignedFieldsForToolDefs(
+  input: ToolDefsDriftInput,
+): ToolDefsDriftResult {
+  const { currentHash, snapshots } = input;
   if (snapshots.size === 0) {
     return { shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" };
   }
   const mismatched: string[] = [];
-  let sawChanged = false;
-  let sawShrank = false;
-  let sawGrew = false;
-  for (const [responseId, snap] of snapshots) {
-    // Equality short-circuit: same size and every snap entry present in current.
-    if (snap.size === currentActiveTools.size) {
-      let allMatch = true;
-      for (const name of snap) {
-        if (!currentActiveTools.has(name)) {
-          allMatch = false;
-          break;
-        }
-      }
-      if (allMatch) continue;
-    }
-    // Classify direction of divergence.
-    let snapHasExtra = false; // names in snap not in current → shrank-or-changed
-    let currentHasExtra = false; // names in current not in snap → grew-or-changed
-    for (const name of snap) {
-      if (!currentActiveTools.has(name)) {
-        snapHasExtra = true;
-        break;
-      }
-    }
-    for (const name of currentActiveTools) {
-      if (!snap.has(name)) {
-        currentHasExtra = true;
-        break;
-      }
-    }
-    if (snapHasExtra && currentHasExtra) sawChanged = true;
-    else if (snapHasExtra) sawShrank = true;
-    else if (currentHasExtra) sawGrew = true;
-    mismatched.push(responseId);
+  for (const [responseId, snapHash] of snapshots) {
+    if (snapHash !== currentHash) mismatched.push(responseId);
   }
   if (mismatched.length === 0) {
     return { shouldDrop: false, mismatchedResponseIds: [], reason: "no_drift" };
   }
-  const reason: ToolSetDriftResult["reason"] = sawChanged
-    ? "tool_set_changed"
-    : sawShrank
-      ? "tool_set_shrank"
-      : sawGrew
-        ? "tool_set_grew"
-        : "no_drift";
-  return { shouldDrop: true, mismatchedResponseIds: mismatched, reason };
+  return {
+    shouldDrop: true,
+    mismatchedResponseIds: mismatched,
+    reason: "tool_defs_changed",
+  };
 }
