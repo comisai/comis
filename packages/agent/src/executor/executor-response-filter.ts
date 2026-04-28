@@ -140,16 +140,27 @@ const DELIVERY_TOOL_NAMES = ["message", "notify"];
 /**
  * When the final assistant message is thinking-only or a
  * silent token (NO_REPLY, HEARTBEAT_OK) but text was emitted in earlier
- * turns, walk backward through session messages to find the last assistant
- * message that contained visible text blocks.
+ * turns, recover a meaningful user-visible response.
  *
- * Two-pass strategy:
- * 1. Backward walk skipping tool-call turns — finds the most recent
- *    standalone response (text-only, no toolCall/tool_use blocks).
- * 2. Forward walk from userMessageIndex including tool-call turns — finds
- *    the earliest pre-tool commentary, which is typically the framing
- *    response (e.g. "I'm going to build..."), not a late step annotation
- *    (e.g. "Step 4/4: sanity-testing...").
+ * Two-pass strategy (gated):
+ * 1. **Tool-call synthesis** (primary) — if ≥1 prior assistant turn within the
+ *    current execution window contains tool-call blocks, synthesize a
+ *    structured `[comis: tool-call summary recovered ...]` reply listing each
+ *    tool + primary identifying argument. This avoids surfacing earlier
+ *    planning prose ("let me plan this out before building...") AS the final
+ *    reply when the work was actually completed via tools.
+ * 2. **Standalone walk-backward** (fallback) — when zero prior tool calls were
+ *    collected (pure-conversational case), preserve the original behavior of
+ *    walking backward through messages to find the most recent assistant turn
+ *    with visible text-only content (no tool calls).
+ *
+ * The synthesis-gate (a single early-return — see `tool-call-synthesis-gate`
+ * comment below) ensures the standalone walk only fires when no tool calls
+ * were observed; this keeps the pass selection mutually exclusive.
+ *
+ * Suppressed when a delivery tool (`message`, `notify`) was used — the agent
+ * already delivered content via side-channel and the silent final token is
+ * intentional.
  *
  * Returns the recovered text, or the original response if no recovery needed.
  */
@@ -186,8 +197,60 @@ export function recoverEmptyFinalResponse(params: {
       }
       /* eslint-disable @typescript-eslint/no-explicit-any */
 
-      // Pass 1: backward walk — prefer the most recent standalone response
-      // (assistant turns that have text but NO tool call blocks)
+      // Collect tool-call summaries from prior assistant turns within the
+      // current execution window (lowerBound .. messages.length).
+      //
+      // Note: blocks with non-string `name` are still summarized (the helper
+      // renders them as "unknown_tool") but are NOT added to `toolNamesSet`.
+      // Consequence: a batch of purely malformed blocks emits `toolNames: []`
+      // in the INFO log while `toolCallCount` reflects the bullet count. This
+      // is intentional — `toolNames` is a deduplicated set of well-typed
+      // identifiers for log aggregation, not a per-bullet identifier list.
+      const toolCallSummaries: string[] = [];
+      const toolNamesSet = new Set<string>();
+      for (let i = lowerBound; i < messages.length; i++) {
+        const msg = messages[i]; // eslint-disable-line security/detect-object-injection
+        if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
+        for (const block of msg.content) {
+          if (block?.type === "toolCall" || block?.type === "tool_use") {
+            toolCallSummaries.push(summarizeToolCall(block));
+            // Only well-typed names enter the set — malformed blocks are still
+            // summarized as "unknown_tool" but excluded from toolNames.
+            if (typeof block?.name === "string") toolNamesSet.add(block.name);
+          }
+        }
+      }
+
+      // Synthesis-only-when-tool-calls contract (grep anchor: "tool-call-synthesis-gate"):
+      // Returning here is the ONE place that prevents the `standalone` walk-backward
+      // (below) from ever firing alongside synthesis. Do not add code paths
+      // that fall through to standalone after toolCallSummaries are non-empty.
+      if (toolCallSummaries.length > 0) {
+        const bullets = toolCallSummaries.map(s => `  • ${s}`).join("\n");
+        const synthesis =
+          `[comis: tool-call summary recovered from successful operations — the assistant's final message was empty]\n` +
+          `Completed ${toolCallSummaries.length} tool call${toolCallSummaries.length === 1 ? "" : "s"} in this batch:\n` +
+          `${bullets}\n` +
+          `The work was done; the assistant did not summarize. Please ask "what did you do?" if details are needed.`;
+
+        logger.info(
+          {
+            module: "agent.executor.empty-turn-recovery",
+            recoveryPass: "tool-call-synthesis",
+            toolCallCount: toolCallSummaries.length,
+            toolNames: [...toolNamesSet],
+            synthesisLength: synthesis.length,
+            hint: "Final assistant message was empty after tool batch; synthesized completion summary from tool-call history.",
+          },
+          "Empty-turn recovery: synthesized from tool-call history",
+        );
+        return synthesis; // tool-call-synthesis-gate — see comment above.
+      }
+
+      // Standalone walk-backward (pure-conversational fallback): reachable
+      // ONLY when toolCallSummaries.length === 0, guaranteed by the early-
+      // return above. Do NOT wrap in an additional conditional — the single
+      // gate above is the contract anchor.
       for (let i = messages.length - 1; i >= lowerBound; i--) {
         const msg = messages[i]; // eslint-disable-line security/detect-object-injection
         if (msg?.role === "assistant" && Array.isArray(msg.content)) {
@@ -205,29 +268,6 @@ export function recoverEmptyFinalResponse(params: {
                 turnIndex: i,
                 recoveredLength: recovered.length,
                 recoveryPass: "standalone",
-              },
-              "recovered visible text from earlier turn",
-            );
-            return recovered;
-          }
-        }
-      }
-
-      // Pass 2: forward walk — fall back to the earliest pre-tool commentary.
-      // Walking forward prefers the framing/introduction message over late
-      // step annotations (e.g. "I'm going to build..." over "Step 4/4: ...").
-      for (let i = lowerBound; i < messages.length; i++) {
-        const msg = messages[i]; // eslint-disable-line security/detect-object-injection
-        if (msg?.role === "assistant" && Array.isArray(msg.content)) {
-          const recovered = extractVisibleText(msg.content);
-          if (recovered) {
-            logger.info(
-              {
-                hint: "Final assistant message was empty or silent-token-only; recovered pre-tool commentary from earlier turn",
-                errorKind: "transient" as ErrorKind,
-                turnIndex: i,
-                recoveredLength: recovered.length,
-                recoveryPass: "pre-tool-commentary",
               },
               "recovered visible text from earlier turn",
             );
@@ -283,6 +323,68 @@ function hasDeliveryToolCall(messages: any[], lowerBound: number): boolean {
     }
   }
   return false;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/** Summarize a single tool-call content block as `toolName({primary_arg: "value"})`.
+ *  Reads `name` from the block, and `input` (Anthropic native) or `arguments`
+ *  (internal mapped convention) for args. Returns bare tool name on malformed
+ *  input — never throws. */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function summarizeToolCall(call: any): string {
+  const name = typeof call?.name === "string" ? call.name : "unknown_tool";
+  // Both Anthropic native (`input`) and internal mapped (`arguments`) shapes.
+  const args: Record<string, unknown> | undefined =
+    (call?.input && typeof call.input === "object" ? call.input : undefined) ??
+    (call?.arguments && typeof call.arguments === "object" ? call.arguments : undefined);
+
+  if (!args) return name;
+
+  switch (name) {
+    case "agents_manage": {
+      const action = typeof args.action === "string" ? args.action : undefined;
+      const agentId = typeof args.agent_id === "string" ? args.agent_id : undefined;
+      if (action && agentId) return `agents_manage.${action}({agent_id: "${agentId}"})`;
+      if (action) return `agents_manage.${action}`;
+      return "agents_manage";
+    }
+    case "write":
+    case "edit":
+    case "read": {
+      const p = typeof args.path === "string" ? args.path : undefined;
+      return p ? `${name}({path: "${p}"})` : name;
+    }
+    case "gateway": {
+      const action = typeof args.action === "string" ? args.action : undefined;
+      const section = typeof args.section === "string" ? args.section : undefined;
+      if (action && section) return `gateway({action: "${action}", section: "${section}"})`;
+      if (action) return `gateway({action: "${action}"})`;
+      return "gateway";
+    }
+    case "exec": {
+      const cmd = typeof args.command === "string" ? args.command : undefined;
+      if (cmd) {
+        const preview = cmd.length > 60 ? `${cmd.slice(0, 60)}…` : cmd;
+        return `exec({command: "${preview}"})`;
+      }
+      return "exec";
+    }
+    case "pipeline": {
+      const pname = typeof args.name === "string" ? args.name : undefined;
+      return pname ? `pipeline({name: "${pname}"})` : "pipeline";
+    }
+    case "sessions_spawn": {
+      const agentId = typeof args.agent_id === "string" ? args.agent_id : undefined;
+      return agentId ? `sessions_spawn({agent_id: "${agentId}"})` : "sessions_spawn";
+    }
+    case "message":
+    case "notify": {
+      const action = typeof args.action === "string" ? args.action : undefined;
+      return action ? `${name}({action: "${action}"})` : name;
+    }
+    default:
+      return name;
+  }
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
