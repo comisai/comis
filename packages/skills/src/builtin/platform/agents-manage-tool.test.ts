@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Value } from "@sinclair/typebox/value";
-import { createAgentsManageTool } from "./agents-manage-tool.js";
+import {
+  createAgentsManageTool,
+  AgentsManageToolParams,
+  buildCreateContract,
+} from "./agents-manage-tool.js";
 import { runWithContext } from "@comis/core";
 import type { RequestContext, ApprovalGate } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -415,6 +419,9 @@ describe("agents_manage tool", () => {
         agentId: "ta-fundamentals",
         workspaceDir: "/home/comis/.comis/workspace-ta-fundamentals",
         contractEmitted: true,
+        // 260428-vyf: additive field distinguishing the 3 inline-write
+        // outcomes. "none" because this test does not supply inlineContent.
+        inlineWritesOutcome: "none",
       });
       expect(msg).toMatch(/agents_manage\.create succeeded.*next-step contract emitted/);
     });
@@ -438,6 +445,8 @@ describe("agents_manage tool", () => {
         agentId: "ta-bear",
         workspaceDir: null,
         contractEmitted: true,
+        // 260428-vyf: additive field, "none" when inlineContent absent.
+        inlineWritesOutcome: "none",
       });
     });
 
@@ -489,6 +498,187 @@ describe("agents_manage tool", () => {
         );
         expect(sw2Calls, `action ${c.action}: contractEmitted INFO must not fire`).toEqual([]);
       }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 260428-vyf Layer 2: inline ROLE.md / IDENTITY.md content on agents.create.
+  //
+  // The tool layer accepts workspace.role / workspace.identity at the schema
+  // boundary, strips them from the config payload before the RPC, and
+  // forwards them as a separate top-level `inlineContent` parameter (Path A).
+  // The daemon writes the files atomically as part of agents.create and
+  // returns an `inlineWritesResult` field on the RPC payload, which
+  // buildCreateContract uses to decide between the SHORT, PARTIAL, and
+  // 2-step (existing) contract forms.
+  //
+  // Tests 1-4: TypeBox schema accept/reject for the new shape + size limits.
+  // Test 5: handler strips role/identity from config + forwards inlineContent.
+  // Tests 6-9: buildCreateContract 3-state branches + IO failure fallthrough.
+  // ---------------------------------------------------------------------------
+  describe("create inline workspace content (260428-vyf)", () => {
+    // ---------------------------------------------------------------------
+    // Test 1-4: schema accept/reject
+    // ---------------------------------------------------------------------
+    it("Test 1 — schema accepts workspace.role + workspace.identity", () => {
+      const ok = Value.Check(AgentsManageToolParams, {
+        action: "create",
+        agent_id: "vyf-a",
+        config: {
+          workspace: { profile: "specialist", role: "R", identity: "I" },
+        },
+      });
+      expect(ok).toBe(true);
+    });
+
+    it("Test 2 — schema rejects oversize role (>16384 chars)", () => {
+      const ok = Value.Check(AgentsManageToolParams, {
+        action: "create",
+        agent_id: "vyf-big-r",
+        config: {
+          workspace: { profile: "specialist", role: "x".repeat(16385) },
+        },
+      });
+      expect(ok).toBe(false);
+    });
+
+    it("Test 3 — schema rejects oversize identity (>4096 chars)", () => {
+      const ok = Value.Check(AgentsManageToolParams, {
+        action: "create",
+        agent_id: "vyf-big-i",
+        config: {
+          workspace: { profile: "specialist", identity: "y".repeat(4097) },
+        },
+      });
+      expect(ok).toBe(false);
+    });
+
+    it("Test 4 — schema accepts role-only and identity-only shapes", () => {
+      const roleOnly = Value.Check(AgentsManageToolParams, {
+        action: "create",
+        agent_id: "vyf-r",
+        config: { workspace: { profile: "specialist", role: "R" } },
+      });
+      expect(roleOnly).toBe(true);
+      const idOnly = Value.Check(AgentsManageToolParams, {
+        action: "create",
+        agent_id: "vyf-i",
+        config: { workspace: { profile: "full", identity: "I" } },
+      });
+      expect(idOnly).toBe(true);
+    });
+
+    // ---------------------------------------------------------------------
+    // Test 5: handler strips role/identity from config + forwards inlineContent
+    // ---------------------------------------------------------------------
+    it("Test 5 — handler strips role/identity from RPC config and forwards inlineContent", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "vyf-strip",
+        created: true,
+        workspaceDir: "/tmp/workspace-vyf-strip",
+        inlineWritesResult: { roleWritten: true, identityWritten: true, bytesWritten: 2 },
+      });
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-vyf-strip", {
+          action: "create",
+          agent_id: "vyf-strip",
+          config: {
+            workspace: { profile: "specialist", role: "R", identity: "I" },
+          },
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledTimes(1);
+      const [method, rpcArgs] = mockRpcCall.mock.calls[0]!;
+      expect(method).toBe("agents.create");
+      const argsTyped = rpcArgs as {
+        agentId: string;
+        config: { workspace?: Record<string, unknown> };
+        inlineContent?: { role?: string; identity?: string };
+        _trustLevel: string;
+      };
+      // Config workspace must NOT carry role/identity any more.
+      expect(argsTyped.config.workspace).toEqual({ profile: "specialist" });
+      // inlineContent is the dedicated top-level RPC param.
+      expect(argsTyped.inlineContent).toEqual({ role: "R", identity: "I" });
+    });
+
+    // ---------------------------------------------------------------------
+    // Test 6: buildCreateContract — both written → SHORT contract
+    // ---------------------------------------------------------------------
+    it("Test 6 — buildCreateContract: both written emits SHORT operationally-ready contract", () => {
+      const text = buildCreateContract("agt-a", "/tmp/workspace-agt-a", {
+        roleWritten: true,
+        identityWritten: true,
+        bytesWritten: 42,
+      });
+      expect(text).toContain("✓ Agent agt-a created at /tmp/workspace-agt-a with inline ROLE.md");
+      expect(text).toContain("and IDENTITY.md");
+      expect(text).toContain("42 bytes");
+      expect(text).toContain("No further setup needed");
+      expect(text).toContain("operationally ready");
+      // Negative: must NOT use the long-form 2-step language.
+      expect(text).not.toContain("Next required action");
+      expect(text).not.toContain("NOT ready until");
+    });
+
+    // ---------------------------------------------------------------------
+    // Test 7: buildCreateContract — partial (role only) → mixed contract
+    // ---------------------------------------------------------------------
+    it("Test 7 — buildCreateContract: role-only partial mentions ROLE.md written + IDENTITY.md still template", () => {
+      const text = buildCreateContract("agt-p", "/tmp/workspace-agt-p", {
+        roleWritten: true,
+        identityWritten: false,
+        bytesWritten: 1,
+      });
+      expect(text).toContain("with inline ROLE.md");
+      expect(text).toContain("IDENTITY.md is still the unmodified template");
+      // Single Next-required-action line targeting only IDENTITY.md.
+      const nextActionLines = text.split("\n").filter((l) => l.includes("Next required action"));
+      expect(nextActionLines.length).toBe(1);
+      expect(nextActionLines[0]).toContain("IDENTITY.md");
+      expect(nextActionLines[0]).not.toContain("ROLE.md");
+    });
+
+    // ---------------------------------------------------------------------
+    // Test 8: buildCreateContract — neither (regression) emits existing 2-step
+    // ---------------------------------------------------------------------
+    it("Test 8 — buildCreateContract: neither/undefined falls through to existing 260428-sw2 contract", () => {
+      const undefinedResult = buildCreateContract("agt-n", "/tmp/workspace-agt-n");
+      expect(undefinedResult).toContain("✓ Agent agt-n created at /tmp/workspace-agt-n.");
+      expect(undefinedResult).toContain("Workspace files are TEMPLATES");
+      expect(undefinedResult).toContain("Next required action");
+      expect(undefinedResult).toContain("NOT ready until ROLE.md is customized");
+      expect(undefinedResult).not.toContain("inline ROLE.md");
+      expect(undefinedResult).not.toContain("operationally ready");
+
+      const noWritesResult = buildCreateContract("agt-x", "/tmp/workspace-agt-x", {
+        roleWritten: false,
+        identityWritten: false,
+        bytesWritten: 0,
+      });
+      // false/false success-shape still falls through to the 2-step contract.
+      expect(noWritesResult).toContain("Workspace files are TEMPLATES");
+      expect(noWritesResult).toContain("Next required action");
+    });
+
+    // ---------------------------------------------------------------------
+    // Test 9: buildCreateContract — IO failure shape falls through to 2-step
+    // ---------------------------------------------------------------------
+    it("Test 9 — buildCreateContract: helper IO failure shape falls through to existing 2-step contract", () => {
+      const text = buildCreateContract("agt-f", "/tmp/workspace-agt-f", {
+        ok: false,
+        error: { kind: "io", file: "ROLE.md", message: "EACCES" },
+      });
+      // The error-shape lacks `roleWritten` so the function takes the
+      // existing 2-step branch — pinning that the LLM is told to call
+      // write() to recover, not the false short-form "ready" message.
+      expect(text).toContain("Next required action");
+      expect(text).toContain("Workspace files are TEMPLATES");
+      expect(text).not.toContain("operationally ready");
+      expect(text).not.toContain("inline ROLE.md");
     });
   });
 

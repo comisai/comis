@@ -261,8 +261,24 @@ export const TOOL_ORDER: string[] = [
  * Not all tools need guides -- most are self-explanatory from their lean description.
  */
 export const TOOL_GUIDES: Record<string, string> = {
-  agents_manage: `## Two-step creation flow (REQUIRED)
-Step 1 — call agents_manage({action:"create", agent_id, config:{name, model, provider, maxSteps, workspace?:{profile:"full"|"specialist"}, skills?:{...}}}). Only those fields are accepted; the schema is z.strictObject so unknown keys are rejected. Do NOT pass persona/role/description/prompt/instructions in create config.
+  agents_manage: `## Single-call creation (PREFERRED for batch fleet creation)
+For batch creation (multiple agents in one turn) and any case where you already know the agent's role and identity, use the SINGLE-CALL form. This collapses the previous 3-call workflow (create + 2× write) into 1 call per agent — critical when creating fleets of 5+ agents in parallel.
+
+agents_manage({action:"create", agent_id, config:{
+  name, model, provider, maxSteps,
+  workspace:{
+    profile:"full"|"specialist",
+    role:"...persona, role, behavioral guidelines, domain conventions...",      // inline ROLE.md content (max 16384 chars)
+    identity:"...name, creature, vibe, emoji, ethos..."                          // inline IDENTITY.md content (max 4096 chars)
+  },
+  skills?:{...}
+}})
+
+The daemon writes ROLE.md and IDENTITY.md atomically as part of create. The tool result reports inlineWritesResult; on success the next-step contract says "No further setup needed — agent is operationally ready" and you SKIP the write() roundtrip entirely.
+
+## Two-step creation flow (FALLBACK)
+Use this only when role/identity cannot be inlined (e.g. content discovered after create, multi-step interactive design):
+Step 1 — call agents_manage({action:"create", agent_id, config:{name, model, provider, maxSteps, workspace?:{profile:"full"|"specialist"}, skills?:{...}}}). Only those fields are accepted; the schema is z.strictObject so unknown keys are rejected. Do NOT pass persona/role/description/prompt/instructions in create config when omitting the inline form.
 Step 2 — call write({path: "~/.comis/workspace-{agent_id}/ROLE.md", content: "...persona/role/behavioral guidance..."}) to set the agent's role and identity. Use IDENTITY.md for name/creature/vibe/emoji.
 
 Workspace.profile values: "full" or "specialist" ONLY. No "none", "minimal", "compact", or other values.
@@ -283,7 +299,7 @@ All built-in tools ENABLED by default (except browser). Do NOT disable tools unl
 maxSteps default: 50. Do NOT set below 20.
 ## Batch Creation
 Present a plan to the user before creating agents in batch.
-Multiple agents can be created in one turn. Customize ALL workspace files for each agent after creation.`,
+Multiple agents can be created in one turn. Customize ALL workspace files for each agent after creation — or use single-call creation above to inline ROLE.md/IDENTITY.md and skip the post-create writes entirely.`,
 
   pipeline: `## Pipeline Usage Guide
 Use 'define' action first to validate graph structure before save/execute.

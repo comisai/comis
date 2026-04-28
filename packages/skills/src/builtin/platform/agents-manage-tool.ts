@@ -22,7 +22,7 @@ import type { RpcCall } from "./cron-tool.js";
 // Parameter schema
 // ---------------------------------------------------------------------------
 
-const AgentsManageToolParams = Type.Object({
+export const AgentsManageToolParams = Type.Object({
   action: Type.Union(
     [
       Type.Literal("create"),
@@ -79,10 +79,32 @@ const AgentsManageToolParams = Type.Object({
                       "Workspace profile (alternative to flat workspace_profile). Valid: full | specialist ONLY. NO other values accepted.",
                   },
                 ),
+                // 260428-vyf L2: inline ROLE.md / IDENTITY.md content. The tool
+                // handler strips these from the config payload BEFORE the RPC
+                // and forwards them as a separate top-level `inlineContent`
+                // param. The daemon writes them as files (write-once side-
+                // effect); they are NEVER persisted to config.yaml. When
+                // omitted, the seed templates remain in place and the LLM is
+                // instructed via the next-step contract to call write()
+                // afterward (the FALLBACK 2-step flow).
+                role: Type.Optional(
+                  Type.String({
+                    description:
+                      "Inline ROLE.md content. Written to <workspaceDir>/ROLE.md immediately on create. Should describe the agent's purpose, behavioral guidelines, domain conventions. Max 16384 chars. When omitted, ROLE.md is the unmodified seed template — call write() afterward to customize.",
+                    maxLength: 16384,
+                  }),
+                ),
+                identity: Type.Optional(
+                  Type.String({
+                    description:
+                      "Inline IDENTITY.md content. Written to <workspaceDir>/IDENTITY.md immediately on create. Should set name/creature/vibe/emoji/avatar/ethos for the agent. Max 4096 chars. When omitted, IDENTITY.md is the unmodified seed template.",
+                    maxLength: 4096,
+                  }),
+                ),
               },
               {
                 description:
-                  "Nested workspace configuration. Use this OR the flat workspace_profile field, not both.",
+                  "Nested workspace configuration. Use this OR the flat workspace_profile field, not both. Optionally inline ROLE.md / IDENTITY.md via role/identity for single-call creation (PREFERRED for batch fleet creation).",
                 additionalProperties: false,
               },
             ),
@@ -158,6 +180,25 @@ function mapWorkspaceProfile(config: Record<string, unknown> | undefined): void 
   }
 }
 
+// 260428-vyf L2: shape of the inline-write outcome the daemon attaches to
+// the agents.create RPC return when the caller supplied inlineContent. The
+// daemon either writes the success-shape (`AgentInlineWritesValue`) or the
+// failure-shape (`AgentInlineWritesError`). When inlineContent was absent,
+// the field is omitted entirely from the RPC payload.
+export interface AgentInlineWritesValue {
+  roleWritten: boolean;
+  identityWritten: boolean;
+  bytesWritten: number;
+}
+export interface AgentInlineWritesError {
+  ok: false;
+  error: {
+    kind: "oversize" | "path_traversal" | "io";
+    file: "ROLE.md" | "IDENTITY.md";
+    [k: string]: unknown;
+  };
+}
+
 /**
  * Build the post-create next-step contract emitted as the FIRST text block
  * of the `agents_manage.create` tool_result. The freshest, uncached surface
@@ -169,14 +210,51 @@ function mapWorkspaceProfile(config: Record<string, unknown> | undefined): void 
  * Pure string composition. No I/O, no Result<T,E> needed (per AGENTS.md
  * §2.1: Result is for fallible paths only; this is infallible).
  *
- * Case A (workspaceDir present): full contract — at-line, file paths with
- * intent, "Next required action" with the literal write({path:..., content:..})
- * directive, and an explicit "NOT ready until ROLE.md is customized" gate.
+ * Three branches keyed on `inlineWritesResult` (260428-vyf):
+ *  - BOTH written → SHORT contract: "No further setup needed — agent is
+ *    operationally ready". Skips the post-create write() roundtrip.
+ *  - PARTIAL (only one of role/identity written) → mixed contract pointing
+ *    only at the still-template file with a single "Next required action".
+ *  - NEITHER (or write failure / undefined) → existing 260428-sw2 2-step
+ *    contract verbatim, telling the LLM to call write() for ROLE.md.
  *
  * Case B (workspaceDir absent — defensive fallback): shorter form pinning
  * "Customize {agentId}'s workspace ROLE.md and IDENTITY.md before using."
  */
-function buildCreateContract(agentId: string, workspaceDir: string | undefined): string {
+export function buildCreateContract(
+  agentId: string,
+  workspaceDir: string | undefined,
+  inlineWritesResult?: AgentInlineWritesValue | AgentInlineWritesError,
+): string {
+  // BOTH written → SHORT operationally-ready contract.
+  if (
+    workspaceDir !== undefined
+    && inlineWritesResult !== undefined
+    && "roleWritten" in inlineWritesResult
+    && inlineWritesResult.roleWritten
+    && inlineWritesResult.identityWritten
+  ) {
+    return `✓ Agent ${agentId} created at ${workspaceDir} with inline ROLE.md and IDENTITY.md (${inlineWritesResult.bytesWritten} bytes total). No further setup needed — agent is operationally ready.`;
+  }
+
+  // PARTIAL (exactly one of role/identity written).
+  if (
+    workspaceDir !== undefined
+    && inlineWritesResult !== undefined
+    && "roleWritten" in inlineWritesResult
+    && (inlineWritesResult.roleWritten || inlineWritesResult.identityWritten)
+  ) {
+    const written = inlineWritesResult.roleWritten ? "ROLE.md" : "IDENTITY.md";
+    const remaining = inlineWritesResult.roleWritten ? "IDENTITY.md" : "ROLE.md";
+    return [
+      `✓ Agent ${agentId} created at ${workspaceDir} with inline ${written} (${inlineWritesResult.bytesWritten} bytes).`,
+      `⚠ ${remaining} is still the unmodified template.`,
+      `Next required action for this agent: call write({path: "${workspaceDir}/${remaining}", content: "..."}). This agent is NOT ready until ${remaining} is customized.`,
+    ].join("\n");
+  }
+
+  // NEITHER (no inlineContent supplied, write failure, or undefined): fall
+  // through to the existing 260428-sw2 2-step contract verbatim.
   if (workspaceDir !== undefined) {
     return [
       `✓ Agent ${agentId} created at ${workspaceDir}.`,
@@ -259,17 +337,61 @@ export function createAgentsManageTool(
           const agentId = readStringParam(p, "agent_id");
           const config = coerceConfig(p);
           mapWorkspaceProfile(config);
+
+          // 260428-vyf L2 (Path A): strip workspace.role / workspace.identity
+          // from the config payload BEFORE the RPC and forward them as a
+          // separate top-level `inlineContent` parameter. Rationale: the
+          // downstream Zod schema (PerAgentConfigSchema.workspace at
+          // packages/core/src/config/schema-agent.ts) is z.strictObject —
+          // unknown keys would trigger Zod `unrecognized_keys` rejection.
+          // role/identity are write-once side-effects (ROLE.md / IDENTITY.md
+          // file writes), NOT durable state — they MUST NOT leak into
+          // config.yaml. Path B (extending Zod schema-agent.ts) was
+          // rejected because it would persist them.
+          let inlineContent: { role?: string; identity?: string } | undefined;
+          if (config && typeof config === "object") {
+            const ws = (config as Record<string, unknown>).workspace as Record<string, unknown> | undefined;
+            if (ws && (typeof ws.role === "string" || typeof ws.identity === "string")) {
+              inlineContent = {};
+              if (typeof ws.role === "string") {
+                inlineContent.role = ws.role;
+                delete ws.role;
+              }
+              if (typeof ws.identity === "string") {
+                inlineContent.identity = ws.identity;
+                delete ws.identity;
+              }
+            }
+          }
+
           callbacks?.onMutationStart?.();
           try {
-            const result = await rpcCall("agents.create", { agentId, config, _trustLevel: ctx.trustLevel });
+            const rpcParams: Record<string, unknown> = { agentId, config, _trustLevel: ctx.trustLevel };
+            if (inlineContent !== undefined) rpcParams.inlineContent = inlineContent;
+            const result = await rpcCall("agents.create", rpcParams);
             // agentId is guaranteed non-undefined by readStringParam(required=true) above.
             const aid = agentId as string;
             const workspaceDir = (result as { workspaceDir?: string } | undefined)?.workspaceDir;
+            const inlineWritesResult = (result as
+              | { inlineWritesResult?: AgentInlineWritesValue | AgentInlineWritesError }
+              | undefined)?.inlineWritesResult;
 
-            // 260428-sw2 Layer 1: emit the next-step contract on the
-            // freshest, uncached surface the LLM reads each turn (the
-            // tool_result text). One structured INFO log pins this happened.
-            const contractText = buildCreateContract(aid, workspaceDir);
+            // 260428-sw2 Layer 1 + 260428-vyf Layer 2: emit the next-step
+            // contract on the freshest, uncached surface the LLM reads each
+            // turn (the tool_result text). The contract has 3 branches keyed
+            // on inlineWritesResult (see buildCreateContract). One structured
+            // INFO log pins this happened.
+            const contractText = buildCreateContract(aid, workspaceDir, inlineWritesResult);
+            // Distinguish the 3 inline-write outcomes for observability.
+            // "none"    — caller did not supply inlineContent
+            // "written" — helper succeeded (full or partial)
+            // "failed"  — helper returned err shape (oversize|path_traversal|io)
+            const inlineWritesOutcome: "none" | "written" | "failed" =
+              inlineWritesResult === undefined
+                ? "none"
+                : "roleWritten" in inlineWritesResult
+                  ? "written"
+                  : "failed";
             logger.info(
               {
                 module: "skill.agents-manage",
@@ -277,6 +399,7 @@ export function createAgentsManageTool(
                 agentId: aid,
                 workspaceDir: workspaceDir ?? null,
                 contractEmitted: true,
+                inlineWritesOutcome,
               },
               "agents_manage.create succeeded — next-step contract emitted",
             );
