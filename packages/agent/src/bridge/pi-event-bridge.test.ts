@@ -3567,4 +3567,382 @@ describe("createPiEventBridge", () => {
       expect(hashInvariantErrors).toHaveLength(0);
     });
   });
+
+  // ------------------------------------------------------------------
+  // 260428-j0v: unconditional entry/exit logs at the three thinking-block
+  // diagnostic sites (turn_start pre-call, LLM-error dispatch decision,
+  // wire-diff dispatch completion).
+  // ------------------------------------------------------------------
+  describe("260428-j0v: unconditional entry/exit logs", () => {
+    /** Build a turn_end event with controlled content + responseId. */
+    function makeTurnEndWithContent(
+      content: ReadonlyArray<Record<string, unknown>>,
+      responseId?: string,
+    ) {
+      return {
+        type: "turn_end" as const,
+        message: {
+          role: "assistant" as const,
+          content,
+          api: "anthropic-messages",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5-20250929",
+          usage: {
+            input: 100,
+            output: 50,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 150,
+            cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+          },
+          stopReason: "stop",
+          timestamp: Date.now(),
+          ...(responseId !== undefined && { responseId }),
+        },
+        toolResults: [],
+      };
+    }
+
+    function makeTurnEndError(errorMessage: string) {
+      return {
+        type: "turn_end" as const,
+        message: {
+          role: "assistant" as const,
+          content: [],
+          api: "anthropic-messages",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5-20250929",
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "error",
+          errorMessage,
+          timestamp: Date.now(),
+        },
+        toolResults: [],
+      };
+    }
+
+    function thinkingBlock(text: string, sig: string): Record<string, unknown> {
+      return { type: "thinking", thinking: text, thinkingSignature: sig };
+    }
+
+    /** Filter info mock calls by module field. */
+    function infoCallsByModule(deps: PiEventBridgeDeps, mod: string) {
+      const calls = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls as Array<
+        [Record<string, unknown>, string]
+      >;
+      return calls.filter((c) => c[0]?.module === mod);
+    }
+
+    /** Filter info mock calls by message string. */
+    function infoCallsByMessage(deps: PiEventBridgeDeps, msg: string) {
+      const calls = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls as Array<
+        [Record<string, unknown>, string]
+      >;
+      return calls.filter((c) => c[1] === msg);
+    }
+
+    // ----- Site 1: turn_start pre-call entry log -----
+
+    it("A. pre-call entry log fires with candidatesChecked > 0, mismatchesLogged: 0 on full match", () => {
+      const block = thinkingBlock("orig-thought", "sig-1");
+      // Stub getSessionMessages to return the same content the bridge will hash.
+      const liveMsg = { role: "assistant", responseId: "resp-1", content: [block] };
+      const getSessionMessages = vi.fn().mockReturnValue([liveMsg]);
+      const localDeps = createMockDeps({ getSessionMessages });
+      const { listener } = createPiEventBridge(localDeps);
+
+      // Prime the hash store by firing one turn_end with the same block.
+      listener(makeTurnEndWithContent([block], "resp-1") as any);
+
+      // Now fire turn_start; the pre-call entry log must fire with counters.
+      listener({ type: "turn_start", turnIndex: 1, timestamp: Date.now() } as any);
+
+      const calls = infoCallsByMessage(localDeps, "Pre-call assertion ran");
+      expect(calls).toHaveLength(1);
+      const [payload] = calls[0]!;
+      expect(payload).toMatchObject({
+        module: "agent.bridge.hash-invariant",
+        candidatesChecked: 1,
+        mismatchesLogged: 0,
+        restoredCount: 0,
+        anyResponseIdMatched: true,
+        hashStoreSize: 1,
+        canonicalStoreSize: 1,
+      });
+    });
+
+    it("B. pre-call entry log fires with candidatesChecked: 0 when no live message has a stored hash", () => {
+      // Hash store is empty (no prior turn_end primed it). Live message has a
+      // responseId that is NOT in the store.
+      const liveMsg = {
+        role: "assistant",
+        responseId: "resp-other",
+        content: [thinkingBlock("text", "sig-x")],
+      };
+      const getSessionMessages = vi.fn().mockReturnValue([liveMsg]);
+      const localDeps = createMockDeps({ getSessionMessages });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any);
+
+      const calls = infoCallsByMessage(localDeps, "Pre-call assertion ran");
+      expect(calls).toHaveLength(1);
+      const [payload] = calls[0]!;
+      expect(payload).toMatchObject({
+        module: "agent.bridge.hash-invariant",
+        candidatesChecked: 0,
+        mismatchesLogged: 0,
+        restoredCount: 0,
+        anyResponseIdMatched: false,
+        hashStoreSize: 0,
+        canonicalStoreSize: 0,
+      });
+    });
+
+    it("C. pre-call entry log fires with all-zero counters when getSessionMessages is undefined", () => {
+      const localDeps = createMockDeps(); // no getSessionMessages
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any);
+
+      const calls = infoCallsByMessage(localDeps, "Pre-call assertion ran");
+      expect(calls).toHaveLength(1);
+      const [payload] = calls[0]!;
+      expect(payload).toMatchObject({
+        module: "agent.bridge.hash-invariant",
+        candidatesChecked: 0,
+        mismatchesLogged: 0,
+        restoredCount: 0,
+        anyResponseIdMatched: false,
+        hashStoreSize: 0,
+        canonicalStoreSize: 0,
+      });
+    });
+
+    it("C2. pre-call entry log fires even when getSessionMessages throws", () => {
+      const getSessionMessages = vi.fn().mockImplementation(() => {
+        throw new Error("synthetic-pre-call-error");
+      });
+      const localDeps = createMockDeps({ getSessionMessages });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any);
+
+      const calls = infoCallsByMessage(localDeps, "Pre-call assertion ran");
+      expect(calls).toHaveLength(1);
+      const [payload] = calls[0]!;
+      expect(payload.candidatesChecked).toBe(0);
+      expect(payload.anyResponseIdMatched).toBe(false);
+    });
+
+    it("C3. pre-call entry log surfaces mismatchesLogged > 0 when in-memory diverged from stored hash", () => {
+      const origBlock = thinkingBlock("orig", "sig-1");
+      const mutatedBlock = thinkingBlock("mutated-text", "sig-1");
+      // First, prime hash store with the original block via turn_end. Then
+      // stub getSessionMessages to return the MUTATED block — the bridge's
+      // pre-walk should detect a positional hash mismatch and report it.
+      const liveMsg = { role: "assistant", responseId: "resp-mut", content: [mutatedBlock] };
+      const getSessionMessages = vi.fn().mockReturnValue([liveMsg]);
+      const localDeps = createMockDeps({ getSessionMessages });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener(makeTurnEndWithContent([origBlock], "resp-mut") as any);
+      listener({ type: "turn_start", turnIndex: 1, timestamp: Date.now() } as any);
+
+      const calls = infoCallsByMessage(localDeps, "Pre-call assertion ran");
+      expect(calls).toHaveLength(1);
+      const [payload] = calls[0]!;
+      expect(payload).toMatchObject({
+        module: "agent.bridge.hash-invariant",
+        candidatesChecked: 1,
+        mismatchesLogged: 1,
+        restoredCount: 1,
+        anyResponseIdMatched: true,
+      });
+    });
+
+    // ----- Site 2A: wire-diff dispatch decision log -----
+
+    it("D. dispatch-decision log fires with regexMatched: false on a generic 400 (rate-limit error)", () => {
+      const localDeps = createMockDeps();
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener(makeTurnEndError("rate limit exceeded") as any);
+
+      const calls = infoCallsByMessage(localDeps, "Wire-edge diff dispatch decision");
+      expect(calls).toHaveLength(1);
+      const [payload] = calls[0]!;
+      expect(payload).toMatchObject({
+        module: "agent.bridge.wire-diff",
+        regexMatched: false,
+        candidatesFound: 0,
+        jsonlPathPresent: false,
+        getSessionMessagesPresent: false,
+        getSessionJsonlPathPresent: false,
+      });
+    });
+
+    it("E. dispatch-decision log fires with regexMatched: true, candidatesFound > 0 on a signed-replay 400", () => {
+      const block = thinkingBlock("signed-thought", "sig-real");
+      const liveMsg = { role: "assistant", responseId: "resp-signed", content: [block] };
+      const getSessionMessages = vi.fn().mockReturnValue([liveMsg]);
+      const getSessionJsonlPath = vi.fn().mockReturnValue("/test/session.jsonl");
+      const localDeps = createMockDeps({ getSessionMessages, getSessionJsonlPath });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener(
+        makeTurnEndError(
+          "messages.5.content.17: thinking blocks cannot be modified, "
+            + "moved, or removed once provided",
+        ) as any,
+      );
+
+      const calls = infoCallsByMessage(localDeps, "Wire-edge diff dispatch decision");
+      expect(calls).toHaveLength(1);
+      const [payload] = calls[0]!;
+      expect(payload).toMatchObject({
+        module: "agent.bridge.wire-diff",
+        regexMatched: true,
+        candidatesFound: 1,
+        jsonlPathPresent: true,
+        getSessionMessagesPresent: true,
+        getSessionJsonlPathPresent: true,
+      });
+    });
+
+    it("F. dispatch-decision log fires with candidatesFound: 0 when in-memory has no signed thinking blocks", async () => {
+      // Live messages have only text content — no signed thinking blocks. The
+      // dispatch is gated out, so the completion log MUST NOT fire.
+      const liveMsg = { role: "assistant", responseId: "resp-text", content: [{ type: "text", text: "hi" }] };
+      const getSessionMessages = vi.fn().mockReturnValue([liveMsg]);
+      const getSessionJsonlPath = vi.fn().mockReturnValue("/test/session.jsonl");
+      const localDeps = createMockDeps({ getSessionMessages, getSessionJsonlPath });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener(
+        makeTurnEndError(
+          "messages.0.content.0: thinking blocks cannot be modified",
+        ) as any,
+      );
+
+      const decisionCalls = infoCallsByMessage(localDeps, "Wire-edge diff dispatch decision");
+      expect(decisionCalls).toHaveLength(1);
+      const [payload] = decisionCalls[0]!;
+      expect(payload).toMatchObject({
+        regexMatched: true,
+        candidatesFound: 0,
+        jsonlPathPresent: true,
+      });
+
+      // Drain microtask queue to surface any (incorrectly-fired) completion log.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const completionCalls = infoCallsByMessage(localDeps, "Wire-edge diff dispatch complete");
+      expect(completionCalls).toHaveLength(0);
+    });
+
+    // ----- Site 2B: wire-diff dispatch completion log -----
+
+    it("G. dispatch-completion log fires after candidates processed (with file-read error from missing JSONL)", async () => {
+      const block = thinkingBlock("signed-thought-G", "sig-G");
+      const liveMsg = { role: "assistant", responseId: "resp-G", content: [block] };
+      const getSessionMessages = vi.fn().mockReturnValue([liveMsg]);
+      // Use a path that definitely doesn't exist — forces fileReadErrors=1.
+      const getSessionJsonlPath = vi.fn().mockReturnValue(
+        "/tmp/definitely-does-not-exist-260428-j0v.jsonl",
+      );
+      const localDeps = createMockDeps({ getSessionMessages, getSessionJsonlPath });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener(
+        makeTurnEndError(
+          "messages.0.content.0: thinking blocks cannot be modified",
+        ) as any,
+      );
+
+      // Drain the fire-and-forget Promise dispatch (multiple ticks because
+      // fs.readFile is async and the helper awaits it).
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      const completionCalls = infoCallsByMessage(localDeps, "Wire-edge diff dispatch complete");
+      expect(completionCalls).toHaveLength(1);
+      const [payload] = completionCalls[0]!;
+      expect(payload).toMatchObject({
+        module: "agent.bridge.wire-diff",
+        candidatesProcessed: 1,
+        totalDivergences: 0,
+        persistedNotFound: 0,
+        fileReadErrors: 1,
+      });
+    });
+
+    it("H. dispatch-decision and dispatch-completion both fire on regex+candidate+callback path", async () => {
+      const block = thinkingBlock("signed-thought-H", "sig-H");
+      const liveMsg = { role: "assistant", responseId: "resp-H", content: [block] };
+      const getSessionMessages = vi.fn().mockReturnValue([liveMsg]);
+      const getSessionJsonlPath = vi.fn().mockReturnValue(
+        "/tmp/definitely-does-not-exist-260428-j0v-H.jsonl",
+      );
+      const localDeps = createMockDeps({ getSessionMessages, getSessionJsonlPath });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener(
+        makeTurnEndError(
+          "messages.0.content.0: thinking blocks cannot be modified",
+        ) as any,
+      );
+
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      // Both wire-diff INFO logs should appear, in order.
+      const wireDiffCalls = infoCallsByModule(localDeps, "agent.bridge.wire-diff");
+      const messages = wireDiffCalls.map((c) => c[1]);
+      expect(messages).toContain("Wire-edge diff dispatch decision");
+      expect(messages).toContain("Wire-edge diff dispatch complete");
+      // Decision must come before completion.
+      const decisionIdx = messages.indexOf("Wire-edge diff dispatch decision");
+      const completionIdx = messages.indexOf("Wire-edge diff dispatch complete");
+      expect(decisionIdx).toBeLessThan(completionIdx);
+    });
+
+    it("I. existing 260428-iag wire-diff ERROR is preserved (no behavior change beyond new INFO emissions)", () => {
+      // A non-error turn_end must NOT trigger the wire-diff decision log.
+      const localDeps = createMockDeps();
+      const { listener } = createPiEventBridge(localDeps);
+      listener(makeTurnEndWithContent([{ type: "text", text: "hi" }], "resp-ok") as any);
+
+      const decisionCalls = infoCallsByMessage(localDeps, "Wire-edge diff dispatch decision");
+      expect(decisionCalls).toHaveLength(0);
+      const completionCalls = infoCallsByMessage(localDeps, "Wire-edge diff dispatch complete");
+      expect(completionCalls).toHaveLength(0);
+    });
+
+    it("J. existing LLM-error WARN at line 1099 is preserved alongside the new dispatch-decision INFO", () => {
+      const localDeps = createMockDeps();
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener(makeTurnEndError("rate limit exceeded") as any);
+
+      // Existing WARN must still fire.
+      const warnCalls = (localDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls as Array<
+        [Record<string, unknown>, string]
+      >;
+      const llmErrorWarns = warnCalls.filter((c) => c[1] === "LLM call returned error");
+      expect(llmErrorWarns).toHaveLength(1);
+
+      // New dispatch-decision INFO must also fire.
+      const decisionCalls = infoCallsByMessage(localDeps, "Wire-edge diff dispatch decision");
+      expect(decisionCalls).toHaveLength(1);
+    });
+  });
 });

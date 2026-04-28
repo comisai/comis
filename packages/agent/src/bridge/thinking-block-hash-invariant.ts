@@ -68,6 +68,23 @@ export interface AssertDeps {
   logger: { error: (obj: Record<string, unknown>, msg: string) => void };
 }
 
+/** Result shape returned by `assertThinkingBlocksUnchanged`. Counters surface
+ *  what the helper observed on this call so callers can emit telemetry without
+ *  re-walking the inputs. Fields are computed even when the helper is a no-op
+ *  (empty prior). */
+export interface AssertResult {
+  /** Number of `prior` entries we walked (equals `prior.length` when prior is
+   *  an array; 0 when prior was empty/non-array). */
+  candidatesChecked: number;
+  /** Number of structured ERROR logs emitted on this call (1 per missing
+   *  index + 1 per hash-mismatch index). */
+  mismatchesLogged: number;
+  /** True iff at least one prior `blockIndex` had a corresponding entry in
+   *  `current`, regardless of whether the hashes matched. False when current
+   *  was empty/non-array OR every prior index was missing. */
+  anyResponseIdMatched: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
@@ -174,15 +191,21 @@ export function assertThinkingBlocksUnchanged(
   current: ReadonlyArray<Record<string, unknown>> | undefined | null,
   responseId: string | undefined,
   deps: AssertDeps,
-): void {
-  if (!Array.isArray(prior) || prior.length === 0) return;
+): AssertResult {
+  if (!Array.isArray(prior) || prior.length === 0) {
+    return { candidatesChecked: 0, mismatchesLogged: 0, anyResponseIdMatched: false };
+  }
   const currentHashes = computeThinkingBlockHashes(current);
   const byIndex = new Map<number, ThinkingBlockHash>();
   for (const h of currentHashes) byIndex.set(h.blockIndex, h);
 
+  let mismatchesLogged = 0;
+  let anyResponseIdMatched = false;
+
   for (const old of prior) {
     const now = byIndex.get(old.blockIndex);
     if (!now) {
+      mismatchesLogged++;
       safeLog(
         deps,
         {
@@ -202,7 +225,9 @@ export function assertThinkingBlocksUnchanged(
       );
       continue;
     }
+    anyResponseIdMatched = true;
     if (now.hash !== old.hash) {
+      mismatchesLogged++;
       safeLog(
         deps,
         {
@@ -222,6 +247,12 @@ export function assertThinkingBlocksUnchanged(
       );
     }
   }
+
+  return {
+    candidatesChecked: prior.length,
+    mismatchesLogged,
+    anyResponseIdMatched,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -495,16 +526,16 @@ function blockHash(block: unknown): string {
 
 const WIRE_DIFF_MODULE_FIELD = "agent.bridge.wire-diff";
 
-const WIRE_DIFF_HINT_FILE_MISSING =
+export const WIRE_DIFF_HINT_FILE_MISSING =
   "JSONL session file unreadable; wire-edge diff skipped. " +
   "Confirm session path resolution and filesystem permissions.";
 
-const WIRE_DIFF_HINT_NOT_FOUND =
+export const WIRE_DIFF_HINT_NOT_FOUND =
   "responseId not present in persisted JSONL session file; " +
   "wire-edge diff skipped. The assistant message may not have been " +
   "persisted yet, or the responseId was rotated.";
 
-const WIRE_DIFF_HINT_INTERNAL =
+export const WIRE_DIFF_HINT_INTERNAL =
   "Wire-edge diff aborted on unexpected internal error; in-memory " +
   "shape passed through unchanged. Inspect prior context-engine layers.";
 

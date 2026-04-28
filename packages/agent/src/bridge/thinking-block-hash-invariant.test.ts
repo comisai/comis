@@ -264,6 +264,121 @@ describe("assertThinkingBlocksUnchanged", () => {
 });
 
 // ---------------------------------------------------------------------------
+// AssertResult return shape (260428-j0v)
+// ---------------------------------------------------------------------------
+
+describe("AssertResult return shape", () => {
+  it("returns candidatesChecked === N, mismatchesLogged === 0, anyResponseIdMatched === true on full match", () => {
+    const blocks = [blockA(), blockB()];
+    const prior = computeThinkingBlockHashes(blocks);
+    const error = vi.fn();
+    const result = assertThinkingBlocksUnchanged(prior, blocks, "resp_test_match", {
+      logger: { error },
+    });
+    expect(result).toEqual({
+      candidatesChecked: 2,
+      mismatchesLogged: 0,
+      anyResponseIdMatched: true,
+    });
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("returns mismatchesLogged === 1, candidatesChecked === N, anyResponseIdMatched === true when one block was mutated", () => {
+    const original = [blockA(), blockB()];
+    const prior = computeThinkingBlockHashes(original);
+    const mutated = [blockA(), blockB({ thinking: TEXT_B + "_MUTATED" })];
+    const error = vi.fn();
+    const result = assertThinkingBlocksUnchanged(prior, mutated, "resp_test_mut", {
+      logger: { error },
+    });
+    expect(result).toEqual({
+      candidatesChecked: 2,
+      mismatchesLogged: 1,
+      anyResponseIdMatched: true,
+    });
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns candidatesChecked === 0, mismatchesLogged === 0, anyResponseIdMatched === false when prior is empty", () => {
+    const error = vi.fn();
+    const result = assertThinkingBlocksUnchanged([], [blockA()], "resp_test_empty_prior", {
+      logger: { error },
+    });
+    expect(result).toEqual({
+      candidatesChecked: 0,
+      mismatchesLogged: 0,
+      anyResponseIdMatched: false,
+    });
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("returns mismatchesLogged === 1, anyResponseIdMatched === false when prior has one entry but current is empty", () => {
+    const original = [blockA()];
+    const prior = computeThinkingBlockHashes(original);
+    const error = vi.fn();
+    const result = assertThinkingBlocksUnchanged(prior, [], "resp_test_missing", {
+      logger: { error },
+    });
+    expect(result).toEqual({
+      candidatesChecked: 1,
+      mismatchesLogged: 1,
+      anyResponseIdMatched: false,
+    });
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns mismatchesLogged === 2 when one block is mutated and one block is missing entirely", () => {
+    const original = [blockA(), blockB()];
+    const prior = computeThinkingBlockHashes(original);
+    // current has only one block, and that block's text is mutated.
+    const partialMutated = [blockA({ thinking: TEXT_A + "_X" })];
+    const error = vi.fn();
+    const result = assertThinkingBlocksUnchanged(prior, partialMutated, "resp_test_mixed", {
+      logger: { error },
+    });
+    expect(result).toEqual({
+      candidatesChecked: 2,
+      mismatchesLogged: 2, // 1 for blockIndex 0 mutated + 1 for blockIndex 1 missing
+      anyResponseIdMatched: true, // blockIndex 0 was found (even though hash differs)
+    });
+    expect(error).toHaveBeenCalledTimes(2);
+  });
+
+  it("anyResponseIdMatched is false when current is non-array (defensive path)", () => {
+    const original = [blockA()];
+    const prior = computeThinkingBlockHashes(original);
+    const error = vi.fn();
+    const result = assertThinkingBlocksUnchanged(
+      prior,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- exercising defensive path
+      null as any,
+      "resp_test_null",
+      { logger: { error } },
+    );
+    expect(result.candidatesChecked).toBe(1);
+    expect(result.mismatchesLogged).toBe(1);
+    expect(result.anyResponseIdMatched).toBe(false);
+  });
+
+  it("regression: existing void-return-style call sites still work (return is silently discardable)", () => {
+    // Old callers expecting void must compile and run unchanged. The return
+    // value being unused does not affect logger side effects.
+    const blocks = [blockA()];
+    const prior = computeThinkingBlockHashes(blocks);
+    const error = vi.fn();
+    // Callers that ignore the return value still see the same logger effects.
+    expect(() => {
+      assertThinkingBlocksUnchanged(prior, blocks, "resp_test_void", { logger: { error } });
+    }).not.toThrow();
+    expect(error).not.toHaveBeenCalled();
+    // And on a mismatch, the ERROR still fires.
+    const mutated = [blockA({ thinking: TEXT_A + "_X" })];
+    assertThinkingBlocksUnchanged(prior, mutated, "resp_test_void_mut", { logger: { error } });
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // restoreCanonicalThinkingBlocks
 // ---------------------------------------------------------------------------
 

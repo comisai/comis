@@ -41,7 +41,13 @@ import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { extractMcpServerName, classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { checkStepLimit, emitStepLimitAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
-import { computeThinkingBlockHashes, diffThinkingBlocksAgainstPersisted, type ThinkingBlockHash } from "./thinking-block-hash-invariant.js";
+import {
+  computeThinkingBlockHashes,
+  diffThinkingBlocksAgainstPersisted,
+  WIRE_DIFF_HINT_FILE_MISSING,
+  WIRE_DIFF_HINT_NOT_FOUND,
+  type ThinkingBlockHash,
+} from "./thinking-block-hash-invariant.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -432,13 +438,75 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // happens, so the bytes Anthropic sees match the canonical
           // stream-close snapshot. The closure swallows its own throws; the
           // wrapper here is belt-and-braces.
+          //
+          // 260428-j0v: ALWAYS emit ONE INFO log carrying the counters the
+          // bridge can derive — even when the closure is unwired or returns
+          // undefined / no candidates. This closes the silent-success
+          // ambiguity observed on trace c5680133 where ZERO agent.bridge.*
+          // events appeared despite the helpers having shipped.
+          //
+          // Counters are computed by the bridge's own walk of the messages
+          // returned by the closure (or empty when unwired) so the executor
+          // closure stays untouched. `mismatchesLogged` and `restoredCount`
+          // are derived from positional hash diffs — they equal the work the
+          // closure's helpers actually emit/heal.
+          const hashStoreSize = m.thinkingBlockHashes.size;
+          const canonicalStoreSize = m.thinkingBlockCanonical.size;
+
+          let candidatesChecked = 0;
+          let mismatchesLogged = 0;
+          let anyResponseIdMatched = false;
+
           if (deps.getSessionMessages) {
+            let liveBeforeClosure: ReadonlyArray<unknown> | undefined;
             try {
-              deps.getSessionMessages();
+              liveBeforeClosure = deps.getSessionMessages();
             } catch {
               // Pre-call hook must NEVER abort agent flow.
+              liveBeforeClosure = undefined;
+            }
+
+            if (Array.isArray(liveBeforeClosure)) {
+              for (const msg of liveBeforeClosure) {
+                if (!msg || typeof msg !== "object") continue;
+                const sm = msg as { role?: string; responseId?: string; content?: unknown };
+                if (sm.role !== "assistant") continue;
+                if (typeof sm.responseId !== "string") continue;
+                const prior = m.thinkingBlockHashes.get(sm.responseId);
+                if (!prior) continue;
+                candidatesChecked++;
+                anyResponseIdMatched = true;
+                const currentBlocks = Array.isArray(sm.content)
+                  ? (sm.content as Array<Record<string, unknown>>)
+                  : [];
+                const currentHashes = computeThinkingBlockHashes(currentBlocks);
+                const byIndex = new Map<number, ThinkingBlockHash>();
+                for (const h of currentHashes) byIndex.set(h.blockIndex, h);
+                for (const old of prior) {
+                  const now = byIndex.get(old.blockIndex);
+                  if (!now || now.hash !== old.hash) mismatchesLogged++;
+                }
+              }
             }
           }
+
+          // restoredCount equals mismatchesLogged in the current symmetric
+          // implementation; surfaced as a separate field so future asymmetric
+          // assert/restore semantics are observable.
+          const restoredCount = mismatchesLogged;
+
+          deps.logger.info(
+            {
+              module: "agent.bridge.hash-invariant",
+              candidatesChecked,
+              mismatchesLogged,
+              restoredCount,
+              anyResponseIdMatched,
+              hashStoreSize,
+              canonicalStoreSize,
+            },
+            "Pre-call assertion ran",
+          );
           break;
         }
 
@@ -1112,6 +1180,13 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // path. Silent no-op when the signature doesn't match or when
           // either getSessionMessages / getSessionJsonlPath is unwired.
           //
+          // 260428-j0v: ALWAYS emit ONE dispatch-decision INFO log carrying
+          // boolean flags that explain WHY the wire-diff dispatch was or was
+          // not entered (regex match, candidate count, callback presence) —
+          // even when regexMatched is false or callbacks are unwired. When
+          // the dispatch IS entered, emit a second dispatch-completion INFO
+          // after the async candidates loop completes.
+          //
           // The signature regex matches Anthropic's actual 400 message:
           // "messages.N.content.M: thinking blocks cannot be modified"
           // and the redacted_thinking variant. Both `thinking|redacted_thinking`
@@ -1119,80 +1194,120 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // unrelated 400s (rate limits, auth, schema errors).
           {
             const errMsg = m.lastLlmErrorMessage;
-            const isSignedReplayRejection =
+            const regexMatched =
               typeof errMsg === "string" &&
               /thinking|redacted_thinking/.test(errMsg) &&
               /modif|cannot/.test(errMsg);
-            if (
-              isSignedReplayRejection &&
-              deps.getSessionMessages &&
-              deps.getSessionJsonlPath
-            ) {
-              const live = deps.getSessionMessages();
-              const jsonlPath = deps.getSessionJsonlPath();
-              if (Array.isArray(live) && typeof jsonlPath === "string" && jsonlPath.length > 0) {
-                // Snapshot the last <=3 candidate messages now (sync) -- the
-                // async dispatch below uses these snapshots, never touches
-                // the live array.
-                type Candidate = { responseId: string; content: ReadonlyArray<Record<string, unknown>> };
-                const candidates: Candidate[] = [];
-                for (let i = live.length - 1; i >= 0 && candidates.length < 3; i--) {
-                  // eslint-disable-next-line security/detect-object-injection -- numeric loop index
-                  const msg = live[i] as { role?: string; responseId?: string; content?: unknown };
-                  if (!msg || typeof msg !== "object") continue;
-                  if (msg.role !== "assistant") continue;
-                  if (typeof msg.responseId !== "string") continue;
-                  if (!Array.isArray(msg.content)) continue;
-                  const blocks = msg.content as Array<Record<string, unknown>>;
-                  const hasSigned = blocks.some(
-                    (b) =>
-                      b.type === "thinking" &&
-                      typeof b.thinkingSignature === "string" &&
-                      (b.thinkingSignature as string).length > 0 &&
-                      b.redacted !== true,
-                  );
-                  if (!hasSigned) continue;
-                  candidates.push({ responseId: msg.responseId, content: blocks });
-                }
-                if (candidates.length > 0) {
-                  const capturedJsonlPath = jsonlPath;
-                  // Async non-blocking dispatch -- never blocks the error path.
-                  void Promise.resolve().then(async () => {
-                    try {
-                      for (const c of candidates) {
-                        const entries = await diffThinkingBlocksAgainstPersisted(
-                          c.content,
-                          c.responseId,
-                          capturedJsonlPath,
-                          { logger: deps.logger },
-                        );
-                        for (const entry of entries) {
-                          deps.logger.error(
-                            {
-                              module: "agent.bridge.wire-diff",
-                              responseId: c.responseId,
-                              blockIndex: entry.blockIndex,
-                              persistedHash: entry.persistedHash,
-                              inMemoryHash: entry.inMemoryHash,
-                              persistedText: entry.persistedText,
-                              inMemoryText: entry.inMemoryText,
-                              persistedSigLen: entry.persistedSigLen,
-                              inMemorySigLen: entry.inMemorySigLen,
-                              errorKind: "internal" as const,
-                              hint:
-                                "Mutation occurred between bridge restoration hook and " +
-                                "pi-ai serialization — likely inside pi-ai or its dependencies",
-                            },
-                            "Wire-edge thinking-block divergence vs persisted JSONL",
-                          );
-                        }
-                      }
-                    } catch {
-                      // Diagnostic must NEVER abort the error path.
-                    }
-                  });
-                }
+            const liveForDecision = deps.getSessionMessages?.();
+            const jsonlPathForDecision = deps.getSessionJsonlPath?.();
+
+            // Pre-compute candidatesFound by walking liveForDecision with the
+            // same filter the dispatch uses. Cap at 3 to mirror dispatch behavior.
+            type Candidate = { responseId: string; content: ReadonlyArray<Record<string, unknown>> };
+            const candidates: Candidate[] = [];
+            if (Array.isArray(liveForDecision)) {
+              for (let i = liveForDecision.length - 1; i >= 0 && candidates.length < 3; i--) {
+                // eslint-disable-next-line security/detect-object-injection -- numeric loop index
+                const msg = liveForDecision[i] as { role?: string; responseId?: string; content?: unknown };
+                if (!msg || typeof msg !== "object") continue;
+                if (msg.role !== "assistant") continue;
+                if (typeof msg.responseId !== "string") continue;
+                if (!Array.isArray(msg.content)) continue;
+                const blocks = msg.content as Array<Record<string, unknown>>;
+                const hasSigned = blocks.some(
+                  (b) =>
+                    b.type === "thinking" &&
+                    typeof b.thinkingSignature === "string" &&
+                    (b.thinkingSignature as string).length > 0 &&
+                    b.redacted !== true,
+                );
+                if (!hasSigned) continue;
+                candidates.push({ responseId: msg.responseId, content: blocks });
               }
+            }
+
+            const jsonlPathPresent =
+              typeof jsonlPathForDecision === "string" && jsonlPathForDecision.length > 0;
+
+            deps.logger.info(
+              {
+                module: "agent.bridge.wire-diff",
+                regexMatched,
+                candidatesFound: candidates.length,
+                jsonlPathPresent,
+                getSessionMessagesPresent: typeof deps.getSessionMessages === "function",
+                getSessionJsonlPathPresent: typeof deps.getSessionJsonlPath === "function",
+              },
+              "Wire-edge diff dispatch decision",
+            );
+
+            if (regexMatched && jsonlPathPresent && candidates.length > 0) {
+              const capturedJsonlPath = jsonlPathForDecision;
+              // Async non-blocking dispatch -- never blocks the error path.
+              void Promise.resolve().then(async () => {
+                let candidatesProcessed = 0;
+                let totalDivergences = 0;
+                let persistedNotFound = 0;
+                let fileReadErrors = 0;
+
+                // Wrapped logger forwards to deps.logger AND counts the
+                // helper's WARN outcomes by hint-constant identity (no regex).
+                const countingLogger = {
+                  warn: (obj: Record<string, unknown>, msg: string) => {
+                    deps.logger.warn(obj, msg);
+                    if (obj.hint === WIRE_DIFF_HINT_FILE_MISSING) fileReadErrors++;
+                    else if (obj.hint === WIRE_DIFF_HINT_NOT_FOUND) persistedNotFound++;
+                  },
+                };
+
+                try {
+                  for (const c of candidates) {
+                    candidatesProcessed++;
+                    const entries = await diffThinkingBlocksAgainstPersisted(
+                      c.content,
+                      c.responseId,
+                      capturedJsonlPath,
+                      { logger: countingLogger },
+                    );
+                    totalDivergences += entries.length;
+                    for (const entry of entries) {
+                      deps.logger.error(
+                        {
+                          module: "agent.bridge.wire-diff",
+                          responseId: c.responseId,
+                          blockIndex: entry.blockIndex,
+                          persistedHash: entry.persistedHash,
+                          inMemoryHash: entry.inMemoryHash,
+                          persistedText: entry.persistedText,
+                          inMemoryText: entry.inMemoryText,
+                          persistedSigLen: entry.persistedSigLen,
+                          inMemorySigLen: entry.inMemorySigLen,
+                          errorKind: "internal" as const,
+                          hint:
+                            "Mutation occurred between bridge restoration hook and " +
+                            "pi-ai serialization — likely inside pi-ai or its dependencies",
+                        },
+                        "Wire-edge thinking-block divergence vs persisted JSONL",
+                      );
+                    }
+                  }
+                } catch {
+                  // Diagnostic must NEVER abort the error path.
+                }
+
+                // ALWAYS emit the completion INFO, even on totalDivergences=0
+                // or when every helper call hit a read error.
+                deps.logger.info(
+                  {
+                    module: "agent.bridge.wire-diff",
+                    candidatesProcessed,
+                    totalDivergences,
+                    persistedNotFound,
+                    fileReadErrors,
+                  },
+                  "Wire-edge diff dispatch complete",
+                );
+              });
             }
           }
           deps.circuitBreaker.recordFailure();
