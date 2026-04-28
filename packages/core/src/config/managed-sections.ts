@@ -37,6 +37,29 @@ export interface ManagedSectionRedirect {
    * already present in config.
    */
   fullyManaged: boolean;
+  /**
+   * Compact schema fragment so the LLM can call the tool without a separate
+   * discover_tools round-trip. Populated when the action enum + required
+   * fields fit in < 20 lines of hint text. Verified against the tool's
+   * TypeBox parameter schema as of this commit.
+   *
+   * Bug B (260428-gj6): production trace c7b91328 showed the agent burning
+   * ~30s × 4 LLM calls re-loading the agents_manage schema after an
+   * immutable-path rejection. Surfacing the fragment inline closes that
+   * round-trip tax.
+   */
+  schemaFragment?: {
+    /** Valid `action` enum values (pinned to the tool's TypeBox Union literals). */
+    actions: readonly string[];
+    /**
+     * Required field names per action -- only entries that are strictly
+     * required by the tool's handler (omitting Type.Optional fields with
+     * sensible defaults). Omit the whole property when no action has
+     * required-beyond-action fields (e.g., channels_manage operates on
+     * existing entries only).
+     */
+    requiredByAction?: Record<string, readonly string[]>;
+  };
 }
 
 /**
@@ -61,6 +84,17 @@ export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = [
       args: [],
     },
     fullyManaged: true,
+    // Action enum pinned to mcp-manage-tool.ts TypeBox Union (lines 25-31).
+    // requiredByAction.connect captures the stdio-transport happy path
+    // (transport="sse"|"http" requires `url` instead of `command` -- the
+    // exampleArgs above documents the stdio shape, the schema fragment
+    // documents required fields for that same shape).
+    schemaFragment: {
+      actions: ["list", "status", "connect", "disconnect", "reconnect"],
+      requiredByAction: {
+        connect: ["name", "transport", "command"],
+      },
+    },
   },
   {
     pathPrefix: "gateway.tokens",
@@ -69,6 +103,16 @@ export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = [
     // Verified against tokens-manage-tool.ts TokensManageToolParams.
     exampleArgs: { action: "create", token_id: "<token-id>", scopes: ["rpc", "ws"] },
     fullyManaged: true,
+    // Action enum pinned to tokens-manage-tool.ts TypeBox Union (lines 25-31).
+    // token_id is genuinely Type.Optional (auto-generated when omitted, per
+    // the schema description at L36); only `scopes` is strictly required for
+    // create.
+    schemaFragment: {
+      actions: ["list", "create", "revoke", "rotate"],
+      requiredByAction: {
+        create: ["scopes"],
+      },
+    },
   },
   {
     pathPrefix: "channels",
@@ -78,6 +122,12 @@ export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = [
     // No exampleArgs -- no create-equivalent action; channels are configured
     // via operator config + media-setting toggles only.
     fullyManaged: false,
+    // Action enum pinned to channels-manage-tool.ts TypeBox Union (lines 32-37).
+    // No requiredByAction -- channels_manage operates on existing entries; all
+    // fields beyond `action` are looked up from config or optional.
+    schemaFragment: {
+      actions: ["list", "get", "enable", "disable", "restart", "configure"],
+    },
   },
   {
     pathPrefix: "agents",
@@ -95,6 +145,17 @@ export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = [
       },
     },
     fullyManaged: true,
+    // Action enum pinned to agents-manage-tool.ts TypeBox Union (lines 27-32).
+    // agent_id is required on every action (Type.String, not Optional);
+    // config is required for create (the action handler rejects create
+    // without a config payload, even though the schema marks it Optional to
+    // accept the alternate JSON-string fallback shape).
+    schemaFragment: {
+      actions: ["create", "get", "update", "delete", "suspend", "resume"],
+      requiredByAction: {
+        create: ["agent_id", "config"],
+      },
+    },
   },
 ] as const;
 
@@ -152,6 +213,22 @@ export function formatRedirectHint(
     parts.push(
       `Load it via discover_tools("${redirect.tool}") if not yet available.`,
     );
+  }
+
+  // Bug B (260428-gj6): inline the dedicated tool's action enum + required
+  // fields so the LLM can call it without a separate discover_tools round-
+  // trip. Positioned AFTER the Recovery example (so the example is the first
+  // thing the model sees) and BEFORE the mutablePaths block (which is the
+  // alternative path for already-existing entries).
+  if (redirect.schemaFragment) {
+    parts.push(`Tool actions: ${redirect.schemaFragment.actions.join(", ")}.`);
+    if (redirect.schemaFragment.requiredByAction) {
+      for (const [action, fields] of Object.entries(
+        redirect.schemaFragment.requiredByAction,
+      )) {
+        parts.push(`Required fields for \`${action}\`: ${fields.join(", ")}.`);
+      }
+    }
   }
 
   if (mutablePaths && mutablePaths.length > 0) {

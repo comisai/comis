@@ -771,4 +771,86 @@ describe("gateway tool", () => {
       expect(rpcCall).not.toHaveBeenCalled();
     });
   });
+
+  // Bug B (260428-gj6): inline schema fragment in immutable-section rejection
+  // hint so the LLM can call the dedicated *_manage tool without burning a
+  // discover_tools round-trip. The hint must include the action enum and
+  // required-field list pinned to each tool's TypeBox source.
+  describe("immutability schema-fragment hints (Bug B)", () => {
+    it("agents/patch rejection includes agents_manage, discover_tools, and Tool actions: with create literal", async () => {
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall);
+
+      let captured: Error | undefined;
+      try {
+        // Patching at agent-id root (e.g. agents.new-agent) is immutable
+        // because no MUTABLE_CONFIG_OVERRIDES pattern matches a 2-segment
+        // path under `agents.` -- agent creation must go through
+        // agents_manage(action:"create", ...).
+        await tool.execute("call-bugb-1", {
+          action: "patch",
+          section: "agents",
+          key: "new-agent",
+          value: { name: "x", model: "y", provider: "anthropic" },
+        });
+      } catch (e) {
+        captured = e as Error;
+      }
+      expect(captured).toBeDefined();
+      const msg = captured!.message;
+      expect(msg).toContain("agents_manage");
+      expect(msg).toContain("discover_tools(");
+      expect(msg).toContain("Tool actions:");
+      expect(msg).toContain("create");
+      // Required fields appear so the LLM knows which params it must supply.
+      expect(msg).toContain("Required fields for `create`: agent_id, config");
+    });
+
+    it("agents/apply rejection includes the schema fragment too", async () => {
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall);
+
+      let captured: Error | undefined;
+      try {
+        await tool.execute("call-bugb-2", {
+          action: "apply" as "read",
+          section: "agents",
+          value: { coding: { name: "x", model: "y", provider: "anthropic" } },
+        });
+      } catch (e) {
+        captured = e as Error;
+      }
+      expect(captured).toBeDefined();
+      const msg = captured!.message;
+      expect(msg).toContain("Tool actions:");
+      // create is the action the LLM needs for the apply-rejection recovery.
+      expect(msg).toContain("create");
+      expect(msg).toContain("agent_id");
+    });
+
+    it("synthetic immutable path with no managed-section redirect omits the schema-fragment line", async () => {
+      // Backward-compat pin: when the matched immutable path has NO managed-
+      // section redirect, the rejection hint omits the `Tool actions:` line.
+      // `security` is in IMMUTABLE_CONFIG_PREFIXES but not in MANAGED_SECTIONS.
+      const rpcCall = createMockRpcCall();
+      const tool = createGatewayTool(rpcCall);
+
+      let captured: Error | undefined;
+      try {
+        await tool.execute("call-bugb-3", {
+          action: "apply" as "read",
+          section: "security",
+          value: { allowedOrigins: ["*"] },
+        });
+      } catch (e) {
+        captured = e as Error;
+      }
+      expect(captured).toBeDefined();
+      const msg = captured!.message;
+      expect(msg).toContain("[permission_denied]");
+      // No managed-section redirect = no Tool actions line.
+      expect(msg).not.toContain("Tool actions:");
+      expect(msg).not.toContain("Required fields for");
+    });
+  });
 });
