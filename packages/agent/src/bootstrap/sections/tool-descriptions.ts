@@ -95,6 +95,7 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   channels_manage: "Manage channel adapter status (admin)",
   tokens_manage: "Manage gateway API tokens (admin)",
   models_manage: "List models and test availability",
+  providers_manage: "Manage LLM provider endpoints (admin)",
   skills_manage: "Manage skill registry entries (admin)",
   mcp_manage: "Manage MCP server connections (admin)",
   heartbeat_manage: "Manage agent heartbeat schedules (admin)",
@@ -198,6 +199,10 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   models_manage: "List available models and test provider availability.",
+  providers_manage: (ctx: ToolDescriptionContext): string => {
+    const base = "Manage LLM providers: list, get, create, update, delete, enable, disable.";
+    return ctx.trustLevel === "admin" ? base : base + " Admin required.";
+  },
   skills_manage: (ctx: ToolDescriptionContext): string => {
     const base = "Manage skill registry: list, reload, enable, disable skills.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
@@ -230,7 +235,7 @@ export const TOOL_ORDER: string[] = [
   // Middle (low-frequency): platform actions, privileged, context, media
   "discord_action", "telegram_action", "slack_action", "whatsapp_action",
   "agents_manage", "obs_query", "sessions_manage", "memory_manage",
-  "channels_manage", "tokens_manage", "models_manage", "skills_manage", "mcp_manage", "heartbeat_manage",
+  "channels_manage", "tokens_manage", "models_manage", "providers_manage", "skills_manage", "mcp_manage", "heartbeat_manage",
   "ctx_search", "ctx_inspect", "ctx_expand", "ctx_recall",
   "image_analyze", "tts_synthesize", "transcribe_audio", "describe_video", "extract_document",
   "browser", "gateway",
@@ -295,6 +300,91 @@ maxSteps default: 50. Do NOT set below 20.
 ## Batch Creation
 Present a plan to the user before creating agents in batch.
 Multiple agents can be created in one turn. Customize ALL workspace files for each agent after creation — or use single-call creation above to inline ROLE.md/IDENTITY.md and skip the post-create writes entirely.`,
+
+  providers_manage: `## Provider Configuration Guide
+
+### Credential Workflow
+API keys are NEVER stored in provider config. Always use this two-step process:
+1. Store the API key: gateway({ action: "env_set", env_key: "<KEY_NAME>", env_value: "<key>" })
+2. Create the provider: providers_manage({ action: "create", provider_id: "<name>", config: { type: "openai", baseUrl: "<url>", apiKeyName: "<KEY_NAME>", models: [{ id: "<model>" }] } })
+
+For local providers (Ollama, LM Studio, vLLM) that don't need API keys, omit apiKeyName.
+
+### After Creating a Provider
+Switch an agent to use the new provider:
+  agents_manage({ action: "update", agent_id: "<id>", config: { provider: "<provider_id>", model: "<model_id>" } })
+
+### Switching an Agent's Provider or Model
+To switch an agent to a different provider/model, call agents_manage update with the new pair:
+  agents_manage({ action: "update", agent_id: "<id>", config: { provider: "<provider_id>", model: "<model_id>" } })
+
+\`agents.*.model\` and \`agents.*.provider\` are listed in MUTABLE_CONFIG_OVERRIDES, so the immutability guard does not block the patch.
+
+**Two preconditions the LLM MUST verify before issuing the update:**
+  1. The target provider exists as a \`providers.entries.<provider_id>\` key. If it does not, call providers_manage create FIRST (and gateway env_set for the API key if needed). Patching an agent to a provider that has no entry resolves under the wrong provider family at the next session — the original bug.
+  2. The model id matches a \`models[].id\` in that provider entry (or is a built-in known to the pi-ai catalog for that provider type). Otherwise \`registry.find(provider, model)\` returns undefined and the next session falls back with a "Model not found" message.
+
+**Timing — the change is NOT hot-applied to the active session.**
+agents_manage update writes through persistToConfig WITHOUT a hot-update callback, which triggers a SIGUSR2 daemon restart (2-second debounce). The new provider/model takes effect on the next session, not the currently-running prompt. Tell the user the switch is queued and will take effect after the daemon settles.
+
+### Configuring Model Failover
+After creating providers, configure automatic failover so the agent recovers from provider outages without user intervention:
+  agents_manage({ action: "update", agent_id: "<id>", config: { modelFailover: { fallbackModels: [{ provider: "<fallback_provider>", modelId: "<fallback_model>" }] } } })
+
+Failover order: primary model > cache-aware short retry (same model) > auth key rotation (same provider) > fallback models in order. Each fallback entry is a { provider, modelId } pair referencing a configured provider.
+
+### Adding vs Replacing a Fallback (read-modify-write)
+\`fallbackModels\` and \`authProfiles\` are **replaced wholesale** on update — the array you send becomes the complete new state. Scalar fields (cooldownInitialMs, maxAttempts, etc.) are deep-merged and preserved.
+
+When the user asks to **add** a fallback to an agent (vs. replace the whole chain), do this:
+  1. agents_manage({ action: "get", agent_id: "<id>" }) > read existing config.modelFailover.fallbackModels
+  2. Append the new { provider, modelId } entry to that array (preserving order)
+  3. agents_manage({ action: "update", agent_id: "<id>", config: { modelFailover: { fallbackModels: [...existing, ...new] } } })
+
+Same pattern applies to authProfiles. Skipping the read step silently drops previously-configured fallbacks. When the user says "set" / "use" / "switch fallback to X", a direct overwrite is correct; when they say "add" / "also" / "in addition", read first.
+
+To add auth key rotation for rate-limited providers (multiple API keys for the same provider):
+  1. Store additional keys: gateway({ action: "env_set", env_key: "ANTHROPIC_API_KEY_2", env_value: "<key>" })
+  2. Configure auth profiles: agents_manage({ action: "update", agent_id: "<id>", config: { modelFailover: { authProfiles: [{ keyName: "ANTHROPIC_API_KEY_2", provider: "anthropic" }] } } })
+
+### Provider Types
+The "type" field selects the SDK code path (API protocol). Common values:
+- **openai** — Any OpenAI-compatible endpoint: NVIDIA NIM, Groq, Together, Fireworks, Perplexity, DeepSeek, vLLM, LM Studio, llama.cpp, or any custom endpoint
+- **anthropic** — Anthropic Claude API
+- **google** — Google Gemini API
+- **ollama** — Local Ollama server
+- **mistral** — Mistral AI API
+- **groq** — Groq API (also works with type "openai")
+- **together** — Together AI API
+- **deepseek** — DeepSeek API (also works with type "openai")
+- **cerebras** — Cerebras API
+- **xai** — xAI Grok API
+- **openrouter** — OpenRouter multi-provider gateway
+
+When in doubt, use type "openai" with a custom baseUrl — most third-party and self-hosted providers speak the OpenAI API format.
+
+### Local Providers (no API key)
+For local inference servers, set baseUrl to the local endpoint and omit apiKeyName:
+  providers_manage({ action: "create", provider_id: "local-ollama", config: { type: "ollama", baseUrl: "http://localhost:11434", models: [{ id: "llama3.3" }] } })
+
+### Models
+Only the model "id" is required. All other fields (name, contextWindow, maxTokens, reasoning, input) are optional and will be filled with defaults.
+
+### Adding vs Replacing a Model (read-modify-write)
+\`models\` is **replaced wholesale** on update — the array you send becomes the complete new state. To **add** a model to an existing provider (vs. replace the whole list):
+  1. providers_manage({ action: "get", provider_id: "<id>" }) > read existing config.models
+  2. Append the new { id: "<new-model>" } entry to that array (preserving order)
+  3. providers_manage({ action: "update", provider_id: "<id>", config: { models: [...existing, {id: "<new-model>"}] } })
+
+When the user says "add" / "also" / "in addition", read first. When they say "set" / "replace" / "use only", a direct overwrite is correct. Same pattern as agents_manage's modelFailover.fallbackModels.
+
+\`headers\` follows a different rule: it is **shallow-merged per key**, so adding one custom header does NOT erase others — direct \`{ headers: { "X-New": "v" } }\` updates work without read-modify-write.
+
+### Clearing a Field
+\`persistToConfig\` cannot remove keys via patch — only set or replace. To clear an apiKeyName (e.g., to convert a cloud provider to keyless), the recipe is: disable > delete > recreate without apiKeyName. Direct YAML edits also work for operators with shell access.
+
+### Fleet-Wide Operations
+providers_manage and agents_manage operate on one entity at a time. For fleet-wide provider/model/failover changes: (1) create new provider(s) first, (2) agents_manage list to discover agents, (3) agents_manage update x N in parallel (one call per agent in the same turn). Group agents by model tier for tiered failover (e.g. opus agents get different fallbacks than sonnet agents).`,
 
   pipeline: `## Pipeline Usage Guide
 Use 'define' action first to validate graph structure before save/execute.
