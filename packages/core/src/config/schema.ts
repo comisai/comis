@@ -113,6 +113,21 @@ export const AppConfigSchema = z.strictObject({
     documentation: DocumentationConfigSchema.default(() => DocumentationConfigSchema.parse({})),
     /** Telegram file reference guard: detects hallucinated file paths in responses */
     telegramFileRefGuard: TelegramFileRefGuardConfigSchema.default(() => TelegramFileRefGuardConfigSchema.parse({})),
+  }).superRefine((config, ctx) => {
+    // Startup invariant: reject the reserved "default" provider name.
+    // "default" collides with PerAgentConfigSchema.provider's schema default
+    // value, making it impossible to distinguish "user explicitly chose the
+    // provider named 'default'" from "user omitted the provider field and got
+    // the schema default". Reject at parse time with an actionable rename hint.
+    if (config.providers?.entries?.default !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["providers", "entries", "default"],
+        message:
+          "providers.entries.default is reserved (it collides with the PerAgentConfig.provider " +
+          "schema default). Rename to a specific identifier like providers.entries.anthropic-default.",
+      });
+    }
   });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;

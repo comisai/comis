@@ -115,6 +115,34 @@ export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = [
     },
   },
   {
+    pathPrefix: "providers",
+    tool: "providers_manage",
+    description:
+      "Manage LLM providers (list, get, create, update, delete, enable, disable).",
+    // Verified against providers-manage-tool.ts ProvidersManageToolParams.
+    exampleArgs: {
+      action: "create",
+      provider_id: "<any-name>",
+      config: {
+        type: "<sdk-type>",
+        name: "<display-name>",
+        baseUrl: "<api-base-url>",
+        apiKeyName: "<SECRET_KEY_NAME>",
+        models: [{ id: "<model-id>" }],
+      },
+    },
+    fullyManaged: true,
+    // Action enum pinned to providers-manage-tool.ts TypeBox Union.
+    // provider_id + config are required for create; other actions require
+    // only provider_id or nothing (list).
+    schemaFragment: {
+      actions: ["list", "get", "create", "update", "delete", "enable", "disable"],
+      requiredByAction: {
+        create: ["provider_id", "config"],
+      },
+    },
+  },
+  {
     pathPrefix: "channels",
     tool: "channels_manage",
     description:

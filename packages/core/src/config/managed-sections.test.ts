@@ -50,6 +50,14 @@ describe("getManagedSectionRedirect", () => {
     expect(getManagedSectionRedirect("gateway", "tokens")?.tool).toBe("tokens_manage");
   });
 
+  it("maps providers to providers_manage", () => {
+    expect(getManagedSectionRedirect("providers")?.tool).toBe("providers_manage");
+  });
+
+  it("maps providers.entries.nvidia to providers_manage", () => {
+    expect(getManagedSectionRedirect("providers", "entries.nvidia")?.tool).toBe("providers_manage");
+  });
+
   it("redirects channels paths to channels_manage", () => {
     expect(getManagedSectionRedirect("channels", "telegram.allowFrom")?.tool).toBe(
       "channels_manage",
