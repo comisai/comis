@@ -24,8 +24,8 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
     }
   });
 
-  it("has entries for all 45 tools (excludes 6 native file tools)", () => {
-    expect(Object.keys(LEAN_TOOL_DESCRIPTIONS).length).toBe(45);
+  it("has entries for all 46 tools (excludes 6 native file tools)", () => {
+    expect(Object.keys(LEAN_TOOL_DESCRIPTIONS).length).toBe(46);
   });
 });
 
@@ -38,8 +38,8 @@ describe("TOOL_SUMMARIES", () => {
     }
   });
 
-  it("has entries for all 51 tools", () => {
-    expect(Object.keys(TOOL_SUMMARIES).length).toBe(51);
+  it("has entries for all 52 tools", () => {
+    expect(Object.keys(TOOL_SUMMARIES).length).toBe(52);
   });
 });
 
@@ -48,10 +48,11 @@ describe("TOOL_SUMMARIES", () => {
 // ---------------------------------------------------------------------------
 
 describe("TOOL_GUIDES", () => {
-  it("has entries for all 12 guided tools", () => {
+  it("has entries for all 13 guided tools", () => {
     const expected = [
       "agents_manage", "apply_patch", "channels_manage", "edit", "exec",
-      "gateway", "grep", "message", "pipeline", "read", "sessions_spawn", "write",
+      "gateway", "grep", "message", "pipeline", "providers_manage", "read",
+      "sessions_spawn", "write",
     ].sort();
     expect(Object.keys(TOOL_GUIDES).sort()).toEqual(expected);
   });
@@ -311,7 +312,7 @@ describe("resolveDescription", () => {
   it("all privileged tool dynamic builders follow admin suffix pattern", () => {
     const privileged = [
       "agents_manage", "obs_query", "sessions_manage", "memory_manage",
-      "channels_manage", "tokens_manage", "skills_manage", "mcp_manage", "heartbeat_manage",
+      "channels_manage", "tokens_manage", "providers_manage", "skills_manage", "mcp_manage", "heartbeat_manage",
     ];
     for (const name of privileged) {
       const admin = resolveDescription(
