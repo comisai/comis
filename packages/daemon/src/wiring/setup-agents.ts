@@ -30,6 +30,8 @@ import {
   createModelRegistryAdapter,
   registerCustomProviders,
   createProviderHealthMonitor,
+  createAuthProfileManager,
+  createAuthRotationAdapter,
   setSanitizeLogger,
   setToolNormalizationLogger,
   LEAN_TOOL_DESCRIPTIONS,
@@ -361,6 +363,26 @@ export async function setupSingleAgent(
   // No wrapWithAudit: PiEventBridge already emits tool:executed for ALL tools.
   // tools: [] -- all tools come exclusively through customTools where the full
   // Comis security pipeline (safePath + tool policy + audit) is enforced.
+
+  // Model failover: convert config FallbackModel[] to "provider:modelId" strings
+  // and create auth rotation adapter for multi-key providers.
+  const failoverConfig = effectiveConfig.modelFailover;
+  const fallbackModelStrings = failoverConfig.fallbackModels.map(
+    (m) => `${m.provider}:${m.modelId}`,
+  );
+  const authProfileManager = failoverConfig.authProfiles.length > 0
+    ? createAuthProfileManager({
+        profiles: failoverConfig.authProfiles,
+        secretManager: scopedManager,
+        initialMs: failoverConfig.cooldownInitialMs,
+        multiplier: failoverConfig.cooldownMultiplier,
+        capMs: failoverConfig.cooldownCapMs,
+      })
+    : undefined;
+  const authRotation = authProfileManager
+    ? createAuthRotationAdapter({ authStorage: piAuthStorage, profileManager: authProfileManager })
+    : undefined;
+
   const executor = createPiExecutor(effectiveConfig, {
     circuitBreaker,
     providerHealth: deps.providerHealth,
@@ -371,6 +393,8 @@ export async function setupSingleAgent(
     logger: perAgentLogger,
     authStorage: piAuthStorage,
     modelRegistry: piModelRegistry,
+    fallbackModels: fallbackModelStrings.length > 0 ? fallbackModelStrings : undefined,
+    authRotation,
     sessionAdapter,
     workspaceDir: dir,
     agentDir: resolvedAgentDir,
