@@ -71,6 +71,19 @@ const PROVIDER_TYPE_TO_API: Record<string, Api> = {
   google: "google-generative-ai",
 };
 
+const DEFAULT_BASE_URLS: Record<string, string> = {
+  google: "https://generativelanguage.googleapis.com/v1beta",
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
+  groq: "https://api.groq.com/openai/v1",
+  mistral: "https://api.mistral.ai/v1",
+  together: "https://api.together.xyz/v1",
+  deepseek: "https://api.deepseek.com/v1",
+  cerebras: "https://api.cerebras.ai/v1",
+  xai: "https://api.x.ai/v1",
+  openrouter: "https://openrouter.ai/api/v1",
+};
+
 /** Subset of `ProviderEntry` (from `@comis/core`) we read for pi registration. */
 export interface CustomProviderRegistration {
   type: string;
@@ -167,7 +180,7 @@ export function registerCustomProviders(
     try {
       registry.registerProvider(providerName, {
         api,
-        baseUrl: entry.baseUrl || undefined,
+        baseUrl: entry.baseUrl || DEFAULT_BASE_URLS[entry.type],
         apiKey: resolvedApiKey,
         headers: headersResolved,
         // pi's ProviderModelConfig requires concrete values for name/cost/

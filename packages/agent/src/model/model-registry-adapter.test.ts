@@ -510,7 +510,7 @@ describe("registerCustomProviders", () => {
     const count = registerCustomProviders(
       registry,
       {
-        bad: nvidiaEntry({ apiKeyName: "A", baseUrl: "", models: [{ id: "m" }] }),
+        bad: nvidiaEntry({ type: "custom-unknown", apiKeyName: "A", baseUrl: "", models: [{ id: "m" }] }),
         good: nvidiaEntry(),
       },
       secretManager,
