@@ -379,6 +379,126 @@ describe("registerCustomProviders", () => {
     expect(registry.find("unknownProxy", "q")!.api).toBe("openai-completions");
   });
 
+  it("registers keyless ollama provider with sentinel apiKey", () => {
+    const secretManager = createSecretManager({});
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const { logger, debugs } = captureLogger();
+
+    const count = registerCustomProviders(
+      registry,
+      {
+        "local-ollama": {
+          type: "ollama",
+          baseUrl: "http://localhost:11434/v1",
+          apiKeyName: "",
+          enabled: true,
+          headers: {},
+          models: [{ id: "llama3.3" }],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    expect(count).toBe(1);
+    const found = registry.find("local-ollama", "llama3.3");
+    expect(found).toBeDefined();
+    expect(found!.provider).toBe("local-ollama");
+    // Sentinel apiKey must be used for keyless ollama type
+    expect(found!.apiKey).toBe("ollama-no-auth");
+    expect(debugs.some((d) => d.msg.includes("keyless sentinel"))).toBe(true);
+  });
+
+  it("still rejects keyless openai-compatible provider", () => {
+    const secretManager = createSecretManager({});
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const { logger, warns } = captureLogger();
+
+    const count = registerCustomProviders(
+      registry,
+      {
+        "cloud-openai": {
+          type: "openai",
+          baseUrl: "https://api.openai.com/v1",
+          apiKeyName: "",
+          enabled: true,
+          headers: {},
+          models: [{ id: "gpt-4o" }],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    expect(count).toBe(0);
+    expect(registry.find("cloud-openai", "gpt-4o")).toBeUndefined();
+    expect(warns.length).toBe(1);
+    expect(warns[0]!.msg).toContain("no API key");
+  });
+
+  it("uses real apiKey when keyless type has apiKeyName configured", () => {
+    const secretManager = createSecretManager({ OLLAMA_API_KEY: "real-key" });
+    const authStorage = createAuthStorageAdapter({
+      secretManager,
+      customProviderEntries: { "secure-ollama": { apiKeyName: "OLLAMA_API_KEY", enabled: true } },
+    });
+    const registry = createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+
+    const count = registerCustomProviders(
+      registry,
+      {
+        "secure-ollama": {
+          type: "ollama",
+          baseUrl: "http://localhost:11434/v1",
+          apiKeyName: "OLLAMA_API_KEY",
+          enabled: true,
+          headers: {},
+          models: [{ id: "llama3.3" }],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    expect(count).toBe(1);
+    const found = registry.find("secure-ollama", "llama3.3");
+    expect(found).toBeDefined();
+    // Real key must be used, NOT the sentinel
+    expect(found!.apiKey).toBe("real-key");
+  });
+
+  it("does not leak sentinel to cloud providers when apiKey is missing", () => {
+    const secretManager = createSecretManager({});
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const { logger, warns } = captureLogger();
+
+    const count = registerCustomProviders(
+      registry,
+      {
+        "cloud-missing": {
+          type: "openai",
+          baseUrl: "https://api.openai.com/v1",
+          apiKeyName: "MISSING_KEY",
+          enabled: true,
+          headers: {},
+          models: [{ id: "gpt-4o" }],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    expect(count).toBe(0);
+    expect(registry.find("cloud-missing", "gpt-4o")).toBeUndefined();
+    // Must be skipped, sentinel NOT applied
+    expect(warns.length).toBe(1);
+    expect(warns[0]!.obj.providerName).toBe("cloud-missing");
+  });
+
   it("logs WARN and keeps going when registerProvider throws (e.g., missing baseUrl)", () => {
     const secretManager = createSecretManager({ A: "a", NVIDIA_API_KEY: "n" });
     const authStorage = createAuthStorageAdapter({ secretManager });
