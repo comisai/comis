@@ -35,7 +35,8 @@ import type { TurnBudgetTracker } from "../budget/turn-budget-tracker.js";
 import type { BudgetGuard } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
 import { wrapInEnvelope } from "../envelope/message-envelope.js";
-import { runWithModelRetry } from "./model-retry.js";
+import { runWithModelRetry, isAuthError } from "./model-retry.js";
+import { normalizeModelId } from "../provider/model-id-normalize.js";
 import { withPromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
 import { classifyError, classifyPromptTimeout } from "./error-classifier.js";
 import { scrubSignedReplayStateInPlace } from "./signature-block-scrubber.js";
@@ -682,6 +683,80 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
                   promptError = new Error(
                     `Silent LLM failure: ${retryBridgeResult.llmCalls} LLM call(s) produced empty response after retry (finishReason: ${retryBridgeResult.finishReason ?? "unknown"})${llmDetail}`,
                   );
+
+                  // LKW silent-failure fallback: some providers return 403 as
+                  // an empty response (SDK doesn't throw), so model-retry's LKW
+                  // block never fires. Detect auth errors here and try the LKW
+                  // model as a final attempt before giving up.
+                  const silentAuthErr = retryBridgeResult.lastLlmErrorMessage ?? "";
+                  if (isAuthError(new Error(silentAuthErr)) && deps.lastKnownModel) {
+                    const lkw =
+                      deps.lastKnownModel.getLastKnown(agentId ?? "") ??
+                      deps.lastKnownModel.getAnyKnown(config.provider);
+
+                    if (lkw && (lkw.provider !== config.provider || lkw.model !== config.model)) {
+                      deps.logger.info(
+                        { lkwProvider: lkw.provider, lkwModel: lkw.model, silentAuthErr },
+                        "Silent auth failure — attempting last-known-working model",
+                      );
+
+                      try {
+                        const normalizedLkw = normalizeModelId(lkw.provider, lkw.model);
+                        const lkwModelObj = deps.modelRegistry.find(lkw.provider, normalizedLkw.modelId);
+                        if (lkwModelObj) {
+                          await session.setModel(lkwModelObj);
+                        }
+
+                        // Strip trailing empty assistant turns before the LKW attempt
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const lkwMsgs: any[] = (session as any).messages ?? [];
+                        for (let li = lkwMsgs.length - 1; li >= 0; li--) {
+                          const lm = lkwMsgs[li]; // eslint-disable-line security/detect-object-injection
+                          if (lm?.role !== "assistant") break;
+                          const lBlocks = Array.isArray(lm.content) ? lm.content : [];
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
+                          const lHasText = lBlocks.some((b: any) => b.type === "text" && typeof b.text === "string" && b.text.trim() !== "");
+                          if (!lHasText) lkwMsgs.splice(li, 1);
+                          else break;
+                        }
+
+                        await withPromptTimeout(
+                          session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
+                          effectiveTimeout.retryPromptTimeoutMs,
+                          () => session.abort(),
+                        );
+
+                        const lkwText = getVisibleAssistantText(session);
+                        if (lkwText !== "") {
+                          promptSucceeded = true;
+                          promptError = undefined;
+                          deps.lastKnownModel.recordSuccess(agentId ?? "default", lkw.provider, lkw.model);
+                          deps.logger.info(
+                            { lkwProvider: lkw.provider, lkwModel: lkw.model },
+                            "LKW silent-failure fallback succeeded",
+                          );
+                        } else {
+                          deps.logger.warn(
+                            {
+                              lkwProvider: lkw.provider, lkwModel: lkw.model,
+                              hint: "LKW model also produced empty response",
+                              errorKind: "dependency" as ErrorKind,
+                            },
+                            "LKW silent-failure fallback produced empty response",
+                          );
+                        }
+                      } catch (lkwErr) {
+                        deps.logger.warn(
+                          {
+                            err: lkwErr, lkwProvider: lkw.provider, lkwModel: lkw.model,
+                            hint: "LKW model threw during silent-failure fallback",
+                            errorKind: "dependency" as ErrorKind,
+                          },
+                          "LKW silent-failure fallback failed",
+                        );
+                      }
+                    }
+                  }
                 }
               }
             }
