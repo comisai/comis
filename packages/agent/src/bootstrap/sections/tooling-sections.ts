@@ -262,10 +262,10 @@ export function buildCodingFallbackSection(
 // 5b. Privileged Tools & Approval Gate (skip if minimal or no privileged tools)
 // ---------------------------------------------------------------------------
 
-/** The 10 privileged/supervisor tool names. */
+/** The 11 privileged/supervisor tool names. */
 export const PRIVILEGED_TOOL_NAMES = [
   "agents_manage", "obs_query", "sessions_manage", "memory_manage",
-  "channels_manage", "tokens_manage", "models_manage",
+  "channels_manage", "tokens_manage", "models_manage", "providers_manage",
   "skills_manage", "mcp_manage", "heartbeat_manage",
 ];
 
@@ -420,6 +420,7 @@ export function buildPrivilegedToolsSection(
     "- memory_manage: delete, flush",
     "- channels_manage: enable, disable, restart",
     "- tokens_manage: create, revoke, rotate",
+    "- providers_manage: create, delete",
     "",
     "**Read-only (no approval needed):**",
     "- obs_query: all actions (diagnostics, billing, traces, activity)",
@@ -429,6 +430,7 @@ export function buildPrivilegedToolsSection(
     "- memory_manage: stats, browse, export",
     "- channels_manage: list, get",
     "- tokens_manage: list",
+    "- providers_manage: list, get, update, enable, disable",
     "",
     "### Approval Gate Behavior",
     "",
@@ -450,6 +452,10 @@ export function buildPrivilegedToolsSection(
     "- **Reset vs delete session**: Reset clears messages but keeps the session identity (good for \"start fresh\"). Delete archives the transcript and removes the session entirely.",
     "- **Memory delete vs flush**: Delete removes specific entries by ID (surgical). Flush removes all entries for a scope (nuclear -- use with caution, requires approval).",
     "- **Token rotation**: Prefer rotate over revoke+create -- rotation is atomic and prevents downtime.",
+    "- **Provider then agent**: When adding any custom provider (cloud, local, or self-hosted), first create the provider entry (providers_manage create), store the API key if needed (gateway env_set -- skip for keyless providers like Ollama), then switch the agent (agents_manage update). Never set an agent's model to a name that has no matching provider.",
+    "- **Failover chain**: After creating multiple providers, configure automatic model failover on the agent (agents_manage update with modelFailover.fallbackModels). Each fallback entry is a {provider, modelId} pair referencing a configured provider. Failover order: primary > cache-aware retry > auth key rotation > fallback models in order. Never add a fallback model whose provider does not exist.",
+    "- **Add vs replace fallback**: modelFailover.fallbackModels and authProfiles are REPLACED wholesale on update (scalar fields deep-merge; arrays do not). When the user says 'add' / 'also' / 'in addition', call agents_manage get FIRST to read the current array, append, then update with the full list. When the user says 'set' / 'use' / 'switch to', overwrite directly.",
+    "- **Fleet-wide changes**: providers_manage and agents_manage operate on one entity at a time. For fleet-wide provider/model/failover changes: (1) create new provider(s) first, (2) agents_manage list to discover agents, (3) agents_manage update x N in parallel (one call per agent in the same turn). Group agents by model tier for tiered failover (e.g. opus agents get different fallbacks than sonnet agents).",
   ];
 
   return lines;
