@@ -814,11 +814,18 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     onTaskExtraction: extractFromConversation,
     // Restart continuation: track recently-active sessions for SIGUSR2 replay
     onMessageProcessed: (msg, channelType) => {
+      // Preserve channel-native chat type so post-restart synthetic messages
+      // can frame group sessions correctly. Without this, group inbounds are
+      // mis-framed as DMs on first turn after restart.
+      const chatType = typeof msg.metadata?.telegramChatType === "string"
+        ? msg.metadata.telegramChatType
+        : undefined;
       continuationTracker.track({
         agentId: defaultAgentId,
         channelType,
         channelId: msg.channelId,
         userId: msg.senderId,
+        chatType,
         tenantId: container.config.tenantId,
         timestamp: Date.now(),
       });
@@ -1368,6 +1375,21 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
         );
         continue;
       }
+      // Rehydrate chat-type metadata so downstream resolveChatType /
+      // isGroupMessage classify the resumed session correctly. Without this,
+      // a synthetic restart message for a group is mis-framed as a DM on the
+      // first post-restart turn.
+      const syntheticMetadata: Record<string, unknown> = {
+        isRestartContinuation: true,
+        mcpStatusLine: mcpStatusLine ?? null,
+      };
+      if (record.channelType === "telegram" && record.chatType) {
+        syntheticMetadata.telegramChatType = record.chatType;
+      }
+      if (record.chatType === "group" || record.chatType === "supergroup") {
+        // Channel-agnostic flag mirrored by other adapters (e.g. WhatsApp).
+        syntheticMetadata.isGroup = true;
+      }
       const syntheticMsg = {
         id: randomUUID(),
         channelId: record.channelId,
@@ -1376,7 +1398,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
         text: mcpStatusLine ? `${baseText}\n${mcpStatusLine}` : baseText,
         timestamp: Date.now(),
         attachments: [] as never[],
-        metadata: { isRestartContinuation: true, mcpStatusLine: mcpStatusLine ?? null } as Record<string, unknown>,
+        metadata: syntheticMetadata,
       };
       channelManager.injectMessage(record.channelType, syntheticMsg).catch((injectErr) => {
         daemonLogger.warn(
