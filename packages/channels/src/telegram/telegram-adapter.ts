@@ -33,7 +33,7 @@ import { ok, err } from "@comis/shared";
 import { Bot, InputFile } from "grammy";
 import { randomUUID } from "node:crypto";
 import { validateBotToken, validateWebhookSecret } from "./credential-validator.js";
-import { mapGrammyToNormalized } from "./message-mapper.js";
+import { mapGrammyToNormalized, type TelegramBotIdentity } from "./message-mapper.js";
 import { normalizeTelegramPollResult } from "../shared/poll-normalizer.js";
 import { resolveTelegramThreadContext, resolveOutboundThreadParams, isTelegramThreadNotFoundError, buildTypingThreadParams } from "./thread-context.js";
 import { renderTelegramButtons, renderTelegramCards } from "./rich-renderer.js";
@@ -174,6 +174,9 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
   const handlers: MessageHandler[] = [];
   let _channelId = "telegram-pending";
   let runnerHandle: ReturnType<typeof run> | null = null;
+  // Bot identity is populated after token validation in start(). Used by the
+  // message mapper to detect mentions/replies/bot_commands aimed at this bot.
+  let botIdentity: TelegramBotIdentity | undefined;
 
   // Health tracking
   let _connected = false;
@@ -195,7 +198,7 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
     }
 
     _lastMessageAt = Date.now();
-    const normalized = mapGrammyToNormalized(msg, chatId);
+    const normalized = mapGrammyToNormalized(msg, chatId, botIdentity);
     deps.logger.info(
       { channelType: "telegram", messageId: normalized.id, chatId: String(chatId), previewLen: (normalized.text ?? "").length },
       "Inbound message",
@@ -239,6 +242,9 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
 
       const botInfo = tokenResult.value;
       _channelId = `telegram-${botInfo.id}`;
+      // Populate identity now that getMe() has succeeded — message mapper
+      // uses this to detect mentions/replies/bot_commands aimed at us.
+      botIdentity = { id: botInfo.id, username: botInfo.username };
 
       // Validate webhook secret if provided
       if (deps.webhookSecret) {
