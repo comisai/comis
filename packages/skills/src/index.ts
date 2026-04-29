@@ -90,7 +90,6 @@ export {
   createSessionsSpawnTool,
   createSessionSearchTool,
   // Agent tools
-  createAgentsListTool,
   createSubagentsTool,
   createPipelineTool,
   // Messaging

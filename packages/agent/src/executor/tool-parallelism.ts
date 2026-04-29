@@ -48,8 +48,6 @@ export const READ_ONLY_TOOLS = new Set([
   "sessions_list",
   "session_status",
   "sessions_history",
-  "agents_list",
-
   // Context reads
   "ctx_search",
   "ctx_inspect",

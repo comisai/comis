@@ -39,9 +39,9 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 // ===========================================================================
 
 describe("tool-metadata-registry -- registry count", () => {
-  it("registers exactly 51 unique tools (registry count assertion)", () => {
+  it("registers exactly 50 unique tools (registry count assertion)", () => {
     const all = getAllToolMetadata();
-    expect(all.size).toBe(51);
+    expect(all.size).toBe(50);
   });
 });
 
@@ -101,15 +101,15 @@ describe("tool-metadata-registry -- parallelism read-only tools", () => {
     "read", "grep", "find", "ls",
     "web_search", "web_fetch", "browser",
     "memory_search", "memory_get", "session_search",
-    "sessions_list", "session_status", "sessions_history", "agents_list",
+    "sessions_list", "session_status", "sessions_history",
     "ctx_search", "ctx_inspect", "ctx_expand", "ctx_recall",
     "image_analyze", "describe_video", "extract_document", "transcribe_audio",
     "obs_query", "models_manage",
     "discover_tools",
   ];
 
-  it("registers all 25 read-only tools with isReadOnly: true", () => {
-    expect(READ_ONLY_TOOLS).toHaveLength(25);
+  it("registers all 24 read-only tools with isReadOnly: true", () => {
+    expect(READ_ONLY_TOOLS).toHaveLength(24);
     for (const name of READ_ONLY_TOOLS) {
       const meta = getToolMetadata(name);
       expect(meta, `${name} should have metadata`).toBeDefined();
@@ -559,7 +559,7 @@ describe("tool-metadata-registry -- output schemas", () => {
 describe("tool-metadata-registry -- search hints", () => {
   const DEFERRABLE_TOOLS = [
     "sessions_list", "sessions_history", "sessions_send", "sessions_spawn",
-    "subagents", "pipeline", "session_status", "session_search", "agents_list",
+    "subagents", "pipeline", "session_status", "session_search",
     "cron", "gateway", "image_analyze", "tts_synthesize",
     "transcribe_audio", "describe_video",
     "extract_document", "browser",
@@ -669,7 +669,7 @@ describe("tool-metadata-registry -- search hints", () => {
 // ===========================================================================
 
 describe("tool-metadata-registry -- completeness", () => {
-  it("all 51 TOOL_SUMMARIES tools have at least one metadata field", () => {
+  it("all 50 TOOL_SUMMARIES tools have at least one metadata field", () => {
     const ALL_TOOLS = [
       "read", "edit", "write", "grep", "find", "ls", "apply_patch",
       "exec", "process",
@@ -677,7 +677,7 @@ describe("tool-metadata-registry -- completeness", () => {
       "memory_search", "memory_store", "memory_get",
       "message",
       "sessions_list", "sessions_history", "sessions_send", "sessions_spawn",
-      "subagents", "pipeline", "session_status", "session_search", "agents_list",
+      "subagents", "pipeline", "session_status", "session_search",
       "cron", "gateway", "image_analyze", "tts_synthesize",
       "transcribe_audio", "describe_video", "extract_document", "browser",
       "discord_action", "telegram_action", "slack_action", "whatsapp_action",
@@ -688,7 +688,7 @@ describe("tool-metadata-registry -- completeness", () => {
       "discover_tools",
     ];
 
-    expect(ALL_TOOLS.length).toBe(51);
+    expect(ALL_TOOLS.length).toBe(50);
 
     const missing: string[] = [];
     for (const tool of ALL_TOOLS) {

@@ -120,7 +120,6 @@ export const TOOL_GROUPS: Record<string, string[]> = {
     "session_status",
     "session_search",
     "subagents",
-    "agents_list",
     "pipeline",
   ],
   "group:platform_actions": [

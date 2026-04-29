@@ -683,6 +683,134 @@ describe("agents_manage tool", () => {
   });
 
   // -----------------------------------------------------------------------
+  // systemPrompt / prompt / instructions alias → workspace.role
+  // -----------------------------------------------------------------------
+
+  describe("role alias mapping (systemPrompt hallucination fix)", () => {
+    it("maps systemPrompt to workspace.role and forwards as inlineContent", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "alias-sp",
+        created: true,
+        workspaceDir: "/tmp/workspace-alias-sp",
+        inlineWritesResult: { roleWritten: true, identityWritten: false, bytesWritten: 50 },
+      });
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-alias-sp", {
+          action: "create",
+          agent_id: "alias-sp",
+          config: {
+            name: "Alias Test",
+            systemPrompt: "You are a helpful analyst.",
+          },
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledTimes(1);
+      const [, rpcArgs] = mockRpcCall.mock.calls[0]!;
+      const args = rpcArgs as {
+        config: Record<string, unknown>;
+        inlineContent?: { role?: string; identity?: string };
+      };
+      // systemPrompt must be stripped from config
+      expect(args.config).not.toHaveProperty("systemPrompt");
+      // workspace.role must be set and forwarded as inlineContent
+      expect(args.inlineContent).toEqual({ role: "You are a helpful analyst." });
+    });
+
+    it("maps string-form config with systemPrompt (the actual production failure path)", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "alias-str",
+        created: true,
+        workspaceDir: "/tmp/workspace-alias-str",
+        inlineWritesResult: { roleWritten: true, identityWritten: false, bytesWritten: 30 },
+      });
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-alias-str", {
+          action: "create",
+          agent_id: "alias-str",
+          config: JSON.stringify({
+            name: "StringForm",
+            model: "claude-sonnet-4-6",
+            systemPrompt: "You are a trader.",
+          }),
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledTimes(1);
+      const [, rpcArgs] = mockRpcCall.mock.calls[0]!;
+      const args = rpcArgs as {
+        config: Record<string, unknown>;
+        inlineContent?: { role?: string; identity?: string };
+      };
+      expect(args.config).not.toHaveProperty("systemPrompt");
+      expect(args.inlineContent).toEqual({ role: "You are a trader." });
+    });
+
+    it("explicit workspace.role takes precedence over alias", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "alias-prec",
+        created: true,
+        workspaceDir: "/tmp/workspace-alias-prec",
+        inlineWritesResult: { roleWritten: true, identityWritten: false, bytesWritten: 20 },
+      });
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-alias-prec", {
+          action: "create",
+          agent_id: "alias-prec",
+          config: {
+            workspace: { profile: "specialist", role: "Explicit role" },
+            systemPrompt: "Should be ignored",
+          },
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledTimes(1);
+      const [, rpcArgs] = mockRpcCall.mock.calls[0]!;
+      const args = rpcArgs as {
+        config: Record<string, unknown>;
+        inlineContent?: { role?: string; identity?: string };
+      };
+      expect(args.config).not.toHaveProperty("systemPrompt");
+      expect(args.inlineContent).toEqual({ role: "Explicit role" });
+    });
+
+    it("maps other aliases: prompt, instructions, system", async () => {
+      for (const alias of ["prompt", "instructions", "system"] as const) {
+        mockRpcCall.mockReset();
+        mockRpcCall.mockResolvedValue({
+          agentId: `alias-${alias}`,
+          created: true,
+          workspaceDir: `/tmp/workspace-alias-${alias}`,
+          inlineWritesResult: { roleWritten: true, identityWritten: false, bytesWritten: 10 },
+        });
+
+        const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+        await runWithContext(makeContext("admin"), () =>
+          tool.execute(`call-alias-${alias}`, {
+            action: "create",
+            agent_id: `alias-${alias}`,
+            config: { [alias]: "Some role content" },
+          } as never),
+        );
+
+        const [, rpcArgs] = mockRpcCall.mock.calls[0]!;
+        const args = rpcArgs as {
+          config: Record<string, unknown>;
+          inlineContent?: { role?: string; identity?: string };
+        };
+        expect(args.config, `${alias} should be stripped`).not.toHaveProperty(alias);
+        expect(args.inlineContent, `${alias} should map to role`).toEqual({ role: "Some role content" });
+      }
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // get action
   // -----------------------------------------------------------------------
 
@@ -827,6 +955,44 @@ describe("agents_manage tool", () => {
       expect(result.details).toEqual(
         expect.objectContaining({ agentId: "bot-1", resumed: true }),
       );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // list action
+  // -----------------------------------------------------------------------
+
+  describe("list action", () => {
+    it("calls rpcCall('agents.list') and returns result", async () => {
+      mockRpcCall.mockResolvedValue([
+        { agentId: "bot-1", suspended: false },
+        { agentId: "bot-2", suspended: true },
+      ]);
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-l1", { action: "list" } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.list", { _trustLevel: "admin" });
+      expect(result.details).toEqual([
+        { agentId: "bot-1", suspended: false },
+        { agentId: "bot-2", suspended: true },
+      ]);
+    });
+
+    it("works without agent_id parameter", async () => {
+      mockRpcCall.mockResolvedValue([]);
+
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-l2", { action: "list" } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.list", { _trustLevel: "admin" });
+      expect(result.details).toEqual([]);
     });
   });
 

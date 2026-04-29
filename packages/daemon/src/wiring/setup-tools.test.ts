@@ -12,7 +12,6 @@ const mockCreateCronTool = vi.hoisted(() => vi.fn(() => ({ name: "cron" })));
 const mockCreateUnifiedMemoryTool = vi.hoisted(() => vi.fn(() => ({ name: "memory_tool" })));
 const mockCreateUnifiedSessionTool = vi.hoisted(() => vi.fn(() => ({ name: "session_tool" })));
 const mockCreateUnifiedContextTool = vi.hoisted(() => vi.fn(() => ({ name: "context_tool" })));
-const mockCreateAgentsListTool = vi.hoisted(() => vi.fn(() => ({ name: "agents_list" })));
 const mockCreateMessageTool = vi.hoisted(() => vi.fn(() => ({ name: "message" })));
 const mockCreateDiscordActionTool = vi.hoisted(() => vi.fn(() => ({ name: "discord_action" })));
 const mockCreateTelegramActionTool = vi.hoisted(() => vi.fn(() => ({ name: "telegram_action" })));
@@ -91,7 +90,6 @@ vi.mock("@comis/skills", () => ({
   createUnifiedMemoryTool: mockCreateUnifiedMemoryTool,
   createUnifiedSessionTool: mockCreateUnifiedSessionTool,
   createUnifiedContextTool: mockCreateUnifiedContextTool,
-  createAgentsListTool: mockCreateAgentsListTool,
   createMessageTool: mockCreateMessageTool,
   createDiscordActionTool: mockCreateDiscordActionTool,
   createTelegramActionTool: mockCreateTelegramActionTool,
@@ -323,7 +321,6 @@ describe("setupTools", () => {
     expect(mockCreateCronTool).toHaveBeenCalled();
     expect(mockCreateUnifiedMemoryTool).toHaveBeenCalled();
     expect(mockCreateUnifiedSessionTool).toHaveBeenCalled();
-    expect(mockCreateAgentsListTool).toHaveBeenCalled();
     expect(mockCreateMessageTool).toHaveBeenCalled();
     expect(mockCreateApplyPatchTool).toHaveBeenCalled();
 
@@ -933,7 +930,6 @@ describe("setupTools", () => {
       expect(toolNames).not.toContain("memory_tool");
       expect(toolNames).not.toContain("sessions_spawn");
       expect(toolNames).not.toContain("gateway");
-      expect(toolNames).not.toContain("agents_list");
     });
 
     it("no options defaults to all platform tools", async () => {

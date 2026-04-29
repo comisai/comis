@@ -68,7 +68,6 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   pipeline: "Execute multi-node DAG workflow pipelines",
   session_status: "Show agent status and usage",
   session_search: "Search full session transcript history",
-  agents_list: "List all available agent IDs",
   // Platform
   cron: "Manage cron jobs and reminders",
   gateway: "Read or patch system config",
@@ -139,8 +138,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   },
 
   // ----- Sessions -----
-  // Confusable pair: sessions_list / agents_list
-  sessions_list: "List active sessions with filters. For available agent IDs, use agents_list.",
+  sessions_list: "List active sessions with filters. For available agent IDs, use agents_manage({action:'list'}).",
   sessions_history: "Fetch conversation history for another session or sub-agent.",
   // Confusable pair: sessions_send / message
   sessions_send: "Send message to another session. For chat channel messages, use message.",
@@ -150,9 +148,6 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   session_status: "Show agent status card: usage, model, steps. Optional per-session model override.",
   // Confusable pair: session_search / memory_search
   session_search: "Search full session transcript including evicted content. For stored facts, use memory_search.",
-  // Confusable pair: agents_list / sessions_list
-  agents_list: "List available agent IDs for spawning. For active sessions, use sessions_list.",
-
   // ----- Platform -----
   cron: "Manage cron jobs, scheduled tasks, and reminders.",
   gateway: "Read/patch config, restart gateway, check status.",
@@ -177,7 +172,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 
   // ----- Privileged / Supervisor (dynamic: admin suffix) -----
   agents_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage agent fleet: create, get, update, delete, suspend, resume.";
+    const base = "Manage agent fleet: list, create, get, update, delete, suspend, resume. For batch creation, pass workspace.role/identity inline to skip the 2-step write flow.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   obs_query: (ctx: ToolDescriptionContext): string => {
@@ -244,7 +239,7 @@ export const TOOL_ORDER: string[] = [
   "memory_store", "memory_get",
   "web_fetch",
   "sessions_list", "sessions_history", "sessions_send", "sessions_spawn",
-  "subagents", "pipeline", "session_status", "session_search", "agents_list",
+  "subagents", "pipeline", "session_status", "session_search",
   "cron", "process",
   "discover_tools",
 ];

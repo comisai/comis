@@ -68,7 +68,6 @@ describe("isReadOnlyTool", () => {
     "image_analyze",
     "obs_query",
     "discover_tools",
-    "agents_list",
     "models_manage",
     "sessions_list",
     "session_status",
@@ -134,8 +133,8 @@ describe("isReadOnlyTool", () => {
 // ---------------------------------------------------------------------------
 
 describe("READ_ONLY_TOOLS", () => {
-  it("contains at least 25 tool names", () => {
-    expect(READ_ONLY_TOOLS.size).toBeGreaterThanOrEqual(25);
+  it("contains at least 24 tool names", () => {
+    expect(READ_ONLY_TOOLS.size).toBeGreaterThanOrEqual(24);
   });
 
   it("does NOT contain process (kill action is mutating)", () => {

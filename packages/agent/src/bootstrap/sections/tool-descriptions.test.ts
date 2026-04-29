@@ -24,8 +24,8 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
     }
   });
 
-  it("has entries for all 46 tools (excludes 6 native file tools)", () => {
-    expect(Object.keys(LEAN_TOOL_DESCRIPTIONS).length).toBe(46);
+  it("has entries for all 45 tools (excludes 6 native file tools)", () => {
+    expect(Object.keys(LEAN_TOOL_DESCRIPTIONS).length).toBe(45);
   });
 });
 
@@ -38,8 +38,8 @@ describe("TOOL_SUMMARIES", () => {
     }
   });
 
-  it("has entries for all 52 tools", () => {
-    expect(Object.keys(TOOL_SUMMARIES).length).toBe(52);
+  it("has entries for all 51 tools", () => {
+    expect(Object.keys(TOOL_SUMMARIES).length).toBe(51);
   });
 });
 
@@ -226,12 +226,8 @@ describe("confusable pair disambiguation", () => {
     expect(resolve("session_search")).toContain("memory_search");
   });
 
-  it("sessions_list mentions agents_list", () => {
-    expect(resolve("sessions_list")).toContain("agents_list");
-  });
-
-  it("agents_list mentions sessions_list", () => {
-    expect(resolve("agents_list")).toContain("sessions_list");
+  it("sessions_list mentions agents_manage", () => {
+    expect(resolve("sessions_list")).toContain("agents_manage");
   });
 
   it("sessions_send mentions message", () => {

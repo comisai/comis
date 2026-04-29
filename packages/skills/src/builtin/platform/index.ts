@@ -37,7 +37,6 @@ export { createSessionsSpawnTool } from "./sessions-spawn-tool.js";
 export { createSessionSearchTool } from "./session-search-tool.js";
 
 // Agent tools
-export { createAgentsListTool } from "./agents-list-tool.js";
 export { createSubagentsTool } from "./subagents-tool.js";
 export { createPipelineTool } from "./pipeline-tool.js";
 

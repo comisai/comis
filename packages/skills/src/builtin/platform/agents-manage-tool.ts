@@ -2,7 +2,7 @@
 /**
  * Agent management tool: multi-action tool for fleet management.
  *
- * Supports 6 actions: create, get, update, delete, suspend, resume.
+ * Supports 7 actions: create, get, update, delete, suspend, resume, list.
  * Destructive actions (create, delete) require approval via the ApprovalGate.
  * All actions enforce admin trust level via createTrustGuard.
  * Delegates to agents.* RPC handlers via rpcCall.
@@ -31,12 +31,13 @@ export const AgentsManageToolParams = Type.Object({
       Type.Literal("delete"),
       Type.Literal("suspend"),
       Type.Literal("resume"),
+      Type.Literal("list"),
     ],
-    { description: "Agent management action. Valid values: create (new agent), get (read config/status), update (modify config), delete (remove agent), suspend (pause execution), resume (restart execution)" },
+    { description: "Agent management action. Valid values: create (new agent), get (read config/status), update (modify config), delete (remove agent), suspend (pause execution), resume (restart execution), list (all agent IDs)" },
   ),
-  agent_id: Type.String({
-    description: "The agent identifier (required for all actions)",
-  }),
+  agent_id: Type.Optional(Type.String({
+    description: "The agent identifier (required for all actions except list)",
+  })),
   config: Type.Optional(
     // Accept EITHER a structured object OR a JSON string. Anthropic's LLM
     // sometimes emits nested free-form objects as stringified JSON; coerceConfig()
@@ -146,7 +147,7 @@ export const AgentsManageToolParams = Type.Object({
   ),
 });
 
-const VALID_ACTIONS = ["create", "get", "update", "delete", "suspend", "resume"] as const;
+const VALID_ACTIONS = ["create", "get", "update", "delete", "suspend", "resume", "list"] as const;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -286,7 +287,7 @@ function coerceConfig(p: Record<string, unknown>): Record<string, unknown> | und
 // ---------------------------------------------------------------------------
 
 /**
- * Create an agent management tool with 6 actions.
+ * Create an agent management tool with 7 actions.
  *
  * Actions:
  * - **create** -- Create a new agent (requires approval)
@@ -295,6 +296,7 @@ function coerceConfig(p: Record<string, unknown>): Record<string, unknown> | und
  * - **delete** -- Delete an agent (requires approval)
  * - **suspend** -- Suspend agent execution
  * - **resume** -- Resume a suspended agent
+ * - **list** -- List all available agent IDs
  *
  * @param rpcCall - RPC call function for delegating to the daemon backend
  * @param logger - Required structured logger. Used to emit a per-create
@@ -325,7 +327,7 @@ export function createAgentsManageTool(
       name: "agents_manage",
       label: "Agent Management",
       description:
-        "Manage agent fleet: create, get, update, delete, suspend, resume. " +
+        "Manage agent fleet: create, get, update, delete, suspend, resume, list. " +
         "Use update to switch an agent's LLM provider or model (e.g. switch to Gemini, change model). " +
         "Create/delete require approval.",
       parameters: AgentsManageToolParams,
@@ -337,6 +339,22 @@ export function createAgentsManageTool(
           const agentId = readStringParam(p, "agent_id");
           const config = coerceConfig(p);
           mapWorkspaceProfile(config);
+
+          // Map common LLM-hallucinated "system prompt" field names to
+          // workspace.role — the correct inline ROLE.md path. Runs after
+          // coerceConfig (catches string-form) and before L2 stripping.
+          if (config && typeof config === "object") {
+            const ROLE_ALIASES = ["systemPrompt", "system", "prompt", "instructions", "systemMessage", "description"] as const;
+            const c = config as Record<string, unknown>;
+            for (const alias of ROLE_ALIASES) {
+              if (typeof c[alias] === "string") {
+                const ws = (c.workspace ??= {}) as Record<string, unknown>;
+                if (typeof ws.role !== "string") ws.role = c[alias] as string;
+                delete c[alias];
+                break;
+              }
+            }
+          }
 
           // 260428-vyf L2 (Path A): strip workspace.role / workspace.identity
           // from the config payload BEFORE the RPC and forward them as a
@@ -466,6 +484,9 @@ export function createAgentsManageTool(
         async resume(p, rpcCall, ctx) {
           const agentId = readStringParam(p, "agent_id");
           return rpcCall("agents.resume", { agentId, _trustLevel: ctx.trustLevel });
+        },
+        async list(_p, rpcCall, ctx) {
+          return rpcCall("agents.list", { _trustLevel: ctx.trustLevel });
         },
       },
     },

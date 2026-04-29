@@ -66,8 +66,6 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("sessions_list",    { isReadOnly: true });
   registerToolMetadata("session_status",   { isReadOnly: true });
   registerToolMetadata("sessions_history", { isReadOnly: true });
-  registerToolMetadata("agents_list",      { isReadOnly: true });
-
   registerToolMetadata("ctx_search",  { isReadOnly: true });
   registerToolMetadata("ctx_inspect", { isReadOnly: true });
   registerToolMetadata("ctx_expand",  { isReadOnly: true });
@@ -373,8 +371,6 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("pipeline",         { searchHint: "workflow dag graph orchestrate chain multi-step sequential" });
   registerToolMetadata("session_status",   { searchHint: "session state alive running progress heartbeat check" });
   registerToolMetadata("session_search",   { searchHint: "find session lookup filter match query user channel" });
-  registerToolMetadata("agents_list",      { searchHint: "bots agents roster fleet inventory configured available" });
-
   // --- Platform tools ---
   registerToolMetadata("cron",             { searchHint: "schedule timer reminder recurring job automation crontab interval" });
   registerToolMetadata("gateway",          { searchHint: "config restart patch status settings yaml update system admin" });
@@ -400,7 +396,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("whatsapp_action", { searchHint: "status group admin label broadcast forward whatsapp" });
 
   // --- Privileged management tools ---
-  registerToolMetadata("agents_manage",    { searchHint: "fleet create delete suspend resume agent configure workspace" });
+  registerToolMetadata("agents_manage",    { searchHint: "fleet list create delete suspend resume agent configure roster inventory" });
   registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing traces logs health" });
   registerToolMetadata("sessions_manage",  { searchHint: "delete reset export compact session lifecycle cleanup admin" });
   registerToolMetadata("memory_manage",    { searchHint: "delete flush export browse stats storage cleanup purge" });
