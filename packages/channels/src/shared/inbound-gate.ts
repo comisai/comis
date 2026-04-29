@@ -113,6 +113,21 @@ export async function evaluateInboundGate(
         injectedAsHistory: true,
         timestamp: Date.now(),
       });
+      deps.logger.info(
+        {
+          channelType: adapter.channelType,
+          chatId: msg.channelId,
+          senderId: msg.senderId,
+          reason: decision.reason,
+          activationMode: arConfig.groupActivation,
+          isBotMentioned: msg.metadata?.isBotMentioned === true,
+          replyToBot: msg.metadata?.replyToBot === true,
+          action: "inject-history" as const,
+          hint: "Group activation policy did not match — message saved as history context only. Set autoReplyEngine.groupActivation=always to respond to all group messages, or @-mention/reply to the bot to activate it.",
+          errorKind: "config" as const,
+        },
+        "Group message did not activate agent",
+      );
 
       // Push to group history ring buffer for context injection
       if (deps.groupHistoryBuffer) {
@@ -149,12 +164,21 @@ export async function evaluateInboundGate(
         injectedAsHistory: false,
         timestamp: Date.now(),
       });
-      deps.logger.debug({
-        step: "auto-reply-suppressed",
-        channelType: adapter.channelType,
-        chatId: msg.channelId,
-        reason: decision.reason,
-      }, "Auto-reply suppressed");
+      deps.logger.info(
+        {
+          channelType: adapter.channelType,
+          chatId: msg.channelId,
+          senderId: msg.senderId,
+          reason: decision.reason,
+          activationMode: arConfig.groupActivation,
+          isBotMentioned: msg.metadata?.isBotMentioned === true,
+          replyToBot: msg.metadata?.replyToBot === true,
+          action: "ignore" as const,
+          hint: "Group activation policy did not match and history injection is disabled. Set autoReplyEngine.groupActivation=always or autoReplyEngine.historyInjection=true to change.",
+          errorKind: "config" as const,
+        },
+        "Group message ignored",
+      );
       return { action: "skip" };
     }
   }
