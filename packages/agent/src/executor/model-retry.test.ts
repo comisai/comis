@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
-import { parseModelString, runWithModelRetry, type ModelRetryParams } from "./model-retry.js";
+import { parseModelString, runWithModelRetry, isAuthError, type ModelRetryParams } from "./model-retry.js";
 import { PromptTimeoutError } from "./prompt-timeout.js";
+import { createLastKnownModelTracker } from "../model/last-known-model.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -122,7 +123,11 @@ describe("runWithModelRetry", () => {
       const params = makeParams();
       const result = await runWithModelRetry(params);
 
-      expect(result).toEqual({ succeeded: true, error: undefined });
+      expect(result).toEqual({
+        succeeded: true,
+        error: undefined,
+        effectiveModel: { provider: "anthropic", model: "claude-3-opus" },
+      });
       expect(params.session.prompt).toHaveBeenCalledTimes(1);
     });
 
@@ -752,6 +757,221 @@ describe("runWithModelRetry", () => {
       expect(primaryFailureLog![0]).toEqual(
         expect.objectContaining({ model: "anthropic:claude-3-opus" }),
       );
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // isAuthError
+  // -------------------------------------------------------------------
+  describe("isAuthError", () => {
+    it("returns true for 401 status errors", () => {
+      const err = Object.assign(new Error("Unauthorized"), { status: 401 });
+      expect(isAuthError(err)).toBe(true);
+    });
+
+    it("returns true for 403 status errors", () => {
+      const err = Object.assign(new Error("Forbidden"), { status: 403 });
+      expect(isAuthError(err)).toBe(true);
+    });
+
+    it("returns true for auth message patterns", () => {
+      expect(isAuthError(new Error("invalid api key"))).toBe(true);
+      expect(isAuthError(new Error("Authentication failed"))).toBe(true);
+      expect(isAuthError(new Error("Unauthorized access"))).toBe(true);
+      expect(isAuthError(new Error("permission denied"))).toBe(true);
+    });
+
+    it("returns false for non-auth errors", () => {
+      expect(isAuthError(new Error("rate limit exceeded"))).toBe(false);
+      expect(isAuthError(new Error("server error"))).toBe(false);
+      const rateLimitErr = Object.assign(new Error("Too many requests"), { status: 429 });
+      expect(isAuthError(rateLimitErr)).toBe(false);
+    });
+
+    it("returns false for non-Error values", () => {
+      expect(isAuthError("string error")).toBe(false);
+      expect(isAuthError(null)).toBe(false);
+      expect(isAuthError(undefined)).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // effectiveModel tracking
+  // -------------------------------------------------------------------
+  describe("effectiveModel tracking", () => {
+    it("effectiveModel reflects primary model on primary success", async () => {
+      const params = makeParams();
+      const result = await runWithModelRetry(params);
+
+      expect(result.effectiveModel).toEqual({
+        provider: "anthropic",
+        model: "claude-3-opus",
+      });
+    });
+
+    it("effectiveModel reflects fallback model on fallback success", async () => {
+      const session = makeSession();
+      session.prompt
+        .mockRejectedValueOnce(new Error("primary fail"))
+        .mockResolvedValueOnce(undefined);
+
+      const params = makeParams({
+        session,
+        deps: {
+          eventBus: makeEventBus(),
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          fallbackModels: ["openai:gpt-4"],
+        },
+      });
+
+      const result = await runWithModelRetry(params);
+
+      expect(result.effectiveModel).toEqual({
+        provider: "openai",
+        model: "gpt-4",
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Last-known-working model fallback
+  // -------------------------------------------------------------------
+  describe("LKW fallback", () => {
+    it("tries LKW model after all configured fallbacks fail with auth error", async () => {
+      const session = makeSession();
+      const authErr = Object.assign(new Error("Unauthorized"), { status: 401 });
+      session.prompt
+        .mockRejectedValueOnce(authErr)  // primary
+        .mockRejectedValueOnce(authErr)  // fallback
+        .mockResolvedValueOnce(undefined); // LKW succeeds
+
+      const lkwTracker = createLastKnownModelTracker();
+      lkwTracker.recordSuccess("other-agent", "google", "gemini-pro");
+
+      const eventBus = makeEventBus();
+      const params = makeParams({
+        session,
+        deps: {
+          eventBus,
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          fallbackModels: ["openai:gpt-4"],
+          lastKnownModel: lkwTracker,
+          agentId: "test-agent",
+        },
+      });
+
+      const result = await runWithModelRetry(params);
+
+      expect(result.succeeded).toBe(true);
+      expect(result.effectiveModel).toEqual({
+        provider: "google",
+        model: "gemini-pro",
+      });
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "model:lkw_fallback_attempt",
+        expect.objectContaining({
+          toProvider: "google",
+          toModel: "gemini-pro",
+        }),
+      );
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "model:lkw_fallback_succeeded",
+        expect.objectContaining({
+          provider: "google",
+          model: "gemini-pro",
+        }),
+      );
+    });
+
+    it("does NOT try LKW for non-auth errors (e.g. rate limit)", async () => {
+      const session = makeSession();
+      const rateLimitErr = Object.assign(new Error("Rate limited"), { status: 429 });
+      session.prompt.mockRejectedValue(rateLimitErr);
+
+      const lkwTracker = createLastKnownModelTracker();
+      lkwTracker.recordSuccess("other-agent", "google", "gemini-pro");
+
+      const eventBus = makeEventBus();
+      const params = makeParams({
+        session,
+        deps: {
+          eventBus,
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          lastKnownModel: lkwTracker,
+        },
+      });
+
+      const result = await runWithModelRetry(params);
+
+      expect(result.succeeded).toBe(false);
+      // LKW attempt event should NOT be emitted
+      const lkwCalls = vi.mocked(eventBus.emit).mock.calls.filter(
+        (c) => c[0] === "model:lkw_fallback_attempt",
+      );
+      expect(lkwCalls).toHaveLength(0);
+    });
+
+    it("skips LKW if same provider/model as primary", async () => {
+      const session = makeSession();
+      const authErr = Object.assign(new Error("Unauthorized"), { status: 401 });
+      session.prompt.mockRejectedValue(authErr);
+
+      const lkwTracker = createLastKnownModelTracker();
+      // LKW is same as primary -- should be skipped
+      lkwTracker.recordSuccess("test-agent", "anthropic", "claude-3-opus");
+
+      const eventBus = makeEventBus();
+      const params = makeParams({
+        session,
+        deps: {
+          eventBus,
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          lastKnownModel: lkwTracker,
+          agentId: "test-agent",
+        },
+      });
+
+      const result = await runWithModelRetry(params);
+
+      expect(result.succeeded).toBe(false);
+      const lkwCalls = vi.mocked(eventBus.emit).mock.calls.filter(
+        (c) => c[0] === "model:lkw_fallback_attempt",
+      );
+      expect(lkwCalls).toHaveLength(0);
+    });
+
+    it("LKW fallback success sets effectiveModel", async () => {
+      const session = makeSession();
+      const authErr = Object.assign(new Error("Unauthorized"), { status: 401 });
+      session.prompt
+        .mockRejectedValueOnce(authErr) // primary
+        .mockResolvedValueOnce(undefined); // LKW succeeds
+
+      const lkwTracker = createLastKnownModelTracker();
+      lkwTracker.recordSuccess("other-agent", "openai", "gpt-4");
+
+      const params = makeParams({
+        session,
+        deps: {
+          eventBus: makeEventBus(),
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          lastKnownModel: lkwTracker,
+          agentId: "test-agent",
+        },
+      });
+
+      const result = await runWithModelRetry(params);
+
+      expect(result.succeeded).toBe(true);
+      expect(result.effectiveModel).toEqual({
+        provider: "openai",
+        model: "gpt-4",
+      });
     });
   });
 });

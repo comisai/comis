@@ -55,6 +55,7 @@ import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";
 import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js";
+import type { LastKnownModelTracker } from "../model/last-known-model.js";
 import type { EnvelopeConfig } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -112,6 +113,7 @@ export interface RunPromptParams {
     fallbackModels?: string[];
     modelRegistry: ModelRegistry;
     providerHealth?: ProviderHealthMonitor;
+    lastKnownModel?: LastKnownModelTracker;
     envelopeConfig?: EnvelopeConfig;
     outputGuard?: OutputGuardPort;
     canaryToken?: string;
@@ -345,11 +347,21 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
         agentId,
         sessionKey: formatSessionKey(sessionKey),
         providerHealth: deps.providerHealth,
+        lastKnownModel: deps.lastKnownModel,
         onResetTimer: (fn) => { onResetTimer(fn); },
       },
     });
     promptSucceeded = retryResult.succeeded;
     promptError = retryResult.error;
+
+    // Record successful model for last-known-working tracker
+    if (retryResult.succeeded && retryResult.effectiveModel) {
+      deps.lastKnownModel?.recordSuccess(
+        agentId ?? "default",
+        retryResult.effectiveModel.provider,
+        retryResult.effectiveModel.model,
+      );
+    }
   }
 
   // Detect zero-LLM-call stuck session.
@@ -495,6 +507,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
                 agentId,
                 sessionKey: formatSessionKey(sessionKey),
                 providerHealth: deps.providerHealth,
+                lastKnownModel: deps.lastKnownModel,
                 onResetTimer: (fn) => { onResetTimer(fn); },
               },
             });
@@ -640,6 +653,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
                 agentId,
                 sessionKey: formatSessionKey(sessionKey),
                 providerHealth: deps.providerHealth,
+                lastKnownModel: deps.lastKnownModel,
                 onResetTimer: (fn) => { onResetTimer(fn); },
               },
             });
@@ -1088,7 +1102,12 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
       const classified = promptError instanceof PromptTimeoutError
         ? classifyPromptTimeout(promptError.timeoutMs)
         : classifyError(promptError);
-      result.response = classified.userMessage;
+      // Enrich auth_invalid messages with the failing provider name
+      if (classified.category === "auth_invalid") {
+        result.response = `The AI service could not authenticate with the "${config.provider}" provider. Please check the API key or notify the system administrator.`;
+      } else {
+        result.response = classified.userMessage;
+      }
       result.errorContext = {
         errorType: promptError instanceof PromptTimeoutError ? "PromptTimeout" : "PromptFailure",
         retryable: classified.retryable,
