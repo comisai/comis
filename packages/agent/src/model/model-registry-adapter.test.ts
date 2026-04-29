@@ -379,7 +379,7 @@ describe("registerCustomProviders", () => {
     expect(registry.find("unknownProxy", "q")!.api).toBe("openai-completions");
   });
 
-  it("registers keyless ollama provider with sentinel apiKey", () => {
+  it("registers keyless ollama provider with sentinel apiKey", async () => {
     const secretManager = createSecretManager({});
     const authStorage = createAuthStorageAdapter({ secretManager });
     const registry = createModelRegistryAdapter(authStorage);
@@ -405,8 +405,9 @@ describe("registerCustomProviders", () => {
     const found = registry.find("local-ollama", "llama3.3");
     expect(found).toBeDefined();
     expect(found!.provider).toBe("local-ollama");
-    // Sentinel apiKey must be used for keyless ollama type
-    expect(found!.apiKey).toBe("ollama-no-auth");
+    // Sentinel apiKey is stored at provider level -- verify via getApiKeyForProvider
+    const resolvedKey = await registry.getApiKeyForProvider("local-ollama");
+    expect(resolvedKey).toBe("ollama-no-auth");
     expect(debugs.some((d) => d.msg.includes("keyless sentinel"))).toBe(true);
   });
 
@@ -438,7 +439,7 @@ describe("registerCustomProviders", () => {
     expect(warns[0]!.msg).toContain("no API key");
   });
 
-  it("uses real apiKey when keyless type has apiKeyName configured", () => {
+  it("uses real apiKey when keyless type has apiKeyName configured", async () => {
     const secretManager = createSecretManager({ OLLAMA_API_KEY: "real-key" });
     const authStorage = createAuthStorageAdapter({
       secretManager,
@@ -467,7 +468,8 @@ describe("registerCustomProviders", () => {
     const found = registry.find("secure-ollama", "llama3.3");
     expect(found).toBeDefined();
     // Real key must be used, NOT the sentinel
-    expect(found!.apiKey).toBe("real-key");
+    const resolvedKey = await registry.getApiKeyForProvider("secure-ollama");
+    expect(resolvedKey).toBe("real-key");
   });
 
   it("does not leak sentinel to cloud providers when apiKey is missing", () => {

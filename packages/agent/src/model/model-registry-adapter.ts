@@ -45,6 +45,19 @@ export function createModelRegistryAdapter(authStorage: AuthStorage): ModelRegis
  * proxies (NVIDIA NIM, Together, ollama, lm-studio, etc.) work without
  * code changes.
  */
+/**
+ * Provider types that can register without an API key.
+ *
+ * Ollama (and similar local inference servers) do not require authentication
+ * by default. When a provider entry has a type in this set and no apiKeyName
+ * is configured (or the named secret is missing), registration proceeds with
+ * the "ollama-no-auth" sentinel instead of being skipped.
+ *
+ * The sentinel reaches the wire as `Authorization: Bearer ollama-no-auth`.
+ * Ollama ignores Authorization unless `OLLAMA_API_KEY` is set server-side.
+ */
+const KEYLESS_PROVIDER_TYPES = new Set(["ollama"]);
+
 const PROVIDER_TYPE_TO_API: Record<string, Api> = {
   openai: "openai-completions",
   groq: "openai-completions",
@@ -122,12 +135,14 @@ export function registerCustomProviders(
     }
 
     const apiKey = entry.apiKeyName ? secretManager.get(entry.apiKeyName) : undefined;
-    if (hasModels && !apiKey) {
+    const isKeylessType = KEYLESS_PROVIDER_TYPES.has(entry.type);
+
+    if (hasModels && !apiKey && !isKeylessType) {
       logger.warn(
         {
           providerName,
           apiKeyName: entry.apiKeyName,
-          hint: "Set the named secret in ~/.comis/.env or remove the provider entry from config.yaml",
+          hint: "Set the named secret in ~/.comis/.env, omit apiKeyName for type='ollama', or remove the provider entry from config.yaml",
           errorKind: "config",
         },
         "Custom provider has models but no API key -- skipping registration",
@@ -137,12 +152,23 @@ export function registerCustomProviders(
 
     const api = PROVIDER_TYPE_TO_API[entry.type] ?? "openai-completions";
     const headersResolved = Object.keys(entry.headers).length > 0 ? entry.headers : undefined;
+    const resolvedApiKey = apiKey ?? (isKeylessType ? "ollama-no-auth" : undefined);
+
+    if (resolvedApiKey === "ollama-no-auth") {
+      logger.debug(
+        {
+          providerName,
+          hint: "Using keyless sentinel for type='ollama'. If your Ollama server requires an OLLAMA_API_KEY, set the provider's apiKeyName explicitly via providers_manage update.",
+        },
+        "Custom provider registered with keyless sentinel",
+      );
+    }
 
     try {
       registry.registerProvider(providerName, {
         api,
         baseUrl: entry.baseUrl || undefined,
-        apiKey,
+        apiKey: resolvedApiKey,
         headers: headersResolved,
         // pi's ProviderModelConfig requires concrete values for name/cost/
         // contextWindow/maxTokens. Comis's UserModelSchema lets users omit
