@@ -24,6 +24,16 @@ export interface ContinuationRecord {
   peerId?: string;
   guildId?: string;
   threadId?: string;
+  /**
+   * Channel-native chat type tag captured at track-time so the synthetic
+   * restart message can frame the resumed conversation correctly.
+   *
+   * For Telegram: `"private"`, `"group"`, `"supergroup"`, or `"channel"`
+   * (sourced from `metadata.telegramChatType`). Without this, group sessions
+   * are mis-framed as DMs on first turn after restart because the synthetic
+   * inbound carries no chat-type metadata.
+   */
+  chatType?: string;
   tenantId: string;
   timestamp: number;
 }

@@ -122,6 +122,30 @@ describe("createRestartContinuationTracker", () => {
 
     expect(count).toBe(2);
   });
+
+  it("preserves chatType across track -> capture -> loadContinuations round trip", () => {
+    // Regression: synthetic restart messages were mis-framing group sessions
+    // as DMs because chatType was not captured. The full round-trip must
+    // preserve telegramChatType so resolveChatType returns "group" on the
+    // first post-restart turn.
+    const tracker = createRestartContinuationTracker();
+    tracker.track(makeRecord({ channelId: "group-chat", chatType: "supergroup" }));
+    tracker.track(makeRecord({ channelId: "dm-chat", userId: "u-dm", chatType: "private" }));
+    tracker.track(makeRecord({ channelId: "no-meta", userId: "u-nm" })); // chatType omitted
+
+    const filePath = join(tmpDir, "round-trip.json");
+    const wrote = tracker.capture(filePath, 60_000);
+    expect(wrote).toBe(3);
+
+    const logger = makeMockLogger();
+    const loaded = loadContinuations(filePath, 300_000, logger);
+    expect(loaded).toHaveLength(3);
+
+    const byChannel = new Map(loaded.map((r) => [r.channelId, r]));
+    expect(byChannel.get("group-chat")?.chatType).toBe("supergroup");
+    expect(byChannel.get("dm-chat")?.chatType).toBe("private");
+    expect(byChannel.get("no-meta")?.chatType).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
