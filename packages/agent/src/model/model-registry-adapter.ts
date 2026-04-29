@@ -12,7 +12,8 @@
 
 import { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { AuthStorage } from "@mariozechner/pi-coding-agent";
-import type { Api, Model } from "@mariozechner/pi-ai";
+import { getModels, getProviders } from "@mariozechner/pi-ai";
+import type { Api, Model, KnownProvider } from "@mariozechner/pi-ai";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { SecretManager } from "@comis/core";
 import type { ModelAllowlist } from "./model-allowlist.js";
@@ -71,18 +72,13 @@ const PROVIDER_TYPE_TO_API: Record<string, Api> = {
   google: "google-generative-ai",
 };
 
-const DEFAULT_BASE_URLS: Record<string, string> = {
-  google: "https://generativelanguage.googleapis.com/v1beta",
-  openai: "https://api.openai.com/v1",
-  anthropic: "https://api.anthropic.com/v1",
-  groq: "https://api.groq.com/openai/v1",
-  mistral: "https://api.mistral.ai/v1",
-  together: "https://api.together.xyz/v1",
-  deepseek: "https://api.deepseek.com/v1",
-  cerebras: "https://api.cerebras.ai/v1",
-  xai: "https://api.x.ai/v1",
-  openrouter: "https://openrouter.ai/api/v1",
-};
+const _builtInProviders = new Set<string>(getProviders());
+
+function getBuiltInBaseUrl(type: string): string | undefined {
+  if (!_builtInProviders.has(type)) return undefined;
+  const models = getModels(type as KnownProvider);
+  return models[0]?.baseUrl;
+}
 
 /** Subset of `ProviderEntry` (from `@comis/core`) we read for pi registration. */
 export interface CustomProviderRegistration {
@@ -180,7 +176,7 @@ export function registerCustomProviders(
     try {
       registry.registerProvider(providerName, {
         api,
-        baseUrl: entry.baseUrl || DEFAULT_BASE_URLS[entry.type],
+        baseUrl: entry.baseUrl || getBuiltInBaseUrl(entry.type),
         apiKey: resolvedApiKey,
         headers: headersResolved,
         // pi's ProviderModelConfig requires concrete values for name/cost/
