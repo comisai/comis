@@ -15,7 +15,9 @@ concurrency:
 jobs:
   # ---------------------------------------------------------------------------
   # Build per-platform digests for the daemon image.
-  # amd64 and arm64 each run on ubuntu-latest (arm64 via QEMU emulation).
+  # Each platform runs natively on its own runner (no QEMU emulation) — the
+  # arm64 build under QEMU intermittently hangs on Node-native deps and tsc,
+  # so it now uses GitHub's native arm runner.
   # Both variants (default + slim) are built per runner so the shared build
   # stage layers are cached and the second variant is near-instant.
   # ---------------------------------------------------------------------------
@@ -27,7 +29,7 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-latest
           - platform: linux/arm64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-arm
 
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -35,9 +37,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4
-        if: matrix.platform == 'linux/arm64'
 
       - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
 
