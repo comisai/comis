@@ -121,6 +121,9 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // Memoized per-execute() so all pipeline runs in a single execute() see a
   // consistent decision (cleaner + scrubber must agree). The closure reads
   // the latest model identity each time (handles cycleModel mid-execute).
+  // Returns the identity/idle drift only — the kvl tool-defs dimension was
+  // removed in 260428-lm6 in favor of the unconditional latest-message
+  // preserving scrub in signature-replay-scrubber.
   let memoizedDrift: DriftCheck | undefined;
   const computeDriftIfNeeded = (): DriftCheck | undefined => {
     if (memoizedDrift !== undefined) return memoizedDrift;
@@ -132,7 +135,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       // Derive currentApi from model.api when present; otherwise fall back to
       // the provider family (resolveProviderFamily strips -bedrock / -vertex).
       const currentApi = model?.api ?? resolveProviderFamily(config.provider);
-      memoizedDrift = shouldDropSignedFields({
+      const existingDrift = shouldDropSignedFields({
         // Cast: shouldDropSignedFields tolerates malformed entries internally.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         fileEntries: fileEntries as any,
@@ -143,6 +146,8 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
         },
         idleMs,
       });
+
+      memoizedDrift = existingDrift;
       return memoizedDrift;
     } catch (err) {
       deps.logger.warn(

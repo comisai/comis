@@ -13,7 +13,6 @@ function makePlan(overrides: Partial<ExecutionPlan> = {}): ExecutionPlan {
       { index: 3, description: "Configure thresholds", status: "pending" },
     ],
     completedCount: 1,
-    nudged: false,
     createdAtMs: Date.now(),
     ...overrides,
   };

@@ -30,7 +30,6 @@ import {
   createUnifiedMemoryTool,
   createUnifiedSessionTool,
   createUnifiedContextTool,
-  createAgentsListTool,
   createMessageTool,
   createDiscordActionTool,
   createTelegramActionTool,
@@ -359,7 +358,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         createCronTool(agentRpc),
         createUnifiedMemoryTool(agentRpc, approvalGate),
         createUnifiedSessionTool(agentRpc),
-        createAgentsListTool(agentRpc),
         createMessageTool(agentRpc),
         createDiscordActionTool(agentRpc, skillsLogger),
         createTelegramActionTool(agentRpc),
@@ -374,8 +372,8 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         createTranscribeAudioTool(agentRpc),
         createDescribeVideoTool(agentRpc),
         createExtractDocumentTool(agentRpc),
-        createGatewayTool(agentRpc),
-        createAgentsManageTool(agentRpc, approvalGate, {
+        createGatewayTool(agentRpc, skillsLogger),
+        createAgentsManageTool(agentRpc, skillsLogger, approvalGate, {
           onMutationStart: enterConfigMutationFence,
           onMutationEnd: leaveConfigMutationFence,
           // After agents.create seeds the new workspace's template files

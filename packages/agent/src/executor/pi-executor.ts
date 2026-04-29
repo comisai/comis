@@ -70,6 +70,7 @@ import type { ActiveRunRegistry, RunHandle } from "./active-run-registry.js";
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../session/orphaned-message-repair.js";
 import { scrubRedactedToolCalls } from "../session/scrub-redacted-tool-calls.js";
 import { createPiEventBridge } from "../bridge/pi-event-bridge.js";
+import { assertThinkingBlocksUnchanged, restoreCanonicalThinkingBlocks } from "../bridge/thinking-block-hash-invariant.js";
 import { createAdaptiveCacheRetention, createStaticRetention } from "./adaptive-cache-retention.js";
 import type { AdaptiveCacheRetention } from "./adaptive-cache-retention.js";
 // SessionLatch types and createSessionLatch moved to executor-session-state.ts
@@ -101,10 +102,7 @@ import {
   clearSessionCacheSavings,
 } from "./executor-session-state.js";
 import { validateInput } from "./executor-input-guard.js";
-import {
-  scanWithOutputGuard,
-  // recoverEmptyFinalResponse, extractExecutionPlan, generateCompletenessNudge moved to executor-prompt-runner.ts
-} from "./executor-response-filter.js";
+import { scanWithOutputGuard } from "./executor-response-filter.js";
 import { normalizeModelCompat } from "../provider/model-compat.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";
@@ -1190,6 +1188,63 @@ export function createPiExecutor(
                 timestamp: Date.now(),
               };
             },
+            // 260428-hoy: pre-LLM-call hook -- runs once per `turn_start`,
+            // BEFORE pi-ai serializes the next request. Asserts the
+            // cross-turn hash invariant (logs ERROR per mutated block, with
+            // module:"agent.bridge.hash-invariant"), then heals any mutated
+            // thinking blocks against the canonical stream-close snapshot
+            // and writes the healed array back into session.agent.state.messages
+            // so persistence and downstream layers see the same shape pi-ai
+            // serializes. Order matters: assert FIRST so the diagnostic
+            // captures every mutation before the heal overwrites it. Both
+            // helpers swallow throws internally; the outer try/catch is a
+            // belt-and-braces fallback -- the pre-call hook must NEVER abort
+            // agent flow.
+            getSessionMessages: () => {
+              const live = session.agent.state.messages;
+              if (!Array.isArray(live)) return live;
+              try {
+                const stores = bridge.getThinkingBlockStores();
+                if (stores.hashes.size > 0) {
+                  for (const sessMsg of live) {
+                    if (!sessMsg || typeof sessMsg !== "object") continue;
+                    const sm = sessMsg as { role?: string; responseId?: string; content?: unknown };
+                    if (sm.role !== "assistant") continue;
+                    if (typeof sm.responseId !== "string") continue;
+                    const prior = stores.hashes.get(sm.responseId);
+                    if (!prior) continue;
+                    const currentContent = Array.isArray(sm.content)
+                      ? (sm.content as Array<Record<string, unknown>>)
+                      : [];
+                    assertThinkingBlocksUnchanged(prior, currentContent, sm.responseId, {
+                      logger: deps.logger,
+                    });
+                  }
+                }
+                if (stores.canonical.size > 0) {
+                  const result = restoreCanonicalThinkingBlocks(
+                    live,
+                    stores.canonical,
+                    { logger: deps.logger },
+                  );
+                  if (result.restoredCount > 0) {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary; healed array preserves AgentMessage shape
+                    session.agent.state.messages = result.messages as any;
+                    return result.messages;
+                  }
+                }
+              } catch {
+                // Pre-call hook must NEVER abort agent flow.
+              }
+              return live;
+            },
+            // 260428-iag wire-edge diagnostic: resolves the per-session JSONL
+            // path on demand. The bridge invokes this only after detecting the
+            // signed-replay rejection signature on a 400 — never on the happy
+            // path. Path comes from the same sessionAdapter that already
+            // governs read/write of the file, so safePath / sessionKey routing
+            // is reused (sessionKeyToPath -> safePath under the hood).
+            getSessionJsonlPath: () => sessionAdapter.getSessionPath(sessionKey),
             // Budget trajectory warning: shared ref and per-execution cap
             perExecutionBudgetCap: config.budgets?.perExecution,
             budgetWarningRef,

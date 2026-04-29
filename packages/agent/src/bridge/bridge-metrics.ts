@@ -12,6 +12,7 @@
 
 import type { ExecutionResult } from "../executor/types.js";
 import type { ContextUsageData } from "../safety/context-window-guard.js";
+import type { ThinkingBlockHash } from "./thinking-block-hash-invariant.js";
 
 // ---------------------------------------------------------------------------
 // Metrics state
@@ -89,6 +90,20 @@ export interface BridgeMetricsState {
 
   // Budget trajectory warning: tracks whether the approaching-exhaustion warning has been emitted
   budgetWarningEmitted: boolean;
+
+  // Bug A diagnostic: SHA-256 hashes of thinking blocks captured at each
+  // assistant turn_end, keyed by responseId. Used to detect cross-turn
+  // mutation of signed thinking blocks (logs only -- never alters flow).
+  // Capped at 32 entries with FIFO eviction to prevent unbounded growth on
+  // long-running sessions.
+  thinkingBlockHashes: Map<string, ThinkingBlockHash[]>;
+
+  /** 260428-hoy: Canonical (pre-mutation) snapshot of each assistant message's
+   *  full content array, captured at stream close in lockstep with thinkingBlockHashes.
+   *  Keyed by responseId; capped at 32 with FIFO eviction in lockstep with the
+   *  hash store. Used by the pre-LLM-call restoration pass to heal cross-turn
+   *  mutation of signed thinking blocks before pi-ai serializes the next request. */
+  thinkingBlockCanonical: Map<string, ReadonlyArray<unknown>>;
 }
 
 /**
@@ -133,6 +148,8 @@ export function createBridgeMetrics(): BridgeMetricsState {
     sessionCumulativeCacheSavedUsd: 0,
     totalThinkingTokens: 0,
     budgetWarningEmitted: false,
+    thinkingBlockHashes: new Map(),
+    thinkingBlockCanonical: new Map(),
   };
 }
 

@@ -6,3 +6,6 @@ export { createLogger } from "./logging/index.js";
 export type { LoggerOptions, ComisLogger } from "./logging/index.js";
 export type { LogFields, ErrorKind } from "./logging/index.js";
 export { isValidLogLevel, VALID_LOG_LEVELS } from "./logging/index.js";
+
+// Runtime detection helpers (single source of truth for Docker/PID-1 probes)
+export { isDocker } from "./runtime/is-docker.js";

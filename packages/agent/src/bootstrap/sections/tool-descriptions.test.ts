@@ -24,8 +24,8 @@ describe("LEAN_TOOL_DESCRIPTIONS", () => {
     }
   });
 
-  it("has entries for all 46 tools (excludes 6 native file tools)", () => {
-    expect(Object.keys(LEAN_TOOL_DESCRIPTIONS).length).toBe(46);
+  it("has entries for all 45 tools (excludes 6 native file tools)", () => {
+    expect(Object.keys(LEAN_TOOL_DESCRIPTIONS).length).toBe(45);
   });
 });
 
@@ -38,8 +38,8 @@ describe("TOOL_SUMMARIES", () => {
     }
   });
 
-  it("has entries for all 52 tools", () => {
-    expect(Object.keys(TOOL_SUMMARIES).length).toBe(52);
+  it("has entries for all 51 tools", () => {
+    expect(Object.keys(TOOL_SUMMARIES).length).toBe(51);
   });
 });
 
@@ -114,6 +114,76 @@ describe("TOOL_GUIDES", () => {
   it("exec guide adds Sandbox-Forbidden Paths section header", () => {
     expect(TOOL_GUIDES.exec).toMatch(/## Sandbox-Forbidden Paths/);
   });
+
+  // -------------------------------------------------------------------------
+  // 260428-rrr Bug B: prescriptive 2-step creation flow + workspace.profile
+  // enum guardrail. Production trace f099bac9 (session 678314278) showed
+  // 18 fleet-creation failures across 9 agents because the LLM:
+  //   (a) embedded persona/role text inside the create config (Zod
+  //       unrecognized_keys rejection on z.strictObject), and
+  //   (b) probed for non-enum workspace.profile values like "minimal" /
+  //       "none" (Zod enum rejection).
+  // The TOOL_GUIDES rewrite leads with a prescriptive "Two-step creation
+  // flow (REQUIRED)" block that names ROLE.md as the persona destination
+  // and pins the enum to "full"|"specialist" only.
+  // -------------------------------------------------------------------------
+  describe("TOOL_GUIDES.agents_manage (260428-rrr: prescriptive 2-step flow)", () => {
+    it("contains a 'Two-step creation flow' leading block", () => {
+      expect(TOOL_GUIDES.agents_manage).toContain("Two-step creation flow");
+    });
+
+    it("names ROLE.md as the file for persona/role/identity", () => {
+      expect(TOOL_GUIDES.agents_manage).toContain("ROLE.md");
+    });
+
+    it("explicitly forbids passing persona in create config", () => {
+      expect(TOOL_GUIDES.agents_manage).toContain("Do NOT pass persona");
+    });
+
+    it("pins workspace.profile enum guardrail", () => {
+      expect(TOOL_GUIDES.agents_manage).toContain("Workspace.profile values");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 260428-vyf Layer 2: TOOL_GUIDE rewrite — single-call creation is now
+  // PREFERRED for batch fleet creation; the existing 2-step flow is
+  // relabeled as FALLBACK and ordered after the single-call section.
+  //
+  // Goal: shrink the LLM's parallel-tool-call surface (3 calls per agent →
+  // 1 call per agent) so TOOL_GUIDE prescriptive text is not crowded out
+  // under high parallel-tool-call load (production session 1a8b0d91 turn
+  // 13 silent termination after a 9-agent batch creation).
+  //
+  // The existing 260428-rrr pin tests above MUST continue to pass against
+  // the rewritten guide (FALLBACK section preserves the verbatim 2-step
+  // language including "Two-step creation flow", "ROLE.md", "Do NOT pass
+  // persona", and "Workspace.profile values").
+  // -------------------------------------------------------------------------
+  describe("TOOL_GUIDES.agents_manage (260428-vyf: single-call PREFERRED)", () => {
+    it("Test 10 — contains a 'Single-call creation' PREFERRED block with workspace.role/identity example", () => {
+      expect(TOOL_GUIDES.agents_manage).toContain("Single-call creation");
+      expect(TOOL_GUIDES.agents_manage).toContain("PREFERRED for batch fleet creation");
+      expect(TOOL_GUIDES.agents_manage).toContain("workspace:");
+      expect(TOOL_GUIDES.agents_manage).toMatch(/role:\s*"/);
+      expect(TOOL_GUIDES.agents_manage).toMatch(/identity:\s*"/);
+    });
+
+    it("Test 11 — size hints (16384 / 4096) appear in the single-call section", () => {
+      expect(TOOL_GUIDES.agents_manage).toContain("16384");
+      expect(TOOL_GUIDES.agents_manage).toContain("4096");
+    });
+
+    it("Test 12 — FALLBACK relabel and ordering: single-call appears BEFORE the FALLBACK 2-step block", () => {
+      const guide = TOOL_GUIDES.agents_manage;
+      expect(guide).toContain("Two-step creation flow (FALLBACK)");
+      const singleCallIdx = guide.indexOf("Single-call creation");
+      const fallbackIdx = guide.indexOf("(FALLBACK)");
+      expect(singleCallIdx).toBeGreaterThan(-1);
+      expect(fallbackIdx).toBeGreaterThan(-1);
+      expect(singleCallIdx).toBeLessThan(fallbackIdx);
+    });
+  });
 });
 
 describe("key set parity", () => {
@@ -156,12 +226,8 @@ describe("confusable pair disambiguation", () => {
     expect(resolve("session_search")).toContain("memory_search");
   });
 
-  it("sessions_list mentions agents_list", () => {
-    expect(resolve("sessions_list")).toContain("agents_list");
-  });
-
-  it("agents_list mentions sessions_list", () => {
-    expect(resolve("agents_list")).toContain("sessions_list");
+  it("sessions_list mentions agents_manage", () => {
+    expect(resolve("sessions_list")).toContain("agents_manage");
   });
 
   it("sessions_send mentions message", () => {

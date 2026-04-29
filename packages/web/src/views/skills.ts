@@ -131,8 +131,7 @@ const PLATFORM_TOOL_DESCRIPTIONS: Record<string, string> = {
   sessions_send: "Send a message into another session (fire-and-forget, wait, or ping-pong)",
   sessions_spawn: "Spawn a sub-agent session for background work (sync or async)",
   sessions_manage: "Delete, reset, export, or compact session lifecycles",
-  agents_list: "List all configured agent IDs in the system",
-  agents_manage: "Create, inspect, update, suspend/resume, and delete agents",
+  agents_manage: "List, create, inspect, update, suspend/resume, and delete agents",
   subagents: "List, kill, or steer running sub-agents",
   message: "Send, reply, react, edit, delete, and fetch messages across all channels",
   discord_action: "Pin/unpin, kick/ban, roles, threads, channels, bot presence",
@@ -158,7 +157,7 @@ const PLATFORM_TOOL_DESCRIPTIONS: Record<string, string> = {
 const PLATFORM_TOOL_CATEGORIES: { label: string; tools: string[] }[] = [
   { label: "MEMORY", tools: ["memory_search", "memory_get", "memory_store", "memory_manage"] },
   { label: "SESSIONS", tools: ["session_status", "sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "sessions_manage"] },
-  { label: "AGENTS", tools: ["agents_list", "agents_manage", "subagents"] },
+  { label: "AGENTS", tools: ["agents_manage", "subagents"] },
   { label: "MESSAGING", tools: ["message", "discord_action", "telegram_action", "slack_action", "whatsapp_action"] },
   { label: "MEDIA", tools: ["image_analyze", "tts_synthesize", "transcribe_audio", "describe_video", "extract_document"] },
   { label: "INFRASTRUCTURE", tools: ["cron", "gateway", "browser", "obs_query"] },

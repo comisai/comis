@@ -980,6 +980,136 @@ describe("PiExecutor", () => {
       );
       expect(bookendCall![0].durationMs).toBeGreaterThanOrEqual(0);
     });
+
+    // -----------------------------------------------------------------------
+    // 260428-ur1 — L4 post-batch continuation integration
+    // -----------------------------------------------------------------------
+
+    it("Test 10 — emits postBatchContinuation log fields when handler fires after empty-final-after-tool-batch", async () => {
+      // Conversation ending with an empty assistant turn after agents_manage
+      // succeeded. pi-coding-agent session shape: tool results live in
+      // role: "toolResult" entries (NOT role: "user" with tool_result blocks).
+      mockSession.messages = [
+        { role: "user", content: [{ type: "text", text: "create 1 agent" }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I'll create it." },
+            { type: "toolCall", id: "t1", name: "agents_manage", arguments: { action: "create", agent_id: "x" } },
+          ],
+        },
+        { role: "toolResult", toolCallId: "t1", toolName: "agents_manage", content: [{ type: "text", text: "ok" }], isError: false },
+        { role: "assistant", content: [] }, // EMPTY final turn — triggers L4
+      ];
+
+      // Bridge result tuned so the upstream silent-failure handlers
+      // at executor-prompt-runner.ts:394-436 (silent-02 recovery) and
+      // ~821 (all-thinking continuation) BOTH skip — letting L4 be the
+      // one that fires:
+      //   - textEmitted: true   → silent-02 skips (treats empty final after
+      //                            text in earlier turns as expected).
+      //   - stepsExecuted: 0    → all-thinking continuation skips.
+      //   - llmCalls: 1, finishReason: "stop" → not stuck-session.
+      // L4's detection reads session.messages directly (not the bridge
+      // step counter), so the toolCall in our pre-populated messages still
+      // triggers detection.
+      mockGetResult.mockReturnValue({
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.01 },
+        stepsExecuted: 0,
+        llmCalls: 1,
+        finishReason: "stop",
+        textEmitted: true,
+      });
+
+      // First read returns "" (triggers L4); after followUp pushes the
+      // recovered turn, getVisibleAssistantText reads it directly from
+      // session.messages (since the latest assistant has a visible text
+      // block, phase-filter's getVisibleAssistantText returns it).
+      mockGetLastAssistantText.mockReturnValue("");
+      mockFollowUp.mockImplementationOnce(async () => {
+        mockSession.messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: "done!" }],
+        });
+        // Bump the SDK getter so post-followUp reads see "done!".
+        mockGetLastAssistantText.mockReturnValue("done!");
+      });
+
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-l4");
+
+      const infoCalls = (deps.logger.info as Mock).mock.calls;
+      const bookendCall = infoCalls.find(
+        ([_fields, msg]: [any, string]) => msg === "Execution complete",
+      );
+      expect(bookendCall).toBeDefined();
+      const fields = bookendCall![0];
+
+      expect(fields).toMatchObject({
+        postBatchContinuationFired: true,
+        postBatchContinuationAttempts: 1,
+        postBatchContinuationOutcome: "recovered",
+      });
+      expect(mockFollowUp).toHaveBeenCalledTimes(1);
+    });
+
+    it("Test 11 — emits sepStepsPlanned/sepStepsCompleted; does NOT emit sepNudgeTriggered (SEP observability after L4 downgrade)", async () => {
+      // Inject a synthetic SEP plan into executionPlanRef.current via the
+      // bridge mock. executor-post-execution.ts:339 reads the ref to
+      // populate result.plannerMetrics, which feeds the bookend log.
+      (createPiEventBridge as Mock).mockImplementationOnce((opts: any) => {
+        if (opts.executionPlan) {
+          opts.executionPlan.current = {
+            active: true,
+            request: "do work",
+            steps: [
+              { index: 1, description: "Step A", status: "done" },
+              { index: 2, description: "Step B", status: "done" },
+              { index: 3, description: "Step C", status: "pending" },
+            ],
+            completedCount: 2,
+            createdAtMs: Date.now(),
+          };
+        }
+        return {
+          listener: mockBridgeListener,
+          getResult: mockGetResult,
+          addGhostCost: vi.fn(),
+        };
+      });
+
+      // Normal flow: assistant emits visible text, no L4 trigger.
+      mockSession.messages = [
+        { role: "user", content: [{ type: "text", text: "do work" }] },
+        { role: "assistant", content: [{ type: "text", text: "Done." }] },
+      ];
+      mockGetLastAssistantText.mockReturnValue("Done.");
+
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-sep");
+
+      const infoCalls = (deps.logger.info as Mock).mock.calls;
+      const bookendCall = infoCalls.find(
+        ([_fields, msg]: [any, string]) => msg === "Execution complete",
+      );
+      expect(bookendCall).toBeDefined();
+      const fields = bookendCall![0];
+
+      // POSITIVE pin (observability preserved — uses actual tool-call count,
+      // not prose-extracted step count, to avoid over-counting):
+      expect(fields).toMatchObject({
+        sepStepsPlanned: 2,
+        sepStepsCompleted: 2,
+      });
+
+      // ABSENCE pin (enforcement-mode field gone):
+      expect("sepNudgeTriggered" in fields).toBe(false);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -4551,13 +4681,16 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // The pipeline status from execution 1 must NOT leak through
-      expect(result.response).toBe("");
+      // L3 cross-boundary guard: synthesis is bounded by userMessageIndex, so it
+      // sees ONLY Execution 2's image_generate tool call. The pipeline status from
+      // Execution 1 must NOT leak through into the synthesized summary.
+      expect(result.response).toContain("tool-call summary recovered");
+      expect(result.response).toContain("image_generate");
       expect(result.response).not.toContain("Pipeline status");
       expect(result.response).not.toContain("trading pipeline");
     });
 
-    it("prefers non-tool turn over pre-tool commentary (stock-scanner scenario)", async () => {
+    it("synthesizes tool-call summary instead of leaking framing/step prose (stock-scanner scenario)", async () => {
       // Final turn: empty → triggers recovery
       mockGetLastAssistantText.mockReturnValue("");
       mockGetResult.mockReturnValue({
@@ -4568,10 +4701,10 @@ describe("PiExecutor", () => {
         finishReason: "stop",
         textEmitted: true,
       });
-      // Simulates the stock-scanner incident: the agent emitted step progress
-      // annotations as pre-tool commentary (text + toolCall in the same turn),
-      // then a standalone framing response earlier. Recovery should prefer
-      // the framing response over the "Step 4/4" annotation.
+      // L3 stock-scanner update: the agent emitted step progress annotations
+      // mixed with tool calls. Under L3 synthesis, recovery returns a structured
+      // tool-call summary — neither the framing prose nor the step annotation
+      // leaks through as the user-visible reply.
       mockSession.messages = [
         { role: "user", content: "Create a stock scanner skill", timestamp: 1 },
         {
@@ -4610,13 +4743,19 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Should recover the standalone framing text, NOT the step annotation
-      expect(result.response).toContain("I'm going to build it as a private skill");
+      // Positive: synthesis fires and lists the actual tools used.
+      expect(result.response).toContain("tool-call summary recovered");
+      expect(result.response).toContain("Completed 3 tool calls");
+      expect(result.response).toContain("read");
+      expect(result.response).toContain("exec");
+      expect(result.response).toContain("sessions_spawn");
+      // Negative: neither the framing prose nor the step annotations leak through.
+      expect(result.response).not.toContain("I'm going to build");
       expect(result.response).not.toContain("Step 4/4");
       expect(result.response).not.toContain("sanity-testing");
     });
 
-    it("falls back to pre-tool commentary when no standalone text turns exist", async () => {
+    it("synthesizes tool-call summary when no standalone text turns exist (replaces deleted pre-tool commentary fallback)", async () => {
       // Final turn: empty → triggers recovery
       mockGetLastAssistantText.mockReturnValue("");
       mockGetResult.mockReturnValue({
@@ -4627,7 +4766,9 @@ describe("PiExecutor", () => {
         finishReason: "stop",
         textEmitted: true,
       });
-      // All assistant turns with text also have tool calls — no standalone text
+      // All assistant turns with text also have tool calls — no standalone text.
+      // Under L3, synthesis now returns a structured tool-call summary instead
+      // of leaking the framing prose ("Let me handle that for you.").
       mockSession.messages = [
         { role: "user", content: "Do something", timestamp: 1 },
         {
@@ -4654,8 +4795,11 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Should fall back to pre-tool commentary when no standalone turns have text
-      expect(result.response).toContain("Let me handle that for you.");
+      // Positive: synthesis output, NOT the framing prose.
+      expect(result.response).toContain("tool-call summary recovered");
+      expect(result.response).toContain("exec");
+      // Negative: framing prose must NOT leak through.
+      expect(result.response).not.toContain("Let me handle that for you.");
     });
   });
 
@@ -4664,27 +4808,14 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("late continuation after all-thinking execution", () => {
-    it("fires late continuation when textEmitted is true but all text is thinking-only", async () => {
-      // When textEmitted=true, the zero-LLM-call detection block is skipped entirely.
-      // The code falls through to empty-response recovery:
-      //   candidateResponse = getLastAssistantText() -> ""
-      //   llmCalls > 0 && !textEmitted -> textEmitted=true, so condition is false
-      //   -> falls to candidateResponse === "" check
-      //   -> textEmitted=true case proceeds to empty-response recovery
-      //   -> rawResponse="" -> needsRecovery=true
-      //   -> session.messages has only thinking blocks -> recovery returns ""
-      //   -> extractedResponse="" -> result.response=""
-      //   -> late continuation fires: response="" && stepsExecuted>0 && finishReason="stop"
-      //   -> calls followUp -> getLastAssistantText returns recovered text
+    it("synthesis covers thinking-only-with-tools case before late continuation can fire", async () => {
+      // L3 synthesis closes the late-continuation pathway for fixtures that
+      // include tool calls: synthesis produces non-empty output, so the
+      // `result.response === ""` precondition for late-continuation is false
+      // and followUp is NOT called. The user gets immediate context (which
+      // tools ran) instead of waiting for a follow-up nudge.
 
-      // Mock sequence for getLastAssistantText:
-      //   1. Initial candidateResponse check: ""
-      //   2. rawResponse for empty-response recovery: ""
-      //   3. After late-continuation followUp - recovery read: "Here is your chart..."
-      mockGetLastAssistantText
-        .mockReturnValueOnce("") // initial candidateResponse check
-        .mockReturnValueOnce("") // rawResponse for empty-response recovery
-        .mockReturnValue("Here is your chart..."); // after followUp recovery
+      mockGetLastAssistantText.mockReturnValue("");
 
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4723,43 +4854,54 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      expect(result.response).toBe("Here is your chart...");
+      // Synthesis fires from the exec tool call.
+      expect(result.response).toContain("tool-call summary recovered");
+      expect(result.response).toContain("exec");
       expect(result.finishReason).not.toBe("error");
-      expect(mockFollowUp).toHaveBeenCalledWith("Please provide a visible response summarizing what you did.");
+      // Late continuation is short-circuited — synthesis already filled in a
+      // useful response.
+      expect(mockFollowUp).not.toHaveBeenCalled();
     });
 
-    it("falls through gracefully when late-continuation followUp produces empty response", async () => {
-      // All getLastAssistantText calls return "" — even after followUp
+    it("late continuation still fires when synthesis is unavailable (pure-conversational thinking-only case)", async () => {
+      // L3 update: synthesis only fires when ≥1 tool call exists in the current
+      // execution window. For pure-conversational fixtures (no tool calls) where
+      // all visible text is thinking-only, recovery returns "" → late
+      // continuation still fires as before. This proves the L3 change did not
+      // break the late-continuation pathway for the case it was designed for.
       mockGetLastAssistantText.mockReturnValue("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
         cost: { total: 0.05 },
+        // stepsExecuted > 0 is the late-continuation precondition; here it
+        // reflects internal LLM work (e.g. thinking deltas) without tool calls.
         stepsExecuted: 3,
         llmCalls: 4,
         finishReason: "stop",
         textEmitted: true,
       });
 
-      // All assistant messages are thinking-only
+      // All assistant messages are thinking-only AND there are zero tool calls
+      // in the current execution window. Synthesis is short-circuited (no tool
+      // calls collected), standalone walk-backward finds no visible text →
+      // recovery returns "" → late continuation fires.
       mockSession.messages = [
         { role: "user", content: "Process the data", timestamp: 1 },
         {
           role: "assistant",
           content: [
-            { type: "thinking", thinking: "Processing data with the tool." },
-            { type: "toolCall", id: "tc1", name: "exec", arguments: {} },
+            { type: "thinking", thinking: "Processing data internally." },
           ],
-          stopReason: "toolUse",
+          stopReason: "stop",
           timestamp: 2,
         },
-        { role: "toolResult", toolCallId: "tc1", toolName: "exec", content: [{ type: "text", text: "OK" }], isError: false, timestamp: 3 },
         {
           role: "assistant",
           content: [
             { type: "thinking", thinking: "Data processed." },
           ],
           stopReason: "stop",
-          timestamp: 4,
+          timestamp: 3,
         },
       ];
       mockFollowUp.mockResolvedValue(undefined);
@@ -4768,7 +4910,7 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Late continuation tried but failed; downstream handler returns empty response
+      // Late continuation tried but followUp produced nothing visible → empty.
       expect(result.response).toBe("");
       expect(mockFollowUp).toHaveBeenCalled();
     });

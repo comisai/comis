@@ -84,11 +84,14 @@ function buildHealthContext(configPaths: string[]): DoctorContext {
   const dataDir = config?.dataDir || os.homedir() + "/.comis";
   const daemonPidFile = dataDir + "/daemon.pid";
 
+  // gw.host is a *bind* address; remap wildcards to loopback so the
+  // connectivity probe targets a real address.
   let gatewayUrl: string | undefined;
   if (config?.gateway) {
     const gw = config.gateway;
-    const host = gw.host || "127.0.0.1";
-    const port = gw.port || 3000;
+    const bindHost = gw.host || "127.0.0.1";
+    const host = bindHost === "0.0.0.0" ? "127.0.0.1" : bindHost === "::" ? "::1" : bindHost;
+    const port = gw.port || 4766;
     const protocol = gw.tls ? "https" : "http";
     gatewayUrl = `${protocol}://${host}:${port}`;
   }

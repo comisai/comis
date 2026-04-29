@@ -68,7 +68,6 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   pipeline: "Execute multi-node DAG workflow pipelines",
   session_status: "Show agent status and usage",
   session_search: "Search full session transcript history",
-  agents_list: "List all available agent IDs",
   // Platform
   cron: "Manage cron jobs and reminders",
   gateway: "Read or patch system config",
@@ -139,8 +138,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   },
 
   // ----- Sessions -----
-  // Confusable pair: sessions_list / agents_list
-  sessions_list: "List active sessions with filters. For available agent IDs, use agents_list.",
+  sessions_list: "List active sessions with filters. For available agent IDs, use agents_manage({action:'list'}).",
   sessions_history: "Fetch conversation history for another session or sub-agent.",
   // Confusable pair: sessions_send / message
   sessions_send: "Send message to another session. For chat channel messages, use message.",
@@ -150,9 +148,6 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
   session_status: "Show agent status card: usage, model, steps. Optional per-session model override.",
   // Confusable pair: session_search / memory_search
   session_search: "Search full session transcript including evicted content. For stored facts, use memory_search.",
-  // Confusable pair: agents_list / sessions_list
-  agents_list: "List available agent IDs for spawning. For active sessions, use sessions_list.",
-
   // ----- Platform -----
   cron: "Manage cron jobs, scheduled tasks, and reminders.",
   gateway: "Read/patch config, restart gateway, check status.",
@@ -177,7 +172,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 
   // ----- Privileged / Supervisor (dynamic: admin suffix) -----
   agents_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage agent fleet: create, get, update, delete, suspend, resume.";
+    const base = "Manage agent fleet: list, create, get, update, delete, suspend, resume. For batch creation, pass workspace.role/identity inline to skip the 2-step write flow.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   obs_query: (ctx: ToolDescriptionContext): string => {
@@ -244,7 +239,7 @@ export const TOOL_ORDER: string[] = [
   "memory_store", "memory_get",
   "web_fetch",
   "sessions_list", "sessions_history", "sessions_send", "sessions_spawn",
-  "subagents", "pipeline", "session_status", "session_search", "agents_list",
+  "subagents", "pipeline", "session_status", "session_search",
   "cron", "process",
   "discover_tools",
 ];
@@ -261,7 +256,28 @@ export const TOOL_ORDER: string[] = [
  * Not all tools need guides -- most are self-explanatory from their lean description.
  */
 export const TOOL_GUIDES: Record<string, string> = {
-  agents_manage: `## Workspace Customization Guide
+  agents_manage: `## Single-call creation (PREFERRED for batch fleet creation)
+For batch creation (multiple agents in one turn) and any case where you already know the agent's role and identity, use the SINGLE-CALL form. This collapses the previous 3-call workflow (create + 2× write) into 1 call per agent — critical when creating fleets of 5+ agents in parallel.
+
+agents_manage({action:"create", agent_id, config:{
+  name, model, provider, maxSteps,
+  workspace:{
+    profile:"full"|"specialist",
+    role:"...persona, role, behavioral guidelines, domain conventions...",      // inline ROLE.md content (max 16384 chars)
+    identity:"...name, creature, vibe, emoji, ethos..."                          // inline IDENTITY.md content (max 4096 chars)
+  },
+  skills?:{...}
+}})
+
+The daemon writes ROLE.md and IDENTITY.md atomically as part of create. The tool result reports inlineWritesResult; on success the next-step contract says "No further setup needed — agent is operationally ready" and you SKIP the write() roundtrip entirely.
+
+## Two-step creation flow (FALLBACK)
+Use this only when role/identity cannot be inlined (e.g. content discovered after create, multi-step interactive design):
+Step 1 — call agents_manage({action:"create", agent_id, config:{name, model, provider, maxSteps, workspace?:{profile:"full"|"specialist"}, skills?:{...}}}). Only those fields are accepted; the schema is z.strictObject so unknown keys are rejected. Do NOT pass persona/role/description/prompt/instructions in create config when omitting the inline form.
+Step 2 — call write({path: "~/.comis/workspace-{agent_id}/ROLE.md", content: "...persona/role/behavioral guidance..."}) to set the agent's role and identity. Use IDENTITY.md for name/creature/vibe/emoji.
+
+Workspace.profile values: "full" or "specialist" ONLY. No "none", "minimal", "compact", or other values.
+## Workspace Customization Guide
 Each agent gets a workspace at ~/.comis/workspace-{agentId}/ with these files:
 IDENTITY.md (CRITICAL): Set Name, Creature, Vibe, Emoji. A filled Name auto-skips onboarding.
 ROLE.md (CRITICAL): Agent role, behavioral guidelines, domain conventions.
@@ -278,7 +294,7 @@ All built-in tools ENABLED by default (except browser). Do NOT disable tools unl
 maxSteps default: 50. Do NOT set below 20.
 ## Batch Creation
 Present a plan to the user before creating agents in batch.
-Multiple agents can be created in one turn. Customize ALL workspace files for each agent after creation.`,
+Multiple agents can be created in one turn. Customize ALL workspace files for each agent after creation — or use single-call creation above to inline ROLE.md/IDENTITY.md and skip the post-create writes entirely.`,
 
   pipeline: `## Pipeline Usage Guide
 Use 'define' action first to validate graph structure before save/execute.

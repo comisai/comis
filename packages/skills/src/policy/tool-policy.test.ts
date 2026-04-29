@@ -39,7 +39,6 @@ function createMockTools(): AgentTool<any>[] {
     mockTool("sessions_send"),
     mockTool("sessions_spawn"),
     mockTool("subagents"),
-    mockTool("agents_list"),
   ];
 }
 
@@ -362,7 +361,7 @@ describe("TOOL_GROUPS", () => {
 
   it("group:sessions contains all 9 session tools including session_search", () => {
     const sessions = TOOL_GROUPS["group:sessions"]!;
-    expect(sessions).toHaveLength(9);
+    expect(sessions).toHaveLength(8);
     expect(sessions).toContain("sessions_list");
     expect(sessions).toContain("sessions_history");
     expect(sessions).toContain("sessions_send");
@@ -370,7 +369,6 @@ describe("TOOL_GROUPS", () => {
     expect(sessions).toContain("session_status");
     expect(sessions).toContain("session_search");
     expect(sessions).toContain("subagents");
-    expect(sessions).toContain("agents_list");
     expect(sessions).toContain("pipeline");
   });
 

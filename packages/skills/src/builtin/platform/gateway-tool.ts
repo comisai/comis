@@ -28,6 +28,8 @@ import {
 } from "./tool-helpers.js";
 import { createMultiActionDispatchTool } from "./messaging-factory.js";
 import type { RpcCall } from "./cron-tool.js";
+import { isDocker } from "@comis/infra";
+import type { ComisLogger } from "@comis/infra";
 
 // ---------------------------------------------------------------------------
 // Canonical action list -- single source of truth
@@ -147,9 +149,14 @@ const GatewayToolParams = Type.Object({
  * - **env_list** -- List configured secret NAMES (admin-only, read-only). Use before asking the user for a key to check whether it is already configured. Values are never returned.
  *
  * @param rpcCall - RPC call function for delegating to the daemon backend
+ * @param logger - Structured logger for surfacing operator-relevant events
+ *   (e.g., the Docker restart-policy WARN on the `restart` action)
  * @returns AgentTool implementing the gateway control interface
  */
-export function createGatewayTool(rpcCall: RpcCall): AgentTool<typeof GatewayToolParams> {
+export function createGatewayTool(
+  rpcCall: RpcCall,
+  logger: ComisLogger,
+): AgentTool<typeof GatewayToolParams> {
   const restartGate = createActionGate("gateway.restart");
   const patchGate = createActionGate("config.patch");
   const applyGate = createActionGate("config.apply");
@@ -222,6 +229,22 @@ export function createGatewayTool(rpcCall: RpcCall): AgentTool<typeof GatewayToo
                 actionType: gate.actionType,
                 hint: "Ask the user to confirm this restart, then call again with _confirmed: true.",
               };
+            }
+            // 260428-qrn: Inside Docker the restart relies entirely on the
+            // container's restart policy to bring the daemon back. Surface
+            // a structured WARN so the operator gets a breadcrumb in
+            // `docker logs` pointing at `--restart unless-stopped`. Tool
+            // result schema unchanged (Pino-only -- no extra content blocks).
+            if (isDocker()) {
+              logger.warn(
+                {
+                  hint:
+                    "Container must have --restart unless-stopped (or compose restart: unless-stopped) for the restart to bring it back. Otherwise run 'docker restart <name>' from your host after the daemon exits.",
+                  errorKind: "config" as const,
+                  module: "skill.gateway",
+                },
+                "Daemon restart requested inside Docker container — relies on container restart policy",
+              );
             }
             return rpcCall("gateway.restart", { _trustLevel });
           }

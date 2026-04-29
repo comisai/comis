@@ -9,11 +9,12 @@ import type { LogLevelManager } from "./observability/log-infra.js";
 import type { TokenTracker } from "./observability/token-tracker.js";
 import type { ShutdownHandle } from "./process/graceful-shutdown.js";
 import type { ProcessMonitor } from "./process/process-monitor.js";
-import { main, type DaemonOverrides, hardenDataDirPermissions, runPreflightDoctor } from "./daemon.js";
+import { main, type DaemonOverrides, hardenDataDirPermissions, runPreflightDoctor, applyInspectDefaultsForLogging } from "./daemon.js";
 import type { MediaResult } from "./wiring/setup-media.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
+import { inspect } from "node:util";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../test/support/mock-event-bus.js";
 
@@ -712,5 +713,60 @@ describe("runPreflightDoctor", () => {
     });
     expect(closed).toBe(true);
     expect(exitFn).toHaveBeenCalledExactlyOnceWith(78);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyInspectDefaultsForLogging
+// ---------------------------------------------------------------------------
+
+describe("applyInspectDefaultsForLogging", () => {
+  let savedDepth: number | null;
+  let savedBreakLength: number;
+
+  beforeEach(() => {
+    savedDepth = inspect.defaultOptions.depth ?? null;
+    savedBreakLength = inspect.defaultOptions.breakLength ?? 80;
+    // Reset to Node defaults for each test so prior test state cannot leak.
+    inspect.defaultOptions.depth = 2;
+    inspect.defaultOptions.breakLength = 80;
+  });
+
+  afterEach(() => {
+    inspect.defaultOptions.depth = savedDepth;
+    inspect.defaultOptions.breakLength = savedBreakLength;
+  });
+
+  it("sets depth=null and breakLength=Infinity when ANTHROPIC_LOG=debug", () => {
+    const result = applyInspectDefaultsForLogging({ ANTHROPIC_LOG: "debug" });
+    expect(inspect.defaultOptions.depth).toBeNull();
+    expect(inspect.defaultOptions.breakLength).toBe(Infinity);
+    expect(result).toEqual({ depthChanged: true, breakLengthChanged: true });
+  });
+
+  it("sets depth=null and breakLength=Infinity when ANTHROPIC_LOG=info", () => {
+    const result = applyInspectDefaultsForLogging({ ANTHROPIC_LOG: "info" });
+    expect(inspect.defaultOptions.depth).toBeNull();
+    expect(inspect.defaultOptions.breakLength).toBe(Infinity);
+    expect(result).toEqual({ depthChanged: true, breakLengthChanged: true });
+  });
+
+  it("does not mutate inspect defaults when ANTHROPIC_LOG is unset", () => {
+    const result = applyInspectDefaultsForLogging({});
+    expect(inspect.defaultOptions.depth).toBe(2);
+    expect(inspect.defaultOptions.breakLength).toBe(80);
+    expect(result).toEqual({ depthChanged: false, breakLengthChanged: false });
+  });
+
+  it("does not mutate inspect defaults for non-debug/info ANTHROPIC_LOG values", () => {
+    const r1 = applyInspectDefaultsForLogging({ ANTHROPIC_LOG: "warn" });
+    expect(inspect.defaultOptions.depth).toBe(2);
+    expect(inspect.defaultOptions.breakLength).toBe(80);
+    expect(r1).toEqual({ depthChanged: false, breakLengthChanged: false });
+
+    const r2 = applyInspectDefaultsForLogging({ ANTHROPIC_LOG: "" });
+    expect(inspect.defaultOptions.depth).toBe(2);
+    expect(inspect.defaultOptions.breakLength).toBe(80);
+    expect(r2).toEqual({ depthChanged: false, breakLengthChanged: false });
   });
 });

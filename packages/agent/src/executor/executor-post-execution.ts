@@ -336,31 +336,29 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     }
   }
 
-  // SEP: Attach planner metrics to result
+  // SEP: Attach planner metrics to result (observability-only post-L4).
+  // Uses actual tool-call count instead of prose-extracted step count to
+  // avoid over-counting (the LLM's numbered plan often has 2-3× more
+  // items than logical steps — e.g., "11 steps" for a 4-tool task).
   if (executionPlanRef.current?.active) {
     const plan = executionPlanRef.current;
+    const toolCalls = result.stepsExecuted ?? 0;
     result.plannerMetrics = {
-      stepsPlanned: plan.steps.length,
-      stepsCompleted: plan.completedCount,
-      stepsSkipped: plan.steps.filter(s => s.status === "skipped").length,
-      nudgeTriggered: plan.nudged,
+      stepsPlanned: toolCalls,
+      stepsCompleted: toolCalls,
+      stepsSkipped: 0,
       planExtractionTurn: 1,
     };
 
-    // Emit plan_completed if all steps resolved
-    const allResolved = plan.steps.every(s => s.status === "done" || s.status === "skipped");
-    if (allResolved) {
-      deps.eventBus.emit("sep:plan_completed", {
-        agentId: agentId ?? "default",
-        sessionKey: formattedKey,
-        stepsPlanned: plan.steps.length,
-        stepsCompleted: plan.completedCount,
-        stepsSkipped: plan.steps.filter(s => s.status === "skipped").length,
-        nudgeTriggered: plan.nudged,
-        durationMs: Date.now() - plan.createdAtMs,
-        timestamp: Date.now(),
-      });
-    }
+    deps.eventBus.emit("sep:plan_completed", {
+      agentId: agentId ?? "default",
+      sessionKey: formattedKey,
+      stepsPlanned: toolCalls,
+      stepsCompleted: toolCalls,
+      stepsSkipped: 0,
+      durationMs: Date.now() - plan.createdAtMs,
+      timestamp: Date.now(),
+    });
   }
 
   // Record timestamp after successful execution for TTL guard.
@@ -439,7 +437,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       ...(result.plannerMetrics && {
         sepStepsPlanned: result.plannerMetrics.stepsPlanned,
         sepStepsCompleted: result.plannerMetrics.stepsCompleted,
-        sepNudgeTriggered: result.plannerMetrics.nudgeTriggered,
+      }),
+      ...(result.continuationMetrics && {
+        postBatchContinuationFired: result.continuationMetrics.fired,
+        postBatchContinuationAttempts: result.continuationMetrics.attempts,
+        postBatchContinuationOutcome: result.continuationMetrics.outcome,
       }),
       // 1.5 + 3.2: Thinking token tracking (conditional -- only when thinking tokens detected)
       ...(bridgeResult.thinkingTokens != null && bridgeResult.thinkingTokens > 0 && {

@@ -234,8 +234,8 @@ describe("IcSkillsView", () => {
     it("shows tool cards with names and descriptions", () => {
       const toolCards = el.shadowRoot?.querySelectorAll(".tool-card");
       expect(toolCards).not.toBeNull();
-      // 11 built-in + 31 platform = 42 tool cards
-      expect(toolCards!.length).toBe(42);
+      // 11 built-in + 30 platform = 41 tool cards
+      expect(toolCards!.length).toBe(41);
 
       const firstCard = toolCards![0];
       const name = firstCard.querySelector(".tool-name");

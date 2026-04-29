@@ -40,6 +40,7 @@
     "@clack/prompts": "^1.1.0",
     "@comis/agent": "workspace:*",
     "@comis/core": "workspace:*",
+    "@comis/infra": "workspace:*",
     "@comis/memory": "workspace:*",
     "@comis/shared": "workspace:*",
     "chalk": "^5.6.2",

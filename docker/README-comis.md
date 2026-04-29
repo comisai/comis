@@ -45,19 +45,22 @@ docker pull comisai/comis:latest-slim
 
 docker run -d \
   --name comis \
+  --restart unless-stopped \
   -p 127.0.0.1:4766:4766 \
-  -v "$HOME/.comis:/data" \
-  -v "$HOME/.comis:/etc/comis:ro" \
-  -e SECRETS_MASTER_KEY="$(openssl rand -hex 32)" \
+  -v comis-data:/home/comis/.comis \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   comisai/comis:latest-slim
 ```
+
+The `--restart unless-stopped` flag is required — the wizard and any agent-initiated config change (`gateway.restart`, `gateway.env_set`, `gateway.patch`) signal the daemon to reload, and Docker's restart policy is what brings the container back with the new config.
 
 Verify:
 
 ```bash
 curl http://127.0.0.1:4766/health
 ```
+
+> **Already running Comis on the host?** Don't bind-mount your existing `~/.comis` into the container — the host's `config.yaml` may reference env vars that aren't set in the container, and both daemons would race on the SQLite databases. Use a Docker named volume (as above) or a separate host directory (e.g. `~/.comis-docker`).
 
 ## Docker Compose
 
@@ -70,10 +73,8 @@ services:
     ports:
       - "127.0.0.1:4766:4766"
     volumes:
-      - ~/.comis:/data
-      - ~/.comis:/etc/comis:ro
+      - comis-data:/home/comis/.comis
     environment:
-      - SECRETS_MASTER_KEY=${SECRETS_MASTER_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
@@ -81,9 +82,15 @@ services:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - COMIS_GATEWAY_HOST=0.0.0.0
       - COMIS_GATEWAY_PORT=4766
+      # Optional — set to enable the encrypted secrets.db (opt-in).
+      # Without it the daemon runs in legacy .env mode (default).
+      - SECRETS_MASTER_KEY=${SECRETS_MASTER_KEY:-}
+
+volumes:
+  comis-data:
 ```
 
-A full `docker-compose.yml` (with the optional `comis-web` dashboard and `comis-cli` profiles) ships in the [GitHub repo](https://github.com/comisai/comis/blob/main/docker-compose.yml).
+A full `docker-compose.yml` (with the optional `comis-web` dashboard and `comis-cli` profiles, plus a host-bind variant) ships in the [GitHub repo](https://github.com/comisai/comis/blob/main/docker-compose.yml).
 
 ---
 
@@ -99,14 +106,9 @@ A full `docker-compose.yml` (with the optional `comis-web` dashboard and `comis-
 
 | Path | Purpose |
 |------|---------|
-| `/data` | Persistent state — SQLite DBs, logs, traces, secrets |
-| `/etc/comis` | Config directory — mount your `config.yaml` here (read-only recommended) |
+| `/home/comis/.comis` | All persistent state — SQLite DBs, logs, traces, secrets, `config.yaml`, `.env`. The daemon's data dir and config dir resolve to the same path inside the container. |
 
-### Required environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `SECRETS_MASTER_KEY` | 32-byte hex key for encrypting secrets at rest. Generate with `openssl rand -hex 32`. |
+> **Note:** if you bind-mount `config.yaml` from a separate read-only path (e.g. `/etc/comis:ro`), the daemon cannot write its `config.last-good.yaml` snapshot to that directory. Either keep the config writable or edit `config.yaml` from the host when recovering from a bad config.
 
 ### Common environment variables
 
@@ -117,9 +119,10 @@ A full `docker-compose.yml` (with the optional `comis-web` dashboard and `comis-
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `DISCORD_BOT_TOKEN` | Discord bot token |
 | `SLACK_BOT_TOKEN` | Slack bot token |
-| `COMIS_GATEWAY_HOST` | Bind address — must be `0.0.0.0` inside the container |
+| `COMIS_GATEWAY_HOST` | Bind address **inside the container** (separate from the host-side `-p` mapping). Defaults to `0.0.0.0` since 1.0.25. On older images, set this explicitly so Docker port-forwarding can reach the daemon. |
 | `COMIS_GATEWAY_PORT` | Gateway port (default `4766`) |
 | `COMIS_GATEWAY_TOKEN` | Optional bearer token for gateway auth |
+| `SECRETS_MASTER_KEY` | **Optional.** 32-byte hex key (generate with `openssl rand -hex 32`). When set, the daemon stores credentials in an encrypted `secrets.db`. Without it, the daemon runs in legacy `.env` mode (default). Recommended for production multi-tenant deployments — see [Secrets management](https://docs.comis.ai/operations/docker#secrets-management). |
 
 Secrets are auto-redacted in Comis logs (3 levels deep) — but never log them yourself.
 

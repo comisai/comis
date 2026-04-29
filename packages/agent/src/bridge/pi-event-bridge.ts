@@ -41,6 +41,13 @@ import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { extractMcpServerName, classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 import { checkStepLimit, emitStepLimitAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort } from "./bridge-safety-controls.js";
+import {
+  computeThinkingBlockHashes,
+  diffThinkingBlocksAgainstPersisted,
+  WIRE_DIFF_HINT_FILE_MISSING,
+  WIRE_DIFF_HINT_NOT_FOUND,
+  type ThinkingBlockHash,
+} from "./thinking-block-hash-invariant.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -134,6 +141,24 @@ export interface PiEventBridgeDeps {
    *  on each API call, read by the bridge on turn_end for per-TTL cost calculation.
    *  The bridge normalizes these estimates against the actual SDK-reported cacheWriteTokens. */
   ttlSplit?: TtlSplitEstimate;
+  /** 260428-hoy pre-call hook: invoked once per `turn_start` event, BEFORE
+   *  pi-ai serializes the next request. The closure (defined in pi-executor)
+   *  walks `session.agent.state.messages`, asserts the cross-turn
+   *  hash-invariant per assistant message with a stored hash entry (logs
+   *  ERROR on mutation), then runs the canonical-restore helper against the
+   *  canonical store (heals any mutation in-place by writing the result
+   *  back to `session.agent.state.messages`). The return value is unused by
+   *  the bridge -- the side effect is the heal write-back. Optional: when
+   *  omitted, both the diagnostic and the heal are silently disabled
+   *  (e.g., unit tests that don't drive a full agent session). */
+  getSessionMessages?: () => ReadonlyArray<unknown> | undefined;
+  /** 260428-iag wire-edge diagnostic: returns the absolute path to the
+   *  per-session JSONL on disk. The bridge invokes this only when the LLM
+   *  error path detects the signed-replay rejection signature, then
+   *  diff'd against the persisted canonical to surface mutation that
+   *  occurred AFTER the bridge's restoration hook. Optional — when
+   *  omitted, the wire-edge diagnostic is a silent no-op. */
+  getSessionJsonlPath?: () => string | null;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -152,6 +177,16 @@ export interface PiEventBridgeResult {
   getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string }>; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; sessionCostUsd?: number; sessionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
   /** Accumulate estimated cost from a timed-out API request. */
   addGhostCost: (estimated: GhostCostEstimate) => void;
+  /** 260428-hoy: ReadonlyMap views of the per-responseId hash store and
+   *  canonical-snapshot store, both populated at stream-close in lockstep.
+   *  The executor's pre-LLM-call closure reads both stores to drive the
+   *  hash-invariant assertion plus the canonical restore helper. Returns
+   *  ReadonlyMap views to preserve internal-state encapsulation -- the
+   *  underlying `m` object is never exported. */
+  getThinkingBlockStores: () => {
+    hashes: ReadonlyMap<string, ReadonlyArray<ThinkingBlockHash>>;
+    canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;
+  };
 }
 
 // Re-export helper functions for backward compatibility with existing imports
@@ -392,6 +427,90 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         }
 
         // -----------------------------------------------------------------
+        // LLM turn about to start (pre-serialize hook for assert+restore)
+        // -----------------------------------------------------------------
+        case "turn_start": {
+          // 260428-hoy: Run the executor-supplied pre-call closure once per
+          // turn, before pi-ai reads `session.agent.state.messages` to
+          // serialize the next API request. The closure performs the
+          // assert-then-restore pass over the live transcript and writes the
+          // healed array back into session state when at least one swap
+          // happens, so the bytes Anthropic sees match the canonical
+          // stream-close snapshot. The closure swallows its own throws; the
+          // wrapper here is belt-and-braces.
+          //
+          // 260428-j0v: ALWAYS emit ONE INFO log carrying the counters the
+          // bridge can derive — even when the closure is unwired or returns
+          // undefined / no candidates. This closes the silent-success
+          // ambiguity observed on trace c5680133 where ZERO agent.bridge.*
+          // events appeared despite the helpers having shipped.
+          //
+          // Counters are computed by the bridge's own walk of the messages
+          // returned by the closure (or empty when unwired) so the executor
+          // closure stays untouched. `mismatchesLogged` and `restoredCount`
+          // are derived from positional hash diffs — they equal the work the
+          // closure's helpers actually emit/heal.
+          const hashStoreSize = m.thinkingBlockHashes.size;
+          const canonicalStoreSize = m.thinkingBlockCanonical.size;
+
+          let candidatesChecked = 0;
+          let mismatchesLogged = 0;
+          let anyResponseIdMatched = false;
+
+          if (deps.getSessionMessages) {
+            let liveBeforeClosure: ReadonlyArray<unknown> | undefined;
+            try {
+              liveBeforeClosure = deps.getSessionMessages();
+            } catch {
+              // Pre-call hook must NEVER abort agent flow.
+              liveBeforeClosure = undefined;
+            }
+
+            if (Array.isArray(liveBeforeClosure)) {
+              for (const msg of liveBeforeClosure) {
+                if (!msg || typeof msg !== "object") continue;
+                const sm = msg as { role?: string; responseId?: string; content?: unknown };
+                if (sm.role !== "assistant") continue;
+                if (typeof sm.responseId !== "string") continue;
+                const prior = m.thinkingBlockHashes.get(sm.responseId);
+                if (!prior) continue;
+                candidatesChecked++;
+                anyResponseIdMatched = true;
+                const currentBlocks = Array.isArray(sm.content)
+                  ? (sm.content as Array<Record<string, unknown>>)
+                  : [];
+                const currentHashes = computeThinkingBlockHashes(currentBlocks);
+                const byIndex = new Map<number, ThinkingBlockHash>();
+                for (const h of currentHashes) byIndex.set(h.blockIndex, h);
+                for (const old of prior) {
+                  const now = byIndex.get(old.blockIndex);
+                  if (!now || now.hash !== old.hash) mismatchesLogged++;
+                }
+              }
+            }
+          }
+
+          // restoredCount equals mismatchesLogged in the current symmetric
+          // implementation; surfaced as a separate field so future asymmetric
+          // assert/restore semantics are observable.
+          const restoredCount = mismatchesLogged;
+
+          deps.logger.info(
+            {
+              module: "agent.bridge.hash-invariant",
+              candidatesChecked,
+              mismatchesLogged,
+              restoredCount,
+              anyResponseIdMatched,
+              hashStoreSize,
+              canonicalStoreSize,
+            },
+            "Pre-call assertion ran",
+          );
+          break;
+        }
+
+        // -----------------------------------------------------------------
         // LLM turn completed
         // -----------------------------------------------------------------
         case "turn_end": {
@@ -436,6 +555,40 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 },
                 "Assistant message block accounting at stream close",
               );
+
+              // Bug A diagnostic + 260428-hoy heal: capture hashes AND a
+              // canonical (pre-mutation) snapshot of the full content array,
+              // keyed by responseId, in lockstep across both stores. The
+              // hash store powers the assertion ERROR log (mutation
+              // diagnostic); the canonical store powers the pre-call
+              // restore pass that heals cross-turn mutation before the next
+              // API serialize. Both stores are FIFO-evicted at 32 entries
+              // in lockstep so they always share the same keyset.
+              if (typeof responseIdForLog === "string") {
+                const hashes = computeThinkingBlockHashes(blocks);
+                if (hashes.length > 0) {
+                  while (m.thinkingBlockHashes.size >= 32) {
+                    const oldestKey = m.thinkingBlockHashes.keys().next().value;
+                    if (oldestKey === undefined) break;
+                    m.thinkingBlockHashes.delete(oldestKey);
+                    m.thinkingBlockCanonical.delete(oldestKey);
+                  }
+                  m.thinkingBlockHashes.set(responseIdForLog, hashes);
+                  // 260428-hoy: capture canonical (pre-mutation) full
+                  // content array so the pre-LLM-call restore pass can heal
+                  // any cross-turn mutation before pi-ai serializes the
+                  // next request. structuredClone is a Node 22 global; the
+                  // try/catch is defensive against rare exotic input shapes.
+                  try {
+                    const canonical = Object.freeze(structuredClone(blocks)) as ReadonlyArray<unknown>;
+                    m.thinkingBlockCanonical.set(responseIdForLog, canonical);
+                  } catch {
+                    // Canonical capture failure is non-fatal: the hash store
+                    // still fires the assertion diagnostic on resend; only
+                    // the heal step degrades to no-op for this responseId.
+                  }
+                }
+              }
             }
           }
 
@@ -814,7 +967,6 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   request: (deps.sepMessageText ?? "").slice(0, 200),
                   steps,
                   completedCount: 0,
-                  nudged: false,
                   createdAtMs: Date.now(),
                 };
                 deps.executionPlan.current = plan;
@@ -1019,6 +1171,144 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             },
             "LLM call returned error",
           );
+          // 260428-iag wire-edge diagnostic: when the LLM error matches the
+          // Anthropic signed-replay rejection signature ("thinking blocks ...
+          // cannot be modified"), diff the in-memory content against the
+          // persisted JSONL canonical and emit one ERROR per divergent block.
+          // Fully async / fire-and-forget — never blocks the existing error
+          // path. Silent no-op when the signature doesn't match or when
+          // either getSessionMessages / getSessionJsonlPath is unwired.
+          //
+          // 260428-j0v: ALWAYS emit ONE dispatch-decision INFO log carrying
+          // boolean flags that explain WHY the wire-diff dispatch was or was
+          // not entered (regex match, candidate count, callback presence) —
+          // even when regexMatched is false or callbacks are unwired. When
+          // the dispatch IS entered, emit a second dispatch-completion INFO
+          // after the async candidates loop completes.
+          //
+          // The signature regex matches Anthropic's actual 400 message:
+          // "messages.N.content.M: thinking blocks cannot be modified"
+          // and the redacted_thinking variant. Both `thinking|redacted_thinking`
+          // AND `modif|cannot` must be present to avoid false positives on
+          // unrelated 400s (rate limits, auth, schema errors).
+          {
+            const errMsg = m.lastLlmErrorMessage;
+            const regexMatched =
+              typeof errMsg === "string" &&
+              /thinking|redacted_thinking/.test(errMsg) &&
+              /modif|cannot/.test(errMsg);
+            const liveForDecision = deps.getSessionMessages?.();
+            const jsonlPathForDecision = deps.getSessionJsonlPath?.();
+
+            // Pre-compute candidatesFound by walking liveForDecision with the
+            // same filter the dispatch uses. Cap at 3 to mirror dispatch behavior.
+            type Candidate = { responseId: string; content: ReadonlyArray<Record<string, unknown>> };
+            const candidates: Candidate[] = [];
+            if (Array.isArray(liveForDecision)) {
+              for (let i = liveForDecision.length - 1; i >= 0 && candidates.length < 3; i--) {
+                // eslint-disable-next-line security/detect-object-injection -- numeric loop index
+                const msg = liveForDecision[i] as { role?: string; responseId?: string; content?: unknown };
+                if (!msg || typeof msg !== "object") continue;
+                if (msg.role !== "assistant") continue;
+                if (typeof msg.responseId !== "string") continue;
+                if (!Array.isArray(msg.content)) continue;
+                const blocks = msg.content as Array<Record<string, unknown>>;
+                const hasSigned = blocks.some(
+                  (b) =>
+                    b.type === "thinking" &&
+                    typeof b.thinkingSignature === "string" &&
+                    (b.thinkingSignature as string).length > 0 &&
+                    b.redacted !== true,
+                );
+                if (!hasSigned) continue;
+                candidates.push({ responseId: msg.responseId, content: blocks });
+              }
+            }
+
+            const jsonlPathPresent =
+              typeof jsonlPathForDecision === "string" && jsonlPathForDecision.length > 0;
+
+            deps.logger.info(
+              {
+                module: "agent.bridge.wire-diff",
+                regexMatched,
+                candidatesFound: candidates.length,
+                jsonlPathPresent,
+                getSessionMessagesPresent: typeof deps.getSessionMessages === "function",
+                getSessionJsonlPathPresent: typeof deps.getSessionJsonlPath === "function",
+              },
+              "Wire-edge diff dispatch decision",
+            );
+
+            if (regexMatched && jsonlPathPresent && candidates.length > 0) {
+              const capturedJsonlPath = jsonlPathForDecision;
+              // Async non-blocking dispatch -- never blocks the error path.
+              void Promise.resolve().then(async () => {
+                let candidatesProcessed = 0;
+                let totalDivergences = 0;
+                let persistedNotFound = 0;
+                let fileReadErrors = 0;
+
+                // Wrapped logger forwards to deps.logger AND counts the
+                // helper's WARN outcomes by hint-constant identity (no regex).
+                const countingLogger = {
+                  warn: (obj: Record<string, unknown>, msg: string) => {
+                    deps.logger.warn(obj, msg);
+                    if (obj.hint === WIRE_DIFF_HINT_FILE_MISSING) fileReadErrors++;
+                    else if (obj.hint === WIRE_DIFF_HINT_NOT_FOUND) persistedNotFound++;
+                  },
+                };
+
+                try {
+                  for (const c of candidates) {
+                    candidatesProcessed++;
+                    const entries = await diffThinkingBlocksAgainstPersisted(
+                      c.content,
+                      c.responseId,
+                      capturedJsonlPath,
+                      { logger: countingLogger },
+                    );
+                    totalDivergences += entries.length;
+                    for (const entry of entries) {
+                      deps.logger.error(
+                        {
+                          module: "agent.bridge.wire-diff",
+                          responseId: c.responseId,
+                          blockIndex: entry.blockIndex,
+                          persistedHash: entry.persistedHash,
+                          inMemoryHash: entry.inMemoryHash,
+                          persistedText: entry.persistedText,
+                          inMemoryText: entry.inMemoryText,
+                          persistedSigLen: entry.persistedSigLen,
+                          inMemorySigLen: entry.inMemorySigLen,
+                          errorKind: "internal" as const,
+                          hint:
+                            "Mutation occurred between bridge restoration hook and " +
+                            "pi-ai serialization — likely inside pi-ai or its dependencies",
+                        },
+                        "Wire-edge thinking-block divergence vs persisted JSONL",
+                      );
+                    }
+                  }
+                } catch {
+                  // Diagnostic must NEVER abort the error path.
+                }
+
+                // ALWAYS emit the completion INFO, even on totalDivergences=0
+                // or when every helper call hit a read error.
+                deps.logger.info(
+                  {
+                    module: "agent.bridge.wire-diff",
+                    candidatesProcessed,
+                    totalDivergences,
+                    persistedNotFound,
+                    fileReadErrors,
+                  },
+                  "Wire-edge diff dispatch complete",
+                );
+              });
+            }
+          }
           deps.circuitBreaker.recordFailure();
           deps.providerHealth?.recordFailure(deps.provider, deps.agentId);
           // If circuit breaker just opened, abort mid-execution
@@ -1055,5 +1345,16 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
     m.timedOutRequests += 1;
   };
 
-  return { listener, getResult, addGhostCost };
+  // 260428-hoy: typed ReadonlyMap accessor for the executor's pre-call
+  // closure. Returns views over the live maps -- the executor never receives
+  // the mutable `m` object itself.
+  const getThinkingBlockStores = (): {
+    hashes: ReadonlyMap<string, ReadonlyArray<ThinkingBlockHash>>;
+    canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;
+  } => ({
+    hashes: m.thinkingBlockHashes,
+    canonical: m.thinkingBlockCanonical,
+  });
+
+  return { listener, getResult, addGhostCost, getThinkingBlockStores };
 }

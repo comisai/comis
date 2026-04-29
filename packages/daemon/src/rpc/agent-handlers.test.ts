@@ -12,6 +12,15 @@ vi.mock("./persist-to-config.js", () => ({
   persistToConfig: vi.fn().mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } }),
 }));
 
+// ---------------------------------------------------------------------------
+// Mock agent-inline-workspace module so we can drive 260428-vyf inline-write
+// outcomes per-test without touching the real filesystem.
+// ---------------------------------------------------------------------------
+
+vi.mock("./agent-inline-workspace.js", () => ({
+  writeInlineWorkspaceFiles: vi.fn(),
+}));
+
 vi.mock("@comis/agent", () => ({
   resolveWorkspaceDir: vi.fn((_config: unknown, agentId?: string) =>
     agentId && agentId !== "default"
@@ -88,6 +97,9 @@ vi.mock("@comis/agent", () => ({
 import { persistToConfig } from "./persist-to-config.js";
 const mockPersistToConfig = vi.mocked(persistToConfig);
 
+import { writeInlineWorkspaceFiles } from "./agent-inline-workspace.js";
+const mockWriteInline = vi.mocked(writeInlineWorkspaceFiles);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -134,6 +146,15 @@ describe("createAgentHandlers", () => {
   beforeEach(() => {
     mockPersistToConfig.mockClear();
     mockPersistToConfig.mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } } as never);
+    // Default: helper returns ok with no files written. The handler skips
+    // the call entirely when inlineContent is undefined, so this default
+    // is a safety net for tests that supply inlineContent without
+    // overriding the helper outcome.
+    mockWriteInline.mockReset();
+    mockWriteInline.mockResolvedValue({
+      ok: true,
+      value: { roleWritten: false, identityWritten: false, bytesWritten: 0 },
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -313,6 +334,147 @@ describe("createAgentHandlers", () => {
       expect(mockPersistToConfig).toHaveBeenCalledOnce();
       const agentsPatch = mockPersistToConfig.mock.calls[0]![1].patch.agents as Record<string, Record<string, unknown>>;
       expect(agentsPatch["ws-persist-bot"]!.workspacePath).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 260428-vyf Layer 2: agents.create with inlineContent {role, identity}.
+  //
+  // Single-call agent creation: the L1 tool layer strips role/identity from
+  // config.workspace and forwards them as a separate top-level RPC param
+  // (`inlineContent`). The daemon writes ROLE.md / IDENTITY.md atomically
+  // via the writeInlineWorkspaceFiles helper. role/identity are write-once
+  // side-effects, NOT durable state — they NEVER reach config.yaml.
+  // -------------------------------------------------------------------------
+  describe("agents.create with inlineContent (260428-vyf)", () => {
+    it("Test 1 (full inline): forwards role+identity to helper, returns inlineWritesResult on RPC payload", async () => {
+      mockWriteInline.mockResolvedValueOnce({
+        ok: true,
+        value: { roleWritten: true, identityWritten: true, bytesWritten: 2 },
+      });
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.create"]!({
+        agentId: "vyf-full",
+        inlineContent: { role: "R", identity: "I" },
+        _trustLevel: "admin",
+      })) as { agentId: string; created: boolean; workspaceDir: string; inlineWritesResult?: unknown };
+
+      expect(result.created).toBe(true);
+      expect(result.workspaceDir).toBe("/home/test/.comis/workspace-vyf-full");
+      expect(result.inlineWritesResult).toEqual({
+        roleWritten: true,
+        identityWritten: true,
+        bytesWritten: 2,
+      });
+
+      expect(mockWriteInline).toHaveBeenCalledTimes(1);
+      const [helperDeps, helperParams] = mockWriteInline.mock.calls[0]!;
+      expect(helperDeps).toHaveProperty("logger");
+      expect(helperParams).toEqual({
+        workspaceDir: "/home/test/.comis/workspace-vyf-full",
+        agentId: "vyf-full",
+        role: "R",
+        identity: "I",
+      });
+    });
+
+    it("Test 2 (role-only): forwards role only, returns partial inlineWritesResult", async () => {
+      mockWriteInline.mockResolvedValueOnce({
+        ok: true,
+        value: { roleWritten: true, identityWritten: false, bytesWritten: 1 },
+      });
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.create"]!({
+        agentId: "vyf-role",
+        inlineContent: { role: "R" },
+        _trustLevel: "admin",
+      })) as { inlineWritesResult?: unknown };
+
+      expect(result.inlineWritesResult).toEqual({
+        roleWritten: true,
+        identityWritten: false,
+        bytesWritten: 1,
+      });
+      const [, helperParams] = mockWriteInline.mock.calls[0]!;
+      expect(helperParams).toEqual({
+        workspaceDir: "/home/test/.comis/workspace-vyf-role",
+        agentId: "vyf-role",
+        role: "R",
+        identity: undefined,
+      });
+    });
+
+    it("Test 3 (no inlineContent — regression): result OMITS inlineWritesResult; helper not invoked", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.create"]!({
+        agentId: "vyf-none",
+        config: { name: "None" },
+        _trustLevel: "admin",
+      })) as Record<string, unknown>;
+
+      expect("inlineWritesResult" in result).toBe(false);
+      expect(mockWriteInline).not.toHaveBeenCalled();
+    });
+
+    it("Test 4 (persisted config strips role/identity): patch.agents[agentId] has no role/identity keys even when inlineContent supplied", async () => {
+      mockWriteInline.mockResolvedValueOnce({
+        ok: true,
+        value: { roleWritten: true, identityWritten: true, bytesWritten: 2 },
+      });
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      await handlers["agents.create"]!({
+        agentId: "vyf-strip",
+        config: { name: "Strip Bot" },
+        inlineContent: { role: "R", identity: "I" },
+        _trustLevel: "admin",
+      });
+
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      const agentsPatch = mockPersistToConfig.mock.calls[0]![1].patch.agents as Record<string, Record<string, unknown>>;
+      const agentEntry = agentsPatch["vyf-strip"]!;
+      expect(agentEntry).not.toHaveProperty("role");
+      expect(agentEntry).not.toHaveProperty("identity");
+      // Workspace, if present, must not carry these either.
+      const ws = agentEntry.workspace as Record<string, unknown> | undefined;
+      if (ws !== undefined) {
+        expect(ws).not.toHaveProperty("role");
+        expect(ws).not.toHaveProperty("identity");
+      }
+    });
+
+    it("Test 5 (helper failure): RPC still returns created:true; inlineWritesResult carries the err shape; no throw", async () => {
+      mockWriteInline.mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "io", file: "ROLE.md", message: "EACCES" },
+      });
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.create"]!({
+        agentId: "vyf-fail",
+        inlineContent: { role: "R" },
+        _trustLevel: "admin",
+      })) as { created: boolean; workspaceDir: string; inlineWritesResult?: unknown };
+
+      expect(result.created).toBe(true);
+      expect(result.workspaceDir).toBe("/home/test/.comis/workspace-vyf-fail");
+      expect(result.inlineWritesResult).toEqual({
+        ok: false,
+        error: { kind: "io", file: "ROLE.md", message: "EACCES" },
+      });
     });
   });
 

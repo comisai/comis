@@ -65,14 +65,18 @@ export function buildJsonOutput(
   let gatewayToken: string | undefined;
 
   if (state.gateway) {
-    const bindIp =
+    // For LAN mode the daemon binds 0.0.0.0, but the printed URL is
+    // a *connect* hint — surface 127.0.0.1 (the only address every
+    // local caller can reach). External clients use the host's public
+    // IP/hostname; surfacing 0.0.0.0 here would just be misleading.
+    const connectIp =
       state.gateway.bindMode === "loopback"
         ? "127.0.0.1"
         : state.gateway.bindMode === "lan"
-          ? "0.0.0.0"
+          ? "127.0.0.1"
           : state.gateway.customIp ?? "127.0.0.1";
     const port = state.gateway.port ?? 4766;
-    gatewayUrl = `ws://${bindIp}:${port}`;
+    gatewayUrl = `ws://${connectIp}:${port}`;
 
     // Only include token when auth method is token
     if (state.gateway.authMethod === "token" && state.gateway.token) {

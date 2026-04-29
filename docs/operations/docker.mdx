@@ -78,7 +78,7 @@ a profile-based activation model.
 **comis-daemon** (always runs):
 - Gateway port binding via `COMIS_GATEWAY_HOST` and `COMIS_GATEWAY_PORT` env vars
   (default: `127.0.0.1:4766`)
-- Volumes for `/home/comis/.comis` (persistent data) and `/etc/comis` (config, read-only)
+- Volumes for `/home/comis/.comis` (persistent data) and `/etc/comis` (config); both bind-mount the same host dir (`~/.comis` by default)
 - Environment variable pass-through for secrets, provider keys, and channel tokens
 - Health check: `curl -sf http://127.0.0.1:4766/health` (60s interval, 10s
   timeout, 30s start period, 3 retries)
@@ -147,7 +147,7 @@ The daemon uses two mount points inside the container:
 | Container path | Purpose | Default host path |
 |---------------|---------|-------------------|
 | `/home/comis/.comis` | SQLite databases, logs, traces, secrets, `.env` | `~/.comis` |
-| `/etc/comis` | Configuration files (read-only mount) | `~/.comis` |
+| `/etc/comis` | Canonical Linux config path — same host dir as above; the daemon reads `config.yaml` here and writes `config.last-good.yaml` next to it | `~/.comis` |
 
 ### Files in `/home/comis/.comis`
 
@@ -224,8 +224,15 @@ The production setup includes several hardening measures:
 - **Digest-pinned base images** -- ARGs at the top of the Dockerfile accept
   `@sha256:` digests for reproducible, tamper-evident builds
 - **UID/GID 1000** -- predictable file ownership on host-mounted volumes
-- **Read-only config mount** -- `/etc/comis` is mounted with `:ro` so the
-  container cannot modify configuration files
+- **Writable state mounts** -- both `/home/comis/.comis` (data, including
+  `.env`) and `/etc/comis` (config) are mounted read-write so the daemon
+  can persist new credentials (via the agent's `gateway` env_set action,
+  `comis configure`, or the `env.set` RPC) and write its
+  `config.last-good.yaml` snapshot next to `config.yaml` for the
+  bootstrap-failure recovery path. Prompt-injected exec is contained
+  separately by the bwrap sandbox, which excludes `/home/comis/.comis`
+  and `/etc/comis` from the per-command mount set entirely (see
+  [Per-command exec sandbox](#per-command-exec-sandbox-bubblewrap) below).
 - **Minimal base image** -- `node:22-bookworm-slim` has fewer packages and a
   smaller attack surface than the full image
 - **No unnecessary ports** -- only port 4766 is exposed
@@ -507,8 +514,9 @@ The repository ships two automated Docker workflows:
 
 Both workflows build multi-arch manifests (`linux/amd64` + `linux/arm64`) and
 produce both `default` and `slim` variants. The Docker Hub workflow version tags
-are derived directly from the git tag — pushing `v1.0.19` produces
-`comisai/comis:1.0.19`, `comisai/comis:1.0`, and `comisai/comis:latest`.
+are derived directly from the git tag — pushing `v1.0.25` produces
+`comisai/comis:1.0.25`, `comisai/comis:1.0`, and `comisai/comis:latest`
+(plus the matching `-slim` variants).
 
 For full details on image tags, required secrets, and manual publishing, see the
 [Docker Hub Publishing](/operations/docker-hub) page.

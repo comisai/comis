@@ -56,6 +56,7 @@ import { setupChannelHealthLogging } from "./observability/channel-health-logger
 import { registerGracefulShutdown } from "./process/graceful-shutdown.js";
 import { createProcessMonitor } from "./process/process-monitor.js";
 import { startWatchdog } from "./health/watchdog.js";
+import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
 import { randomUUID, createHmac } from "node:crypto";
 import { existsSync, chmodSync, statSync, mkdirSync, readFileSync, unlinkSync, cpSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
@@ -66,11 +67,44 @@ import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import os from "node:os";
 import { join as pathJoin, dirname as pathDirname, resolve as pathResolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 
 const DEFAULT_CONFIG_PATHS = [
   safePath(safePath(os.homedir(), ".comis"), "config.yaml"),
   safePath(safePath(os.homedir(), ".comis"), "config.local.yaml"),
 ];
+
+/**
+ * When ANTHROPIC_LOG=debug|info is set, the Anthropic SDK calls
+ * `console.debug('[req] sending request', { ...payload })`, which Node
+ * formats with util.inspect using the default `depth: 2`. That collapses
+ * the request body to `messages: [Array]`, so we lose the actual body
+ * we are trying to capture.
+ *
+ * This helper deepens util.inspect ONLY when the SDK debug logger is
+ * actually enabled. When ANTHROPIC_LOG is unset, the SDK emits no debug
+ * lines anyway, so we leave inspect defaults alone — keeping production
+ * logs unchanged.
+ *
+ * `breakLength: Infinity` keeps each log line single-line so grep-based
+ * inspection of the daemon log keeps working.
+ *
+ * Returns whether each default was changed (used by tests; ignored at
+ * runtime).
+ */
+export function applyInspectDefaultsForLogging(
+  env: Record<string, string | undefined>,
+): { depthChanged: boolean; breakLengthChanged: boolean } {
+  const lvl = env["ANTHROPIC_LOG"];
+  if (lvl !== "debug" && lvl !== "info") {
+    return { depthChanged: false, breakLengthChanged: false };
+  }
+  const depthChanged = inspect.defaultOptions.depth !== null;
+  const breakLengthChanged = inspect.defaultOptions.breakLength !== Infinity;
+  inspect.defaultOptions.depth = null;
+  inspect.defaultOptions.breakLength = Infinity;
+  return { depthChanged, breakLengthChanged };
+}
 
 /**
  * Sensitive environment variable prefixes to remove from process.env after
@@ -227,6 +261,14 @@ export async function runPreflightDoctor(
 export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInstance> {
   const startupStartMs = Date.now();
   const instanceId = randomUUID().slice(0, 8);
+
+  // Anthropic SDK debug log lines route through console.debug -> util.inspect.
+  // Deepen inspect defaults BEFORE any code path that may construct an
+  // Anthropic client (skills/agent setup, prewarm, etc.) so the very first
+  // `[req] sending request` line shows the full body. Gated on ANTHROPIC_LOG
+  // so production runs are unaffected.
+  // eslint-disable-next-line no-restricted-syntax -- process.env access required before SecretManager is initialized; ANTHROPIC_LOG is the SDK-owned switch, not a comis credential.
+  applyInspectDefaultsForLogging(process.env as Record<string, string | undefined>);
 
   const _bootstrap = overrides.bootstrap ?? bootstrap;
   const _setupSecrets = overrides.setupSecrets ?? _setupSecretsImpl;
@@ -1485,6 +1527,11 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
       },
     },
   }, "Comis daemon started");
+
+  // Docker-only: surface restart-policy requirement immediately after the
+  // startup banner. No-op outside containers. Wired here so the WARN lands
+  // in `docker logs` next to the banner, where operators look first.
+  emitDockerRestartPolicyWarn(daemonLogger);
 
   // Snapshot current config as last-known-good after successful startup
   if (configPaths.length > 0) {

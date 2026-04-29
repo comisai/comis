@@ -27,6 +27,7 @@ import {
 import * as os from "node:os";
 import { promisify } from "node:util";
 import { safePath } from "@comis/core";
+import { isDocker } from "@comis/infra";
 
 const exec = promisify(execFile);
 import type {
@@ -109,6 +110,45 @@ async function waitForReady(host: string, port: number): Promise<boolean> {
     } catch {
       // Not ready yet -- keep polling
     }
+    await new Promise((r) => setTimeout(r, READY_POLL_MS));
+  }
+  return false;
+}
+
+/**
+ * Poll the gateway through a stop/start cycle.
+ *
+ * Used after signalling the in-container daemon for a Docker-managed
+ * restart: first waits for the gateway to go down (proving the signal
+ * landed and the container is exiting), then for a fresh gateway to
+ * come back (proving Docker's restart policy respawned the container).
+ * Returns false if either phase times out.
+ */
+async function waitForRestart(host: string, port: number): Promise<boolean> {
+  const url = `http://${host}:${port}/health`;
+  const probe = async (): Promise<boolean> => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1500);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  // Phase 1: wait for the gateway to disappear (signal landed).
+  const downDeadline = Date.now() + 5_000;
+  while (Date.now() < downDeadline) {
+    if (!(await probe())) break;
+    await new Promise((r) => setTimeout(r, READY_POLL_MS));
+  }
+
+  // Phase 2: wait for the gateway to come back (container restarted).
+  const upDeadline = Date.now() + READY_TIMEOUT_MS;
+  while (Date.now() < upDeadline) {
+    if (await probe()) return true;
     await new Promise((r) => setTimeout(r, READY_POLL_MS));
   }
   return false;
@@ -247,6 +287,37 @@ async function runHealthCheck(
 // ---------- Service manager detection ----------
 
 type ServiceManager = "systemd" | "systemd-user" | "direct";
+
+/**
+ * Find the comis daemon PID inside the container.
+ *
+ * Scans /proc for processes whose parent is PID 1 and whose cmdline
+ * contains "daemon.js". Used to signal the container's daemon for a
+ * Docker-native restart instead of spawning a sibling.
+ */
+async function findContainerDaemonPid(): Promise<number | undefined> {
+  try {
+    const { readdirSync, readFileSync } = await import("node:fs");
+    for (const entry of readdirSync("/proc")) {
+      if (!/^\d+$/.test(entry)) continue;
+      const pid = Number(entry);
+      if (pid === 1 || pid === process.pid) continue;
+      let cmdline: string;
+      let ppid: string;
+      try {
+        cmdline = readFileSync(`/proc/${entry}/cmdline`, "utf-8");
+        const status = readFileSync(`/proc/${entry}/status`, "utf-8");
+        ppid = (/^PPid:\s*(\d+)/m.exec(status)?.[1]) ?? "";
+      } catch {
+        continue;
+      }
+      if (ppid !== "1") continue;
+      if (!cmdline.includes("daemon.js")) continue;
+      return pid;
+    }
+  } catch { /* /proc not accessible */ }
+  return undefined;
+}
 
 async function detectServiceManager(): Promise<ServiceManager> {
   if (!existsSync("/run/systemd/system")) return "direct";
@@ -415,6 +486,69 @@ export const daemonStartStep: WizardStep = {
     }
 
     // 4. Direct-spawn fallback (no systemd)
+
+    // Docker branch: the daemon is the container's PID 1 process tree.
+    // Spawning a sibling produces EADDRINUSE; killing PID 1 directly via
+    // pid-file (which the container daemon doesn't write) is a no-op.
+    // Signal the actual daemon process so dumb-init exits and Docker's
+    // restart policy brings the container back with the new config.
+    if (isDocker()) {
+      const dockerSpinner: Spinner = prompter.spinner();
+
+      if (choice === "restart" || daemonRunning) {
+        dockerSpinner.start("Signalling container daemon to restart...");
+        const targetPid = await findContainerDaemonPid();
+        if (targetPid) {
+          // 260428-qrn: Prime the user BEFORE the SIGTERM so they have a
+          // breadcrumb pointing at the missing `--restart unless-stopped`
+          // flag. This is a heads-up, not an abort -- the existing
+          // waitForRestart detector still handles the failure path below.
+          prompter.log.warn(
+            "Restarting daemon via SIGTERM. The container must have been started with `--restart unless-stopped` (or equivalent compose `restart: unless-stopped`). If the container exits and stays exited, run `docker restart <container-name>` from your host.",
+          );
+          try { process.kill(targetPid, "SIGTERM"); } catch { /* already gone */ }
+          // Wait for the gateway to disappear, then for it to come back
+          // (Docker restart policy respawns the container).
+          const restarted = await waitForRestart(host, port);
+          if (restarted) {
+            dockerSpinner.stop("Daemon restarted via container restart policy");
+          } else {
+            dockerSpinner.stop(
+              "Daemon stopped, but the container did not auto-restart",
+            );
+            prompter.log.warn(
+              "Run `docker restart <container>` (or `docker start <container>` if it exited) to apply the new config.",
+            );
+            return updateState(state, {});
+          }
+        } else {
+          dockerSpinner.stop("Could not find the container daemon process");
+          prompter.log.warn(
+            "Run `docker restart <container>` to apply the new configuration.",
+          );
+          return updateState(state, {});
+        }
+      } else {
+        // Daemon wasn't running and we're inside a container — Docker
+        // launches the daemon itself; nothing for the wizard to do here.
+        dockerSpinner.start("Waiting for container daemon...");
+        const ready = await waitForReady(host, port);
+        dockerSpinner.stop(
+          ready ? "Daemon ready" : "Daemon not yet responding",
+        );
+        if (!ready) {
+          prompter.log.warn(
+            "Start the container with `docker start <container>` if it isn't already running.",
+          );
+          return updateState(state, {});
+        }
+      }
+
+      if (!state.skipHealth) {
+        await runHealthCheck(state, prompter, host, port);
+      }
+      return updateState(state, {});
+    }
 
     // Stop existing daemon before restart
     if (choice === "restart") {
