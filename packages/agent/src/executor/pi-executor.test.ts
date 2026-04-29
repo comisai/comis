@@ -1100,9 +1100,10 @@ describe("PiExecutor", () => {
       expect(bookendCall).toBeDefined();
       const fields = bookendCall![0];
 
-      // POSITIVE pin (observability preserved):
+      // POSITIVE pin (observability preserved — uses actual tool-call count,
+      // not prose-extracted step count, to avoid over-counting):
       expect(fields).toMatchObject({
-        sepStepsPlanned: 3,
+        sepStepsPlanned: 2,
         sepStepsCompleted: 2,
       });
 
