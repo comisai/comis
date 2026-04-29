@@ -257,6 +257,8 @@ export interface PiExecutorDeps {
   circuitBreaker: CircuitBreaker;
   /** Optional provider health monitor for cross-agent pre-check. */
   providerHealth?: ProviderHealthMonitor;
+  /** Optional last-known-working model tracker for auth-failure fallback. */
+  lastKnownModel?: import("../model/last-known-model.js").LastKnownModelTracker;
   budgetGuard: BudgetGuard;
   costTracker: CostTracker;
   stepCounter: StepCounter;
@@ -1406,6 +1408,7 @@ export function createPiExecutor(
                 fallbackModels: deps.fallbackModels,
                 modelRegistry: deps.modelRegistry,
                 providerHealth: deps.providerHealth,
+                lastKnownModel: deps.lastKnownModel,
                 envelopeConfig: deps.envelopeConfig,
                 outputGuard: deps.outputGuard,
                 canaryToken: deps.canaryToken,

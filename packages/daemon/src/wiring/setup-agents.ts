@@ -30,6 +30,7 @@ import {
   createModelRegistryAdapter,
   registerCustomProviders,
   createProviderHealthMonitor,
+  createLastKnownModelTracker,
   createAuthProfileManager,
   createAuthRotationAdapter,
   setSanitizeLogger,
@@ -39,6 +40,7 @@ import {
   type AgentExecutor,
   type ActiveRunRegistry,
   type ProviderHealthMonitor,
+  type LastKnownModelTracker,
   type ToolDescriptionContext,
 } from "@comis/agent";
 import {
@@ -79,6 +81,8 @@ export interface SingleAgentDeps {
   db?: unknown;
   /** Global provider health monitor shared across all agents */
   providerHealth?: ProviderHealthMonitor;
+  /** Global last-known-working model tracker shared across all agents */
+  lastKnownModel?: LastKnownModelTracker;
   /** Optional embedding port for discover_tools semantic search. */
   embeddingPort?: import("@comis/core").EmbeddingPort;
   /** Delivery mirror port for session mirroring injection */
@@ -386,6 +390,7 @@ export async function setupSingleAgent(
   const executor = createPiExecutor(effectiveConfig, {
     circuitBreaker,
     providerHealth: deps.providerHealth,
+    lastKnownModel: deps.lastKnownModel,
     budgetGuard,
     costTracker,
     stepCounter,
@@ -579,6 +584,9 @@ export async function setupAgents(deps: {
     eventBus: container.eventBus,
   });
 
+  // Global last-known-working model tracker (shared across all agents)
+  const lastKnownModel = createLastKnownModelTracker();
+
   // Construct shared deps struct once before the loop (for hot-add reuse)
   const singleAgentDeps: SingleAgentDeps = {
     container,
@@ -598,6 +606,7 @@ export async function setupAgents(deps: {
     contextStore: deps.contextStore,
     db: deps.db,
     providerHealth,
+    lastKnownModel,
     embeddingPort: deps.embeddingPort,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
