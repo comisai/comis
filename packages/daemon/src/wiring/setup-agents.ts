@@ -223,7 +223,7 @@ export async function setupSingleAgent(
     customProviderEntries,
   });
   const piModelRegistry = createModelRegistryAdapter(piAuthStorage);
-  const customProviderCount = registerCustomProviders(
+  const { registered: customProviderCount, providerAliases } = registerCustomProviders(
     piModelRegistry,
     customProviderEntries,
     scopedManager,
@@ -233,6 +233,12 @@ export async function setupSingleAgent(
     agentLogger.debug(
       { agentId, customProviderCount },
       "Custom YAML providers registered with pi ModelRegistry",
+    );
+  }
+  if (providerAliases.size > 0) {
+    agentLogger.debug(
+      { agentId, aliases: Object.fromEntries(providerAliases) },
+      "Provider name aliases for built-in resolution",
     );
   }
 
@@ -398,6 +404,7 @@ export async function setupSingleAgent(
     logger: perAgentLogger,
     authStorage: piAuthStorage,
     modelRegistry: piModelRegistry,
+    providerAliases,
     fallbackModels: fallbackModelStrings.length > 0 ? fallbackModelStrings : undefined,
     authRotation,
     sessionAdapter,

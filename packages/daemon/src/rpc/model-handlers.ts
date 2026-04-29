@@ -9,6 +9,7 @@
  */
 
 import type { ModelCatalog } from "@comis/agent";
+import type { ProviderEntry } from "@comis/core";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -21,6 +22,8 @@ export interface ModelHandlerDeps {
   modelCatalog: ModelCatalog;
   /** Agent configs for determining which providers are actively configured. */
   agents: Record<string, { provider: string; model: string }>;
+  /** Custom provider entries from config.yaml for fallback when catalog is empty. */
+  providerEntries?: Record<string, ProviderEntry>;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,14 +101,15 @@ export function createModelHandlers(deps: ModelHandlerDeps): Record<string, RpcH
       );
 
       if (matchingAgents.length === 0) {
-        // Include catalog info so the LLM knows models exist even when
-        // no agent is wired to this provider yet.
         const modelsInCatalog = deps.modelCatalog.getByProvider(provider);
+        const providerEntry = deps.providerEntries?.[provider];
+        const customModelCount = providerEntry?.enabled ? providerEntry.models.length : 0;
         return {
           provider,
           status: "not_configured",
           message: "No agents use this provider",
           modelsInCatalog: modelsInCatalog.length,
+          ...(customModelCount > 0 ? { customModels: customModelCount } : {}),
           hint:
             "To switch to this provider, use agents_manage with action 'update' " +
             "to set the agent's provider and model. " +
@@ -117,11 +121,36 @@ export function createModelHandlers(deps: ModelHandlerDeps): Record<string, RpcH
       // Check catalog availability for this provider
       const modelsInCatalog = deps.modelCatalog.getByProvider(provider);
 
+      if (modelsInCatalog.length > 0) {
+        return {
+          provider,
+          status: "available",
+          modelsAvailable: modelsInCatalog.length,
+          validatedModels: modelsInCatalog.filter((m) => m.validated).length,
+          agentsUsing: matchingAgents.map(([id, a]) => ({ agentId: id, model: a.model })),
+        };
+      }
+
+      // Catalog empty — check custom provider entries (custom providers
+      // register with the pi ModelRegistry for routing but are not in the
+      // static ModelCatalog used by this management tool).
+      const providerEntry = deps.providerEntries?.[provider];
+      if (providerEntry && providerEntry.enabled && providerEntry.models.length > 0) {
+        return {
+          provider,
+          status: "available",
+          source: "custom_provider",
+          modelsAvailable: providerEntry.models.length,
+          models: providerEntry.models.map((m) => m.id),
+          agentsUsing: matchingAgents.map(([id, a]) => ({ agentId: id, model: a.model })),
+        };
+      }
+
       return {
         provider,
-        status: modelsInCatalog.length > 0 ? "available" : "no_models",
-        modelsAvailable: modelsInCatalog.length,
-        validatedModels: modelsInCatalog.filter((m) => m.validated).length,
+        status: "no_models",
+        modelsAvailable: 0,
+        validatedModels: 0,
         agentsUsing: matchingAgents.map(([id, a]) => ({ agentId: id, model: a.model })),
       };
     },

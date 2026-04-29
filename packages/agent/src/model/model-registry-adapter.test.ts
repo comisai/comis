@@ -253,14 +253,14 @@ describe("registerCustomProviders", () => {
     const registry = createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
-    const count = registerCustomProviders(
+    const { registered } = registerCustomProviders(
       registry,
       { nvidia: nvidiaEntry() },
       secretManager,
       logger,
     );
 
-    expect(count).toBe(1);
+    expect(registered).toBe(1);
     const found = registry.find("nvidia", "moonshotai/kimi-k2.5");
     expect(found).toBeDefined();
     expect(found!.provider).toBe("nvidia");
@@ -278,7 +278,8 @@ describe("registerCustomProviders", () => {
     const registry = createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
-    registerCustomProviders(registry, { nvidia: nvidiaEntry() }, secretManager, logger);
+    const { registered } = registerCustomProviders(registry, { nvidia: nvidiaEntry() }, secretManager, logger);
+    expect(registered).toBe(1);
 
     const available = registry.getAvailable();
     const nvidiaAvailable = available.filter((m) => m.provider === "nvidia");
@@ -292,14 +293,14 @@ describe("registerCustomProviders", () => {
     const registry = createModelRegistryAdapter(authStorage);
     const { logger, debugs } = captureLogger();
 
-    const count = registerCustomProviders(
+    const { registered } = registerCustomProviders(
       registry,
       { nvidia: nvidiaEntry({ enabled: false }) },
       secretManager,
       logger,
     );
 
-    expect(count).toBe(0);
+    expect(registered).toBe(0);
     expect(registry.find("nvidia", "moonshotai/kimi-k2.5")).toBeUndefined();
     expect(debugs.some((d) => d.msg.includes("disabled"))).toBe(true);
   });
@@ -310,14 +311,14 @@ describe("registerCustomProviders", () => {
     const registry = createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
-    const count = registerCustomProviders(
+    const { registered } = registerCustomProviders(
       registry,
       { empty: nvidiaEntry({ baseUrl: "", models: [] }) },
       secretManager,
       logger,
     );
 
-    expect(count).toBe(0);
+    expect(registered).toBe(0);
   });
 
   it("logs WARN and continues when models declared but apiKeyName secret is missing", () => {
@@ -326,14 +327,14 @@ describe("registerCustomProviders", () => {
     const registry = createModelRegistryAdapter(authStorage);
     const { logger, warns } = captureLogger();
 
-    const count = registerCustomProviders(
+    const { registered } = registerCustomProviders(
       registry,
       { nvidia: nvidiaEntry() },
       secretManager,
       logger,
     );
 
-    expect(count).toBe(0);
+    expect(registered).toBe(0);
     expect(registry.find("nvidia", "moonshotai/kimi-k2.5")).toBeUndefined();
     expect(warns.length).toBe(1);
     expect(warns[0]!.obj.errorKind).toBe("config");
@@ -385,7 +386,7 @@ describe("registerCustomProviders", () => {
     const registry = createModelRegistryAdapter(authStorage);
     const { logger, debugs } = captureLogger();
 
-    const count = registerCustomProviders(
+    const { registered } = registerCustomProviders(
       registry,
       {
         "local-ollama": {
@@ -401,7 +402,7 @@ describe("registerCustomProviders", () => {
       logger,
     );
 
-    expect(count).toBe(1);
+    expect(registered).toBe(1);
     const found = registry.find("local-ollama", "llama3.3");
     expect(found).toBeDefined();
     expect(found!.provider).toBe("local-ollama");
@@ -417,7 +418,7 @@ describe("registerCustomProviders", () => {
     const registry = createModelRegistryAdapter(authStorage);
     const { logger, warns } = captureLogger();
 
-    const count = registerCustomProviders(
+    const { registered } = registerCustomProviders(
       registry,
       {
         "cloud-openai": {
@@ -426,15 +427,15 @@ describe("registerCustomProviders", () => {
           apiKeyName: "",
           enabled: true,
           headers: {},
-          models: [{ id: "gpt-4o" }],
+          models: [{ id: "gpt-4o-custom-finetune" }],
         },
       },
       secretManager,
       logger,
     );
 
-    expect(count).toBe(0);
-    expect(registry.find("cloud-openai", "gpt-4o")).toBeUndefined();
+    expect(registered).toBe(0);
+    expect(registry.find("cloud-openai", "gpt-4o-custom-finetune")).toBeUndefined();
     expect(warns.length).toBe(1);
     expect(warns[0]!.msg).toContain("no API key");
   });
@@ -448,7 +449,7 @@ describe("registerCustomProviders", () => {
     const registry = createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
-    const count = registerCustomProviders(
+    const { registered } = registerCustomProviders(
       registry,
       {
         "secure-ollama": {
@@ -464,7 +465,7 @@ describe("registerCustomProviders", () => {
       logger,
     );
 
-    expect(count).toBe(1);
+    expect(registered).toBe(1);
     const found = registry.find("secure-ollama", "llama3.3");
     expect(found).toBeDefined();
     // Real key must be used, NOT the sentinel
@@ -478,7 +479,7 @@ describe("registerCustomProviders", () => {
     const registry = createModelRegistryAdapter(authStorage);
     const { logger, warns } = captureLogger();
 
-    const count = registerCustomProviders(
+    const { registered } = registerCustomProviders(
       registry,
       {
         "cloud-missing": {
@@ -487,15 +488,15 @@ describe("registerCustomProviders", () => {
           apiKeyName: "MISSING_KEY",
           enabled: true,
           headers: {},
-          models: [{ id: "gpt-4o" }],
+          models: [{ id: "gpt-4o-custom-finetune" }],
         },
       },
       secretManager,
       logger,
     );
 
-    expect(count).toBe(0);
-    expect(registry.find("cloud-missing", "gpt-4o")).toBeUndefined();
+    expect(registered).toBe(0);
+    expect(registry.find("cloud-missing", "gpt-4o-custom-finetune")).toBeUndefined();
     // Must be skipped, sentinel NOT applied
     expect(warns.length).toBe(1);
     expect(warns[0]!.obj.providerName).toBe("cloud-missing");
@@ -507,7 +508,7 @@ describe("registerCustomProviders", () => {
     const registry = createModelRegistryAdapter(authStorage);
     const { logger, warns } = captureLogger();
 
-    const count = registerCustomProviders(
+    const { registered } = registerCustomProviders(
       registry,
       {
         bad: nvidiaEntry({ type: "custom-unknown", apiKeyName: "A", baseUrl: "", models: [{ id: "m" }] }),
@@ -519,11 +520,138 @@ describe("registerCustomProviders", () => {
 
     // 'bad' fails (no baseUrl), 'good' succeeds. registerProvider keys
     // by the entries-object key, so 'good' is the provider name in pi.
-    expect(count).toBe(1);
+    expect(registered).toBe(1);
     expect(registry.find("good", "moonshotai/kimi-k2.5")).toBeDefined();
     expect(registry.find("bad", "m")).toBeUndefined();
     expect(warns.length).toBe(1);
     expect(warns[0]!.obj.providerName).toBe("bad");
     expect(warns[0]!.obj.errorKind).toBe("config");
+  });
+
+  it("filters out models that already exist in pi SDK built-in catalog", () => {
+    const secretManager = createSecretManager({ GEMINI_KEY: "gk" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const { logger, debugs } = captureLogger();
+
+    const { registered, providerAliases } = registerCustomProviders(
+      registry,
+      {
+        gemini: {
+          type: "google",
+          baseUrl: "",
+          apiKeyName: "GEMINI_KEY",
+          enabled: true,
+          headers: {},
+          models: [
+            { id: "gemini-2.5-flash" },
+            { id: "my-custom-fine-tuned-model" },
+          ],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    expect(registered).toBe(1);
+    expect(providerAliases.get("gemini")).toBe("google");
+    // Built-in model should NOT be registered under "gemini"
+    expect(registry.find("gemini", "gemini-2.5-flash")).toBeUndefined();
+    // Custom model should be registered under "gemini"
+    expect(registry.find("gemini", "my-custom-fine-tuned-model")).toBeDefined();
+    expect(debugs.some((d) => d.msg.includes("built-in models already in pi SDK"))).toBe(true);
+  });
+
+  it("skips registration entirely when all models are built-in", () => {
+    const secretManager = createSecretManager({ GEMINI_KEY: "gk" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+
+    const { registered, providerAliases } = registerCustomProviders(
+      registry,
+      {
+        gemini: {
+          type: "google",
+          baseUrl: "",
+          apiKeyName: "GEMINI_KEY",
+          enabled: true,
+          headers: {},
+          models: [{ id: "gemini-2.5-flash" }, { id: "gemini-2.5-pro" }],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    expect(registered).toBe(0);
+    // Alias is still created even when no custom models registered
+    expect(providerAliases.get("gemini")).toBe("google");
+  });
+
+  it("does not create alias when provider name matches built-in type", () => {
+    const secretManager = createSecretManager({ KEY: "k" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+
+    const { providerAliases } = registerCustomProviders(
+      registry,
+      {
+        google: {
+          type: "google",
+          baseUrl: "",
+          apiKeyName: "KEY",
+          enabled: true,
+          headers: {},
+          models: [{ id: "gemini-2.5-flash" }],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    expect(providerAliases.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveInitialModel with providerAliases
+// ---------------------------------------------------------------------------
+
+describe("resolveInitialModel with providerAliases", () => {
+  it("resolves built-in model via alias when comis name differs from built-in", async () => {
+    const secretManager = createSecretManager({ GEMINI_API_KEY: "gk" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const aliases = new Map([["gemini", "google"]]);
+
+    const result = await resolveInitialModel(
+      registry,
+      { provider: "gemini", model: "gemini-2.5-flash" },
+      undefined,
+      aliases,
+    );
+
+    expect(result.model).toBeDefined();
+    expect(result.model!.id).toBe("gemini-2.5-flash");
+    expect(result.fallbackMessage).toBeUndefined();
+  });
+
+  it("returns undefined when alias target also has no match", async () => {
+    const secretManager = createSecretManager({ GEMINI_API_KEY: "gk" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const aliases = new Map([["gemini", "google"]]);
+
+    const result = await resolveInitialModel(
+      registry,
+      { provider: "gemini", model: "nonexistent-xyz" },
+      undefined,
+      aliases,
+    );
+
+    expect(result.model).toBeUndefined();
+    expect(result.fallbackMessage).toBeDefined();
   });
 });

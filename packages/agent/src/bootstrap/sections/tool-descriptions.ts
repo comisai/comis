@@ -303,6 +303,18 @@ Multiple agents can be created in one turn. Customize ALL workspace files for ea
 
   providers_manage: `## Provider Configuration Guide
 
+### Built-in vs Custom Provider Check (MANDATORY first step)
+Before creating a custom provider, check if the model already exists in the built-in catalog. Built-in providers (anthropic, google, openai, groq, mistral, deepseek, cerebras, xai, openrouter) already have their models registered — creating a redundant custom entry is wrong and will be ignored. Use models_manage({ action: "list" }) to see available built-in models.
+
+If the model IS built-in: skip provider creation. Just store the API key (gateway env_set) and switch the agent directly.
+If the model is NOT built-in: you need a custom provider. Proceed to the steps below, but first gather ALL required configuration.
+
+### Information Gathering for Custom Providers
+When creating a non-built-in provider, you MUST have: (1) the API base URL, (2) the exact model ID string, (3) the API protocol type. If the user did not supply all three:
+1. Use web_search to look up the provider's API documentation (search for "<provider name> API base URL" or "<provider name> API docs").
+2. If web search finds the information, use it to fill in the missing fields.
+3. If web search does NOT find the information, ask the user to supply the missing fields before proceeding. Do NOT guess or invent URLs.
+
 ### Credential Workflow
 API keys are NEVER stored in provider config. Always use this two-step process:
 1. Store the API key: gateway({ action: "env_set", env_key: "<KEY_NAME>", env_value: "<key>" })

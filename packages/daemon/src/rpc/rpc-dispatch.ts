@@ -319,7 +319,10 @@ export function createRpcDispatch(deps: RpcDispatchDeps): RpcCall {
       },
     }),
     ...createObsHandlers(deps),
-    ...createModelHandlers(deps),
+    ...createModelHandlers({
+      ...deps,
+      providerEntries: deps.container.config.providers.entries,
+    }),
     ...createChannelHandlers({
       ...deps,
       persistDeps: {

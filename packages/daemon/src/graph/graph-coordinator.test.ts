@@ -17,6 +17,8 @@ import type { CoordinatorSharedState, GraphRunState } from "./graph-coordinator-
 
 vi.mock("@mariozechner/pi-ai", () => ({
   getModel: vi.fn().mockReturnValue({ id: "mock-model" }),
+  getModels: vi.fn().mockReturnValue([]),
+  getProviders: vi.fn().mockReturnValue([]),
   completeSimple: vi.fn().mockResolvedValue({
     usage: { cacheWrite: 0, totalTokens: 0, cost: { total: 0 } },
   }),
