@@ -162,6 +162,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
       lifecycleReactions: { enabled: false, emojiTier: "unicode", timing: { debounceMs: 700, holdDoneMs: 3000, holdErrorMs: 5000, stallSoftMs: 15000, stallHardMs: 30000 }, perChannel: {} },
       observability: { persistence: { enabled: false, retentionDays: 30, snapshotIntervalMs: 300_000 } },
       deliveryQueue: { enabled: false, maxQueueDepth: 10_000, defaultMaxAttempts: 5, defaultExpireMs: 3_600_000, drainOnStartup: true, drainBudgetMs: 60_000, pruneIntervalMs: 300_000 },
+      providers: { entries: {} },
       tenantId: "default",
       logLevel: "info",
       agentDir: "/tmp/test-agent-dir",
