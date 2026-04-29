@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Message } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
-import { mapGrammyToNormalized } from "./message-mapper.js";
+import { mapGrammyToNormalized, type TelegramBotIdentity } from "./message-mapper.js";
 
 // Mock crypto.randomUUID for deterministic test IDs
 vi.mock("node:crypto", () => ({
@@ -233,5 +233,166 @@ describe("message-mapper / mapGrammyToNormalized", () => {
       const result = mapGrammyToNormalized(msg, 123);
       expect(result.metadata.telegramChatType).toBe(chatType);
     }
+  });
+
+  describe("bot addressing detection", () => {
+    const bot: TelegramBotIdentity = { id: 7777, username: "comis_test_bot" };
+
+    it("flags isBotMentioned for @username mention entity matching the bot", () => {
+      const text = "@comis_test_bot please summarize";
+      const msg = stubTextMessage({
+        chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
+        text,
+        entities: [
+          { type: "mention", offset: 0, length: "@comis_test_bot".length },
+        ],
+      } as Partial<Message>);
+      const result = mapGrammyToNormalized(msg, -1001234, bot);
+      expect(result.metadata.isBotMentioned).toBe(true);
+      expect(result.metadata).not.toHaveProperty("replyToBot");
+      expect(result.metadata).not.toHaveProperty("isBotCommand");
+    });
+
+    it("flags isBotMentioned for text_mention entity referencing the bot id", () => {
+      const text = "Hello bot please respond";
+      const msg = stubTextMessage({
+        chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
+        text,
+        entities: [
+          {
+            type: "text_mention",
+            offset: 6,
+            length: 3,
+            user: { id: 7777, is_bot: true, first_name: "Comis" },
+          },
+        ],
+      } as Partial<Message>);
+      const result = mapGrammyToNormalized(msg, -1001234, bot);
+      expect(result.metadata.isBotMentioned).toBe(true);
+    });
+
+    it("flags replyToBot when reply_to_message is from the bot", () => {
+      const msg = stubTextMessage({
+        chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
+        text: "thanks",
+        reply_to_message: {
+          message_id: 100,
+          date: 1700000000,
+          chat: { id: -1001234, type: "supergroup", title: "Group" },
+          from: { id: 7777, is_bot: true, first_name: "Comis" },
+          text: "previous bot reply",
+        } as Message,
+      } as Partial<Message>);
+      const result = mapGrammyToNormalized(msg, -1001234, bot);
+      expect(result.metadata.replyToBot).toBe(true);
+      expect(result.metadata).not.toHaveProperty("isBotMentioned");
+    });
+
+    it("flags isBotCommand and isBotMentioned for /cmd@bot bot_command entity", () => {
+      const text = "/status@comis_test_bot now";
+      const msg = stubTextMessage({
+        chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
+        text,
+        entities: [
+          { type: "bot_command", offset: 0, length: "/status@comis_test_bot".length },
+        ],
+      } as Partial<Message>);
+      const result = mapGrammyToNormalized(msg, -1001234, bot);
+      expect(result.metadata.isBotCommand).toBe(true);
+      expect(result.metadata.isBotMentioned).toBe(true);
+    });
+
+    it("flags isBotCommand and isBotMentioned for bare /cmd bot_command entity (DM)", () => {
+      const text = "/status";
+      const msg = stubTextMessage({
+        text,
+        entities: [{ type: "bot_command", offset: 0, length: 7 }],
+      });
+      const result = mapGrammyToNormalized(msg, 123, bot);
+      expect(result.metadata.isBotCommand).toBe(true);
+      expect(result.metadata.isBotMentioned).toBe(true);
+    });
+
+    it("does not flag for mentions of other users", () => {
+      const text = "@someone_else look at this";
+      const msg = stubTextMessage({
+        chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
+        text,
+        entities: [{ type: "mention", offset: 0, length: "@someone_else".length }],
+      } as Partial<Message>);
+      const result = mapGrammyToNormalized(msg, -1001234, bot);
+      expect(result.metadata).not.toHaveProperty("isBotMentioned");
+      expect(result.metadata).not.toHaveProperty("replyToBot");
+      expect(result.metadata).not.toHaveProperty("isBotCommand");
+    });
+
+    it("does not flag for text_mention of other users", () => {
+      const text = "hi user";
+      const msg = stubTextMessage({
+        chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
+        text,
+        entities: [
+          {
+            type: "text_mention",
+            offset: 3,
+            length: 4,
+            user: { id: 9999, is_bot: false, first_name: "Other" },
+          },
+        ],
+      } as Partial<Message>);
+      const result = mapGrammyToNormalized(msg, -1001234, bot);
+      expect(result.metadata).not.toHaveProperty("isBotMentioned");
+    });
+
+    it("does not flag for /cmd@other_bot targeted at a different bot", () => {
+      const text = "/status@other_bot ping";
+      const msg = stubTextMessage({
+        chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
+        text,
+        entities: [{ type: "bot_command", offset: 0, length: "/status@other_bot".length }],
+      } as Partial<Message>);
+      const result = mapGrammyToNormalized(msg, -1001234, bot);
+      expect(result.metadata).not.toHaveProperty("isBotCommand");
+      expect(result.metadata).not.toHaveProperty("isBotMentioned");
+    });
+
+    it("inspects caption_entities for media-with-caption messages", () => {
+      const msg = stubTextMessage({
+        chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
+        text: undefined,
+        caption: "@comis_test_bot tag this photo",
+        caption_entities: [{ type: "mention", offset: 0, length: "@comis_test_bot".length }],
+        photo: [{ file_id: "p1", file_unique_id: "u1", width: 800, height: 600 }],
+      } as unknown as Partial<Message>);
+      const result = mapGrammyToNormalized(msg, -1001234, bot);
+      expect(result.metadata.isBotMentioned).toBe(true);
+    });
+
+    it("omits all addressing flags when bot identity is not provided (back-compat)", () => {
+      const text = "@comis_test_bot please summarize";
+      const msg = stubTextMessage({
+        chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
+        text,
+        entities: [{ type: "mention", offset: 0, length: "@comis_test_bot".length }],
+      } as Partial<Message>);
+      // Existing 2-arg call signature must continue to work and must NOT
+      // populate addressing flags — the adapter is responsible for passing
+      // the bot identity once getMe() succeeds.
+      const result = mapGrammyToNormalized(msg, -1001234);
+      expect(result.metadata).not.toHaveProperty("isBotMentioned");
+      expect(result.metadata).not.toHaveProperty("replyToBot");
+      expect(result.metadata).not.toHaveProperty("isBotCommand");
+    });
+
+    it("does case-insensitive comparison on @username mentions", () => {
+      const text = "@Comis_Test_Bot ping";
+      const msg = stubTextMessage({
+        chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
+        text,
+        entities: [{ type: "mention", offset: 0, length: "@Comis_Test_Bot".length }],
+      } as Partial<Message>);
+      const result = mapGrammyToNormalized(msg, -1001234, bot);
+      expect(result.metadata.isBotMentioned).toBe(true);
+    });
   });
 });
