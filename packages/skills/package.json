@@ -1,7 +1,7 @@
 {
   "name": "@comis/skills",
   "private": true,
-  "version": "1.0.26",
+  "version": "1.0.27",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Skill system, MCP integration, and tool sandbox for Comis agents",
@@ -50,7 +50,7 @@
     "file-type": "^21.3.2",
     "iconv-lite": "^0.7.2",
     "ignore": "^7.0.5",
-    "impit": "^0.13.0",
+    "impit": "0.13.0",
     "linkedom": "^0.18.12",
     "music-metadata": "^11.12.3",
     "openai": "^6.27.0",
