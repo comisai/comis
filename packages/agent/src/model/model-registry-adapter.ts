@@ -12,7 +12,8 @@
 
 import { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { AuthStorage } from "@mariozechner/pi-coding-agent";
-import type { Api, Model } from "@mariozechner/pi-ai";
+import { getModels, getProviders } from "@mariozechner/pi-ai";
+import type { Api, Model, KnownProvider } from "@mariozechner/pi-ai";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { SecretManager } from "@comis/core";
 import type { ModelAllowlist } from "./model-allowlist.js";
@@ -45,6 +46,19 @@ export function createModelRegistryAdapter(authStorage: AuthStorage): ModelRegis
  * proxies (NVIDIA NIM, Together, ollama, lm-studio, etc.) work without
  * code changes.
  */
+/**
+ * Provider types that can register without an API key.
+ *
+ * Ollama (and similar local inference servers) do not require authentication
+ * by default. When a provider entry has a type in this set and no apiKeyName
+ * is configured (or the named secret is missing), registration proceeds with
+ * the "ollama-no-auth" sentinel instead of being skipped.
+ *
+ * The sentinel reaches the wire as `Authorization: Bearer ollama-no-auth`.
+ * Ollama ignores Authorization unless `OLLAMA_API_KEY` is set server-side.
+ */
+const KEYLESS_PROVIDER_TYPES = new Set(["ollama"]);
+
 const PROVIDER_TYPE_TO_API: Record<string, Api> = {
   openai: "openai-completions",
   groq: "openai-completions",
@@ -57,6 +71,19 @@ const PROVIDER_TYPE_TO_API: Record<string, Api> = {
   anthropic: "anthropic-messages",
   google: "google-generative-ai",
 };
+
+const _builtInProviders = new Set<string>(getProviders());
+
+function getBuiltInBaseUrl(type: string): string | undefined {
+  if (!_builtInProviders.has(type)) return undefined;
+  const models = getModels(type as KnownProvider);
+  return models[0]?.baseUrl;
+}
+
+function getBuiltInModelIds(type: string): Set<string> {
+  if (!_builtInProviders.has(type)) return new Set();
+  return new Set(getModels(type as KnownProvider).map((m) => m.id));
+}
 
 /** Subset of `ProviderEntry` (from `@comis/core`) we read for pi registration. */
 export interface CustomProviderRegistration {
@@ -82,6 +109,19 @@ export interface CustomProviderLogger {
   debug(obj: Record<string, unknown>, msg: string): void;
 }
 
+/** Result of custom provider registration. */
+export interface RegisterCustomProvidersResult {
+  /** Number of provider entries successfully registered. */
+  registered: number;
+  /**
+   * Comis provider name → built-in pi SDK provider name.
+   * Populated when a YAML entry's `type` matches a built-in provider but the
+   * entry's key (comis name) differs. Lets model resolution fall back to the
+   * built-in catalog: `registry.find("gemini", id)` fails → try `registry.find("google", id)`.
+   */
+  providerAliases: Map<string, string>;
+}
+
 /**
  * Register YAML `providers.entries.*` with pi-coding-agent's ModelRegistry.
  *
@@ -93,41 +133,65 @@ export interface CustomProviderLogger {
  * Per-entry behavior:
  *   - Skipped if `enabled === false`.
  *   - Skipped if no models declared and no `baseUrl` override.
+ *   - Models that already exist in the built-in pi SDK catalog for the
+ *     entry's `type` are filtered out (no redundant registration).
  *   - On `registerProvider` error (missing baseUrl, missing apiKey, etc.),
  *     a WARN is logged and the loop continues -- one bad entry must not
  *     prevent the daemon from starting.
- *
- * @returns Number of entries successfully registered.
  */
 export function registerCustomProviders(
   registry: ModelRegistry,
   entries: Record<string, CustomProviderRegistration>,
   secretManager: SecretManager,
   logger: CustomProviderLogger,
-): number {
+): RegisterCustomProvidersResult {
   let registered = 0;
+  const providerAliases = new Map<string, string>();
+
   for (const [providerName, entry] of Object.entries(entries)) {
     if (!entry.enabled) {
       logger.debug({ providerName }, "Custom provider skipped (disabled)");
       continue;
     }
-    const hasModels = entry.models.length > 0;
+
+    const builtInIds = getBuiltInModelIds(entry.type);
+    const isBuiltInType = builtInIds.size > 0;
+
+    if (isBuiltInType && providerName !== entry.type) {
+      providerAliases.set(providerName, entry.type);
+    }
+
+    const customModels = isBuiltInType
+      ? entry.models.filter((m) => !builtInIds.has(m.id))
+      : [...entry.models];
+
+    if (isBuiltInType && customModels.length < entry.models.length) {
+      const skipped = entry.models.length - customModels.length;
+      logger.debug(
+        { providerName, type: entry.type, skipped, remaining: customModels.length },
+        "Skipped built-in models already in pi SDK catalog",
+      );
+    }
+
+    const hasModels = customModels.length > 0;
     const hasBaseUrlOverride = !!entry.baseUrl;
     if (!hasModels && !hasBaseUrlOverride) {
       logger.debug(
         { providerName },
-        "Custom provider skipped (no models and no baseUrl override)",
+        "Custom provider skipped (no custom models and no baseUrl override)",
       );
       continue;
     }
 
     const apiKey = entry.apiKeyName ? secretManager.get(entry.apiKeyName) : undefined;
-    if (hasModels && !apiKey) {
+    const isKeylessType = KEYLESS_PROVIDER_TYPES.has(entry.type);
+
+    if (hasModels && !apiKey && !isKeylessType) {
       logger.warn(
         {
           providerName,
           apiKeyName: entry.apiKeyName,
-          hint: "Set the named secret in ~/.comis/.env or remove the provider entry from config.yaml",
+          hint: "Set the named secret in ~/.comis/.env, omit apiKeyName for type='ollama', or remove the provider entry from config.yaml",
           errorKind: "config",
         },
         "Custom provider has models but no API key -- skipping registration",
@@ -137,20 +201,26 @@ export function registerCustomProviders(
 
     const api = PROVIDER_TYPE_TO_API[entry.type] ?? "openai-completions";
     const headersResolved = Object.keys(entry.headers).length > 0 ? entry.headers : undefined;
+    const resolvedApiKey = apiKey ?? (isKeylessType ? "ollama-no-auth" : undefined);
+
+    if (resolvedApiKey === "ollama-no-auth") {
+      logger.debug(
+        {
+          providerName,
+          hint: "Using keyless sentinel for type='ollama'. If your Ollama server requires an OLLAMA_API_KEY, set the provider's apiKeyName explicitly via providers_manage update.",
+        },
+        "Custom provider registered with keyless sentinel",
+      );
+    }
 
     try {
       registry.registerProvider(providerName, {
         api,
-        baseUrl: entry.baseUrl || undefined,
-        apiKey,
+        baseUrl: entry.baseUrl || getBuiltInBaseUrl(entry.type),
+        apiKey: resolvedApiKey,
         headers: headersResolved,
-        // pi's ProviderModelConfig requires concrete values for name/cost/
-        // contextWindow/maxTokens. Comis's UserModelSchema lets users omit
-        // these (defaults to optional/undefined), so we fill in zeros and
-        // a generous default context window. Cost is informational only
-        // and our CostTracker uses pi-ai's own catalog where it can.
         models: hasModels
-          ? entry.models.map((m) => ({
+          ? customModels.map((m) => ({
               id: m.id,
               name: m.name ?? m.id,
               contextWindow: m.contextWindow ?? 128_000,
@@ -172,7 +242,7 @@ export function registerCustomProviders(
           providerName,
           api,
           baseUrl: entry.baseUrl,
-          modelCount: entry.models.length,
+          modelCount: customModels.length,
         },
         "Custom provider registered with pi ModelRegistry",
       );
@@ -188,7 +258,7 @@ export function registerCustomProviders(
       );
     }
   }
-  return registered;
+  return { registered, providerAliases };
 }
 
 /**
@@ -206,12 +276,18 @@ export async function resolveInitialModel(
   registry: ModelRegistry,
   config: { provider: string; model: string },
   allowlist?: ModelAllowlist,
+  providerAliases?: Map<string, string>,
 ): Promise<InitialModelResult> {
-  // Try to find the exact model in the registry
-  const model = registry.find(config.provider, config.model);
+  let model = registry.find(config.provider, config.model);
+
+  if (!model && providerAliases) {
+    const builtInName = providerAliases.get(config.provider);
+    if (builtInName) {
+      model = registry.find(builtInName, config.model);
+    }
+  }
 
   if (!model) {
-    // Try to find any available model from the requested provider
     const available = registry.getAvailable();
     const providerModel = available.find((m) => m.provider === config.provider);
 
@@ -224,7 +300,6 @@ export async function resolveInitialModel(
       };
     }
 
-    // Found a provider model but not the exact ID -- return it with a note
     return {
       model: undefined,
       thinkingLevel: "off",

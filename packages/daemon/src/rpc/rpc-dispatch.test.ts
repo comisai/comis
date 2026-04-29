@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { classifyRpcError } from "./rpc-dispatch.js";
 
 // ---------------------------------------------------------------------------
-// Mock all 15 handler factory imports so createRpcDispatch can be tested
+// Mock all 16 handler factory imports so createRpcDispatch can be tested
 // without constructing the full 50+ field RpcDispatchDeps object.
 // ---------------------------------------------------------------------------
 
@@ -155,6 +155,18 @@ vi.mock("./skill-handlers.js", () => ({
   })),
 }));
 
+vi.mock("./provider-handlers.js", () => ({
+  createProviderHandlers: vi.fn(() => ({
+    "providers.list": vi.fn(async () => ({ providers: [] })),
+    "providers.get": vi.fn(async () => ({ provider: null })),
+    "providers.add": vi.fn(async () => ({ added: true })),
+    "providers.update": vi.fn(async () => ({ updated: true })),
+    "providers.remove": vi.fn(async () => ({ removed: true })),
+    "providers.set_default": vi.fn(async () => ({ updated: true })),
+    "providers.test": vi.fn(async () => ({ ok: true })),
+  })),
+}));
+
 // ---------------------------------------------------------------------------
 // Tests: classifyRpcError (pure function)
 // ---------------------------------------------------------------------------
@@ -238,7 +250,7 @@ describe("createRpcDispatch", () => {
   // to evaluate inline expressions like `deps.container.eventBus`.
   const mockDeps = {
     logger: mockLogger,
-    container: { eventBus: { emit: vi.fn(), on: vi.fn() } },
+    container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { providers: { entries: {} } } },
   } as never;
 
   beforeEach(() => {
@@ -305,7 +317,7 @@ describe("createRpcDispatch", () => {
     expect(logObj.errorKind).toBeTruthy();
   });
 
-  it("merges handlers from all 15 factory modules", async () => {
+  it("merges handlers from all 16 factory modules", async () => {
     const dispatch = await getDispatch();
 
     // Verify methods from different factories are all routable
@@ -325,6 +337,7 @@ describe("createRpcDispatch", () => {
       "channel.list",
       "token.list",
       "daemon.info",
+      "providers.list",
     ];
 
     for (const method of methodsToCheck) {

@@ -38,6 +38,8 @@ vi.mock("@comis/agent", () => ({
 
 vi.mock("@mariozechner/pi-ai", () => ({
   getModel: vi.fn(() => null),
+  getModels: vi.fn(() => []),
+  getProviders: vi.fn(() => []),
 }));
 
 import { buildMediaPipeline, type MediaPipelineDeps } from "./setup-channels-media.js";

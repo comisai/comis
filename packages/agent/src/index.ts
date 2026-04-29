@@ -90,6 +90,10 @@ export type { OAuthTokenManager, OAuthTokenManagerDeps, OAuthError } from "./mod
 export { createAuthUsageTracker } from "./model/auth-usage-tracker.js";
 export type { AuthUsageTracker, ProfileStats, ProfileUsageInput } from "./model/auth-usage-tracker.js";
 
+// Last-known-working model tracker (auth-failure fallback)
+export { createLastKnownModelTracker } from "./model/last-known-model.js";
+export type { LastKnownModelTracker, LastKnownModelEntry } from "./model/last-known-model.js";
+
 // Routing
 export { createMessageRouter, resolveAgent } from "./routing/message-router.js";
 export type { MessageRouter } from "./routing/message-router.js";
@@ -320,7 +324,7 @@ export type { AuthStorageAdapterOptions } from "./model/auth-storage-adapter.js"
 
 // Model registry adapter (ModelRegistry creation + initial model resolution)
 export { createModelRegistryAdapter, registerCustomProviders, resolveInitialModel } from "./model/model-registry-adapter.js";
-export type { CustomProviderRegistration, CustomProviderLogger } from "./model/model-registry-adapter.js";
+export type { CustomProviderRegistration, CustomProviderLogger, RegisterCustomProvidersResult } from "./model/model-registry-adapter.js";
 
 // Session key mapper (SessionKey to/from filesystem path)
 export { sessionKeyToPath, pathToSessionKey } from "./session/session-key-mapper.js";

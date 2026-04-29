@@ -182,6 +182,7 @@ Supervisor tools can make significant changes to your system. They are intended 
 | `tokens_manage` | list, create, revoke, rotate | Gateway tokens -- manage API authentication tokens |
 | `models_manage` | list, test | Model catalog -- view available models and test connections |
 | `skills_manage` | list, import, delete | Skill lifecycle -- manage custom skills |
+| `providers_manage` | list, get, create, update, delete, enable, disable | LLM provider endpoints -- register and manage custom model providers |
 | `mcp_manage` | list, status, connect, disconnect, reconnect | MCP connections -- manage external tool servers |
 
 ### Supervisor Tool Details
@@ -275,6 +276,211 @@ Supervisor tools can make significant changes to your system. They are intended 
     - `"shared"` -- operates on the global skills directory (default agent only)
 
     The scope defaults to `"local"`, so an agent's skill mutations are isolated to its own workspace unless explicitly targeting the shared directory.
+  </Accordion>
+
+  <Accordion title="providers_manage -- LLM provider management" icon="server">
+    **Admin required.** Manage custom LLM provider endpoints.
+
+    **Actions:**
+    - **list** -- View all configured providers (name, type, status, model count)
+    - **get** -- Read full provider configuration for a specific provider
+    - **create** -- Register a new provider (requires approval)
+    - **update** -- Modify an existing provider's configuration
+    - **delete** -- Remove a provider (requires approval, blocked if agents reference it)
+    - **enable** -- Activate a disabled provider
+    - **disable** -- Deactivate a provider (warns if agents reference it)
+
+    **Parameters:**
+    | Parameter | Type | Required | Description |
+    |-----------|------|----------|-------------|
+    | `action` | string | Yes | One of: list, get, create, update, delete, enable, disable |
+    | `provider_id` | string | For all except list | Provider identifier (e.g., "nvidia", "deepseek") |
+    | `config` | object | For create/update | Provider configuration (type, baseUrl, apiKeyName, models) |
+
+    **Example -- Cloud provider (NVIDIA NIM):**
+    ```json
+    // Step 1: Store the API key
+    gateway({ action: "env_set", env_key: "NVIDIA_API_KEY", env_value: "nvapi-..." })
+
+    // Step 2: Create the provider (minimal -- only id required in models)
+    providers_manage({
+      action: "create",
+      provider_id: "nvidia",
+      config: {
+        type: "openai",
+        name: "NVIDIA NIM",
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+        apiKeyName: "NVIDIA_API_KEY",
+        models: [{ id: "moonshotai/kimi-k2.5" }]
+      }
+    })
+
+    // Step 3: Switch agent to use the new provider
+    agents_manage({ action: "update", agent_id: "default", config: { provider: "nvidia", model: "moonshotai/kimi-k2.5" } })
+    ```
+
+    **Example -- Local inference server (Ollama, no API key needed):**
+    ```json
+    providers_manage({
+      action: "create",
+      provider_id: "local-ollama",
+      config: {
+        type: "ollama",
+        name: "Local Ollama",
+        baseUrl: "http://localhost:11434",
+        models: [{ id: "llama3.3" }, { id: "qwen3:32b" }, { id: "deepseek-r1:14b" }]
+      }
+    })
+    ```
+
+    **Example -- Multi-model cloud provider (DeepSeek):**
+    ```json
+    providers_manage({
+      action: "create",
+      provider_id: "deepseek",
+      config: {
+        type: "openai",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKeyName: "DEEPSEEK_API_KEY",
+        models: [{ id: "deepseek-chat" }, { id: "deepseek-reasoner" }]
+      }
+    })
+    ```
+
+    **Example -- Self-hosted vLLM / LM Studio endpoint:**
+    ```json
+    providers_manage({
+      action: "create",
+      provider_id: "my-vllm",
+      config: {
+        type: "openai",
+        name: "Self-hosted vLLM",
+        baseUrl: "http://gpu-server:8000/v1",
+        models: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }]
+      }
+    })
+    ```
+
+    **Example -- Multi-provider gateway (OpenRouter):**
+    ```json
+    providers_manage({
+      action: "create",
+      provider_id: "openrouter",
+      config: {
+        type: "openrouter",
+        name: "OpenRouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKeyName: "OPENROUTER_API_KEY",
+        models: [{ id: "google/gemini-2.5-flash" }, { id: "anthropic/claude-sonnet-4" }]
+      }
+    })
+    ```
+
+    **Example -- Rich model entry (with optional metadata):**
+    ```json
+    providers_manage({
+      action: "update",
+      provider_id: "nvidia",
+      config: {
+        models: [{
+          id: "moonshotai/kimi-k2.5",
+          name: "Kimi K2.5",
+          reasoning: true,
+          contextWindow: 262144,
+          maxTokens: 16384,
+          input: ["text", "image"]
+        }]
+      }
+    })
+    ```
+
+    <Warning>
+      API keys are never stored in provider config. Always store keys via `gateway env_set` first,
+      then reference the key name in `apiKeyName`. The provider config only holds the key name,
+      not the value.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Model failover -- automatic recovery from provider outages" icon="shield-check">
+    Configure automatic model failover on any agent via `agents_manage update`. When the primary model fails, the agent automatically tries fallback models in order.
+
+    **Failover pipeline:**
+    1. Primary model attempt (with resettable timeout)
+    2. Cache-aware short retry on 429/529 (preserves prompt cache)
+    3. Auth key rotation if `authProfiles` configured (same provider, different key)
+    4. Ordered fallback model loop (different provider + model)
+    5. Exhaustion event if all attempts fail
+
+    **Example -- basic fallback chain:**
+    ```json
+    agents_manage({
+      action: "update",
+      agent_id: "default",
+      config: {
+        modelFailover: {
+          fallbackModels: [
+            { provider: "deepseek", modelId: "deepseek-chat" },
+            { provider: "local-ollama", modelId: "llama3.3" }
+          ]
+        }
+      }
+    })
+    ```
+
+    **Example -- auth key rotation for rate limits:**
+    ```json
+    // Step 1: Store backup API key
+    gateway({ action: "env_set", env_key: "ANTHROPIC_API_KEY_2", env_value: "sk-ant-..." })
+
+    // Step 2: Configure rotation
+    agents_manage({
+      action: "update",
+      agent_id: "default",
+      config: {
+        modelFailover: {
+          authProfiles: [
+            { keyName: "ANTHROPIC_API_KEY_2", provider: "anthropic" }
+          ]
+        }
+      }
+    })
+    ```
+
+    **Example -- full resilience (fallback + auth rotation + custom cooldown):**
+    ```json
+    agents_manage({
+      action: "update",
+      agent_id: "default",
+      config: {
+        modelFailover: {
+          fallbackModels: [
+            { provider: "deepseek", modelId: "deepseek-chat" },
+            { provider: "local-ollama", modelId: "llama3.3" }
+          ],
+          authProfiles: [
+            { keyName: "NVIDIA_API_KEY_2", provider: "nvidia" }
+          ],
+          maxAttempts: 8,
+          cooldownInitialMs: 30000,
+          cooldownMultiplier: 3,
+          cooldownCapMs: 1800000
+        }
+      }
+    })
+    ```
+
+    <Warning>
+      Each fallback model must reference a provider that has been created via `providers_manage`.
+      If a referenced provider does not exist or is disabled, that fallback step is skipped.
+    </Warning>
+
+    <Warning>
+      `fallbackModels` and `authProfiles` are replaced wholesale on update -- the array you send
+      becomes the complete new state. To **add** a fallback (not replace the chain), first call
+      `agents_manage get` to read the existing array, append the new entry, then call
+      `agents_manage update` with the full list. Scalar fields (cooldownInitialMs, maxAttempts)
+      are preserved across partial updates via a top-level merge inside the handler.
+    </Warning>
   </Accordion>
 
   <Accordion title="mcp_manage -- MCP server management" icon="network-wired">

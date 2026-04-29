@@ -40,6 +40,7 @@ const mockCreateExecTool = vi.hoisted(() => vi.fn(() => ({ name: "exec" })));
 const mockCreateProcessTool = vi.hoisted(() => vi.fn(() => ({ name: "process" })));
 const mockCreateApplyPatchTool = vi.hoisted(() => vi.fn(() => ({ name: "apply_patch" })));
 const mockCreateHeartbeatManageTool = vi.hoisted(() => vi.fn(() => ({ name: "heartbeat_manage" })));
+const mockCreateProvidersManageTool = vi.hoisted(() => vi.fn(() => ({ name: "providers_manage" })));
 const mockCreateNotifyTool = vi.hoisted(() => vi.fn(() => ({ name: "notify_user" })));
 const mockCreateImageGenerateTool = vi.hoisted(() => vi.fn(() => ({ name: "image_generate" })));
 const mockCreateProcessRegistry = vi.hoisted(() => vi.fn(() => ({
@@ -114,6 +115,7 @@ vi.mock("@comis/skills", () => ({
   createChannelsManageTool: mockCreateChannelsManageTool,
   createSkillsManageTool: mockCreateSkillsManageTool,
   createMcpManageTool: mockCreateMcpManageTool,
+  createProvidersManageTool: mockCreateProvidersManageTool,
   createExecTool: mockCreateExecTool,
   createProcessTool: mockCreateProcessTool,
   createApplyPatchTool: mockCreateApplyPatchTool,
@@ -332,6 +334,7 @@ describe("setupTools", () => {
     expect(toolNames).toContain("apply_patch");
     expect(toolNames).toContain("gateway");
     expect(toolNames).toContain("skills_manage");
+    expect(toolNames).toContain("providers_manage");
   });
 
   // -------------------------------------------------------------------------

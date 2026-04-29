@@ -99,6 +99,7 @@ export { createObsQueryTool } from "./obs-query-tool.js";
 export { createMemoryManageTool } from "./memory-manage-tool.js";
 export { createSessionsManageTool } from "./sessions-manage-tool.js";
 export { createModelsManageTool } from "./models-manage-tool.js";
+export { createProvidersManageTool } from "./providers-manage-tool.js";
 export { createTokensManageTool } from "./tokens-manage-tool.js";
 export { createChannelsManageTool } from "./channels-manage-tool.js";
 export { createSkillsManageTool } from "./skills-manage-tool.js";

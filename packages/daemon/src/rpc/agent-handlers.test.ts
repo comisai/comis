@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createAgentHandlers } from "./agent-handlers.js";
 import type { AgentHandlerDeps } from "./agent-handlers.js";
 import type { PersistToConfigDeps } from "./persist-to-config.js";
+import type { ProviderEntry } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Mock persist-to-config module to avoid real filesystem operations
@@ -19,6 +20,10 @@ vi.mock("./persist-to-config.js", () => ({
 
 vi.mock("./agent-inline-workspace.js", () => ({
   writeInlineWorkspaceFiles: vi.fn(),
+}));
+
+vi.mock("./probe-provider-auth.js", () => ({
+  probeProviderAuth: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
 }));
 
 vi.mock("@comis/agent", () => ({
@@ -100,6 +105,9 @@ const mockPersistToConfig = vi.mocked(persistToConfig);
 import { writeInlineWorkspaceFiles } from "./agent-inline-workspace.js";
 const mockWriteInline = vi.mocked(writeInlineWorkspaceFiles);
 
+import { probeProviderAuth } from "./probe-provider-auth.js";
+const mockProbeProviderAuth = vi.mocked(probeProviderAuth);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -155,6 +163,8 @@ describe("createAgentHandlers", () => {
       ok: true,
       value: { roleWritten: false, identityWritten: false, bytesWritten: 0 },
     });
+    mockProbeProviderAuth.mockClear();
+    mockProbeProviderAuth.mockResolvedValue({ ok: true, value: undefined });
   });
 
   // -------------------------------------------------------------------------
@@ -647,6 +657,153 @@ describe("createAgentHandlers", () => {
           _trustLevel: "admin",
         }),
       ).rejects.toThrow("Agent not found: nonexistent");
+    });
+
+    it("rejects when provider changes and probe fails", async () => {
+      mockProbeProviderAuth.mockResolvedValueOnce({
+        ok: false,
+        error: "API key rejected by provider (HTTP 401). Verify the key is correct and has not expired.",
+      });
+      const deps = makeDeps({
+        providerEntries: {
+          "nvidia-nim": {
+            type: "openai",
+            name: "NVIDIA NIM",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKeyName: "NVIDIA_API_KEY",
+            enabled: true,
+            timeoutMs: 120000,
+            maxRetries: 2,
+            headers: {},
+            capabilities: { providerFamily: "default", dropThinkingBlockModelHints: [], transcriptToolCallIdMode: "default", transcriptToolCallIdModelHints: [] },
+            models: [],
+          } as ProviderEntry,
+        },
+        secretManager: { has: () => true, get: (key: string) => key === "NVIDIA_API_KEY" ? "test-key" : undefined },
+      });
+      const handlers = createAgentHandlers(deps);
+
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "default",
+          config: { provider: "nvidia-nim", model: "llama-3.1-70b" },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow("Cannot switch agent");
+
+      // Agent config should NOT have been updated
+      expect(deps.agents["default"]!.provider).toBe("anthropic");
+    });
+
+    it("skips probe when provider unchanged", async () => {
+      const deps = makeDeps({
+        providerEntries: {
+          anthropic: {
+            type: "anthropic",
+            name: "Anthropic",
+            baseUrl: "https://api.anthropic.com",
+            apiKeyName: "ANTHROPIC_API_KEY",
+            enabled: true,
+            timeoutMs: 120000,
+            maxRetries: 2,
+            headers: {},
+            capabilities: { providerFamily: "default", dropThinkingBlockModelHints: [], transcriptToolCallIdMode: "default", transcriptToolCallIdModelHints: [] },
+            models: [],
+          } as ProviderEntry,
+        },
+        secretManager: { has: () => true, get: () => "test-key" },
+      });
+      const handlers = createAgentHandlers(deps);
+
+      await handlers["agents.update"]!({
+        agentId: "default",
+        config: { name: "Renamed Agent" },
+        _trustLevel: "admin",
+      });
+
+      expect(mockProbeProviderAuth).not.toHaveBeenCalled();
+    });
+
+    it("succeeds when provider changes and probe passes", async () => {
+      // Default mock returns ok
+      const deps = makeDeps({
+        providerEntries: {
+          "nvidia-nim": {
+            type: "openai",
+            name: "NVIDIA NIM",
+            baseUrl: "https://integrate.api.nvidia.com/v1",
+            apiKeyName: "NVIDIA_API_KEY",
+            enabled: true,
+            timeoutMs: 120000,
+            maxRetries: 2,
+            headers: {},
+            capabilities: { providerFamily: "default", dropThinkingBlockModelHints: [], transcriptToolCallIdMode: "default", transcriptToolCallIdModelHints: [] },
+            models: [],
+          } as ProviderEntry,
+        },
+        secretManager: { has: () => true, get: (key: string) => key === "NVIDIA_API_KEY" ? "test-key" : undefined },
+      });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: { provider: "nvidia-nim", model: "llama-3.1-70b" },
+        _trustLevel: "admin",
+      })) as { updated: boolean; config: Record<string, unknown> };
+
+      expect(result.updated).toBe(true);
+      expect(result.config.provider).toBe("nvidia-nim");
+      expect(mockProbeProviderAuth).toHaveBeenCalledOnce();
+    });
+
+    it("preserves scalar modelFailover fields when patching only fallbackModels", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      // Setup: agent with existing modelFailover scalars
+      await handlers["agents.create"]!({
+        agentId: "failover-test",
+        config: {
+          name: "Failover Test",
+          modelFailover: {
+            fallbackModels: [{ provider: "anthropic", modelId: "claude-sonnet-4-5-20250929" }],
+            cooldownInitialMs: 30_000,
+            cooldownMultiplier: 3,
+          },
+        },
+        _trustLevel: "admin",
+      });
+
+      mockPersistToConfig.mockClear();
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "failover-test",
+        config: {
+          modelFailover: {
+            fallbackModels: [
+              { provider: "deepseek", modelId: "deepseek-chat" },
+              { provider: "ollama", modelId: "llama3.3" },
+            ],
+          },
+        },
+        _trustLevel: "admin",
+      })) as { agentId: string; config: Record<string, unknown>; updated: boolean };
+
+      // In-memory: fallbackModels replaced, scalar cooldown fields preserved
+      const mf = result.config.modelFailover as Record<string, unknown>;
+      expect((mf.fallbackModels as unknown[]).length).toBe(2);
+      expect(mf.cooldownInitialMs).toBe(30_000);
+      expect(mf.cooldownMultiplier).toBe(3);
+
+      // Persisted: only user's partial patch (NOT the merged form)
+      const persistCall = mockPersistToConfig.mock.calls.at(-1);
+      const persistedPatch = (persistCall?.[1] as Record<string, unknown>)?.patch as Record<string, unknown>;
+      const agentPatch = (persistedPatch?.agents as Record<string, Record<string, unknown>>)?.["failover-test"];
+      // The persisted patch should have modelFailover.fallbackModels but NOT cooldownInitialMs
+      expect((agentPatch?.modelFailover as Record<string, unknown>)?.fallbackModels).toBeDefined();
+      // cooldownInitialMs should NOT be in the persisted patch (it was not in the user's input)
+      expect((agentPatch?.modelFailover as Record<string, unknown>)?.cooldownInitialMs).toBeUndefined();
     });
   });
 

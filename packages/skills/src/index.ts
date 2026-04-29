@@ -128,6 +128,7 @@ export {
   createMemoryManageTool,
   createSessionsManageTool,
   createModelsManageTool,
+  createProvidersManageTool,
   createTokensManageTool,
   createChannelsManageTool,
   createSkillsManageTool,

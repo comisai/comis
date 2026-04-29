@@ -257,6 +257,8 @@ export interface PiExecutorDeps {
   circuitBreaker: CircuitBreaker;
   /** Optional provider health monitor for cross-agent pre-check. */
   providerHealth?: ProviderHealthMonitor;
+  /** Optional last-known-working model tracker for auth-failure fallback. */
+  lastKnownModel?: import("../model/last-known-model.js").LastKnownModelTracker;
   budgetGuard: BudgetGuard;
   costTracker: CostTracker;
   stepCounter: StepCounter;
@@ -265,6 +267,7 @@ export interface PiExecutorDeps {
   // Adapters
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
+  providerAliases?: Map<string, string>;
   // Session management
   sessionAdapter: ComisSessionManager;
   // Workspace
@@ -551,18 +554,18 @@ export function createPiExecutor(
       // Apply per-node model override from ExecutionOverrides and normalize shortcuts before registry lookup
       const normalizedPrimary = normalizeModelId(config.provider, config.model);
       let resolvedModel = deps.modelRegistry.find(config.provider, normalizedPrimary.modelId);
+      if (!resolvedModel && deps.providerAliases) {
+        const builtInName = deps.providerAliases.get(config.provider);
+        if (builtInName) {
+          resolvedModel = deps.modelRegistry.find(builtInName, normalizedPrimary.modelId);
+        }
+      }
       if (normalizedPrimary.normalized) {
         deps.logger.debug(
           { original: config.model, resolved: normalizedPrimary.modelId },
           "Model ID normalized via shortcut",
         );
       }
-      // Surface the silent-fallback case where pi-coding-agent picks a different
-      // provider than the user configured. When find() returns undefined for an
-      // explicit (non-default) provider/model, pi will silently shop `findInitialModel`
-      // and pick whatever built-in has env-var auth -- e.g., GEMINI_API_KEY → google.
-      // The wiring fix in setup-agents.ts should cover the YAML-provider case; this
-      // log catches stragglers (typos, disabled providers, missing API keys).
       if (!resolvedModel
         && config.provider.toLowerCase() !== "default"
         && config.model.toLowerCase() !== "default") {
@@ -1406,6 +1409,7 @@ export function createPiExecutor(
                 fallbackModels: deps.fallbackModels,
                 modelRegistry: deps.modelRegistry,
                 providerHealth: deps.providerHealth,
+                lastKnownModel: deps.lastKnownModel,
                 envelopeConfig: deps.envelopeConfig,
                 outputGuard: deps.outputGuard,
                 canaryToken: deps.canaryToken,

@@ -382,10 +382,10 @@ describe("buildPrivilegedToolsSection", () => {
     expect(joined).toContain("### Fleet Management Patterns");
   });
 
-  it("works with all 10 privileged tool names", () => {
+  it("works with all 11 privileged tool names", () => {
     const allPrivileged = [
       "agents_manage", "obs_query", "sessions_manage", "memory_manage",
-      "channels_manage", "tokens_manage", "models_manage",
+      "channels_manage", "tokens_manage", "models_manage", "providers_manage",
       "skills_manage", "mcp_manage", "heartbeat_manage",
     ];
     const result = buildPrivilegedToolsSection(allPrivileged, false);

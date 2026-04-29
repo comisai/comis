@@ -2,10 +2,10 @@
 /**
  * Signature replay scrubber context engine layer.
  *
- * Always-on policy: clears `thinkingSignature` from EVERY assistant message
- * (latest included) and strips `thoughtSignature` from `toolCall` /
- * `tool_call` blocks in the same messages. `redacted_thinking` blocks are
- * never modified, anywhere.
+ * Always-on policy: strips signed `thinking` blocks entirely from EVERY
+ * assistant message (latest included) and strips `thoughtSignature` from
+ * `toolCall` / `tool_call` blocks in the same messages. `redacted_thinking`
+ * blocks are never modified, anywhere.
  *
  * Rationale: Anthropic's signed-thinking validation operates on the full
  * (system + tools + history) prefix. After 8 quick tasks of progressively
@@ -148,16 +148,19 @@ export function createSignatureReplayScrubber(
               newContent[j] = block;
               continue;
             }
-            // Signed thinking: clear the signature (do NOT delete the field
-            // — pi-ai's serializer expects the property to exist on signed
-            // thinking blocks). The thinking content is still present and
-            // replayable; only the signature is cleared, which Anthropic
-            // tolerates. The alternative — dropping the block entirely —
-            // breaks reasoning-token continuity for any future-prefix replay.
+            // Signed thinking: strip the block entirely. Clearing the
+            // signature to "" was previously attempted but Anthropic only
+            // tolerates it while the prompt cache covers the prefix. On
+            // cache eviction the full request is re-validated and a modified
+            // thinkingSignature triggers a 400 ("thinking blocks cannot be
+            // modified"). Stripping the block avoids this: Anthropic accepts
+            // conversations where thinking blocks are absent from historical
+            // turns. Reasoning-token continuity is lost, but that is
+            // strictly better than a hard 400 that kills the session.
             if (typeof b.thinkingSignature === "string" && b.thinkingSignature.length > 0) {
-              const copy = { ...(b as Record<string, unknown>), thinkingSignature: "" };
+              // Mark as null — filtered out below.
               // eslint-disable-next-line security/detect-object-injection -- numeric index
-              newContent[j] = copy;
+              newContent[j] = null;
               blocksAffected++;
               messageChanged = true;
               continue;
@@ -187,8 +190,14 @@ export function createSignatureReplayScrubber(
         }
 
         if (messageChanged) {
+          const filtered = newContent.filter((b) => b !== null);
+          // Safety: if stripping thinking blocks emptied the content, keep
+          // a minimal text block so the message structure stays valid.
+          const safeContent = filtered.length > 0
+            ? filtered
+            : [{ type: "text" as const, text: "" }];
           // eslint-disable-next-line security/detect-object-injection -- numeric index
-          result[i] = { ...(msg as object), content: newContent } as AgentMessage;
+          result[i] = { ...(msg as object), content: safeContent } as AgentMessage;
           scrubbedAssistantMessages++;
           anyChanged = true;
         } else {

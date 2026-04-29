@@ -8,6 +8,7 @@ import {
 } from "./schema-providers.js";
 import { ModelCompatConfigSchema } from "../domain/model-compat.js";
 import { ProviderCapabilitiesSchema } from "../domain/provider-capabilities.js";
+import { AppConfigSchema } from "./schema.js";
 
 // ---------------------------------------------------------------------------
 // ModelCompatConfigSchema
@@ -326,5 +327,39 @@ describe("ProvidersConfigSchema", () => {
       expect(ds.models).toHaveLength(1);
       expect(ds.models[0].comisCompat?.supportsTools).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AppConfigSchema — providers.entries.default reserved name invariant
+// ---------------------------------------------------------------------------
+
+describe("AppConfigSchema providers.entries.default reserved name", () => {
+  it("rejects a provider entry named 'default' at parse time", () => {
+    const result = AppConfigSchema.safeParse({
+      providers: {
+        entries: {
+          default: { type: "openai" },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join("."));
+      expect(paths).toContain("providers.entries.default");
+      const messages = result.error.issues.map((i) => i.message);
+      expect(messages.some((m) => m.includes("reserved"))).toBe(true);
+    }
+  });
+
+  it("accepts a provider entry with a non-reserved name alongside other providers", () => {
+    const result = AppConfigSchema.safeParse({
+      providers: {
+        entries: {
+          "anthropic-default": { type: "anthropic" },
+        },
+      },
+    });
+    expect(result.success).toBe(true);
   });
 });

@@ -31,6 +31,7 @@ import type { TypedEventBus } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/infra";
 import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";
 import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js";
+import type { LastKnownModelTracker } from "../model/last-known-model.js";
 import { withPromptTimeout, withResettablePromptTimeout, PromptTimeoutError } from "./prompt-timeout.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 
@@ -71,6 +72,8 @@ export interface ModelRetryParams {
     sessionKey?: string;
     /** Optional provider health monitor for failure aggregation. */
     providerHealth?: ProviderHealthMonitor;
+    /** Optional last-known-working model tracker for auth-failure fallback. */
+    lastKnownModel?: LastKnownModelTracker;
     /** Callback to receive the resetTimer function from the resettable prompt timeout. */
     onResetTimer?: (resetFn: () => void) => void;
   };
@@ -80,6 +83,8 @@ export interface ModelRetryParams {
 export interface ModelRetryResult {
   succeeded: boolean;
   error?: unknown;
+  /** The model that ultimately succeeded (primary, fallback, or LKW). */
+  effectiveModel?: { provider: string; model: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +157,26 @@ function parseRetryAfterMs(error: unknown): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// Auth error detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether an error is an authentication/authorization failure (401/403).
+ * Used to gate the last-known-working model fallback -- LKW only fires for
+ * auth errors, not for rate limits or transient failures.
+ */
+export function isAuthError(error: unknown): boolean {
+  const status = getErrorStatus(error);
+  if (status === 401 || status === 403) return true;
+  if (error instanceof Error) {
+    return /invalid.?api.?key|authentication|unauthorized|401|403|permission.?denied/i.test(
+      error.message,
+    );
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Main function
 // ---------------------------------------------------------------------------
 
@@ -178,6 +203,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
 
   let promptError: unknown = undefined;
   let promptSucceeded = false;
+  let effectiveModel: { provider: string; model: string } | undefined;
 
   try {
     // Primary prompt uses resettable timeout so tool completions can reset the
@@ -194,6 +220,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
     deps.onResetTimer?.(resettable.resetTimer);
     await resettable.promise;
     promptSucceeded = true;
+    effectiveModel = { provider: config.provider, model: config.model };
     // Record success for auth rotation cooldown tracking
     if (authRotation?.hasProfiles(config.provider)) {
       authRotation.recordSuccess(config.provider);
@@ -247,6 +274,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             );
             promptSucceeded = true;
             promptError = undefined;
+            effectiveModel = { provider: config.provider, model: config.model };
             // Record success for auth rotation tracking
             if (authRotation?.hasProfiles(config.provider)) {
               authRotation.recordSuccess(config.provider);
@@ -284,6 +312,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           );
           promptSucceeded = true;
           promptError = undefined;
+          effectiveModel = { provider: config.provider, model: config.model };
           authRotation.recordSuccess(config.provider);
           logger.info(
             { provider: config.provider },
@@ -361,6 +390,9 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         );
         promptSucceeded = true;
         promptError = undefined;
+        if (parsed) {
+          effectiveModel = { provider: parsed.provider, model: parsed.modelId };
+        }
         logger.info(
           { fallbackModel: fallbackModelStr },
           "Fallback model succeeded",
@@ -406,7 +438,72 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         timestamp: Date.now(),
       });
     }
+
+    // Last-known-working model fallback: when all configured models fail
+    // with an auth error, try a model that recently succeeded somewhere
+    // on this daemon (per-agent first, then daemon-wide from a different provider).
+    if (!promptSucceeded && isAuthError(promptError) && deps.lastKnownModel) {
+      const lkw =
+        deps.lastKnownModel.getLastKnown(deps.agentId ?? "") ??
+        deps.lastKnownModel.getAnyKnown(config.provider);
+
+      if (lkw && (lkw.provider !== config.provider || lkw.model !== config.model)) {
+        eventBus.emit("model:lkw_fallback_attempt", {
+          fromProvider: config.provider,
+          fromModel: config.model,
+          toProvider: lkw.provider,
+          toModel: lkw.model,
+          timestamp: Date.now(),
+        });
+        logger.info(
+          { lkwProvider: lkw.provider, lkwModel: lkw.model },
+          "Attempting last-known-working model fallback",
+        );
+
+        try {
+          const normalizedLkw = normalizeModelId(lkw.provider, lkw.model);
+          const lkwModelObj = modelRegistry.find(lkw.provider, normalizedLkw.modelId);
+          if (lkwModelObj) {
+            await session.setModel(lkwModelObj);
+          }
+
+          await withPromptTimeout(
+            session.prompt(messageText, {
+              expandPromptTemplates: false,
+              images: promptImages,
+            }),
+            timeoutConfig.retryPromptTimeoutMs,
+            () => session.abort(),
+          );
+          promptSucceeded = true;
+          promptError = undefined;
+          effectiveModel = { provider: lkw.provider, model: lkw.model };
+
+          eventBus.emit("model:lkw_fallback_succeeded", {
+            provider: lkw.provider,
+            model: lkw.model,
+            timestamp: Date.now(),
+          });
+          logger.info(
+            { lkwProvider: lkw.provider, lkwModel: lkw.model },
+            "Last-known-working model fallback succeeded",
+          );
+        } catch (lkwError) {
+          promptError = lkwError;
+          logger.warn(
+            {
+              err: lkwError,
+              lkwProvider: lkw.provider,
+              lkwModel: lkw.model,
+              hint: "Last-known-working model also failed",
+              errorKind: "dependency" as ErrorKind,
+            },
+            "Last-known-working model fallback failed",
+          );
+        }
+      }
+    }
   }
 
-  return { succeeded: promptSucceeded, error: promptError };
+  return { succeeded: promptSucceeded, error: promptError, effectiveModel };
 }

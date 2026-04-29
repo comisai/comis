@@ -15,7 +15,7 @@
  */
 
 import { PerAgentConfigSchema } from "@comis/core";
-import type { PerAgentConfig, ModelOperationType, OperationModels } from "@comis/core";
+import type { PerAgentConfig, ProviderEntry, ModelOperationType, OperationModels } from "@comis/core";
 import {
   resolveWorkspaceDir,
   resolveOperationModel,
@@ -29,6 +29,7 @@ import {
   type AgentInlineWorkspaceResult,
   type AgentInlineWorkspaceError,
 } from "./agent-inline-workspace.js";
+import { probeProviderAuth } from "./probe-provider-auth.js";
 
 import type { RpcHandler } from "./types.js";
 
@@ -50,8 +51,10 @@ export interface AgentHandlerDeps {
   hotAdd?: (agentId: string, config: PerAgentConfig) => Promise<void>;
   /** Hot-remove callback: tears down agent runtime without restart. When provided, skipRestart: true is passed to persistToConfig. */
   hotRemove?: (agentId: string) => Promise<void>;
-  /** SecretManager for API key availability checks. */
-  secretManager?: { has(key: string): boolean };
+  /** SecretManager for API key availability checks and probe key retrieval. */
+  secretManager?: { has(key: string): boolean; get(key: string): string | undefined };
+  /** Provider entries map for probe lookups when agents switch providers. */
+  providerEntries?: Record<string, ProviderEntry>;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,8 +268,41 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         } as typeof existing.scheduler;
       }
 
+      // Preserve scalar fields on partial modelFailover updates. fallbackModels,
+      // authProfiles, and allowedModels are arrays -- they are replaced wholesale
+      // by the spread (no element-wise merge), which matches the documented
+      // "user provides the complete desired list" semantic. Scalar fields
+      // (cooldownInitialMs, cooldownMultiplier, cooldownCapMs, maxAttempts) are
+      // preserved when omitted from the patch.
+      if (config.modelFailover && existing.modelFailover) {
+        config.modelFailover = {
+          ...existing.modelFailover,
+          ...config.modelFailover,
+        } as typeof existing.modelFailover;
+      }
+
       const merged = { ...existing, ...config };
       const parsedConfig = PerAgentConfigSchema.parse(merged);
+
+      // Probe provider API key when provider or model changes
+      const providerChanging = config.provider !== undefined && config.provider !== existing.provider;
+      const modelChanging = config.model !== undefined && config.model !== existing.model;
+      if ((providerChanging || modelChanging) && deps.providerEntries) {
+        const targetProvider = parsedConfig.provider;
+        const providerEntry = deps.providerEntries[targetProvider];
+        if (providerEntry?.apiKeyName && deps.secretManager) {
+          const apiKey = deps.secretManager.get(providerEntry.apiKeyName);
+          if (apiKey) {
+            const probeResult = await probeProviderAuth(providerEntry.baseUrl, apiKey, parsedConfig.model);
+            if (!probeResult.ok) {
+              throw new Error(
+                `Cannot switch agent "${agentId}" to provider "${targetProvider}": ${probeResult.error}`,
+              );
+            }
+          }
+        }
+      }
+
       deps.agents[agentId] = parsedConfig;
 
       // Best-effort persistence to config.yaml

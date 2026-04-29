@@ -44,6 +44,7 @@ import { createHeartbeatHandlers } from "./heartbeat-handlers.js";
 import { createSkillHandlers } from "./skill-handlers.js";
 import { createNotificationHandlers } from "./notification-handlers.js";
 import { createImageHandlers, type ImageHandlerDeps } from "./image-handlers.js";
+import { createProviderHandlers } from "./provider-handlers.js";
 import type { McpClientManager } from "@comis/skills";
 import type { LogLevelManager } from "../observability/log-infra.js";
 
@@ -296,6 +297,19 @@ export function createRpcDispatch(deps: RpcDispatchDeps): RpcCall {
     ...createAgentHandlers({
       ...deps,
       secretManager: deps.container?.secretManager,
+      providerEntries: deps.container.config.providers.entries,
+      persistDeps: {
+        container: deps.container,
+        configPaths: deps.configPaths,
+        defaultConfigPaths: deps.defaultConfigPaths,
+        configGitManager: deps.configGitManager,
+        logger: deps.logger,
+      },
+    }),
+    ...createProviderHandlers({
+      agents: deps.agents,
+      providerEntries: deps.container.config.providers.entries,
+      secretManager: deps.container?.secretManager,
       persistDeps: {
         container: deps.container,
         configPaths: deps.configPaths,
@@ -305,7 +319,10 @@ export function createRpcDispatch(deps: RpcDispatchDeps): RpcCall {
       },
     }),
     ...createObsHandlers(deps),
-    ...createModelHandlers(deps),
+    ...createModelHandlers({
+      ...deps,
+      providerEntries: deps.container.config.providers.entries,
+    }),
     ...createChannelHandlers({
       ...deps,
       persistDeps: {

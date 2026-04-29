@@ -116,7 +116,7 @@ describe("createSignatureReplayScrubber", () => {
   // Single assistant: latest IS scrubbed (260428-nzp)
   // -------------------------------------------------------------------------
 
-  it("single assistant message: signature cleared on the latest (no carve-out)", async () => {
+  it("single assistant message: signed thinking block stripped from the latest (no carve-out)", async () => {
     const logger = makeLoggerMock();
     const onScrubbed = vi.fn();
     const layer = createSignatureReplayScrubber({ logger, onScrubbed });
@@ -125,12 +125,11 @@ describe("createSignatureReplayScrubber", () => {
     ];
     const result = await layer.apply(messages, stubBudget);
 
-    // Latest is now scrubbed: thinkingSignature cleared (property kept as "").
+    // Signed thinking block stripped entirely; text block remains.
     expect(result).not.toBe(messages);
     const m0 = result[0] as { content: Array<Record<string, unknown>> };
-    expect(m0.content).toHaveLength(2);
-    expect(m0.content[0]).toMatchObject({ type: "thinking", thinking: "t", thinkingSignature: "" });
-    expect(m0.content[1]).toEqual(makeTextBlock("a"));
+    expect(m0.content).toHaveLength(1);
+    expect(m0.content[0]).toEqual(makeTextBlock("a"));
 
     expect(logger.info).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalledWith(
@@ -160,7 +159,7 @@ describe("createSignatureReplayScrubber", () => {
   // Two assistants: BOTH scrubbed (latest no longer preserved)
   // -------------------------------------------------------------------------
 
-  it("two assistant messages: signatures cleared on BOTH (older + latest)", async () => {
+  it("two assistant messages: signed thinking stripped from BOTH (older + latest)", async () => {
     const logger = makeLoggerMock();
     const onScrubbed = vi.fn();
     const layer = createSignatureReplayScrubber({ logger, onScrubbed });
@@ -176,24 +175,21 @@ describe("createSignatureReplayScrubber", () => {
     ];
     const result = await layer.apply(messages, stubBudget);
 
-    // Older assistant scrubbed.
+    // Older assistant: signed thinking block stripped, text block remains.
     const m1 = result[1] as { content: Array<Record<string, unknown>> };
-    expect(m1.content).toHaveLength(2);
-    expect(m1.content[0]).toMatchObject({ type: "thinking", thinking: "old", thinkingSignature: "" });
-    expect(m1.content[1]).toEqual(makeTextBlock("a"));
+    expect(m1.content).toHaveLength(1);
+    expect(m1.content[0]).toEqual(makeTextBlock("a"));
 
-    // Latest assistant ALSO scrubbed (no carve-out).
+    // Latest assistant ALSO stripped (no carve-out).
     expect(result[3]).not.toBe(messages[3]);
     const m3 = result[3] as { content: Array<Record<string, unknown>> };
-    expect(m3.content).toHaveLength(2);
-    expect(m3.content[0]).toMatchObject({ type: "thinking", thinking: "new", thinkingSignature: "" });
-    expect(m3.content[1]).toEqual(makeTextBlock("b"));
+    expect(m3.content).toHaveLength(1);
+    expect(m3.content[0]).toEqual(makeTextBlock("b"));
 
     // User messages preserved as same references.
     expect(result[0]).toBe(messages[0]);
     expect(result[2]).toBe(messages[2]);
 
-    // INFO log: total counts across BOTH scrubbed messages.
     expect(logger.info).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalledWith(
       {
@@ -221,7 +217,7 @@ describe("createSignatureReplayScrubber", () => {
   // ALL assistants scrubbed (including the latest)
   // -------------------------------------------------------------------------
 
-  it("ALL assistant messages scrubbed: thinking signatures cleared and tool_call signatures stripped on every turn", async () => {
+  it("ALL assistant messages scrubbed: thinking blocks stripped and tool_call signatures stripped on every turn", async () => {
     const logger = makeLoggerMock();
     const layer = createSignatureReplayScrubber({ logger });
 
@@ -240,10 +236,10 @@ describe("createSignatureReplayScrubber", () => {
     // Every assistant turn (1, 3, 5, 7) — INCLUDING the latest at index 7 — is scrubbed.
     for (const idx of [1, 3, 5, 7]) {
       const m = result[idx] as { content: Array<Record<string, unknown>> };
-      expect(m.content[0]).toMatchObject({ type: "thinking", thinkingSignature: "" });
-      expect(m.content[1]).not.toHaveProperty("thoughtSignature");
-      expect(m.content[1]).toMatchObject({ type: "tool_call", toolCallId: "call-1", toolName: "test_tool" });
-      // Different reference from the original (since it was rewritten).
+      // Signed thinking block stripped; only the toolCall block remains.
+      expect(m.content).toHaveLength(1);
+      expect(m.content[0]).not.toHaveProperty("thoughtSignature");
+      expect(m.content[0]).toMatchObject({ type: "tool_call", toolCallId: "call-1", toolName: "test_tool" });
       expect(result[idx]).not.toBe(messages[idx]);
     }
 
@@ -284,19 +280,17 @@ describe("createSignatureReplayScrubber", () => {
 
     const result = await layer.apply(messages, stubBudget);
 
-    // Older assistant: signed cleared, redacted byte-identical.
+    // Older assistant: signed block stripped, redacted byte-identical, text kept.
     const m0 = result[0] as { content: Array<Record<string, unknown>> };
-    expect(m0.content).toHaveLength(3);
-    expect(m0.content[0]).toMatchObject({ type: "thinking", thinking: "signed-o", thinkingSignature: "" });
-    expect(m0.content[1]).toBe(olderRedacted);
-    expect(m0.content[2]).toEqual(makeTextBlock("after-o"));
+    expect(m0.content).toHaveLength(2);
+    expect(m0.content[0]).toBe(olderRedacted);
+    expect(m0.content[1]).toEqual(makeTextBlock("after-o"));
 
-    // Latest assistant: signed cleared, redacted byte-identical.
+    // Latest assistant: signed block stripped, redacted byte-identical, text kept.
     const m1 = result[1] as { content: Array<Record<string, unknown>> };
-    expect(m1.content).toHaveLength(3);
-    expect(m1.content[0]).toMatchObject({ type: "thinking", thinking: "signed-l", thinkingSignature: "" });
-    expect(m1.content[1]).toBe(latestRedacted);
-    expect(m1.content[2]).toEqual(makeTextBlock("after-l"));
+    expect(m1.content).toHaveLength(2);
+    expect(m1.content[0]).toBe(latestRedacted);
+    expect(m1.content[1]).toEqual(makeTextBlock("after-l"));
   });
 
   // -------------------------------------------------------------------------
@@ -404,15 +398,15 @@ describe("createSignatureReplayScrubber", () => {
     // Fenced messages: same references, untouched.
     expect(result[0]).toBe(messages[0]);
     expect(result[1]).toBe(messages[1]);
-    // Past fence: signature cleared.
+    // Past fence: signed thinking block stripped, text block remains.
     const m2 = result[2] as { content: Array<Record<string, unknown>> };
-    expect(m2.content[0]).toMatchObject({ type: "thinking", thinking: "t2", thinkingSignature: "" });
-    expect(m2.content[1]).toEqual(makeTextBlock("a2"));
+    expect(m2.content).toHaveLength(1);
+    expect(m2.content[0]).toEqual(makeTextBlock("a2"));
     // Latest assistant: ALSO scrubbed now (no carve-out).
     expect(result[3]).not.toBe(messages[3]);
     const m3 = result[3] as { content: Array<Record<string, unknown>> };
-    expect(m3.content[0]).toMatchObject({ type: "thinking", thinking: "t3", thinkingSignature: "" });
-    expect(m3.content[1]).toEqual(makeTextBlock("a3"));
+    expect(m3.content).toHaveLength(1);
+    expect(m3.content[0]).toEqual(makeTextBlock("a3"));
 
     expect(onScrubbed).toHaveBeenCalledWith({
       scrubbedAssistantMessages: 2,
@@ -467,11 +461,15 @@ describe("createSignatureReplayScrubber", () => {
 
     // Result reflects the scrub on BOTH older and latest.
     const scrubbed0 = result[0] as { content: Array<Record<string, unknown>> };
-    expect(scrubbed0.content[0]).toMatchObject({ type: "thinking", thinkingSignature: "" });
-    expect(scrubbed0.content[2]).not.toHaveProperty("thoughtSignature");
+    // Signed thinking block stripped; text block + toolCall (sans thoughtSignature) remain.
+    expect(scrubbed0.content).toHaveLength(2);
+    expect(scrubbed0.content[0]).toEqual(makeTextBlock("a1"));
+    expect(scrubbed0.content[1]).not.toHaveProperty("thoughtSignature");
 
     const scrubbed1 = result[1] as { content: Array<Record<string, unknown>> };
-    expect(scrubbed1.content[0]).toMatchObject({ type: "thinking", thinkingSignature: "" });
+    // Signed thinking block stripped; text block remains.
+    expect(scrubbed1.content).toHaveLength(1);
+    expect(scrubbed1.content[0]).toEqual(makeTextBlock("latest"));
   });
 
   // -------------------------------------------------------------------------
