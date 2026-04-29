@@ -88,31 +88,43 @@ describe("probeProviderAuth", () => {
     const mockFetch = vi.fn().mockResolvedValue({ status: 200 });
     vi.stubGlobal("fetch", mockFetch);
 
-    await probeProviderAuth("https://api.example.com/v1", "test-key", 2_000);
+    await probeProviderAuth("https://api.example.com/v1", "test-key", "gpt-4o", 2_000);
 
     expect(mockFetch).toHaveBeenCalledOnce();
     const callArgs = mockFetch.mock.calls[0]!;
-    expect(callArgs[0]).toBe("https://api.example.com/v1/models");
+    expect(callArgs[0]).toBe("https://api.example.com/v1/chat/completions");
     expect(callArgs[1]).toMatchObject({
-      method: "GET",
-      headers: { Authorization: "Bearer test-key" },
+      method: "POST",
+      headers: { Authorization: "Bearer test-key", "Content-Type": "application/json" },
     });
-    // AbortSignal.timeout is used — verify signal is present
     expect(callArgs[1].signal).toBeDefined();
   });
 
-  it("sends GET /models with Authorization header", async () => {
+  it("sends POST /chat/completions with model and max_tokens:1", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ status: 200 });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await probeProviderAuth("https://api.example.com/v1", "test-key", "my-model");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.example.com/v1/chat/completions",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer test-key", "Content-Type": "application/json" },
+      }),
+    );
+    const body = JSON.parse(mockFetch.mock.calls[0]![1].body);
+    expect(body.model).toBe("my-model");
+    expect(body.max_tokens).toBe(1);
+  });
+
+  it("uses fallback model 'test' when model is undefined", async () => {
     const mockFetch = vi.fn().mockResolvedValue({ status: 200 });
     vi.stubGlobal("fetch", mockFetch);
 
     await probeProviderAuth("https://api.example.com/v1", "test-key");
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      "https://api.example.com/v1/models",
-      expect.objectContaining({
-        method: "GET",
-        headers: { Authorization: "Bearer test-key" },
-      }),
-    );
+    const body = JSON.parse(mockFetch.mock.calls[0]![1].body);
+    expect(body.model).toBe("test");
   });
 });

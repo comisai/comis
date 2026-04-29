@@ -293,7 +293,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         if (providerEntry?.apiKeyName && deps.secretManager) {
           const apiKey = deps.secretManager.get(providerEntry.apiKeyName);
           if (apiKey) {
-            const probeResult = await probeProviderAuth(providerEntry.baseUrl, apiKey);
+            const probeResult = await probeProviderAuth(providerEntry.baseUrl, apiKey, parsedConfig.model);
             if (!probeResult.ok) {
               throw new Error(
                 `Cannot switch agent "${agentId}" to provider "${targetProvider}": ${probeResult.error}`,

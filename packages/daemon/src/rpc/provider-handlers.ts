@@ -202,7 +202,7 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
       if (parsedConfig.apiKeyName && deps.secretManager) {
         const apiKey = deps.secretManager.get(parsedConfig.apiKeyName);
         if (apiKey) {
-          const probeResult = await probeProviderAuth(parsedConfig.baseUrl, apiKey);
+          const probeResult = await probeProviderAuth(parsedConfig.baseUrl, apiKey, parsedConfig.models[0]?.id);
           if (!probeResult.ok) {
             throw new Error(
               `Provider "${providerId}" API key validation failed: ${probeResult.error}`,
