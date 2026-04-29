@@ -90,6 +90,10 @@ export type { OAuthTokenManager, OAuthTokenManagerDeps, OAuthError } from "./mod
 export { createAuthUsageTracker } from "./model/auth-usage-tracker.js";
 export type { AuthUsageTracker, ProfileStats, ProfileUsageInput } from "./model/auth-usage-tracker.js";
 
+// Last-known-working model tracker (auth-failure fallback)
+export { createLastKnownModelTracker } from "./model/last-known-model.js";
+export type { LastKnownModelTracker, LastKnownModelEntry } from "./model/last-known-model.js";
+
 // Routing
 export { createMessageRouter, resolveAgent } from "./routing/message-router.js";
 export type { MessageRouter } from "./routing/message-router.js";
