@@ -19,6 +19,7 @@
 import { ProviderEntrySchema } from "@comis/core";
 import type { ProviderEntry, PerAgentConfig } from "@comis/core";
 import { persistToConfig, type PersistToConfigDeps } from "./persist-to-config.js";
+import { probeProviderAuth } from "./probe-provider-auth.js";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -33,8 +34,8 @@ export interface ProviderHandlerDeps {
   agents: Record<string, PerAgentConfig>;
   /** Optional persistence deps for writing changes to config.yaml. */
   persistDeps?: PersistToConfigDeps;
-  /** SecretManager for apiKeyConfigured three-state. */
-  secretManager?: { has(key: string): boolean };
+  /** SecretManager for apiKeyConfigured three-state and probe key retrieval. */
+  secretManager?: { has(key: string): boolean; get(key: string): string | undefined };
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +197,20 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
 
       const config = (params.config as Partial<ProviderEntry>) ?? {};
       const parsedConfig = ProviderEntrySchema.parse(config);
+
+      // Probe provider API key before committing config
+      if (parsedConfig.apiKeyName && deps.secretManager) {
+        const apiKey = deps.secretManager.get(parsedConfig.apiKeyName);
+        if (apiKey) {
+          const probeResult = await probeProviderAuth(parsedConfig.baseUrl, apiKey);
+          if (!probeResult.ok) {
+            throw new Error(
+              `Provider "${providerId}" API key validation failed: ${probeResult.error}`,
+            );
+          }
+        }
+      }
+
       deps.providerEntries[providerId] = parsedConfig;
 
       // Best-effort persistence to config.yaml

@@ -13,8 +13,15 @@ vi.mock("./persist-to-config.js", () => ({
   persistToConfig: vi.fn().mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } }),
 }));
 
+vi.mock("./probe-provider-auth.js", () => ({
+  probeProviderAuth: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
+}));
+
 import { persistToConfig } from "./persist-to-config.js";
 const mockPersistToConfig = vi.mocked(persistToConfig);
+
+import { probeProviderAuth } from "./probe-provider-auth.js";
+const mockProbeProviderAuth = vi.mocked(probeProviderAuth);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -100,6 +107,8 @@ describe("createProviderHandlers", () => {
   beforeEach(() => {
     mockPersistToConfig.mockClear();
     mockPersistToConfig.mockResolvedValue({ ok: true, value: { configPath: "/tmp/test-config.yaml" } } as never);
+    mockProbeProviderAuth.mockClear();
+    mockProbeProviderAuth.mockResolvedValue({ ok: true, value: undefined });
   });
 
   // -------------------------------------------------------------------------
@@ -478,6 +487,64 @@ describe("createProviderHandlers", () => {
       expect(call[1]!.patch).toMatchObject({
         providers: { entries: { "new-provider": expect.objectContaining({ type: "openai" }) } },
       });
+    });
+
+    it("rejects when probe returns auth error", async () => {
+      mockProbeProviderAuth.mockResolvedValueOnce({
+        ok: false,
+        error: "API key rejected by provider (HTTP 401). Verify the key is correct and has not expired.",
+      });
+      const deps = makeDeps({
+        persistDeps: makePersistDeps(),
+        secretManager: { has: () => true, get: (key: string) => key === "NVIDIA_API_KEY" ? "test-key" : undefined },
+      });
+      const handlers = createProviderHandlers(deps);
+
+      await expect(
+        handlers["providers.create"]!({
+          providerId: "nvidia-nim",
+          config: { type: "openai", name: "NVIDIA NIM", baseUrl: "https://integrate.api.nvidia.com/v1", apiKeyName: "NVIDIA_API_KEY" },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow("API key validation failed");
+
+      // Provider should NOT have been added to the map
+      expect(deps.providerEntries["nvidia-nim"]).toBeUndefined();
+    });
+
+    it("succeeds when probe returns ok", async () => {
+      // Default mock already returns ok
+      const deps = makeDeps({
+        persistDeps: makePersistDeps(),
+        secretManager: { has: () => true, get: (key: string) => key === "NVIDIA_API_KEY" ? "test-key" : undefined },
+      });
+      const handlers = createProviderHandlers(deps);
+
+      const result = (await handlers["providers.create"]!({
+        providerId: "nvidia-nim",
+        config: { type: "openai", name: "NVIDIA NIM", baseUrl: "https://integrate.api.nvidia.com/v1", apiKeyName: "NVIDIA_API_KEY" },
+        _trustLevel: "admin",
+      })) as { providerId: string; created: boolean };
+
+      expect(result.created).toBe(true);
+      expect(deps.providerEntries["nvidia-nim"]).toBeDefined();
+      expect(mockProbeProviderAuth).toHaveBeenCalledOnce();
+    });
+
+    it("skips probe when no apiKeyName", async () => {
+      const deps = makeDeps({
+        persistDeps: makePersistDeps(),
+        secretManager: { has: () => true, get: () => "test-key" },
+      });
+      const handlers = createProviderHandlers(deps);
+
+      await handlers["providers.create"]!({
+        providerId: "local-ollama",
+        config: { type: "ollama", name: "Ollama" },
+        _trustLevel: "admin",
+      });
+
+      expect(mockProbeProviderAuth).not.toHaveBeenCalled();
     });
   });
 

@@ -297,6 +297,7 @@ export function createRpcDispatch(deps: RpcDispatchDeps): RpcCall {
     ...createAgentHandlers({
       ...deps,
       secretManager: deps.container?.secretManager,
+      providerEntries: deps.container.config.providers.entries,
       persistDeps: {
         container: deps.container,
         configPaths: deps.configPaths,
