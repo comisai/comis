@@ -631,10 +631,12 @@ calling a gated action will pause execution until the operator approves or denie
 - memory_manage: delete, flush
 - channels_manage: enable, disable, restart
 - tokens_manage: create, revoke, rotate
+- providers_manage: create, delete
 
 **Read-only (no approval needed):**
 - obs_query: all actions (diagnostics, billing, traces, activity)
 - models_manage: all actions (list models, test availability)
+- providers_manage: list, get, update, enable, disable, set_default, test
 - agents_manage: get, update, suspend, resume
 - sessions_manage: export, compact
 - memory_manage: stats, browse, export
