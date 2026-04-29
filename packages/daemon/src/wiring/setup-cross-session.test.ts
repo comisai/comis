@@ -1215,11 +1215,12 @@ describe("setupCrossSession", () => {
 
     it("SUB_AGENT_TOOL_DENYLIST contains expected tools", () => {
       expect(SUB_AGENT_TOOL_DENYLIST).toBeInstanceOf(Set);
-      expect(SUB_AGENT_TOOL_DENYLIST.size).toBe(9);
+      expect(SUB_AGENT_TOOL_DENYLIST.size).toBe(10);
       expect(SUB_AGENT_TOOL_DENYLIST.has("gateway")).toBe(true);
       expect(SUB_AGENT_TOOL_DENYLIST.has("channels_manage")).toBe(true);
       expect(SUB_AGENT_TOOL_DENYLIST.has("agents_manage")).toBe(true);
       expect(SUB_AGENT_TOOL_DENYLIST.has("models_manage")).toBe(true);
+      expect(SUB_AGENT_TOOL_DENYLIST.has("providers_manage")).toBe(true);
       expect(SUB_AGENT_TOOL_DENYLIST.has("tokens_manage")).toBe(true);
       expect(SUB_AGENT_TOOL_DENYLIST.has("skills_manage")).toBe(true);
       expect(SUB_AGENT_TOOL_DENYLIST.has("sessions_manage")).toBe(true);
