@@ -265,6 +265,19 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         } as typeof existing.scheduler;
       }
 
+      // Preserve scalar fields on partial modelFailover updates. fallbackModels,
+      // authProfiles, and allowedModels are arrays -- they are replaced wholesale
+      // by the spread (no element-wise merge), which matches the documented
+      // "user provides the complete desired list" semantic. Scalar fields
+      // (cooldownInitialMs, cooldownMultiplier, cooldownCapMs, maxAttempts) are
+      // preserved when omitted from the patch.
+      if (config.modelFailover && existing.modelFailover) {
+        config.modelFailover = {
+          ...existing.modelFailover,
+          ...config.modelFailover,
+        } as typeof existing.modelFailover;
+      }
+
       const merged = { ...existing, ...config };
       const parsedConfig = PerAgentConfigSchema.parse(merged);
       deps.agents[agentId] = parsedConfig;
