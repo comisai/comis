@@ -55,6 +55,7 @@ import {
   createSkillsManageTool,
   createMcpManageTool,
   createHeartbeatManageTool,
+  createProvidersManageTool,
   createNotifyTool,
   createImageGenerateTool,
   createBackgroundTasksTool,
@@ -410,6 +411,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         createObsQueryTool(agentRpc),
         createSessionsManageTool(agentRpc, approvalGate),
         createModelsManageTool(agentRpc),
+        createProvidersManageTool(agentRpc, approvalGate, {
+          onMutationStart: enterConfigMutationFence,
+          onMutationEnd: leaveConfigMutationFence,
+        }),
         createTokensManageTool(agentRpc, approvalGate),
         createChannelsManageTool(agentRpc, approvalGate),
         createSkillsManageTool(agentRpc, approvalGate),

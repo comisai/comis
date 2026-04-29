@@ -85,6 +85,7 @@ export const SUB_AGENT_TOOL_DENYLIST = new Set([
   "channels_manage",  // channels.restart, config.patch -> SIGUSR2
   "agents_manage",    // agent create/delete -> config persistence -> SIGUSR2
   "models_manage",    // model config changes -> config persistence -> SIGUSR2
+  "providers_manage", // provider CRUD -> config persistence -> SIGUSR2
   "tokens_manage",    // token CRUD -> config persistence -> SIGUSR2
   "skills_manage",    // skill config changes -> config persistence -> potential SIGUSR2
   "sessions_manage",  // session purge is destructive

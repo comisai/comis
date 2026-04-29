@@ -648,6 +648,56 @@ describe("createAgentHandlers", () => {
         }),
       ).rejects.toThrow("Agent not found: nonexistent");
     });
+
+    it("preserves scalar modelFailover fields when patching only fallbackModels", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createAgentHandlers(deps);
+
+      // Setup: agent with existing modelFailover scalars
+      await handlers["agents.create"]!({
+        agentId: "failover-test",
+        config: {
+          name: "Failover Test",
+          modelFailover: {
+            fallbackModels: [{ provider: "anthropic", modelId: "claude-sonnet-4-5-20250929" }],
+            cooldownInitialMs: 30_000,
+            cooldownMultiplier: 3,
+          },
+        },
+        _trustLevel: "admin",
+      });
+
+      mockPersistToConfig.mockClear();
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "failover-test",
+        config: {
+          modelFailover: {
+            fallbackModels: [
+              { provider: "deepseek", modelId: "deepseek-chat" },
+              { provider: "ollama", modelId: "llama3.3" },
+            ],
+          },
+        },
+        _trustLevel: "admin",
+      })) as { agentId: string; config: Record<string, unknown>; updated: boolean };
+
+      // In-memory: fallbackModels replaced, scalar cooldown fields preserved
+      const mf = result.config.modelFailover as Record<string, unknown>;
+      expect((mf.fallbackModels as unknown[]).length).toBe(2);
+      expect(mf.cooldownInitialMs).toBe(30_000);
+      expect(mf.cooldownMultiplier).toBe(3);
+
+      // Persisted: only user's partial patch (NOT the merged form)
+      const persistCall = mockPersistToConfig.mock.calls.at(-1);
+      const persistedPatch = (persistCall?.[1] as Record<string, unknown>)?.patch as Record<string, unknown>;
+      const agentPatch = (persistedPatch?.agents as Record<string, Record<string, unknown>>)?.["failover-test"];
+      // The persisted patch should have modelFailover.fallbackModels but NOT cooldownInitialMs
+      expect((agentPatch?.modelFailover as Record<string, unknown>)?.fallbackModels).toBeDefined();
+      // cooldownInitialMs should NOT be in the persisted patch (it was not in the user's input)
+      expect((agentPatch?.modelFailover as Record<string, unknown>)?.cooldownInitialMs).toBeUndefined();
+    });
   });
 
   // -------------------------------------------------------------------------
