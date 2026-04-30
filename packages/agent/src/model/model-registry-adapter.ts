@@ -181,20 +181,98 @@ export function registerCustomProviders(
       providerAliases.set(providerName, entry.type);
     }
 
-    const customModels = isBuiltInType
-      ? entry.models.filter((m) => !builtInIds.has(m.id))
-      : [...entry.models];
+    // Layer 1B (260430-vwt): catalog-aware model enrichment.
+    //
+    // Before computing customModels, decide whether to inherit the full
+    // pi-ai catalog or to enrich the user's sparse list with catalog
+    // metadata.
+    //
+    // Inherit branch (empty list + built-in type + no baseUrl override):
+    //   user wants the full native catalog under this provider name --
+    //   bypass the dedup filter below; the inherited list is intentional.
+    // Enrich branch (sparse list + built-in type):
+    //   for each user model, fill missing fields from the catalog when an
+    //   ID match is found. The dedup filter still applies after enrichment
+    //   so that user-supplied IDs already in pi-ai's built-in catalog are
+    //   served via the built-in path (not redundantly registered).
+    const hasBaseUrlOverride = !!entry.baseUrl;
+    const shouldInheritCatalog =
+      entry.models.length === 0 && isBuiltInType && !hasBaseUrlOverride;
 
-    if (isBuiltInType && customModels.length < entry.models.length) {
-      const skipped = entry.models.length - customModels.length;
+    let workingModels: Array<{
+      id: string;
+      name?: string;
+      contextWindow?: number;
+      maxTokens?: number;
+      reasoning?: boolean;
+      input?: ReadonlyArray<"text" | "image">;
+      cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+    }>;
+
+    if (shouldInheritCatalog) {
+      // Inherit the full native catalog -- no dedup, no fallback values.
+      const catalogModels = getModels(entry.type as KnownProvider);
+      workingModels = catalogModels.map((m) => ({
+        id: m.id,
+        name: m.name,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+        reasoning: m.reasoning,
+        input: m.input,
+        cost: m.cost,
+      }));
       logger.debug(
-        { providerName, type: entry.type, skipped, remaining: customModels.length },
-        "Skipped built-in models already in pi SDK catalog",
+        { providerName, type: entry.type, inherited: workingModels.length },
+        "Inherited full pi-ai native catalog (empty user list)",
       );
+    } else if (isBuiltInType) {
+      // Sparse list: enrich each user model with catalog data, then dedup.
+      const catalog = getModels(entry.type as KnownProvider);
+      const enriched = entry.models.map((m) => {
+        const cat = catalog.find((c) => c.id === m.id);
+        if (!cat) {
+          return {
+            id: m.id,
+            name: m.name,
+            contextWindow: m.contextWindow,
+            maxTokens: m.maxTokens,
+            reasoning: m.reasoning,
+            input: m.input,
+            cost: m.cost,
+          };
+        }
+        return {
+          id: m.id,
+          name: m.name ?? cat.name,
+          contextWindow: m.contextWindow ?? cat.contextWindow,
+          maxTokens: m.maxTokens ?? cat.maxTokens,
+          reasoning: m.reasoning ?? cat.reasoning,
+          input: m.input ?? cat.input,
+          cost: {
+            input: m.cost?.input ?? cat.cost?.input,
+            output: m.cost?.output ?? cat.cost?.output,
+            cacheRead: m.cost?.cacheRead ?? cat.cost?.cacheRead,
+            cacheWrite: m.cost?.cacheWrite ?? cat.cost?.cacheWrite,
+          },
+        };
+      });
+      // Dedup: filter out built-in IDs (already served via pi-ai's built-in path).
+      workingModels = enriched.filter((m) => !builtInIds.has(m.id));
+      if (workingModels.length < entry.models.length) {
+        const skipped = entry.models.length - workingModels.length;
+        logger.debug(
+          { providerName, type: entry.type, skipped, remaining: workingModels.length },
+          "Skipped built-in models already in pi SDK catalog",
+        );
+      }
+    } else {
+      // Custom (non-catalog) type: user-supplied list as-is.
+      workingModels = [...entry.models];
     }
 
+    const customModels = workingModels;
+
     const hasModels = customModels.length > 0;
-    const hasBaseUrlOverride = !!entry.baseUrl;
     if (!hasModels && !hasBaseUrlOverride) {
       logger.debug(
         { providerName },
