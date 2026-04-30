@@ -30,7 +30,44 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "
 import { dirname } from "node:path";
 import { z } from "zod";
 
+import { resolveProviderCredential } from "./credential-resolver.js";
 import type { RpcHandler } from "./types.js";
+
+/**
+ * True when the patch key writes a provider/model field.
+ * Matches `<id>.provider` or `<id>.model` (leaf only — does not match
+ * nested paths like modelFailover.fallbackModels.0.provider, which is
+ * deliberately out-of-scope for the credential guard).
+ */
+function isAgentProviderOrModelKey(key: string | undefined): boolean {
+  if (!key) return false;
+  return /(^|\.)(provider|model)$/.test(key);
+}
+
+/**
+ * Resolve the provider value the patch is establishing.
+ * - For `.provider` patches, the new value IS the provider.
+ * - For `.model`-only patches, look up the agent's CURRENT provider
+ *   (validates that the agent's existing auth chain still resolves —
+ *   surfaces stale broken configs at patch time rather than at next chat).
+ * Returns undefined for paths the guard doesn't validate.
+ */
+function extractTargetProvider(
+  key: string,
+  newValue: unknown,
+  currentConfig: { agents?: Record<string, { provider?: string }> },
+): string | undefined {
+  if (key.endsWith(".provider")) {
+    return typeof newValue === "string" ? newValue : undefined;
+  }
+  if (key.endsWith(".model")) {
+    const agentId = key.split(".")[0];
+    if (!agentId) return undefined;
+    // eslint-disable-next-line security/detect-object-injection -- agents map is typed Record; agentId from validated key
+    return currentConfig.agents?.[agentId]?.provider;
+  }
+  return undefined;
+}
 
 /**
  * Restore MCP server `env` from existing YAML when the UI patch
@@ -483,6 +520,40 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
           throw new Error(
             `Config path "${key ? `${section}.${key}` : section}" is immutable and cannot be modified at runtime.${suffix}`,
           );
+        }
+
+        // Credential guard (260501-2pz): when a patch targets an agent's
+        // provider/model field, verify the resulting provider's API key is
+        // resolvable from at least one source pi-coding-agent will consult
+        // at runtime. Fail-loud here rather than letting an unauthorized
+        // provider config persist and explode at the next chat turn.
+        // See `.planning/design/daemon-credential-guard/PLAN.md`.
+        if (section === "agents" && isAgentProviderOrModelKey(key)) {
+          const targetProvider = extractTargetProvider(
+            key!,
+            coercedValue,
+            deps.container.config as { agents?: Record<string, { provider?: string }> },
+          );
+          if (targetProvider !== undefined) {
+            const resolution = resolveProviderCredential(targetProvider, {
+              providerEntries: deps.container.config.providers?.entries ?? {},
+              secretManager: deps.container.secretManager,
+            });
+            if (!resolution.ok) {
+              deps.logger.warn(
+                {
+                  method: "config.patch",
+                  section,
+                  key,
+                  targetProvider,
+                  hint: "Provider credential not resolvable",
+                  errorKind: "validation" as const,
+                },
+                "Config patch rejected: missing provider credential",
+              );
+              throw new Error(resolution.reason!);
+            }
+          }
         }
 
         // Build patch object (use coerced value for the actual data, keep original for audit)

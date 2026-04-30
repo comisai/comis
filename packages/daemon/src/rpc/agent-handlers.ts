@@ -30,6 +30,7 @@ import {
   type AgentInlineWorkspaceError,
 } from "./agent-inline-workspace.js";
 import { probeProviderAuth } from "./probe-provider-auth.js";
+import { resolveProviderCredential } from "./credential-resolver.js";
 
 import type { RpcHandler } from "./types.js";
 
@@ -113,6 +114,20 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       raw.skills = existingSkills;
 
       const parsedConfig = PerAgentConfigSchema.parse(config);
+
+      // Credential guard (260501-2pz): fail-loud if the new agent's
+      // provider has no resolvable API key. Mirrors agents.update guard
+      // ordering — runs BEFORE the in-memory commit so rejection prevents
+      // assignment, file persist, and hot-add. Same helper as the patch /
+      // update call sites for cross-handler consistency.
+      const credCheck = resolveProviderCredential(parsedConfig.provider, {
+        providerEntries: deps.providerEntries ?? {},
+        secretManager: deps.secretManager,
+      });
+      if (!credCheck.ok) {
+        throw new Error(credCheck.reason!);
+      }
+
       deps.agents[agentId] = parsedConfig;
 
       // Best-effort persistence to config.yaml
@@ -284,20 +299,40 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       const merged = { ...existing, ...config };
       const parsedConfig = PerAgentConfigSchema.parse(merged);
 
-      // Probe provider API key when provider or model changes
+      // Credential guard + probe (260501-2pz): when provider OR model
+      // changes, (a) GUARD — fail-loud if the resulting provider's API key
+      // is not resolvable from any source (no silent skip), then (b) PROBE
+      // — preexisting wire validation when an explicit providers.entries
+      // record with apiKeyName exists. Order matters: guard runs first
+      // (cheap, all paths), probe runs second (only when applicable).
       const providerChanging = config.provider !== undefined && config.provider !== existing.provider;
       const modelChanging = config.model !== undefined && config.model !== existing.model;
-      if ((providerChanging || modelChanging) && deps.providerEntries) {
+      if (providerChanging || modelChanging) {
         const targetProvider = parsedConfig.provider;
-        const providerEntry = deps.providerEntries[targetProvider];
-        if (providerEntry?.apiKeyName && deps.secretManager) {
-          const apiKey = deps.secretManager.get(providerEntry.apiKeyName);
-          if (apiKey) {
-            const probeResult = await probeProviderAuth(providerEntry.baseUrl, apiKey, parsedConfig.model);
-            if (!probeResult.ok) {
-              throw new Error(
-                `Cannot switch agent "${agentId}" to provider "${targetProvider}": ${probeResult.error}`,
-              );
+
+        // (a) GUARD — fail-loud if no credential source resolves
+        const resolution = resolveProviderCredential(targetProvider, {
+          providerEntries: deps.providerEntries ?? {},
+          secretManager: deps.secretManager,
+        });
+        if (!resolution.ok) {
+          throw new Error(resolution.reason!);
+        }
+
+        // (b) PROBE — preexisting behavior, fires only when an explicit
+        // providers.entries record with apiKeyName exists and the secret
+        // is retrievable. Validates the key works against the wire.
+        if (deps.providerEntries) {
+          const providerEntry = deps.providerEntries[targetProvider];
+          if (providerEntry?.apiKeyName && deps.secretManager) {
+            const apiKey = deps.secretManager.get(providerEntry.apiKeyName);
+            if (apiKey) {
+              const probeResult = await probeProviderAuth(providerEntry.baseUrl, apiKey, parsedConfig.model);
+              if (!probeResult.ok) {
+                throw new Error(
+                  `Cannot switch agent "${agentId}" to provider "${targetProvider}": ${probeResult.error}`,
+                );
+              }
             }
           }
         }

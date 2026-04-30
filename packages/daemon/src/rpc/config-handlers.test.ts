@@ -1471,3 +1471,162 @@ describe("gateway.status admin trust enforcement (H-1)", () => {
     expect(result.uptime).toEqual(expect.any(Number));
   });
 });
+
+// ---------------------------------------------------------------------------
+// 260501-2pz: daemon-side credential guard for agents.*.{provider,model}
+// patches. Verifies config.patch rejects fail-loud when the resulting
+// agent provider has no resolvable API key from any source pi-coding-agent
+// would consult at runtime.
+// ---------------------------------------------------------------------------
+
+describe("config.patch credential guard (260501-2pz)", () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+  let tempConfig: ReturnType<typeof createTempConfig>;
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    tempConfig = createTempConfig();
+    originalEnv = { ...process.env };
+    // Strip canonical keys we manipulate so per-test state is deterministic.
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    tempConfig.cleanup();
+    process.env = originalEnv;
+  });
+
+  it("rejects agents.<id>.provider patch when no source resolves (no entry, no env)", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "agents",
+        key: "default.provider",
+        value: "openrouter",
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/Cannot set agent provider to "openrouter"/);
+
+    // Patch must not have triggered a restart
+    vi.advanceTimersByTime(200);
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("succeeds when canonical env key is set (Source B)", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-v1-xxx";
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    const result = await handlers["config.patch"]!({
+      section: "agents",
+      key: "default.provider",
+      value: "openrouter",
+      _trustLevel: "admin",
+    });
+    expect(result).toMatchObject({ patched: true });
+  });
+
+  it("succeeds when providers.entries.<id>.apiKeyName is in secretManager (Source A)", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    // Wire a provider entry whose apiKeyName resolves via the bootstrap's
+    // secretManager (process.env in tests). Set the env value first.
+    process.env.OR_KEY = "sk-or-v1-xxx";
+    // Re-bootstrap so the secretManager picks up the new env value.
+    const freshDeps = makeDeps(tempConfig.configPath);
+    (freshDeps.container.config as { providers: { entries: Record<string, unknown> } }).providers.entries["openrouter"] = {
+      type: "openai",
+      name: "OR",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKeyName: "OR_KEY",
+      enabled: true,
+      timeoutMs: 120_000,
+      maxRetries: 2,
+      headers: {},
+      capabilities: { providerFamily: "default", dropThinkingBlockModelHints: [], transcriptToolCallIdMode: "default", transcriptToolCallIdModelHints: [] },
+      models: [],
+    };
+    const handlers = createConfigHandlers(freshDeps);
+    void deps; // avoid unused-let warning
+
+    const result = await handlers["config.patch"]!({
+      section: "agents",
+      key: "default.provider",
+      value: "openrouter",
+      _trustLevel: "admin",
+    });
+    expect(result).toMatchObject({ patched: true });
+    delete process.env.OR_KEY;
+  });
+
+  it("rejection message names the configured apiKeyName when entry exists but secret is missing", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    (deps.container.config as { providers: { entries: Record<string, unknown> } }).providers.entries["openrouter"] = {
+      type: "openai",
+      name: "OR",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKeyName: "OR_KEY",
+      enabled: true,
+      timeoutMs: 120_000,
+      maxRetries: 2,
+      headers: {},
+      capabilities: { providerFamily: "default", dropThinkingBlockModelHints: [], transcriptToolCallIdMode: "default", transcriptToolCallIdModelHints: [] },
+      models: [],
+    };
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "agents",
+        key: "default.provider",
+        value: "openrouter",
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/apiKeyName is "OR_KEY"/);
+  });
+
+  it("does NOT fire on non-credential agent patches (maxSteps)", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    // No providerEntries / no env → guard would reject if it fired.
+    // maxSteps is not a provider/model field, so guard is a no-op.
+    const result = await handlers["config.patch"]!({
+      section: "agents",
+      key: "default.maxSteps",
+      value: "50",
+      _trustLevel: "admin",
+    });
+    expect(result).toMatchObject({ patched: true });
+  });
+
+  it("rejects agents.<id>.model patch when current provider has no resolvable key", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    // Seed agent at an unauthenticated provider DIRECTLY (cannot use
+    // agents.create here — config-handlers tests don't drive that handler;
+    // the underlying config has agents.default with no auth chain set).
+    (deps.container.config as { agents: Record<string, unknown> }).agents["default"] = {
+      name: "Stale",
+      model: "qwen/qwen3-coder",
+      provider: "openrouter",
+      maxSteps: 25,
+    };
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "agents",
+        key: "default.model",
+        value: "qwen/qwen3-coder-latest",
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/Cannot set agent provider to "openrouter"/);
+  });
+});
