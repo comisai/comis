@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createModelScanner, type ModelScanner, type ScanResult } from "./model-scanner.js";
+import {
+  createModelScanner,
+  getCatalogBaseUrl,
+  isOpenAICompatibleType,
+  type ModelScanner,
+  type ScanResult,
+} from "./model-scanner.js";
+import { getModels } from "@mariozechner/pi-ai";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -230,18 +237,29 @@ describe("ModelScanner", () => {
       expect(result.error!.toLowerCase()).toContain("abort");
     });
 
-    it("returns keyValid=false with error for unsupported type", async () => {
-      scanner = createScannerWithMock(async () => jsonResponse({}));
-
-      const result = await scanner.scanProvider(
-        "ollama",
-        { type: "ollama", baseUrl: "http://localhost:11434" },
-        "no-key",
+    // Layer 1E (260430-vwt): types other than anthropic/google are now
+    // treated as OpenAI-compatible by the scanner. Ollama (and any other
+    // local or custom OpenAI-compatible proxy) is scanned via /v1/models
+    // with a Bearer token. This is a deliberate behavioral broadening from
+    // the prior 8-type allowlist -- the scanner's role is /v1/models
+    // probing, and the catalog wire-format api ("mistral-conversations",
+    // "openai-responses", etc.) is orthogonal.
+    it("scans custom OpenAI-compatible types (ollama) via /v1/models", async () => {
+      scanner = createScannerWithMock(async () =>
+        jsonResponse({ data: [{ id: "llama3.3" }] }),
       );
 
-      expect(result.keyValid).toBe(false);
-      expect(result.error).toBeDefined();
-      expect(result.error!.toLowerCase()).toContain("unsupported");
+      const result = await scanner.scanProvider(
+        "local-ollama",
+        { type: "ollama", baseUrl: "http://localhost:11434" },
+        "ollama-no-auth",
+      );
+
+      expect(result.keyValid).toBe(true);
+      expect(result.modelsDiscovered).toEqual(["llama3.3"]);
+      expect(fetchCalls[0]!.url).toBe("http://localhost:11434/v1/models");
+      const headers = fetchCalls[0]!.init.headers as Record<string, string>;
+      expect(headers["Authorization"]).toBe("Bearer ollama-no-auth");
     });
   });
 
@@ -348,5 +366,36 @@ describe("ModelScanner", () => {
       expect(failed).toBeDefined();
       expect(failed!.error).toBeDefined();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layer 1E (260430-vwt) -- catalog-driven helpers
+// ---------------------------------------------------------------------------
+
+describe("Layer 1E catalog-driven helpers", () => {
+  it("isOpenAICompatibleType returns true for native pi-ai providers other than anthropic/google", () => {
+    expect(isOpenAICompatibleType("openrouter")).toBe(true);
+    expect(isOpenAICompatibleType("groq")).toBe(true);
+    expect(isOpenAICompatibleType("openai")).toBe(true);
+    expect(isOpenAICompatibleType("xai")).toBe(true);
+    // anthropic and google have their own scan paths
+    expect(isOpenAICompatibleType("anthropic")).toBe(false);
+    expect(isOpenAICompatibleType("google")).toBe(false);
+    // Custom non-catalog types fall through to OpenAI-compatible
+    expect(isOpenAICompatibleType("ollama")).toBe(true);
+    expect(isOpenAICompatibleType("nvidia-nim")).toBe(true);
+  });
+
+  it("getCatalogBaseUrl returns the OpenRouter URL from the live pi-ai catalog", () => {
+    const expected = getModels("openrouter")[0]?.baseUrl;
+    expect(expected).toBeDefined();
+    expect(getCatalogBaseUrl("openrouter")).toBe(expected);
+  });
+
+  it("getCatalogBaseUrl returns undefined for non-native types", () => {
+    // Ollama is not in pi-ai's native getProviders() catalog (count=0).
+    expect(getCatalogBaseUrl("ollama")).toBeUndefined();
+    expect(getCatalogBaseUrl("nonexistent-zzz")).toBeUndefined();
   });
 });
