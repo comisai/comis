@@ -5,7 +5,7 @@
  */
 
 import { ok, err } from "@comis/shared";
-import { Type, Kind, OptionalKind } from "typebox";
+import { Type } from "typebox";
 import { describe, it, expect, vi } from "vitest";
 import type { McpToolDefinition, McpClientManager } from "../integrations/mcp-client.js";
 import { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, extractMcpServerName, classifyMcpErrorType } from "./mcp-tool-bridge.js";
@@ -46,22 +46,22 @@ function makeCallTool(): McpClientManager["callTool"] {
 describe("jsonSchemaToTypeBox", () => {
   it("converts string type", () => {
     const result = jsonSchemaToTypeBox({ type: "string" });
-    expect(result[Kind]).toBe("String");
+    expect((result as any).type).toBe("string");
   });
 
   it("converts number type", () => {
     const result = jsonSchemaToTypeBox({ type: "number" });
-    expect(result[Kind]).toBe("Number");
+    expect((result as any).type).toBe("number");
   });
 
   it("converts integer type", () => {
     const result = jsonSchemaToTypeBox({ type: "integer" });
-    expect(result[Kind]).toBe("Integer");
+    expect((result as any).type).toBe("integer");
   });
 
   it("converts boolean type", () => {
     const result = jsonSchemaToTypeBox({ type: "boolean" });
-    expect(result[Kind]).toBe("Boolean");
+    expect((result as any).type).toBe("boolean");
   });
 
   it("converts array type with items", () => {
@@ -69,12 +69,12 @@ describe("jsonSchemaToTypeBox", () => {
       type: "array",
       items: { type: "string" },
     });
-    expect(result[Kind]).toBe("Array");
+    expect((result as any).type).toBe("array");
   });
 
   it("converts array type without items to Array<Any>", () => {
     const result = jsonSchemaToTypeBox({ type: "array" });
-    expect(result[Kind]).toBe("Array");
+    expect((result as any).type).toBe("array");
   });
 
   it("converts object type with properties and required", () => {
@@ -86,29 +86,30 @@ describe("jsonSchemaToTypeBox", () => {
       },
       required: ["name"],
     });
-    expect(result[Kind]).toBe("Object");
+    expect((result as any).type).toBe("object");
     const props = (result as any).properties;
-    expect(props.name[Kind]).toBe("String");
-    // name is required, so it should NOT have the Optional modifier
-    expect(OptionalKind in props.name).toBe(false);
-    // age is optional (not in required), so wrapped in Type.Optional
-    expect(props.age[Kind]).toBe("Number");
-    expect(props.age[OptionalKind]).toBe("Optional");
+    expect(props.name.type).toBe("string");
+    // name is required, so it appears in the required array
+    expect((result as any).required).toContain("name");
+    // age is optional (not in required array)
+    expect(props.age.type).toBe("number");
+    expect((result as any).required).not.toContain("age");
   });
 
   it("converts object type without properties to empty Object", () => {
     const result = jsonSchemaToTypeBox({ type: "object" });
-    expect(result[Kind]).toBe("Object");
+    expect((result as any).type).toBe("object");
   });
 
   it("falls back to Any for unknown types", () => {
     const result = jsonSchemaToTypeBox({ type: "null" });
-    expect(result[Kind]).toBe("Any");
+    // typebox 1.x Any produces an empty schema {}
+    expect((result as any).type).toBeUndefined();
   });
 
   it("falls back to Any for missing type", () => {
     const result = jsonSchemaToTypeBox({});
-    expect(result[Kind]).toBe("Any");
+    expect((result as any).type).toBeUndefined();
   });
 
   it("handles nested objects", () => {
@@ -125,11 +126,11 @@ describe("jsonSchemaToTypeBox", () => {
         },
       },
     });
-    expect(result[Kind]).toBe("Object");
+    expect((result as any).type).toBe("object");
     const addressProp = (result as any).properties.address;
-    // address is optional (no required array on outer schema), so Type.Optional wrapping
-    expect(addressProp[Kind]).toBe("Object");
-    expect(addressProp[OptionalKind]).toBe("Optional");
+    // address is optional (no required array on outer schema)
+    expect(addressProp.type).toBe("object");
+    expect((result as any).required ?? []).not.toContain("address");
   });
 });
 
@@ -181,7 +182,7 @@ describe("mcpToolsToAgentTools", () => {
 
     const agentTools = mcpToolsToAgentTools([tool], makeCallTool());
     expect(agentTools).toHaveLength(1);
-    expect(agentTools[0].parameters[Kind]).toBe("Object");
+    expect((agentTools[0].parameters as any).type).toBe("object");
   });
 
   it("execute() calls through to McpClientManager.callTool", async () => {

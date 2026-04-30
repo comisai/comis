@@ -239,10 +239,10 @@ export function mcpToolsToAgentTools(
 
       async execute(
         _toolCallId: string,
-        params: Record<string, unknown>,
+        params: unknown,
       ): Promise<AgentToolResult<{ success: boolean }>> {
         try {
-          const result = await callTool(tool.qualifiedName, params);
+          const result = await callTool(tool.qualifiedName, params as Record<string, unknown>);
 
           if (!result.ok) {
             const errorResult = {

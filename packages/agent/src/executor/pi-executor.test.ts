@@ -1909,7 +1909,7 @@ describe("PiExecutor", () => {
           enabled: true,
           maxRetries: 5,
           baseDelayMs: 4000,
-          maxDelayMs: 60000,
+          provider: { maxRetryDelayMs: 60000 },
         },
       });
     });
@@ -1932,7 +1932,7 @@ describe("PiExecutor", () => {
           enabled: true,
           maxRetries: 5,
           baseDelayMs: 4000,
-          maxDelayMs: 60000,
+          provider: { maxRetryDelayMs: 60000 },
         },
       });
     });
@@ -2082,7 +2082,7 @@ describe("PiExecutor", () => {
           enabled: true,
           maxRetries: 5,
           baseDelayMs: 4000,
-          maxDelayMs: 60000,
+          provider: { maxRetryDelayMs: 60000 },
         },
       });
     });
@@ -2244,7 +2244,7 @@ describe("PiExecutor", () => {
             enabled: true,
             maxRetries: 5,
             baseDelayMs: 1000,
-            maxDelayMs: 30000,
+            provider: { maxRetryDelayMs: 30000 },
           },
         }),
       );
@@ -2262,7 +2262,7 @@ describe("PiExecutor", () => {
             enabled: true,
             maxRetries: 5,
             baseDelayMs: 4000,
-            maxDelayMs: 60000,
+            provider: { maxRetryDelayMs: 60000 },
           },
         }),
       );
@@ -2289,7 +2289,7 @@ describe("PiExecutor", () => {
             enabled: false,
             maxRetries: 0,
             baseDelayMs: 2000,
-            maxDelayMs: 60000,
+            provider: { maxRetryDelayMs: 60000 },
           },
         }),
       );

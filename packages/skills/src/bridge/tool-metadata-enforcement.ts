@@ -67,7 +67,7 @@ export function wrapWithMetadataEnforcement(tool: AgentTool<any>): AgentTool<any
     ...tool,
     async execute(
       toolCallId: string,
-      params: Record<string, unknown>,
+      params: unknown,
       signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentToolResult generic per pi-agent-core API
@@ -76,7 +76,7 @@ export function wrapWithMetadataEnforcement(tool: AgentTool<any>): AgentTool<any
 
       // Pre-flight validation
       if (meta?.validateInput) {
-        const validationError = await meta.validateInput(params);
+        const validationError = await meta.validateInput(params as Record<string, unknown>);
         if (validationError !== undefined && validationError !== "") {
           const err = new Error(`[invalid_value] ${validationError}`);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- attach errorKind for audit wrapper propagation
