@@ -314,10 +314,47 @@ Multiple agents can be created in one turn. Customize ALL workspace files for ea
 
   providers_manage: `## Provider Configuration Guide
 
+### Credential Pre-Check (MANDATORY before any provider switch)
+BEFORE storing or switching, you MUST verify the credential exists. Never patch agents.*.provider, agents.*.model, call agents_manage update, call providers_manage create, or use gateway.patch on any agents.*.{provider,model} key without first running this 4-step flow:
+
+1. **List existing keys** — gateway({ action: "env_list", filter: "<PROVIDER>*" })
+   Examples: filter "OPENROUTER*" / "ANTHROPIC*" / "GROQ*" / "DEEPSEEK*".
+   env_list returns only NAMES, never values — safe to call proactively.
+   Use the canonical name: <PROVIDER_UPPER>_API_KEY for cloud providers
+   (OPENROUTER_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, DEEPSEEK_API_KEY,
+   GEMINI_API_KEY for google, etc.). If env_list returns a non-canonical
+   name (e.g. "OR_KEY", "MY_OPENROUTER_KEY"), use that matched name verbatim
+   as apiKeyName. Local providers (ollama, lm-studio, vLLM) skip this step
+   entirely (no API key needed).
+
+2. **Decide based on env_list result:**
+   a. **Match found** — use the matching env name as apiKeyName. Skip to step 4.
+   b. **No match** — ASK THE USER for the API key. Phrase it explicitly:
+      "I don't see a <KEY_NAME> configured. Please share your <Provider>
+      API key (signup link if relevant) and I'll store it before switching."
+      Do NOT proceed without the key. Do NOT invent a fake key. Do NOT
+      silently skip the switch.
+
+3. **Store the key (only after the user supplies it)** —
+   gateway({ action: "env_set", env_key: "<KEY_NAME>", env_value: "<USER_PROVIDED_KEY>" })
+
+4. **Now safe to switch** — call providers_manage create (for non-built-in)
+   or proceed directly to agents_manage update (for built-in). See the
+   "Built-in vs Custom Provider Check" and "Switching an Agent's Provider
+   or Model" sections below.
+
+This rule applies UNCONDITIONALLY across ALL provider-switch paths:
+- agents_manage update with new {provider, model}
+- providers_manage create (the apiKeyName must reference a key already in env)
+- gateway.patch agents.*.provider or agents.*.model
+- providers_manage update changing apiKeyName
+
+If the agent's primary will use a credential, you verify the credential exists FIRST. Skipping this check is the bug that causes "No API key found for <provider>" failures at the next chat turn — the user sees a generic "An error occurred" message and the bot silently breaks.
+
 ### Built-in vs Custom Provider Check (MANDATORY first step)
 Before creating a custom provider, check if the model already exists in the built-in catalog. Built-in providers (${_builtInProvidersList}) already have their models registered — creating a redundant custom entry is wrong and will be ignored. Call models_manage({ action: "list_providers" }) for the live native-catalog list, or models_manage({ action: "list" }) for available models. Prefer list_providers over the static list above when you need an up-to-date roster.
 
-If the model IS built-in: skip provider creation. Just store the API key (gateway env_set) and switch the agent directly.
+If the model IS built-in: skip provider creation. After credential pre-check passes (above), go straight to agents_manage update with the new provider/model pair (the credential is already in env from pre-check step 3, so apiKeyName resolution succeeds at the next session).
 If the model is NOT built-in: you need a custom provider. Proceed to the steps below, but first gather ALL required configuration.
 
 ### Choosing the \`type\` Field (POST AUTO-PROMOTE FLOW)
@@ -332,12 +369,13 @@ When creating a non-built-in provider, you MUST have: (1) the API base URL, (2) 
 2. If web search finds the information, use it to fill in the missing fields.
 3. If web search does NOT find the information, ask the user to supply the missing fields before proceeding. Do NOT guess or invent URLs.
 
-### Credential Workflow
-API keys are NEVER stored in provider config. Always use this two-step process:
-1. Store the API key: gateway({ action: "env_set", env_key: "<KEY_NAME>", env_value: "<key>" })
-2. Create the provider: providers_manage({ action: "create", provider_id: "<name>", config: { type: "openai", baseUrl: "<url>", apiKeyName: "<KEY_NAME>", models: [{ id: "<model>" }] } })
+### Credential Workflow Summary
+API keys are NEVER stored in provider config — they live in env (set via Credential Pre-Check step 3 above) and are referenced by name via apiKeyName. The Credential Pre-Check above is the canonical entry point; this section just documents what gets stored where:
+- Env (~/.comis/.env): the API key value, keyed by name (e.g. OPENROUTER_API_KEY=sk-or-v1-...)
+- providers.entries.<id>.apiKeyName: the env NAME (not the value)
+- SecretManager / setRuntimeApiKey: comis populates this from the env at daemon boot and on hot-reload after env_set; agents never set it directly.
 
-For local providers (Ollama, LM Studio, vLLM) that don't need API keys, omit apiKeyName.
+For local providers (Ollama, LM Studio, vLLM) that don't need API keys, the Credential Pre-Check is skipped (step 1 noted local providers skip); just call providers_manage create with \`apiKeyName\` omitted.
 
 ### After Creating a Provider
 Switch an agent to use the new provider:
@@ -349,9 +387,10 @@ To switch an agent to a different provider/model, call agents_manage update with
 
 \`agents.*.model\` and \`agents.*.provider\` are listed in MUTABLE_CONFIG_OVERRIDES, so the immutability guard does not block the patch.
 
-**Two preconditions the LLM MUST verify before issuing the update:**
+**Three preconditions the LLM MUST verify before issuing the update:**
   1. The target provider exists as a \`providers.entries.<provider_id>\` key. If it does not, call providers_manage create FIRST (and gateway env_set for the API key if needed). Patching an agent to a provider that has no entry resolves under the wrong provider family at the next session — the original bug.
   2. The model id matches a \`models[].id\` in that provider entry (or is a built-in known to the pi-ai catalog for that provider type). Otherwise \`registry.find(provider, model)\` returns undefined and the next session falls back with a "Model not found" message.
+  3. **Credential pre-check passed** (see top of this guide). The target provider's apiKeyName is non-empty AND \`gateway env_list filter:"<PROVIDER>*"\` confirmed the named secret exists in env. Skipping this step is the bug that causes "No API key found" failures at the next chat turn — verified production repro on 2026-05-01.
 
 **Timing — the change is NOT hot-applied to the active session.**
 agents_manage update writes through persistToConfig WITHOUT a hot-update callback, which triggers a SIGUSR2 daemon restart (2-second debounce). The new provider/model takes effect on the next session, not the currently-running prompt. Tell the user the switch is queued and will take effect after the daemon settles.

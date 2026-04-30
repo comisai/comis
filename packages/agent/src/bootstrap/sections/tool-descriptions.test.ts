@@ -185,6 +185,85 @@ describe("TOOL_GUIDES", () => {
       expect(singleCallIdx).toBeLessThan(fallbackIdx);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // 260501-1zs: Credential Pre-Check section mandates env_list before any
+  // provider switch. Production repro on 2026-05-01: agent silently called
+  // gateway.patch agents.default.{provider,model} without first checking
+  // ~/.comis/.env for OPENROUTER_API_KEY; daemon failed at the next chat
+  // turn with "No API key found for openrouter" and the user saw a generic
+  // "An error occurred" message.
+  //
+  // The fix wraps the brittle "Just store the API key (gateway env_set) and
+  // switch the agent directly" shortcut behind a mandatory 4-step pre-check
+  // (env_list → ask if absent → env_set → switch). The new section is
+  // placed at the TOP of the providers_manage TOOL_GUIDE so the LLM reads
+  // it BEFORE the "Built-in vs Custom Provider Check" section.
+  //
+  // The 8 anchor pins below verify the 6 truths from the plan's frontmatter
+  // (header present, env_list referenced, ASK THE USER wording, hard-stop
+  // wording, brittle wording GONE, ordering correct, three preconditions
+  // list extended, multi-path enumeration).
+  // -------------------------------------------------------------------------
+  describe("TOOL_GUIDES.providers_manage (260501-1zs: credential pre-check)", () => {
+    it("Test 1 — providers_manage TOOL_GUIDE contains 'Credential Pre-Check (MANDATORY before any provider switch)' header", () => {
+      expect(TOOL_GUIDES.providers_manage).toContain("Credential Pre-Check (MANDATORY before any provider switch)");
+    });
+
+    it("Test 2 — providers_manage TOOL_GUIDE references env_list", () => {
+      expect(TOOL_GUIDES.providers_manage).toContain("env_list");
+    });
+
+    it("Test 3 — providers_manage TOOL_GUIDE includes 'ASK THE USER for the API key' with recovery wording", () => {
+      expect(TOOL_GUIDES.providers_manage).toContain("ASK THE USER for the API key");
+    });
+
+    it("Test 4 — providers_manage TOOL_GUIDE forbids proceeding without a key", () => {
+      expect(TOOL_GUIDES.providers_manage).toContain("Do NOT proceed without the key");
+    });
+
+    it("Test 5 — brittle 'just store + switch directly' shortcut wording is no longer present anywhere in tool-descriptions", async () => {
+      // The pre-fix wording was: "Just store the API key (gateway env_set) and switch the agent directly."
+      // It must be replaced by the credential-aware sequenced flow.
+      // Source-grep mirrors the import.meta.url + fileURLToPath precedent at
+      // packages/skills/src/builtin/platform/agents-manage-tool.test.ts:1457-1463.
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const url = await import("node:url");
+      const here = path.dirname(url.fileURLToPath(import.meta.url));
+      const fileContent = fs.readFileSync(path.resolve(here, "tool-descriptions.ts"), "utf-8");
+      expect(fileContent).not.toMatch(/Just store the API key.*and switch the agent directly/);
+    });
+
+    it("Test 6 — Credential Pre-Check section appears textually before Built-in vs Custom Provider Check section", () => {
+      const guide = TOOL_GUIDES.providers_manage;
+      const preCheckIdx = guide.indexOf("Credential Pre-Check (MANDATORY before any provider switch)");
+      const builtInIdx = guide.indexOf("Built-in vs Custom Provider Check");
+      expect(preCheckIdx).toBeGreaterThanOrEqual(0);
+      expect(builtInIdx).toBeGreaterThanOrEqual(0);
+      expect(preCheckIdx).toBeLessThan(builtInIdx);
+    });
+
+    it("Test 7 — 'Switching an Agent's Provider or Model' lists three preconditions including credential pre-check", () => {
+      expect(TOOL_GUIDES.providers_manage).toContain("Three preconditions");
+      expect(TOOL_GUIDES.providers_manage).toContain("Credential pre-check passed");
+    });
+
+    it("Test 8 — Credential Pre-Check enumerates all provider-switch paths (gateway.patch + agents_manage + providers_manage)", () => {
+      const guide = TOOL_GUIDES.providers_manage;
+      expect(guide).toContain("gateway.patch agents.*.provider");
+      expect(guide).toContain("agents_manage update");
+      expect(guide).toContain("providers_manage create");
+    });
+
+    it("Test 9 (hygiene) — 'Credential Workflow' is renamed to 'Credential Workflow Summary'", () => {
+      // Step C of the plan renames the section to clarify that the canonical
+      // entry point is the Credential Pre-Check above; this section just
+      // documents what gets stored where. A bare "Credential Workflow" header
+      // would re-introduce ambiguity.
+      expect(TOOL_GUIDES.providers_manage).toContain("Credential Workflow Summary");
+    });
+  });
 });
 
 describe("key set parity", () => {
