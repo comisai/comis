@@ -33,13 +33,13 @@
   "dependencies": {
     "@comis/core": "workspace:*",
     "@comis/shared": "workspace:*",
-    "better-sqlite3": "^12.6.2",
-    "lru-cache": "^11.2.6",
-    "node-llama-cpp": "^3.17.1",
-    "openai": "^6.27.0",
-    "p-queue": "^9.1.0",
+    "better-sqlite3": "12.9.0",
+    "lru-cache": "11.3.5",
+    "node-llama-cpp": "3.18.1",
+    "openai": "6.34.0",
+    "p-queue": "9.2.0",
     "sqlite-vec": "0.1.9",
-    "zod": "^4.3.6"
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",

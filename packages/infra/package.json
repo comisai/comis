@@ -33,7 +33,7 @@
   "dependencies": {
     "@comis/core": "workspace:*",
     "@comis/shared": "workspace:*",
-    "pino": "^10.3.1"
+    "pino": "10.3.1"
   },
   "devDependencies": {
     "pino-pretty": "13.1.3",

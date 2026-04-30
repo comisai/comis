@@ -43,10 +43,10 @@
     "@mariozechner/pi-ai": "0.68.0",
     "@mariozechner/pi-coding-agent": "0.68.0",
     "diff": "8.0.4",
-    "p-queue": "^9.1.0",
-    "proper-lockfile": "^4.1.2",
-    "sharp": "^0.34.5",
-    "zod": "^4.3.6"
+    "p-queue": "9.2.0",
+    "proper-lockfile": "4.1.2",
+    "sharp": "0.34.5",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
