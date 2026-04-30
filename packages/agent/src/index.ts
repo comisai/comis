@@ -424,7 +424,9 @@ export {
   isOpenAiFamily,
   shouldDropThinkingBlocks,
   resolveToolCallIdMode,
+  validateProviderOverrides,
 } from "./provider/capabilities.js";
+export type { ProviderOverridesValidatorLogger } from "./provider/capabilities.js";
 
 // Model compatibility auto-detection (xAI compat flags)
 export { normalizeModelCompat } from "./provider/model-compat.js";

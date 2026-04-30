@@ -543,6 +543,35 @@ describe("daemon main()", () => {
       }),
     );
   });
+
+  // -------------------------------------------------------------------------
+  // Layer 3C (260501-07g): boot-time PROVIDER_OVERRIDES staleness validator
+  // -------------------------------------------------------------------------
+  // The daemon calls validateProviderOverrides during the "3.6" startup step.
+  // Against the LIVE pi-ai catalog, two override keys are currently orphans
+  // (anthropic-vertex, azure-openai). The validator emits one structured WARN
+  // per orphan key with errorKind:"config" and module:"agent.capabilities".
+
+  it("emits structured WARNs for orphaned PROVIDER_OVERRIDES keys at boot", async () => {
+    const { overrides, mocks } = buildOverrides();
+
+    await main(overrides);
+
+    // The mock LogLevelManager returns the same mock logger for every
+    // getLogger() call -- assert at least one warn carrying the validator's
+    // signature was emitted during boot.
+    const sharedMockLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>)
+      .mock.results[0]?.value;
+    expect(sharedMockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: expect.any(String),
+        hint: expect.stringContaining("PROVIDER_OVERRIDES"),
+        errorKind: "config",
+        module: "agent.capabilities",
+      }),
+      "Capability override has no matching pi-ai provider",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
