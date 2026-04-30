@@ -122,7 +122,15 @@ export interface ChannelManagerDeps {
   handleConfigCommand?: (args: string[], channelType: string) => Promise<string | undefined>;
   /** Optional callback for task extraction after successful agent execution. */
   onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
-  /** Optional callback fired after each successful inbound message processing. Used by restart continuation tracker. */
+  /**
+   * Optional hook fired BEFORE the inbound message is dispatched to the executor.
+   * Use this for state that must be visible during processing (e.g. continuation
+   * tracker for SIGUSR2 capture). Fires for both real adapter inbounds and
+   * synthetic injected messages. Does NOT fire for early-return paths
+   * (no-adapter warning, graph-report intercept).
+   */
+  onMessageReceived?: (msg: NormalizedMessage, channelType: string) => void;
+  /** Optional callback fired AFTER each successful inbound message processing. Used by post-processing state (e.g. notification session activity recording). */
   onMessageProcessed?: (msg: NormalizedMessage, channelType: string) => void;
   /** When true, lifecycle reactor handles queued/thinking reactions -- skip ack reaction in inbound pipeline. */
   lifecycleReactionsEnabled?: boolean;
@@ -277,6 +285,11 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
                 return; // Handled -- do not forward to agent
               }
             }
+            // Fire onMessageReceived BEFORE await processInboundMessage so any
+            // mid-processing SIGUSR2 still sees the session in continuation
+            // tracker state. The graph-report intercept above must remain BEFORE
+            // this call so control-plane callbacks bypass both hooks.
+            deps.onMessageReceived?.(msg, adapter.channelType);
             await processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
             deps.onMessageProcessed?.(msg, adapter.channelType);
           } catch (error) {
@@ -403,12 +416,17 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           return;
         }
       }
+      // Two-callback contract (symmetric with the normal inbound path):
+      //   onMessageReceived fires BEFORE processInboundMessage so any
+      //     mid-execution SIGUSR2 sees the session in continuation tracker
+      //     state. Daemon wires this to continuationTracker.track(...).
+      //   onMessageProcessed fires AFTER processing for post-processing state
+      //     that depends on deferred refs (e.g. sessionTrackerRef.recordActivity).
+      // Both early-return branches above (no-adapter warn, graph-report intercept)
+      // intentionally bypass both callbacks because they represent control-plane
+      // events, not real session activity.
+      deps.onMessageReceived?.(msg, channelType);
       await processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
-      // Symmetric with the normal inbound path (line 248): the synthetic
-      // recovery user-message represents real session activity, so notify
-      // the continuation tracker. Without this call, multi-restart chains
-      // see an empty tracker on the second SIGUSR2 -> 0 captured -> the
-      // next instance has nothing to replay (silent bot).
       deps.onMessageProcessed?.(msg, channelType);
     },
   };

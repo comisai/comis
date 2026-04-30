@@ -138,7 +138,14 @@ export interface ChannelsDeps {
   rpcCall?: RpcCall;
   /** Optional callback for task extraction after successful agent execution (gated by config.scheduler.tasks.enabled). */
   onTaskExtraction?: (conversationText: string, sessionKey: string, agentId: string) => Promise<void>;
-  /** Optional callback fired after each successful inbound message processing. Used by restart continuation tracker. */
+  /**
+   * Optional callback fired BEFORE each inbound message is dispatched to the
+   * executor. Used by the restart continuation tracker so the session is
+   * visible in tracker state before any tool call could trigger SIGUSR2.
+   * Bypassed for early-return paths (no-adapter, graph-report intercept).
+   */
+  onMessageReceived?: (msg: NormalizedMessage, channelType: string) => void;
+  /** Optional callback fired AFTER each successful inbound message processing. Used by post-processing state (e.g. notification session activity recording). */
   onMessageProcessed?: (msg: NormalizedMessage, channelType: string) => void;
   /** Optional approval gate for /approve and /deny chat commands in inbound pipeline (APPR-CHAT). */
   approvalGate?: import("@comis/core").ApprovalGate;
@@ -731,6 +738,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       } : undefined,
       // Task extraction callback (gated by config.scheduler.tasks.enabled)
       onTaskExtraction: deps.onTaskExtraction,
+      onMessageReceived: deps.onMessageReceived,
       onMessageProcessed: deps.onMessageProcessed,
       // Graph report button callback intercept: deliver full report as .md file attachment
       onGraphReportRequest: async (graphId, _channelType, channelId, adapter, threadId) => {
