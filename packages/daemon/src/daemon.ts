@@ -777,7 +777,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // before setupTools completes).
   // Deferred notification session tracker ref: wired after setupNotifications returns.
   // The onMessageProcessed callback reads this at call time (not definition time),
-  // so it is always set before any message arrives.
+  // so it is always set before any message arrives. recordActivity MUST stay in
+  // the post-processing callback because the ref is wired AFTER setupChannels
+  // returns; tracker.track moved to onMessageReceived which has no such dep.
   const sessionTrackerRef: { ref?: import("./notification/session-tracker.js").SessionTracker } = {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches assembleToolsForAgent signature from setup-tools.ts
   const toolAssemblerRef: { ref?: (agentId: string, options?: import("./wiring/setup-tools.js").AssembleToolsOptions) => Promise<any[]> } = {};
@@ -812,8 +814,16 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     rpcCall,
     // Task extraction callback (gated by config.scheduler.tasks.enabled)
     onTaskExtraction: extractFromConversation,
-    // Restart continuation: track recently-active sessions for SIGUSR2 replay
-    onMessageProcessed: (msg, channelType) => {
+    // Restart continuation: track recently-active sessions for SIGUSR2 replay.
+    // Two-callback timing split (260430-s4m corrects the r4i-A flaw):
+    //   onMessageReceived fires BEFORE processInboundMessage so the tracker
+    //     Map is populated before any tool call could trigger SIGUSR2 mid-
+    //     execution. Without this, multi-restart chains saw 0 captured records
+    //     and the next instance had nothing to replay -> silent bot.
+    //   onMessageProcessed fires AFTER processing for sessionTrackerRef
+    //     because the ref is wired post-setupNotifications (deferred-ref
+    //     pattern); calling it pre-processing would fire on an undefined ref.
+    onMessageReceived: (msg, channelType) => {
       // Preserve channel-native chat type so post-restart synthetic messages
       // can frame group sessions correctly. Without this, group inbounds are
       // mis-framed as DMs on first turn after restart.
@@ -829,8 +839,12 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
         tenantId: container.config.tenantId,
         timestamp: Date.now(),
       });
+    },
+    onMessageProcessed: (msg, channelType) => {
       // Record session activity for notification channel resolution fallback.
-      // sessionTrackerRef is populated after setupNotifications() returns (below).
+      // sessionTrackerRef.ref is populated post-construction by
+      // setupNotifications (line 879 below), so this MUST stay in the
+      // after-processing callback -- moving it earlier would fire on undefined.
       sessionTrackerRef.ref?.recordActivity(defaultAgentId, channelType, msg.channelId);
     },
     // /approve and /deny chat command interception

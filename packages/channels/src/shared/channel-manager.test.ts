@@ -797,6 +797,284 @@ describe("createChannelManager", () => {
     });
   });
 
+  describe("onMessageReceived / onMessageProcessed timing", () => {
+    // Pin the timing contract that fixes the r4i-A flaw: onMessageReceived
+    // MUST fire BEFORE await processInboundMessage on both code paths so the
+    // continuation tracker is populated before any in-flight tool call could
+    // trigger SIGUSR2. onMessageProcessed retains its post-processing
+    // semantics (sessionTrackerRef.ref deferred-wiring requirement).
+
+    /** Build a deferred promise the test can resolve at will. */
+    function makeDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+      let resolveFn: (value: T) => void = () => {};
+      const promise = new Promise<T>((r) => {
+        resolveFn = r;
+      });
+      return { promise, resolve: resolveFn };
+    }
+
+    it("fires onMessageReceived BEFORE processInboundMessage on the normal inbound path", async () => {
+      const calls: string[] = [];
+      const deferred = makeDeferred<{
+        response: string;
+        sessionKey: { tenantId: string; userId: string; channelId: string };
+        tokensUsed: { input: number; output: number; total: number };
+        cost: { total: number };
+        stepsExecuted: number;
+        finishReason: "stop";
+      }>();
+      const adapter = makeAdapter();
+      const executor = makeExecutor({
+        execute: vi.fn(() => deferred.promise),
+      });
+      const onMessageReceived = vi.fn(() => {
+        calls.push("received");
+      });
+      const onMessageProcessed = vi.fn(() => {
+        calls.push("processed");
+      });
+      const deps = makeDeps({
+        adapters: [adapter],
+        createExecutor: vi.fn(() => executor),
+        onMessageReceived,
+        onMessageProcessed,
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      const msg = makeMessage();
+      const handlerPromise = adapter._handlers[0](msg);
+      // Yield microtasks so executor.execute can be reached and the handler
+      // is parked at await processInboundMessage.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // While processing is hung, onMessageReceived must have already fired
+      // and onMessageProcessed must not have fired yet.
+      expect(onMessageReceived).toHaveBeenCalledTimes(1);
+      expect(onMessageReceived).toHaveBeenCalledWith(msg, "telegram");
+      expect(onMessageProcessed).not.toHaveBeenCalled();
+
+      // Resolve the deferred executor to unblock processInboundMessage.
+      deferred.resolve({
+        response: "Agent response text",
+        sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.001 },
+        stepsExecuted: 0,
+        finishReason: "stop",
+      });
+      await handlerPromise;
+
+      expect(onMessageProcessed).toHaveBeenCalledTimes(1);
+      expect(onMessageProcessed).toHaveBeenCalledWith(msg, "telegram");
+      expect(calls).toEqual(["received", "processed"]);
+    });
+
+    it("fires onMessageReceived BEFORE processInboundMessage on the injectMessage path", async () => {
+      const calls: string[] = [];
+      const deferred = makeDeferred<{
+        response: string;
+        sessionKey: { tenantId: string; userId: string; channelId: string };
+        tokensUsed: { input: number; output: number; total: number };
+        cost: { total: number };
+        stepsExecuted: number;
+        finishReason: "stop";
+      }>();
+      const adapter = makeAdapter();
+      const executor = makeExecutor({
+        execute: vi.fn(() => deferred.promise),
+      });
+      const onMessageReceived = vi.fn(() => {
+        calls.push("received");
+      });
+      const onMessageProcessed = vi.fn(() => {
+        calls.push("processed");
+      });
+      const deps = makeDeps({
+        adapters: [adapter],
+        createExecutor: vi.fn(() => executor),
+        onMessageReceived,
+        onMessageProcessed,
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      const msg = makeMessage();
+      const injectPromise = manager.injectMessage("telegram", msg);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(onMessageReceived).toHaveBeenCalledTimes(1);
+      expect(onMessageReceived).toHaveBeenCalledWith(msg, "telegram");
+      expect(onMessageProcessed).not.toHaveBeenCalled();
+
+      deferred.resolve({
+        response: "Agent response text",
+        sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.001 },
+        stepsExecuted: 0,
+        finishReason: "stop",
+      });
+      await injectPromise;
+
+      expect(onMessageProcessed).toHaveBeenCalledTimes(1);
+      expect(onMessageProcessed).toHaveBeenCalledWith(msg, "telegram");
+      expect(calls).toEqual(["received", "processed"]);
+    });
+
+    it("graph-report intercept on injectMessage bypasses BOTH callbacks", async () => {
+      const onMessageReceived = vi.fn();
+      const onMessageProcessed = vi.fn();
+      const onGraphReportRequest = vi.fn(async () => {});
+      const adapter = makeAdapter();
+      const deps = makeDeps({
+        adapters: [adapter],
+        onMessageReceived,
+        onMessageProcessed,
+        onGraphReportRequest,
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      const msg = makeMessage({
+        text: "graph:report:abc123",
+        metadata: { telegramMessageId: 42, isButtonCallback: true },
+      });
+      await manager.injectMessage("telegram", msg);
+
+      expect(onGraphReportRequest).toHaveBeenCalledTimes(1);
+      expect(onMessageReceived).not.toHaveBeenCalled();
+      expect(onMessageProcessed).not.toHaveBeenCalled();
+    });
+
+    it("no-adapter intercept on injectMessage bypasses BOTH callbacks", async () => {
+      const onMessageReceived = vi.fn();
+      const onMessageProcessed = vi.fn();
+      const deps = makeDeps({
+        adapters: [],
+        onMessageReceived,
+        onMessageProcessed,
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      await manager.injectMessage("nonexistent", makeMessage());
+
+      expect(onMessageReceived).not.toHaveBeenCalled();
+      expect(onMessageProcessed).not.toHaveBeenCalled();
+      expect(deps.logger.warn).toHaveBeenCalled();
+    });
+
+    it("graph-report intercept on the normal inbound path bypasses BOTH callbacks", async () => {
+      const onMessageReceived = vi.fn();
+      const onMessageProcessed = vi.fn();
+      const onGraphReportRequest = vi.fn(async () => {});
+      const adapter = makeAdapter();
+      const deps = makeDeps({
+        adapters: [adapter],
+        onMessageReceived,
+        onMessageProcessed,
+        onGraphReportRequest,
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      const msg = makeMessage({
+        text: "graph:report:abc123",
+        metadata: { telegramMessageId: 42, isButtonCallback: true },
+      });
+      await adapter._handlers[0](msg);
+
+      expect(onGraphReportRequest).toHaveBeenCalledTimes(1);
+      expect(onMessageReceived).not.toHaveBeenCalled();
+      expect(onMessageProcessed).not.toHaveBeenCalled();
+    });
+
+    it("r4i-A regression pin: onMessageReceived fires while processing is still in flight", async () => {
+      // This pins the specific bug fixed by 260430-s4m: in r4i-A, the only
+      // callback (onMessageProcessed) fired AFTER processInboundMessage
+      // resolved -- so a SIGUSR2 mid-execution observed an empty
+      // continuation tracker. Wiring tracker.track to onMessageReceived
+      // closes that timing window.
+      const deferred = (() => {
+        let resolveFn: (v: {
+          response: string;
+          sessionKey: { tenantId: string; userId: string; channelId: string };
+          tokensUsed: { input: number; output: number; total: number };
+          cost: { total: number };
+          stepsExecuted: number;
+          finishReason: "stop";
+        }) => void = () => {};
+        const promise = new Promise<{
+          response: string;
+          sessionKey: { tenantId: string; userId: string; channelId: string };
+          tokensUsed: { input: number; output: number; total: number };
+          cost: { total: number };
+          stepsExecuted: number;
+          finishReason: "stop";
+        }>((r) => {
+          resolveFn = r;
+        });
+        return { promise, resolve: resolveFn };
+      })();
+      const adapter = makeAdapter();
+      const executor = makeExecutor({
+        execute: vi.fn(() => deferred.promise),
+      });
+      const onMessageReceived = vi.fn();
+      const onMessageProcessed = vi.fn();
+      const deps = makeDeps({
+        adapters: [adapter],
+        createExecutor: vi.fn(() => executor),
+        onMessageReceived,
+        onMessageProcessed,
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      const msg = makeMessage();
+      const injectPromise = manager.injectMessage("telegram", msg);
+      // Yield microtasks so the call reaches await processInboundMessage.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // While processing is hung, the continuation-tracker-equivalent
+      // (onMessageReceived spy) MUST already have been called -- this is
+      // the timing semantic the bug repro requires. onMessageProcessed
+      // (which carries recordActivity) MUST NOT have been called yet.
+      expect(onMessageReceived).toHaveBeenCalledTimes(1);
+      expect(onMessageProcessed).not.toHaveBeenCalled();
+
+      deferred.resolve({
+        response: "Agent response text",
+        sessionKey: { tenantId: "default", userId: "user-1", channelId: "12345" },
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.001 },
+        stepsExecuted: 0,
+        finishReason: "stop",
+      });
+      await injectPromise;
+      expect(onMessageProcessed).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not throw when onMessageReceived is undefined", async () => {
+      const adapter = makeAdapter();
+      // Provide onMessageProcessed only -- onMessageReceived is omitted.
+      const deps = makeDeps({
+        adapters: [adapter],
+        onMessageProcessed: vi.fn(),
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      // Both code paths must tolerate an undefined onMessageReceived.
+      await expect(adapter._handlers[0](makeMessage())).resolves.not.toThrow();
+      await expect(manager.injectMessage("telegram", makeMessage())).resolves.not.toThrow();
+    });
+  });
+
   describe("stopAll() in-flight drain", () => {
     it("awaits in-flight sendMessage before calling adapter.stop()", async () => {
       const callOrder: string[] = [];
