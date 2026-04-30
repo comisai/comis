@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAgentHandlers } from "./agent-handlers.js";
 import type { AgentHandlerDeps } from "./agent-handlers.js";
 import type { PersistToConfigDeps } from "./persist-to-config.js";
@@ -113,6 +113,45 @@ const mockProbeProviderAuth = vi.mocked(probeProviderAuth);
 // ---------------------------------------------------------------------------
 
 function makeDeps(overrides?: Partial<AgentHandlerDeps>): AgentHandlerDeps {
+  // Default provider entries + secretManager so the 260501-2pz credential
+  // guard passes for the test defaults ("default" and "anthropic"). Tests
+  // that need to assert guard rejection override these explicitly.
+  const defaultProviderEntries: Record<string, ProviderEntry> = {
+    default: {
+      type: "ollama",
+      name: "",
+      baseUrl: "",
+      apiKeyName: "",
+      enabled: true,
+      timeoutMs: 120_000,
+      maxRetries: 2,
+      headers: {},
+      capabilities: {
+        providerFamily: "default",
+        dropThinkingBlockModelHints: [],
+        transcriptToolCallIdMode: "default",
+        transcriptToolCallIdModelHints: [],
+      },
+      models: [],
+    } as ProviderEntry,
+    anthropic: {
+      type: "anthropic",
+      name: "",
+      baseUrl: "",
+      apiKeyName: "ANTHROPIC_API_KEY",
+      enabled: true,
+      timeoutMs: 120_000,
+      maxRetries: 2,
+      headers: {},
+      capabilities: {
+        providerFamily: "default",
+        dropThinkingBlockModelHints: [],
+        transcriptToolCallIdMode: "default",
+        transcriptToolCallIdModelHints: [],
+      },
+      models: [],
+    } as ProviderEntry,
+  };
   return {
     agents: {
       default: {
@@ -124,6 +163,8 @@ function makeDeps(overrides?: Partial<AgentHandlerDeps>): AgentHandlerDeps {
     },
     defaultAgentId: "default",
     suspendedAgents: new Set<string>(),
+    providerEntries: defaultProviderEntries,
+    secretManager: { has: () => true, get: () => "test-key" },
     ...overrides,
   };
 }
@@ -1422,6 +1463,194 @@ describe("createAgentHandlers", () => {
         expect(op.crossProvider).toBe(false);
         expect(op.apiKeyConfigured).toBe(true);
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Credential guard (260501-2pz): daemon-side fail-loud rejection of
+  // agents.update / agents.create patches that would set the agent's
+  // provider to one whose API key is not resolvable.
+  // -------------------------------------------------------------------------
+
+  describe("agents.update credential guard (260501-2pz)", () => {
+    let originalEnv: NodeJS.ProcessEnv;
+    beforeEach(() => {
+      originalEnv = { ...process.env };
+      delete process.env.OPENROUTER_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      delete process.env.ANTHROPIC_OAUTH_TOKEN;
+    });
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it("agents.update with provider change to unauthenticated provider throws actionable error", async () => {
+      // No providerEntries for openrouter, no env key, no secret manager hit
+      const deps = makeDeps({
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+      });
+      const handlers = createAgentHandlers(deps);
+
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "default",
+          config: { provider: "openrouter", model: "qwen/qwen3-coder" },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/Cannot set agent provider to "openrouter"/);
+
+      // Existing config must NOT be mutated by a rejected patch
+      expect(deps.agents["default"]!.provider).toBe("anthropic");
+      expect(mockProbeProviderAuth).not.toHaveBeenCalled();
+    });
+
+    it("agents.update with provider change to authenticated provider (Source A) succeeds", async () => {
+      const deps = makeDeps({
+        providerEntries: {
+          openrouter: {
+            type: "openai",
+            name: "OpenRouter",
+            baseUrl: "https://openrouter.ai/api/v1",
+            apiKeyName: "OPENROUTER_API_KEY",
+            enabled: true,
+            timeoutMs: 120000,
+            maxRetries: 2,
+            headers: {},
+            capabilities: { providerFamily: "default", dropThinkingBlockModelHints: [], transcriptToolCallIdMode: "default", transcriptToolCallIdModelHints: [] },
+            models: [],
+          } as ProviderEntry,
+        },
+        secretManager: {
+          has: (k) => k === "OPENROUTER_API_KEY",
+          get: (k) => k === "OPENROUTER_API_KEY" ? "sk-or-v1-xxx" : undefined,
+        },
+      });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: { provider: "openrouter", model: "qwen/qwen3-coder" },
+        _trustLevel: "admin",
+      })) as { updated: boolean; config: Record<string, unknown> };
+
+      expect(result.updated).toBe(true);
+      expect(result.config.provider).toBe("openrouter");
+      // Probe runs as second step (preexisting wire-validation behavior)
+      expect(mockProbeProviderAuth).toHaveBeenCalledOnce();
+    });
+
+    it("agents.update with model-only change rejects when current provider has no resolvable key (regression detector)", async () => {
+      // Seed an agent that points at an unauthenticated provider directly.
+      // Per Plan-checker fix #4: bypass agents.create (which would now
+      // reject) by populating deps.agents directly.
+      const deps = makeDeps({
+        agents: {
+          stale: {
+            name: "Stale Agent",
+            model: "qwen/qwen3-coder",
+            provider: "openrouter",
+            maxSteps: 25,
+          } as AgentHandlerDeps["agents"][string],
+        },
+        defaultAgentId: "stale",
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+      });
+      const handlers = createAgentHandlers(deps);
+
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "stale",
+          config: { model: "anthropic/claude-3-haiku" }, // model-only patch
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/Cannot set agent provider to "openrouter"/);
+    });
+
+    it("agents.update with non-provider/model patch (skills) does not invoke guard", async () => {
+      // No providerEntries / no secretManager — guard would reject if it ran.
+      // Skills updates must NOT trigger the guard.
+      const deps = makeDeps({
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+      });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: { skills: { builtinTools: { webSearch: false } } },
+        _trustLevel: "admin",
+      })) as { updated: boolean };
+
+      expect(result.updated).toBe(true);
+      expect(mockProbeProviderAuth).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("agents.create credential guard (260501-2pz)", () => {
+    let originalEnv: NodeJS.ProcessEnv;
+    beforeEach(() => {
+      originalEnv = { ...process.env };
+      delete process.env.OPENROUTER_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+    });
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it("agents.create with new agent pointing at unauthenticated provider throws actionable error", async () => {
+      const deps = makeDeps({
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+      });
+      const handlers = createAgentHandlers(deps);
+
+      await expect(
+        handlers["agents.create"]!({
+          agentId: "new-bot",
+          config: { name: "New Bot", provider: "openrouter", model: "qwen/qwen3-coder" },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/Cannot set agent provider to "openrouter"/);
+
+      // In-memory commit and persist must NOT have happened
+      expect(deps.agents["new-bot"]).toBeUndefined();
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
+    it("agents.create with authenticated provider (Source A) succeeds", async () => {
+      const deps = makeDeps({
+        providerEntries: {
+          openrouter: {
+            type: "openai",
+            name: "OpenRouter",
+            baseUrl: "https://openrouter.ai/api/v1",
+            apiKeyName: "OPENROUTER_API_KEY",
+            enabled: true,
+            timeoutMs: 120000,
+            maxRetries: 2,
+            headers: {},
+            capabilities: { providerFamily: "default", dropThinkingBlockModelHints: [], transcriptToolCallIdMode: "default", transcriptToolCallIdModelHints: [] },
+            models: [],
+          } as ProviderEntry,
+        },
+        secretManager: {
+          has: (k) => k === "OPENROUTER_API_KEY",
+          get: (k) => k === "OPENROUTER_API_KEY" ? "sk-or-v1-xxx" : undefined,
+        },
+      });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.create"]!({
+        agentId: "new-bot",
+        config: { name: "New Bot", provider: "openrouter", model: "qwen/qwen3-coder" },
+        _trustLevel: "admin",
+      })) as { created: boolean; agentId: string };
+
+      expect(result.created).toBe(true);
+      expect(deps.agents["new-bot"]).toBeDefined();
+      expect(deps.agents["new-bot"]!.provider).toBe("openrouter");
     });
   });
 });
