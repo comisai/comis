@@ -356,6 +356,8 @@ function summarizeToolCall(call: any): string {
     case "gateway": {
       const action = typeof args.action === "string" ? args.action : undefined;
       const section = typeof args.section === "string" ? args.section : undefined;
+      const key = typeof args.key === "string" ? args.key : undefined;
+      if (action && section && key) return `gateway({action: "${action}", section: "${section}", key: "${key}"})`;
       if (action && section) return `gateway({action: "${action}", section: "${section}"})`;
       if (action) return `gateway({action: "${action}"})`;
       return "gateway";

@@ -617,6 +617,10 @@ describe("recoverEmptyFinalResponse — tool-call synthesis (L3)", () => {
     expect(runSingle({ type: "toolCall", id: "tc", name: "gateway", arguments: { action: "patch", section: "agents" } }))
       .toContain('gateway({action: "patch", section: "agents"})');
 
+    // Case C2: gateway with action+section+key → includes key for disambiguation
+    expect(runSingle({ type: "toolCall", id: "tc", name: "gateway", arguments: { action: "patch", section: "agents", key: "default.model" } }))
+      .toContain('gateway({action: "patch", section: "agents", key: "default.model"})');
+
     // Case D: edit with path → edit({path: "..."})
     expect(runSingle({ type: "toolCall", id: "tc", name: "edit", arguments: { path: "/y.md" } }))
       .toContain('edit({path: "/y.md"})');
@@ -637,6 +641,38 @@ describe("recoverEmptyFinalResponse — tool-call synthesis (L3)", () => {
     // Case G: tool_use shape (Anthropic native) with `input` → same output as `arguments`
     expect(runSingle({ type: "tool_use", id: "toolu_1", name: "write", input: { path: "/native.md" } }))
       .toContain('write({path: "/native.md"})');
+  });
+
+  it("disambiguates parallel gateway.patch calls with different keys in the same batch", () => {
+    // Production repro from 2026-04-30 OpenRouter onboarding test: model fired
+    // gateway.patch agents.default.model + gateway.patch agents.default.provider
+    // in the same turn. Pre-fix, both bullets rendered identically as
+    // `gateway({action: "patch", section: "agents"})`. Post-fix, key field
+    // disambiguates them.
+    const result = recoverEmptyFinalResponse({
+      extractedResponse: "",
+      textEmitted: true,
+      messages: [
+        { role: "user", content: "Switch to OpenRouter Qwen3 Coder", timestamp: 1 },
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", id: "tc1", name: "gateway", arguments: { action: "patch", section: "agents", key: "default.model", value: "qwen/qwen3-coder" } },
+            { type: "toolCall", id: "tc2", name: "gateway", arguments: { action: "patch", section: "agents", key: "default.provider", value: "openrouter" } },
+          ],
+          stopReason: "toolUse",
+          timestamp: 2,
+        },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
+        { role: "toolResult", toolCallId: "tc2", content: [{ type: "text", text: "OK" }], timestamp: 4 },
+        { role: "assistant", content: [], stopReason: "stop", timestamp: 5 },
+      ],
+      logger: mockLogger(),
+      userMessageIndex: 0,
+    });
+    expect(result).toContain('gateway({action: "patch", section: "agents", key: "default.model"})');
+    expect(result).toContain('gateway({action: "patch", section: "agents", key: "default.provider"})');
+    expect(result).toContain("Completed 2 tool calls");
   });
 
   it("source no longer contains the pre-tool-commentary recovery pass marker (regression)", async () => {
