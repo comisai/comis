@@ -2,14 +2,16 @@
 /**
  * Model management RPC handler module.
  * Handles model catalog query methods:
- *   models.list -- List available models (optionally filtered by provider)
- *   models.test -- Check provider configuration and catalog status
- * Both handlers are read-only -- no approval gate required.
+ *   models.list           -- List available models (optionally filtered by provider)
+ *   models.test           -- Check provider configuration and catalog status
+ *   models.list_providers -- Live native pi-ai catalog provider list (Layer 1F)
+ * All handlers are read-only -- no approval gate required.
  * @module
  */
 
 import type { ModelCatalog } from "@comis/agent";
 import type { ProviderEntry } from "@comis/core";
+import { getProviders } from "@mariozechner/pi-ai";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -83,6 +85,24 @@ export function createModelHandlers(deps: ModelHandlerDeps): Record<string, RpcH
         }),
         totalModels: deps.modelCatalog.getAll().length,
       };
+    },
+
+    // -----------------------------------------------------------------------
+    // List native pi-ai catalog providers (Layer 1F -- 260430-vwt)
+    //
+    // Live self-discovery for the agent: returns the de-duplicated, sorted
+    // list of provider names from the pi-ai native catalog. Pairs with the
+    // tool-descriptions auto-promote guidance so the agent can verify
+    // which provider_id values trigger promotion in providers.create.
+    // -----------------------------------------------------------------------
+
+    "models.list_providers": async (params) => {
+      const trustLevel = params._trustLevel as string | undefined;
+      if (trustLevel !== "admin") {
+        throw new Error("Admin access required");
+      }
+      const providers = [...new Set<string>(getProviders())].sort();
+      return { providers, count: providers.length };
     },
 
     // -----------------------------------------------------------------------

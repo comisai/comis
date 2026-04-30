@@ -408,3 +408,39 @@ describe("getToolGuideWithSchema", () => {
     expect(result).toContain("```");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Layer 1D (260430-vwt) -- providers_manage TOOL_GUIDE generated from
+// the live pi-ai catalog
+// ---------------------------------------------------------------------------
+
+describe("Layer 1D providers_manage TOOL_GUIDE catalog interpolation", () => {
+  it("Built-in providers list contains every name from getProviders()", async () => {
+    const { getProviders } = await import("@mariozechner/pi-ai");
+    const guide = TOOL_GUIDES.providers_manage!;
+    for (const p of getProviders()) {
+      expect(guide, `provider "${p}" missing from providers_manage TOOL_GUIDE`).toContain(p);
+    }
+  });
+
+  it("guide points the agent at models_manage list_providers for runtime self-discovery", () => {
+    const guide = TOOL_GUIDES.providers_manage!;
+    expect(guide).toContain("models_manage");
+    expect(guide).toMatch(/list_providers/);
+  });
+
+  it("guide describes the post-auto-promote type-field rule (Layer 1C tie-in)", () => {
+    const guide = TOOL_GUIDES.providers_manage!;
+    // The new section was added as part of the Layer 1C rollout to keep
+    // the agent's documented usage in sync with the daemon's promotion.
+    expect(guide).toMatch(/auto-?promote/i);
+    expect(guide).toMatch(/OMIT/);
+  });
+
+  it("hardcoded literal provider list is gone from TOOL_GUIDES.providers_manage", () => {
+    const guide = TOOL_GUIDES.providers_manage!;
+    expect(guide).not.toContain(
+      "anthropic, google, openai, groq, mistral, deepseek, cerebras, xai, openrouter",
+    );
+  });
+});

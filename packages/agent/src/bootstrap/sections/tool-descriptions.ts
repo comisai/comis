@@ -20,6 +20,17 @@
 
 import type { ModelTier } from "./tooling-sections.js";
 import { getToolMetadata } from "@comis/core";
+import { getProviders } from "@mariozechner/pi-ai";
+
+// ---------------------------------------------------------------------------
+// Layer 1D (260430-vwt) -- live native-catalog provider list
+//
+// Computed once at module load time. Used by the providers_manage TOOL_GUIDE
+// "Built-in vs Custom Provider Check" block below so the text reflects
+// pi-ai's current native catalog without per-version source patches.
+// ---------------------------------------------------------------------------
+
+const _builtInProvidersList = [...getProviders()].sort().join(", ");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -304,10 +315,16 @@ Multiple agents can be created in one turn. Customize ALL workspace files for ea
   providers_manage: `## Provider Configuration Guide
 
 ### Built-in vs Custom Provider Check (MANDATORY first step)
-Before creating a custom provider, check if the model already exists in the built-in catalog. Built-in providers (anthropic, google, openai, groq, mistral, deepseek, cerebras, xai, openrouter) already have their models registered — creating a redundant custom entry is wrong and will be ignored. Use models_manage({ action: "list" }) to see available built-in models.
+Before creating a custom provider, check if the model already exists in the built-in catalog. Built-in providers (${_builtInProvidersList}) already have their models registered — creating a redundant custom entry is wrong and will be ignored. Call models_manage({ action: "list_providers" }) for the live native-catalog list, or models_manage({ action: "list" }) for available models. Prefer list_providers over the static list above when you need an up-to-date roster.
 
 If the model IS built-in: skip provider creation. Just store the API key (gateway env_set) and switch the agent directly.
 If the model is NOT built-in: you need a custom provider. Proceed to the steps below, but first gather ALL required configuration.
+
+### Choosing the \`type\` Field (POST AUTO-PROMOTE FLOW)
+After Layer 1C of the catalog-driven providers redesign, the \`type\` field follows two distinct rules depending on the provider name:
+- **If \`provider_id\` matches a built-in name** (use models_manage list_providers to verify): OMIT \`type\` entirely from the create config. The daemon auto-promotes \`type\` to the native catalog name when \`provider_id\` matches a native entry AND no custom \`baseUrl\` is supplied. Setting \`type:"openai"\` for a built-in name still works (auto-promoted), but omitting it is cleaner.
+- **If \`provider_id\` is a custom OpenAI-compatible proxy** (NVIDIA NIM, Together, Fireworks, etc.) NOT in the native catalog: set \`type:"openai"\` (or whatever wire-format API matches). Auto-promotion does not fire for non-catalog names.
+- **If \`baseUrl\` differs from the native catalog URL** for a built-in name: this signals you want the OpenAI-passthrough shape (custom proxy that masquerades as the built-in). Auto-promotion is suppressed; the entry stays as \`type:"openai"\`.
 
 ### Information Gathering for Custom Providers
 When creating a non-built-in provider, you MUST have: (1) the API base URL, (2) the exact model ID string, (3) the API protocol type. If the user did not supply all three:

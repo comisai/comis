@@ -25,19 +25,20 @@ const ModelsManageToolParams = Type.Object({
     [
       Type.Literal("list"),
       Type.Literal("test"),
+      Type.Literal("list_providers"),
     ],
-    { description: "Model management action. Valid values: list (query model catalog), test (check provider availability)" },
+    { description: "Model management action. Valid values: list (query model catalog), test (check provider availability), list_providers (live native pi-ai catalog provider list for self-discovery)" },
   ),
   provider: Type.Optional(
     Type.String({
       description:
-        "Provider name to filter results (optional for list, required for test). " +
+        "Provider name to filter results (optional for list, required for test, ignored for list_providers). " +
         "Examples: anthropic, openai, google, groq.",
     }),
   ),
 });
 
-const VALID_ACTIONS = ["list", "test"] as const;
+const VALID_ACTIONS = ["list", "test", "list_providers"] as const;
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -88,6 +89,12 @@ export function createModelsManageTool(rpcCall: RpcCall): AgentTool<typeof Model
         async test(p, rpcCall, ctx) {
           const provider = readStringParam(p, "provider");
           return rpcCall("models.test", { provider, _trustLevel: ctx.trustLevel });
+        },
+        // Layer 1F (260430-vwt): live native-catalog provider list for
+        // agent self-discovery. Pairs with the tool-guide pointer so the
+        // agent can confirm which names auto-promote in providers.create.
+        async list_providers(_p, rpcCall, ctx) {
+          return rpcCall("models.list_providers", { _trustLevel: ctx.trustLevel });
         },
       },
     },
