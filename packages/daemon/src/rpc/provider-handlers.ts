@@ -18,6 +18,7 @@
 
 import { ProviderEntrySchema } from "@comis/core";
 import type { ProviderEntry, PerAgentConfig } from "@comis/core";
+import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
 import { persistToConfig, type PersistToConfigDeps } from "./persist-to-config.js";
 import { probeProviderAuth } from "./probe-provider-auth.js";
 import type { RpcHandler } from "./types.js";
@@ -95,6 +96,69 @@ function formatReferenceMessage(refs: { primary: string[]; fallback: string[]; a
     parts.push(`authProfiles: ${refs.authProfile.join(", ")}`);
   }
   return parts.join("; ");
+}
+
+// ---------------------------------------------------------------------------
+// Layer 1C (260430-vwt): catalog-aware type promotion
+// ---------------------------------------------------------------------------
+
+/** Logger shape accepted by `normalizeProviderEntry`. Subset of Pino. */
+interface NormalizeLogger {
+  info: (obj: object, msg: string) => void;
+}
+
+/**
+ * Auto-promote a Partial<ProviderEntry> when the `providerId` matches a
+ * native pi-ai catalog entry AND the user has not expressed clear intent
+ * to deviate from the native shape.
+ *
+ * The agent's tool guide currently shows `type:"openai"` as the example
+ * for any OpenAI-compatible provider. Without promotion, registering
+ * "openrouter" by name with that example shape lands a `type:"openai"`
+ * entry that bypasses the OpenRouter native catalog (no costs, wrong
+ * context window, single explicit model).
+ *
+ * Promotion fires when:
+ *   1. providerId is in the live pi-ai native catalog, AND
+ *   2. config.type is missing or set to "openai" (the passthrough sentinel), AND
+ *   3. config.baseUrl is missing or matches the native catalog's baseUrl.
+ *
+ * Conservatism: a user pointing at a custom proxy whose URL differs from
+ * the native one keeps their explicit `type:"openai"` shape -- the URL
+ * mismatch is the opt-out signal.
+ *
+ * Logged at INFO with the original_type / promoted_type so operators can
+ * see which entries were rewritten on the way in.
+ */
+function normalizeProviderEntry(
+  providerId: string,
+  config: Partial<ProviderEntry>,
+  logger?: NormalizeLogger,
+): Partial<ProviderEntry> {
+  const native = new Set<string>(getProviders());
+  if (!native.has(providerId)) return config;
+
+  const catalog = getModels(providerId as KnownProvider);
+  const nativeBaseUrl = catalog[0]?.baseUrl;
+
+  const isPassthroughType = !config.type || config.type === "openai";
+  const userBaseUrlMatchesNative =
+    !config.baseUrl || config.baseUrl === nativeBaseUrl;
+
+  if (isPassthroughType && userBaseUrlMatchesNative) {
+    logger?.info(
+      {
+        providerId,
+        original_type: config.type,
+        promoted_type: providerId,
+        hint: "Auto-promoted to native pi-ai catalog provider",
+      },
+      "providers.create: type promoted to native",
+    );
+    return { ...config, type: providerId };
+  }
+
+  return config;
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +260,15 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
       }
 
       const config = (params.config as Partial<ProviderEntry>) ?? {};
-      const parsedConfig = ProviderEntrySchema.parse(config);
+      // Layer 1C (260430-vwt): auto-promote type to native catalog name
+      // when the providerId matches a pi-ai catalog entry AND the user has
+      // not opted out via a custom baseUrl.
+      const normalizedConfig = normalizeProviderEntry(
+        providerId,
+        config,
+        deps.persistDeps?.logger,
+      );
+      const parsedConfig = ProviderEntrySchema.parse(normalizedConfig);
 
       // Probe provider API key before committing config
       if (parsedConfig.apiKeyName && deps.secretManager) {
@@ -213,11 +285,15 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
 
       deps.providerEntries[providerId] = parsedConfig;
 
-      // Best-effort persistence to config.yaml
+      // Best-effort persistence to config.yaml. Persist the normalized
+      // config (post-Layer-1C promotion) so the YAML reflects the
+      // promoted type -- otherwise the daemon would re-promote on every
+      // restart, or worse, the persisted type:"openai" would override the
+      // runtime promoted type on subsequent loads.
       if (deps.persistDeps) {
         const ctx = params._context as { agentId?: string; userId?: string; traceId?: string } | undefined;
         const persistResult = await persistToConfig(deps.persistDeps, {
-          patch: { providers: { entries: { [providerId]: config as unknown as Record<string, unknown> } } },
+          patch: { providers: { entries: { [providerId]: normalizedConfig as unknown as Record<string, unknown> } } },
           actionType: "providers.create",
           entityId: providerId,
           actingUser: ctx?.userId ?? (params._agentId as string | undefined),
@@ -255,13 +331,31 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
       // so we only persist the user's partial patch (not the fully merged config).
       const userPatch = params.config ? structuredClone(params.config as Record<string, unknown>) : {};
 
+      // Layer 1C (260430-vwt): on update, only auto-promote when the user
+      // is actively changing the `type` field. If `type` is absent from
+      // the patch, the user is editing other fields and we must not
+      // rewrite their existing type silently.
+      let normalizedPatch = config;
+      if (config.type !== undefined) {
+        normalizedPatch = normalizeProviderEntry(
+          providerId,
+          config,
+          deps.persistDeps?.logger,
+        );
+        // Mirror the promotion into both the in-memory merge and the persisted patch
+        // so the YAML matches the runtime view.
+        if (normalizedPatch.type !== config.type) {
+          (userPatch as Record<string, unknown>).type = normalizedPatch.type;
+        }
+      }
+
       // Headers: shallow merge per-key (preserve existing keys, overlay new ones)
-      if (config.headers && existing.headers) {
-        config.headers = { ...existing.headers, ...config.headers };
+      if (normalizedPatch.headers && existing.headers) {
+        normalizedPatch.headers = { ...existing.headers, ...normalizedPatch.headers };
       }
       // models[] and capabilities: replaced wholesale via spread (no merge needed)
 
-      const merged = { ...existing, ...config };
+      const merged = { ...existing, ...normalizedPatch };
       const parsedConfig = ProviderEntrySchema.parse(merged);
       deps.providerEntries[providerId] = parsedConfig;
 

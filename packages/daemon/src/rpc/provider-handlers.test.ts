@@ -546,6 +546,94 @@ describe("createProviderHandlers", () => {
 
       expect(mockProbeProviderAuth).not.toHaveBeenCalled();
     });
+
+    // -----------------------------------------------------------------------
+    // Layer 1C (260430-vwt) -- catalog-aware type promotion
+    // -----------------------------------------------------------------------
+
+    it("Layer 1C: promotes type='openai' to providerId when name matches native catalog (openrouter)", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createProviderHandlers(deps);
+
+      const result = (await handlers["providers.create"]!({
+        providerId: "openrouter",
+        config: { type: "openai", apiKeyName: "OPENROUTER_API_KEY", models: [] },
+        _trustLevel: "admin",
+      })) as { providerId: string; created: boolean; config: { type: string } };
+
+      expect(result.created).toBe(true);
+      expect(result.config.type).toBe("openrouter");
+      expect(deps.providerEntries["openrouter"]!.type).toBe("openrouter");
+
+      // INFO log emitted with original_type / promoted_type
+      const infoCalls = (persistDeps.logger.info as ReturnType<typeof vi.fn>).mock.calls;
+      const promotionLog = infoCalls.find(
+        (c) =>
+          (c[0] as Record<string, unknown>).providerId === "openrouter"
+          && (c[0] as Record<string, unknown>).original_type === "openai"
+          && (c[0] as Record<string, unknown>).promoted_type === "openrouter",
+      );
+      expect(promotionLog).toBeDefined();
+
+      // Persisted patch reflects the promoted type (not the user's "openai")
+      const persistCall = mockPersistToConfig.mock.calls[0]!;
+      const persistedEntry = (persistCall[1]!.patch as Record<string, Record<string, Record<string, Record<string, unknown>>>>).providers!.entries!.openrouter!;
+      expect(persistedEntry.type).toBe("openrouter");
+    });
+
+    it("Layer 1C: does NOT promote when user supplied a custom baseUrl (opt-out signal)", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createProviderHandlers(deps);
+
+      const result = (await handlers["providers.create"]!({
+        providerId: "openrouter",
+        config: {
+          type: "openai",
+          baseUrl: "https://my-proxy.example.com/v1",
+          apiKeyName: "OPENROUTER_API_KEY",
+          models: [{ id: "qwen/qwen3-coder" }],
+        },
+        _trustLevel: "admin",
+      })) as { providerId: string; created: boolean; config: { type: string } };
+
+      expect(result.created).toBe(true);
+      // Custom baseUrl signals user wants the OpenAI passthrough; no promotion.
+      expect(result.config.type).toBe("openai");
+      expect(deps.providerEntries["openrouter"]!.type).toBe("openai");
+    });
+
+    it("Layer 1C: does NOT promote when providerId is not in the native catalog", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createProviderHandlers(deps);
+
+      const result = (await handlers["providers.create"]!({
+        providerId: "my-custom-proxy",
+        config: { type: "openai", apiKeyName: "MY_PROXY_KEY", baseUrl: "https://proxy.example.com/v1" },
+        _trustLevel: "admin",
+      })) as { providerId: string; created: boolean; config: { type: string } };
+
+      expect(result.created).toBe(true);
+      expect(result.config.type).toBe("openai");
+      expect(deps.providerEntries["my-custom-proxy"]!.type).toBe("openai");
+    });
+
+    it("Layer 1C: promotes when type is omitted entirely and providerId is native (passthrough sentinel)", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createProviderHandlers(deps);
+
+      const result = (await handlers["providers.create"]!({
+        providerId: "groq",
+        config: { apiKeyName: "GROQ_API_KEY", models: [] },
+        _trustLevel: "admin",
+      })) as { providerId: string; created: boolean; config: { type: string } };
+
+      expect(result.created).toBe(true);
+      expect(result.config.type).toBe("groq");
+    });
   });
 
   // -------------------------------------------------------------------------
