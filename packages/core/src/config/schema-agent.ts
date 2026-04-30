@@ -352,8 +352,12 @@ export const ContextEngineConfigSchema = z.strictObject({
    *  triggers on model id / provider / api change (those checks are
    *  unconditional regardless of this idle threshold). Range: 1 min .. 24 h. */
   replayDriftIdleMs: z.number().int().min(60_000).max(24 * 60 * 60_000).default(30 * 60_000),
-  /** Model for LLM compaction in "provider:modelId" format. Defaults to Haiku for cost efficiency. Empty string falls through to session model. */
-  compactionModel: z.string().default("anthropic:claude-haiku-4-5-20250929"),
+  /** Model for LLM compaction in "provider:modelId" format. Empty string
+   *  (the default) triggers runtime resolution against the agent's primary
+   *  provider via pi-ai catalog (fast-tier cost model). Avoids pinning a
+   *  hardcoded Anthropic literal that goes stale on pi-ai upgrades and
+   *  cross-routes background ops to Claude when primary is OpenRouter/Google/etc. */
+  compactionModel: z.string().default(""),
   /** Minimum age (in tool result positions) before content is eligible for dead content eviction. */
   evictionMinAge: z.number().int().min(3).max(50).default(15),
 

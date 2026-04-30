@@ -450,6 +450,7 @@ export type { ThinkingTagFilter, ThinkingTagFilterOptions } from "./response-fil
 export { resolveOperationModel, resolveProviderFamily } from "./model/operation-model-resolver.js";
 export type { OperationModelResolution } from "./model/operation-model-resolver.js";
 export { resolveOperationDefaults, OPERATION_TIER_MAP, OPERATION_TIMEOUT_DEFAULTS, OPERATION_CACHE_DEFAULTS } from "./model/operation-model-defaults.js";
+export { resolveCompactionModel } from "./model/compaction-model-resolver.js";
 
 // SessionLatch utility
 export { createSessionLatch } from "./executor/session-latch.js";

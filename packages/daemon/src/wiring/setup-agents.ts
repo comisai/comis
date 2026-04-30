@@ -37,6 +37,7 @@ import {
   setSanitizeLogger,
   setToolNormalizationLogger,
   resolveOperationDefaults,
+  resolveCompactionModel,
   LEAN_TOOL_DESCRIPTIONS,
   resolveDescription,
   type AgentExecutor,
@@ -206,6 +207,27 @@ export async function setupSingleAgent(
       },
       "Resolved default model/provider for agent",
     );
+  }
+
+  // Resolve contextEngine.compactionModel if it was left at the empty-string
+  // schema default. The resolved value is informational — actual compaction
+  // routing flows through resolveOperationModel(operationType: "compaction")
+  // at execute-time. Logging at INFO once per agent at startup gives
+  // operators a visible record of which model would back background ops.
+  const ceCompactionRaw = effectiveConfig.contextEngine?.compactionModel ?? "";
+  if (ceCompactionRaw.length === 0) {
+    const resolvedCompaction = resolveCompactionModel(ceCompactionRaw, resolved.provider);
+    if (resolvedCompaction.length > 0) {
+      agentLogger.info(
+        {
+          agentId,
+          primaryProvider: resolved.provider,
+          resolvedCompactionModel: resolvedCompaction,
+          source: "catalog_heuristic",
+        },
+        "Resolved compactionModel from pi-ai catalog",
+      );
+    }
   }
 
   // Each agent gets a dedicated workspace folder:
