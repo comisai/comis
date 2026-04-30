@@ -15,6 +15,7 @@ import type { SqliteMemoryAdapter, createSessionStore } from "@comis/memory";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
+import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
 import {
   createCircuitBreaker,
   createBudgetGuard,
@@ -35,6 +36,7 @@ import {
   createAuthRotationAdapter,
   setSanitizeLogger,
   setToolNormalizationLogger,
+  resolveOperationDefaults,
   LEAN_TOOL_DESCRIPTIONS,
   resolveDescription,
   type AgentExecutor,
@@ -171,7 +173,14 @@ export async function setupSingleAgent(
 
   const { container, memoryAdapter, agentLogger, resolvedAgentDir } = deps;
 
-  // Resolve "default" model/provider to global defaults (MODELS-DEFAULT)
+  // Resolve "default" model/provider to global defaults (MODELS-DEFAULT).
+  // Resolution sources, in priority order:
+  //   1. Per-agent explicit value (agentConfig.model / .provider)
+  //   2. modelsConfig.defaultModel / .defaultProvider (YAML models.* section)
+  //   3. Pi-ai catalog: most-populated native provider (heuristic), mid-tier
+  //      cost model from resolveOperationDefaults
+  // Surfaces resolution source at INFO once per agent so operators can see
+  // which model got picked without having to read the resolver source.
   const modelsConfig = container.config.models;
   const resolved = resolveAgentModel(agentConfig, modelsConfig);
   const effectiveConfig = { ...agentConfig, model: resolved.model, provider: resolved.provider };
@@ -182,9 +191,19 @@ export async function setupSingleAgent(
   container.config.agents[agentId] = effectiveConfig;
 
   if (agentConfig.model !== resolved.model || agentConfig.provider !== resolved.provider) {
-    agentLogger.debug(
-      { agentId, originalModel: agentConfig.model, resolvedModel: resolved.model,
-        originalProvider: agentConfig.provider, resolvedProvider: resolved.provider },
+    const source =
+      modelsConfig.defaultModel || modelsConfig.defaultProvider
+        ? "explicit_yaml"
+        : "catalog_heuristic";
+    agentLogger.info(
+      {
+        agentId,
+        originalModel: agentConfig.model,
+        resolvedModel: resolved.model,
+        originalProvider: agentConfig.provider,
+        resolvedProvider: resolved.provider,
+        source,
+      },
       "Resolved default model/provider for agent",
     );
   }
@@ -691,56 +710,73 @@ export async function setupAgents(deps: {
 // ---------------------------------------------------------------------------
 
 /**
- * Default model ID per provider, mirroring @mariozechner/pi-coding-agent's
- * defaultModelPerProvider. Used when model: "default" and no
- * models.defaultModel is configured.
- */
-const DEFAULT_MODEL_PER_PROVIDER: Record<string, string> = {
-  "amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
-  anthropic: "claude-opus-4-6",
-  openai: "gpt-5.1-codex",
-  "azure-openai-responses": "gpt-5.2",
-  "openai-codex": "gpt-5.3-codex",
-  google: "gemini-2.5-pro",
-  "google-gemini-cli": "gemini-2.5-pro",
-  "google-antigravity": "gemini-3-pro-high",
-  "google-vertex": "gemini-3-pro-preview",
-  "github-copilot": "gpt-4o",
-  openrouter: "openai/gpt-5.1-codex",
-  "vercel-ai-gateway": "anthropic/claude-opus-4-6",
-  xai: "grok-4-fast-non-reasoning",
-  groq: "openai/gpt-oss-120b",
-  cerebras: "zai-glm-4.6",
-  zai: "glm-4.6",
-  mistral: "devstral-medium-latest",
-  minimax: "MiniMax-M2.7",
-  "minimax-cn": "MiniMax-M2.7",
-  huggingface: "moonshotai/Kimi-K2.5",
-  opencode: "claude-opus-4-6",
-  "kimi-coding": "kimi-k2-thinking",
-};
-
-const FALLBACK_PROVIDER = "anthropic";
-
-/**
- * Resolve "default" model/provider placeholders to global defaults.
- * Called once per agent at daemon startup so executors always receive concrete values.
- * Resolution order for model:
- *   1. modelsConfig.defaultModel (from YAML models.defaultModel)
- *   2. DEFAULT_MODEL_PER_PROVIDER[resolvedProvider]
- *   3. DEFAULT_MODEL_PER_PROVIDER["anthropic"] (ultimate fallback)
+ * Resolve "default" model/provider placeholders to concrete values from the
+ * pi-ai catalog. Called once per agent at daemon startup so executors always
+ * receive concrete values.
+ *
+ * Resolution sources, in priority order:
+ *   1. Per-agent explicit value (agentConfig.model / .provider not "default")
+ *   2. YAML models.defaultModel / models.defaultProvider (operator override)
+ *   3. Catalog heuristic for provider: most-populated native pi-ai provider
+ *      (e.g. openrouter at 249 models > anthropic at 23). Single source of
+ *      truth — no env var, no hardcoded FALLBACK_PROVIDER. If users want
+ *      a specific default, they set models.defaultProvider in YAML.
+ *   4. Catalog heuristic for model: resolveOperationDefaults(provider).mid
+ *      (mid-tier cost), falling back to getModels(provider)[0].id.
+ *
+ * Throws when the pi-ai catalog is empty (zero providers / zero models for
+ * the resolved provider) — the caller is asking for a default and we can't
+ * synthesize one. Operators can recover by setting models.defaultProvider /
+ * models.defaultModel explicitly.
  */
 export function resolveAgentModel(
   agentConfig: { model: string; provider: string },
   modelsConfig: { defaultModel: string; defaultProvider: string },
 ): { model: string; provider: string } {
-  const provider = agentConfig.provider.toLowerCase() === "default"
-    ? (modelsConfig.defaultProvider || FALLBACK_PROVIDER)
-    : agentConfig.provider;
+  const providerIsDefault = agentConfig.provider.toLowerCase() === "default";
+  const modelIsDefault = agentConfig.model.toLowerCase() === "default";
 
-  const model = agentConfig.model.toLowerCase() === "default"
-    ? (modelsConfig.defaultModel || DEFAULT_MODEL_PER_PROVIDER[provider] || DEFAULT_MODEL_PER_PROVIDER[FALLBACK_PROVIDER])
-    : agentConfig.model;
+  // Step 1: resolve provider
+  let provider: string;
+  if (!providerIsDefault) {
+    provider = agentConfig.provider;
+  } else if (modelsConfig.defaultProvider) {
+    provider = modelsConfig.defaultProvider;
+  } else {
+    // Catalog heuristic: most-populated native provider wins.
+    const allProviders = getProviders();
+    if (allProviders.length === 0) {
+      throw new Error(
+        "Pi-ai catalog returned zero providers. " +
+        "Install or upgrade @mariozechner/pi-ai, or set models.defaultProvider explicitly.",
+      );
+    }
+    provider = allProviders
+      .map((p) => ({ p, n: getModels(p as KnownProvider).length }))
+      .sort((a, b) => b.n - a.n)[0]!.p;
+  }
+
+  // Step 2: resolve model
+  let model: string;
+  if (!modelIsDefault) {
+    model = agentConfig.model;
+  } else if (modelsConfig.defaultModel) {
+    model = modelsConfig.defaultModel;
+  } else {
+    // Catalog read: prefer mid-tier from resolveOperationDefaults
+    // (catalog-derived, cost-aware), fall back to first model id when
+    // resolveOperationDefaults returns {} (custom YAML providers).
+    const tier = resolveOperationDefaults(provider);
+    const firstId = getModels(provider as KnownProvider)[0]?.id;
+    const candidate = tier.mid ?? firstId;
+    if (!candidate) {
+      throw new Error(
+        `No models found for provider "${provider}" in pi-ai catalog. ` +
+        "Set models.defaultModel explicitly or upgrade @mariozechner/pi-ai.",
+      );
+    }
+    model = candidate;
+  }
 
   return { model, provider };
 }
