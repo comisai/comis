@@ -18,11 +18,22 @@ agent thinks.
 
 - A Telegram account
 
+<Note>
+This page covers three Telegram chat types: **direct messages** (1:1), **groups**
+(multi-party conversation), and **channels** (broadcast feeds). Each has its own
+section below; the [Setup](#setup) flow gets the bot online for DMs, then the
+[Groups](#groups) and [Channels](#channels) sections add the chat-type specifics.
+</Note>
+
 <Warning>
-By default, Telegram bots in groups only see messages that mention them or
-start with `/`. If your agent should see **all** messages in a group, you need
-to disable privacy mode via BotFather (explained in the troubleshooting section
-below).
+**Group privacy mode is ON by default.** With the default in place, Telegram
+only forwards group messages to your bot when the message @-mentions it, replies
+to one of its messages, or is a `/cmd@<botname>` command. Plain group chatter
+never reaches Comis. If you want the bot to respond freely (or use
+`groupActivation: "always" | "custom"`), follow the
+[Disable BotFather privacy mode](#disable-botfather-privacy-mode) procedure —
+**toggling the setting alone is not enough**, you must kick and re-add the bot
+afterwards because Telegram caches the privacy flag at the moment the bot joins.
 </Warning>
 
 ## Setup
@@ -144,6 +155,342 @@ your messages never contain phantom link cards. No configuration is needed.
 | Message length | 4,096 characters | Automatically splits long responses into multiple messages at paragraph boundaries |
 | Attachment size | 50 MB | Files over 50 MB are rejected with a user-friendly error message |
 
+## Groups
+
+Telegram **groups** (and **supergroups**) are multi-party chats where many users
+talk together. The bot is just another member, and Telegram applies an extra
+filter — **privacy mode** — that determines which messages the bot can see at
+all. The Comis activation policy then decides which of those messages should
+trigger a reply. Both layers matter; misconfiguring either one results in the
+bot looking "broken."
+
+### How addressing works (default)
+
+Out of the box, your agent activates in a group when **any** of these is true:
+
+- The message contains `@<your_bot_username>` parsed as a Telegram mention entity
+- The message is a reply to one of the bot's previous messages
+- The message is a slash command targeted at the bot: `/cmd@<your_bot_username>`
+
+Plain group chatter (no mention, no reply, no command) is silently recorded as
+history context but does **not** activate the agent. This is the
+`mention-gated` activation mode and is the default for `autoReplyEngine.groupActivation`.
+
+### Setting up a Telegram group
+
+<Steps>
+  <Step title="Complete the base Setup section first">
+    Confirm the bot is online and replying to DMs (the
+    [Setup](#setup) flow above). Group setup builds on a working DM bot.
+  </Step>
+
+  <Step title="Add the bot to your group">
+    In Telegram, open the group → tap the group name → **Add Members** →
+    search for `@<your_bot_username>` → tap the bot → **Add**. The bot does
+    **not** need to be an administrator unless you turn off privacy mode
+    (next step) or your agent uses platform actions like ban/promote/pin
+    that require admin rights.
+  </Step>
+
+  <Step title="(Recommended) Disable BotFather privacy mode">
+    Required only if you want the bot to see **all** group messages — for
+    example, when running with `groupActivation: "always"` or `"custom"`,
+    or when your agent passively monitors group chatter. If you only need
+    mention-gated behavior, **skip this step** and leave privacy on.
+
+    See [Disable BotFather privacy mode](#disable-botfather-privacy-mode)
+    immediately below for the full procedure (including the mandatory
+    kick-and-readd step).
+  </Step>
+
+  <Step title="Restrict who can talk to the bot (optional)">
+    By default, **any** user in the group can activate the bot. To
+    restrict it to specific Telegram user IDs, add them to `allowFrom`
+    in `~/.comis/config.yaml`:
+
+    ```yaml
+    channels:
+      telegram:
+        enabled: true
+        botToken: "${TELEGRAM_BOT_TOKEN}"
+        allowFrom:
+          - "678314278"      # Alice
+          - "5900067809"     # Bob
+    ```
+
+    `allowFrom` is sender-keyed, not chat-keyed. Adding the group's chat ID
+    to `allowFrom` does **not** whitelist the group — every individual user
+    you want to enable must be listed by their Telegram user ID. To find a
+    user's ID, ask them to send any message in the group while you tail
+    `pm2 logs comis` (the `senderId` field is logged on every inbound).
+    Leave `allowFrom: []` (or omit it) to allow all users.
+  </Step>
+
+  <Step title="Restart the daemon and test">
+    ```bash
+    pnpm build && pm2 flush && pm2 restart comis
+    sleep 5 && pm2 logs comis --lines 10 --nostream
+    ```
+
+    In the group, send a fresh `@<your_bot_username> hello` (when typing
+    `@`, tap the suggestion popup so Telegram parses it as a mention
+    entity — typing the text alone is not enough). The bot should reply
+    within seconds.
+  </Step>
+</Steps>
+
+### Disable BotFather privacy mode
+
+Permanently disable privacy mode so the bot sees **all** group messages
+reliably.
+
+<Steps>
+  <Step title="Toggle the setting in BotFather">
+    Open Telegram, message **@BotFather**, then:
+
+    `/mybots` → select **@<your_bot_username>** → **Bot Settings** → **Group Privacy** → **Turn off**
+
+    BotFather confirms `Privacy mode is disabled for <bot>`.
+  </Step>
+
+  <Step title="Kick and re-add the bot in every existing group">
+    **This step is mandatory.** Telegram caches the privacy flag at the
+    moment the bot joins a group. Toggling the setting in BotFather does
+    **not** retroactively unlock messages in groups the bot is already in.
+
+    For every group where you want the bot to see all messages:
+
+    1. Open the group → tap the group name → **Members**
+    2. Find the bot → swipe (iOS) or long-press (Android) → **Remove**
+    3. Re-add the bot via **Add Members** → `@<your_bot_username>` → **Add**
+
+    From this point on, the bot receives every message in those groups.
+  </Step>
+
+  <Step title="Verify the flag is off">
+    Confirm via the Bot API directly:
+
+    ```bash
+    TOKEN=$(grep '^TELEGRAM_BOT_TOKEN' ~/.comis/.env | cut -d= -f2- | tr -d '"')
+    curl -s "https://api.telegram.org/bot${TOKEN}/getMe" | python3 -m json.tool
+    ```
+
+    Look for `"can_read_all_group_messages": true`. If it still says
+    `false`, BotFather hasn't propagated the change yet — wait a minute
+    and try again.
+  </Step>
+</Steps>
+
+<Warning>
+**Privacy off = bot sees everything.** Once disabled, the bot receives
+every message in the group, including DMs between members that get
+quoted, file attachments, location pins, and so on. Comis still applies
+its own activation policy (so it doesn't *reply* to everything), but the
+data flows into the agent's history buffer. Only disable privacy if you
+need it.
+</Warning>
+
+### Group activation modes
+
+Comis decides whether to activate the agent based on the
+`autoReplyEngine.groupActivation` config (top level of `config.yaml`):
+
+```yaml
+autoReplyEngine:
+  enabled: true
+  groupActivation: mention-gated   # default — recommended
+  customPatterns: []               # used only when groupActivation: custom
+  historyInjection: true           # silently buffer non-trigger messages as context
+  maxHistoryInjections: 50
+  maxGroupHistoryMessages: 20
+```
+
+| Mode | When the agent activates | Privacy mode requirement |
+|---|---|---|
+| `mention-gated` (default) | Message @-mentions the bot, replies to it, or uses `/cmd@<botname>` | Privacy on is fine |
+| `always` | Every group message | **Privacy must be off** |
+| `custom` | Message text matches one of `customPatterns` (regex) | **Privacy must be off** |
+
+`historyInjection: true` silently records non-trigger group messages into a
+ring buffer per session, so when the agent does activate, it has the recent
+context. Set to `false` to drop them entirely.
+
+`custom` example — wake the agent on either a regex trigger or any question:
+
+```yaml
+autoReplyEngine:
+  groupActivation: custom
+  customPatterns:
+    - "^hey bot\\b"
+    - "\\?$"
+```
+
+### Routing different groups to different agents
+
+If you want a single bot to serve multiple agents — one per group, or one per
+user — use top-level `routing` bindings. The
+[Multi-agent routing](#multi-agent-routing) section below has the full schema
+and examples.
+
+### Finding a group's chat ID
+
+You'll need the group's numeric chat ID (looks like `-1001234567890` or
+`-5152588116`) for routing bindings, log filters, or sending posts
+programmatically.
+
+```bash
+# Send any message in the group with the bot present, then:
+pm2 logs comis --lines 50 --nostream | grep -E '"chatId":"-[0-9]+"' | tail -3
+```
+
+Or via the API:
+
+```bash
+TOKEN=$(grep '^TELEGRAM_BOT_TOKEN' ~/.comis/.env | cut -d= -f2- | tr -d '"')
+curl -s "https://api.telegram.org/bot${TOKEN}/getUpdates" \
+  | python3 -m json.tool | grep -A1 '"chat":' | head -20
+```
+
+Group chat IDs are negative; supergroup IDs are large negative numbers
+(typically starting with `-100`).
+
+## Channels
+
+Telegram **channels** are one-way broadcast feeds: one or more administrators
+post; subscribers read. Channels are not chats — there are no member messages
+to respond to. Use a channel when you want the agent to publish status
+updates, daily summaries, monitoring alerts, or any kind of scheduled feed.
+
+Use a [group](#groups) instead if you want a conversational bot.
+
+### Setting up a Telegram channel
+
+<Steps>
+  <Step title="Create the channel in Telegram">
+    **iOS / Android:** tap the **pencil icon** (top right on iOS, ✏️
+    floating button on Android) → **New Channel**.
+    **Desktop / Web:** click the **menu icon** (☰) → **New Channel**.
+
+    Set channel name, optional description and photo, then choose
+    **Public** (gets a `t.me/<handle>` link, anyone can find it) or
+    **Private** (invite-only via link).
+  </Step>
+
+  <Step title="Add the bot as an administrator">
+    Channels do not have plain "members" for bots — bots must be
+    administrators or they cannot post.
+
+    Open the channel → tap the channel name (header) → **Administrators**
+    → **Add Administrator** → search `@<your_bot_username>` → tap to
+    select. Grant at minimum **Post Messages**. For richer behavior also
+    enable **Edit Messages**, **Delete Messages**, and (if your agent
+    manages subscribers) **Add Subscribers**. Save.
+  </Step>
+
+  <Step title="Find the channel's chat ID">
+    Post any message in the channel as the bot's owner, then check logs
+    or hit the API:
+
+    ```bash
+    TOKEN=$(grep '^TELEGRAM_BOT_TOKEN' ~/.comis/.env | cut -d= -f2- | tr -d '"')
+    curl -s "https://api.telegram.org/bot${TOKEN}/getUpdates" \
+      | python3 -m json.tool | grep -B1 -A2 '"type": "channel"' | head -20
+    ```
+
+    Channel chat IDs are large negative numbers, typically
+    `-1001234567890`.
+  </Step>
+
+  <Step title="Have the agent post into the channel">
+    Comis treats channels as ordinary delivery targets. Your agent can
+    post via the messaging tool (`message` skill), background tasks, or
+    the gateway HTTP API. Use the channel's numeric chat ID as the
+    target:
+
+    ```bash
+    # Manual test from the host:
+    TOKEN=$(grep '^TELEGRAM_BOT_TOKEN' ~/.comis/.env | cut -d= -f2- | tr -d '"')
+    CHANNEL_ID="-1001234567890"
+    curl -s "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+      -d "chat_id=${CHANNEL_ID}" \
+      -d "text=Hello from the bot!"
+    ```
+
+    For scheduled posts, wire a [heartbeat or cron task](/agent-tools/scheduling)
+    that calls the messaging tool with `channelType: "telegram"` and
+    `channelId: "<channel-id>"`.
+  </Step>
+</Steps>
+
+<Note>
+**Channel privacy mode does not apply.** The BotFather privacy toggle
+governs *groups*, not channels. Bot admins in channels see exactly the
+posts you'd expect to see — there's nothing extra to enable.
+</Note>
+
+### Inbound from channels
+
+Telegram emits `channel_post` updates for messages authored in the channel.
+Comis normalizes these the same way as group messages: `chatType: "channel"`
+in the prompt context, `telegramChatType: "channel"` in metadata. The auto-reply
+gate also applies, so if you want the agent to react to channel posts (rare —
+usually channels are write-only from the agent's perspective), set
+`groupActivation: "always"` or `"custom"` and target the channel's chat ID
+in your routing bindings.
+
+## Multi-agent routing
+
+A single Telegram bot can serve multiple agents. Comis resolves which agent
+handles a given message via the top-level `routing` config, with bindings
+ranked by specificity (`peerId` 8 > `channelId` 4 > `guildId` 2 > `channelType` 1).
+
+```yaml
+agents:
+  default:
+    model: claude-opus-4-7
+  research:
+    model: claude-sonnet-4-6
+  ops:
+    model: claude-haiku-4-5
+
+routing:
+  defaultAgentId: default
+  bindings:
+    # Per-chat: this group always routes to research agent
+    - channelType: telegram
+      channelId: "-5152588116"
+      agentId: research
+
+    # Per-user: Alice always hits ops agent (in any chat)
+    - channelType: telegram
+      peerId: "678314278"
+      agentId: ops
+
+    # Per-user-in-chat: Bob in the research group goes to default
+    - channelType: telegram
+      channelId: "-5152588116"
+      peerId: "111222333"
+      agentId: default
+```
+
+`mention-gated` and `allowFrom` apply **per resolved agent** — first the bot
+receives the message, then the router picks the agent, then the agent's gate
+runs. Multi-agent setups don't change addressing rules; they just change which
+agent answers.
+
+If you need a literally separate bot identity per agent (different
+`@username`, different command menus), run one Comis daemon per bot:
+
+```bash
+mkdir -p ~/.comis-research && cp ~/.comis/config.yaml ~/.comis-research/config.yaml
+# Edit to use a different TELEGRAM_BOT_TOKEN and a single agent
+COMIS_CONFIG_PATHS="$HOME/.comis-research/config.yaml" \
+  pm2 start packages/daemon/dist/daemon.js --name comis-research
+```
+
+The schema currently allows one `channels.telegram` entry per daemon, so
+multi-bot in a single daemon is not yet supported.
+
 ## Forum Topics
 
 Telegram supergroups can enable **forum mode**, which organizes conversations into
@@ -256,13 +603,107 @@ Here is a top-to-bottom run for a brand-new bot called **MyTeamBot**:
 
 ## Troubleshooting
 
-<AccordionGroup>
-  <Accordion title="Bot doesn't respond in groups">
-    **What happened:** Privacy mode is enabled (the default). In privacy mode,
-    bots in groups only receive messages that mention them or start with `/`.
+The fastest diagnostic for "bot didn't reply in a group" is to tail the
+daemon log while you send the test message:
 
-    **How to fix it:** Open Telegram, send `/setprivacy` to **@BotFather**,
-    select your bot, and choose **Disable**. Restart the Comis daemon afterward.
+```bash
+pm2 logs comis --lines 0 | grep -E 'Inbound message|Group message did not activate|Group message ignored|autoreply:activated|Execution complete|Delivery complete'
+```
+
+Three possible outcomes tell you which layer is failing:
+
+1. **No `Inbound message` log at all** → Telegram never forwarded the
+   message to the bot. This is a Telegram-side filter (privacy mode, bot
+   not in group, mention not parsed as an entity). See the first
+   accordion below.
+2. **`Inbound message` followed by `Group message did not activate
+   agent`** → Comis received the message but the activation policy
+   suppressed it. The log line includes `isBotMentioned`, `replyToBot`,
+   and `activationMode` so you can see exactly why. See the second
+   accordion.
+3. **`Inbound message` → `autoreply:activated` → `Execution complete`
+   → `Delivery complete`** → Working as designed. If the user still
+   doesn't see a reply, see the delivery accordion.
+
+<AccordionGroup>
+  <Accordion title="No 'Inbound message' log at all (Telegram-side filter)">
+    **What happened:** Telegram never sent the message to the bot.
+    Most common causes:
+
+    - **Privacy mode is on AND the message wasn't a recognized mention,
+      reply, or `/cmd@<botname>`.** With privacy on, Telegram filters
+      every other message before it reaches the bot. Typing
+      `@<your_bot_username>` as plain text is **not** enough — your
+      Telegram client must parse it as a mention entity at send time
+      (look for the in-app suggestion popup when you type the `@`).
+    - **The bot isn't actually in the group.** Check the member list.
+      Re-add it via the group's **Add Members** flow.
+    - **The bot was added to the group while privacy mode was on, then
+      privacy was disabled.** The flag is cached at join time — kick and
+      re-add the bot. See [Disable BotFather privacy mode](#disable-botfather-privacy-mode).
+
+    **Verify privacy state directly:**
+
+    ```bash
+    TOKEN=$(grep '^TELEGRAM_BOT_TOKEN' ~/.comis/.env | cut -d= -f2- | tr -d '"')
+    curl -s "https://api.telegram.org/bot${TOKEN}/getMe" | python3 -m json.tool
+    ```
+
+    `"can_read_all_group_messages": false` means privacy is on (the
+    BotFather default).
+
+    **Quick test that bypasses privacy mode entirely:** send
+    `/start@<your_bot_username>` in the group. `/cmd@<botname>` always
+    reaches the bot regardless of privacy. If that fires the agent, your
+    code path is fine and the issue was Telegram-side filtering on the
+    earlier test.
+  </Accordion>
+
+  <Accordion title="Inbound logged, then 'Group message did not activate agent'">
+    **What happened:** Comis received the message, but the auto-reply
+    gate suppressed it. The diagnostic log spells out why:
+
+    ```
+    {"msg":"Group message did not activate agent",
+     "isBotMentioned": false, "replyToBot": false,
+     "reason":"group-not-mentioned", "activationMode":"mention-gated", ...}
+    ```
+
+    Common causes:
+
+    - `activationMode: "mention-gated"` and the message didn't
+      `@`-mention the bot. Either type `@<your_bot_username>` properly
+      (tap the suggestion) or switch to `groupActivation: "always"`
+      (privacy must be off — see the [Groups](#groups) section).
+    - The message was an edit. Telegram doesn't always re-emit `mention`
+      entities for edits; send a fresh message instead.
+    - Your activation policy expects a `custom` regex that didn't match.
+      Inspect the log's `reason` field.
+
+    To make every group message activate the agent, set:
+
+    ```yaml
+    autoReplyEngine:
+      groupActivation: always
+    ```
+
+    and disable BotFather privacy mode.
+  </Accordion>
+
+  <Accordion title="Inbound logged, but sender is blocked by allowFrom">
+    **What happened:** A user other than yourself tried to talk to the
+    bot, but their Telegram user ID isn't in `channels.telegram.allowFrom`.
+    You'll see this log line:
+
+    ```
+    {"msg":"Sender blocked by allowFrom filter",
+     "senderId":"<their-id>", "errorKind":"auth", ...}
+    ```
+
+    **How to fix it:** add their user ID to `allowFrom`, or remove
+    `allowFrom` (or set it to `[]`) to allow all senders. `allowFrom`
+    only matches sender IDs — putting a group's chat ID there does
+    nothing.
   </Accordion>
 
   <Accordion title="Bot token rejected">
@@ -271,6 +712,17 @@ Here is a top-to-bottom run for a brand-new bot called **MyTeamBot**:
     **How to fix it:** Open Telegram, send `/token` to **@BotFather**, and select
     your bot to regenerate the token. Update the token in your `~/.comis/.env`
     file and restart the daemon.
+  </Accordion>
+
+  <Accordion title="Bot replies in DM but not in groups, even after disabling privacy">
+    **What happened:** The privacy flag is per-bot in BotFather, but
+    Telegram caches it on the bot's group membership at the time of
+    joining. Disabling privacy in BotFather does **not** retroactively
+    apply to groups the bot is already in.
+
+    **How to fix it:** kick the bot from each affected group, then
+    re-add it. See [Disable BotFather privacy mode](#disable-botfather-privacy-mode)
+    for the full procedure plus the API call to verify the flag flipped.
   </Accordion>
 
   <Accordion title="Messages take a long time to arrive">
