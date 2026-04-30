@@ -10,7 +10,7 @@
  *   Level 1: invocationOverride (e.g., CronPayload.model)
  *   Level 2: operationModels[operationType] from agent config
  *   Level 3: parentModel (sub-agent only)
- *   Level 4: OPERATION_MODEL_DEFAULTS[providerFamily] + OPERATION_TIER_MAP
+ *   Level 4: catalog-derived tier (resolveOperationDefaults + OPERATION_TIER_MAP)
  *   Level 5: Agent primary model (ultimate fallback)
  *
  * @module
@@ -19,7 +19,7 @@
 import type { ModelOperationType, OperationModelEntry, OperationModels } from "@comis/core";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import {
-  OPERATION_MODEL_DEFAULTS,
+  resolveOperationDefaults,
   OPERATION_TIER_MAP,
   OPERATION_TIMEOUT_DEFAULTS,
   OPERATION_CACHE_DEFAULTS,
@@ -122,7 +122,7 @@ export function resolveProviderFamily(provider: string): string {
  *   1. invocationOverride -- per-call override (e.g., CronPayload.model)
  *   2. operationModels[op] -- explicit agent config
  *   3. parentModel -- inherited from parent agent (subagent only)
- *   4. OPERATION_MODEL_DEFAULTS -- provider-family smart defaults
+ *   4. resolveOperationDefaults -- pi-ai catalog-derived per-provider tier
  *   5. agent primary -- ultimate fallback
  *
  * @param params - Resolution context (all inputs needed for the decision)
@@ -187,13 +187,17 @@ export function resolveOperationModel(params: {
     return buildResult(parsed.provider, parsed.modelId, "parent_inherited", operationType, timeoutMs, cacheRetention);
   }
 
-  // -- Level 4: family default --
+  // -- Level 4: catalog-derived tier --
+  // Reads pi-ai catalog at call time (no hardcoded family map). Picks the
+  // 10th-percentile cost text-capable model for `fast`, 50th for `mid`.
+  // Returns {} for unknown providers (custom YAML providers like Ollama).
   const tier = OPERATION_TIER_MAP[operationType];
   if (tier !== "primary") {
-    const familyDefaults = OPERATION_MODEL_DEFAULTS[providerFamily];
-    if (familyDefaults) {
-      const modelId = familyDefaults[tier];
-      // Do NOT call normalizeModelId on defaults -- they are already registry-validated
+    const defaults = resolveOperationDefaults(providerFamily);
+    const modelId = defaults[tier];
+    if (modelId) {
+      // Do NOT call normalizeModelId on catalog ids — they are already
+      // canonical pi-ai registry entries.
       return buildResult(agentProvider, modelId, "family_default", operationType, timeoutMs, cacheRetention);
     }
   }
