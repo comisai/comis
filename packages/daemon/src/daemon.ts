@@ -63,6 +63,7 @@ import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { createExecGit } from "./config/exec-git.js";
 import { saveLastKnownGood, buildRollbackSuggestion, handleRestoreFlag } from "./config/last-known-good.js";
 import { createRestartContinuationTracker, loadContinuations, buildMcpStatusLine } from "./wiring/restart-continuation.js";
+import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import os from "node:os";
 import { join as pathJoin, dirname as pathDirname, resolve as pathResolve } from "node:path";
@@ -783,7 +784,14 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   const sessionTrackerRef: { ref?: import("./notification/session-tracker.js").SessionTracker } = {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches assembleToolsForAgent signature from setup-tools.ts
   const toolAssemblerRef: { ref?: (agentId: string, options?: import("./wiring/setup-tools.js").AssembleToolsOptions) => Promise<any[]> } = {};
-  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, commandQueue } = await setupChannels({
+  // Resolver translating daemon UUIDs (NormalizedMessage.id) back to platform-
+  // native message ids (e.g. Telegram integer message_id) for the
+  // message.delete/edit/react RPC handlers. Built post-setupChannels (needs
+  // channelCapabilities from the return), captured by reference inside the
+  // onMessageReceived lambda below — safe because no inbound message can fire
+  // before channelManager.start() runs later.
+  let inboundMessageIdResolver: InboundMessageIdResolver | undefined;
+  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, channelCapabilities, commandQueue } = await setupChannels({
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger,
     linkRunner,
@@ -839,6 +847,10 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
         tenantId: container.config.tenantId,
         timestamp: Date.now(),
       });
+      // Translate daemon UUID -> platform-native message id so message.delete/
+      // edit/react can call channel adapters with what they actually expect.
+      // Resolver is assigned just after setupChannels returns (below).
+      inboundMessageIdResolver?.record(msg, channelType);
     },
     onMessageProcessed: (msg, channelType) => {
       // Record session activity for notification channel resolution fallback.
@@ -860,6 +872,19 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
 
   // Populate channel plugins ref for per-message char limit resolution.
   channelPluginsRef.ref = channelPlugins;
+
+  // Build the inbound message id resolver now that we have channelCapabilities.
+  // Each enabled channel contributes its `replyToMetaKey` (e.g. "telegramMessageId")
+  // so the resolver knows which metadata field to read on inbound to capture
+  // the platform-native id. Safe to assign now: setupChannels has not started
+  // adapters yet, so no inbound message has fired the onMessageReceived lambda.
+  {
+    const metaKeyByChannel = new Map<string, string>();
+    for (const [type, cap] of channelCapabilities) {
+      metaKeyByChannel.set(type, cap.replyToMetaKey);
+    }
+    inboundMessageIdResolver = createInboundMessageIdResolver({ metaKeyByChannel });
+  }
 
   // Populate channelAdapters ref now that setupChannels has returned.
   // The drain cycle needs adapters to re-deliver pending messages.
@@ -1237,7 +1262,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     agentDataDir: pathJoin(container.config.dataDir ?? pathJoin(os.homedir(), ".comis"), "agents"),
     sessionStore: sessionStoreBridge,
     crossSessionSender, subAgentRunner, graphCoordinator, namedGraphStore, nodeTypeRegistry,
-    securityConfig: container.config.security, adaptersByType, visionRegistry,
+    securityConfig: container.config.security, adaptersByType, inboundMessageIdResolver, visionRegistry,
     mediaConfig: container.config.integrations.media, ttsAdapter, linkRunner,
     logger, container, configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS,
     configGitManager,

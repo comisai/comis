@@ -103,6 +103,10 @@ export interface RpcDispatchDeps {
 
   // Message deps
   adaptersByType: Map<string, ChannelPort>;
+  /** Resolves daemon NormalizedMessage.id UUIDs back to platform-native
+   *  message ids for message.delete/edit/react. Optional for backward compat
+   *  with daemon configs that disable channel adapters entirely. */
+  inboundMessageIdResolver?: import("../wiring/inbound-message-id-resolver.js").InboundMessageIdResolver;
 
   // Media deps
   visionRegistry?: Map<string, VisionProvider>;

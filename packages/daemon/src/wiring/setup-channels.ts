@@ -66,6 +66,11 @@ export interface ChannelsResult {
   approvalNotifier?: ApprovalNotifier;
   /** Full plugin objects keyed by channel type for capabilities RPC */
   channelPlugins: Map<string, ChannelPluginPort>;
+  /** Per-channel capability info (notably `replyToMetaKey` — the metadata
+   *  field carrying the platform-native message id). Used by the inbound
+   *  UUID resolver so message.delete/edit/react can translate daemon UUIDs
+   *  back to native ids before calling the channel adapter. */
+  channelCapabilities: Map<string, import("./setup-channels-adapters.js").ChannelCapabilityInfo>;
   /** The command queue instance for parent session TTL extension during graph execution. */
   commandQueue?: CommandQueue;
 }
@@ -1035,5 +1040,5 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     return resolveAttachment({ url, type: "file" } as Attachment);
   };
 
-  return { adaptersByType, channelManager, compositeResolver, resolveAttachment: resolveAttachmentByUrl, lifecycleReactors, approvalNotifier, channelPlugins, commandQueue };
+  return { adaptersByType, channelManager, compositeResolver, resolveAttachment: resolveAttachmentByUrl, lifecycleReactors, approvalNotifier, channelPlugins, channelCapabilities, commandQueue };
 }

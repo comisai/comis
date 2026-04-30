@@ -42,7 +42,38 @@ export interface MessageHandlerDeps {
   onGatewayAttachment?: (channelId: string, marker: string) => void;
   /** Delivery queue for crash-safe persistence */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
+  /** Resolves daemon NormalizedMessage.id UUIDs to platform-native message
+   *  ids for delete/edit/react handlers. Optional — when absent, message_id
+   *  passes through unchanged (which fails on Telegram for inbound UUIDs but
+   *  works for native ids returned by message.send). */
+  inboundMessageIdResolver?: import("../wiring/inbound-message-id-resolver.js").InboundMessageIdResolver;
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Translate the agent's `message_id` argument to the platform-native id when
+ * it matches a recently-received inbound message UUID. Returns the original
+ * value when no match (already-native id from message.send, expired UUID,
+ * cross-channel mismatch). Always returns a string.
+ */
+function resolveMessageId(
+  resolver: InboundMessageIdResolver | undefined,
+  messageId: string,
+  channelType: string,
+  channelId: string,
+): string {
+  if (!resolver) return messageId;
+  const record = resolver.resolve(messageId);
+  if (!record) return messageId;
+  if (record.channelType !== channelType) return messageId;
+  if (record.channelId !== channelId) return messageId;
+  return record.nativeId;
+}
+
+type InboundMessageIdResolver = NonNullable<MessageHandlerDeps["inboundMessageIdResolver"]>;
 
 // ---------------------------------------------------------------------------
 // Capability guard — maps RPC methods to ChannelCapability feature flags.
@@ -115,7 +146,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelType = params.channel_type as string;
       const channelId = params.channel_id as string;
       const text = params.text as string;
-      const messageId = params.message_id as string;
+      const messageId = resolveMessageId(deps.inboundMessageIdResolver, params.message_id as string, channelType, channelId);
       authorizeChannelAccess(params._originChannelId as string | undefined, channelId, params._trustLevel as string | undefined);
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
       const extra: Record<string, unknown> = {
@@ -138,7 +169,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelType = params.channel_type as string;
       assertCapability("message.react", channelType, deps.channelPlugins);
       const channelId = params.channel_id as string;
-      const messageId = params.message_id as string;
+      const messageId = resolveMessageId(deps.inboundMessageIdResolver, params.message_id as string, channelType, channelId);
       const emoji = params.emoji as string;
       authorizeChannelAccess(params._originChannelId as string | undefined, channelId, params._trustLevel as string | undefined);
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
@@ -153,7 +184,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelType = params.channel_type as string;
       assertCapability("message.edit", channelType, deps.channelPlugins);
       const channelId = params.channel_id as string;
-      const messageId = params.message_id as string;
+      const messageId = resolveMessageId(deps.inboundMessageIdResolver, params.message_id as string, channelType, channelId);
       const text = params.text as string;
       authorizeChannelAccess(params._originChannelId as string | undefined, channelId, params._trustLevel as string | undefined);
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
@@ -167,7 +198,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       const channelType = params.channel_type as string;
       assertCapability("message.delete", channelType, deps.channelPlugins);
       const channelId = params.channel_id as string;
-      const messageId = params.message_id as string;
+      const messageId = resolveMessageId(deps.inboundMessageIdResolver, params.message_id as string, channelType, channelId);
       authorizeChannelAccess(params._originChannelId as string | undefined, channelId, params._trustLevel as string | undefined);
       const adapter = resolveAdapter(channelType, deps.adaptersByType);
       const result = await adapter.deleteMessage(channelId, messageId);
