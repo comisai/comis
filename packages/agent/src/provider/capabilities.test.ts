@@ -1,5 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+
+// Hoist-mock @mariozechner/pi-ai so `validateProviderOverrides` reads from
+// the controllable `getProvidersMock` instead of the real catalog.
+// vi.mock is hoisted to the top of the file by Vitest -- the factory closure
+// captures `getProvidersMock` via the function body, not via lexical scope at
+// import time, so we redirect the mock per-test by reassigning its return
+// value with `getProvidersMock.mockReturnValue(...)`.
+const { getProvidersMock } = vi.hoisted(() => ({
+  getProvidersMock: vi.fn<() => string[]>(() => []),
+}));
+vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@mariozechner/pi-ai")>();
+  return { ...actual, getProviders: getProvidersMock };
+});
+
 import {
   DEFAULTS,
   resolveProviderCapabilities,
@@ -10,6 +28,7 @@ import {
   isGoogleAIStudio,
   shouldDropThinkingBlocks,
   resolveToolCallIdMode,
+  validateProviderOverrides,
 } from "./capabilities.js";
 
 // ---------------------------------------------------------------------------
@@ -326,5 +345,136 @@ describe("resolveToolCallIdMode", () => {
 
   it("returns 'default' for ('mistral', 'unknown-model')", () => {
     expect(resolveToolCallIdMode("mistral", "unknown-model")).toBe("default");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. ANTHROPIC_FAMILY de-duplication regression (Layer 3B -- 260501-07g)
+// ---------------------------------------------------------------------------
+//
+// Phase 3B replaced three duplicate `ANTHROPIC_FAMILY` Sets in the executor
+// with calls to `isAnthropicFamily` from this module. These regressions guard
+// against the Sets reappearing as future "quick fix" copies.
+
+describe("Layer 3B: ANTHROPIC_FAMILY de-duplication regression", () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+
+  it.each([
+    "packages/agent/src/executor/ttl-guard.ts",
+    "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
+    "packages/agent/src/executor/stream-wrappers/config-resolver.ts",
+  ])("%s does not declare a local ANTHROPIC_FAMILY Set", (relPath) => {
+    const source = readFileSync(join(repoRoot, relPath), "utf8");
+    // Local-declaration regex (catches `const ANTHROPIC_FAMILY = new Set(...)`)
+    expect(source).not.toMatch(/const\s+ANTHROPIC_FAMILY\s*=/);
+    // Belt-and-braces: bare identifier should also be gone (the executor
+    // call sites used `ANTHROPIC_FAMILY.has(...)`).
+    expect(source).not.toMatch(/\bANTHROPIC_FAMILY\b/);
+  });
+
+  it.each([
+    "packages/agent/src/executor/ttl-guard.ts",
+    "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
+    "packages/agent/src/executor/stream-wrappers/config-resolver.ts",
+  ])("%s imports isAnthropicFamily from provider/capabilities", (relPath) => {
+    const source = readFileSync(join(repoRoot, relPath), "utf8");
+    expect(source).toMatch(/import\s*\{[^}]*\bisAnthropicFamily\b[^}]*\}\s*from\s*["'][^"']*provider\/capabilities/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 11. validateProviderOverrides (Layer 3C -- 260501-07g)
+// ---------------------------------------------------------------------------
+//
+// Boot-time staleness validator. Emits structured WARNs for keys in
+// PROVIDER_OVERRIDES that pi-ai no longer ships. Does NOT throw -- the
+// daemon continues to boot with dead override entries.
+
+describe("validateProviderOverrides", () => {
+  // Currently-known PROVIDER_OVERRIDES keys (from capabilities.ts).
+  // If this list changes, update `OVERRIDE_KEYS_COUNT` to match.
+  const OVERRIDE_KEYS_COUNT = 12;
+
+  beforeEach(() => {
+    getProvidersMock.mockReset();
+  });
+
+  afterEach(() => {
+    getProvidersMock.mockReset();
+  });
+
+  it("emits one WARN per orphan key when getProviders() returns a sparse list", () => {
+    const sparseProviders = ["anthropic", "openai"];
+    getProvidersMock.mockReturnValue(sparseProviders);
+
+    const warn = vi.fn();
+    const result = validateProviderOverrides({ warn });
+
+    // 12 override keys, only 2 present in mocked catalog -> 10 orphans
+    expect(result.checked).toBe(OVERRIDE_KEYS_COUNT);
+    expect(result.orphans).toHaveLength(OVERRIDE_KEYS_COUNT - 2);
+    expect(warn).toHaveBeenCalledTimes(OVERRIDE_KEYS_COUNT - 2);
+
+    // Orphans returned should include the override keys NOT in sparseProviders
+    expect(result.orphans).toEqual(
+      expect.arrayContaining([
+        "anthropic-vertex", "amazon-bedrock", "azure-openai",
+        "azure-openai-responses", "openai-codex", "google",
+        "google-gemini-cli", "google-antigravity", "google-vertex", "mistral",
+      ]),
+    );
+    // anthropic and openai are live, must NOT be in orphans
+    expect(result.orphans).not.toContain("anthropic");
+    expect(result.orphans).not.toContain("openai");
+  });
+
+  it("each WARN call carries provider, hint, errorKind, module fields", () => {
+    getProvidersMock.mockReturnValue([]);
+    const warn = vi.fn();
+    validateProviderOverrides({ warn });
+
+    expect(warn).toHaveBeenCalled();
+    // Inspect the first call shape
+    const [obj, msg] = warn.mock.calls[0]!;
+    expect(obj).toEqual(expect.objectContaining({
+      provider: expect.any(String),
+      hint: expect.stringContaining("PROVIDER_OVERRIDES"),
+      errorKind: "config",
+      module: "agent.capabilities",
+    }));
+    expect(msg).toBe("Capability override has no matching pi-ai provider");
+  });
+
+  it("emits no WARN when all override keys are in the live catalog", () => {
+    // Mock catalog to include every PROVIDER_OVERRIDES key
+    const allOverrideKeys = [
+      "anthropic", "anthropic-vertex", "amazon-bedrock",
+      "openai", "azure-openai", "azure-openai-responses", "openai-codex",
+      "google", "google-gemini-cli", "google-antigravity", "google-vertex",
+      "mistral",
+    ];
+    getProvidersMock.mockReturnValue(allOverrideKeys);
+
+    const warn = vi.fn();
+    const result = validateProviderOverrides({ warn });
+
+    expect(result.checked).toBe(OVERRIDE_KEYS_COUNT);
+    expect(result.orphans).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("returned `checked` matches Object.keys(PROVIDER_OVERRIDES).length", () => {
+    getProvidersMock.mockReturnValue([]);
+    const warn = vi.fn();
+    const result = validateProviderOverrides({ warn });
+    expect(result.checked).toBe(OVERRIDE_KEYS_COUNT);
+    // With empty live catalog, every key is an orphan
+    expect(result.orphans).toHaveLength(OVERRIDE_KEYS_COUNT);
+  });
+
+  it("does not throw when getProviders() returns []", () => {
+    getProvidersMock.mockReturnValue([]);
+    const warn = vi.fn();
+    expect(() => validateProviderOverrides({ warn })).not.toThrow();
   });
 });

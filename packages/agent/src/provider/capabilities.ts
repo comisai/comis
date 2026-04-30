@@ -14,6 +14,7 @@
  * @module
  */
 
+import { getProviders } from "@mariozechner/pi-ai";
 import type { ProviderCapabilities } from "@comis/core";
 
 /**
@@ -186,4 +187,51 @@ export function resolveToolCallIdMode(
     return matches ? "strict9" : "default";
   }
   return caps.transcriptToolCallIdMode;
+}
+
+// ---------------------------------------------------------------------------
+// Boot-time PROVIDER_OVERRIDES staleness validator (Layer 3C -- 260501-07g)
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal Pino-compatible logger surface for `validateProviderOverrides`.
+ * Object-first warn signature matches the project convention (object + msg).
+ */
+export interface ProviderOverridesValidatorLogger {
+  warn(obj: object, msg: string): void;
+}
+
+/**
+ * Validate that every key in `PROVIDER_OVERRIDES` exists in the live pi-ai
+ * catalog. Orphaned keys (override entries for providers pi-ai no longer
+ * ships) are emitted as structured WARNs so operators notice on the next
+ * pi-ai bump. Does NOT throw -- the daemon continues to boot. Orphaned
+ * overrides are dead-code, not active failures.
+ *
+ * @param logger - Pino-compatible logger (object-first warn signature)
+ * @returns Inventory: orphan keys + total count of override keys checked
+ */
+export function validateProviderOverrides(
+  logger: ProviderOverridesValidatorLogger,
+): { orphans: string[]; checked: number } {
+  const liveProviders = new Set<string>(getProviders());
+  const overrideKeys = Object.keys(PROVIDER_OVERRIDES);
+  const orphans: string[] = [];
+
+  for (const key of overrideKeys) {
+    if (!liveProviders.has(key)) {
+      orphans.push(key);
+      logger.warn(
+        {
+          provider: key,
+          hint: "Provider override exists for unknown pi-ai provider; remove from PROVIDER_OVERRIDES on next bump",
+          errorKind: "config",
+          module: "agent.capabilities",
+        },
+        "Capability override has no matching pi-ai provider",
+      );
+    }
+  }
+
+  return { orphans, checked: overrideKeys.length };
 }

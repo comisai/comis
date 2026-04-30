@@ -51,15 +51,20 @@ interface StepDef {
   icon: string;
 }
 
-interface ProviderOption {
-  key: string;
-  type: string;
-  name: string;
+/**
+ * UX-only metadata per provider key. Provider names + model lists come from
+ * the live pi-ai catalog via `models.list_providers` / `models.list` RPC.
+ * Keys present in the catalog but missing from this map render with sensible
+ * defaults (capitalized name, generic description, needsApiKey=true,
+ * needsBaseUrl=false). See PROVIDER_UI_HINTS below.
+ */
+interface ProviderUiHint {
+  displayName: string;
   description: string;
+  signupUrl?: string;
   needsApiKey: boolean;
   needsBaseUrl: boolean;
-  defaultBaseUrl: string;
-  defaultModel: string;
+  defaultBaseUrl?: string;
 }
 
 interface ChannelFieldDef {
@@ -82,132 +87,110 @@ const STEPS: StepDef[] = [
   { label: "Review", icon: "check" },
 ];
 
-const PROVIDERS: ProviderOption[] = [
-  // Recommended
-  {
-    key: "anthropic",
-    type: "anthropic",
-    name: "Anthropic",
+/**
+ * UX-only metadata per provider key. The list of provider keys to render
+ * comes from the LIVE pi-ai catalog at runtime via `models.list_providers`.
+ * Catalog providers without a hint here render with sensible defaults
+ * (capitalized name, generic description, needsApiKey=true, needsBaseUrl=false)
+ * computed by `getProviderHint`. The Custom path is a synthetic key
+ * (`CUSTOM_PROVIDER_KEY`) appended after catalog providers for OpenAI-
+ * compatible custom proxies that aren't in the catalog.
+ *
+ * Phase 3A (260501-07g): replaced the static `PROVIDERS` array (and its
+ * hardcoded `defaultModel` per entry) with this UX-only hints map. Models
+ * are populated dynamically from `models.list provider:<name>`.
+ */
+const PROVIDER_UI_HINTS: Record<string, ProviderUiHint> = {
+  anthropic: {
+    displayName: "Anthropic",
     description: "Claude models, recommended for agents",
+    signupUrl: "https://console.anthropic.com/settings/keys",
     needsApiKey: true,
     needsBaseUrl: false,
-    defaultBaseUrl: "",
-    defaultModel: "claude-sonnet-4-5-20250929",
   },
-  {
-    key: "openai",
-    type: "openai",
-    name: "OpenAI",
+  openai: {
+    displayName: "OpenAI",
     description: "GPT-4o, o1, o3 models",
+    signupUrl: "https://platform.openai.com/api-keys",
     needsApiKey: true,
     needsBaseUrl: false,
-    defaultBaseUrl: "",
-    defaultModel: "gpt-4o",
   },
-  // Other cloud providers
-  {
-    key: "google",
-    type: "google",
-    name: "Google",
+  google: {
+    displayName: "Google",
     description: "Gemini models",
+    signupUrl: "https://aistudio.google.com/app/apikey",
     needsApiKey: true,
     needsBaseUrl: false,
-    defaultBaseUrl: "",
-    defaultModel: "gemini-2.0-flash",
   },
-  {
-    key: "groq",
-    type: "groq",
-    name: "Groq",
-    description: "Fast inference (Llama, Mixtral)",
-    needsApiKey: true,
-    needsBaseUrl: false,
-    defaultBaseUrl: "",
-    defaultModel: "llama-3.3-70b-versatile",
-  },
-  {
-    key: "mistral",
-    type: "mistral",
-    name: "Mistral",
-    description: "Mistral models",
-    needsApiKey: true,
-    needsBaseUrl: false,
-    defaultBaseUrl: "",
-    defaultModel: "mistral-large-latest",
-  },
-  {
-    key: "deepseek",
-    type: "deepseek",
-    name: "DeepSeek",
-    description: "DeepSeek models",
-    needsApiKey: true,
-    needsBaseUrl: false,
-    defaultBaseUrl: "",
-    defaultModel: "deepseek-chat",
-  },
-  {
-    key: "xai",
-    type: "xai",
-    name: "xAI",
-    description: "Grok models",
-    needsApiKey: true,
-    needsBaseUrl: false,
-    defaultBaseUrl: "",
-    defaultModel: "grok-2",
-  },
-  {
-    key: "together",
-    type: "together",
-    name: "Together AI",
-    description: "Open-source model hosting",
-    needsApiKey: true,
-    needsBaseUrl: false,
-    defaultBaseUrl: "",
-    defaultModel: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-  },
-  {
-    key: "cerebras",
-    type: "cerebras",
-    name: "Cerebras",
+  groq: {
+    displayName: "Groq",
     description: "Fast inference",
+    signupUrl: "https://console.groq.com/keys",
     needsApiKey: true,
     needsBaseUrl: false,
-    defaultBaseUrl: "",
-    defaultModel: "llama-3.3-70b",
   },
-  {
-    key: "openrouter",
-    type: "openrouter",
-    name: "OpenRouter",
+  mistral: {
+    displayName: "Mistral",
+    description: "Mistral models",
+    signupUrl: "https://console.mistral.ai/api-keys/",
+    needsApiKey: true,
+    needsBaseUrl: false,
+  },
+  cerebras: {
+    displayName: "Cerebras",
+    description: "Fast inference",
+    signupUrl: "https://cloud.cerebras.ai/",
+    needsApiKey: true,
+    needsBaseUrl: false,
+  },
+  xai: {
+    displayName: "xAI",
+    description: "Grok models",
+    signupUrl: "https://console.x.ai/",
+    needsApiKey: true,
+    needsBaseUrl: false,
+  },
+  openrouter: {
+    displayName: "OpenRouter",
     description: "Multi-provider routing",
+    signupUrl: "https://openrouter.ai/keys",
     needsApiKey: true,
     needsBaseUrl: false,
-    defaultBaseUrl: "",
-    defaultModel: "anthropic/claude-sonnet-4-5-20250929",
   },
-  // Local
-  {
-    key: "ollama",
-    type: "ollama",
-    name: "Ollama",
-    description: "Local open-source models, no API key needed",
-    needsApiKey: false,
-    needsBaseUrl: true,
-    defaultBaseUrl: "http://localhost:11434",
-    defaultModel: "llama3",
-  },
-  // Custom
-  {
-    key: "custom",
-    type: "openai",
-    name: "Custom",
-    description: "Any OpenAI-compatible API endpoint",
-    needsApiKey: false,
-    needsBaseUrl: true,
-    defaultBaseUrl: "",
-    defaultModel: "",
-  },
-];
+};
+
+/** Synthetic key the wizard renders separately for OpenAI-compatible custom proxies. */
+const CUSTOM_PROVIDER_KEY = "__custom__";
+
+/** UX hint for the synthetic Custom path. */
+const CUSTOM_PROVIDER_HINT: ProviderUiHint = {
+  displayName: "Custom",
+  description: "Any OpenAI-compatible API endpoint",
+  needsApiKey: false,
+  needsBaseUrl: true,
+};
+
+/**
+ * Resolve the UX hint for a provider key. Returns the static hint when
+ * present, otherwise computes a reasonable default (capitalized display
+ * name, generic description, expects an API key). Catalog providers added
+ * by future pi-ai upgrades render via this fallback path with no comis
+ * code change.
+ */
+function getProviderHint(key: string): ProviderUiHint {
+  // Object.hasOwn gates the bracket lookup; the only attacker-controllable
+  // surface here is a provider key that originated from `models.list_providers`
+  // RPC (admin-scoped), and the value is a UX-only hint object with no
+  // dangerous fields. Suppressed warning is acceptable.
+  // eslint-disable-next-line security/detect-object-injection -- gated by Object.hasOwn against literal record
+  if (Object.hasOwn(PROVIDER_UI_HINTS, key)) return PROVIDER_UI_HINTS[key]!;
+  return {
+    displayName: key.charAt(0).toUpperCase() + key.slice(1),
+    description: "",
+    needsApiKey: true,
+    needsBaseUrl: false,
+  };
+}
 
 const CHANNEL_PLATFORMS: { key: string; label: string; fields: ChannelFieldDef[] }[] = [
   {
@@ -837,6 +820,86 @@ export class IcSetupWizard extends LitElement {
   @state() private _applyDone = false;
   @state() private _validationErrors: Record<string, string> = {};
 
+  // Layer 3A (260501-07g): live provider catalog state.
+  // _catalogProviders is fetched via `models.list_providers` on first mount.
+  // _modelOptions is fetched per-provider via `models.list provider:<name>`.
+  @state() private _catalogProviders: string[] = [];
+  @state() private _catalogProvidersLoading = false;
+  @state() private _catalogProvidersError: string | undefined;
+  @state() private _modelOptions: Array<{ id: string; cost: number }> = [];
+  @state() private _modelOptionsLoading = false;
+  @state() private _modelOptionsError: string | undefined;
+
+  /* ---------------------------------------------------------------- */
+  /*  Lifecycle                                                        */
+  /* ---------------------------------------------------------------- */
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    // Fire-and-forget; _loadCatalogProviders sets its own loading/error state.
+    void this._loadCatalogProviders();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Catalog fetching                                                 */
+  /* ---------------------------------------------------------------- */
+
+  private async _loadCatalogProviders(): Promise<void> {
+    if (!this.rpcClient) {
+      // No RPC client wired -- treat as a recoverable error so the user
+      // can retry once the client connects.
+      this._catalogProviders = [];
+      this._catalogProvidersError = "RPC client not connected";
+      return;
+    }
+    this._catalogProvidersLoading = true;
+    this._catalogProvidersError = undefined;
+    try {
+      const result = await this.rpcClient.call("models.list_providers", {}) as
+        { providers?: string[]; count?: number };
+      this._catalogProviders = result.providers ?? [];
+    } catch (err) {
+      this._catalogProvidersError = err instanceof Error ? err.message : String(err);
+      this._catalogProviders = [];
+    } finally {
+      this._catalogProvidersLoading = false;
+    }
+  }
+
+  private async _loadModelOptions(provider: string): Promise<void> {
+    if (!this.rpcClient) {
+      this._modelOptions = [];
+      this._modelOptionsError = "RPC client not connected";
+      return;
+    }
+    this._modelOptionsLoading = true;
+    this._modelOptionsError = undefined;
+    this._modelOptions = [];
+    try {
+      const result = await this.rpcClient.call("models.list", { provider }) as {
+        models?: Array<{
+          modelId?: string;
+          id?: string;
+          cost?: { input?: number; output?: number };
+        }>;
+      };
+      const raw = result.models ?? [];
+      // The gateway returns either `id` or `modelId` depending on the path
+      // (catalog vs. registered providers); normalize both shapes.
+      const options = raw.map((m) => ({
+        id: (m.modelId ?? m.id ?? "").trim(),
+        cost: (m.cost?.input ?? 0) + (m.cost?.output ?? 0),
+      })).filter((m) => m.id.length > 0);
+      // Sort by total cost ascending so cheapest options surface first.
+      options.sort((a, b) => a.cost - b.cost);
+      this._modelOptions = options;
+    } catch (err) {
+      this._modelOptionsError = err instanceof Error ? err.message : String(err);
+    } finally {
+      this._modelOptionsLoading = false;
+    }
+  }
+
   /* ---------------------------------------------------------------- */
   /*  Step validation                                                  */
   /* ---------------------------------------------------------------- */
@@ -851,15 +914,21 @@ export class IcSetupWizard extends LitElement {
         }
         break;
       case 1: { // Provider
-        if (!this._wizardData.providerType) {
+        if (!this._wizardData.providerName) {
           errors["providerType"] = "Please select a provider";
         }
-        const provider = PROVIDERS.find((p) => p.key === this._wizardData.providerName);
-        if (provider?.needsApiKey && !this._wizardData.apiKey.trim()) {
+        const isCustom = this._wizardData.providerName === CUSTOM_PROVIDER_KEY;
+        const hint = isCustom ? CUSTOM_PROVIDER_HINT : getProviderHint(this._wizardData.providerName);
+        if (hint.needsApiKey && !this._wizardData.apiKey.trim()) {
           errors["apiKey"] = "API key is required for this provider";
         }
-        if (provider?.needsBaseUrl && !this._wizardData.baseUrl.trim()) {
+        if (hint.needsBaseUrl && !this._wizardData.baseUrl.trim()) {
           errors["baseUrl"] = "Base URL is required for this provider";
+        }
+        // Native providers must pick a model from the live dropdown;
+        // Custom providers fall back to a free-text input.
+        if (!isCustom && this._wizardData.providerName && !this._wizardData.defaultModel.trim()) {
+          errors["defaultModel"] = "Please select a model for this provider";
         }
         break;
       }
@@ -911,16 +980,29 @@ export class IcSetupWizard extends LitElement {
   /*  Provider selection                                                */
   /* ---------------------------------------------------------------- */
 
-  private _selectProvider(provider: ProviderOption): void {
+  private _selectProvider(key: string): void {
+    const isCustom = key === CUSTOM_PROVIDER_KEY;
+    const hint = isCustom ? CUSTOM_PROVIDER_HINT : getProviderHint(key);
     this._wizardData = {
       ...this._wizardData,
-      providerName: provider.key,
-      providerType: provider.type,
-      baseUrl: provider.defaultBaseUrl,
-      defaultModel: provider.defaultModel,
+      providerName: key,
+      // Custom providers stay as `type: "openai"` (passthrough);
+      // native providers send `type: <key>` and Phase 1's auto-promote
+      // handler echoes the native type back -- no special-casing here.
+      providerType: isCustom ? "openai" : key,
+      apiKey: "",
+      baseUrl: hint.defaultBaseUrl ?? "",
+      defaultModel: "", // user picks from the live model dropdown
     };
     this._testResult = { status: "idle" };
     this._validationErrors = {};
+    this._modelOptions = [];
+    this._modelOptionsError = undefined;
+
+    // Native providers fetch their models from the catalog; Custom does not.
+    if (!isCustom) {
+      void this._loadModelOptions(key);
+    }
   }
 
   /* ---------------------------------------------------------------- */
@@ -1228,44 +1310,67 @@ export class IcSetupWizard extends LitElement {
   private _renderStep2() {
     const d = this._wizardData;
     const errors = this._validationErrors;
-    const selectedProvider = PROVIDERS.find((p) => p.key === d.providerName);
+
+    // Render the catalog grid based on _catalogProviders state.
+    // Loading + error states surface inside the .provider-grid slot so the
+    // step layout stays stable regardless of fetch outcome.
+    let grid;
+    if (this._catalogProvidersLoading) {
+      grid = html`<div class="provider-grid-loading">Loading providers from catalog...</div>`;
+    } else if (this._catalogProvidersError) {
+      grid = html`
+        <div class="provider-grid-error">
+          <span class="form-error">Failed to load provider catalog: ${this._catalogProvidersError}</span>
+          <button class="test-btn" @click=${() => { void this._loadCatalogProviders(); }}>Retry</button>
+        </div>
+      `;
+    } else {
+      // Live catalog providers + synthetic Custom path appended at the end.
+      const providerKeys = [...this._catalogProviders, CUSTOM_PROVIDER_KEY];
+      grid = html`
+        <div class="provider-grid">
+          ${providerKeys.map((key) => {
+            const hint = key === CUSTOM_PROVIDER_KEY ? CUSTOM_PROVIDER_HINT : getProviderHint(key);
+            return html`
+              <div
+                class="provider-card ${d.providerName === key ? "active" : ""}"
+                role="button"
+                tabindex="0"
+                aria-pressed=${d.providerName === key ? "true" : "false"}
+                @click=${() => this._selectProvider(key)}
+                @keydown=${(e: KeyboardEvent) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    this._selectProvider(key);
+                  }
+                }}
+              >
+                <div class="provider-card-name">${hint.displayName}</div>
+                <div class="provider-card-desc">${hint.description}</div>
+              </div>
+            `;
+          })}
+        </div>
+      `;
+    }
 
     return html`
-      <div class="provider-grid">
-        ${PROVIDERS.map(
-          (p) => html`
-            <div
-              class="provider-card ${d.providerName === p.key ? "active" : ""}"
-              role="button"
-              tabindex="0"
-              aria-pressed=${d.providerName === p.key ? "true" : "false"}
-              @click=${() => this._selectProvider(p)}
-              @keydown=${(e: KeyboardEvent) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  this._selectProvider(p);
-                }
-              }}
-            >
-              <div class="provider-card-name">${p.name}</div>
-              <div class="provider-card-desc">${p.description}</div>
-            </div>
-          `,
-        )}
-      </div>
+      ${grid}
       ${errors["providerType"] ? html`<span class="form-error">${errors["providerType"]}</span>` : nothing}
 
-      ${selectedProvider ? this._renderProviderConfig(selectedProvider) : nothing}
+      ${d.providerName ? this._renderProviderConfig(d.providerName) : nothing}
     `;
   }
 
-  private _renderProviderConfig(provider: ProviderOption) {
+  private _renderProviderConfig(providerKey: string) {
     const d = this._wizardData;
     const errors = this._validationErrors;
+    const isCustom = providerKey === CUSTOM_PROVIDER_KEY;
+    const hint = isCustom ? CUSTOM_PROVIDER_HINT : getProviderHint(providerKey);
 
     return html`
       <div class="provider-config">
-        ${provider.needsApiKey ? html`
+        ${hint.needsApiKey ? html`
           <div class="form-field">
             <label class="form-label">API Key</label>
             <input
@@ -1281,14 +1386,14 @@ export class IcSetupWizard extends LitElement {
           </div>
         ` : nothing}
 
-        ${provider.needsBaseUrl ? html`
+        ${hint.needsBaseUrl ? html`
           <div class="form-field">
             <label class="form-label">Base URL</label>
             <input
               class="form-input"
               type="text"
               .value=${d.baseUrl}
-              placeholder=${provider.defaultBaseUrl || "https://api.example.com"}
+              placeholder=${hint.defaultBaseUrl || "https://api.example.com"}
               @input=${(e: Event) => {
                 this._wizardData = { ...this._wizardData, baseUrl: (e.target as HTMLInputElement).value };
               }}
@@ -1297,18 +1402,7 @@ export class IcSetupWizard extends LitElement {
           </div>
         ` : nothing}
 
-        <div class="form-field">
-          <label class="form-label">Default Model</label>
-          <input
-            class="form-input"
-            type="text"
-            .value=${d.defaultModel}
-            placeholder=${provider.defaultModel || "Model ID"}
-            @input=${(e: Event) => {
-              this._wizardData = { ...this._wizardData, defaultModel: (e.target as HTMLInputElement).value };
-            }}
-          />
-        </div>
+        ${this._renderModelField(isCustom)}
 
         <div class="test-row">
           <button
@@ -1328,6 +1422,73 @@ export class IcSetupWizard extends LitElement {
             ? html`<span class="test-spinner">Connecting...</span>`
             : nothing}
         </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Render the model selector. Custom providers fall back to a free-text
+   * input (their model IDs aren't in pi-ai's catalog). Native providers
+   * render a dropdown populated from `_modelOptions` (already sorted by
+   * total cost ascending). Loading + error states render their own slots.
+   */
+  private _renderModelField(isCustom: boolean) {
+    const d = this._wizardData;
+    const errors = this._validationErrors;
+
+    if (isCustom) {
+      return html`
+        <div class="form-field">
+          <label class="form-label">Model ID</label>
+          <input
+            class="form-input"
+            type="text"
+            .value=${d.defaultModel}
+            placeholder="e.g., qwen/qwen3-coder"
+            @input=${(e: Event) => {
+              this._wizardData = { ...this._wizardData, defaultModel: (e.target as HTMLInputElement).value };
+            }}
+          />
+        </div>
+      `;
+    }
+
+    if (this._modelOptionsLoading) {
+      return html`
+        <div class="form-field">
+          <label class="form-label">Model</label>
+          <span class="test-spinner">Loading models from ${d.providerName}...</span>
+        </div>
+      `;
+    }
+
+    if (this._modelOptionsError) {
+      return html`
+        <div class="form-field">
+          <label class="form-label">Model</label>
+          <span class="form-error">Failed to load models: ${this._modelOptionsError}</span>
+          <button class="test-btn" @click=${() => { void this._loadModelOptions(d.providerName); }}>Retry</button>
+        </div>
+      `;
+    }
+
+    return html`
+      <div class="form-field">
+        <label class="form-label">Model</label>
+        <select
+          class="form-select"
+          @change=${(e: Event) => {
+            this._wizardData = { ...this._wizardData, defaultModel: (e.target as HTMLSelectElement).value };
+          }}
+        >
+          <option value="" ?selected=${!d.defaultModel}>— select a model —</option>
+          ${this._modelOptions.map((m) => html`
+            <option value=${m.id} ?selected=${m.id === d.defaultModel}>
+              ${m.id}${m.cost > 0 ? ` ($${m.cost.toFixed(2)}/1M)` : " (free)"}
+            </option>
+          `)}
+        </select>
+        ${errors["defaultModel"] ? html`<span class="form-error">${errors["defaultModel"]}</span>` : nothing}
       </div>
     `;
   }

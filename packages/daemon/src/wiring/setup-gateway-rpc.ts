@@ -213,7 +213,7 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
   // Model management admin methods
   // -------------------------------------------------------------------------
 
-  registerRpcPassthrough(dynamicRouter, rpcCall, ["models.list", "models.test"], "admin");
+  registerRpcPassthrough(dynamicRouter, rpcCall, ["models.list", "models.list_providers", "models.test"], "admin");
 
   // -------------------------------------------------------------------------
   // Token management admin methods

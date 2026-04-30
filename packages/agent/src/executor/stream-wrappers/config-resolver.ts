@@ -12,6 +12,7 @@ import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { CacheRetention } from "@mariozechner/pi-ai";
 import type { ComisLogger } from "@comis/infra";
 
+import { isAnthropicFamily } from "../../provider/capabilities.js";
 import type { StreamFnWrapper } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -35,9 +36,6 @@ export interface ConfigResolverConfig {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/** Anthropic-family providers that support cache_control breakpoints. */
-const ANTHROPIC_FAMILY = new Set(["anthropic", "anthropic-vertex", "amazon-bedrock"]);
 
 /** SYS-BOUNDARY: Deterministic marker between static and dynamic system prompt blocks.
  *  Enables cache break diagnostics to identify whether changes are in the
@@ -101,7 +99,7 @@ export function createConfigResolver(
 
       // Inject cacheRetention for Anthropic-family providers when truthy
       // Resolve dynamic getter for per-execution cache retention override
-      if (ANTHROPIC_FAMILY.has(model.provider)) {
+      if (isAnthropicFamily(model.provider)) {
         const retention = typeof config.cacheRetention === "function"
           ? config.cacheRetention()
           : config.cacheRetention;
