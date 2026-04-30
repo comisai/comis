@@ -56,6 +56,41 @@ function appendToolResult(sm: SessionManager, toolCallId: string, text: string):
   } as any);
 }
 
+/**
+ * Append a tool result whose text content is a JSON-stringified body.
+ * Mirrors how structured tool responses (e.g., gateway.patch) appear on the wire.
+ */
+function appendToolResultJson(
+  sm: SessionManager,
+  toolCallId: string,
+  body: Record<string, unknown>,
+): void {
+  sm.appendMessage({
+    role: "tool" as any,
+    content: [{ type: "text", text: JSON.stringify(body) }],
+    toolCallId,
+    timestamp: Date.now(),
+  } as any);
+}
+
+/**
+ * Append an errored tool result. Marks the message envelope with `isError: true`,
+ * matching one of the two SDK shapes produced by tool adapters on failure.
+ */
+function appendErroredToolResult(
+  sm: SessionManager,
+  toolCallId: string,
+  errorText: string,
+): void {
+  sm.appendMessage({
+    role: "tool" as any,
+    content: [{ type: "text", text: errorText }],
+    toolCallId,
+    isError: true,
+    timestamp: Date.now(),
+  } as any);
+}
+
 /** Append an assistant message with toolUse stopReason. */
 function appendAssistantToolUse(sm: SessionManager, toolCallId: string): void {
   sm.appendMessage({
@@ -255,6 +290,74 @@ describe("repairOrphanedMessages", () => {
     const result = repairOrphanedMessages(sm);
     expect(result.repaired).toBe(false);
     expect(result.reason).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // Content-aware tool-result tail tests (CONTEXT.md §Change 1A)
+  // -------------------------------------------------------------------------
+
+  it("repairs session ending with successful toolResult marked restarting:true", () => {
+    const sm = createTestSession();
+    appendUser(sm, "patch the gateway");
+    appendAssistantToolUse(sm, "call_010");
+    appendToolResultJson(sm, "call_010", {
+      patched: true,
+      section: "gateway",
+      key: "host",
+      value: "0.0.0.0",
+      restarting: true,
+    });
+
+    const result = repairOrphanedMessages(sm);
+    expect(result.repaired).toBe(true);
+    expect(result.reason).toContain("tool result");
+
+    const context = sm.buildSessionContext();
+    const lastMsg = context.messages[context.messages.length - 1]!;
+    const content = (lastMsg as any).content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content[0].type).toBe("text");
+    expect(content[0].text).toBe(
+      "(daemon restarted to apply the change — continuing)",
+    );
+  });
+
+  it("repairs session ending with errored toolResult", () => {
+    const sm = createTestSession();
+    appendUser(sm, "do thing");
+    appendAssistantToolUse(sm, "call_011");
+    appendErroredToolResult(sm, "call_011", "some error message");
+
+    const result = repairOrphanedMessages(sm);
+    expect(result.repaired).toBe(true);
+    expect(result.reason).toContain("tool result");
+
+    const context = sm.buildSessionContext();
+    const lastMsg = context.messages[context.messages.length - 1]!;
+    const content = (lastMsg as any).content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content[0].type).toBe("text");
+    expect(content[0].text).toBe(
+      "(previous tool errored before I could react)",
+    );
+  });
+
+  it("repairs session ending with successful toolResult that has no restart marker", () => {
+    const sm = createTestSession();
+    appendUser(sm, "query something");
+    appendAssistantToolUse(sm, "call_012");
+    appendToolResult(sm, "call_012", JSON.stringify({ ok: true, items: [] }));
+
+    const result = repairOrphanedMessages(sm);
+    expect(result.repaired).toBe(true);
+    expect(result.reason).toContain("tool result");
+
+    const context = sm.buildSessionContext();
+    const lastMsg = context.messages[context.messages.length - 1]!;
+    const content = (lastMsg as any).content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content[0].type).toBe("text");
+    expect(content[0].text).toBe("(continuing after daemon restart)");
   });
 
   // -------------------------------------------------------------------------
