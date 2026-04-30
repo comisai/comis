@@ -22,6 +22,7 @@ import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, resolveBreakpointStrategy } from "./con
 import type { SessionLatch, AccumulativeLatch } from "../session-latch.js";
 import { createAccumulativeLatch } from "../session-latch.js";
 import { MIN_CACHEABLE_TOKENS, DEFAULT_MIN_CACHEABLE_TOKENS, CHARS_PER_TOKEN_RATIO, CHARS_PER_TOKEN_RATIO_STRUCTURED, CACHE_LOOKBACK_WINDOW } from "../../context-engine/index.js";
+import { isAnthropicFamily } from "../../provider/capabilities.js";
 import { estimateContextChars } from "../../safety/token-estimator.js";
 import { computeHash, djb2 } from "../cache-break-detection.js";
 import type { BlockStabilityTracker } from "../block-stability-tracker.js";
@@ -243,9 +244,6 @@ export function resolveCacheRetention(
 
 /** Anthropic beta header for 1M context window. */
 const CONTEXT_1M_BETA = "context-1m-2025-08-07";
-
-/** Anthropic-family providers that support cache_control breakpoints. */
-const ANTHROPIC_FAMILY = new Set(["anthropic", "anthropic-vertex", "amazon-bedrock"]);
 
 /** Check if a model uses the OpenAI Responses API. */
 function isResponsesApiProvider(model: { api?: string }): boolean {
@@ -1122,7 +1120,7 @@ export function createRequestBodyInjector(
 ): StreamFnWrapper {
   return function requestBodyInjector(next: StreamFn): StreamFn {
     return (model, context, options) => {
-      const needsCacheBreakpoints = ANTHROPIC_FAMILY.has(model.provider);
+      const needsCacheBreakpoints = isAnthropicFamily(model.provider);
       const needsResponsesApiInjection = isResponsesApiProvider(model as { api?: string });
 
       if (!needsCacheBreakpoints && !needsResponsesApiInjection) {

@@ -16,14 +16,12 @@ import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { CacheRetention } from "@mariozechner/pi-ai";
 import type { ComisLogger } from "@comis/infra";
 
+import { isAnthropicFamily } from "../provider/capabilities.js";
 import type { StreamFnWrapper } from "./stream-wrappers/types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/** Anthropic-family providers that support cache_control breakpoints. */
-const ANTHROPIC_FAMILY = new Set(["anthropic", "anthropic-vertex", "amazon-bedrock"]);
 
 /** TTL boundaries in milliseconds, keyed by CacheRetention value.
  *  "short" = 5 minutes, "long" = 60 minutes. */
@@ -70,7 +68,7 @@ export function createTtlGuard(config: TtlGuardConfig): StreamFnWrapper {
   return function ttlGuard(next: StreamFn): StreamFn {
     return (model, context, options) => {
       // Non-Anthropic providers skip TTL check entirely
-      if (!ANTHROPIC_FAMILY.has(model.provider)) {
+      if (!isAnthropicFamily(model.provider)) {
         return next(model, context, options);
       }
 

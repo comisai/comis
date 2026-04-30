@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULTS,
@@ -326,5 +329,39 @@ describe("resolveToolCallIdMode", () => {
 
   it("returns 'default' for ('mistral', 'unknown-model')", () => {
     expect(resolveToolCallIdMode("mistral", "unknown-model")).toBe("default");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. ANTHROPIC_FAMILY de-duplication regression (Layer 3B -- 260501-07g)
+// ---------------------------------------------------------------------------
+//
+// Phase 3B replaced three duplicate `ANTHROPIC_FAMILY` Sets in the executor
+// with calls to `isAnthropicFamily` from this module. These regressions guard
+// against the Sets reappearing as future "quick fix" copies.
+
+describe("Layer 3B: ANTHROPIC_FAMILY de-duplication regression", () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+
+  it.each([
+    "packages/agent/src/executor/ttl-guard.ts",
+    "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
+    "packages/agent/src/executor/stream-wrappers/config-resolver.ts",
+  ])("%s does not declare a local ANTHROPIC_FAMILY Set", (relPath) => {
+    const source = readFileSync(join(repoRoot, relPath), "utf8");
+    // Local-declaration regex (catches `const ANTHROPIC_FAMILY = new Set(...)`)
+    expect(source).not.toMatch(/const\s+ANTHROPIC_FAMILY\s*=/);
+    // Belt-and-braces: bare identifier should also be gone (the executor
+    // call sites used `ANTHROPIC_FAMILY.has(...)`).
+    expect(source).not.toMatch(/\bANTHROPIC_FAMILY\b/);
+  });
+
+  it.each([
+    "packages/agent/src/executor/ttl-guard.ts",
+    "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
+    "packages/agent/src/executor/stream-wrappers/config-resolver.ts",
+  ])("%s imports isAnthropicFamily from provider/capabilities", (relPath) => {
+    const source = readFileSync(join(repoRoot, relPath), "utf8");
+    expect(source).toMatch(/import\s*\{[^}]*\bisAnthropicFamily\b[^}]*\}\s*from\s*["'][^"']*provider\/capabilities/);
   });
 });
