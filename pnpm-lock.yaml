@@ -6,7 +6,7 @@ settings:
 
 overrides:
   tar: '>=7.5.7'
-  '@sinclair/typebox': 0.34.49
+  typebox: 1.1.24
   protobufjs: '>=7.5.5'
   undici: '>=7.24.0'
   flatted: '>=3.4.2'
@@ -88,14 +88,14 @@ importers:
         specifier: 1.50.1
         version: 1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))
       '@mariozechner/pi-agent-core':
-        specifier: 0.68.0
-        version: 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.70.6
+        version: 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@mariozechner/pi-ai':
-        specifier: 0.68.0
-        version: 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.70.6
+        version: 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@mariozechner/pi-coding-agent':
-        specifier: 0.68.0
-        version: 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.70.6
+        version: 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       diff:
         specifier: 8.0.4
         version: 8.0.4
@@ -334,14 +334,14 @@ importers:
         specifier: 10.8.0
         version: 10.8.0
       '@mariozechner/pi-agent-core':
-        specifier: 0.68.0
-        version: 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.70.6
+        version: 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@mariozechner/pi-ai':
-        specifier: 0.68.0
-        version: 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.70.6
+        version: 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@mariozechner/pi-coding-agent':
-        specifier: 0.68.0
-        version: 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.70.6
+        version: 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.3.6)
@@ -351,9 +351,6 @@ importers:
       '@napi-rs/canvas':
         specifier: 0.1.100
         version: 0.1.100
-      '@sinclair/typebox':
-        specifier: 0.34.49
-        version: 0.34.49
       '@slack/bolt':
         specifier: 4.7.1
         version: 4.7.1(@types/express@5.0.6)
@@ -474,6 +471,9 @@ importers:
       sqlite-vec:
         specifier: 0.1.9
         version: 0.1.9
+      typebox:
+        specifier: 1.1.24
+        version: 1.1.24
       undici:
         specifier: '>=7.24.0'
         version: 8.1.0
@@ -550,8 +550,8 @@ importers:
         specifier: workspace:*
         version: link:../skills
       '@mariozechner/pi-ai':
-        specifier: 0.68.0
-        version: 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.70.6
+        version: 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       better-sqlite3:
         specifier: 12.9.0
         version: 12.9.0
@@ -745,11 +745,11 @@ importers:
         specifier: 1.9.6
         version: 1.9.6
       '@mariozechner/pi-agent-core':
-        specifier: 0.68.0
-        version: 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.70.6
+        version: 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@mariozechner/pi-coding-agent':
-        specifier: 0.68.0
-        version: 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.70.6
+        version: 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.3.6)
@@ -759,9 +759,6 @@ importers:
       '@napi-rs/canvas':
         specifier: 0.1.100
         version: 0.1.100
-      '@sinclair/typebox':
-        specifier: 0.34.49
-        version: 0.34.49
       chardet:
         specifier: 2.1.1
         version: 2.1.1
@@ -804,6 +801,9 @@ importers:
       sharp:
         specifier: 0.34.5
         version: 0.34.5
+      typebox:
+        specifier: 1.1.24
+        version: 1.1.24
       undici:
         specifier: '>=7.24.0'
         version: 8.1.0
@@ -1474,22 +1474,22 @@ packages:
     resolution: {integrity: sha512-faGUlTcXka5l7rv0lP3K3vGW/ejRuOS24RR2aSFWREUQqzjgdsuWNo/IiPqL3kWRGt6Ahl2+qcDAwtdeWeuGUw==}
     hasBin: true
 
-  '@mariozechner/pi-agent-core@0.68.0':
-    resolution: {integrity: sha512-y9PAWvN1dxkByHc2lthHFe0MGV6H+FiR5IzFHFrEUZC9mA2J73JEPDFOdcNVCkadmRRipI3b3qiAzwlIQ1gioA==}
+  '@mariozechner/pi-agent-core@0.70.6':
+    resolution: {integrity: sha512-PovJZJqhY4ajgTJRUcLzfWKnlQuJHxHW3T030CafR9LYeLmOHi/HGS8DbCdRgSJNbnoIG+kl67/7++9DKZ2+sg==}
     engines: {node: '>=20.0.0'}
 
-  '@mariozechner/pi-ai@0.68.0':
-    resolution: {integrity: sha512-/Th1hzj33FVTStpd0Cw8TWNXe5jcLvnzD/PzReBA6h+FsfvMSropxYovHvN9B3JH+EMKLaf3wf5IePnhMjN6vg==}
+  '@mariozechner/pi-ai@0.70.6':
+    resolution: {integrity: sha512-LVAadu0Y+hb7Bj7EDiLsx6AuGxHlxDq0euLzyqX698i9qt0BW6a+oQSUIZQz4rJwExF18OvyL7ygJ5781ojrIQ==}
     engines: {node: '>=20.0.0'}
     hasBin: true
 
-  '@mariozechner/pi-coding-agent@0.68.0':
-    resolution: {integrity: sha512-dUau+5wJB7b8lTdH5yGnjb02JS+lkTGN2t6TcOtfoZYLLdwGKtkL2DuJx1vpIhIfJX+7ZBB8OfEBkFiXx+Zduw==}
+  '@mariozechner/pi-coding-agent@0.70.6':
+    resolution: {integrity: sha512-S4hUZghBeHPqsL6+DNg/TbGLziSh5+/mEHPVlYq5y6ImirWXhISLdLCnyZUW83OblKWihmG7unhJXiHQTH82mQ==}
     engines: {node: '>=20.6.0'}
     hasBin: true
 
-  '@mariozechner/pi-tui@0.68.1':
-    resolution: {integrity: sha512-j+XI22ehKo4c1gEAzohoSBcgA4X5+vVinTn8a9Osb7h9N8B/rvF23GArJpiMsmE001U47rsLw0mrPop5Kmta+w==}
+  '@mariozechner/pi-tui@0.70.6':
+    resolution: {integrity: sha512-orBJEwMdpBC38AXfdVBKT5ZvqNTcKg6g3NdoF5a9aNQzDI/dOTu1UNYFYyEOTFRiTxSR1nw8eovbCcaSyekWfw==}
     engines: {node: '>=20.0.0'}
 
   '@mistralai/mistralai@2.2.1':
@@ -1882,9 +1882,6 @@ packages:
 
   '@simple-git/argv-parser@1.1.1':
     resolution: {integrity: sha512-Q9lBcfQ+VQCpQqGJFHe5yooOS5hGdLFFbJ5R+R5aDsnkPCahtn1hSkMcORX65J2Z5lxSkD0lQorMsncuBQxYUw==}
-
-  '@sinclair/typebox@0.34.49':
-    resolution: {integrity: sha512-brySQQs7Jtn0joV8Xh9ZV/hZb9Ozb0pmazDIASBkYKCjXrXU3mpcFahmK/z4YDhGkQvP9mWJbVyahdtU5wQA+A==}
 
   '@slack/bolt@4.7.1':
     resolution: {integrity: sha512-CIyVjvHm/gY/e6n/xsJibcQFh2+S0WrlaV4LzpwXDlsmWuDrhLzAqBcOP/i9vgyFklO+DXD9Pzbz2uSPCctnZQ==}
@@ -4518,6 +4515,9 @@ packages:
     resolution: {integrity: sha512-OZs6gsjF4vMp32qrCbiVSkrFmXtG/AZhY3t0iAMrMBiAZyV9oALtXO8hsrHbMXF9x6L3grlFuwW2oAz7cav+Gw==}
     engines: {node: '>= 0.6'}
 
+  typebox@1.1.24:
+    resolution: {integrity: sha512-IGWOHx9UfqkEl7lNmA5417b80VY1NHNGdD5OgwEojHCKdsX1oj0lmgc6N6qEb0tUYzQBveIoccNwBen3IDIHwg==}
+
   typescript-eslint@8.59.0:
     resolution: {integrity: sha512-BU3ONW9X+v90EcCH9ZS6LMackcVtxRLlI3XrYyqZIwVSHIk7Qf7bFw1z0M9Q0IUxhTMZCf8piY9hTYaNEIASrw==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
@@ -5654,9 +5654,10 @@ snapshots:
       std-env: 3.10.0
       yoctocolors: 2.1.2
 
-  '@mariozechner/pi-agent-core@0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)':
+  '@mariozechner/pi-agent-core@0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)':
     dependencies:
-      '@mariozechner/pi-ai': 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-ai': 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      typebox: 1.1.24
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - aws-crt
@@ -5666,19 +5667,17 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-ai@0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)':
+  '@mariozechner/pi-ai@0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)':
     dependencies:
       '@anthropic-ai/sdk': 0.90.0(zod@4.3.6)
       '@aws-sdk/client-bedrock-runtime': 3.1037.0
       '@google/genai': 1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))
       '@mistralai/mistralai': 2.2.1
-      '@sinclair/typebox': 0.34.49
-      ajv: 8.20.0
-      ajv-formats: 3.0.1(ajv@8.20.0)
       chalk: 5.6.2
       openai: 6.26.0(ws@8.20.0)(zod@4.3.6)
       partial-json: 0.1.7
       proxy-agent: 6.5.0
+      typebox: 1.1.24
       undici: 8.1.0
       zod-to-json-schema: 3.25.2(zod@4.3.6)
     transitivePeerDependencies:
@@ -5690,15 +5689,13 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-coding-agent@0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)':
+  '@mariozechner/pi-coding-agent@0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)':
     dependencies:
       '@mariozechner/jiti': 2.6.5
-      '@mariozechner/pi-agent-core': 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
-      '@mariozechner/pi-ai': 0.68.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
-      '@mariozechner/pi-tui': 0.68.1
+      '@mariozechner/pi-agent-core': 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-ai': 0.70.6(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-tui': 0.70.6
       '@silvia-odwyer/photon-node': 0.3.4
-      '@sinclair/typebox': 0.34.49
-      ajv: 8.20.0
       chalk: 5.6.2
       cli-highlight: 2.1.11
       diff: 8.0.4
@@ -5711,6 +5708,7 @@ snapshots:
       minimatch: 10.2.5
       proper-lockfile: 4.1.2
       strip-ansi: 7.2.0
+      typebox: 1.1.24
       undici: 8.1.0
       uuid: 14.0.0
       yaml: 2.8.3
@@ -5725,7 +5723,7 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-tui@0.68.1':
+  '@mariozechner/pi-tui@0.70.6':
     dependencies:
       '@types/mime-types': 2.1.4
       chalk: 5.6.2
@@ -6006,8 +6004,6 @@ snapshots:
   '@simple-git/argv-parser@1.1.1':
     dependencies:
       '@simple-git/args-pathspec': 1.0.3
-
-  '@sinclair/typebox@0.34.49': {}
 
   '@slack/bolt@4.7.1(@types/express@5.0.6)':
     dependencies:
@@ -9014,6 +9010,8 @@ snapshots:
       content-type: 1.0.5
       media-typer: 1.1.0
       mime-types: 3.0.2
+
+  typebox@1.1.24: {}
 
   typescript-eslint@8.59.0(eslint@10.2.1(jiti@2.6.1))(typescript@5.9.3):
     dependencies:
