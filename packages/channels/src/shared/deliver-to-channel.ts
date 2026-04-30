@@ -475,8 +475,7 @@ export async function deliverToChannel(
       }
 
       // Send with or without retry
-      let result: Result<string, Error>;
-      let retried = false;
+      const retried = Boolean(deps?.retryEngine);
       const chunkSendStart = Date.now();
 
       // Build the send promise WITHOUT awaiting yet, so we can register it
@@ -497,10 +496,6 @@ export async function deliverToChannel(
           )
         : adapter.sendMessage(channelId, chunk, sendOpts);
 
-      if (deps?.retryEngine) {
-        retried = true;
-      }
-
       if (deps?.inFlightSends) {
         const tracked: Promise<unknown> = sendPromise;
         deps.inFlightSends.add(tracked);
@@ -513,7 +508,7 @@ export async function deliverToChannel(
         });
       }
 
-      result = await sendPromise;
+      const result: Result<string, Error> = await sendPromise;
 
       const chunkResult: ChunkDeliveryResult = {
         ok: result.ok,
