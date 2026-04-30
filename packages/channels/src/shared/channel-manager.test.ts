@@ -742,6 +742,61 @@ describe("createChannelManager", () => {
     });
   });
 
+  describe("injectMessage()", () => {
+    it("invokes onMessageProcessed after successful injection", async () => {
+      const onMessageProcessed = vi.fn();
+      const adapter = makeAdapter();
+      const deps = makeDeps({ adapters: [adapter], onMessageProcessed });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      const msg = makeMessage();
+      await manager.injectMessage("telegram", msg);
+
+      expect(onMessageProcessed).toHaveBeenCalledTimes(1);
+      expect(onMessageProcessed).toHaveBeenCalledWith(msg, "telegram");
+    });
+
+    it("does not invoke onMessageProcessed for graph-report intercept", async () => {
+      const onMessageProcessed = vi.fn();
+      const onGraphReportRequest = vi.fn(async () => {});
+      const adapter = makeAdapter();
+      const deps = makeDeps({ adapters: [adapter], onMessageProcessed, onGraphReportRequest });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      const msg = makeMessage({
+        text: "graph:report:abc123",
+        metadata: { telegramMessageId: 42, isButtonCallback: true },
+      });
+      await manager.injectMessage("telegram", msg);
+
+      expect(onGraphReportRequest).toHaveBeenCalledTimes(1);
+      expect(onMessageProcessed).not.toHaveBeenCalled();
+    });
+
+    it("does not invoke onMessageProcessed when adapter is missing", async () => {
+      const onMessageProcessed = vi.fn();
+      const deps = makeDeps({ adapters: [], onMessageProcessed });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      await manager.injectMessage("nonexistent", makeMessage());
+
+      expect(onMessageProcessed).not.toHaveBeenCalled();
+      expect(deps.logger.warn).toHaveBeenCalled();
+    });
+
+    it("does not throw when onMessageProcessed is undefined", async () => {
+      const adapter = makeAdapter();
+      const deps = makeDeps({ adapters: [adapter] }); // no onMessageProcessed
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      await expect(manager.injectMessage("telegram", makeMessage())).resolves.not.toThrow();
+    });
+  });
+
   describe("activeCount", () => {
     it("reflects started adapters", async () => {
       const adapter1 = makeAdapter();

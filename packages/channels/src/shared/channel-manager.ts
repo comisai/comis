@@ -348,6 +348,12 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
         }
       }
       await processInboundMessage(deps, adapter, msg, activePacers, sendOverrides);
+      // Symmetric with the normal inbound path (line 248): the synthetic
+      // recovery user-message represents real session activity, so notify
+      // the continuation tracker. Without this call, multi-restart chains
+      // see an empty tracker on the second SIGUSR2 -> 0 captured -> the
+      // next instance has nothing to replay (silent bot).
+      deps.onMessageProcessed?.(msg, channelType);
     },
   };
 }
