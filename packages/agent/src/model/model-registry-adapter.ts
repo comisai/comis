@@ -40,13 +40,6 @@ export function createModelRegistryAdapter(authStorage: AuthStorage): ModelRegis
 }
 
 /**
- * YAML provider type → pi-ai API identifier. Mirrors the
- * `OPENAI_COMPATIBLE_TYPES` set in `model-scanner.ts`. Unknown types
- * default to `openai-completions` so arbitrary OpenAI-compatible
- * proxies (NVIDIA NIM, Together, ollama, lm-studio, etc.) work without
- * code changes.
- */
-/**
  * Provider types that can register without an API key.
  *
  * Ollama (and similar local inference servers) do not require authentication
@@ -59,20 +52,47 @@ export function createModelRegistryAdapter(authStorage: AuthStorage): ModelRegis
  */
 const KEYLESS_PROVIDER_TYPES = new Set(["ollama"]);
 
-const PROVIDER_TYPE_TO_API: Record<string, Api> = {
-  openai: "openai-completions",
-  groq: "openai-completions",
-  mistral: "openai-completions",
+const _builtInProviders = new Set<string>(getProviders());
+
+/**
+ * Infer pi-ai wire API from the live catalog.
+ *
+ * For any provider name that pi-ai exposes via `getProviders()`, read the
+ * `api` field from the first registered model. This is the single source of
+ * truth: when pi-ai adds a provider with a new wire format (e.g. a future
+ * `xyz-streaming` API), this helper picks it up automatically without any
+ * comis code change.
+ *
+ * Returns `undefined` when the type is not in the native catalog -- callers
+ * should chain to `FALLBACK_API_FOR_CUSTOM_TYPES` and finally to the
+ * `openai-completions` default for arbitrary OpenAI-compatible proxies.
+ */
+function inferApiFromCatalog(type: string): Api | undefined {
+  if (!_builtInProviders.has(type)) return undefined;
+  const models = getModels(type as KnownProvider);
+  return models[0]?.api as Api | undefined;
+}
+
+/**
+ * Tiny fallback table for custom provider types pi-ai does NOT ship in its
+ * native catalog. These are local inference servers and legacy aliases that
+ * speak OpenAI-compatible wire format but have no provider entry in
+ * `models.generated.ts`. Everything else falls through to
+ * `"openai-completions"` -- the safe default for arbitrary OpenAI-compatible
+ * proxies (NVIDIA NIM, Fireworks, Perplexity, vLLM, llama.cpp, etc.).
+ */
+const FALLBACK_API_FOR_CUSTOM_TYPES: Record<string, Api> = {
+  ollama: "openai-completions",
+  "lm-studio": "openai-completions",
   together: "openai-completions",
-  deepseek: "openai-completions",
-  cerebras: "openai-completions",
-  xai: "openai-completions",
-  openrouter: "openai-completions",
-  anthropic: "anthropic-messages",
-  google: "google-generative-ai",
 };
 
-const _builtInProviders = new Set<string>(getProviders());
+/**
+ * API resolution model for `entry.type`:
+ *   1. catalog-first   -- `inferApiFromCatalog(type)` reads the live pi-ai catalog
+ *   2. fallback-second -- `FALLBACK_API_FOR_CUSTOM_TYPES[type]` for legacy custom types
+ *   3. default-final   -- `"openai-completions"` for arbitrary OpenAI-compatible proxies
+ */
 
 function getBuiltInBaseUrl(type: string): string | undefined {
   if (!_builtInProviders.has(type)) return undefined;
@@ -199,7 +219,10 @@ export function registerCustomProviders(
       continue;
     }
 
-    const api = PROVIDER_TYPE_TO_API[entry.type] ?? "openai-completions";
+    const api =
+      inferApiFromCatalog(entry.type)
+      ?? FALLBACK_API_FOR_CUSTOM_TYPES[entry.type]
+      ?? "openai-completions";
     const headersResolved = Object.keys(entry.headers).length > 0 ? entry.headers : undefined;
     const resolvedApiKey = apiKey ?? (isKeylessType ? "ollama-no-auth" : undefined);
 

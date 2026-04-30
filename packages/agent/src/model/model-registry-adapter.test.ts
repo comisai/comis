@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { getModels } from "@mariozechner/pi-ai";
 import { createSecretManager } from "@comis/core";
 import { createAuthStorageAdapter } from "./auth-storage-adapter.js";
 import { createModelAllowlist } from "./model-allowlist.js";
@@ -265,7 +266,12 @@ describe("registerCustomProviders", () => {
     expect(found).toBeDefined();
     expect(found!.provider).toBe("nvidia");
     expect(found!.id).toBe("moonshotai/kimi-k2.5");
-    expect(found!.api).toBe("openai-completions");
+    // Layer 1A (260430-vwt): registered API is now read from the live pi-ai
+    // catalog when entry.type ("openai") is a native provider. The catalog
+    // currently reports "openai-responses" for openai. Read it dynamically
+    // so the assertion stays stable across pi-ai upgrades.
+    const expectedApi = getModels("openai")[0]!.api;
+    expect(found!.api).toBe(expectedApi);
     expect(found!.baseUrl).toBe("https://integrate.api.nvidia.com/v1");
   });
 
@@ -612,6 +618,77 @@ describe("registerCustomProviders", () => {
     );
 
     expect(providerAliases.size).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Layer 1A — catalog-driven API resolution (260430-vwt-1A)
+  //
+  // Replaces the deleted PROVIDER_TYPE_TO_API hardcoded map. The registered
+  // API for native types comes from the live pi-ai catalog; the fallback
+  // table covers legacy custom types pi-ai does not ship.
+  // -------------------------------------------------------------------------
+
+  it("Layer 1A: registered API for native type 'openrouter' matches the live pi-ai catalog", () => {
+    // Read the expected api from the catalog at test time so the assertion
+    // stays stable across pi-ai upgrades that may switch openrouter's wire
+    // format.
+    const catalog = getModels("openrouter");
+    expect(catalog.length).toBeGreaterThan(0);
+    const expectedApi = catalog[0]!.api;
+
+    const secretManager = createSecretManager({ OPENROUTER_API_KEY: "or-test" });
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+
+    const { registered } = registerCustomProviders(
+      registry,
+      {
+        myOpenRouter: {
+          type: "openrouter",
+          baseUrl: "https://openrouter.example/v1",
+          apiKeyName: "OPENROUTER_API_KEY",
+          enabled: true,
+          headers: {},
+          models: [{ id: "qwen/qwen3-coder-custom-test-1A" }], // not in built-in catalog → registered
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    expect(registered).toBe(1);
+    const found = registry.find("myOpenRouter", "qwen/qwen3-coder-custom-test-1A");
+    expect(found).toBeDefined();
+    expect(found!.api).toBe(expectedApi);
+  });
+
+  it("Layer 1A: 'ollama' falls back to openai-completions via FALLBACK_API_FOR_CUSTOM_TYPES (not in pi-ai catalog)", () => {
+    const secretManager = createSecretManager({});
+    const authStorage = createAuthStorageAdapter({ secretManager });
+    const registry = createModelRegistryAdapter(authStorage);
+    const { logger } = captureLogger();
+
+    const { registered } = registerCustomProviders(
+      registry,
+      {
+        "local-ollama-1A": {
+          type: "ollama",
+          baseUrl: "http://localhost:11434/v1",
+          apiKeyName: "",
+          enabled: true,
+          headers: {},
+          models: [{ id: "llama3.3-1A" }],
+        },
+      },
+      secretManager,
+      logger,
+    );
+
+    expect(registered).toBe(1);
+    const found = registry.find("local-ollama-1A", "llama3.3-1A");
+    expect(found).toBeDefined();
+    expect(found!.api).toBe("openai-completions");
   });
 });
 
