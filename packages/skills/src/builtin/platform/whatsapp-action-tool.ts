@@ -12,7 +12,7 @@
  * @module
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { createPlatformActionTool, type PlatformActionDescriptor } from "./platform-action-tool.js";
 import type { RpcCall } from "./cron-tool.js";
 

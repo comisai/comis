@@ -13,7 +13,7 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import * as fs from "node:fs/promises";
 import { extname } from "node:path";
 import { safePath, PathTraversalError } from "@comis/core";

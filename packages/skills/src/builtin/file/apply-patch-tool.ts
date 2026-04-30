@@ -10,7 +10,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { safePath, PathTraversalError } from "@comis/core";

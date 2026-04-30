@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { applyToolPolicy, TOOL_PROFILES, TOOL_GROUPS, expandGroups } from "./tool-policy.js";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { ToolFilterReason, ToolPolicyResult } from "./tool-policy.js";

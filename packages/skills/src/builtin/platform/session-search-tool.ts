@@ -16,7 +16,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { jsonResult, readStringParam, readNumberParam, readBooleanParam } from "./tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
 import { sanitizeFts5Query } from "./fts5-sanitizer.js";

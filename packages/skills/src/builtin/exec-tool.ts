@@ -23,7 +23,7 @@
  */
 
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, writeFileSync, copyFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";

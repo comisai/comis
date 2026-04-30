@@ -8,7 +8,7 @@
  * @module
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 // ---------------------------------------------------------------------------
 // Constants

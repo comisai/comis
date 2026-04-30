@@ -5,7 +5,7 @@
  */
 
 import { ok, err } from "@comis/shared";
-import { Type, Kind, OptionalKind } from "@sinclair/typebox";
+import { Type, Kind, OptionalKind } from "typebox";
 import { describe, it, expect, vi } from "vitest";
 import type { McpToolDefinition, McpClientManager } from "../integrations/mcp-client.js";
 import { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, extractMcpServerName, classifyMcpErrorType } from "./mcp-tool-bridge.js";

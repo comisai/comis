@@ -20,7 +20,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type, type Static } from "typebox";
 import { Impit } from "impit";
 import { validateUrl, wrapWebContent, EXTERNAL_CONTENT_WARNING, type WrapExternalContentOptions, FileExtractionConfigSchema } from "@comis/core";
 import { createPdfExtractor } from "../integrations/document/pdf-extractor.js";

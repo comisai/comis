@@ -10,7 +10,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import type { TSchema } from "@sinclair/typebox";
+import type { TSchema } from "typebox";
 import { jsonResult, readStringParam, createActionGate } from "./tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
 

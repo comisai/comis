@@ -10,7 +10,7 @@
  * @module
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { createRpcDispatchTool } from "./messaging-factory.js";
 import type { RpcCall } from "./cron-tool.js";
 

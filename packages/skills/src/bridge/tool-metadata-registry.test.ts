@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll, vi } from "vitest";
 import { getAllToolMetadata, getToolMetadata, truncateContentBlocks, registerToolMetadata, TypedEventBus } from "@comis/core";
 import type { EventMap } from "@comis/core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { registerAllToolMetadata } from "./tool-metadata-registry.js";
 import { wrapWithMetadataEnforcement } from "./tool-metadata-enforcement.js";
 import { wrapWithAudit } from "./tool-audit.js";

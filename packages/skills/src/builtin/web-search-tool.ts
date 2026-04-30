@@ -18,7 +18,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type, type Static } from "typebox";
 import { wrapWebContent, type WrapExternalContentOptions } from "@comis/core";
 import { fetchUrlContent } from "./web-fetch-tool.js";
 import type { TTLCache } from "@comis/shared";

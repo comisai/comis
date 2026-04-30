@@ -11,7 +11,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type, type Static } from "typebox";
 import { tryGetContext } from "@comis/core";
 import {
   jsonResult,

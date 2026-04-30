@@ -14,7 +14,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type, type TSchema } from "@sinclair/typebox";
+import { Type, type TSchema } from "typebox";
 import { registerToolMetadata } from "@comis/core";
 import { resolveSourceProfile, type ToolSourceProfile } from "../builtin/tool-source-profiles.js";
 import type { McpToolDefinition, McpClientManager, McpToolCallResult } from "../integrations/mcp-client.js";
