@@ -22,8 +22,16 @@
  * plain text rather than sending sanitized-text + original-signature
  * mismatch. Skips `redacted: true` blocks (no readable text to taint).
  *
- * Cache fence respected exactly like `thinking-block-cleaner` and
- * `signature-replay-scrubber`.
+ * 260430-anthropic-400-thinking-block: cacheFenceIndex is intentionally
+ * NOT consulted to gate guarding. The guard is pure/deterministic — input
+ * messages → same guarded output every time — so iter 1 strips,
+ * Anthropic caches the guarded prefix, iter 2 strips identically, and the
+ * cache hits. The prior fence-skip caused per-execution divergence
+ * symmetric to the bug found in `signature-replay-scrubber.ts` and
+ * `thinking-block-cleaner.ts`: iter 1 stripped (fence=-1) and built a
+ * surrogate-safe cached prefix, iter 2 preserved fence-protected messages
+ * (fence>0) and re-introduced surrogate-tainted-with-original-signature
+ * blocks at positions Anthropic had cached without them.
  *
  * Immutability: never mutates input; shallow-copies the block and the
  * containing message only when scrubbing is needed. When no scrub fires,
@@ -76,7 +84,7 @@ export function createSignatureSurrogateGuard(
   return {
     name: "signature-surrogate-guard",
 
-    async apply(messages: AgentMessage[], budget: TokenBudget): Promise<AgentMessage[]> {
+    async apply(messages: AgentMessage[], _budget: TokenBudget): Promise<AgentMessage[]> {
       if (messages.length === 0) {
         deps?.onGuarded?.({ signaturesStripped: 0 });
         return messages;
@@ -90,12 +98,10 @@ export function createSignatureSurrogateGuard(
         // eslint-disable-next-line security/detect-object-injection -- numeric index
         const original = messages[i];
 
-        // Cache fence: messages at or below the fence must not be modified.
-        if (i <= budget.cacheFenceIndex) {
-          // eslint-disable-next-line security/detect-object-injection -- numeric index
-          result[i] = original;
-          continue;
-        }
+        // 260430-anthropic-400-thinking-block: cacheFenceIndex is intentionally
+        // NOT consulted here. Stripping uniformly across the array keeps the
+        // guarded prefix identical across iterations of the same execution,
+        // which is what Anthropic's prompt-cache validator requires.
 
         const msg = original as { role?: string; content?: unknown };
         if (msg.role !== "assistant" || !Array.isArray(msg.content)) {

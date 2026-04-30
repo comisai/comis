@@ -21,6 +21,27 @@
  * guarantees the surrounding context changes turn-to-turn. So the latest's
  * signatures get invalidated too. Drop them all.
  *
+ * 260430-anthropic-400-thinking-block: the prior cache-fence skip
+ * (`if (i <= budget.cacheFenceIndex) preserve`) caused a per-execution
+ * regression. In iteration 1 of an execution the fence is -1 so all signed
+ * thinking blocks are stripped and the wire body establishes a cached
+ * prefix WITHOUT signatures. In subsequent iterations the fence becomes
+ * positive (= the breakpoint placed in iter 1) and the skip preserved
+ * messages 0…fence as-is. But `buildSessionContext()` reloads from on-disk
+ * JSONL where signatures are intact, so the wire body re-introduced signed
+ * thinking blocks at fence-protected positions that Anthropic had cached
+ * as unsigned. The cache-prefix validator detected the divergence and
+ * rejected with `400 invalid_request_error: ... blocks cannot be modified`.
+ *
+ * Fix: scrub uniformly across the array, regardless of cacheFenceIndex.
+ * The scrubber is pure/deterministic — input messages → same scrubbed
+ * output every time — so iter 1 strips, Anthropic caches the stripped
+ * prefix, iter 2 strips identically, and the cache hits. There is NO
+ * per-iteration cache penalty: the rebuild only happens once per session
+ * (when iter 1 first establishes the cached prefix). The cacheFenceIndex
+ * is read from the budget for diagnostic stats only and never gates
+ * stripping.
+ *
  * Provider coverage: NOT gated on `model.reasoning` because Gemini's
  * `thoughtSignature` lives on toolCall blocks even when the model itself
  * is not flagged as reasoning. Cost is one walk over assistant messages,
@@ -84,7 +105,7 @@ export function createSignatureReplayScrubber(
   return {
     name: "signature-replay-scrubber",
 
-    async apply(messages: AgentMessage[], budget: TokenBudget): Promise<AgentMessage[]> {
+    async apply(messages: AgentMessage[], _budget: TokenBudget): Promise<AgentMessage[]> {
       if (messages.length === 0) return messages;
 
       // Find the latest assistant message index. If none, no scrub.
@@ -106,12 +127,11 @@ export function createSignatureReplayScrubber(
         // eslint-disable-next-line security/detect-object-injection -- numeric index
         const original = messages[i];
 
-        // Cache fence: messages at or below the fence must not be modified.
-        if (i <= budget.cacheFenceIndex) {
-          // eslint-disable-next-line security/detect-object-injection -- numeric index
-          result[i] = original;
-          continue;
-        }
+        // 260430-anthropic-400-thinking-block: cacheFenceIndex is intentionally
+        // NOT consulted here. Stripping uniformly across the array keeps the
+        // scrubbed prefix identical across iterations of the same execution,
+        // which is what Anthropic's prompt-cache validator requires. See
+        // module docstring for the full rationale.
 
         const msg = original as { role?: string; content?: unknown };
         if (msg.role !== "assistant" || !Array.isArray(msg.content)) {
@@ -120,8 +140,8 @@ export function createSignatureReplayScrubber(
           continue;
         }
 
-        // Assistant message past the fence — walk content blocks. Latest
-        // included: cross-turn signature validation invalidates it too.
+        // Walk content blocks. Latest included: cross-turn signature
+        // validation invalidates it too.
         const content = msg.content as unknown[];
         let messageChanged = false;
         const newContent: unknown[] = new Array(content.length);

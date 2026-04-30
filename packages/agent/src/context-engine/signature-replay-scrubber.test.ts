@@ -5,14 +5,23 @@
  * Verifies the always-on, latest-included scrub policy: every assistant
  * message (latest included) has its thinkingSignature cleared and its
  * toolCall thoughtSignature stripped; redacted_thinking blocks are never
- * modified; cache fence is respected; immutability guarantees hold; INFO
- * log is emitted exactly once per apply() when at least one assistant
- * message was scrubbed.
+ * modified; cache fence is IGNORED (260430-anthropic-400-thinking-block);
+ * immutability guarantees hold; INFO log is emitted exactly once per
+ * apply() when at least one assistant message was scrubbed.
  *
  * 260428-nzp: the previous "preserve latest" carve-out was removed —
  * cross-turn signature validation invalidates the latest's signatures too
  * because the surrounding context (system + tools + history) drifts
  * turn-to-turn under comis's dynamic context engine.
+ *
+ * 260430-anthropic-400-thinking-block: the previous "preserve fenced"
+ * carve-out was also removed. The scrubber is pure/deterministic, so
+ * stripping uniformly across the array keeps the scrubbed prefix identical
+ * across iterations of the same execution. This is what Anthropic's
+ * prompt-cache validator requires; the prior fence-skip caused per-
+ * execution divergence (iter 1 stripped, iter 2 preserved fence-protected
+ * messages with their on-disk signatures intact, cache validator rejected
+ * with `400 ... blocks cannot be modified`).
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -377,46 +386,77 @@ describe("createSignatureReplayScrubber", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Cache fence (still respected — fenced messages untouched even now)
+  // Cache fence is IGNORED (260430-anthropic-400-thinking-block)
+  //
+  // The scrubber must strip uniformly across the array, regardless of
+  // budget.cacheFenceIndex. Stripping is pure/deterministic so the same
+  // input produces the same scrubbed output every time, which is what
+  // Anthropic's prompt-cache validator requires.
   // -------------------------------------------------------------------------
 
-  it("respects budget.cacheFenceIndex: messages at/below fence untouched; latest still scrubbed", async () => {
+  it("260430-anthropic-400-thinking-block: cacheFenceIndex is ignored — fence-protected messages are still scrubbed", async () => {
     const logger = makeLoggerMock();
     const onScrubbed = vi.fn();
     const layer = createSignatureReplayScrubber({ logger, onScrubbed });
 
     const messages: AgentMessage[] = [
-      makeAssistantMsg([makeSignedThinkingBlock("t0", "s0"), makeTextBlock("a0")]), // index 0 — fenced
-      makeAssistantMsg([makeSignedThinkingBlock("t1", "s1"), makeTextBlock("a1")]), // index 1 — fenced
-      makeAssistantMsg([makeSignedThinkingBlock("t2", "s2"), makeTextBlock("a2")]), // index 2 — past fence → scrubbed
-      makeAssistantMsg([makeSignedThinkingBlock("t3", "s3"), makeTextBlock("a3")]), // index 3 — latest, ALSO scrubbed
+      makeAssistantMsg([makeSignedThinkingBlock("t0", "s0"), makeTextBlock("a0")]), // index 0 — would be fenced
+      makeAssistantMsg([makeSignedThinkingBlock("t1", "s1"), makeTextBlock("a1")]), // index 1 — would be fenced
+      makeAssistantMsg([makeSignedThinkingBlock("t2", "s2"), makeTextBlock("a2")]), // index 2 — past fence
+      makeAssistantMsg([makeSignedThinkingBlock("t3", "s3"), makeTextBlock("a3")]), // index 3 — latest
     ];
 
     const fencedBudget: TokenBudget = { ...stubBudget, cacheFenceIndex: 1 };
     const result = await layer.apply(messages, fencedBudget);
 
-    // Fenced messages: same references, untouched.
-    expect(result[0]).toBe(messages[0]);
-    expect(result[1]).toBe(messages[1]);
-    // Past fence: signed thinking block stripped, text block remains.
-    const m2 = result[2] as { content: Array<Record<string, unknown>> };
-    expect(m2.content).toHaveLength(1);
-    expect(m2.content[0]).toEqual(makeTextBlock("a2"));
-    // Latest assistant: ALSO scrubbed now (no carve-out).
-    expect(result[3]).not.toBe(messages[3]);
-    const m3 = result[3] as { content: Array<Record<string, unknown>> };
-    expect(m3.content).toHaveLength(1);
-    expect(m3.content[0]).toEqual(makeTextBlock("a3"));
+    // ALL 4 assistants get their signed thinking stripped — the fence is no
+    // longer a gate. Verifies the fix for the "blocks cannot be modified"
+    // 400 error class.
+    for (const idx of [0, 1, 2, 3]) {
+      expect(result[idx]).not.toBe(messages[idx]);
+      const m = result[idx] as { content: Array<Record<string, unknown>> };
+      expect(m.content).toHaveLength(1);
+      expect(m.content[0]).toEqual(makeTextBlock(`a${idx}`));
+    }
 
     expect(onScrubbed).toHaveBeenCalledWith({
-      scrubbedAssistantMessages: 2,
-      blocksAffected: 2,
+      scrubbedAssistantMessages: 4,
+      blocksAffected: 4,
       toolCallsAffected: 0,
       latestAssistantIdx: 3,
-      dropped: 2,
+      dropped: 4,
       signaturesStripped: 0,
       reason: undefined,
     });
+  });
+
+  it("260430-anthropic-400-thinking-block: deterministic across cacheFenceIndex variations — same input → same scrubbed output", async () => {
+    // Pin the prefix-stability invariant: the bug was that fence=-1 produced
+    // one prefix and fence>0 produced a different prefix for the SAME on-disk
+    // messages. The fix makes the output independent of cacheFenceIndex.
+    const logger = makeLoggerMock();
+    const layer = createSignatureReplayScrubber({ logger });
+
+    const buildMessages = (): AgentMessage[] => [
+      makeAssistantMsg([makeSignedThinkingBlock("t0", "s0"), makeTextBlock("a0"), makeToolCallBlock({ thoughtSignature: "ts0" })]),
+      makeAssistantMsg([makeSignedThinkingBlock("t1", "s1"), makeTextBlock("a1")]),
+      makeAssistantMsg([makeSignedThinkingBlock("t2", "s2"), makeToolCallBlock({ thoughtSignature: "ts2" })]),
+      makeAssistantMsg([makeSignedThinkingBlock("t3", "s3"), makeTextBlock("a3")]),
+    ];
+
+    const resultFenceMinus1 = await layer.apply(buildMessages(), { ...stubBudget, cacheFenceIndex: -1 });
+    const resultFence0 = await layer.apply(buildMessages(), { ...stubBudget, cacheFenceIndex: 0 });
+    const resultFence2 = await layer.apply(buildMessages(), { ...stubBudget, cacheFenceIndex: 2 });
+    const resultFence3 = await layer.apply(buildMessages(), { ...stubBudget, cacheFenceIndex: 3 });
+    const resultFence99 = await layer.apply(buildMessages(), { ...stubBudget, cacheFenceIndex: 99 });
+
+    // All five outputs must be byte-equal. JSON.stringify is sufficient for
+    // structural equality on POJO content here.
+    const ref = JSON.stringify(resultFenceMinus1);
+    expect(JSON.stringify(resultFence0)).toBe(ref);
+    expect(JSON.stringify(resultFence2)).toBe(ref);
+    expect(JSON.stringify(resultFence3)).toBe(ref);
+    expect(JSON.stringify(resultFence99)).toBe(ref);
   });
 
   // -------------------------------------------------------------------------

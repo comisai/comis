@@ -5,6 +5,11 @@
  * Verifies configurable keep-window stripping of thinking blocks from
  * older assistant messages while preserving redacted thinking blocks
  * and maintaining immutability guarantees.
+ *
+ * 260430-anthropic-400-thinking-block: cacheFenceIndex no longer gates
+ * stripping. The cleaner is pure/deterministic so the same input must
+ * produce the same cleaned output regardless of the fence value, which is
+ * what Anthropic's prompt-cache validator requires.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -300,14 +305,16 @@ describe("createThinkingBlockCleaner", () => {
   });
 
   // -------------------------------------------------------------------------
-  // cache fence
+  // cache fence — IGNORED as of 260430-anthropic-400-thinking-block.
+  // The fence is read for diagnostic stats but no longer gates stripping.
   // -------------------------------------------------------------------------
 
-  describe("cache fence", () => {
-    it("skips stripping thinking blocks from messages at or before fence", async () => {
+  describe("cache fence (260430-anthropic-400-thinking-block: ignored)", () => {
+    it("260430-anthropic-400-thinking-block: cacheFenceIndex does NOT protect old assistants from stripping", async () => {
       const layer = createThinkingBlockCleaner(2); // keepTurns=2
-      // 6 assistant messages: indices 0-2 fenced, 3-5 modifiable
-      // Only the last 2 are in keep window (indices 4, 5). Index 3 is beyond keep window.
+      // 6 assistant messages: indices 0-2 historically would be fenced,
+      // 3-5 modifiable. Only the last 2 are in keep window (indices 4, 5).
+      // After the fix: cleaner strips 0-3 regardless of fence.
       const messages: AgentMessage[] = Array.from({ length: 6 }, (_, i) =>
         makeAssistantMsg([makeThinkingBlock(`think-${i}`), makeTextBlock(`text-${i}`)]),
       );
@@ -315,15 +322,13 @@ describe("createThinkingBlockCleaner", () => {
       const fencedBudget: TokenBudget = { ...stubBudget, cacheFenceIndex: 2 };
       const result = await layer.apply(messages, fencedBudget);
 
-      // Messages at indices 0, 1, 2 must retain thinking blocks (fenced)
-      for (let i = 0; i <= 2; i++) {
+      // Messages at indices 0, 1, 2, 3 are beyond keep window — ALL stripped.
+      // The fence at index 2 used to protect 0-2; now it doesn't.
+      for (let i = 0; i <= 3; i++) {
         const msg = result[i] as { role: string; content: unknown[] };
-        expect(msg.content).toHaveLength(2); // thinking + text preserved
+        expect(msg.content).toHaveLength(1); // only text — thinking stripped
+        expect(msg.content[0]).toEqual(makeTextBlock(`text-${i}`));
       }
-
-      // Message at index 3 is beyond keep window AND beyond fence -> stripped
-      const msg3 = result[3] as { role: string; content: unknown[] };
-      expect(msg3.content).toHaveLength(1); // only text
 
       // Messages at indices 4, 5 are in keep window -> preserved
       for (let i = 4; i <= 5; i++) {
@@ -332,7 +337,27 @@ describe("createThinkingBlockCleaner", () => {
       }
     });
 
-    it("fence -1 means no protection (all modifiable)", async () => {
+    it("fence -1 produces identical result to fence>0 (deterministic across fence values)", async () => {
+      // Pin the prefix-stability invariant: same input → same output regardless of fence.
+      const layer = createThinkingBlockCleaner(2);
+      const buildMessages = (): AgentMessage[] => Array.from({ length: 6 }, (_, i) =>
+        makeAssistantMsg([makeThinkingBlock(`think-${i}`), makeTextBlock(`text-${i}`)]),
+      );
+
+      const resultFenceMinus1 = await layer.apply(buildMessages(), { ...stubBudget, cacheFenceIndex: -1 });
+      const resultFence0 = await layer.apply(buildMessages(), { ...stubBudget, cacheFenceIndex: 0 });
+      const resultFence2 = await layer.apply(buildMessages(), { ...stubBudget, cacheFenceIndex: 2 });
+      const resultFence4 = await layer.apply(buildMessages(), { ...stubBudget, cacheFenceIndex: 4 });
+      const resultFence99 = await layer.apply(buildMessages(), { ...stubBudget, cacheFenceIndex: 99 });
+
+      const ref = JSON.stringify(resultFenceMinus1);
+      expect(JSON.stringify(resultFence0)).toBe(ref);
+      expect(JSON.stringify(resultFence2)).toBe(ref);
+      expect(JSON.stringify(resultFence4)).toBe(ref);
+      expect(JSON.stringify(resultFence99)).toBe(ref);
+    });
+
+    it("fence -1 means identical strip behavior as positive fences (all old messages stripped)", async () => {
       const layer = createThinkingBlockCleaner(2); // keepTurns=2
       const messages: AgentMessage[] = Array.from({ length: 6 }, (_, i) =>
         makeAssistantMsg([makeThinkingBlock(`think-${i}`), makeTextBlock(`text-${i}`)]),
@@ -487,7 +512,11 @@ describe("createThinkingBlockCleaner", () => {
       }
     });
 
-    it("onCleaned includes cache fence stats when blocks removed with fence active", async () => {
+    it("onCleaned reports cacheFenceIndex for diagnostics but does not flag protected messages", async () => {
+      // 260430-anthropic-400-thinking-block: messagesProtected is intentionally
+      // omitted because no messages are fence-protected anymore. cacheFenceIndex
+      // is still surfaced for diagnostic visibility into what the cache fence
+      // would have been.
       const onCleaned = vi.fn();
       const layer = createThinkingBlockCleaner(2, onCleaned);
       // 6 assistant messages, keepTurns=2, fence at index 2
@@ -500,10 +529,12 @@ describe("createThinkingBlockCleaner", () => {
 
       expect(onCleaned).toHaveBeenCalledTimes(1);
       const stats = onCleaned.mock.calls[0]![0];
-      // Message index 3 is beyond fence and beyond keep window -- should be stripped
-      expect(stats.blocksRemoved).toBeGreaterThan(0);
+      // Stripping happens regardless of fence (4 messages stripped: indices 0-3).
+      expect(stats.blocksRemoved).toBe(4);
+      // cacheFenceIndex still reported for diagnostics.
       expect(stats.cacheFenceIndex).toBe(2);
-      expect(stats.messagesProtected).toBe(3);
+      // messagesProtected omitted: nothing is fence-protected anymore.
+      expect(stats.messagesProtected).toBeUndefined();
       expect(stats.totalMessages).toBe(6);
     });
 
