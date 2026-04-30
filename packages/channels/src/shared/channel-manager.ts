@@ -138,6 +138,16 @@ export interface ChannelManagerDeps {
   handleSlashCommand?: InboundPipelineDeps["handleSlashCommand"];
   /** Per-agent enforceFinalTag config lookup. */
   getEnforceFinalTag?: InboundPipelineDeps["getEnforceFinalTag"];
+  /**
+   * Optional in-flight outbound sendMessage promise tracker. PRODUCTION
+   * callers (daemon) MUST NOT pass this -- the factory creates its own
+   * per-instance Set. Exposed via deps strictly to allow unit tests to
+   * inject a controllable Set for drain-ordering and deadline assertions.
+   * Drained in stopAll() with a 5s deadline so SIGUSR2 cannot tear down
+   * adapters mid-send (which would orphan the SQLite delivery-queue ack
+   * and trigger a duplicate retry on the next instance).
+   */
+  inFlightSends?: Set<Promise<unknown>>;
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];
 }
@@ -173,6 +183,29 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
   /** Adapter lookup map: channelType -> ChannelPort. Populated in startAll(). */
   const adaptersByType = new Map<string, ChannelPort>();
 
+  /**
+   * Per-instance in-flight outbound sendMessage promises. Used by
+   * deliver-to-channel.ts to register active sends; drained in stopAll() with
+   * a 5s deadline so SIGUSR2 cannot tear down adapters mid-send (which would
+   * orphan the SQLite delivery-queue ack and trigger a duplicate retry on the
+   * next instance).
+   *
+   * Tests may inject a Set via deps.inFlightSends to seed controllable
+   * promises for drain-ordering and deadline assertions; production callers
+   * (daemon) must NOT pass this -- the factory creates its own.
+   */
+  const inFlightSends = deps.inFlightSends ?? new Set<Promise<unknown>>();
+
+  /**
+   * Pipeline deps with inFlightSends threaded in. Spread once so the Set is
+   * visible to processInboundMessage at all three call sites (debounce flush
+   * handler, normal onMessage handler, injectMessage). The original deps
+   * object is left untouched -- callbacks like onMessageProcessed and
+   * onGraphReportRequest live on the same reference (spread copies the
+   * function references, not the underlying behavior).
+   */
+  const pipelineDeps: ChannelManagerDeps = { ...deps, inFlightSends };
+
   // Clean up stale overrides, debounce entries, and group history when sessions expire
   deps.eventBus.on("session:expired", (ev) => {
     sendOverrides.delete(formatSessionKey(ev.sessionKey));
@@ -207,7 +240,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           };
           // Fire-and-forget: processInboundMessage is async but the flush callback is sync.
           // Errors are caught by the onMessage error handler.
-          void processInboundMessage(deps, adapter, syntheticMsg, activePacers, sendOverrides).catch((error) => {
+          void processInboundMessage(pipelineDeps, adapter, syntheticMsg, activePacers, sendOverrides).catch((error) => {
             deps.logger.error(
               {
                 err: error instanceof Error ? error : new Error(String(error)),
@@ -244,7 +277,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
                 return; // Handled -- do not forward to agent
               }
             }
-            await processInboundMessage(deps, adapter, msg, activePacers, sendOverrides);
+            await processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
             deps.onMessageProcessed?.(msg, adapter.channelType);
           } catch (error) {
             deps.logger.error(
@@ -298,6 +331,29 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
         pacer.cancel();
       }
 
+      // Await in-flight outbound sends with a 5s deadline so SIGUSR2 cannot
+      // tear down adapters mid-HTTP-response (which would orphan the SQLite
+      // delivery-queue ack and trigger a duplicate retry on the next instance).
+      // Empty-Set fast path takes no log line, no setTimeout, no Promise.race --
+      // existing shutdown latency is preserved when nothing is in flight.
+      if (inFlightSends.size > 0) {
+        const drainStart = Date.now();
+        const inFlightCount = inFlightSends.size;
+        await Promise.race([
+          Promise.allSettled([...inFlightSends]),
+          new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+        ]);
+        deps.logger.info(
+          {
+            inFlightCount,
+            drainMs: Date.now() - drainStart,
+            remaining: inFlightSends.size,
+            hint: "Outbound sends drained before adapter teardown to avoid duplicate-message risk on SIGUSR2 hot-reload",
+          },
+          "Channel manager: in-flight outbound sends drained",
+        );
+      }
+
       // Build combined adapter list: direct adapters + plugin-registered adapters
       const registryAdapters = deps.channelRegistry
         ? deps.channelRegistry.getChannelPlugins().map((p) => p.adapter)
@@ -347,7 +403,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           return;
         }
       }
-      await processInboundMessage(deps, adapter, msg, activePacers, sendOverrides);
+      await processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
       // Symmetric with the normal inbound path (line 248): the synthetic
       // recovery user-message represents real session activity, so notify
       // the continuation tracker. Without this call, multi-restart chains

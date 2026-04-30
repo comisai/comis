@@ -1152,6 +1152,85 @@ describe("delivery strategy", () => {
   });
 });
 
+describe("inFlightSends tracking", () => {
+  function createMockQueueForInFlight(): DeliveryQueuePort & {
+    enqueue: ReturnType<typeof vi.fn>;
+    ack: ReturnType<typeof vi.fn>;
+    nack: ReturnType<typeof vi.fn>;
+    fail: ReturnType<typeof vi.fn>;
+  } {
+    return {
+      enqueue: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
+      ack: vi.fn().mockResolvedValue(ok(undefined)),
+      nack: vi.fn().mockResolvedValue(ok(undefined)),
+      fail: vi.fn().mockResolvedValue(ok(undefined)),
+      pendingEntries: vi.fn().mockResolvedValue(ok([])),
+      pruneExpired: vi.fn().mockResolvedValue(ok(0)),
+      depth: vi.fn().mockResolvedValue(ok(0)),
+    };
+  }
+
+  it("adds sendPromise to inFlightSends Set before await and removes via finally on success", async () => {
+    const adapter = createMockAdapter("telegram");
+    let resolveSend: (v: Result<string, Error>) => void = () => {};
+    adapter.sendMessage.mockImplementation(
+      () =>
+        new Promise<Result<string, Error>>((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    const inFlightSends = new Set<Promise<unknown>>();
+    const queue = createMockQueueForInFlight();
+
+    const deliveryPromise = deliverToChannel(adapter, "chat-1", "Hello", undefined, {
+      deliveryQueue: queue,
+      inFlightSends,
+    });
+
+    // Allow microtasks to run: the send is now in-flight (awaiting resolution).
+    // The Set must observe the promise BEFORE the await -- this is the
+    // load-bearing assertion for SIGUSR2 mid-send detection.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(inFlightSends.size).toBe(1);
+
+    resolveSend(ok("msg-id-1"));
+    await deliveryPromise;
+
+    // After settle, .finally must have removed the entry.
+    expect(inFlightSends.size).toBe(0);
+  });
+
+  it("removes sendPromise via finally even when sendMessage rejects (Result err)", async () => {
+    const adapter = createMockAdapter("telegram");
+    let resolveSend: (v: Result<string, Error>) => void = () => {};
+    adapter.sendMessage.mockImplementation(
+      () =>
+        new Promise<Result<string, Error>>((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    const inFlightSends = new Set<Promise<unknown>>();
+    const queue = createMockQueueForInFlight();
+
+    const deliveryPromise = deliverToChannel(adapter, "chat-1", "Hello", undefined, {
+      deliveryQueue: queue,
+      inFlightSends,
+    });
+
+    // Allow microtasks: send is in-flight, Set has 1 entry.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(inFlightSends.size).toBe(1);
+
+    // Resolve the promise with an err Result -- still settles, .finally fires.
+    resolveSend(err(new Error("Network exploded")));
+    await deliveryPromise;
+
+    expect(inFlightSends.size).toBe(0);
+  });
+});
+
 describe("QUEUE_BACKOFF_SCHEDULE_MS", () => {
   it("has 5 entries", () => {
     expect(QUEUE_BACKOFF_SCHEDULE_MS).toHaveLength(5);

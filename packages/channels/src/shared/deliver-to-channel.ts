@@ -193,6 +193,16 @@ export interface DeliverToChannelDeps {
    * Aborted deliveries emit delivery:aborted (not delivery:complete).
    */
   abortSignal?: AbortSignal;
+  /**
+   * Per-instance set of in-flight outbound sendMessage promises. When provided,
+   * each chunk send is added to the set BEFORE the await (so a throwing send
+   * is still tracked) and removed via .finally() on settle. Drained in
+   * channel-manager.stopAll() with a 5s deadline so SIGUSR2 cannot tear down
+   * adapters mid-send (which would orphan the SQLite delivery-queue ack and
+   * trigger a duplicate retry on the next instance). Created by the
+   * channel-manager factory; do not pass externally.
+   */
+  inFlightSends?: Set<Promise<unknown>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -469,19 +479,41 @@ export async function deliverToChannel(
       let retried = false;
       const chunkSendStart = Date.now();
 
+      // Build the send promise WITHOUT awaiting yet, so we can register it
+      // in deps.inFlightSends synchronously before the underlying HTTPS POST
+      // is observable as in-flight. This guarantees that a SIGUSR2 hitting
+      // mid-send will see the promise in the Set and drain it before tearing
+      // down adapters (avoids orphaned SQLite delivery-queue acks and the
+      // resulting duplicate-message retry on the next instance).
+      const sendPromise: Promise<Result<string, Error>> = deps?.retryEngine
+        ? deps.retryEngine.sendWithRetry(
+            // RetryEngine expects a ChannelPort-like adapter -- our
+            // DeliveryAdapter has the same sendMessage signature, so cast
+            // through unknown
+            adapter as unknown as Parameters<RetryEngine["sendWithRetry"]>[0],
+            channelId,
+            chunk,
+            sendOpts,
+          )
+        : adapter.sendMessage(channelId, chunk, sendOpts);
+
       if (deps?.retryEngine) {
-        // RetryEngine expects a ChannelPort-like adapter -- our DeliveryAdapter
-        // has the same sendMessage signature, so cast through unknown
-        result = await deps.retryEngine.sendWithRetry(
-          adapter as unknown as Parameters<RetryEngine["sendWithRetry"]>[0],
-          channelId,
-          chunk,
-          sendOpts,
-        );
         retried = true;
-      } else {
-        result = await adapter.sendMessage(channelId, chunk, sendOpts);
       }
+
+      if (deps?.inFlightSends) {
+        const tracked: Promise<unknown> = sendPromise;
+        deps.inFlightSends.add(tracked);
+        // .finally fires on both fulfillment and rejection -- guarantees
+        // Set cleanup even if sendPromise rejects. We intentionally do
+        // not await this side-effect; the void keeps no-floating-promise
+        // lint quiet without altering the awaited value below.
+        void sendPromise.finally(() => {
+          deps.inFlightSends?.delete(tracked);
+        });
+      }
+
+      result = await sendPromise;
 
       const chunkResult: ChunkDeliveryResult = {
         ok: result.ok,

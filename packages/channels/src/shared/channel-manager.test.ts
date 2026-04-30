@@ -797,6 +797,83 @@ describe("createChannelManager", () => {
     });
   });
 
+  describe("stopAll() in-flight drain", () => {
+    it("awaits in-flight sendMessage before calling adapter.stop()", async () => {
+      const callOrder: string[] = [];
+      let resolveSend: () => void = () => {};
+      // Pre-populate an in-flight Set with a manually-resolvable promise to
+      // simulate what deliver-to-channel.ts would have added mid-send.
+      const externalSet = new Set<Promise<unknown>>();
+      const sendPromise = new Promise<void>((r) => {
+        resolveSend = r;
+      });
+      externalSet.add(sendPromise);
+
+      const adapter = makeAdapter({
+        stop: vi.fn(async () => {
+          callOrder.push("stop");
+          return ok(undefined);
+        }),
+      });
+      const deps = makeDeps({ adapters: [adapter], inFlightSends: externalSet });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      const stopPromise = manager.stopAll();
+      // Yield microtasks: drain has started but cannot complete because the
+      // tracked promise is unresolved. adapter.stop() must NOT have run yet.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(callOrder).not.toContain("stop");
+
+      // Resolve the in-flight send: drain race wins, stopAll() proceeds.
+      resolveSend();
+      await stopPromise;
+      expect(callOrder).toContain("stop");
+    });
+
+    it("enforces 5s deadline on hung sends", async () => {
+      vi.useFakeTimers();
+      try {
+        const externalSet = new Set<Promise<unknown>>();
+        // Hung promise -- never resolves. Drain must time out at 5000ms.
+        const hung = new Promise<void>(() => {});
+        externalSet.add(hung);
+
+        const stopSpy = vi.fn(async () => ok(undefined));
+        const adapter = makeAdapter({ stop: stopSpy });
+        const deps = makeDeps({ adapters: [adapter], inFlightSends: externalSet });
+        const manager = createChannelManager(deps);
+        await manager.startAll();
+
+        const stopPromise = manager.stopAll();
+        // Before deadline: stop() has not been called.
+        await vi.advanceTimersByTimeAsync(4999);
+        expect(stopSpy).not.toHaveBeenCalled();
+        // At deadline: drain race resolves, stop() proceeds.
+        await vi.advanceTimersByTimeAsync(2);
+        await stopPromise;
+        expect(stopSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("skips drain log when inFlightSends is empty", async () => {
+      const adapter = makeAdapter();
+      const deps = makeDeps({ adapters: [adapter] }); // factory creates its own empty Set
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+      await manager.stopAll();
+
+      // The "in-flight outbound sends drained" INFO must NOT have been emitted.
+      const drainLogs = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([, msg]) => msg === "Channel manager: in-flight outbound sends drained",
+      );
+      expect(drainLogs).toHaveLength(0);
+    });
+  });
+
   describe("activeCount", () => {
     it("reflects started adapters", async () => {
       const adapter1 = makeAdapter();

@@ -84,6 +84,14 @@ export interface InboundPipelineDeps {
   retryEngine?: RetryEngine;
   /** Delivery queue for crash-safe message persistence. When present, agent responses are enqueued before send. */
   deliveryQueue?: DeliveryQueuePort;
+  /**
+   * Per-instance set of in-flight outbound sendMessage promises. Threaded
+   * through ExecutionPipelineDeps -> DeliverToChannelDeps so deliver-to-channel
+   * can register active sends. Drained in stopAll() with a 5s deadline so
+   * SIGUSR2 cannot tear down adapters mid-send. Created by the channel-manager
+   * factory; do not pass externally.
+   */
+  inFlightSends?: Set<Promise<unknown>>;
   /** Optional active run registry for SDK-native steer+followup. */
   activeRunRegistry?: ActiveRunRegistry;
   /** Handle /config command. Returns response text or undefined if not a config command. */
