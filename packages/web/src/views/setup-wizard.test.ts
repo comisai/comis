@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import process from "node:process";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import type { IcSetupWizard, WizardData } from "./setup-wizard.js";
 import type { RpcClient } from "../api/rpc-client.js";
@@ -6,6 +9,31 @@ import type { RpcClient } from "../api/rpc-client.js";
 // Side-effect import to register custom element
 import "./setup-wizard.js";
 import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
+
+/**
+ * Read a project source file by its package-relative path (e.g.
+ * "src/views/setup-wizard.ts"). Walks up from cwd until we find a directory
+ * containing the file -- vitest workspace runs may execute from the repo
+ * root instead of the package directory. happy-dom (the test environment)
+ * stubs the URL constructor so `new URL("./x.ts", import.meta.url)` fails;
+ * resolving via filesystem walk avoids that.
+ */
+function readProjectFile(packageRelativePath: string): string {
+  // Try cwd first (vitest --filter ./packages/web), then walk up looking for
+  // packages/web/<rel>. The file is always under packages/web/, so we anchor
+  // the search there.
+  let dir = process.cwd();
+  for (let i = 0; i < 8; i++) {
+    const direct = resolve(dir, packageRelativePath);
+    if (existsSync(direct)) return readFileSync(direct, "utf8");
+    const candidate = resolve(dir, "packages/web", packageRelativePath);
+    if (existsSync(candidate)) return readFileSync(candidate, "utf8");
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`readProjectFile: ${packageRelativePath} not found from cwd ${process.cwd()}`);
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -196,58 +224,209 @@ describe("Step 1 - Basics", () => {
 });
 
 /* ================================================================== */
-/*  Step 2 - Provider                                                  */
+/*  Step 2 - Provider (Layer 3A: live catalog -- 260501-07g)           */
 /* ================================================================== */
+//
+// Phase 3A replaced the static 12-entry PROVIDERS array with a runtime
+// fetch via the gateway RPC `models.list_providers`. These tests mock
+// the RPC to drive the catalog state and assert behavioral rendering
+// (loading / error / dynamic grid / Custom synthetic key / model dropdown).
 
-describe("Step 2 - Provider", () => {
-  it("renders 12 provider cards", async () => {
-    const el = await createElement();
+/**
+ * Build a mock RpcClient that answers `models.list_providers` with a fixed
+ * provider list and `models.list provider:<x>` with a per-provider model
+ * list. Other RPC methods return {} by default.
+ */
+function rpcWithCatalog(
+  providers: string[] = ["anthropic", "openrouter", "ollama"],
+  modelsByProvider: Record<string, Array<{ id: string; cost?: { input?: number; output?: number } }>> = {
+    anthropic: [
+      { id: "claude-haiku-4-5", cost: { input: 1, output: 5 } },
+      { id: "claude-sonnet-4-5", cost: { input: 3, output: 15 } },
+    ],
+    openrouter: [{ id: "qwen/qwen3-coder", cost: { input: 0.5, output: 1.5 } }],
+    ollama: [{ id: "llama3" }], // free / no cost
+  },
+): RpcClient {
+  return createMockRpcClient(async (...args: unknown[]) => {
+    const method = args[0] as string;
+    const params = (args[1] as Record<string, unknown> | undefined) ?? {};
+    if (method === "models.list_providers") {
+      return { providers, count: providers.length };
+    }
+    if (method === "models.list") {
+      const provider = params["provider"] as string | undefined;
+      if (provider && modelsByProvider[provider]) {
+        return {
+          models: modelsByProvider[provider].map((m) => ({ modelId: m.id, ...(m.cost ? { cost: m.cost } : {}) })),
+          total: modelsByProvider[provider].length,
+        };
+      }
+      return { models: [], total: 0 };
+    }
+    return {};
+  });
+}
+
+async function withCatalogReady(rpcClient: RpcClient): Promise<IcSetupWizard> {
+  const el = await createElement({ rpcClient });
+  await flush(el); // give connectedCallback's async fetch a tick to resolve
+  await flush(el);
+  return el;
+}
+
+describe("Step 2 - Provider (live catalog)", () => {
+  it("fetches catalog providers via models.list_providers on mount", async () => {
+    const rpcClient = rpcWithCatalog();
+    await withCatalogReady(rpcClient);
+    expect(rpcClient.call).toHaveBeenCalledWith("models.list_providers", {});
+  });
+
+  it("renders one card per catalog provider plus a Custom card", async () => {
+    const rpcClient = rpcWithCatalog(["anthropic", "openrouter"]);
+    const el = await withCatalogReady(rpcClient);
     await goToStep(el, 1);
+    await flush(el);
     const cards = el.shadowRoot?.querySelectorAll(".provider-card");
-    expect(cards?.length).toBe(12);
-    const names = Array.from(cards ?? []).map((c) => c.querySelector(".provider-card-name")?.textContent?.trim());
-    expect(names).toEqual(["Anthropic", "OpenAI", "Google", "Groq", "Mistral", "DeepSeek", "xAI", "Together AI", "Cerebras", "OpenRouter", "Ollama", "Custom"]);
+    // 2 catalog + 1 synthetic Custom = 3
+    expect(cards?.length).toBe(3);
+    const names = Array.from(cards ?? []).map((c) =>
+      c.querySelector(".provider-card-name")?.textContent?.trim(),
+    );
+    expect(names).toEqual(["Anthropic", "OpenRouter", "Custom"]);
   });
 
-  it("clicking a provider card selects it", async () => {
-    const el = await createElement();
+  it("renders a fallback card name for catalog providers missing from PROVIDER_UI_HINTS", async () => {
+    // "kimi-coding" is in pi-ai's catalog but not in PROVIDER_UI_HINTS;
+    // it should render with capitalized fallback display name.
+    const rpcClient = rpcWithCatalog(["kimi-coding"]);
+    const el = await withCatalogReady(rpcClient);
     await goToStep(el, 1);
+    await flush(el);
+    const cards = el.shadowRoot?.querySelectorAll(".provider-card");
+    const names = Array.from(cards ?? []).map((c) =>
+      c.querySelector(".provider-card-name")?.textContent?.trim(),
+    );
+    // First catalog provider gets fallback display name; "Custom" appended.
+    expect(names?.[0]).toBe("Kimi-coding");
+    expect(names).toContain("Custom");
+  });
+
+  it("shows a loading state while the catalog is being fetched", async () => {
+    // Slow RPC: never resolves until we tick
+    let resolveCatalog: ((value: unknown) => void) | undefined;
+    const slowRpc = createMockRpcClient(async (...args: unknown[]) => {
+      const method = args[0] as string;
+      if (method === "models.list_providers") {
+        return new Promise((resolve) => { resolveCatalog = resolve; });
+      }
+      return {};
+    });
+    const el = await createElement({ rpcClient: slowRpc });
+    await goToStep(el, 1);
+    expect(priv(el)._catalogProvidersLoading).toBe(true);
+    const loading = el.shadowRoot?.querySelector(".provider-grid-loading");
+    expect(loading?.textContent?.toLowerCase()).toContain("loading");
+    // Cleanup
+    resolveCatalog?.({ providers: [], count: 0 });
+    await flush(el);
+  });
+
+  it("shows an error state with retry when models.list_providers fails", async () => {
+    const failingRpc = createMockRpcClient(async (...args: unknown[]) => {
+      const method = args[0] as string;
+      if (method === "models.list_providers") throw new Error("network down");
+      return {};
+    });
+    const el = await createElement({ rpcClient: failingRpc });
+    await flush(el);
+    await flush(el);
+    await goToStep(el, 1);
+    expect(priv(el)._catalogProvidersError).toContain("network down");
+    const errEl = el.shadowRoot?.querySelector(".provider-grid-error");
+    expect(errEl?.textContent).toContain("network down");
+    const retryBtn = errEl?.querySelector<HTMLButtonElement>(".test-btn");
+    expect(retryBtn?.textContent?.trim()).toBe("Retry");
+  });
+
+  it("clicking a catalog provider card selects it and triggers models.list fetch", async () => {
+    const rpcClient = rpcWithCatalog();
+    const el = await withCatalogReady(rpcClient);
+    await goToStep(el, 1);
+    await flush(el);
     const cards = el.shadowRoot?.querySelectorAll<HTMLDivElement>(".provider-card");
-    cards?.[0]?.click();
-    await (el as any).updateComplete;
+    cards?.[0]?.click(); // anthropic
+    await flush(el);
     expect(priv(el)._wizardData.providerName).toBe("anthropic");
-    const updatedCards = el.shadowRoot?.querySelectorAll(".provider-card");
-    expect(updatedCards?.[0]?.classList.contains("active")).toBe(true);
+    expect(priv(el)._wizardData.providerType).toBe("anthropic");
+    expect(rpcClient.call).toHaveBeenCalledWith("models.list", { provider: "anthropic" });
   });
 
-  it("selecting Anthropic shows API key field", async () => {
-    const el = await createElement();
+  it("selecting a native provider shows API Key field but no Base URL field", async () => {
+    const rpcClient = rpcWithCatalog(["anthropic"]);
+    const el = await withCatalogReady(rpcClient);
     await goToStep(el, 1);
+    await flush(el);
     const cards = el.shadowRoot?.querySelectorAll<HTMLDivElement>(".provider-card");
-    cards?.[0]?.click(); // Anthropic
-    await (el as any).updateComplete;
+    cards?.[0]?.click(); // anthropic
+    await flush(el);
     const labels = Array.from(el.shadowRoot?.querySelectorAll(".provider-config .form-label") ?? [])
       .map((l) => l.textContent?.trim());
     expect(labels).toContain("API Key");
+    expect(labels).not.toContain("Base URL");
   });
 
-  it("selecting Ollama shows base URL field without API key", async () => {
-    const el = await createElement();
+  it("selecting Custom shows Base URL field, no API key, and a free-text Model ID", async () => {
+    const rpcClient = rpcWithCatalog(["anthropic"]);
+    const el = await withCatalogReady(rpcClient);
     await goToStep(el, 1);
+    await flush(el);
     const cards = el.shadowRoot?.querySelectorAll<HTMLDivElement>(".provider-card");
-    cards?.[10]?.click(); // Ollama
-    await (el as any).updateComplete;
+    // Custom is the last card after the catalog providers
+    const lastCard = cards?.[cards.length - 1] as HTMLDivElement | undefined;
+    lastCard?.click();
+    await flush(el);
+    expect(priv(el)._wizardData.providerName).toBe("__custom__");
+    // Custom path keeps providerType = "openai" so the existing
+    // models.test passthrough remains compatible.
+    expect(priv(el)._wizardData.providerType).toBe("openai");
     const labels = Array.from(el.shadowRoot?.querySelectorAll(".provider-config .form-label") ?? [])
       .map((l) => l.textContent?.trim());
     expect(labels).toContain("Base URL");
     expect(labels).not.toContain("API Key");
+    expect(labels).toContain("Model ID"); // free-text input for Custom
+  });
+
+  it("native provider selection populates the model dropdown sorted by ascending cost", async () => {
+    const rpcClient = rpcWithCatalog(["anthropic"], {
+      anthropic: [
+        { id: "claude-sonnet-4-5", cost: { input: 3, output: 15 } },
+        { id: "claude-haiku-4-5", cost: { input: 1, output: 5 } },
+      ],
+    });
+    const el = await withCatalogReady(rpcClient);
+    await goToStep(el, 1);
+    await flush(el);
+    const cards = el.shadowRoot?.querySelectorAll<HTMLDivElement>(".provider-card");
+    cards?.[0]?.click();
+    await flush(el);
+    await flush(el);
+    // Cheapest should be first in the dropdown (haiku before sonnet).
+    expect(priv(el)._modelOptions.map((m) => m.id)).toEqual([
+      "claude-haiku-4-5",
+      "claude-sonnet-4-5",
+    ]);
+    const select = el.shadowRoot?.querySelector<HTMLSelectElement>(".provider-config .form-select");
+    expect(select).toBeTruthy();
+    const optionValues = Array.from(select?.querySelectorAll("option") ?? [])
+      .map((o) => o.value);
+    expect(optionValues).toEqual(["", "claude-haiku-4-5", "claude-sonnet-4-5"]);
   });
 
   it("test connection button calls models.test RPC method", async () => {
-    const rpcClient = createMockRpcClient();
-    const el = await createElement({ rpcClient });
+    const rpcClient = rpcWithCatalog();
+    const el = await withCatalogReady(rpcClient);
     await goToStep(el, 1);
-    // Select a provider first
     priv(el)._wizardData = { ...priv(el)._wizardData, providerName: "anthropic", providerType: "anthropic" };
     await (el as any).updateComplete;
     const testBtn = el.shadowRoot?.querySelector<HTMLButtonElement>(".test-btn");
@@ -257,8 +436,8 @@ describe("Step 2 - Provider", () => {
   });
 
   it("successful test shows success indicator", async () => {
-    const rpcClient = createMockRpcClient();
-    const el = await createElement({ rpcClient });
+    const rpcClient = rpcWithCatalog();
+    const el = await withCatalogReady(rpcClient);
     await goToStep(el, 1);
     priv(el)._wizardData = { ...priv(el)._wizardData, providerName: "anthropic", providerType: "anthropic" };
     await (el as any).updateComplete;
@@ -273,10 +452,12 @@ describe("Step 2 - Provider", () => {
   it("failed test shows error message", async () => {
     const rpcClient = createMockRpcClient(async (...args: unknown[]) => {
       const method = args[0] as string;
+      if (method === "models.list_providers") return { providers: ["anthropic"], count: 1 };
+      if (method === "models.list") return { models: [], total: 0 };
       if (method === "models.test") throw new Error("Auth failed");
       return {};
     });
-    const el = await createElement({ rpcClient });
+    const el = await withCatalogReady(rpcClient);
     await goToStep(el, 1);
     priv(el)._wizardData = { ...priv(el)._wizardData, providerName: "anthropic", providerType: "anthropic" };
     await (el as any).updateComplete;
@@ -286,6 +467,21 @@ describe("Step 2 - Provider", () => {
     expect(priv(el)._testResult.status).toBe("error");
     const errorEl = el.shadowRoot?.querySelector(".test-error");
     expect(errorEl?.textContent).toContain("Auth failed");
+  });
+
+  it("regression: setup-wizard.ts has no hardcoded PROVIDERS: ProviderOption[] array", () => {
+    // Hard-coded provider table is the staleness pattern Phase 3A removed.
+    // happy-dom doesn't expose the Node URL constructor, so we resolve the
+    // source path via process.cwd() (vitest runs from packages/web).
+    const source = readProjectFile("src/views/setup-wizard.ts");
+    expect(source).not.toMatch(/const\s+PROVIDERS\s*:\s*ProviderOption\s*\[\]/);
+    // No hardcoded model literals -- these were the staleness vectors.
+    expect(source).not.toMatch(/claude-sonnet-4-5-20250929/);
+    expect(source).not.toMatch(/gemini-2\.0-flash/);
+    expect(source).not.toMatch(/llama-3\.3-70b-versatile/);
+    expect(source).not.toMatch(/mistral-large-latest/);
+    expect(source).not.toMatch(/deepseek-chat/);
+    expect(source).not.toMatch(/grok-2/);
   });
 });
 
