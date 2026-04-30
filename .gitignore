@@ -54,6 +54,11 @@ test/config/.gitignore
 # npm pack output
 packages/*/*.tgz
 
+# Transient files from packages/comis/scripts/prepack.js
+packages/comis/npm-shrinkwrap.json
+packages/comis/package-lock.json
+packages/comis/package.json.workspace-backup
+
 # Private keys and certificates
 *.pem
 *.key

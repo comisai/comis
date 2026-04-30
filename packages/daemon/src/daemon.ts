@@ -63,6 +63,7 @@ import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { createExecGit } from "./config/exec-git.js";
 import { saveLastKnownGood, buildRollbackSuggestion, handleRestoreFlag } from "./config/last-known-good.js";
 import { createRestartContinuationTracker, loadContinuations, buildMcpStatusLine } from "./wiring/restart-continuation.js";
+import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import os from "node:os";
 import { join as pathJoin, dirname as pathDirname, resolve as pathResolve } from "node:path";
@@ -777,11 +778,20 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // before setupTools completes).
   // Deferred notification session tracker ref: wired after setupNotifications returns.
   // The onMessageProcessed callback reads this at call time (not definition time),
-  // so it is always set before any message arrives.
+  // so it is always set before any message arrives. recordActivity MUST stay in
+  // the post-processing callback because the ref is wired AFTER setupChannels
+  // returns; tracker.track moved to onMessageReceived which has no such dep.
   const sessionTrackerRef: { ref?: import("./notification/session-tracker.js").SessionTracker } = {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches assembleToolsForAgent signature from setup-tools.ts
   const toolAssemblerRef: { ref?: (agentId: string, options?: import("./wiring/setup-tools.js").AssembleToolsOptions) => Promise<any[]> } = {};
-  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, commandQueue } = await setupChannels({
+  // Resolver translating daemon UUIDs (NormalizedMessage.id) back to platform-
+  // native message ids (e.g. Telegram integer message_id) for the
+  // message.delete/edit/react RPC handlers. Built post-setupChannels (needs
+  // channelCapabilities from the return), captured by reference inside the
+  // onMessageReceived lambda below — safe because no inbound message can fire
+  // before channelManager.start() runs later.
+  let inboundMessageIdResolver: InboundMessageIdResolver | undefined;
+  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, channelCapabilities, commandQueue } = await setupChannels({
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger,
     linkRunner,
@@ -812,8 +822,16 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     rpcCall,
     // Task extraction callback (gated by config.scheduler.tasks.enabled)
     onTaskExtraction: extractFromConversation,
-    // Restart continuation: track recently-active sessions for SIGUSR2 replay
-    onMessageProcessed: (msg, channelType) => {
+    // Restart continuation: track recently-active sessions for SIGUSR2 replay.
+    // Two-callback timing split (260430-s4m corrects the r4i-A flaw):
+    //   onMessageReceived fires BEFORE processInboundMessage so the tracker
+    //     Map is populated before any tool call could trigger SIGUSR2 mid-
+    //     execution. Without this, multi-restart chains saw 0 captured records
+    //     and the next instance had nothing to replay -> silent bot.
+    //   onMessageProcessed fires AFTER processing for sessionTrackerRef
+    //     because the ref is wired post-setupNotifications (deferred-ref
+    //     pattern); calling it pre-processing would fire on an undefined ref.
+    onMessageReceived: (msg, channelType) => {
       // Preserve channel-native chat type so post-restart synthetic messages
       // can frame group sessions correctly. Without this, group inbounds are
       // mis-framed as DMs on first turn after restart.
@@ -829,8 +847,16 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
         tenantId: container.config.tenantId,
         timestamp: Date.now(),
       });
+      // Translate daemon UUID -> platform-native message id so message.delete/
+      // edit/react can call channel adapters with what they actually expect.
+      // Resolver is assigned just after setupChannels returns (below).
+      inboundMessageIdResolver?.record(msg, channelType);
+    },
+    onMessageProcessed: (msg, channelType) => {
       // Record session activity for notification channel resolution fallback.
-      // sessionTrackerRef is populated after setupNotifications() returns (below).
+      // sessionTrackerRef.ref is populated post-construction by
+      // setupNotifications (line 879 below), so this MUST stay in the
+      // after-processing callback -- moving it earlier would fire on undefined.
       sessionTrackerRef.ref?.recordActivity(defaultAgentId, channelType, msg.channelId);
     },
     // /approve and /deny chat command interception
@@ -846,6 +872,19 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
 
   // Populate channel plugins ref for per-message char limit resolution.
   channelPluginsRef.ref = channelPlugins;
+
+  // Build the inbound message id resolver now that we have channelCapabilities.
+  // Each enabled channel contributes its `replyToMetaKey` (e.g. "telegramMessageId")
+  // so the resolver knows which metadata field to read on inbound to capture
+  // the platform-native id. Safe to assign now: setupChannels has not started
+  // adapters yet, so no inbound message has fired the onMessageReceived lambda.
+  {
+    const metaKeyByChannel = new Map<string, string>();
+    for (const [type, cap] of channelCapabilities) {
+      metaKeyByChannel.set(type, cap.replyToMetaKey);
+    }
+    inboundMessageIdResolver = createInboundMessageIdResolver({ metaKeyByChannel });
+  }
 
   // Populate channelAdapters ref now that setupChannels has returned.
   // The drain cycle needs adapters to re-deliver pending messages.
@@ -1223,7 +1262,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     agentDataDir: pathJoin(container.config.dataDir ?? pathJoin(os.homedir(), ".comis"), "agents"),
     sessionStore: sessionStoreBridge,
     crossSessionSender, subAgentRunner, graphCoordinator, namedGraphStore, nodeTypeRegistry,
-    securityConfig: container.config.security, adaptersByType, visionRegistry,
+    securityConfig: container.config.security, adaptersByType, inboundMessageIdResolver, visionRegistry,
     mediaConfig: container.config.integrations.media, ttsAdapter, linkRunner,
     logger, container, configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS,
     configGitManager,
@@ -1364,7 +1403,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
         "MCP connection failures detected during restart continuation replay",
       );
     }
-    const baseText = "[system: daemon restarted after config change — session restored. Do NOT repeat, re-send, or re-execute anything from the previous conversation. Simply greet the user or wait for their next message.]";
+    const baseText = "[system: daemon restarted to apply a config change. The result of your previous tool call is in the conversation above — react to it naturally, confirm or surface any issue, then yield to the user.]";
     for (const record of continuations) {
       // Skip sessions that already received a message during this startup cycle
       // (e.g., Telegram webhook delivered before continuation replay ran).

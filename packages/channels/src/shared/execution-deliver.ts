@@ -28,7 +28,7 @@ import { coalesceBlocks } from "./block-coalescer.js";
 /** Minimal deps needed for the delivery phase. */
 export type DeliverDeps = Pick<
   ExecutionPipelineDeps,
-  "eventBus" | "logger" | "streamingConfig" | "channelRegistry" | "retryEngine" | "deliveryQueue"
+  "eventBus" | "logger" | "streamingConfig" | "channelRegistry" | "retryEngine" | "deliveryQueue" | "inFlightSends"
 >;
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ export async function deliverExecutionResponse(
         skipChunking: true,
         origin: "agent",
       }, deps.deliveryQueue
-        ? { retryEngine: deps.retryEngine, eventBus: deps.eventBus, deliveryQueue: deps.deliveryQueue, replyMode: resolvedReplyMode, abortSignal: deliverySignal }
+        ? { retryEngine: deps.retryEngine, eventBus: deps.eventBus, deliveryQueue: deps.deliveryQueue, replyMode: resolvedReplyMode, abortSignal: deliverySignal, inFlightSends: deps.inFlightSends }
         : undefined);
 
       if (!deliveryResult.ok || !deliveryResult.value.ok) {

@@ -209,11 +209,11 @@ export const VisionConfigSchema = z.strictObject({
  * Link understanding configuration.
  *
  * Controls automatic URL detection, fetching, and content extraction
- * from inbound messages. Disabled by default for backward compatibility.
+ * from inbound messages.
  */
 export const LinkUnderstandingConfigSchema = z.strictObject({
-    /** Enable automatic link understanding (default: false) */
-    enabled: z.boolean().default(false),
+    /** Enable automatic link understanding (default: true) */
+    enabled: z.boolean().default(true),
     /** Maximum number of links to process per message (default: 3) */
     maxLinks: z.number().int().positive().default(3),
     /** Timeout for fetching each URL in milliseconds (default: 10000) */

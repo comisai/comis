@@ -47,15 +47,15 @@
     "@comis/shared": "workspace:*",
     "@comis/skills": "workspace:*",
     "@mariozechner/pi-ai": "0.68.0",
-    "better-sqlite3": "^12.6.2",
-    "hono": "^4.12.14",
-    "pino": "^10.3.1",
-    "pino-roll": "^4.0.0",
-    "yaml": "^2.8.3",
-    "zod": "^4.3.6"
+    "better-sqlite3": "12.9.0",
+    "hono": "4.12.15",
+    "pino": "10.3.1",
+    "pino-roll": "4.0.0",
+    "yaml": "2.8.3",
+    "zod": "4.3.6"
   },
   "optionalDependencies": {
-    "sd-notify": "^2.8.0"
+    "sd-notify": "2.8.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",

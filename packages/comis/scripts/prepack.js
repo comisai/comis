@@ -14,9 +14,10 @@
  * published separately.
  */
 
-import { cpSync, mkdirSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, existsSync, lstatSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const comisRoot = resolve(__dirname, "..");
@@ -134,5 +135,24 @@ for (const entry of entries) {
 if (removed > 0) {
   console.log(`  removed ${removed} pnpm symlinks from node_modules/`);
 }
+
+// --- Step 4: Generate npm-shrinkwrap.json ---
+// Locks the entire transitive dep tree with SHA-512 integrity hashes so that
+// consumers running `npm install -g comisai` get the exact tree we tested
+// against, regardless of caret ranges in transitive package.json files.
+// Without this, a compromised patch published one level down (event-stream /
+// ua-parser-js / node-ipc style) flows through to fresh installs automatically.
+// npm always includes npm-shrinkwrap.json in published tarballs.
+const shrinkwrapPath = join(comisRoot, "npm-shrinkwrap.json");
+const lockPath = join(comisRoot, "package-lock.json");
+if (existsSync(shrinkwrapPath)) rmSync(shrinkwrapPath);
+if (existsSync(lockPath)) rmSync(lockPath);
+
+execSync("npm install --package-lock-only --ignore-scripts --omit=dev --no-audit --no-fund", {
+  cwd: comisRoot,
+  stdio: "pipe",
+});
+renameSync(lockPath, shrinkwrapPath);
+console.log("  generated npm-shrinkwrap.json");
 
 console.log("prepack: done");

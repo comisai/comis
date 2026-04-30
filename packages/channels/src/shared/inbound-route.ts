@@ -43,6 +43,7 @@ export type RouteDeps = Pick<
   | "channelRegistry"
   | "retryEngine"
   | "deliveryQueue"
+  | "inFlightSends"
   | "followupTrigger"
   | "followupConfig"
   | "assembleToolsForAgent"
@@ -175,6 +176,7 @@ export async function routeInboundMessage(
     channelRegistry: deps.channelRegistry,
     retryEngine: deps.retryEngine,
     deliveryQueue: deps.deliveryQueue,
+    inFlightSends: deps.inFlightSends,
     followupTrigger: deps.followupTrigger,
     followupConfig: deps.followupConfig,
     commandQueue: deps.commandQueue,

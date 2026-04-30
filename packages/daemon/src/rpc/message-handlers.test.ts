@@ -447,3 +447,165 @@ describe("capability guard", () => {
     expect(result).toHaveProperty("messageId");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Inbound UUID -> platform-native message id resolution (issue #4 from
+// 260430-r4i triage; production repro 2026-04-30 17:04:31Z `message.delete`
+// failed because Number("e60f9634-...") -> NaN was passed to Telegram).
+// ---------------------------------------------------------------------------
+
+describe("inboundMessageIdResolver integration", () => {
+  let workspaceDir: string;
+
+  beforeEach(() => {
+    workspaceDir = mkdtempSync(join(tmpdir(), "comis-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(workspaceDir, { recursive: true, force: true });
+  });
+
+  function makeDepsWithResolver(): MessageHandlerDeps {
+    const deps = createMockDeps(workspaceDir);
+    const records = new Map<string, { channelType: string; channelId: string; nativeId: string }>();
+    deps.inboundMessageIdResolver = {
+      record: () => { /* not used in handler tests */ },
+      resolve: (uuid: string) => records.get(uuid),
+    };
+    // Seed: UUID e60f9634 came from telegram chat 678314278 with native id "523".
+    records.set("e60f9634-1470-4907-a1c6-ee2b2039331a", {
+      channelType: "telegram",
+      channelId: "678314278",
+      nativeId: "523",
+    });
+    return deps;
+  }
+
+  it("message.delete translates inbound UUID to native id before adapter call", async () => {
+    const deps = makeDepsWithResolver();
+    const handlers = createMessageHandlers(deps);
+    const adapter = deps.adaptersByType.get("telegram")!;
+
+    const result = await handlers["message.delete"]({
+      channel_type: "telegram",
+      channel_id: "678314278",
+      message_id: "e60f9634-1470-4907-a1c6-ee2b2039331a",
+    });
+
+    expect(adapter.deleteMessage).toHaveBeenCalledWith("678314278", "523");
+    expect(result).toMatchObject({ deleted: true, messageId: "523" });
+  });
+
+  it("message.edit translates inbound UUID to native id before adapter call", async () => {
+    const deps = makeDepsWithResolver();
+    const handlers = createMessageHandlers(deps);
+    const adapter = deps.adaptersByType.get("telegram")!;
+
+    await handlers["message.edit"]({
+      channel_type: "telegram",
+      channel_id: "678314278",
+      message_id: "e60f9634-1470-4907-a1c6-ee2b2039331a",
+      text: "edited",
+    });
+
+    expect(adapter.editMessage).toHaveBeenCalledWith("678314278", "523", expect.any(String));
+  });
+
+  it("message.react translates inbound UUID to native id before adapter call", async () => {
+    const deps = makeDepsWithResolver();
+    const handlers = createMessageHandlers(deps);
+    const adapter = deps.adaptersByType.get("telegram")!;
+
+    await handlers["message.react"]({
+      channel_type: "telegram",
+      channel_id: "678314278",
+      message_id: "e60f9634-1470-4907-a1c6-ee2b2039331a",
+      emoji: "👍",
+    });
+
+    expect(adapter.reactToMessage).toHaveBeenCalledWith("678314278", "523", "👍");
+  });
+
+  it("message.reply translates inbound UUID to native id before delivery", async () => {
+    const deps = makeDepsWithResolver();
+    const handlers = createMessageHandlers(deps);
+    const adapter = deps.adaptersByType.get("telegram")!;
+
+    await handlers["message.reply"]({
+      channel_type: "telegram",
+      channel_id: "678314278",
+      message_id: "e60f9634-1470-4907-a1c6-ee2b2039331a",
+      text: "reply",
+    });
+
+    // deliverToChannel forwards replyTo into adapter.sendMessage's options.
+    expect(adapter.sendMessage).toHaveBeenCalled();
+    const call = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[2]).toMatchObject({ replyTo: "523" });
+  });
+
+  it("native id (numeric string) passes through unchanged when not in resolver", async () => {
+    const deps = makeDepsWithResolver();
+    const handlers = createMessageHandlers(deps);
+    const adapter = deps.adaptersByType.get("telegram")!;
+
+    await handlers["message.delete"]({
+      channel_type: "telegram",
+      channel_id: "678314278",
+      message_id: "999",  // a Telegram-native id from message.send response
+    });
+
+    expect(adapter.deleteMessage).toHaveBeenCalledWith("678314278", "999");
+  });
+
+  it("UUID with mismatched channelType passes through unchanged (defensive)", async () => {
+    const deps = makeDepsWithResolver();
+    // Resolver record is for telegram, but caller asserts a different channel.
+    deps.adaptersByType.set("discord", createMockAdapter());
+    const handlers = createMessageHandlers(deps);
+    const tgAdapter = deps.adaptersByType.get("discord")!;
+
+    await handlers["message.delete"]({
+      channel_type: "discord",
+      channel_id: "678314278",
+      message_id: "e60f9634-1470-4907-a1c6-ee2b2039331a",
+    });
+
+    expect(tgAdapter.deleteMessage).toHaveBeenCalledWith(
+      "678314278",
+      "e60f9634-1470-4907-a1c6-ee2b2039331a",
+    );
+  });
+
+  it("UUID with mismatched channelId passes through unchanged (defensive)", async () => {
+    const deps = makeDepsWithResolver();
+    const handlers = createMessageHandlers(deps);
+    const adapter = deps.adaptersByType.get("telegram")!;
+
+    await handlers["message.delete"]({
+      channel_type: "telegram",
+      channel_id: "999999",  // not the one the UUID was recorded under
+      message_id: "e60f9634-1470-4907-a1c6-ee2b2039331a",
+    });
+
+    expect(adapter.deleteMessage).toHaveBeenCalledWith(
+      "999999",
+      "e60f9634-1470-4907-a1c6-ee2b2039331a",
+    );
+  });
+
+  it("works without a resolver (backward compat)", async () => {
+    const deps = createMockDeps(workspaceDir);
+    expect(deps.inboundMessageIdResolver).toBeUndefined();
+    const handlers = createMessageHandlers(deps);
+    const adapter = deps.adaptersByType.get("telegram")!;
+
+    await handlers["message.delete"]({
+      channel_type: "telegram",
+      channel_id: "678314278",
+      message_id: "anything",
+    });
+
+    expect(adapter.deleteMessage).toHaveBeenCalledWith("678314278", "anything");
+  });
+});

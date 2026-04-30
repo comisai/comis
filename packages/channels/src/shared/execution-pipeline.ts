@@ -108,6 +108,14 @@ export interface ExecutionPipelineDeps {
   executionTimeoutMs?: number;
   /** Delivery queue for crash-safe persistence. */
   deliveryQueue?: DeliveryQueuePort;
+  /**
+   * Per-instance set of in-flight outbound sendMessage promises. Threaded
+   * through DeliverToChannelDeps so deliver-to-channel can register active
+   * sends. Drained in stopAll() with a 5s deadline so SIGUSR2 cannot tear
+   * down adapters mid-send. Created by the channel-manager factory; do not
+   * pass externally.
+   */
+  inFlightSends?: Set<Promise<unknown>>;
   /** When true, only content inside <final> blocks reaches users. */
   enforceFinalTag?: boolean;
 }

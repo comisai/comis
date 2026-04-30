@@ -32,9 +32,9 @@
   },
   "dependencies": {
     "@comis/shared": "workspace:*",
-    "ipaddr.js": "^2.3.0",
-    "yaml": "^2.8.3",
-    "zod": "^4.3.6"
+    "ipaddr.js": "2.3.0",
+    "yaml": "2.8.3",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "safe-regex2": "5.1.1",

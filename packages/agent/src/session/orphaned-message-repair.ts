@@ -98,16 +98,27 @@ export function repairOrphanedMessages(sessionManager: SessionManager): RepairRe
 
   // Case 2: Tool-result tail -- session ends with tool/toolResult after
   // an assistant toolUse, but execution was interrupted by a restart.
+  // Content-aware (CONTEXT.md §Change 1A): the synthetic assistant text
+  // reflects the actual trailing toolResult body so the model is not given
+  // a prompt that contradicts the real successful result already on disk.
   /* eslint-disable @typescript-eslint/no-explicit-any -- role "tool"/"toolResult" not in SDK AgentMessage union */
   const isToolResult =
     (lastMsg as any).role === "tool" || (lastMsg as any).role === "toolResult";
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
   if (isToolResult) {
-    appendSyntheticAssistant(
-      sessionManager,
-      "(previous tool execution was interrupted by a system restart)",
-    );
+    let text: string;
+    if (isErroredToolResult(lastMsg)) {
+      text = "(previous tool errored before I could react)";
+    } else {
+      const body = parseToolResultBody(lastMsg);
+      if (body && body.restarting === true) {
+        text = "(daemon restarted to apply the change — continuing)";
+      } else {
+        text = "(continuing after daemon restart)";
+      }
+    }
+    appendSyntheticAssistant(sessionManager, text);
     return {
       repaired: true,
       reason: "trailing tool result without assistant reply (interrupted by restart)",
@@ -194,6 +205,47 @@ function createSyntheticMessage(role: "user" | "assistant", text: string): any {
 /** Append a synthetic assistant message with the given text. */
 function appendSyntheticAssistant(sessionManager: SessionManager, text: string): void {
   sessionManager.appendMessage(createSyntheticMessage("assistant", text) as any);
+}
+
+/**
+ * Best-effort parse of a trailing toolResult message into its tool-body
+ * shape. The SDK wire format stores the body as one or more text content
+ * blocks containing JSON. Returns null when the content isn't parseable
+ * JSON (e.g., raw string output from a non-structured tool). Per CONTEXT.md
+ * §Change 1A, parsing is best-effort, not a domain operation, so Result<T,E>
+ * is intentionally not used here.
+ */
+function parseToolResultBody(
+  msg: unknown,
+): { restarting?: boolean; [k: string]: unknown } | null {
+  const m = msg as { content?: unknown } | null | undefined;
+  if (!m || !Array.isArray(m.content)) return null;
+  const first = m.content[0] as { type?: unknown; text?: unknown } | undefined;
+  if (!first || first.type !== "text" || typeof first.text !== "string") return null;
+  const trimmed = first.text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return typeof parsed === "object" && parsed !== null ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort detection of an errored toolResult. The SDK and various tool
+ * adapters surface errors either via `isError: true` on the message envelope
+ * or on the first content block. Inspect both.
+ */
+function isErroredToolResult(msg: unknown): boolean {
+  const m = msg as { isError?: unknown; content?: unknown } | null | undefined;
+  if (!m) return false;
+  if (m.isError === true) return true;
+  if (Array.isArray(m.content) && m.content.length > 0) {
+    const first = m.content[0] as { isError?: unknown } | undefined;
+    if (first && first.isError === true) return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
