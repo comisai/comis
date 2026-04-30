@@ -1364,7 +1364,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
         "MCP connection failures detected during restart continuation replay",
       );
     }
-    const baseText = "[system: daemon restarted after config change — session restored. Do NOT repeat, re-send, or re-execute anything from the previous conversation. Simply greet the user or wait for their next message.]";
+    const baseText = "[system: daemon restarted to apply a config change. The result of your previous tool call is in the conversation above — react to it naturally, confirm or surface any issue, then yield to the user.]";
     for (const record of continuations) {
       // Skip sessions that already received a message during this startup cycle
       // (e.g., Telegram webhook delivered before continuation replay ran).
