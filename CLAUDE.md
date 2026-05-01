@@ -121,7 +121,7 @@ Steps to ship `vX.Y.Z`:
    gh release create vX.Y.Z --title vX.Y.Z --notes "<notes>"
    ```
    The `vX.Y.Z` tag triggers four workflows in `.github/workflows/`:
-   - `npm-publish.yml` — `pnpm publish -r --provenance` (sigstore attestation via GitHub OIDC). Runs `packages/comis/scripts/prepack.js`, which regenerates `npm-shrinkwrap.json` via `npm install --package-lock-only` and bundles `@comis/*` into `node_modules/@comis/` for inclusion in the tarball.
+   - `npm-publish.yml` — `pnpm publish -r --provenance` (sigstore attestation via GitHub OIDC). Runs `packages/comis/scripts/prepack.js`, which bundles `@comis/*` into `node_modules/@comis/` for inclusion in the tarball.
    - `docker-release.yml`, `dockerhub-release.yml` — multi-arch images (`linux/amd64` + `linux/arm64`), both `default` and `slim` variants. arm64 builds on a native runner (not QEMU).
    - `release.yml` — GitHub release artifacts.
 
@@ -130,6 +130,5 @@ Steps to ship `vX.Y.Z`:
 These are load-bearing for `npm install -g comisai`:
 
 - **All `dependencies` / `devDependencies` are exact-pinned** (no `^` / `~`) across every `packages/*/package.json` and `website/package.json`. `workspace:*` is the only allowed non-numeric specifier — `prepack.js` rewrites it to literal versions for the published tarball.
-- **`packages/comis/scripts/prepack.js` regenerates `npm-shrinkwrap.json` at pack time.** This is the only place the full transitive tree is locked for consumers (`pnpm-lock.yaml` is not shipped in the published tarball). The shrinkwrap pins SHA-512 hashes for every external dep and marks `@comis/*` entries as `inBundle: true`. Do not remove this step.
 - **`@comis/*` workspace packages are `"private": true` and bundled** via `bundledDependencies`. Never publish them to the npm registry.
-- **`pnpm audit --prod` runs in CI as the matching gate.** Because the shrinkwrap freezes the transitive tree for consumers, a flagged vuln means *we* must ship a release — `npm update` on the consumer side won't pick up the fix.
+- **No `npm-shrinkwrap.json`** — exact-pinned direct deps provide sufficient version control. Shrinkwrap was removed because it interacts badly with `bundledDependencies` (phantom `inBundle` flags, pnpm path leaks).

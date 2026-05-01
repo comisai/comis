@@ -14,10 +14,9 @@
  * published separately.
  */
 
-import { cpSync, mkdirSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const comisRoot = resolve(__dirname, "..");
@@ -117,12 +116,9 @@ if (pkg.dependencies) {
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
 console.log(`  resolved ${resolved} workspace:* references to real versions`);
 
-// --- Step 3: Remove all non-bundled entries from node_modules/ ---
-// pnpm populates node_modules/ with symlinks (unscoped) and real directories
-// containing symlinks (scoped, e.g. @slack/bolt -> ../../node_modules/.pnpm/...).
-// If any remain when npm generates the shrinkwrap in step 4, it records them as
-// link entries with pnpm-internal paths that don't exist on the consumer's machine.
-// Remove everything except @comis/ (our bundled packages).
+// --- Step 3: Remove pnpm symlinks from node_modules/ ---
+// pnpm populates node_modules/ with symlinks and scope directories that must not
+// end up in the tarball. Keep only @comis/ (our bundled packages).
 const entries = readdirSync(bundledModules);
 let removed = 0;
 for (const entry of entries) {
@@ -134,23 +130,23 @@ if (removed > 0) {
   console.log(`  removed ${removed} pnpm entries from node_modules/`);
 }
 
-// --- Step 4: Generate npm-shrinkwrap.json ---
-// Locks the entire transitive dep tree with SHA-512 integrity hashes so that
-// consumers running `npm install -g comisai` get the exact tree we tested
-// against, regardless of caret ranges in transitive package.json files.
-// Without this, a compromised patch published one level down (event-stream /
-// ua-parser-js / node-ipc style) flows through to fresh installs automatically.
-// npm always includes npm-shrinkwrap.json in published tarballs.
-const shrinkwrapPath = join(comisRoot, "npm-shrinkwrap.json");
-const lockPath = join(comisRoot, "package-lock.json");
-if (existsSync(shrinkwrapPath)) rmSync(shrinkwrapPath);
-if (existsSync(lockPath)) rmSync(lockPath);
-
-execSync("npm install --package-lock-only --ignore-scripts --omit=dev --no-audit --no-fund", {
-  cwd: comisRoot,
-  stdio: "pipe",
-});
-renameSync(lockPath, shrinkwrapPath);
-console.log("  generated npm-shrinkwrap.json");
+// --- Step 4: Bundle native-dep helpers that npm fails to install ---
+// npm's reify creates empty directories for transitive deps of non-bundled
+// native modules (better-sqlite3 → bindings → file-uri-to-path) when
+// bundledDependencies is present. Ship them in the tarball so they're always
+// available regardless of npm's behavior.
+const FORCE_BUNDLE = { "bindings": "1.5.0", "file-uri-to-path": "1.0.0" };
+const pnpmStore = join(monoRoot, "node_modules", ".pnpm");
+for (const [name, version] of Object.entries(FORCE_BUNDLE)) {
+  const src = join(pnpmStore, `${name}@${version}`, "node_modules", name);
+  const dest = join(bundledModules, name);
+  if (!existsSync(src)) {
+    console.error(`ERROR: ${src} not found in pnpm store`);
+    process.exit(1);
+  }
+  if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
+  cpSync(src, dest, { recursive: true });
+  console.log(`  force-bundled ${name}@${version}`);
+}
 
 console.log("prepack: done");

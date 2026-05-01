@@ -29,12 +29,6 @@ if (existsSync(bundledScope)) {
   rmSync(bundledScope, { recursive: true, force: true });
 }
 
-// Remove the generated npm-shrinkwrap.json — regenerated fresh on next pack.
-const shrinkwrapPath = join(comisRoot, "npm-shrinkwrap.json");
-if (existsSync(shrinkwrapPath)) {
-  rmSync(shrinkwrapPath);
-}
-
 import { execSync } from "node:child_process";
 try {
   execSync("pnpm install --frozen-lockfile", { cwd: join(comisRoot, "../.."), stdio: "pipe" });
