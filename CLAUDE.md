@@ -131,4 +131,3 @@ These are load-bearing for `npm install -g comisai`:
 
 - **All `dependencies` / `devDependencies` are exact-pinned** (no `^` / `~`) across every `packages/*/package.json` and `website/package.json`. `workspace:*` is the only allowed non-numeric specifier — `prepack.js` rewrites it to literal versions for the published tarball.
 - **`@comis/*` workspace packages are `"private": true` and bundled** via `bundledDependencies`. Never publish them to the npm registry.
-- **No `npm-shrinkwrap.json`** — exact-pinned direct deps provide sufficient version control. Shrinkwrap was removed because it interacts badly with `bundledDependencies` (phantom `inBundle` flags, pnpm path leaks).

@@ -180,18 +180,49 @@ describe("watchdog", () => {
   });
 
   it("gracefully degrades when sd-notify is null", () => {
-    handle = startWatchdog({
-      logger,
-      notifyOverride: null,
-    });
+    const prev = process.env["NOTIFY_SOCKET"];
+    delete process.env["NOTIFY_SOCKET"];
+    try {
+      handle = startWatchdog({
+        logger,
+        notifyOverride: null,
+      });
 
-    expect(logger.debug).toHaveBeenCalledWith(
-      "sd-notify not available, watchdog disabled (expected on macOS)",
-    );
+      expect(logger.debug).toHaveBeenCalledWith(
+        "sd-notify not available, watchdog disabled (expected on macOS)",
+      );
 
-    // No errors, just a no-op handle
-    vi.advanceTimersByTime(60_000);
-    // No assertions needed — just verifying no throws
+      // No errors, just a no-op handle
+      vi.advanceTimersByTime(60_000);
+      // No assertions needed — just verifying no throws
+    } finally {
+      if (prev !== undefined) process.env["NOTIFY_SOCKET"] = prev;
+    }
+  });
+
+  it("warns when sd-notify is null but NOTIFY_SOCKET is set (systemd Type=notify)", () => {
+    const prev = process.env["NOTIFY_SOCKET"];
+    process.env["NOTIFY_SOCKET"] = "/run/systemd/notify";
+    try {
+      handle = startWatchdog({
+        logger,
+        notifyOverride: null,
+      });
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errorKind: "config",
+          hint: expect.stringContaining("sd-notify"),
+        }),
+        "sd-notify not loaded but NOTIFY_SOCKET is set; systemd integration disabled",
+      );
+      expect(logger.debug).not.toHaveBeenCalledWith(
+        "sd-notify not available, watchdog disabled (expected on macOS)",
+      );
+    } finally {
+      if (prev === undefined) delete process.env["NOTIFY_SOCKET"];
+      else process.env["NOTIFY_SOCKET"] = prev;
+    }
   });
 
   it("uses watchdogIntervalOverride when provided", () => {
