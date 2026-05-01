@@ -1132,6 +1132,12 @@ export function createPiExecutor(
               session.abortCompaction();
               suppressError(session.abort(), "session abort on compaction cancel");
             },
+            // 260501-dkl: cancel the SDK's internal auto-retry loop when the
+            // bridge classifies the auto_retry_start error as `rate_limited`.
+            // Rate-limit windows (per-minute) outlast the SDK's retry budget
+            // (~30s), so retrying within the window cannot succeed.
+            // `abortRetry()` is sync void -- no error suppression needed.
+            onAbortRetry: () => session.abortRetry(),
             getContextUsage: () => {
               // Defensive try-catch: upstream estimateTokens() in pi-coding-agent
               // crashes with "message.content is not iterable" when an assistant

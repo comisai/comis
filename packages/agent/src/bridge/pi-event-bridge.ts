@@ -28,6 +28,7 @@ import { randomUUID } from "node:crypto";
 import { resolveModelPricing } from "../model/model-catalog.js";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
 import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-break-detection.js";
+import { classifyError } from "../executor/error-classifier.js";
 import type { BudgetGuard } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
 import type { StepCounter } from "../executor/step-counter.js";
@@ -82,6 +83,13 @@ export interface PiEventBridgeDeps {
   onDelta?: (delta: string) => void;
   /** Called when a safety control triggers -- PiExecutor uses this to call session.abort(). */
   onAbort?: () => void;
+  /** Called when a `rate_limited` error fires inside the SDK's auto-retry loop --
+   *  PiExecutor wires this to `session.abortRetry()` to cancel the SDK's
+   *  internal retry. Rate-limit windows are per-minute (longer than the SDK's
+   *  ~30s retry budget), so retrying within the window cannot succeed.
+   *  Non-`rate_limited` retryable errors (overloaded, network, 5xx) bypass this
+   *  hook -- the SDK's normal retry-with-backoff proceeds. (260501-dkl) */
+  onAbortRetry?: () => void;
   /** SDK context usage accessor -- returns live context metrics from AgentSession. */
   getContextUsage?: () => ContextUsageData | undefined;
   /** Context window guard for percent-based warn/block checks. */
@@ -1148,6 +1156,36 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               "Auto-compaction completed",
             );
           }
+          break;
+        }
+
+        // -----------------------------------------------------------------
+        // SDK auto-retry loop: abort on rate_limited (260501-dkl)
+        // -----------------------------------------------------------------
+        case "auto_retry_start": {
+          const errorMessage = (event as { errorMessage?: string }).errorMessage ?? "";
+          const attempt = (event as { attempt?: number }).attempt;
+          const maxAttempts = (event as { maxAttempts?: number }).maxAttempts;
+          const delayMs = (event as { delayMs?: number }).delayMs;
+
+          const classification = classifyError(new Error(errorMessage));
+          if (classification.category === "rate_limited") {
+            deps.logger.info(
+              {
+                module: "agent.bridge.auto-retry-abort",
+                attempt,
+                maxAttempts,
+                delayMs,
+                errorMessage,
+                hint: "Rate-limit windows are per-minute; SDK retry budget cannot bridge the window -- aborting retry to surface terminal failure",
+                errorKind: "rate_limited" as const,
+              },
+              "Aborting SDK auto-retry on rate-limited error",
+            );
+            deps.onAbortRetry?.();
+          }
+          // Non-rate_limited categories (overloaded, network, server_error, etc.)
+          // fall through -- let the SDK's normal retry-with-backoff proceed.
           break;
         }
 
