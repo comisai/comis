@@ -31,28 +31,47 @@ export function isVisibleTextBlock(block: any): boolean {
 }
 
 /**
- * Extract user-visible text from the last assistant message in a session.
+ * Extract user-visible text from the last "real" assistant message.
  *
- * When the last assistant message contains commentary-phase text blocks,
- * filters them out and returns only visible text. Otherwise delegates to
- * the SDK's getLastAssistantText() method.
+ * Filters non-real assistants from the tail walk:
+ *   - aborted-empty (stopReason "aborted" + empty content) — original.
+ *   - error-empty (stopReason "error" + empty content) — sibling of
+ *     aborted-empty, marks failed LLM calls (e.g. 429 / 5xx swallowed
+ *     inside pi-ai's stream wrapper, surfaced as empty content).
+ *   - synthetic-injected (model === "synthetic") — appended by
+ *     orphaned-message-repair.ts to restore role alternation after a
+ *     daemon restart; not user-visible LLM output.
+ *
+ * When the resulting last assistant contains commentary-phase text
+ * blocks, drops them and returns only visible text. Otherwise returns
+ * the visible (non-commentary) text blocks of the last assistant
+ * directly — does NOT delegate to session.getLastAssistantText(),
+ * which walks past empty messages and would re-introduce the
+ * synthetic-leak (260501-egj).
  */
 export function getVisibleAssistantText(session: any): string {
   const messages: any[] | undefined = session?.messages;
 
-  // Find last non-aborted assistant message
+  // Find last "real" assistant message — skip aborted-empty,
+  // error-empty, and synthetic-injected.
   const lastAssistant = Array.isArray(messages)
     ? messages
         .slice()
         .reverse()
         .find((m: any) => {
           if (m.role !== "assistant") return false;
+          // Skip aborted-empty (existing behavior — preserved).
           if (m.stopReason === "aborted" && m.content?.length === 0) return false;
+          // Skip error-empty — failed LLM calls (e.g. 429 swallowed
+          // inside pi-ai's stream wrapper).
+          if (m.stopReason === "error" && m.content?.length === 0) return false;
+          // Skip synthetic-injected — orphaned-message-repair scaffolding.
+          if (m.model === "synthetic") return false;
           return true;
         })
     : undefined;
 
-  // Only activate phase filtering when commentary blocks are present
+  // Only activate phase filtering when commentary blocks are present.
   const hasCommentary = lastAssistant?.content?.some(
     (b: any) => b?.type === "text" && parsePhase(b.textSignature) === "commentary",
   ) ?? false;
@@ -64,7 +83,16 @@ export function getVisibleAssistantText(session: any): string {
       .join("");
   }
 
-  // No commentary — delegate to SDK method
-  return session?.getLastAssistantText?.() ?? "";
+  // No commentary — return lastAssistant's visible text directly.
+  // Do NOT delegate to session.getLastAssistantText() because it walks
+  // past empty messages (aborted/error/etc.) and re-introduces the
+  // synthetic-leak (production bug 260501-egj: post-restart-resumption
+  // rate-limit returned synthetic placeholder instead of the
+  // 260501-cur "Rate limit exceeded" terminal error).
+  if (!lastAssistant?.content || !Array.isArray(lastAssistant.content)) return "";
+  return lastAssistant.content
+    .filter(isVisibleTextBlock)
+    .map((b: any) => b.text)
+    .join("");
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
