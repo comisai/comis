@@ -3866,11 +3866,18 @@ describe("createPiEventBridge", () => {
         ) as any,
       );
 
-      // Drain the fire-and-forget Promise dispatch (multiple ticks because
-      // fs.readFile is async and the helper awaits it).
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      // Drain the fire-and-forget Promise dispatch by polling for the completion
+      // log. The dispatch chain awaits fs.readFile, which takes a variable number
+      // of event-loop ticks to propagate (fewer on macOS, more on Linux CI).
+      // vi.waitFor handles both consistently. (260501-jfk: replaced racy
+      // setImmediate x3 drain that flaked on Linux CI in v1.0.29 publish run.)
+      await vi.waitFor(
+        () => {
+          const calls = infoCallsByMessage(localDeps, "Wire-edge diff dispatch complete");
+          expect(calls).toHaveLength(1);
+        },
+        { timeout: 2000, interval: 10 },
+      );
 
       const completionCalls = infoCallsByMessage(localDeps, "Wire-edge diff dispatch complete");
       expect(completionCalls).toHaveLength(1);
@@ -3900,9 +3907,15 @@ describe("createPiEventBridge", () => {
         ) as any,
       );
 
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      // Drain the fire-and-forget Promise dispatch by polling for the completion
+      // log. (260501-jfk: replaced racy setImmediate x3 drain — see test G.)
+      await vi.waitFor(
+        () => {
+          const messages = infoCallsByModule(localDeps, "agent.bridge.wire-diff").map((c) => c[1]);
+          expect(messages).toContain("Wire-edge diff dispatch complete");
+        },
+        { timeout: 2000, interval: 10 },
+      );
 
       // Both wire-diff INFO logs should appear, in order.
       const wireDiffCalls = infoCallsByModule(localDeps, "agent.bridge.wire-diff");
