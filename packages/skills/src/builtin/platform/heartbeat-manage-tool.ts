@@ -10,7 +10,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { readStringParam } from "./tool-helpers.js";
 import { createAdminManageTool } from "./admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";

@@ -40,13 +40,6 @@ export function createModelRegistryAdapter(authStorage: AuthStorage): ModelRegis
 }
 
 /**
- * YAML provider type → pi-ai API identifier. Mirrors the
- * `OPENAI_COMPATIBLE_TYPES` set in `model-scanner.ts`. Unknown types
- * default to `openai-completions` so arbitrary OpenAI-compatible
- * proxies (NVIDIA NIM, Together, ollama, lm-studio, etc.) work without
- * code changes.
- */
-/**
  * Provider types that can register without an API key.
  *
  * Ollama (and similar local inference servers) do not require authentication
@@ -59,20 +52,47 @@ export function createModelRegistryAdapter(authStorage: AuthStorage): ModelRegis
  */
 const KEYLESS_PROVIDER_TYPES = new Set(["ollama"]);
 
-const PROVIDER_TYPE_TO_API: Record<string, Api> = {
-  openai: "openai-completions",
-  groq: "openai-completions",
-  mistral: "openai-completions",
+const _builtInProviders = new Set<string>(getProviders());
+
+/**
+ * Infer pi-ai wire API from the live catalog.
+ *
+ * For any provider name that pi-ai exposes via `getProviders()`, read the
+ * `api` field from the first registered model. This is the single source of
+ * truth: when pi-ai adds a provider with a new wire format (e.g. a future
+ * `xyz-streaming` API), this helper picks it up automatically without any
+ * comis code change.
+ *
+ * Returns `undefined` when the type is not in the native catalog -- callers
+ * should chain to `FALLBACK_API_FOR_CUSTOM_TYPES` and finally to the
+ * `openai-completions` default for arbitrary OpenAI-compatible proxies.
+ */
+function inferApiFromCatalog(type: string): Api | undefined {
+  if (!_builtInProviders.has(type)) return undefined;
+  const models = getModels(type as KnownProvider);
+  return models[0]?.api as Api | undefined;
+}
+
+/**
+ * Tiny fallback table for custom provider types pi-ai does NOT ship in its
+ * native catalog. These are local inference servers and legacy aliases that
+ * speak OpenAI-compatible wire format but have no provider entry in
+ * `models.generated.ts`. Everything else falls through to
+ * `"openai-completions"` -- the safe default for arbitrary OpenAI-compatible
+ * proxies (NVIDIA NIM, Fireworks, Perplexity, vLLM, llama.cpp, etc.).
+ */
+const FALLBACK_API_FOR_CUSTOM_TYPES: Record<string, Api> = {
+  ollama: "openai-completions",
+  "lm-studio": "openai-completions",
   together: "openai-completions",
-  deepseek: "openai-completions",
-  cerebras: "openai-completions",
-  xai: "openai-completions",
-  openrouter: "openai-completions",
-  anthropic: "anthropic-messages",
-  google: "google-generative-ai",
 };
 
-const _builtInProviders = new Set<string>(getProviders());
+/**
+ * API resolution model for `entry.type`:
+ *   1. catalog-first   -- `inferApiFromCatalog(type)` reads the live pi-ai catalog
+ *   2. fallback-second -- `FALLBACK_API_FOR_CUSTOM_TYPES[type]` for legacy custom types
+ *   3. default-final   -- `"openai-completions"` for arbitrary OpenAI-compatible proxies
+ */
 
 function getBuiltInBaseUrl(type: string): string | undefined {
   if (!_builtInProviders.has(type)) return undefined;
@@ -161,20 +181,98 @@ export function registerCustomProviders(
       providerAliases.set(providerName, entry.type);
     }
 
-    const customModels = isBuiltInType
-      ? entry.models.filter((m) => !builtInIds.has(m.id))
-      : [...entry.models];
+    // Layer 1B (260430-vwt): catalog-aware model enrichment.
+    //
+    // Before computing customModels, decide whether to inherit the full
+    // pi-ai catalog or to enrich the user's sparse list with catalog
+    // metadata.
+    //
+    // Inherit branch (empty list + built-in type + no baseUrl override):
+    //   user wants the full native catalog under this provider name --
+    //   bypass the dedup filter below; the inherited list is intentional.
+    // Enrich branch (sparse list + built-in type):
+    //   for each user model, fill missing fields from the catalog when an
+    //   ID match is found. The dedup filter still applies after enrichment
+    //   so that user-supplied IDs already in pi-ai's built-in catalog are
+    //   served via the built-in path (not redundantly registered).
+    const hasBaseUrlOverride = !!entry.baseUrl;
+    const shouldInheritCatalog =
+      entry.models.length === 0 && isBuiltInType && !hasBaseUrlOverride;
 
-    if (isBuiltInType && customModels.length < entry.models.length) {
-      const skipped = entry.models.length - customModels.length;
+    let workingModels: Array<{
+      id: string;
+      name?: string;
+      contextWindow?: number;
+      maxTokens?: number;
+      reasoning?: boolean;
+      input?: ReadonlyArray<"text" | "image">;
+      cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+    }>;
+
+    if (shouldInheritCatalog) {
+      // Inherit the full native catalog -- no dedup, no fallback values.
+      const catalogModels = getModels(entry.type as KnownProvider);
+      workingModels = catalogModels.map((m) => ({
+        id: m.id,
+        name: m.name,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+        reasoning: m.reasoning,
+        input: m.input,
+        cost: m.cost,
+      }));
       logger.debug(
-        { providerName, type: entry.type, skipped, remaining: customModels.length },
-        "Skipped built-in models already in pi SDK catalog",
+        { providerName, type: entry.type, inherited: workingModels.length },
+        "Inherited full pi-ai native catalog (empty user list)",
       );
+    } else if (isBuiltInType) {
+      // Sparse list: enrich each user model with catalog data, then dedup.
+      const catalog = getModels(entry.type as KnownProvider);
+      const enriched = entry.models.map((m) => {
+        const cat = catalog.find((c) => c.id === m.id);
+        if (!cat) {
+          return {
+            id: m.id,
+            name: m.name,
+            contextWindow: m.contextWindow,
+            maxTokens: m.maxTokens,
+            reasoning: m.reasoning,
+            input: m.input,
+            cost: m.cost,
+          };
+        }
+        return {
+          id: m.id,
+          name: m.name ?? cat.name,
+          contextWindow: m.contextWindow ?? cat.contextWindow,
+          maxTokens: m.maxTokens ?? cat.maxTokens,
+          reasoning: m.reasoning ?? cat.reasoning,
+          input: m.input ?? cat.input,
+          cost: {
+            input: m.cost?.input ?? cat.cost?.input,
+            output: m.cost?.output ?? cat.cost?.output,
+            cacheRead: m.cost?.cacheRead ?? cat.cost?.cacheRead,
+            cacheWrite: m.cost?.cacheWrite ?? cat.cost?.cacheWrite,
+          },
+        };
+      });
+      // Dedup: filter out built-in IDs (already served via pi-ai's built-in path).
+      workingModels = enriched.filter((m) => !builtInIds.has(m.id));
+      if (workingModels.length < entry.models.length) {
+        const skipped = entry.models.length - workingModels.length;
+        logger.debug(
+          { providerName, type: entry.type, skipped, remaining: workingModels.length },
+          "Skipped built-in models already in pi SDK catalog",
+        );
+      }
+    } else {
+      // Custom (non-catalog) type: user-supplied list as-is.
+      workingModels = [...entry.models];
     }
 
+    const customModels = workingModels;
+
     const hasModels = customModels.length > 0;
-    const hasBaseUrlOverride = !!entry.baseUrl;
     if (!hasModels && !hasBaseUrlOverride) {
       logger.debug(
         { providerName },
@@ -199,7 +297,10 @@ export function registerCustomProviders(
       continue;
     }
 
-    const api = PROVIDER_TYPE_TO_API[entry.type] ?? "openai-completions";
+    const api =
+      inferApiFromCatalog(entry.type)
+      ?? FALLBACK_API_FOR_CUSTOM_TYPES[entry.type]
+      ?? "openai-completions";
     const headersResolved = Object.keys(entry.headers).length > 0 ? entry.headers : undefined;
     const resolvedApiKey = apiKey ?? (isKeylessType ? "ollama-no-auth" : undefined);
 

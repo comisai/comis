@@ -11,7 +11,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import type { ApprovalGate } from "@comis/core";
 import { tryGetContext } from "@comis/core";
 import {

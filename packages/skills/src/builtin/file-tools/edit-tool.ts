@@ -11,7 +11,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import * as fs from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { fromPromise } from "@comis/shared";

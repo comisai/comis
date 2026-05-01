@@ -11,7 +11,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import type { ApprovalGate } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { readStringParam } from "./tool-helpers.js";

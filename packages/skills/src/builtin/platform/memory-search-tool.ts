@@ -9,7 +9,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { jsonResult, readStringParam, readNumberParam } from "./tool-helpers.js";
 
 // ── RPC Type ────────────────────────────────────────────────────────

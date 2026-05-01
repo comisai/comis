@@ -6,9 +6,15 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { getModels } from "@mariozechner/pi-ai";
 import type { ModelOperationType, OperationModelEntry, OperationModels } from "@comis/core";
 import { resolveOperationModel, resolveProviderFamily } from "./operation-model-resolver.js";
 import type { OperationModelResolution } from "./operation-model-resolver.js";
+import { resolveOperationDefaults } from "./operation-model-defaults.js";
+
+function totalCost(m: { cost?: { input?: number; output?: number } }): number {
+  return (m.cost?.input ?? 0) + (m.cost?.output ?? 0);
+}
 
 /** Utility: build base params with overrides for concise test setup. */
 function baseParams(overrides?: Partial<Parameters<typeof resolveOperationModel>[0]>) {
@@ -130,30 +136,39 @@ describe("Level 3: parent inherited", () => {
   });
 });
 
-describe("Level 4: family default", () => {
-  it("returns claude-haiku-4-5 for anthropic heartbeat (fast tier)", () => {
+describe("Level 4: family default (catalog-derived)", () => {
+  // Behavioral assertions: pinning literal model IDs would re-introduce
+  // the staleness problem the catalog-derived resolver was designed to fix.
+  // Tests assert the resolved model exists in the provider's catalog and
+  // matches the cost-tier ranking produced by resolveOperationDefaults.
+
+  it("returns the catalog fast-tier model for anthropic heartbeat", () => {
     const result = resolveOperationModel(
       baseParams({
         operationType: "heartbeat",
         providerFamily: "anthropic",
       }),
     );
-    expect(result.modelId).toBe("claude-haiku-4-5");
+    const expected = resolveOperationDefaults("anthropic").fast;
+    expect(result.modelId).toBe(expected);
     expect(result.source).toBe("family_default");
+    // Resolved model must be a real Anthropic catalog entry.
+    expect(getModels("anthropic").find((m) => m.id === result.modelId)).toBeDefined();
   });
 
-  it("returns claude-sonnet-4-6 for anthropic cron (mid tier)", () => {
+  it("returns the catalog mid-tier model for anthropic cron", () => {
     const result = resolveOperationModel(
       baseParams({
         operationType: "cron",
         providerFamily: "anthropic",
       }),
     );
-    expect(result.modelId).toBe("claude-sonnet-4-6");
+    const expected = resolveOperationDefaults("anthropic").mid;
+    expect(result.modelId).toBe(expected);
     expect(result.source).toBe("family_default");
   });
 
-  it("returns gemini-2.5-flash-lite for google heartbeat (fast tier)", () => {
+  it("returns the catalog fast-tier model for google heartbeat", () => {
     const result = resolveOperationModel(
       baseParams({
         operationType: "heartbeat",
@@ -161,11 +176,13 @@ describe("Level 4: family default", () => {
         providerFamily: "google",
       }),
     );
-    expect(result.modelId).toBe("gemini-2.5-flash-lite");
+    const expected = resolveOperationDefaults("google").fast;
+    expect(result.modelId).toBe(expected);
     expect(result.source).toBe("family_default");
+    expect(getModels("google").find((m) => m.id === result.modelId)).toBeDefined();
   });
 
-  it("returns gemini-3-flash for google cron (mid tier)", () => {
+  it("returns the catalog mid-tier model for google cron", () => {
     const result = resolveOperationModel(
       baseParams({
         operationType: "cron",
@@ -174,11 +191,12 @@ describe("Level 4: family default", () => {
         providerFamily: "google",
       }),
     );
-    expect(result.modelId).toBe("gemini-3-flash");
+    const expected = resolveOperationDefaults("google").mid;
+    expect(result.modelId).toBe(expected);
     expect(result.source).toBe("family_default");
   });
 
-  it("returns gpt-5.4-mini for openai cron (mid tier)", () => {
+  it("returns the catalog mid-tier model for openai cron", () => {
     const result = resolveOperationModel(
       baseParams({
         operationType: "cron",
@@ -187,11 +205,13 @@ describe("Level 4: family default", () => {
         providerFamily: "openai",
       }),
     );
-    expect(result.modelId).toBe("gpt-5.4-mini");
+    const expected = resolveOperationDefaults("openai").mid;
+    expect(result.modelId).toBe(expected);
     expect(result.source).toBe("family_default");
+    expect(getModels("openai").find((m) => m.id === result.modelId)).toBeDefined();
   });
 
-  it("returns gpt-5.4-nano for openai heartbeat (fast tier)", () => {
+  it("returns the catalog fast-tier model for openai heartbeat", () => {
     const result = resolveOperationModel(
       baseParams({
         operationType: "heartbeat",
@@ -200,8 +220,64 @@ describe("Level 4: family default", () => {
         providerFamily: "openai",
       }),
     );
-    expect(result.modelId).toBe("gpt-5.4-nano");
+    const expected = resolveOperationDefaults("openai").fast;
+    expect(result.modelId).toBe(expected);
     expect(result.source).toBe("family_default");
+  });
+
+  it("routes openrouter cron to an OpenRouter model (not Anthropic) — Phase 2 bugfix guard", () => {
+    // The motivating bug: switching primary to OpenRouter should NOT route
+    // background tiers to Claude. This test pins the closure of that bug.
+    const result = resolveOperationModel(
+      baseParams({
+        operationType: "cron",
+        agentProvider: "openrouter",
+        agentModel: "qwen/qwen3-coder",
+        providerFamily: "openrouter",
+      }),
+    );
+    expect(result.source).toBe("family_default");
+    expect(result.provider).toBe("openrouter");
+    expect(result.modelId).not.toMatch(/^claude-/);
+    expect(getModels("openrouter").find((m) => m.id === result.modelId)).toBeDefined();
+  });
+
+  it("routes openrouter heartbeat to an OpenRouter model (not Anthropic)", () => {
+    const result = resolveOperationModel(
+      baseParams({
+        operationType: "heartbeat",
+        agentProvider: "openrouter",
+        agentModel: "qwen/qwen3-coder",
+        providerFamily: "openrouter",
+      }),
+    );
+    expect(result.source).toBe("family_default");
+    expect(result.provider).toBe("openrouter");
+    expect(result.modelId).not.toMatch(/^claude-/);
+  });
+
+  it("fast-tier total cost <= mid-tier total cost (ranking property holds via resolver)", () => {
+    // Verifies ranking flows correctly through the resolver, not just the
+    // standalone resolveOperationDefaults helper.
+    for (const provider of ["anthropic", "openai", "openrouter"] as const) {
+      const fast = resolveOperationModel(
+        baseParams({
+          operationType: "heartbeat",
+          agentProvider: provider,
+          providerFamily: provider,
+        }),
+      );
+      const mid = resolveOperationModel(
+        baseParams({
+          operationType: "cron",
+          agentProvider: provider,
+          providerFamily: provider,
+        }),
+      );
+      const fastModel = getModels(provider).find((m) => m.id === fast.modelId)!;
+      const midModel = getModels(provider).find((m) => m.id === mid.modelId)!;
+      expect(totalCost(fastModel)).toBeLessThanOrEqual(totalCost(midModel));
+    }
   });
 
   it("returns agent primary for interactive type (tier is primary, skips defaults)", () => {
@@ -217,16 +293,18 @@ describe("Level 4: family default", () => {
 });
 
 describe("Level 5: agent primary", () => {
-  it("falls back to agent primary for unknown provider family", () => {
+  it("falls back to agent primary for non-native provider family (custom YAML provider)", () => {
+    // Ollama is not in the pi-ai catalog (it's a custom YAML provider type),
+    // so resolveOperationDefaults("ollama") returns {} -> Level 5 fallback.
     const result = resolveOperationModel(
       baseParams({
         operationType: "heartbeat",
-        agentProvider: "xai",
-        agentModel: "grok-4",
-        providerFamily: "xai",
+        agentProvider: "ollama",
+        agentModel: "llama3:8b",
+        providerFamily: "ollama",
       }),
     );
-    expect(result.model).toBe("xai:grok-4");
+    expect(result.model).toBe("ollama:llama3:8b");
     expect(result.source).toBe("agent_primary");
   });
 

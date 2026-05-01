@@ -9,7 +9,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { jsonResult } from "./tool-helpers.js";
 
 import type { RpcCall } from "./memory-search-tool.js";

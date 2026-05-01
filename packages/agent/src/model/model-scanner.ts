@@ -13,6 +13,8 @@
  * @module
  */
 
+import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -70,27 +72,61 @@ export interface ModelScanner {
 }
 
 // ---------------------------------------------------------------------------
-// Provider-specific endpoint builders
+// Catalog-driven endpoint resolution (Layer 1E -- 260430-vwt)
 // ---------------------------------------------------------------------------
 
-/** Default base URLs per provider type. */
-const DEFAULT_BASE_URLS: Record<string, string> = {
-  openai: "https://api.openai.com",
-  anthropic: "https://api.anthropic.com",
-  google: "https://generativelanguage.googleapis.com",
-};
+/**
+ * Native pi-ai providers from the live catalog. Used to source baseUrls
+ * for scanner endpoints when the user has not supplied an explicit
+ * baseUrl override.
+ */
+const _nativeProviders = new Set<string>(getProviders());
 
-/** OpenAI-compatible provider types. */
-const OPENAI_COMPATIBLE_TYPES = new Set([
-  "openai",
-  "groq",
-  "mistral",
-  "together",
-  "deepseek",
-  "cerebras",
-  "xai",
-  "openrouter",
-]);
+/**
+ * Hardcoded fallback base URLs for the three "first-party" provider
+ * families. These remain only as last-resort defaults when pi-ai's catalog
+ * returns nothing for a given type (e.g., a custom proxy named "openai"
+ * with type:"openai" but no baseUrl). The catalog is the source of truth;
+ * these constants are explicit, discoverable backstops.
+ */
+const OPENAI_FALLBACK_BASE_URL = "https://api.openai.com";
+const ANTHROPIC_FALLBACK_BASE_URL = "https://api.anthropic.com";
+const GOOGLE_FALLBACK_BASE_URL = "https://generativelanguage.googleapis.com";
+
+/**
+ * Read the baseUrl for a provider type from the live pi-ai catalog.
+ * Returns undefined when the type is not in the native catalog.
+ *
+ * Exported for testing -- in production, callers should use `buildEndpoint`
+ * which chains catalog-first → user-supplied baseUrl → hardcoded fallback.
+ */
+export function getCatalogBaseUrl(type: string): string | undefined {
+  if (!_nativeProviders.has(type)) return undefined;
+  return getModels(type as KnownProvider)[0]?.baseUrl;
+}
+
+/**
+ * Whether a provider type should be scanned with the OpenAI-compatible
+ * /v1/models endpoint shape.
+ *
+ * Anthropic and Google have their own dedicated scan paths. Every other
+ * type -- whether it's a native pi-ai provider with an `openai-completions`
+ * primary api (groq, openrouter, cerebras, xai, ...), a native provider
+ * whose primary api is something like `openai-responses` or
+ * `mistral-conversations` (these still typically expose /v1/models for
+ * compat), or a custom non-catalog type (NVIDIA NIM, Together, Fireworks,
+ * Ollama, vLLM, ...) -- is scanned via the OpenAI-compatible shape.
+ *
+ * This is intentionally permissive: the scanner's job is API-key
+ * validation, and most providers expose /v1/models regardless of their
+ * primary wire format.
+ *
+ * Exported for testing.
+ */
+export function isOpenAICompatibleType(type: string): boolean {
+  if (type === "anthropic" || type === "google") return false;
+  return true;
+}
 
 interface EndpointInfo {
   url: string;
@@ -102,8 +138,11 @@ function buildEndpoint(
   baseUrl: string,
   apiKey: string,
 ): EndpointInfo | undefined {
-  if (OPENAI_COMPATIBLE_TYPES.has(providerType)) {
-    const base = baseUrl || DEFAULT_BASE_URLS["openai"]!;
+  if (isOpenAICompatibleType(providerType)) {
+    const base =
+      baseUrl
+      || getCatalogBaseUrl(providerType)
+      || OPENAI_FALLBACK_BASE_URL;
     return {
       url: `${base}/v1/models`,
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -111,7 +150,10 @@ function buildEndpoint(
   }
 
   if (providerType === "anthropic") {
-    const base = baseUrl || DEFAULT_BASE_URLS["anthropic"]!;
+    const base =
+      baseUrl
+      || getCatalogBaseUrl(providerType)
+      || ANTHROPIC_FALLBACK_BASE_URL;
     return {
       url: `${base}/v1/models`,
       headers: {
@@ -122,7 +164,10 @@ function buildEndpoint(
   }
 
   if (providerType === "google") {
-    const base = baseUrl || DEFAULT_BASE_URLS["google"]!;
+    const base =
+      baseUrl
+      || getCatalogBaseUrl(providerType)
+      || GOOGLE_FALLBACK_BASE_URL;
     return {
       url: `${base}/v1beta/models?key=${apiKey}`,
       headers: {},
@@ -137,7 +182,7 @@ function buildEndpoint(
 // ---------------------------------------------------------------------------
 
 function parseModelIds(providerType: string, body: Record<string, unknown>): string[] {
-  if (OPENAI_COMPATIBLE_TYPES.has(providerType) || providerType === "anthropic") {
+  if (isOpenAICompatibleType(providerType) || providerType === "anthropic") {
     const data = (body as Record<string, unknown>)?.data;
     if (!Array.isArray(data)) return [];
     return data.map((m: Record<string, unknown>) => m.id).filter((id: unknown) => typeof id === "string");

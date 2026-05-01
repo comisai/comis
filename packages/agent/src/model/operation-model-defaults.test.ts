@@ -1,69 +1,144 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for operation model defaults: validates constant maps and verifies
- * all default model IDs against the pi-ai SDK registry.
+ * Tests for catalog-derived operation model defaults.
+ *
+ * Asserts BEHAVIOR (cost ranking, text-capability filtering, graceful
+ * degradation for unknown providers) rather than literal model IDs —
+ * pinning literals would re-introduce the staleness problem this module
+ * was designed to eliminate (every pi-ai SDK upgrade would break tests).
  */
 
 import { describe, it, expect } from "vitest";
-import { getModels, type KnownProvider } from "@mariozechner/pi-ai";
+import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
 import {
-  OPERATION_MODEL_DEFAULTS,
+  resolveOperationDefaults,
   OPERATION_TIER_MAP,
   OPERATION_TIMEOUT_DEFAULTS,
   OPERATION_CACHE_DEFAULTS,
 } from "./operation-model-defaults.js";
 
-describe("OPERATION_MODEL_DEFAULTS", () => {
-  it("has entries for anthropic, google, and openai families", () => {
-    expect(OPERATION_MODEL_DEFAULTS).toHaveProperty("anthropic");
-    expect(OPERATION_MODEL_DEFAULTS).toHaveProperty("google");
-    expect(OPERATION_MODEL_DEFAULTS).toHaveProperty("openai");
+// ---------------------------------------------------------------------------
+// resolveOperationDefaults
+// ---------------------------------------------------------------------------
+
+function totalCost(m: { cost?: { input?: number; output?: number } }): number {
+  return (m.cost?.input ?? 0) + (m.cost?.output ?? 0);
+}
+
+describe("resolveOperationDefaults", () => {
+  it("returns {} for unknown (non-native) providers", () => {
+    expect(resolveOperationDefaults("not-a-real-provider")).toEqual({});
+    expect(resolveOperationDefaults("")).toEqual({});
+    expect(resolveOperationDefaults("ollama")).toEqual({}); // custom YAML provider, not in pi-ai catalog
   });
 
-  it("each family entry has mid and fast string fields", () => {
-    for (const family of ["anthropic", "google", "openai"]) {
-      const entry = OPERATION_MODEL_DEFAULTS[family];
-      expect(typeof entry.mid).toBe("string");
-      expect(typeof entry.fast).toBe("string");
-      expect(entry.mid.length).toBeGreaterThan(0);
-      expect(entry.fast.length).toBeGreaterThan(0);
+  it("returns valid model IDs (present in catalog) for anthropic", () => {
+    const result = resolveOperationDefaults("anthropic");
+    const catalogIds = new Set(getModels("anthropic").map((m) => m.id));
+    expect(result.fast).toBeDefined();
+    expect(result.mid).toBeDefined();
+    expect(catalogIds.has(result.fast!)).toBe(true);
+    expect(catalogIds.has(result.mid!)).toBe(true);
+  });
+
+  it("returns Anthropic model IDs for anthropic provider (not cross-contaminated)", () => {
+    const result = resolveOperationDefaults("anthropic");
+    // Anthropic model IDs all start with "claude-".
+    expect(result.fast!).toMatch(/^claude-/);
+    expect(result.mid!).toMatch(/^claude-/);
+  });
+
+  it("returns OpenRouter model IDs for openrouter provider (not Anthropic)", () => {
+    const result = resolveOperationDefaults("openrouter");
+    const catalogIds = new Set(getModels("openrouter").map((m) => m.id));
+    expect(result.fast).toBeDefined();
+    expect(result.mid).toBeDefined();
+    expect(catalogIds.has(result.fast!)).toBe(true);
+    expect(catalogIds.has(result.mid!)).toBe(true);
+    // Critically: must NOT be Anthropic IDs (would prove Phase 2's primary bugfix).
+    expect(result.fast!).not.toMatch(/^claude-/);
+    expect(result.mid!).not.toMatch(/^claude-/);
+  });
+
+  it("fast tier total cost <= mid tier total cost (ranking property)", () => {
+    for (const provider of ["anthropic", "openai", "google", "openrouter", "xai", "mistral"] as const) {
+      const result = resolveOperationDefaults(provider);
+      const all = getModels(provider);
+      const fast = all.find((m) => m.id === result.fast);
+      const mid = all.find((m) => m.id === result.mid);
+      expect(fast, `fast model not found in ${provider} catalog`).toBeDefined();
+      expect(mid, `mid model not found in ${provider} catalog`).toBeDefined();
+      expect(totalCost(fast!)).toBeLessThanOrEqual(totalCost(mid!));
     }
   });
 
-  it("has correct model IDs for anthropic", () => {
-    expect(OPERATION_MODEL_DEFAULTS.anthropic.mid).toBe("claude-sonnet-4-6");
-    expect(OPERATION_MODEL_DEFAULTS.anthropic.fast).toBe("claude-haiku-4-5");
+  it("picks text-capable models only", () => {
+    for (const provider of ["anthropic", "openai", "google", "openrouter"] as const) {
+      const { fast, mid } = resolveOperationDefaults(provider);
+      const all = getModels(provider);
+      expect(all.find((m) => m.id === fast)?.input?.includes("text")).toBe(true);
+      expect(all.find((m) => m.id === mid)?.input?.includes("text")).toBe(true);
+    }
   });
 
-  it("has correct model IDs for google", () => {
-    expect(OPERATION_MODEL_DEFAULTS.google.mid).toBe("gemini-3-flash");
-    expect(OPERATION_MODEL_DEFAULTS.google.fast).toBe("gemini-2.5-flash-lite");
+  it("filters out free/local-only models from cost ranking", () => {
+    // Anthropic catalog has no free models — fast tier must have cost > 0.
+    const result = resolveOperationDefaults("anthropic");
+    const fastModel = getModels("anthropic").find((m) => m.id === result.fast);
+    expect(totalCost(fastModel!)).toBeGreaterThan(0);
   });
 
-  it("has correct model IDs for openai", () => {
-    expect(OPERATION_MODEL_DEFAULTS.openai.mid).toBe("gpt-5.4-mini");
-    expect(OPERATION_MODEL_DEFAULTS.openai.fast).toBe("gpt-5.4-nano");
+  it("falls back to first text-capable id when all models are free", () => {
+    // Z.AI catalog is predominantly free models. Algorithm must not divide by
+    // zero — both slots get the same first text-capable id.
+    const zaiModels = getModels("zai");
+    const allFree = zaiModels.every((m) => totalCost(m) === 0);
+    if (allFree) {
+      const result = resolveOperationDefaults("zai");
+      const firstText = zaiModels.find((m) => m.input?.includes("text"))?.id;
+      expect(result.fast).toBe(firstText);
+      expect(result.mid).toBe(firstText);
+    } else {
+      // If pi-ai later adds priced Z.AI models, algorithm uses standard ranking.
+      // Behavioral assertion still holds: fast cost <= mid cost.
+      const result = resolveOperationDefaults("zai");
+      const fast = zaiModels.find((m) => m.id === result.fast);
+      const mid = zaiModels.find((m) => m.id === result.mid);
+      expect(totalCost(fast!)).toBeLessThanOrEqual(totalCost(mid!));
+    }
   });
 
-  it("all 6 default model IDs exist in the pi-ai SDK registry", () => {
-    const modelsToCheck: Array<{ provider: KnownProvider; modelId: string; label: string }> = [
-      { provider: "anthropic", modelId: OPERATION_MODEL_DEFAULTS.anthropic.mid, label: "anthropic.mid" },
-      { provider: "anthropic", modelId: OPERATION_MODEL_DEFAULTS.anthropic.fast, label: "anthropic.fast" },
-      { provider: "google", modelId: OPERATION_MODEL_DEFAULTS.google.mid, label: "google.mid" },
-      { provider: "google", modelId: OPERATION_MODEL_DEFAULTS.google.fast, label: "google.fast" },
-      { provider: "openai", modelId: OPERATION_MODEL_DEFAULTS.openai.mid, label: "openai.mid" },
-      { provider: "openai", modelId: OPERATION_MODEL_DEFAULTS.openai.fast, label: "openai.fast" },
-    ];
+  it("is referentially stable for the same provider (no hidden state)", () => {
+    // Repeated calls with the same input return identical IDs. Proves the
+    // function is pure even though it reads module-level catalog state.
+    const a = resolveOperationDefaults("anthropic");
+    const b = resolveOperationDefaults("anthropic");
+    expect(a.fast).toBe(b.fast);
+    expect(a.mid).toBe(b.mid);
+  });
 
-    for (const { provider, modelId, label } of modelsToCheck) {
-      const registry = getModels(provider);
-      // Accept exact match or preview variant (forward-looking defaults
-      // may reference models that only exist as -preview in the SDK)
-      const found = registry.some((m) => m.id === modelId || m.id === `${modelId}-preview`);
-      expect(found, `${label} model "${modelId}" not found in ${provider} registry (also checked ${modelId}-preview)`).toBe(true);
+  it("covers every native pi-ai provider with at least one slot", () => {
+    // Regression guard: any native provider must produce at least one tier slot
+    // (either via cost ranking or all-free fallback). If pi-ai ships a provider
+    // with zero text-capable models, this test surfaces it.
+    for (const provider of getProviders()) {
+      const { fast, mid } = resolveOperationDefaults(provider as KnownProvider);
+      const hasAnySlot = fast !== undefined || mid !== undefined;
+      const text = getModels(provider as KnownProvider).filter((m) => m.input?.includes("text"));
+      if (text.length === 0) {
+        // No text-capable models -> empty result is correct
+        expect(fast).toBeUndefined();
+        expect(mid).toBeUndefined();
+      } else {
+        expect(hasAnySlot, `provider ${provider} produced no tier slot`).toBe(true);
+      }
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// OPERATION_TIER_MAP — provider-agnostic semantics, unchanged from Phase 1
+// ---------------------------------------------------------------------------
 
 describe("OPERATION_TIER_MAP", () => {
   it("covers all 7 ModelOperationType values", () => {
@@ -103,6 +178,10 @@ describe("OPERATION_TIER_MAP", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// OPERATION_TIMEOUT_DEFAULTS — unchanged
+// ---------------------------------------------------------------------------
+
 describe("OPERATION_TIMEOUT_DEFAULTS", () => {
   it("has correct timeout for heartbeat (60000ms)", () => {
     expect(OPERATION_TIMEOUT_DEFAULTS.heartbeat).toBe(60_000);
@@ -132,6 +211,10 @@ describe("OPERATION_TIMEOUT_DEFAULTS", () => {
     expect(OPERATION_TIMEOUT_DEFAULTS).not.toHaveProperty("interactive");
   });
 });
+
+// ---------------------------------------------------------------------------
+// OPERATION_CACHE_DEFAULTS — unchanged
+// ---------------------------------------------------------------------------
 
 describe("OPERATION_CACHE_DEFAULTS", () => {
   it("heartbeat cache retention is none", () => {

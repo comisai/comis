@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { registerToolMetadata } from "@comis/core";
 import { wrapWithMetadataEnforcement } from "./tool-metadata-enforcement.js";
 

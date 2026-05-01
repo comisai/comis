@@ -211,4 +211,45 @@ describe("createModelHandlers - model management", () => {
       ).rejects.toThrow("Missing required parameter: provider");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Layer 1F (260430-vwt) -- models.list_providers
+  // -------------------------------------------------------------------------
+
+  describe("models.list_providers", () => {
+    it("returns sorted, de-duplicated provider list with count", async () => {
+      const deps = makeDeps();
+      const handlers = createModelHandlers(deps);
+
+      const result = (await handlers["models.list_providers"]!({
+        _trustLevel: "admin",
+      })) as { providers: string[]; count: number };
+
+      expect(Array.isArray(result.providers)).toBe(true);
+      expect(typeof result.count).toBe("number");
+      expect(result.count).toBe(result.providers.length);
+      expect(result.count).toBeGreaterThanOrEqual(10);
+
+      // Sorted ascending
+      const sorted = [...result.providers].sort();
+      expect(result.providers).toEqual(sorted);
+
+      // De-duplicated
+      const unique = new Set(result.providers);
+      expect(unique.size).toBe(result.providers.length);
+    });
+
+    it("rejects when trust level is not admin", async () => {
+      const deps = makeDeps();
+      const handlers = createModelHandlers(deps);
+
+      await expect(
+        handlers["models.list_providers"]!({ _trustLevel: "user" }),
+      ).rejects.toThrow("Admin access required");
+
+      await expect(
+        handlers["models.list_providers"]!({}),
+      ).rejects.toThrow("Admin access required");
+    });
+  });
 });

@@ -12,7 +12,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { jsonResult, readStringParam, readNumberParam, readEnumParam } from "./tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
 

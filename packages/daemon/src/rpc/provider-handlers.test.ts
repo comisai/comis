@@ -23,6 +23,8 @@ const mockPersistToConfig = vi.mocked(persistToConfig);
 import { probeProviderAuth } from "./probe-provider-auth.js";
 const mockProbeProviderAuth = vi.mocked(probeProviderAuth);
 
+import { getProviders, getModels, type KnownProvider } from "@mariozechner/pi-ai";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -545,6 +547,182 @@ describe("createProviderHandlers", () => {
       });
 
       expect(mockProbeProviderAuth).not.toHaveBeenCalled();
+    });
+
+    // -----------------------------------------------------------------------
+    // Layer 1C (260430-vwt) -- catalog-aware type promotion
+    // -----------------------------------------------------------------------
+
+    it("Layer 1C + 260501-gyy: catalog providerId without custom baseUrl is REJECTED by built-in guard before promotion runs", async () => {
+      // After 260501-gyy, the precondition for this Layer 1C path
+      // (catalog providerId + absent baseUrl + type:"openai" passthrough)
+      // is REJECTED by the built-in redundancy guard BEFORE
+      // normalizeProviderEntry runs. The promotion code remains live for
+      // the providers.update path (which still allows in-place type
+      // changes on existing entries).
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createProviderHandlers(deps);
+
+      await expect(
+        handlers["providers.create"]!({
+          providerId: "openrouter",
+          config: { type: "openai", apiKeyName: "OPENROUTER_API_KEY", models: [] },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/Cannot create custom provider entry for/);
+
+      expect(deps.providerEntries["openrouter"]).toBeUndefined();
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
+    it("Layer 1C: does NOT promote when user supplied a custom baseUrl (opt-out signal)", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createProviderHandlers(deps);
+
+      const result = (await handlers["providers.create"]!({
+        providerId: "openrouter",
+        config: {
+          type: "openai",
+          baseUrl: "https://my-proxy.example.com/v1",
+          apiKeyName: "OPENROUTER_API_KEY",
+          models: [{ id: "qwen/qwen3-coder" }],
+        },
+        _trustLevel: "admin",
+      })) as { providerId: string; created: boolean; config: { type: string } };
+
+      expect(result.created).toBe(true);
+      // Custom baseUrl signals user wants the OpenAI passthrough; no promotion.
+      expect(result.config.type).toBe("openai");
+      expect(deps.providerEntries["openrouter"]!.type).toBe("openai");
+    });
+
+    it("Layer 1C: does NOT promote when providerId is not in the native catalog", async () => {
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createProviderHandlers(deps);
+
+      const result = (await handlers["providers.create"]!({
+        providerId: "my-custom-proxy",
+        config: { type: "openai", apiKeyName: "MY_PROXY_KEY", baseUrl: "https://proxy.example.com/v1" },
+        _trustLevel: "admin",
+      })) as { providerId: string; created: boolean; config: { type: string } };
+
+      expect(result.created).toBe(true);
+      expect(result.config.type).toBe("openai");
+      expect(deps.providerEntries["my-custom-proxy"]!.type).toBe("openai");
+    });
+
+    it("Layer 1C + 260501-gyy: catalog providerId without baseUrl (and no type) is REJECTED by built-in guard", async () => {
+      // After 260501-gyy: catalog providerId + absent baseUrl is rejected
+      // before normalizeProviderEntry runs (the would-be passthrough-sentinel
+      // promotion path is now superseded by the guard).
+      const persistDeps = makePersistDeps();
+      const deps = makeDeps({ persistDeps });
+      const handlers = createProviderHandlers(deps);
+
+      await expect(
+        handlers["providers.create"]!({
+          providerId: "groq",
+          config: { apiKeyName: "GROQ_API_KEY", models: [] },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/Cannot create custom provider entry for/);
+
+      expect(deps.providerEntries["groq"]).toBeUndefined();
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
+    // -----------------------------------------------------------------------
+    // 260501-gyy FIX 2 -- built-in provider redundancy guard
+    // -----------------------------------------------------------------------
+
+    describe("built-in redundancy guard (260501-gyy)", () => {
+      // Read a catalog provider name + its canonical baseUrl dynamically so
+      // the tests stay catalog-agnostic across pi-ai upgrades.
+      const catalogProviderId = getProviders()[0]!;
+      const catalogBaseUrl = getModels(catalogProviderId as KnownProvider)[0]?.baseUrl;
+
+      // B1
+      it("rejects providers.create for catalog provider with default baseUrl, does NOT call persistToConfig", async () => {
+        const persistDeps = makePersistDeps();
+        const deps = makeDeps({ persistDeps });
+        const handlers = createProviderHandlers(deps);
+
+        await expect(
+          handlers["providers.create"]!({
+            providerId: catalogProviderId,
+            config: { baseUrl: catalogBaseUrl, apiKeyName: "TEST_KEY" },
+            _trustLevel: "admin",
+          }),
+        ).rejects.toThrow(/Cannot create custom provider entry for/);
+
+        expect(mockPersistToConfig).not.toHaveBeenCalled();
+        expect(deps.providerEntries[catalogProviderId]).toBeUndefined();
+      });
+
+      // B2 -- proxy use case: custom baseUrl on a catalog providerId is allowed.
+      // The user opts out of catalog-promotion by supplying a non-catalog
+      // baseUrl AND an explicit type (the OpenAI-compatible passthrough).
+      it("allows providers.create for catalog provider with custom proxy baseUrl, calls persistToConfig", async () => {
+        const persistDeps = makePersistDeps();
+        const deps = makeDeps({ persistDeps });
+        const handlers = createProviderHandlers(deps);
+
+        const result = (await handlers["providers.create"]!({
+          providerId: catalogProviderId,
+          config: {
+            type: "openai",
+            baseUrl: "https://my-proxy.example.com/v1",
+            apiKeyName: "TEST_KEY",
+          },
+          _trustLevel: "admin",
+        })) as { providerId: string; created: boolean };
+
+        expect(result.providerId).toBe(catalogProviderId);
+        expect(result.created).toBe(true);
+        expect(mockPersistToConfig).toHaveBeenCalledOnce();
+        expect(deps.providerEntries[catalogProviderId]).toBeDefined();
+      });
+
+      // B3
+      it("allows providers.create for non-catalog providerId regardless of baseUrl", async () => {
+        const persistDeps = makePersistDeps();
+        const deps = makeDeps({ persistDeps });
+        const handlers = createProviderHandlers(deps);
+
+        const result = (await handlers["providers.create"]!({
+          providerId: "my-custom-thing-260501-gyy",
+          config: {
+            type: "openai",
+            baseUrl: "https://custom.example.com/v1",
+            apiKeyName: "MY_KEY",
+          },
+          _trustLevel: "admin",
+        })) as { providerId: string; created: boolean };
+
+        expect(result.created).toBe(true);
+        expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      });
+
+      // B4
+      it("rejects providers.create for catalog provider with absent baseUrl", async () => {
+        const persistDeps = makePersistDeps();
+        const deps = makeDeps({ persistDeps });
+        const handlers = createProviderHandlers(deps);
+
+        await expect(
+          handlers["providers.create"]!({
+            providerId: catalogProviderId,
+            config: { apiKeyName: "TEST_KEY" },
+            _trustLevel: "admin",
+          }),
+        ).rejects.toThrow(/Cannot create custom provider entry for/);
+
+        expect(mockPersistToConfig).not.toHaveBeenCalled();
+        expect(deps.providerEntries[catalogProviderId]).toBeUndefined();
+      });
     });
   });
 

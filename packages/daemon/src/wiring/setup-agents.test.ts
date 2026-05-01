@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
 import { resolveAgentModel, setupSingleAgent } from "./setup-agents.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -54,7 +55,12 @@ describe("setupAgents OutputGuard wiring", () => {
 });
 
 describe("resolveAgentModel", () => {
-  it("resolves model: 'default' to models.defaultModel", () => {
+  // Behavioral assertions: avoid pinning literal model IDs (which would
+  // re-introduce per-pi-ai-release staleness — the bug Phase 2 closes).
+  // Tests assert catalog membership and the priority chain (explicit YAML
+  // wins over catalog heuristic; explicit per-agent value wins over both).
+
+  it("resolves model: 'default' to models.defaultModel (explicit YAML wins)", () => {
     const result = resolveAgentModel(
       { model: "default", provider: "anthropic" },
       { defaultModel: "claude-opus-4-20250115", defaultProvider: "" },
@@ -62,7 +68,7 @@ describe("resolveAgentModel", () => {
     expect(result).toEqual({ model: "claude-opus-4-20250115", provider: "anthropic" });
   });
 
-  it("resolves provider: 'default' to models.defaultProvider", () => {
+  it("resolves provider: 'default' to models.defaultProvider (explicit YAML wins)", () => {
     const result = resolveAgentModel(
       { model: "claude-sonnet-4-5-20250929", provider: "default" },
       { defaultModel: "", defaultProvider: "openai" },
@@ -70,7 +76,7 @@ describe("resolveAgentModel", () => {
     expect(result).toEqual({ model: "claude-sonnet-4-5-20250929", provider: "openai" });
   });
 
-  it("resolves both model and provider 'default' together", () => {
+  it("resolves both model and provider 'default' together via explicit YAML", () => {
     const result = resolveAgentModel(
       { model: "default", provider: "default" },
       { defaultModel: "gpt-4o", defaultProvider: "openai" },
@@ -78,47 +84,74 @@ describe("resolveAgentModel", () => {
     expect(result).toEqual({ model: "gpt-4o", provider: "openai" });
   });
 
-  it("falls back to claude-opus-4-6 / anthropic when defaults are empty", () => {
+  it("when both YAML defaults are empty, falls back to catalog heuristic with valid (provider, model)", () => {
+    // No explicit YAML -> catalog heuristic: most-populated native provider,
+    // mid-tier model. Asserts the result is a real pi-ai catalog entry.
     const result = resolveAgentModel(
       { model: "default", provider: "default" },
       { defaultModel: "", defaultProvider: "" },
     );
-    expect(result).toEqual({ model: "claude-opus-4-6", provider: "anthropic" });
+
+    // Provider must be a real pi-ai native provider.
+    expect(getProviders()).toContain(result.provider as KnownProvider);
+    // Model must exist in that provider's catalog.
+    const catalogIds = new Set(getModels(result.provider as KnownProvider).map((m) => m.id));
+    expect(catalogIds.has(result.model)).toBe(true);
   });
 
-  it("resolves model: 'default' to provider-specific default for openai", () => {
+  it("resolves model: 'default' for known provider via catalog (catalog-driven, no hardcoded literal)", () => {
     const result = resolveAgentModel(
       { model: "default", provider: "openai" },
       { defaultModel: "", defaultProvider: "" },
     );
-    expect(result).toEqual({ model: "gpt-5.1-codex", provider: "openai" });
+    expect(result.provider).toBe("openai");
+    // Model must be a real OpenAI catalog entry.
+    const catalogIds = new Set(getModels("openai").map((m) => m.id));
+    expect(catalogIds.has(result.model)).toBe(true);
   });
 
-  it("resolves model: 'default' to provider-specific default for xai", () => {
+  it("resolves model: 'default' for anthropic returns a Claude model from catalog", () => {
+    const result = resolveAgentModel(
+      { model: "default", provider: "anthropic" },
+      { defaultModel: "", defaultProvider: "" },
+    );
+    expect(result.provider).toBe("anthropic");
+    expect(result.model).toMatch(/^claude-/);
+    // Must be a live catalog id.
+    expect(getModels("anthropic").find((m) => m.id === result.model)).toBeDefined();
+  });
+
+  it("resolves model: 'default' for xai (catalog-driven)", () => {
     const result = resolveAgentModel(
       { model: "default", provider: "xai" },
       { defaultModel: "", defaultProvider: "" },
     );
-    expect(result).toEqual({ model: "grok-4-fast-non-reasoning", provider: "xai" });
+    expect(result.provider).toBe("xai");
+    const catalogIds = new Set(getModels("xai").map((m) => m.id));
+    expect(catalogIds.has(result.model)).toBe(true);
   });
 
-  it("resolves model: 'default' with provider: 'default' resolving to openai", () => {
+  it("resolves provider 'default' to models.defaultProvider, then catalog-derives model", () => {
     const result = resolveAgentModel(
       { model: "default", provider: "default" },
       { defaultModel: "", defaultProvider: "google" },
     );
-    expect(result).toEqual({ model: "gemini-2.5-pro", provider: "google" });
+    expect(result.provider).toBe("google");
+    expect(getModels("google").find((m) => m.id === result.model)).toBeDefined();
   });
 
-  it("falls back to anthropic default for unknown provider", () => {
-    const result = resolveAgentModel(
-      { model: "default", provider: "unknown-provider" },
-      { defaultModel: "", defaultProvider: "" },
-    );
-    expect(result).toEqual({ model: "claude-opus-4-6", provider: "unknown-provider" });
+  it("falls back to first catalog model id for unknown (custom YAML) provider", () => {
+    // Unknown provider has no pi-ai catalog -> resolveOperationDefaults({}) returns
+    // {}, getModels returns []. Throws because no candidate exists.
+    expect(() =>
+      resolveAgentModel(
+        { model: "default", provider: "unknown-provider" },
+        { defaultModel: "", defaultProvider: "" },
+      ),
+    ).toThrow(/No models found for provider/);
   });
 
-  it("modelsConfig.defaultModel takes priority over provider-specific default", () => {
+  it("explicit models.defaultModel takes priority over catalog heuristic", () => {
     const result = resolveAgentModel(
       { model: "default", provider: "openai" },
       { defaultModel: "custom-model", defaultProvider: "" },
@@ -126,7 +159,7 @@ describe("resolveAgentModel", () => {
     expect(result).toEqual({ model: "custom-model", provider: "openai" });
   });
 
-  it("passes through non-'default' values unchanged", () => {
+  it("passes through non-'default' values unchanged (explicit per-agent wins over everything)", () => {
     const result = resolveAgentModel(
       { model: "claude-opus-4-20250115", provider: "anthropic" },
       { defaultModel: "gpt-4o", defaultProvider: "openai" },
@@ -140,6 +173,19 @@ describe("resolveAgentModel", () => {
       { defaultModel: "gpt-4o", defaultProvider: "openai" },
     );
     expect(result).toEqual({ model: "gpt-4o", provider: "openai" });
+  });
+
+  it("catalog heuristic with empty model defaultModel for openrouter provider returns an OpenRouter model (not Anthropic)", () => {
+    // Phase 2 bugfix regression guard: when an operator picks
+    // `provider: openrouter` with `model: default`, the resolved model must
+    // be an OpenRouter id, not a Claude id.
+    const result = resolveAgentModel(
+      { model: "default", provider: "openrouter" },
+      { defaultModel: "", defaultProvider: "" },
+    );
+    expect(result.provider).toBe("openrouter");
+    expect(result.model).not.toMatch(/^claude-/);
+    expect(getModels("openrouter").find((m) => m.id === result.model)).toBeDefined();
   });
 });
 

@@ -3945,4 +3945,104 @@ describe("createPiEventBridge", () => {
       expect(decisionCalls).toHaveLength(1);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // auto_retry_start abort hook (260501-dkl)
+  //
+  // Verifies the bridge classifies SDK auto-retry events and fires
+  // `onAbortRetry` only on `rate_limited` errors. Non-rate_limited retryable
+  // errors (overloaded/network/5xx) bypass the hook so the SDK's normal
+  // retry-with-backoff proceeds.
+  // -------------------------------------------------------------------------
+
+  describe("auto_retry_start abort hook (260501-dkl)", () => {
+    it("fires onAbortRetry when auto_retry_start event has rate_limited error", () => {
+      const onAbortRetry = vi.fn();
+      const localDeps = createMockDeps({ onAbortRetry });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener({
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 5000,
+        errorMessage: "429 Rate limit exceeded: limit_rpm/qwen/qwen3-coder",
+      } as any);
+
+      expect(onAbortRetry).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT fire onAbortRetry on non-rate_limited retryable errors (529 overloaded)", () => {
+      const onAbortRetry = vi.fn();
+      const localDeps = createMockDeps({ onAbortRetry });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener({
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 1000,
+        errorMessage: "529 Overloaded",
+      } as any);
+
+      expect(onAbortRetry).not.toHaveBeenCalled();
+    });
+
+    it("does NOT fire onAbortRetry on network errors", () => {
+      const onAbortRetry = vi.fn();
+      const localDeps = createMockDeps({ onAbortRetry });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener({
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 1000,
+        errorMessage: "ECONNRESET",
+      } as any);
+
+      expect(onAbortRetry).not.toHaveBeenCalled();
+    });
+
+    it("safely handles absent onAbortRetry callback", () => {
+      // No onAbortRetry override; createMockDeps does not include it by default.
+      const localDeps = createMockDeps();
+      const { listener } = createPiEventBridge(localDeps);
+
+      expect(() =>
+        listener({
+          type: "auto_retry_start",
+          attempt: 1,
+          maxAttempts: 3,
+          delayMs: 5000,
+          errorMessage: "429 Rate limit exceeded",
+        } as any),
+      ).not.toThrow();
+    });
+
+    it("logs structured INFO with errorKind:'rate_limited' on abort", () => {
+      const onAbortRetry = vi.fn();
+      const localDeps = createMockDeps({ onAbortRetry });
+      const { listener } = createPiEventBridge(localDeps);
+
+      listener({
+        type: "auto_retry_start",
+        attempt: 2,
+        maxAttempts: 3,
+        delayMs: 7500,
+        errorMessage: "429 Rate limit exceeded: limit_rpm/qwen/qwen3-coder",
+      } as any);
+
+      expect(localDeps.logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          module: "agent.bridge.auto-retry-abort",
+          attempt: 2,
+          maxAttempts: 3,
+          delayMs: 7500,
+          errorKind: "rate_limited",
+        }),
+        "Aborting SDK auto-retry on rate-limited error",
+      );
+    });
+  });
 });

@@ -20,7 +20,9 @@ describe("ContextEngineConfigSchema", () => {
       // Shared
       thinkingKeepTurns: 10,
       replayDriftIdleMs: 30 * 60_000,
-      compactionModel: "anthropic:claude-haiku-4-5-20250929",
+      // Empty default; runtime resolution picks fast-tier from primary
+      // provider via pi-ai catalog (resolveCompactionModel).
+      compactionModel: "",
       evictionMinAge: 15,
       // Pipeline
       historyTurns: 15,
@@ -249,17 +251,22 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("compactionModel", () => {
-    it("defaults to Haiku", () => {
+    it("defaults to empty string (runtime resolution via pi-ai catalog)", () => {
+      // Phase 2C-2: schema default changed from a hardcoded Anthropic literal
+      // ("anthropic:claude-haiku-4-5-20250929") to "". Empty string triggers
+      // resolveCompactionModel() at runtime to pick the fast-tier model from
+      // the agent's primary provider — closes the cross-provider routing bug
+      // where switching primary to OpenRouter still routed compaction to Claude.
       const result = ContextEngineConfigSchema.parse({});
-      expect(result.compactionModel).toBe("anthropic:claude-haiku-4-5-20250929");
+      expect(result.compactionModel).toBe("");
     });
 
-    it("accepts a provider:modelId string", () => {
+    it("accepts a provider:modelId string (operator override is preserved)", () => {
       const result = ContextEngineConfigSchema.parse({ compactionModel: "groq:llama-3.3-70b-versatile" });
       expect(result.compactionModel).toBe("groq:llama-3.3-70b-versatile");
     });
 
-    it("accepts empty string (falsy fallback to session model)", () => {
+    it("accepts empty string (triggers runtime resolution downstream)", () => {
       const result = ContextEngineConfigSchema.parse({ compactionModel: "" });
       expect(result.compactionModel).toBe("");
     });

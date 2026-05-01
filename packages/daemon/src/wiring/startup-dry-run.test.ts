@@ -168,11 +168,15 @@ describe("logOperationModelDryRun", () => {
     expect(warnObj.errorKind).toBe("config");
   });
 
-  // Test 7: Unknown provider family => all operations fall to agent_primary, all tieringActive=false
-  it("falls back to agent_primary for unknown provider families", () => {
+  // Test 7: Non-native provider family (custom YAML provider not in pi-ai
+  // catalog) => all operations fall to agent_primary, all tieringActive=false.
+  // Uses "ollama" (a custom YAML provider type) since native pi-ai providers
+  // (xai, openai, anthropic, openrouter, google, etc.) all now resolve via
+  // catalog cost-tiering and would incorrectly be classified as "unknown".
+  it("falls back to agent_primary for non-native (custom) provider families", () => {
     logOperationModelDryRun({
       agents: {
-        myAgent: { provider: "xai", model: "grok-beta" },
+        myAgent: { provider: "ollama", model: "llama3:8b" },
       },
       secretManager: mockSecretManager,
       logger: mockLogger,
@@ -187,8 +191,8 @@ describe("logOperationModelDryRun", () => {
       source: string;
     }>;
 
-    // For unknown provider family, all ops should be agent_primary
-    // (no family defaults available)
+    // For non-native providers (no pi-ai catalog), all ops should fall back
+    // to agent_primary (no catalog tier defaults available).
     for (const op of ops) {
       expect(op.source).toBe("agent_primary");
       expect(op.tieringActive).toBe(false);

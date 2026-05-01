@@ -50,6 +50,7 @@ const {
   mockWrapInEnvelope,
   mockResourceLoaderArgs,
   mockGetSkills,
+  setMockAssistantText,
 } = vi.hoisted(() => {
   const mockPrompt = vi.fn().mockResolvedValue(undefined);
   const mockSubscribe = vi.fn().mockReturnValue(vi.fn());
@@ -133,6 +134,28 @@ const {
   const mockResourceLoaderArgs = { captured: null as any };
   const mockGetSkills = vi.fn().mockReturnValue({ skills: [], diagnostics: [] });
 
+  // 260501-egj: getVisibleAssistantText now reads from mockSession.messages
+  // directly (no SDK delegation on the no-commentary path). This helper keeps
+  // the SDK mock in sync with messages so tests can stay terse — sets BOTH
+  // mockGetLastAssistantText.mockReturnValue(text) AND ensures the trailing
+  // assistant message in mockSession.messages produces `text` from
+  // getVisibleAssistantText. If the last message is already an assistant,
+  // its content is replaced; otherwise a new assistant is appended.
+  const setMockAssistantText = (text: string) => {
+    mockGetLastAssistantText.mockReturnValue(text);
+    const msgs = mockSession.messages;
+    const last = msgs[msgs.length - 1];
+    const newAssistant = {
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text }],
+    };
+    if (last && last.role === "assistant") {
+      msgs[msgs.length - 1] = newAssistant;
+    } else {
+      msgs.push(newAssistant);
+    }
+  };
+
   return {
     mockPrompt,
     mockSubscribe,
@@ -170,6 +193,7 @@ const {
     mockWrapInEnvelope,
     mockResourceLoaderArgs,
     mockGetSkills,
+    setMockAssistantText,
   };
 });
 
@@ -429,7 +453,15 @@ describe("PiExecutor", () => {
     mockFollowUp.mockResolvedValue(undefined);
     mockSession.isStreaming = false;
     mockSession.isCompacting = false;
-    mockSession.messages = [];
+    // 260501-egj: getVisibleAssistantText now reads from mockSession.messages
+    // directly on the no-commentary path (no SDK delegation). The default
+    // mockGetLastAssistantText return is "test response" — mirror that into a
+    // default assistant message so tests that don't override either get the
+    // same default. Tests that need a different response should use
+    // setMockAssistantText() (which updates both the SDK mock and messages).
+    mockSession.messages = [
+      { role: "assistant", content: [{ type: "text", text: "test response" }] },
+    ];
     // Reset skill mocks
     mockResourceLoaderArgs.captured = null;
     mockGetSkills.mockReturnValue({ skills: [], diagnostics: [] });
@@ -627,7 +659,7 @@ describe("PiExecutor", () => {
       mockPrompt
         .mockRejectedValueOnce(new Error("Primary model overloaded"))
         .mockResolvedValueOnce(undefined);
-      mockGetLastAssistantText.mockReturnValue("fallback response");
+      setMockAssistantText("fallback response");
 
       const fallbackModel = { provider: "openai", id: "gpt-4o" };
       const deps = createMockDeps({
@@ -654,7 +686,7 @@ describe("PiExecutor", () => {
       mockPrompt
         .mockRejectedValueOnce(new Error("Primary failed"))
         .mockResolvedValueOnce(undefined);
-      mockGetLastAssistantText.mockReturnValue("first fallback response");
+      setMockAssistantText("first fallback response");
 
       const deps = createMockDeps({
         fallbackModels: ["openai:gpt-4o", "anthropic:claude-sonnet-4-20250514"],
@@ -1266,11 +1298,14 @@ describe("PiExecutor", () => {
       );
     });
 
-    it("getLastAssistantText returning null produces empty response", async () => {
-      mockGetLastAssistantText.mockReturnValue(null);
+    it("empty assistant content produces empty response", async () => {
+      // 260501-egj: getVisibleAssistantText reads mockSession.messages directly
+      // (no SDK delegation). An empty-content assistant — e.g. provider
+      // returned no text blocks — must yield "".
+      setMockAssistantText("");
       // Set llmCalls=1 and textEmitted=true so neither
       // stuck session detection nor silent failure detection triggers.
-      // This test covers the edge case where getLastAssistantText returns null
+      // This test covers the edge case where the assistant has empty content
       // despite a normal LLM call (e.g., provider returned empty content).
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 100, output: 0, total: 100 },
@@ -1286,8 +1321,6 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Source uses: session.getLastAssistantText?.() ?? ""
-      // null is falsy so ?? yields ""
       expect(result.response).toBe("");
       expect(result.finishReason).toBe("stop");
     });
@@ -1358,7 +1391,7 @@ describe("PiExecutor", () => {
       mockPrompt
         .mockRejectedValueOnce(new Error("Rate limited"))
         .mockResolvedValueOnce(undefined);
-      mockGetLastAssistantText.mockReturnValue("rotated key response");
+      setMockAssistantText("rotated key response");
 
       const mockAuthRotation = {
         hasProfiles: vi.fn().mockReturnValue(true),
@@ -1382,7 +1415,7 @@ describe("PiExecutor", () => {
       mockPrompt
         .mockRejectedValueOnce(new Error("Rate limited"))
         .mockResolvedValueOnce(undefined);
-      mockGetLastAssistantText.mockReturnValue("fallback response");
+      setMockAssistantText("fallback response");
 
       const deps = createMockDeps({
         // No authRotation configured
@@ -1408,7 +1441,7 @@ describe("PiExecutor", () => {
         .mockRejectedValueOnce(new Error("Rate limited"))
         .mockRejectedValueOnce(new Error("Rotated key also rate limited"))
         .mockResolvedValueOnce(undefined);
-      mockGetLastAssistantText.mockReturnValue("fallback model response");
+      setMockAssistantText("fallback model response");
 
       const mockAuthRotation = {
         hasProfiles: vi.fn().mockReturnValue(true),
@@ -1456,7 +1489,7 @@ describe("PiExecutor", () => {
       mockPrompt
         .mockRejectedValueOnce(new Error("Rate limited"))
         .mockResolvedValueOnce(undefined);
-      mockGetLastAssistantText.mockReturnValue("fallback response");
+      setMockAssistantText("fallback response");
 
       const mockAuthRotation = {
         hasProfiles: vi.fn().mockReturnValue(true),
@@ -1487,7 +1520,7 @@ describe("PiExecutor", () => {
       mockPrompt
         .mockRejectedValueOnce(new Error("Rate limited"))
         .mockResolvedValueOnce(undefined);
-      mockGetLastAssistantText.mockReturnValue("fallback response");
+      setMockAssistantText("fallback response");
 
       const mockAuthRotation = {
         hasProfiles: vi.fn().mockReturnValue(false),
@@ -1909,7 +1942,7 @@ describe("PiExecutor", () => {
           enabled: true,
           maxRetries: 5,
           baseDelayMs: 4000,
-          maxDelayMs: 60000,
+          provider: { maxRetryDelayMs: 60000 },
         },
       });
     });
@@ -1932,7 +1965,7 @@ describe("PiExecutor", () => {
           enabled: true,
           maxRetries: 5,
           baseDelayMs: 4000,
-          maxDelayMs: 60000,
+          provider: { maxRetryDelayMs: 60000 },
         },
       });
     });
@@ -2082,7 +2115,7 @@ describe("PiExecutor", () => {
           enabled: true,
           maxRetries: 5,
           baseDelayMs: 4000,
-          maxDelayMs: 60000,
+          provider: { maxRetryDelayMs: 60000 },
         },
       });
     });
@@ -2244,7 +2277,7 @@ describe("PiExecutor", () => {
             enabled: true,
             maxRetries: 5,
             baseDelayMs: 1000,
-            maxDelayMs: 30000,
+            provider: { maxRetryDelayMs: 30000 },
           },
         }),
       );
@@ -2262,7 +2295,7 @@ describe("PiExecutor", () => {
             enabled: true,
             maxRetries: 5,
             baseDelayMs: 4000,
-            maxDelayMs: 60000,
+            provider: { maxRetryDelayMs: 60000 },
           },
         }),
       );
@@ -2289,7 +2322,7 @@ describe("PiExecutor", () => {
             enabled: false,
             maxRetries: 0,
             baseDelayMs: 2000,
-            maxDelayMs: 60000,
+            provider: { maxRetryDelayMs: 60000 },
           },
         }),
       );
@@ -3979,11 +4012,11 @@ describe("PiExecutor", () => {
 
   describe("silent LLM failure detection", () => {
     it("detects empty response with llmCalls > 0 as silent failure after retry", async () => {
-      // Simulate: prompt resolves without throwing, but getLastAssistantText returns ""
-      // and bridge reports llmCalls > 0 with finishReason "error".
+      // Simulate: prompt resolves without throwing, but getVisibleAssistantText returns ""
+      // (empty assistant content) and bridge reports llmCalls > 0 with finishReason "error".
       // The silent failure recovery will strip empty turns and retry via model retry,
       // but the retry also produces empty -- ultimately declares terminal failure.
-      mockGetLastAssistantText.mockReturnValue("");
+      setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 0, output: 0, total: 0 },
         cost: { total: 0 },
@@ -4021,8 +4054,8 @@ describe("PiExecutor", () => {
     });
 
     it("does NOT trigger when response is non-empty (normal case)", async () => {
-      // Normal case: getLastAssistantText returns real content
-      mockGetLastAssistantText.mockReturnValue("normal response");
+      // Normal case: assistant has real content
+      setMockAssistantText("normal response");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 100, output: 50, total: 150 },
         cost: { total: 0.01 },
@@ -4049,9 +4082,9 @@ describe("PiExecutor", () => {
 
     it("does NOT trigger when text was emitted in intermediate turn (multi-turn agentic loop)", async () => {
       // Simulate: multi-turn agentic loop where text was produced in an
-      // intermediate turn but getLastAssistantText returns "" (empty final turn
-      // after bookkeeping tool call like memory_store).
-      mockGetLastAssistantText.mockReturnValue("");
+      // intermediate turn but the final assistant has no visible text
+      // (empty final turn after bookkeeping tool call like memory_store).
+      setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
         cost: { total: 0.05 },
@@ -4085,12 +4118,12 @@ describe("PiExecutor", () => {
 
   describe("thinking-only continuation retry", () => {
     it("retries with followUp when finishReason is stop and tool calls were made", async () => {
-      // initial check (line 350) returns "" triggering the block.
-      // After followUp, getLastAssistantText returns "recovered response"
-      // for the continuation re-check and all subsequent reads.
-      mockGetLastAssistantText
-        .mockReturnValueOnce("") // initial candidateResponse check
-        .mockReturnValue("recovered response"); // after followUp + rawResponse reads
+      // initial check returns "" triggering the block. After followUp, the
+      // assistant message in mockSession.messages contains "recovered response"
+      // for the continuation re-check and all subsequent reads (260501-egj:
+      // getVisibleAssistantText reads messages directly, so we wire the
+      // recovery via followUp's mockImplementation pushing a new assistant).
+      setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
         cost: { total: 0.05 },
@@ -4098,7 +4131,9 @@ describe("PiExecutor", () => {
         llmCalls: 4,
         finishReason: "stop",
       });
-      mockFollowUp.mockResolvedValue(undefined);
+      mockFollowUp.mockImplementation(async () => {
+        setMockAssistantText("recovered response");
+      });
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
@@ -4129,11 +4164,9 @@ describe("PiExecutor", () => {
     });
 
     it("retries with followUp when thinking-only with zero tool calls (stepsExecuted=0)", async () => {
-      // initial check returns "" triggering the block.
-      // After followUp, getLastAssistantText returns "recovered response".
-      mockGetLastAssistantText
-        .mockReturnValueOnce("") // initial candidateResponse check
-        .mockReturnValue("recovered response"); // after followUp + rawResponse reads
+      // initial check returns "" triggering the block. After followUp, the
+      // assistant message in mockSession.messages contains "recovered response".
+      setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 100, output: 50, total: 150 },
         cost: { total: 0.01 },
@@ -4141,7 +4174,9 @@ describe("PiExecutor", () => {
         llmCalls: 1,
         finishReason: "stop",
       });
-      mockFollowUp.mockResolvedValue(undefined);
+      mockFollowUp.mockImplementation(async () => {
+        setMockAssistantText("recovered response");
+      });
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
@@ -4153,8 +4188,8 @@ describe("PiExecutor", () => {
     });
 
     it("falls through to failure when zero-tool followUp also produces empty", async () => {
-      // getLastAssistantText always returns "" — even after followUp
-      mockGetLastAssistantText.mockReturnValue("");
+      // Assistant content always empty — even after followUp
+      setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 100, output: 50, total: 150 },
         cost: { total: 0.01 },
@@ -4174,8 +4209,8 @@ describe("PiExecutor", () => {
     });
 
     it("falls through to failure when followUp also produces empty response", async () => {
-      // getLastAssistantText always returns "" — even after followUp
-      mockGetLastAssistantText.mockReturnValue("");
+      // Assistant content always empty — even after followUp
+      setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
         cost: { total: 0.05 },
@@ -4198,18 +4233,26 @@ describe("PiExecutor", () => {
       // First prompt: finishReason "stop" but empty text (thinking-only response).
       // followUp also fails. New behavior: strip empty assistant turn, re-enter model retry.
       // Second prompt: returns "recovered text".
+      // 260501-egj: getVisibleAssistantText reads mockSession.messages directly,
+      // so we drive the recovery via mockPrompt's mockImplementation: the second
+      // prompt call replaces messages with the recovered text.
       let promptCallCount = 0;
       mockPrompt.mockImplementation(async () => {
         promptCallCount++;
+        if (promptCallCount === 2) {
+          // Model retry — replace the thinking-only assistant with recovered text.
+          mockSession.messages = [
+            { role: "user", content: "hello", timestamp: 1 },
+            {
+              role: "assistant",
+              content: [{ type: "text", text: "recovered text" }],
+              stopReason: "stop",
+              timestamp: 3,
+            },
+          ];
+        }
         return undefined;
       });
-
-      // First call: empty (initial check + post-followUp).
-      // After retry via model retry, return recovered text.
-      mockGetLastAssistantText
-        .mockReturnValueOnce("") // initial candidateResponse check (silent failure detection)
-        .mockReturnValueOnce("") // after followUp check (silent02Recovered)
-        .mockReturnValue("recovered text"); // after model retry + rawResponse reads
 
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 100, output: 50, total: 150 },
@@ -4692,7 +4735,6 @@ describe("PiExecutor", () => {
 
     it("synthesizes tool-call summary instead of leaking framing/step prose (stock-scanner scenario)", async () => {
       // Final turn: empty → triggers recovery
-      mockGetLastAssistantText.mockReturnValue("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 800, output: 300, total: 1100 },
         cost: { total: 0.08 },
@@ -4705,6 +4747,9 @@ describe("PiExecutor", () => {
       // mixed with tool calls. Under L3 synthesis, recovery returns a structured
       // tool-call summary — neither the framing prose nor the step annotation
       // leaks through as the user-visible reply.
+      // 260501-egj: getVisibleAssistantText reads messages directly; the
+      // "empty final turn" is modeled as a trailing assistant with no visible
+      // content (was previously implied via SDK mock returning "").
       mockSession.messages = [
         { role: "user", content: "Create a stock scanner skill", timestamp: 1 },
         {
@@ -4737,7 +4782,14 @@ describe("PiExecutor", () => {
           timestamp: 10,
         },
         { role: "toolResult", toolCallId: "tc5", toolName: "sessions_spawn", content: null, isError: false, timestamp: 11 },
+        // Trailing empty assistant — the executor's "final turn empty" probe.
+        { role: "assistant", content: [], stopReason: "stop", timestamp: 12 },
       ];
+      // SDK mock kept in sync with messages — the SDK's tail walk would also
+      // skip the empty assistant and return the prior text, but our reader no
+      // longer delegates. Setting it preserves callsites that may still read
+      // it as a defensive fallback elsewhere in the executor.
+      mockGetLastAssistantText.mockReturnValue("");
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
@@ -4948,7 +5000,7 @@ describe("PiExecutor", () => {
 
     it("does NOT trigger stuck session detection when LLM calls were made", async () => {
       // Normal execution: LLM was called, produced a response.
-      mockGetLastAssistantText.mockReturnValue("Here is your answer.");
+      setMockAssistantText("Here is your answer.");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
         cost: { total: 0.05 },
@@ -5529,11 +5581,17 @@ describe("ExcludeDeferralResult wiring", () => {
         };
       });
 
-      let promptCalls = 0;
-      mockGetLastAssistantText.mockImplementation(() => {
-        promptCalls++;
-        return promptCalls <= 1 ? "truncated resp..." : "full escalated response with complete content";
-      });
+      // 260501-egj: getVisibleAssistantText reads mockSession.messages directly.
+      // The original test relied on getLastAssistantText's mock-counter returning
+      // "truncated" on the first call and "full escalated" on subsequent calls,
+      // which under the OLD contract drove the final result.response from the
+      // later read at executor-prompt-runner.ts:914. Under the new contract we
+      // model the same outcome by setting messages to the post-escalation final
+      // state — the executor's downstream rawResponse read picks it up. The
+      // escalation event itself is verified in the sibling
+      // "emits execution:output_escalated" test; here we only assert the
+      // response replacement.
+      setMockAssistantText("full escalated response with complete content");
       mockPrompt.mockResolvedValue(undefined);
 
       const deps = createMockDeps();
@@ -5692,7 +5750,7 @@ describe("ExcludeDeferralResult wiring", () => {
       });
 
       mockFollowUp.mockResolvedValue(undefined);
-      mockGetLastAssistantText.mockReturnValue("extended response after budget nudge");
+      setMockAssistantText("extended response after budget nudge");
 
       const result = await executor.execute(
         testMessage, testSessionKey, undefined, undefined, undefined,

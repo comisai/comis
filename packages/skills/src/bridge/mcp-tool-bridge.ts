@@ -14,7 +14,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import { Type, type TSchema } from "@sinclair/typebox";
+import { Type, type TSchema } from "typebox";
 import { registerToolMetadata } from "@comis/core";
 import { resolveSourceProfile, type ToolSourceProfile } from "../builtin/tool-source-profiles.js";
 import type { McpToolDefinition, McpClientManager, McpToolCallResult } from "../integrations/mcp-client.js";
@@ -239,10 +239,10 @@ export function mcpToolsToAgentTools(
 
       async execute(
         _toolCallId: string,
-        params: Record<string, unknown>,
+        params: unknown,
       ): Promise<AgentToolResult<{ success: boolean }>> {
         try {
-          const result = await callTool(tool.qualifiedName, params);
+          const result = await callTool(tool.qualifiedName, params as Record<string, unknown>);
 
           if (!result.ok) {
             const errorResult = {

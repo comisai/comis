@@ -299,7 +299,7 @@ export function wrapWithCredentialInjection(
     ...tool,
     async execute(
       toolCallId: string,
-      params: Record<string, unknown>,
+      params: unknown,
       signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
     ) {

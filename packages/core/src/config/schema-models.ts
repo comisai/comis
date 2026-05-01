@@ -31,10 +31,12 @@ export const ModelsConfigSchema = z.strictObject({
     /** Friendly model aliases (e.g., "claude" -> anthropic/claude-sonnet-4) */
     aliases: z.array(ModelAliasSchema).default([]),
     /** Default model identifier. When a per-agent config sets model: "default", this value is used.
-     *  Falls back to "claude-sonnet-4-5-20250929" if empty. */
+     *  When empty (the default), runtime resolution picks the mid-tier cost
+     *  model from the resolved provider's pi-ai catalog (resolveOperationDefaults). */
     defaultModel: z.string().default(""),
     /** Default provider. When a per-agent config sets provider: "default", this value is used.
-     *  Falls back to "anthropic" if empty. */
+     *  When empty (the default), runtime resolution picks the most-populated
+     *  native provider from the pi-ai catalog (heuristic). */
     defaultProvider: z.string().default(""),
   });
 

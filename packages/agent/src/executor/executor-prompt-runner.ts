@@ -570,6 +570,38 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
             // same runPrompt invocation.
             // eslint-disable-next-line no-useless-assignment
             silentRetryAttempted = true;
+          } else if (earlyClassification.category === "rate_limited") {
+            // Provider-side time-based throttle (429/529). Retrying within the
+            // same runPrompt invocation cannot succeed — the rate-limit window
+            // hasn't rolled. The model-retry layer's cache-aware short retry
+            // (model-retry.ts:261-294) is the correct retry point for 429 with
+            // a parseable Retry-After header < SHORT_RETRY_THRESHOLD_MS. If we
+            // got here, that retry was either skipped (no Retry-After) or
+            // exhausted, AND the SDK didn't throw the 429 out (caught inside
+            // pi-ai's stream wrapper, surfaced as empty response). Re-entering
+            // runWithModelRetry from this layer would do another N retries that
+            // all hit the same rate-limit window — observed in production as
+            // 1 user message → 8 LLM calls (daemon.1.log:23:35:06-23:35:52,
+            // OpenRouter qwen/qwen3-coder:free 8 RPM cap). Short-circuit.
+            deps.logger.warn(
+              {
+                llmCalls: earlyBridgeResult.llmCalls,
+                finishReason: earlyBridgeResult.finishReason,
+                providerError: llmErrSource,
+                hint: "Provider returned a rate-limit error; retrying within the same window cannot succeed — surfacing terminal failure to caller",
+                errorKind: "rate_limited" as ErrorKind,
+              },
+              "Rate-limit error — skipping silent-retry and declaring terminal failure",
+            );
+            promptSucceeded = false;
+            const llmDetail = llmErrSource ? ` — ${llmErrSource}` : "";
+            promptError = new Error(
+              `Rate limit exceeded: ${earlyBridgeResult.llmCalls} LLM call(s) produced empty response (finishReason: ${earlyBridgeResult.finishReason ?? "unknown"})${llmDetail}`,
+            );
+            // Defensive invariant: close the gate so a future refactor that
+            // re-enters this region cannot run a second silent-retry cycle.
+            // eslint-disable-next-line no-useless-assignment
+            silentRetryAttempted = true;
           } else if (earlyClassification.category === "client_request") {
             // Plain client_request: deterministic failure (e.g. unprocessable_entity,
             // bare "cannot be modified" without signature noun). Retrying would

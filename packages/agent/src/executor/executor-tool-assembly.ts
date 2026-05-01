@@ -236,7 +236,9 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       enabled: config.sdkRetry?.enabled ?? true,
       maxRetries: config.sdkRetry?.maxRetries ?? 5,
       baseDelayMs: config.sdkRetry?.baseDelayMs ?? 4000,
-      maxDelayMs: config.sdkRetry?.maxDelayMs ?? 60000,
+      provider: {
+        maxRetryDelayMs: config.sdkRetry?.maxDelayMs ?? 60000,
+      },
     },
   };
 

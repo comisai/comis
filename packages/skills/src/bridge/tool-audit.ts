@@ -32,7 +32,7 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
     ...tool,
     async execute(
       toolCallId: string,
-      params: Record<string, unknown>,
+      params: unknown,
       signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentToolResult generic per pi-agent-core API
@@ -82,7 +82,7 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
           traceId: ctx?.traceId,
           agentId,
           sessionKey: ctx?.sessionKey,
-          params,
+          params: params as Record<string, unknown> | undefined,
           ...(errorMessage !== undefined && { errorMessage }),
           ...(errorKind !== undefined && { errorKind }),
         });

@@ -34,7 +34,7 @@ import {
   setupBackgroundTasks,
 } from "./wiring/index.js";
 import { setupSingleAgent } from "./wiring/setup-agents.js";
-import { createActiveRunRegistry, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry } from "@comis/agent";
+import { createActiveRunRegistry, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides } from "@comis/agent";
 import type { GeminiCacheManager } from "@comis/agent";
 import { detectSandboxProvider, createImageGenProvider, createImageGenRateLimiter, createFileStateTracker } from "@comis/skills";
 import type { SandboxProvider, ImageGenRateLimiter } from "@comis/skills";
@@ -421,6 +421,12 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   if (approvalsWarning) {
     daemonLogger.warn({ hint: "Set approvals.enabled: true or remove unused rules", errorKind: "config" as const }, approvalsWarning);
   }
+
+  // 3.6. Validate PROVIDER_OVERRIDES vs live pi-ai catalog (Layer 3C -- 260501-07g).
+  // Emits one structured WARN per orphaned override key (provider listed in
+  // PROVIDER_OVERRIDES that pi-ai no longer ships). Fire-and-forget: never
+  // throws, daemon continues to boot with dead override entries.
+  validateProviderOverrides(agentLogger);
 
   // 4. Observability
   const {

@@ -198,6 +198,39 @@ describe("models_manage tool", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Layer 1F (260430-vwt) -- list_providers action
+  // -----------------------------------------------------------------------
+
+  describe("list_providers action", () => {
+    it("invokes rpcCall(\"models.list_providers\", ...) with admin trust level", async () => {
+      mockRpcCall.mockResolvedValue({ providers: ["anthropic", "google", "openrouter"], count: 3 });
+
+      const tool = createModelsManageTool(mockRpcCall);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-lp1", { action: "list_providers" } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("models.list_providers", { _trustLevel: "admin" });
+      expect(result.details).toEqual({
+        providers: ["anthropic", "google", "openrouter"],
+        count: 3,
+      });
+    });
+
+    it("rejects below-admin trust level for list_providers", async () => {
+      const tool = createModelsManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("user"), () =>
+          tool.execute("call-lp2", { action: "list_providers" } as never),
+        ),
+      ).rejects.toThrow(/Insufficient trust level/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // error handling
   // -----------------------------------------------------------------------
 

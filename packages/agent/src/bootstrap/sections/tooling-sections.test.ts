@@ -445,3 +445,34 @@ describe("TOOL_SUMMARIES integration", () => {
     expect(joined).toContain(TOOL_SUMMARIES["session_search"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Layer 1D (260430-vwt) -- buildPrivilegedToolsSection "Built-in first"
+// bullet rendered from the live pi-ai catalog
+// ---------------------------------------------------------------------------
+
+describe("Layer 1D buildPrivilegedToolsSection catalog interpolation", () => {
+  it("rendered Built-in first bullet contains every name from getProviders()", async () => {
+    const { getProviders } = await import("@mariozechner/pi-ai");
+    const result = buildPrivilegedToolsSection(["providers_manage"], false);
+    const joined = result.join("\n");
+    for (const p of getProviders()) {
+      expect(joined, `provider "${p}" missing from rendered tooling section`).toContain(p);
+    }
+  });
+
+  it("rendered text recommends models_manage list_providers for runtime discovery", () => {
+    const result = buildPrivilegedToolsSection(["providers_manage"], false);
+    const joined = result.join("\n");
+    expect(joined).toContain("models_manage");
+    expect(joined).toMatch(/list_providers/);
+  });
+
+  it("rendered text no longer pins the literal hardcoded provider roster", () => {
+    const result = buildPrivilegedToolsSection(["providers_manage"], false);
+    const joined = result.join("\n");
+    expect(joined).not.toContain(
+      "anthropic, google, openai, groq, mistral, deepseek, cerebras, xai, openrouter",
+    );
+  });
+});

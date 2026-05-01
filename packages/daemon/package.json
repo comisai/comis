@@ -1,7 +1,7 @@
 {
   "name": "@comis/daemon",
   "private": true,
-  "version": "1.0.28",
+  "version": "1.0.29",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Background daemon and orchestrator for the Comis platform",
@@ -46,7 +46,7 @@
     "@comis/scheduler": "workspace:*",
     "@comis/shared": "workspace:*",
     "@comis/skills": "workspace:*",
-    "@mariozechner/pi-ai": "0.68.0",
+    "@mariozechner/pi-ai": "0.70.6",
     "better-sqlite3": "12.9.0",
     "hono": "4.12.15",
     "pino": "10.3.1",

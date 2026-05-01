@@ -424,7 +424,9 @@ export {
   isOpenAiFamily,
   shouldDropThinkingBlocks,
   resolveToolCallIdMode,
+  validateProviderOverrides,
 } from "./provider/capabilities.js";
+export type { ProviderOverridesValidatorLogger } from "./provider/capabilities.js";
 
 // Model compatibility auto-detection (xAI compat flags)
 export { normalizeModelCompat } from "./provider/model-compat.js";
@@ -449,7 +451,8 @@ export type { ThinkingTagFilter, ThinkingTagFilterOptions } from "./response-fil
 // Operation model resolver
 export { resolveOperationModel, resolveProviderFamily } from "./model/operation-model-resolver.js";
 export type { OperationModelResolution } from "./model/operation-model-resolver.js";
-export { OPERATION_MODEL_DEFAULTS, OPERATION_TIER_MAP, OPERATION_TIMEOUT_DEFAULTS, OPERATION_CACHE_DEFAULTS } from "./model/operation-model-defaults.js";
+export { resolveOperationDefaults, OPERATION_TIER_MAP, OPERATION_TIMEOUT_DEFAULTS, OPERATION_CACHE_DEFAULTS } from "./model/operation-model-defaults.js";
+export { resolveCompactionModel } from "./model/compaction-model-resolver.js";
 
 // SessionLatch utility
 export { createSessionLatch } from "./executor/session-latch.js";
