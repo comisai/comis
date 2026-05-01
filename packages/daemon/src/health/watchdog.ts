@@ -27,16 +27,21 @@ interface SdNotify {
 }
 
 let sdNotify: SdNotify | null = null;
+let sdNotifyLoadError: string | null = null;
 
 try {
   // Dynamic import of sd-notify. This will fail on macOS since it's a
   // Linux-native C addon. When unavailable, all operations become no-ops.
-   
+
   const mod = await import("sd-notify");
   sdNotify = (mod.default ?? mod) as SdNotify;
-} catch {
+} catch (err) {
   // sd-notify not available (macOS, missing native build, etc.)
-  // All watchdog operations will be no-ops.
+  // All watchdog operations will be no-ops. Capture the failure reason so
+  // startWatchdog() can surface it loudly when running under systemd
+  // (NOTIFY_SOCKET set) — silent fallback there leaves Type=notify units
+  // hung in 'activating (start)' until TimeoutStartSec fires.
+  sdNotifyLoadError = err instanceof Error ? err.message : String(err);
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +88,19 @@ export function startWatchdog(deps: WatchdogDeps): WatchdogHandle {
   let timer: ReturnType<typeof setInterval> | undefined;
 
   if (!notify) {
-    deps.logger.debug("sd-notify not available, watchdog disabled (expected on macOS)");
+    // eslint-disable-next-line no-restricted-syntax -- process.env access needed for systemd detection; NOTIFY_SOCKET is set by systemd, not a secret
+    if (process.env["NOTIFY_SOCKET"]) {
+      deps.logger.warn(
+        {
+          errorKind: "config",
+          hint: "Reinstall comisai with libsystemd-dev + pkg-config available so the sd-notify native addon builds. Without it, systemd receives no READY/WATCHDOG signals and the unit will hang in 'activating' until TimeoutStartSec, then enter a respawn loop.",
+          loadError: sdNotifyLoadError ?? "unknown",
+        },
+        "sd-notify not loaded but NOTIFY_SOCKET is set; systemd integration disabled",
+      );
+    } else {
+      deps.logger.debug("sd-notify not available, watchdog disabled (expected on macOS)");
+    }
     return { stop: () => {} };
   }
 

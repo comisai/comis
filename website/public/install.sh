@@ -2999,7 +2999,14 @@ StartLimitBurst=3
 StartLimitIntervalSec=60
 
 [Service]
-Type=notify
+# Type=exec (not notify): systemd considers the service started once execve()
+# returns, eliminating the dependency on the sd-notify native addon for
+# startup. Type=notify hung the unit in 'activating (start)' on hosts where
+# sd-notify failed to compile (e.g. missing pkg-config / libsystemd-dev),
+# leading to a TimeoutStartSec respawn loop even though the daemon was
+# healthy. Watchdog liveness via WatchdogSec is intentionally also dropped
+# below for the same reason; per-process internal monitoring remains.
+Type=exec
 ${user_line}
 ${group_line}
 WorkingDirectory=${COMIS_WORKING_DIR}
@@ -3019,7 +3026,13 @@ ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-f
 
 Restart=on-failure
 RestartSec=5s
-WatchdogSec=30s
+# WatchdogSec intentionally not set: it depends on the sd-notify native addon
+# being loadable in the daemon, which is best-effort. If the addon fails to
+# build at install time, WatchdogSec=30s kills the daemon every 30s with no
+# diagnostic. ProcessMonitor (event loop delay tracking) provides in-process
+# liveness signal; Restart=on-failure handles crash recovery. Operators who
+# want kernel-level watchdog can re-add WatchdogSec via a systemd drop-in
+# after confirming the sd-notify native addon loads in the daemon.
 TimeoutStopSec=45
 # The daemon self-restarts by trapping SIGUSR2, shutting down cleanly, and
 # exiting with code 42 (see packages/daemon/src/daemon.ts). Two settings work

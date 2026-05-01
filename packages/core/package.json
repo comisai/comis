@@ -1,7 +1,7 @@
 {
   "name": "@comis/core",
   "private": true,
-  "version": "1.0.33",
+  "version": "1.0.34",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Core domain types, ports, event bus, security, and config for Comis",
