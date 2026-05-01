@@ -1,6 +1,6 @@
 {
   "name": "@comis/web",
-  "version": "1.0.33",
+  "version": "1.0.34",
   "description": "Web dashboard SPA for Comis agent management",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",

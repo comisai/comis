@@ -88,6 +88,7 @@ export function startWatchdog(deps: WatchdogDeps): WatchdogHandle {
   let timer: ReturnType<typeof setInterval> | undefined;
 
   if (!notify) {
+    // eslint-disable-next-line no-restricted-syntax -- process.env access needed for systemd detection; NOTIFY_SOCKET is set by systemd, not a secret
     if (process.env["NOTIFY_SOCKET"]) {
       deps.logger.warn(
         {
