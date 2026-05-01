@@ -1824,30 +1824,31 @@ Export the entire memory database as a portable JSON snapshot. Useful for backup
 
 </Accordion>
 
-<Accordion title="models (2 methods)">
+<Accordion title="models (3 methods)">
 
-Model catalog inspection and connectivity testing.
+Model catalog inspection and connectivity testing. The catalog is sourced live from the [`@mariozechner/pi-ai`](https://www.npmjs.com/package/@mariozechner/pi-ai) SDK — `getProviders()` for the provider list, `getModels(provider)` for per-provider model details. No hardcoded provider/model tables on the comis side.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
-| `models.list` | `admin` | List available models from all configured providers |
+| `models.list_providers` | `admin` | List all providers known to the pi-ai catalog |
+| `models.list` | `admin` | List available models from the catalog (optionally filtered to one provider) |
 | `models.test` | `admin` | Test connectivity to a specific model |
 
-### `models.list`
+### `models.list_providers`
 
-List all models available across your configured LLM providers. Returns the model ID, provider name, and display name for each entry. Use this to discover what models you can assign to agents.
+List all providers in the pi-ai SDK catalog. Returns provider ids and a count. Use this to populate provider pickers (the web wizard's Provider step and CLI wizard's `03-provider` step both consume this).
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | None |
-| **Returns** | `{ models: Array<{ id: string, provider: string, name: string }> }` |
+| **Returns** | `{ providers: string[], count: number }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
-  "method": "models.list",
+  "method": "models.list_providers",
   "id": 1
 }
 ```
@@ -1855,11 +1856,58 @@ List all models available across your configured LLM providers. Returns the mode
 {
   "jsonrpc": "2.0",
   "result": {
-    "models": [
-      { "id": "claude-sonnet-4-5-20250929", "provider": "anthropic", "name": "Claude Sonnet 4.5" },
-      { "id": "gpt-4o", "provider": "openai", "name": "GPT-4o" }
-    ]
+    "providers": [
+      "amazon-bedrock", "anthropic", "azure-openai-responses", "cerebras",
+      "cloudflare-ai-gateway", "cloudflare-workers-ai", "deepseek", "fireworks",
+      "github-copilot", "google", "google-vertex", "groq", "huggingface",
+      "kimi-coding", "minimax", "minimax-cn", "mistral", "moonshotai",
+      "moonshotai-cn", "openai", "openai-codex", "opencode", "opencode-go",
+      "openrouter", "vercel-ai-gateway", "xai", "zai"
+    ],
+    "count": 27
   },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `models.list`
+
+List all models available across the pi-ai catalog (optionally filtered to one provider). Returns the model ID, provider name, display name, baseUrl, context window, max tokens, input modalities, reasoning support, and cost per million tokens. Use this to discover what models you can assign to agents.
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{ provider?: string }` (omit for all providers) |
+| **Returns** | `Array<{ provider, modelId, displayName, contextWindow, maxTokens, baseUrl, input, reasoning, cost: { input, output, cacheRead, cacheWrite }, validated, validatedAt }>` |
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "models.list",
+  "params": { "provider": "anthropic" },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": [
+    {
+      "provider": "anthropic",
+      "modelId": "claude-sonnet-4-5",
+      "displayName": "Claude Sonnet 4.5 (latest)",
+      "baseUrl": "https://api.anthropic.com",
+      "contextWindow": 200000,
+      "maxTokens": 64000,
+      "input": ["text", "image"],
+      "reasoning": true,
+      "cost": { "input": 3.0, "output": 15.0, "cacheRead": 0.3, "cacheWrite": 3.75 },
+      "validated": false,
+      "validatedAt": 0
+    }
+  ],
   "id": 1
 }
 ```

@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis ships **50+ leaf commands grouped into 18 command groups** (verified against `packages/cli/src/cli.ts` at version 1.0.31). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
+Comis ships **50+ leaf commands grouped into 19 command groups** (verified against `packages/cli/src/cli.ts` at version 1.0.31). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
 
 <Snippet file="invocation-modes.mdx" />
 
@@ -466,7 +466,9 @@ comis memory clear --tenant default --filter memoryType=conversation --yes
 
 ### `comis models`
 
-Model management commands for browsing the model catalog and updating agent model assignments.
+Model management commands for browsing the model catalog and updating agent model assignments. The catalog is sourced live from the [`@mariozechner/pi-ai`](https://www.npmjs.com/package/@mariozechner/pi-ai) SDK — adding a new provider/model to pi-ai automatically surfaces it here with no Comis update required.
+
+When the daemon is running, the commands fetch via the `models.list` RPC. When the daemon is stopped (e.g., during `comis init`), they fall back to the local pi-ai static catalog so the wizard works pre-init.
 
 #### Subcommands
 
@@ -489,15 +491,54 @@ Model management commands for browsing the model catalog and updating agent mode
 | `-c, --config <path>` | `string` | Auto-detected | Config file path |
 
 ```bash
-# List all available models
+# List all available models (~949 entries across 27 providers as of pi-ai 0.71.0)
 comis models list
 
 # Filter by provider
 comis models list --provider anthropic
+comis models list --provider openrouter
+
+# Machine-readable
+comis models list --format json
 
 # Set agent model
 comis models set my-agent claude-sonnet-4-5-20250929
 ```
+
+---
+
+### `comis providers`
+
+Provider management commands. Like `comis models`, the provider list is sourced live from the pi-ai SDK catalog (`getProviders()` via the `models.list_providers` RPC), with local fallback when the daemon isn't running.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `providers list` | List all available providers with model counts and key status |
+
+#### `providers list`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+The output includes three columns:
+
+- **Provider** — pi-ai provider id (e.g., `anthropic`, `openrouter`, `groq`)
+- **Models** — count of models the provider exposes in the catalog
+- **Status** — `configured` (canonical env key resolved), `missing key` (provider listed but key not in env), or `keyless` (local providers like ollama / lm-studio that don't need a key)
+
+```bash
+# Default table output
+comis providers list
+
+# Machine-readable
+comis providers list --format json
+# → [{"provider":"anthropic","modelCount":23,"status":"configured"}, ...]
+```
+
+To switch an agent to a different provider, use [`comis agent configure`](#comis-agent) with `--provider <id> --model <id>`.
 
 ---
 

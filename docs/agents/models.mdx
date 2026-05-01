@@ -12,35 +12,44 @@ provider has a hiccup.
 covers picking a default; the reference section covers per-agent overrides,
 fallback chains, and key rotation.
 
-Comis works with **13 AI providers**: Anthropic (Claude), OpenAI (GPT),
-Google (Gemini), Mistral, Groq, Ollama, OpenRouter, Together, Cerebras,
-xAI (Grok), DeepSeek, plus enterprise variants Amazon Bedrock and Azure
-OpenAI. You can set a default model for all agents, override it per agent,
-and configure automatic failover so your agents keep working even if one
-provider goes down.
+Comis ships with native support for **every provider in the [`@mariozechner/pi-ai`](https://www.npmjs.com/package/@mariozechner/pi-ai) catalog** — currently 27 hosted providers (Anthropic, OpenAI, Google, Mistral, Groq, OpenRouter, DeepSeek, xAI, Cerebras, Amazon Bedrock, Azure OpenAI Responses, Vercel AI Gateway, Cloudflare AI Gateway / Workers AI, GitHub Copilot, Hugging Face, Fireworks, Together (via OpenRouter), Moonshot, Minimax, Z.ai, Kimi, OpenCode, and more). The catalog is queried at runtime — adding a new provider to pi-ai automatically lights it up across the daemon, web wizard, CLI wizard, and `comis models list` with **zero comis code changes**.
 
-## All 13 providers at a glance
+Plus you can register custom OpenAI-compatible endpoints (any HTTP service that speaks the OpenAI chat-completions API) for proxies and self-hosted gateways.
 
-| Provider | Canonical IDs | Typical models | Notes |
-|---|---|---|---|
-| **Anthropic** | `anthropic`, `anthropic-vertex`, `amazon-bedrock` | `claude-sonnet-4-5-20250929`, `claude-opus-4-20250514`, `claude-haiku-4-5` | Native ephemeral prompt cache (5m / 1h TTL); Vertex AI and Bedrock are alternate gateways to the same models |
-| **OpenAI** | `openai`, `azure-openai`, `azure-openai-responses`, `openai-codex` | `gpt-4o`, `gpt-4o-mini`, `gpt-5.4-mini`, `gpt-5.4-nano` | Responses API supports `store: true` completion storage |
-| **Google** | `google`, `google-vertex`, `google-gemini-cli`, `google-antigravity` | `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3-flash` | Explicit `CachedContent` API for prompt caching |
-| **Mistral** | `mistral` | `mistral-large`, `mixtral`, `codestral`, `pixtral`, `devstral`, `ministral` | Strict tool-call ID mode |
-| **Groq** | `groq` | `whisper-large-v3-turbo` (audio); LLM models via registry | Lowest-latency inference |
-| **Ollama** | `ollama` | Whatever you have pulled locally | Fully local; no API key required |
-| **OpenRouter** | `openrouter` | Aggregator — exposes 100+ models | One API key, many models |
-| **Together** | `together` | Open-weights models | |
-| **Cerebras** | `cerebras` | `llama-3.3-70b`, others | Wafer-scale inference |
-| **xAI (Grok)** | `xai` (alias `grok`) | `grok-2`, `grok-3` | Standard tool calls |
-| **DeepSeek** | `deepseek` | `deepseek-chat`, `deepseek-coder` | |
-| **Amazon Bedrock** | `amazon-bedrock` (alias `bedrock`, `aws-bedrock`) | Anthropic models via Bedrock | Anthropic family — see row 1 |
-| **Azure OpenAI** | `azure-openai`, `azure-openai-responses` (alias `azure`) | OpenAI models via Azure | OpenAI family — see row 2 |
+You can set a default model for all agents, override it per agent, and configure automatic failover so your agents keep working even if one provider goes down.
 
-The full registry lives in
-`packages/agent/src/provider/capabilities.ts` and `pi-ai`'s static model
-catalog. Run `comis models scan` (or `node packages/cli/dist/cli.js models
-scan`) to live-validate which models your configured keys can actually reach.
+## Discovering available providers and models
+
+The catalog is dynamic. Two CLI commands surface it:
+
+```bash
+# List all providers with model counts and key status
+comis providers list
+
+# Browse the full model catalog
+comis models list
+
+# Filter to one provider
+comis models list --provider openrouter
+
+# Machine-readable
+comis providers list --format json
+comis models list --format json
+```
+
+Each command tries the daemon's `models.list_providers` / `models.list` RPC first, and falls back to the local pi-ai static catalog when the daemon isn't running (so the wizard still works pre-init).
+
+In the web dashboard, the same catalog drives:
+- **Setup Wizard › Provider step** — provider grid populated from `models.list_providers`
+- **Setup Wizard › Model dropdown** — per-provider model list from `models.list`
+- **Models view › Catalog tab** — full searchable model catalog
+- **Agents view › Edit agent** — provider and model dropdowns
+
+There is no hardcoded provider/model list in comis source. The pi-ai catalog is the single source of truth, accessed via `getProviders()` and `getModels(provider)` from `@mariozechner/pi-ai`.
+
+## Custom providers (proxies and self-hosted)
+
+For any endpoint not in the pi-ai catalog — your own gateway, a private deployment, an OpenAI-compatible proxy — register a custom provider entry under `providers.entries.<id>` with `type: "openai"` and your custom `baseUrl`. The daemon's built-in-provider guard rejects redundant entries that try to re-create a built-in provider with the catalog's default URL (those should use the built-in path: env_set + agent provider/model directly).
 
 ## Choosing a model
 
@@ -250,9 +259,13 @@ governs how Comis builds the request body for each provider.
 | xAI Grok | 128K | None | Yes | Limited | No |
 | DeepSeek | 64K-128K | None | Yes | No | No |
 
-The exact context window per concrete model is resolved at runtime by
-`packages/agent/src/model/context-window-resolver.ts`. To see the live
-catalog: `node packages/cli/dist/cli.js models list`.
+The exact context window per concrete model is resolved at runtime from
+the pi-ai catalog (`getModels(provider)`). To see the live catalog: `comis
+models list` (or filter to one provider with `comis models list --provider
+<id>`). The capability matrix above is a reference summary — concrete
+per-model capabilities (cost, max tokens, vision support, reasoning) are
+queryable directly via `comis models list --format json` or the
+`models.list` RPC.
 
 ## Key rotation
 
