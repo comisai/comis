@@ -41,6 +41,10 @@ export function isVisibleTextBlock(block: any): boolean {
  *   - synthetic-injected (model === "synthetic") — appended by
  *     orphaned-message-repair.ts to restore role alternation after a
  *     daemon restart; not user-visible LLM output.
+ *   - cross-turn boundary (role === "user" encountered before a
+ *     qualifying assistant) — return "" because the user message marks
+ *     the start of the current execution window; assistants before it
+ *     belong to prior turns (260501-gyy).
  *
  * When the resulting last assistant contains commentary-phase text
  * blocks, drops them and returns only visible text. Otherwise returns
@@ -52,24 +56,30 @@ export function isVisibleTextBlock(block: any): boolean {
 export function getVisibleAssistantText(session: any): string {
   const messages: any[] | undefined = session?.messages;
 
-  // Find last "real" assistant message — skip aborted-empty,
-  // error-empty, and synthetic-injected.
-  const lastAssistant = Array.isArray(messages)
-    ? messages
-        .slice()
-        .reverse()
-        .find((m: any) => {
-          if (m.role !== "assistant") return false;
-          // Skip aborted-empty (existing behavior — preserved).
-          if (m.stopReason === "aborted" && m.content?.length === 0) return false;
-          // Skip error-empty — failed LLM calls (e.g. 429 swallowed
-          // inside pi-ai's stream wrapper).
-          if (m.stopReason === "error" && m.content?.length === 0) return false;
-          // Skip synthetic-injected — orphaned-message-repair scaffolding.
-          if (m.model === "synthetic") return false;
-          return true;
-        })
-    : undefined;
+  // Find last "real" assistant message in the CURRENT execution window —
+  // skip aborted-empty, error-empty, and synthetic-injected; stop at the
+  // first user message (turn boundary) to avoid leaking prior-turn text
+  // (260501-gyy).
+  const lastAssistant = (() => {
+    if (!Array.isArray(messages)) return undefined;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]; // eslint-disable-line security/detect-object-injection
+      // Crossed turn boundary — assistants before this user message belong
+      // to a prior turn and must not be returned.
+      if (m?.role === "user") return undefined;
+      // toolResult / tool / other roles — keep walking within current turn.
+      if (m?.role !== "assistant") continue;
+      // Skip aborted-empty (existing behavior — preserved).
+      if (m.stopReason === "aborted" && m.content?.length === 0) continue;
+      // Skip error-empty — failed LLM calls (e.g. 429 swallowed inside
+      // pi-ai's stream wrapper).
+      if (m.stopReason === "error" && m.content?.length === 0) continue;
+      // Skip synthetic-injected — orphaned-message-repair scaffolding.
+      if (m.model === "synthetic") continue;
+      return m;
+    }
+    return undefined;
+  })();
 
   // Only activate phase filtering when commentary blocks are present.
   const hasCommentary = lastAssistant?.content?.some(

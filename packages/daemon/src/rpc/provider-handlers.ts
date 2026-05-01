@@ -19,6 +19,7 @@
 import { ProviderEntrySchema } from "@comis/core";
 import type { ProviderEntry, PerAgentConfig } from "@comis/core";
 import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
+import { checkBuiltInProviderRedundancy } from "./builtin-provider-guard.js";
 import { persistToConfig, type PersistToConfigDeps } from "./persist-to-config.js";
 import { probeProviderAuth } from "./probe-provider-auth.js";
 import type { RpcHandler } from "./types.js";
@@ -260,6 +261,19 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
       }
 
       const config = (params.config as Partial<ProviderEntry>) ?? {};
+
+      // 260501-gyy: reject redundant catalog-shadowing entries before
+      // promotion / probe / persist. A built-in provider with a catalog
+      // (or absent) baseUrl is structurally redundant -- pi-ai's dynamic
+      // catalog already provides its model list. Production trace
+      // 2026-05-01 08:53 showed an LLM agent creating
+      // providers.entries.openrouter with an invented model id, leading
+      // to a downstream 404.
+      const guardResult = checkBuiltInProviderRedundancy(providerId, config);
+      if (!guardResult.ok) {
+        throw new Error(guardResult.reason);
+      }
+
       // Layer 1C (260430-vwt): auto-promote type to native catalog name
       // when the providerId matches a pi-ai catalog entry AND the user has
       // not opted out via a custom baseUrl.

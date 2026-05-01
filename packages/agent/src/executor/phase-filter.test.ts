@@ -372,3 +372,126 @@ describe("getVisibleAssistantText — synthetic + empty-error filtering", () => 
     expect(getVisibleAssistantText(session)).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------------
+// getVisibleAssistantText — cross-turn walk-back bound (260501-gyy)
+// ---------------------------------------------------------------------------
+
+describe("getVisibleAssistantText — cross-turn walk-back bound (260501-gyy)", () => {
+  // Local helpers — re-defined inline (parallel to the 260501-egj block above)
+  // so each describe block is independently readable. Byte-identical signatures.
+  const make = (overrides: Record<string, unknown>) => ({
+    role: "assistant",
+    content: [],
+    stopReason: "stop",
+    model: "claude-sonnet-4-5",
+    ...overrides,
+  });
+  const userMsg = (text: string) => ({
+    role: "user",
+    content: [{ type: "text", text }],
+  });
+  const llmAssistant = (text: string) =>
+    make({ content: [{ type: "text", text }] });
+  const syntheticAssistant = (text: string) =>
+    make({ model: "synthetic", content: [{ type: "text", text }] });
+  const emptyErrorAssistant = (model = "qwen/qwen3-coder:free") =>
+    make({ model, content: [], stopReason: "error" });
+
+  it("production-repro: pre-restart claude scaffolding does NOT leak across synthetic-user boundary (260501-gyy)", () => {
+    // Mirrors the production session JSONL shape from
+    // /Users/.../678314278~peer~678314278.jsonl (2026-05-01 08:54 UTC).
+    // Before FIX 1 the find() walk skipped synthetic + 2 toolResults +
+    // empty-error and returned the 91-char Claude scaffolding "Great! The API
+    // key is stored. Now let me switch your agent to use the Qwen 2.5 Coder
+    // model:". After FIX 1 the user-message at index 5 (synthetic-user
+    // continuation-replay) bounds the walk and the function returns "".
+    const session = {
+      getLastAssistantText: vi.fn(),
+      messages: [
+        userMsg("Switch to Qwen 2.5 Coder"),
+        {
+          role: "assistant",
+          stopReason: "toolUse",
+          model: "claude-sonnet-4-5",
+          content: [
+            {
+              type: "text",
+              text:
+                "Great! The API key is stored. Now let me switch your agent to use the Qwen 2.5 Coder model:",
+            },
+            { type: "toolCall", toolCallId: "tc1", name: "providers_manage" },
+            { type: "toolCall", toolCallId: "tc2", name: "gateway" },
+          ],
+        },
+        { role: "tool", content: [{ type: "toolResult", toolCallId: "tc1", isError: false }] },
+        { role: "tool", content: [{ type: "toolResult", toolCallId: "tc2", isError: false }] },
+        syntheticAssistant("(daemon restarted to apply the change — continuing)"),
+        {
+          role: "user",
+          content:
+            "[system: daemon restarted to apply a config change. The result of your previous tool call is in the conversation above — react to it naturally...]",
+        },
+        emptyErrorAssistant("qwen/qwen-2.5-coder-32b-instruct:free"),
+      ],
+    };
+    expect(getVisibleAssistantText(session)).toBe("");
+    expect(session.getLastAssistantText).not.toHaveBeenCalled();
+  });
+
+  it("single-turn happy path: returns text of the only assistant in current turn", () => {
+    const session = {
+      messages: [userMsg("hi"), llmAssistant("hello")],
+    };
+    expect(getVisibleAssistantText(session)).toBe("hello");
+  });
+
+  it("returns '' when last message is user (no assistant produced yet in current turn)", () => {
+    // Walk starts at index 1 (the user) → BOUND HIT immediately → undefined → "".
+    const session = {
+      messages: [llmAssistant("foo"), userMsg("hi")],
+    };
+    expect(getVisibleAssistantText(session)).toBe("");
+  });
+
+  it("multi-turn: returns most-recent-turn assistant text, NOT prior-turn assistant text", () => {
+    const session = {
+      messages: [
+        userMsg("first"),
+        llmAssistant("foo"),
+        userMsg("second"),
+        llmAssistant("bar"),
+        syntheticAssistant("(restart)"),
+      ],
+    };
+    // Walk: synthetic skipped → bar matches → returns "bar" (NOT "foo").
+    expect(getVisibleAssistantText(session)).toBe("bar");
+  });
+
+  it("does NOT walk past user boundary even when current-turn assistants are all skipped", () => {
+    // The user-message at index 2 bounds the walk; llmAssistant("foo") is
+    // across the bound and is not returned.
+    const session = {
+      messages: [
+        userMsg("first"),
+        llmAssistant("foo"),
+        userMsg("second"),
+        emptyErrorAssistant(),
+      ],
+    };
+    expect(getVisibleAssistantText(session)).toBe("");
+  });
+
+  it("walks past aborted-empty within current turn but stops at user-bound", () => {
+    // Aborted-empty skipped → user-bound at index 2 hits → undefined → "".
+    const session = {
+      messages: [
+        userMsg("first"),
+        llmAssistant("foo"),
+        userMsg("second"),
+        { role: "assistant", content: [], stopReason: "aborted", model: "claude-sonnet-4-5" },
+      ],
+    };
+    expect(getVisibleAssistantText(session)).toBe("");
+  });
+});
