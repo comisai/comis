@@ -1,7 +1,7 @@
 {
   "name": "@comis/agent",
   "private": true,
-  "version": "1.0.29",
+  "version": "1.0.30",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "AI agent executor, budget control, and session management for Comis",
@@ -40,7 +40,7 @@
     "@comis/shared": "workspace:*",
     "@google/genai": "1.50.1",
     "@mariozechner/pi-agent-core": "0.70.6",
-    "@mariozechner/pi-ai": "0.70.6",
+    "@mariozechner/pi-ai": "0.71.0",
     "@mariozechner/pi-coding-agent": "0.70.6",
     "diff": "8.0.4",
     "p-queue": "9.2.0",

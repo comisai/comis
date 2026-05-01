@@ -57,7 +57,8 @@
       "music-metadata": ">=11.12.3",
       "vite": ">=7.3.2",
       "fast-xml-parser": ">=5.7.0",
-      "uuid": ">=14.0.0"
+      "uuid": ">=14.0.0",
+      "@anthropic-ai/sdk": ">=0.91.1"
     }
   }
 }
