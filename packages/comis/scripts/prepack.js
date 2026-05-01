@@ -14,7 +14,7 @@
  * published separately.
  */
 
-import { cpSync, mkdirSync, existsSync, lstatSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
@@ -117,23 +117,21 @@ if (pkg.dependencies) {
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
 console.log(`  resolved ${resolved} workspace:* references to real versions`);
 
-// --- Step 3: Remove pnpm symlinks from node_modules/ ---
-// pnpm creates symlinks like node_modules/sd-notify -> ../../node_modules/.pnpm/...
-// npm follows these and creates invalid path-traversal entries in the tarball.
-// Keep only @comis/ (our bundled packages) and remove everything else.
+// --- Step 3: Remove all non-bundled entries from node_modules/ ---
+// pnpm populates node_modules/ with symlinks (unscoped) and real directories
+// containing symlinks (scoped, e.g. @slack/bolt -> ../../node_modules/.pnpm/...).
+// If any remain when npm generates the shrinkwrap in step 4, it records them as
+// link entries with pnpm-internal paths that don't exist on the consumer's machine.
+// Remove everything except @comis/ (our bundled packages).
 const entries = readdirSync(bundledModules);
 let removed = 0;
 for (const entry of entries) {
   if (entry === "@comis") continue;
-  const entryPath = join(bundledModules, entry);
-  const stat = lstatSync(entryPath);
-  if (stat.isSymbolicLink() || entry === ".bin") {
-    rmSync(entryPath, { recursive: true, force: true });
-    removed++;
-  }
+  rmSync(join(bundledModules, entry), { recursive: true, force: true });
+  removed++;
 }
 if (removed > 0) {
-  console.log(`  removed ${removed} pnpm symlinks from node_modules/`);
+  console.log(`  removed ${removed} pnpm entries from node_modules/`);
 }
 
 // --- Step 4: Generate npm-shrinkwrap.json ---
