@@ -28,15 +28,13 @@ Confirm the workspace identity:
 
 ### 2. Provider
 
-Pick the LLM provider to wire up. Each option in the picker shows the provider name, a one-line description, and whether it needs an API key, base URL, or model id:
+Pick the LLM provider to wire up. The picker is **populated live from the [`@mariozechner/pi-ai`](https://www.npmjs.com/package/@mariozechner/pi-ai) catalog** via the `models.list_providers` RPC — currently 27 providers (Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek, xAI, Cerebras, OpenRouter, Amazon Bedrock, Azure OpenAI Responses, Vercel AI Gateway, Cloudflare AI Gateway / Workers AI, GitHub Copilot, Hugging Face, Fireworks, Moonshot, Minimax, Z.ai, Kimi, OpenCode, plus more). Adding a new provider to pi-ai automatically lights it up in this dropdown — no Comis update required.
 
-- **Anthropic** (recommended) -- Claude models
-- **OpenAI** -- GPT-4o, o1, o3 families
-- **Google** -- Gemini
-- **Groq, Mistral, DeepSeek, xAI, Together, Cerebras, OpenRouter** -- third-party hosts and aggregators
-- **Ollama** / **local** -- self-hosted endpoints
+Each provider tile shows the name and (for the most common ones) a one-line hint. Plus a synthetic **Custom** option at the end for any OpenAI-compatible endpoint not in the pi-ai catalog (your own gateway, a private proxy, etc.).
 
-Enter the API key (saved to `~/.comis/.env` or the secrets store, never printed), the base URL if non-default, and the default model id.
+After picking a provider, the **Model** dropdown populates from the same catalog (via `models.list` filtered to that provider) — sorted by cost ascending so the cheapest options surface first.
+
+Enter the API key (saved to `~/.comis/.env` or the secrets store, never printed), the base URL if non-default (only relevant for the "Custom" option), and select a model from the dropdown.
 
 ### 3. Agent
 

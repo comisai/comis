@@ -60,7 +60,7 @@ can't respond to channel events. **Use the $7/mo Starter plan or higher.**
     For production, pin to an immutable version tag instead of `latest-slim` so
     your service doesn't update under you. Find the latest version on the
     [Comis Docker Hub page](https://hub.docker.com/r/comisai/comis/tags) and use
-    e.g. `docker.io/comisai/comis:1.0.30-slim`.
+    e.g. `docker.io/comisai/comis:1.0.31-slim`.
     </Tip>
 
     Click **Connect** (or "Next" depending on your Render UI version).
@@ -234,7 +234,7 @@ services:
     name: comis
     runtime: image
     image:
-      url: docker.io/comisai/comis:1.0.30-slim   # pin to an immutable tag
+      url: docker.io/comisai/comis:1.0.31-slim   # pin to an immutable tag
     plan: starter                                  # $7/mo, has persistent disk
     region: oregon                                 # closest to your users
     healthCheckPath: /health
@@ -343,7 +343,7 @@ If you pinned a version tag (recommended), updating is a 30-second job:
 
   <Step title="Update the image URL">
     On Render → your service → **Settings** → scroll to **Image URL** → change
-    `comisai/comis:1.0.30-slim` to the new version → **Save Changes**.
+    `comisai/comis:1.0.31-slim` to the new version → **Save Changes**.
 
     (Or, if you used `render.yaml`, edit the file in your repo and push — Render
     picks up the change.)

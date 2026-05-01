@@ -18,11 +18,13 @@ The view is organized into four tabs:
 
 ### Providers tab
 
-Lists every provider entry from the `models.providers` config block. Each card shows:
+Lists every **custom provider entry** from the `providers.entries` config block — these are OpenAI-compatible proxies, self-hosted gateways, and other endpoints not covered by the pi-ai built-in catalog. Most users will see this tab empty, because the pi-ai catalog covers all common providers natively (see the Catalog tab below).
 
-- **Type** -- `anthropic`, `openai`, `google`, `mistral`, `groq`, `ollama`, `openrouter`, `together`, `cerebras`, `xai`, `deepseek`, or `local`
+Each card shows:
+
+- **Type** -- any pi-ai catalog provider name, or `openai` for an OpenAI-compatible custom proxy
 - **Name** -- a friendly label
-- **Base URL** -- the endpoint the SDK calls (defaults shown for hosted providers)
+- **Base URL** -- the endpoint the SDK calls
 - **API key env name** -- which environment variable holds the key (e.g., `ANTHROPIC_API_KEY`)
 - **Status** -- a connection dot (green = key present and ping succeeded; red = missing or failing)
 - **Timeout / Max retries** -- per-provider transport tuning
@@ -30,9 +32,13 @@ Lists every provider entry from the `models.providers` config block. Each card s
 
 A **Test** button on each card calls `models.test` to run a connectivity check and (when supported) lists which models the provider currently exposes plus which agents are using it.
 
+<Note>
+The daemon includes a guard that **rejects redundant custom entries** for built-in providers — if you try to create `providers.entries.openrouter` with the catalog's default `baseUrl`, the daemon returns an actionable error directing you to use `gateway env_set OPENROUTER_API_KEY=<key>` + `agents_manage update --provider openrouter` instead. Custom entries are only needed for proxies (different baseUrl) or non-catalog providers.
+</Note>
+
 ### Catalog tab
 
-Lists every model the daemon knows about, sourced from `models.list` RPC. Each row shows:
+Lists every model from the pi-ai SDK catalog — sourced live from the `models.list` RPC, which itself wraps `getModels(provider)` from `@mariozechner/pi-ai`. Each row shows:
 
 | Field | Description |
 |-------|-------------|
