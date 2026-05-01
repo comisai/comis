@@ -91,37 +91,56 @@ const AUTH_METHOD_PROVIDERS: Record<
 // ---------- Provider Validation Endpoints ----------
 
 /**
- * Validation paths per provider.
+ * Path suffixes per provider, RELATIVE to the pi-ai catalog baseUrl.
  *
- * Paths vary too much across providers to derive automatically -- e.g.,
- * groq uses `/openai/v1/models`, anthropic uses `/v1/models`, openrouter
- * uses `/api/v1/models`. We keep a small known-paths table here while
- * the baseUrl comes from the live pi-ai catalog (see
- * `getValidationEndpoint`).
+ * Pi-ai's catalog baseUrl shape is NOT uniform across providers:
+ *   - HOST-ONLY for anthropic ("https://api.anthropic.com"), mistral, deepseek
+ *     -> path here must include the version prefix ("/v1/models").
+ *   - PREFIXED with the version segment for openai ("https://api.openai.com/v1"),
+ *     google ("/v1beta"), groq ("/openai/v1"), xai ("/v1"), cerebras ("/v1"),
+ *     openrouter ("/api/v1") -> path here must NOT repeat the version segment;
+ *     append "/models" only.
  *
- * Drift risk: if pi-ai upgrades a provider's baseUrl AND its path
- * convention changes, this table must be updated. Acceptable trade-
- * off -- paths change rarely (years), baseUrls more often. Catalog-
- * agnostic baseUrl resolution closes the more common drift surface.
+ * Composing entry.baseUrl + entry.path therefore produces the canonical /models
+ * endpoint for each provider (e.g., https://api.openai.com/v1/models,
+ * https://generativelanguage.googleapis.com/v1beta/models,
+ * https://api.groq.com/openai/v1/models).
+ *
+ * Follow-up to 260501-kqq Sub-Fix C: that migration replaced the static
+ * PROVIDER_VALIDATION map (which had host-only baseUrls + correct /v1/models
+ * suffixes) with the catalog-driven `getValidationEndpoint` helper, but the
+ * path-table values were copied verbatim -- producing double-prefixed URLs
+ * (e.g., https://api.openai.com/v1/v1/models -> 404) for the 6 providers
+ * whose catalog baseUrl includes the version segment. 260501-mvw corrects
+ * the table; the helper itself is unchanged.
+ *
+ * Drift risk: if pi-ai upgrades a provider's baseUrl AND its path convention
+ * changes, this table must be updated. Acceptable trade-off -- explicit
+ * beats clever (auto-detection of duplicated path segments could mask
+ * legitimate future shape changes).
  *
  * Excluded: `together` and `ollama` are NOT in pi-ai 0.71.0's catalog
- * (`getModels(p)[0]?.baseUrl` returns undefined for both). The
- * line-130 fallback (`if (!entry) return { valid: true };`) handles
- * them by skipping live validation entirely. For `together` this is a
- * deliberate behavior change vs the pre-260501-kqq state -- live
- * validation against api.together.xyz is now skipped. Users can still
- * target Together via the synthetic `custom` endpoint route.
+ * (`getModels(p)[0]?.baseUrl` returns undefined for both). The line-130
+ * fallback (`if (!entry) return { valid: true };`) handles them by
+ * skipping live validation entirely. For `together` this is a deliberate
+ * behavior change vs the pre-260501-kqq state -- live validation against
+ * api.together.xyz is now skipped. Users can still target Together via
+ * the synthetic `custom` endpoint route.
  */
 const PROVIDER_VALIDATION_PATHS: Record<string, string> = {
+  // Catalog baseUrl is HOST-ONLY for these providers -> path needs the /v1 prefix.
   anthropic: "/v1/models",
-  openai: "/v1/models",
-  google: "/v1/models",
-  groq: "/openai/v1/models",
-  mistral: "/v1/models",
-  deepseek: "/v1/models",
-  xai: "/v1/models",
-  cerebras: "/v1/models",
-  openrouter: "/api/v1/models",
+  mistral:   "/v1/models",
+  deepseek:  "/v1/models",
+  // Catalog baseUrl ALREADY INCLUDES the version prefix for these providers
+  // (e.g., openai's baseUrl is "https://api.openai.com/v1", openrouter's is
+  // "https://openrouter.ai/api/v1") -- append /models only.
+  openai:     "/models",
+  google:     "/models",
+  groq:       "/models",
+  xai:        "/models",
+  cerebras:   "/models",
+  openrouter: "/models",
 };
 
 /**
