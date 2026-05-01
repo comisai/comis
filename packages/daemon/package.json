@@ -1,7 +1,7 @@
 {
   "name": "@comis/daemon",
   "private": true,
-  "version": "1.0.30",
+  "version": "1.0.31",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Background daemon and orchestrator for the Comis platform",
