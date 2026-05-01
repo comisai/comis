@@ -28,13 +28,11 @@ export type {
   GatewayConfig,
   ProviderConfig,
   ToolProviderConfig,
-  SupportedProvider,
   SupportedToolProvider,
 } from "./types.js";
 
 export {
   INITIAL_STATE,
-  SUPPORTED_PROVIDERS,
   SUPPORTED_CHANNELS,
   SUPPORTED_TOOL_PROVIDERS,
   PROVIDER_ENV_KEYS,

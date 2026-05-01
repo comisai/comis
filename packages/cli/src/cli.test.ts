@@ -73,6 +73,7 @@ describe("CLI entry point", () => {
       "status",
       "health",
       "models",
+      "providers",
       "pm2",
       "sessions",
       "reset",
@@ -81,8 +82,8 @@ describe("CLI entry point", () => {
       "uninstall",
     ] as const;
 
-    it("registers exactly 18 commands", () => {
-      expect(program.commands).toHaveLength(18);
+    it("registers exactly 19 commands", () => {
+      expect(program.commands).toHaveLength(19);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

@@ -225,6 +225,9 @@ importers:
       '@comis/shared':
         specifier: workspace:*
         version: link:../shared
+      '@mariozechner/pi-ai':
+        specifier: 0.71.0
+        version: 0.71.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.20.0)(zod@4.3.6)
       chalk:
         specifier: 5.6.2
         version: 5.6.2
