@@ -18,22 +18,6 @@ import {
 } from "../index.js";
 import { createModelCatalog } from "@comis/agent";
 
-// ---------- Recommended Models Per Provider ----------
-
-const RECOMMENDED_MODELS: Record<string, string> = {
-  anthropic: "claude-sonnet-4-5-20250929",
-  openai: "gpt-4o",
-  google: "gemini-2.0-flash",
-  groq: "llama-3.3-70b-versatile",
-  mistral: "mistral-large-latest",
-  deepseek: "deepseek-chat",
-  xai: "grok-2",
-  together: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-  cerebras: "llama-3.3-70b",
-  openrouter: "anthropic/claude-sonnet-4-5-20250929",
-  ollama: "llama3",
-};
-
 // ---------- Helpers ----------
 
 function formatModelHint(m: { contextWindow: number; reasoning: boolean }): string {
@@ -80,9 +64,6 @@ export const agentStep: WizardStep = {
       // Fallback: empty catalog, will use recommended default only
     }
 
-    const providerId = state.provider?.id ?? "";
-    const recommended = RECOMMENDED_MODELS[providerId];
-
     // 4. QuickStart flow -- use "default" so the daemon picks the model at runtime
     if (state.flow === "quickstart") {
       prompter.log.info("Model: default");
@@ -105,11 +86,13 @@ export const agentStep: WizardStep = {
         hint: "Enter a model ID manually",
       });
 
+      // Initial value: state.model takes precedence; otherwise the
+      // first catalog entry. No hardcoded recommendation lookup --
+      // pi-ai's catalog ordering is the source of truth.
       const chosen = await prompter.select<string>({
         message: "Select a model",
         options,
-        initialValue: state.model
-          ?? (recommended && catalogModels.some((m) => m.modelId === recommended) ? recommended : undefined),
+        initialValue: state.model ?? catalogModels[0]?.modelId,
       });
 
       if (chosen === "__custom__") {
@@ -124,8 +107,8 @@ export const agentStep: WizardStep = {
       // Empty catalog -- go directly to custom text input
       selectedModel = await prompter.text({
         message: "Model ID",
-        placeholder: recommended ?? "model-name",
-        defaultValue: state.model ?? recommended,
+        placeholder: state.model ?? "model-name",
+        defaultValue: state.model,
       });
     }
 

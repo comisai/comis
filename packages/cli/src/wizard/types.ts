@@ -173,43 +173,7 @@ export type WizardResult = {
   error?: WizardError;
 };
 
-// ---------- Provider Constants ----------
-
-/** Supported provider entry for selection prompts. */
-export type SupportedProvider = {
-  id: string;
-  label: string;
-  hint?: string;
-  category: "recommended" | "other" | "local" | "custom";
-};
-
-/**
- * All supported LLM providers, grouped by category.
- *
- * Categories: recommended (top picks), other (cloud APIs),
- * local (self-hosted), custom (user-defined endpoints).
- */
-export const SUPPORTED_PROVIDERS: readonly SupportedProvider[] = [
-  // Recommended
-  { id: "anthropic", label: "Anthropic (Claude)", hint: "Recommended for agents", category: "recommended" },
-  { id: "openai", label: "OpenAI (GPT)", hint: "GPT-4o, o1, o3 models", category: "recommended" },
-
-  // Other Providers
-  { id: "google", label: "Google (Gemini)", hint: "Gemini models", category: "other" },
-  { id: "groq", label: "Groq", hint: "Fast inference (Llama, Mixtral)", category: "other" },
-  { id: "mistral", label: "Mistral", hint: "Mistral models", category: "other" },
-  { id: "deepseek", label: "DeepSeek", hint: "DeepSeek models", category: "other" },
-  { id: "xai", label: "xAI (Grok)", hint: "Grok models", category: "other" },
-  { id: "together", label: "Together AI", hint: "Open-source model hosting", category: "other" },
-  { id: "cerebras", label: "Cerebras", hint: "Fast inference", category: "other" },
-  { id: "openrouter", label: "OpenRouter", hint: "Multi-provider routing", category: "other" },
-
-  // Local
-  { id: "ollama", label: "Ollama (local)", hint: "No API key needed", category: "local" },
-
-  // Custom
-  { id: "custom", label: "Custom endpoint", hint: "OpenAI-compatible API", category: "custom" },
-] as const;
+// ---------- Channel Constants ----------
 
 /** Supported channel entry for selection prompts. */
 export type SupportedChannel = {

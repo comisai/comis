@@ -10,6 +10,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import type { WizardPrompter, Spinner } from "../prompter.js";
 import type { WizardState, ProviderConfig } from "../types.js";
 import { INITIAL_STATE } from "../types.js";
@@ -263,5 +266,96 @@ describe("agentStep", () => {
 
     expect(result.model).toBe("fallback-model");
     expect(result.agentName).toBe("my-agent");
+  });
+
+  // ---------- B1-B4: catalog-driven model picker regression tests ----------
+
+  it("B1: uses catalogModels[0].modelId as initialValue when state.model is unset", async () => {
+    vi.mocked(createModelCatalog).mockReturnValue({
+      loadStatic: vi.fn(),
+      getByProvider: vi.fn(() => [
+        {
+          modelId: "claude-sonnet-4-5-20250929",
+          displayName: "Claude Sonnet 4.5",
+          contextWindow: 200000,
+          reasoning: false,
+        },
+        {
+          modelId: "claude-opus-4-20250514",
+          displayName: "Claude Opus 4",
+          contextWindow: 200000,
+          reasoning: true,
+        },
+      ]),
+    } as never);
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.text).mockResolvedValueOnce("my-agent");
+    vi.mocked(prompter.select).mockResolvedValueOnce("claude-sonnet-4-5-20250929");
+
+    const state: WizardState = {
+      ...INITIAL_STATE,
+      flow: "advanced",
+      provider: { id: "anthropic" } as ProviderConfig,
+      // state.model intentionally unset
+    };
+
+    await agentStep.execute(state, prompter);
+
+    const selectCall = (prompter.select as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as { initialValue?: string };
+    expect(selectCall.initialValue).toBe("claude-sonnet-4-5-20250929");
+  });
+
+  it("B2: state.model takes precedence over catalogModels[0] as initialValue", async () => {
+    vi.mocked(createModelCatalog).mockReturnValue({
+      loadStatic: vi.fn(),
+      getByProvider: vi.fn(() => [
+        {
+          modelId: "claude-sonnet-4-5-20250929",
+          displayName: "Claude Sonnet 4.5",
+          contextWindow: 200000,
+          reasoning: false,
+        },
+      ]),
+    } as never);
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.text).mockResolvedValueOnce("my-agent");
+    vi.mocked(prompter.select).mockResolvedValueOnce("my-prior-choice");
+
+    const state: WizardState = {
+      ...INITIAL_STATE,
+      flow: "advanced",
+      provider: { id: "anthropic" } as ProviderConfig,
+      model: "my-prior-choice",
+    };
+
+    await agentStep.execute(state, prompter);
+
+    const selectCall = (prompter.select as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as { initialValue?: string };
+    expect(selectCall.initialValue).toBe("my-prior-choice");
+  });
+
+  it("B3: QuickStart flow still passes model='default' (regression pin)", async () => {
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.text).mockResolvedValueOnce("test-agent");
+
+    const state: WizardState = {
+      ...INITIAL_STATE,
+      flow: "quickstart",
+      provider: { id: "anthropic" } as ProviderConfig,
+    };
+
+    const result = await agentStep.execute(state, prompter);
+
+    expect(result.model).toBe("default");
+  });
+
+  it("B4: RECOMMENDED_MODELS does not appear in 05-agent.ts source", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "05-agent.ts"), "utf-8");
+    expect(src).not.toMatch(/RECOMMENDED_MODELS/);
   });
 });

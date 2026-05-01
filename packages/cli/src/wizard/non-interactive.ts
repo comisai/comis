@@ -17,6 +17,7 @@
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { safePath } from "@comis/core";
+import { createModelCatalog } from "@comis/agent";
 import type {
   WizardState,
   WizardStepId,
@@ -24,7 +25,6 @@ import type {
   GatewayConfig,
   ProviderConfig,
 } from "./types.js";
-import { SUPPORTED_PROVIDERS } from "./types.js";
 import type {
   WizardPrompter,
   SelectOpts,
@@ -100,28 +100,6 @@ export class NonInteractiveError extends Error {
   }
 }
 
-// ---------- Recommended Models ----------
-
-/**
- * Default model per provider, matching step 05-agent logic.
- *
- * When no --model flag is provided, the build function selects
- * the recommended model for the given provider.
- */
-const RECOMMENDED_MODELS: Record<string, string> = {
-  anthropic: "claude-sonnet-4-5-20250929",
-  openai: "gpt-4o",
-  google: "gemini-2.0-flash",
-  groq: "llama-3.3-70b-versatile",
-  mistral: "mistral-large-latest",
-  deepseek: "deepseek-chat",
-  xai: "grok-2",
-  together: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-  cerebras: "llama-3.3-70b",
-  openrouter: "anthropic/claude-sonnet-4-5-20250929",
-  ollama: "llama3",
-};
-
 // ---------- Validation ----------
 
 /**
@@ -153,11 +131,27 @@ export function validateNonInteractiveOptions(
     );
   }
 
-  // Validate provider is known (allow "custom" and "ollama" for forward compat)
-  const knownIds = SUPPORTED_PROVIDERS.map((p) => p.id);
-  if (!knownIds.includes(opts.provider)) {
-    // Unknown provider is allowed but not silently -- the caller can
-    // decide to warn. We do not throw here for forward compatibility.
+  // Soft validation: warn for unknown providers but do not throw.
+  // Daemon-side guards (260501-2pz credential-resolver, 260501-gyy
+  // builtin-provider-guard) catch genuinely-invalid providers downstream
+  // when the agent attempts to use the config. This loosening enables
+  // forward compat when a new pi-ai version adds a provider before
+  // comis releases. The "custom" provider is always allowed (synthetic).
+  if (opts.provider !== "custom") {
+    try {
+      const catalog = createModelCatalog();
+      catalog.loadStatic();
+      const known = new Set(catalog.getAll().map((e) => e.provider));
+      if (!known.has(opts.provider)) {
+        // Soft WARN to stderr -- do not throw, do not log credentials.
+        // Note: this path runs in CLI bootstrap; we use console.warn
+        // because this function may run before any prompter is wired.
+        console.warn(`  WARN: provider "${opts.provider}" is not in the pi-ai catalog. Continuing for forward compatibility -- daemon-side validation will catch invalid providers.`);
+      }
+    } catch {
+      // Catalog load failed (rare) -- skip the check entirely; let
+      // downstream daemon-side guards catch invalid providers.
+    }
   }
 
   // Validate gateway port if specified
@@ -278,9 +272,12 @@ export function buildNonInteractiveState(
     validated: !!opts.skipValidation,
   };
 
-  // Model selection -- use explicit flag or provider default
-  const model =
-    opts.model ?? RECOMMENDED_MODELS[opts.provider!] ?? "default";
+  // Model selection -- delegate to daemon when not specified.
+  // The literal "default" is resolved at agent-execution time via the
+  // pi-ai catalog (builtin-provider-guard.ts:45 baseUrl pattern). Pre-
+  // 260501-kqq, this read a hardcoded provider->model map; that lookup
+  // was removed -- the daemon decides at runtime.
+  const model = opts.model ?? "default";
 
   // Channel configs
   const channels: ChannelConfig[] = [];

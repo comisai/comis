@@ -30,6 +30,7 @@ import {
   validateApiKey,
   getKeyPrefix,
 } from "../index.js";
+import { getModels, type KnownProvider } from "@mariozechner/pi-ai";
 
 // ---------- Provider Help URLs ----------
 
@@ -89,18 +90,58 @@ const AUTH_METHOD_PROVIDERS: Record<
 
 // ---------- Provider Validation Endpoints ----------
 
-const PROVIDER_VALIDATION: Record<string, { baseUrl: string; path: string }> = {
-  anthropic: { baseUrl: "https://api.anthropic.com", path: "/v1/models" },
-  openai: { baseUrl: "https://api.openai.com", path: "/v1/models" },
-  google: { baseUrl: "https://generativelanguage.googleapis.com", path: "/v1/models" },
-  groq: { baseUrl: "https://api.groq.com", path: "/openai/v1/models" },
-  mistral: { baseUrl: "https://api.mistral.ai", path: "/v1/models" },
-  deepseek: { baseUrl: "https://api.deepseek.com", path: "/v1/models" },
-  xai: { baseUrl: "https://api.x.ai", path: "/v1/models" },
-  together: { baseUrl: "https://api.together.xyz", path: "/v1/models" },
-  cerebras: { baseUrl: "https://api.cerebras.ai", path: "/v1/models" },
-  openrouter: { baseUrl: "https://openrouter.ai", path: "/api/v1/models" },
+/**
+ * Validation paths per provider.
+ *
+ * Paths vary too much across providers to derive automatically -- e.g.,
+ * groq uses `/openai/v1/models`, anthropic uses `/v1/models`, openrouter
+ * uses `/api/v1/models`. We keep a small known-paths table here while
+ * the baseUrl comes from the live pi-ai catalog (see
+ * `getValidationEndpoint`).
+ *
+ * Drift risk: if pi-ai upgrades a provider's baseUrl AND its path
+ * convention changes, this table must be updated. Acceptable trade-
+ * off -- paths change rarely (years), baseUrls more often. Catalog-
+ * agnostic baseUrl resolution closes the more common drift surface.
+ *
+ * Excluded: `together` and `ollama` are NOT in pi-ai 0.71.0's catalog
+ * (`getModels(p)[0]?.baseUrl` returns undefined for both). The
+ * line-130 fallback (`if (!entry) return { valid: true };`) handles
+ * them by skipping live validation entirely. For `together` this is a
+ * deliberate behavior change vs the pre-260501-kqq state -- live
+ * validation against api.together.xyz is now skipped. Users can still
+ * target Together via the synthetic `custom` endpoint route.
+ */
+const PROVIDER_VALIDATION_PATHS: Record<string, string> = {
+  anthropic: "/v1/models",
+  openai: "/v1/models",
+  google: "/v1/models",
+  groq: "/openai/v1/models",
+  mistral: "/v1/models",
+  deepseek: "/v1/models",
+  xai: "/v1/models",
+  cerebras: "/v1/models",
+  openrouter: "/api/v1/models",
 };
+
+/**
+ * Resolve the validation endpoint for a provider by reading the catalog
+ * baseUrl from pi-ai (260501-gyy precedent: builtin-provider-guard.ts:45)
+ * and combining it with a known path from PROVIDER_VALIDATION_PATHS.
+ *
+ * Returns `undefined` for providers not in the catalog (or providers
+ * with no models, e.g., ollama with no remote endpoint) -- callers
+ * skip live validation in that case.
+ */
+function getValidationEndpoint(
+  provider: string,
+): { baseUrl: string; path: string } | undefined {
+  const baseUrl = getModels(provider as KnownProvider)[0]?.baseUrl;
+  if (!baseUrl) return undefined;
+  // eslint-disable-next-line security/detect-object-injection -- read of static const map indexed by validated provider string
+  const path = PROVIDER_VALIDATION_PATHS[provider] ?? "/v1/models";
+  return { baseUrl, path };
+}
 
 // ---------- Live Validation ----------
 
@@ -125,7 +166,7 @@ async function validateKeyLive(
     return { valid: true };
   }
 
-  const entry = PROVIDER_VALIDATION[provider];
+  const entry = getValidationEndpoint(provider);
   if (!entry) {
     return { valid: true };
   }

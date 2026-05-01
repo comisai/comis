@@ -9,6 +9,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import type { WizardPrompter, Spinner } from "../prompter.js";
 import type { WizardState, ProviderConfig } from "../types.js";
 import { INITIAL_STATE } from "../types.js";
@@ -16,7 +19,17 @@ import { INITIAL_STATE } from "../types.js";
 // Mock @clack/prompts to prevent import errors (loaded transitively via barrel)
 vi.mock("@clack/prompts", () => ({}));
 
+// Mock pi-ai's getModels so we control the catalog baseUrl in tests
+vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@mariozechner/pi-ai")>();
+  return {
+    ...actual,
+    getModels: vi.fn(() => [{ baseUrl: "https://api.anthropic.com" }]),
+  };
+});
+
 import { credentialsStep } from "./04-credentials.js";
+import { getModels } from "@mariozechner/pi-ai";
 
 // ---------- Mock Prompter Factory ----------
 
@@ -377,5 +390,96 @@ describe("credentialsStep", () => {
     const result = await credentialsStep.execute(state, prompter);
 
     expect(result.provider?.apiKey).toBeUndefined();
+  });
+
+  // ---------- D1-D4: catalog-driven validation regression tests ----------
+
+  it("D1: validation URL is built from pi-ai catalog baseUrl, not a hardcoded map", async () => {
+    // Pin the catalog baseUrl to a sentinel and assert fetch was called
+    // with a URL beginning with that sentinel.
+    vi.mocked(getModels).mockReturnValue([
+      { baseUrl: "https://api.anthropic.com" },
+    ] as never);
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("apikey");
+    vi.mocked(prompter.password).mockResolvedValueOnce(
+      "sk-ant-api03-validkey1234567890abcdefghijklmnop",
+    );
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+    } as Response);
+
+    const state: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "anthropic" } as ProviderConfig,
+    };
+
+    await credentialsStep.execute(state, prompter);
+
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+    const fetchUrl = vi.mocked(globalThis.fetch).mock.calls[0][0] as string;
+    expect(fetchUrl.startsWith("https://api.anthropic.com")).toBe(true);
+    expect(fetchUrl).toContain("/v1/models");
+  });
+
+  it("D2: provider with no catalog baseUrl skips live validation (returns valid)", async () => {
+    // No baseUrl in catalog -> getValidationEndpoint returns undefined
+    // -> the line-130 fallback short-circuits and returns valid=true.
+    vi.mocked(getModels).mockReturnValue([] as never);
+
+    const prompter = createMockPrompter();
+    // Use a non-OAuth provider (groq) -> no auth-method select call
+    vi.mocked(prompter.password).mockResolvedValueOnce(
+      "gsk_" + "a".repeat(50),
+    );
+
+    const state: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "groq" } as ProviderConfig,
+    };
+
+    const result = await credentialsStep.execute(state, prompter);
+
+    // Live validation skipped -- no fetch call
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(result.provider?.validated).toBe(true);
+  });
+
+  it("D3: anthropic OAuth tokens still skip live validation entirely (regression pin)", async () => {
+    // OAuth tokens cannot validate against /models -- existing fast path
+    // (lines 124-126) must still trigger BEFORE the catalog lookup.
+    vi.mocked(getModels).mockReturnValue([
+      { baseUrl: "https://api.anthropic.com" },
+    ] as never);
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("oauth");
+    vi.mocked(prompter.password).mockResolvedValueOnce(
+      "sk-ant-oat01-someOAuthTokenValueThatIsLongEnoughToPass",
+    );
+
+    const state: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "anthropic" } as ProviderConfig,
+    };
+
+    const result = await credentialsStep.execute(state, prompter);
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.authMethod).toBe("oauth");
+  });
+
+  it("D4: PROVIDER_VALIDATION map is gone; getValidationEndpoint + PROVIDER_VALIDATION_PATHS are present", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "04-credentials.ts"), "utf-8");
+    // Dropped: const PROVIDER_VALIDATION: Record<string, ...>
+    expect(src).not.toMatch(/const PROVIDER_VALIDATION\s*:\s*Record/);
+    // New artifacts present
+    expect(src).toMatch(/PROVIDER_VALIDATION_PATHS/);
+    expect(src).toMatch(/getValidationEndpoint/);
+    expect(src).toMatch(/getModels.*KnownProvider.*baseUrl/);
   });
 });

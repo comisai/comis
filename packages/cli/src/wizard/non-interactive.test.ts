@@ -12,9 +12,31 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 vi.mock("@comis/core", () => ({
   safePath: vi.fn((...parts: string[]) => parts.join("/")),
+}));
+// Stub @comis/agent so the soft-warn validation path does not pull in the
+// real pi-ai catalog (which would re-export the full @comis/agent module
+// graph). Tests that need a specific catalog response override this mock
+// per-test via `vi.mocked(createModelCatalog).mockReturnValueOnce(...)`.
+vi.mock("@comis/agent", () => ({
+  createModelCatalog: vi.fn(() => ({
+    loadStatic: vi.fn(),
+    getAll: vi.fn(() => [
+      { provider: "anthropic", modelId: "claude-sonnet-4-5-20250929" },
+      { provider: "openai", modelId: "gpt-4o" },
+      { provider: "google", modelId: "gemini-2.0-flash" },
+      { provider: "groq", modelId: "llama-3.3-70b-versatile" },
+    ]),
+    get: vi.fn(),
+    getByProvider: vi.fn(),
+    mergeScanned: vi.fn(),
+    getProviders: vi.fn(),
+  })),
 }));
 vi.mock("node:os", () => ({ homedir: vi.fn(() => "/home/test") }));
 vi.mock("node:crypto", () => ({
@@ -196,6 +218,50 @@ describe("validateNonInteractiveOptions", () => {
     const opts = validOpts({ provider: "future-provider-xyz" });
     expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
   });
+
+  // ---------- C2-C4: soft-warn validation regression tests ----------
+
+  it("C2: emits a console.warn for unknown providers (no throw)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const opts = validOpts({ provider: "fake-provider-xyz" });
+      expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
+      expect(warnSpy).toHaveBeenCalledOnce();
+      const warnMsg = warnSpy.mock.calls[0][0] as string;
+      expect(warnMsg).toContain("fake-provider-xyz");
+      expect(warnMsg).toContain("not in the pi-ai catalog");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("C3: validation passes silently for catalog providers (no warn)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const opts = validOpts({ provider: "anthropic" });
+      expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("C3b: 'custom' provider passes silently (synthetic, never warns)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const opts = validOpts({ provider: "custom" });
+      expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("C4: RECOMMENDED_MODELS does not appear in non-interactive.ts source", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "non-interactive.ts"), "utf-8");
+    expect(src).not.toMatch(/RECOMMENDED_MODELS/);
+  });
 });
 
 // ==========================================================================
@@ -230,14 +296,16 @@ describe("buildNonInteractiveState", () => {
     expect(state.agentName).toBe("my-bot");
   });
 
-  it("uses RECOMMENDED_MODELS entry for provider when model not specified", () => {
-    const state = buildNonInteractiveState(validOpts({ provider: "anthropic" }));
-    expect(state.model).toBe("claude-sonnet-4-5-20250929");
-  });
-
-  it("uses RECOMMENDED_MODELS for openai provider", () => {
-    const state = buildNonInteractiveState(validOpts({ provider: "openai" }));
-    expect(state.model).toBe("gpt-4o");
+  it("delegates --model resolution to daemon when not specified", () => {
+    // Post-260501-kqq: --model defaults to literal "default" (daemon-side
+    // resolution per builtin-provider-guard.ts:45 catalog readback). The
+    // pre-fix RECOMMENDED_MODELS hardcoded provider->model lookup was
+    // removed; daemon decides at runtime. Verify both providers behave
+    // the same.
+    const stateA = buildNonInteractiveState(validOpts({ provider: "anthropic" }));
+    expect(stateA.model).toBe("default");
+    const stateB = buildNonInteractiveState(validOpts({ provider: "openai" }));
+    expect(stateB.model).toBe("default");
   });
 
   it("uses custom model when opts.model is provided", () => {
