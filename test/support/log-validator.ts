@@ -97,6 +97,12 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
 
   // All test daemons: TLS not configured (test configs use plain HTTP)
   { level: "warn", msg: /Gateway running without TLS/ },
+
+  // Catalog drift: PROVIDER_OVERRIDES contains entries for providers not in
+  // pi-ai's live catalog (e.g. anthropic-vertex, azure-openai, google-gemini-cli,
+  // google-antigravity). The warning is informational — capability overrides
+  // are documented as drift signals, not failures.
+  { level: "warn", msg: /Capability override has no matching pi-ai provider/ },
 ];
 
 // ---------------------------------------------------------------------------

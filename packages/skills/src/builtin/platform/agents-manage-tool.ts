@@ -135,6 +135,25 @@ export const AgentsManageToolParams = Type.Object({
               { description: "Skills and tool configuration" },
             ),
           ),
+          // Phase 9 R8: per-agent OAuth profile preference. Map of provider
+          // → profile-id (e.g. { "openai-codex": "openai-codex:user@example.com" }).
+          // The downstream Zod schema (PerAgentConfigSchema, plan 02 R1) is the
+          // canonical format gate via `validateProfileId`; the daemon-side
+          // `agents.update` handler additionally rejects unknown profile IDs
+          // via `OAuthCredentialStore.has()` (plan 06 Task 2 / D-11).
+          oauthProfiles: Type.Optional(
+            Type.Record(
+              Type.String(),
+              Type.String({
+                description:
+                  "<provider>:<identity> profile ID. Run `comis auth list` first to discover stored profiles.",
+              }),
+              {
+                description:
+                  "OAuth profile preferences per provider (e.g., openai-codex). Each value must match an existing stored profile ID — the daemon rejects nonexistent IDs with a 'not found in store' error.",
+              },
+            ),
+          ),
         },
         { description: "Agent configuration for create/update actions" },
       ),

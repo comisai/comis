@@ -76,7 +76,56 @@ export interface InfraEvents {
   "auth:token_rotated": {
     provider: string;
     profileName: string;
+    /** Canonical "<provider>:<identity>" form (Phase 7). Coexists with profileName for backward compat. */
+    profileId: string;
     expiresAtMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * OAuth profile bootstrapped from environment variable on first
+   * store-empty access. Fires once per process per provider.
+   */
+  "auth:profile_bootstrapped": {
+    provider: string;
+    profileId: string;
+    /** Semi-redacted email (e.g. "mo…e@gmail.com") or "id-<base64url>" fallback. */
+    identity: string;
+    timestamp: number;
+  };
+
+  /**
+   * OAuth profile added to the credential store by an external writer
+   * (CLI `auth login` or wizard step 04). Emitted by OAuthTokenManager's
+   * file watcher (Phase 8 D-07) after a chokidar `change`/`add` event
+   * invalidates the cache and the store list reveals a new profile.
+   *
+   * `source: "external"` indicates the writer is outside this manager
+   * instance. Phase 9 may distinguish 'cli-login' vs 'wizard' if a concrete
+   * consumer requires it (RESEARCH §Pitfall 7 — discriminator dropped this
+   * phase per planner-discretion in CONTEXT D-07).
+   */
+  "auth:profile_added": {
+    provider: string;
+    profileId: string;
+    /** Semi-redacted email (e.g. "mo…e@gmail.com") or "id-<base64url>" fallback. */
+    identity: string;
+    source: "external";
+    timestamp: number;
+  };
+
+  /**
+   * OAuth refresh failed terminally (e.g. refresh_token_reused, network
+   * error after retries, timeout). Phase 7 emits this with coarse errorKind
+   * because pi-ai swallows the original cause (RESEARCH section Q1).
+   */
+  "auth:refresh_failed": {
+    provider: string;
+    profileId: string;
+    /** Coarse classification: refresh_token_reused | network | timeout | refresh_failed. */
+    errorKind: string;
+    /** Operator action recommendation. */
+    hint: string;
     timestamp: number;
   };
 

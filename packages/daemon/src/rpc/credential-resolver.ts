@@ -13,7 +13,7 @@
  *
  * @module
  */
-import { getEnvApiKey } from "@mariozechner/pi-ai";
+import { getEnvApiKey, getProviders, getModels, type KnownProvider } from "@mariozechner/pi-ai";
 import type { ProviderEntry } from "@comis/core";
 
 /**
@@ -29,6 +29,14 @@ export interface CredentialResolverDeps {
   providerEntries?: Record<string, ProviderEntry>;
   /** Secret manager backing process.env / ~/.comis/.env. */
   secretManager?: { has(key: string): boolean };
+  /**
+   * Models config — used to resolve `provider: "default"` to the operator's
+   * configured `models.defaultProvider`, mirroring runtime resolution in
+   * `resolveAgentModel`. When omitted or `defaultProvider` is empty, a
+   * literal `"default"` input passes through and produces a clear rejection
+   * pointing the operator at `models.defaultProvider`.
+   */
+  modelsConfig?: { defaultProvider?: string };
 }
 
 export interface CredentialResolution {
@@ -37,6 +45,8 @@ export interface CredentialResolution {
   reason?: string;
   /** When ok=true: which source resolved. Useful for debug logs. */
   source?: "keyless" | "providers_entry" | "env_canonical";
+  /** When ok=true: the provider name actually checked (after "default" resolution). */
+  resolvedProvider?: string;
 }
 
 export function resolveProviderCredential(
@@ -50,25 +60,53 @@ export function resolveProviderCredential(
     };
   }
 
-  // eslint-disable-next-line security/detect-object-injection -- typed Record<string, ProviderEntry> read; targetProvider validated above
-  const entry = deps.providerEntries?.[targetProvider];
+  // Resolve `provider: "default"` to the operator's configured default,
+  // mirroring runtime resolution in `resolveAgentModel`:
+  //   1. If `providers.entries.default` is explicitly configured, treat that
+  //      as the operator's intent — the entry itself carries the credential
+  //      resolution path (keyless / apiKeyName).
+  //   2. Else, if `models.defaultProvider` is set, use that.
+  //   3. Otherwise, fall back to the most-populated native provider in the
+  //      pi-ai catalog (same heuristic the runtime applies).
+  // This keeps the credential check semantically aligned with the literal
+  // provider the runtime will select.
+  let effectiveProvider = targetProvider;
+  if (targetProvider.toLowerCase() === "default") {
+    const explicitDefault = deps.providerEntries?.default;
+    if (!explicitDefault) {
+      const dp = deps.modelsConfig?.defaultProvider;
+      if (dp && dp.length > 0) {
+        effectiveProvider = dp;
+      } else {
+        const allProviders = getProviders();
+        if (allProviders.length > 0) {
+          effectiveProvider = allProviders
+            .map((p) => ({ p, n: getModels(p as KnownProvider).length }))
+            .sort((a, b) => b.n - a.n)[0]!.p;
+        }
+      }
+    }
+  }
+
+  // eslint-disable-next-line security/detect-object-injection -- typed Record<string, ProviderEntry> read; effectiveProvider validated above
+  const entry = deps.providerEntries?.[effectiveProvider];
 
   // 1. Keyless types
   if (entry && KEYLESS_PROVIDER_TYPES.has(entry.type)) {
-    return { ok: true, source: "keyless" };
+    return { ok: true, source: "keyless", resolvedProvider: effectiveProvider };
   }
 
   // 2. Source A: providers.entries with secret-manager-resolvable apiKeyName
   if (entry?.apiKeyName && deps.secretManager?.has(entry.apiKeyName)) {
-    return { ok: true, source: "providers_entry" };
+    return { ok: true, source: "providers_entry", resolvedProvider: effectiveProvider };
   }
 
   // 3. Source B: pi-ai canonical env / OAuth / ADC chain
-  if (getEnvApiKey(targetProvider)) {
-    return { ok: true, source: "env_canonical" };
+  if (getEnvApiKey(effectiveProvider)) {
+    return { ok: true, source: "env_canonical", resolvedProvider: effectiveProvider };
   }
 
-  return { ok: false, reason: buildRejectionMessage(targetProvider, entry) };
+  return { ok: false, reason: buildRejectionMessage(effectiveProvider, entry) };
 }
 
 function buildRejectionMessage(

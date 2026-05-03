@@ -1137,6 +1137,118 @@ describe("agents_manage tool", () => {
   // a JSON string. This stops the TypeBox validator from rejecting the
   // stringified form the Anthropic LLM sometimes emits for nested free-form
   // objects, before coerceConfig() in execute() gets a chance to parse it.
+  // ---------------------------------------------------------------------------
+  // Phase 9 R8: AgentsManageToolParams.config carries an optional oauthProfiles
+  // field (Type.Optional(Type.Record(Type.String(), Type.String({description})))).
+  // The downstream Zod schema (R1, plan 02) is the canonical format gate; this
+  // tool-layer field documents the surface for the LLM and lets the structured-
+  // config branch of the Type.Union accept oauthProfiles patches.
+  //
+  // Additional check: managed-sections.ts agents entry's exampleArgs.config
+  // includes an oauthProfiles example and round-trips through TypeBox.
+  // ---------------------------------------------------------------------------
+  describe("update with oauthProfiles (Phase 9 R8)", () => {
+    it("AgentsManageToolParams.config declares oauthProfiles as a Record schema (LLM-visible documentation)", () => {
+      // Walk into the structured-config branch of the Type.Union
+      // (config.anyOf[0]) and assert it has a properties.oauthProfiles entry
+      // — this is what makes the field discoverable to the LLM via the tool
+      // schema dump, distinct from the laxer "no additionalProperties: false"
+      // bypass that lets unknown keys flow through. If a future refactor
+      // removes the explicit field, this assertion fails loudly.
+      const params = AgentsManageToolParams as unknown as {
+        properties: {
+          config: {
+            anyOf: Array<{
+              type?: string;
+              properties?: Record<string, unknown>;
+            }>;
+          };
+        };
+      };
+      const structuredBranch = params.properties.config.anyOf.find(
+        (b) => b.type === "object",
+      );
+      expect(structuredBranch).toBeDefined();
+      expect(structuredBranch!.properties).toHaveProperty("oauthProfiles");
+    });
+
+    it("TypeBox structured-config accepts a valid oauthProfiles patch", async () => {
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      const ok = Value.Check(tool.parameters, {
+        action: "update",
+        agent_id: "my-agent",
+        config: {
+          oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
+        },
+      });
+      expect(ok).toBe(true);
+    });
+
+    it("calls rpcCall('agents.update') with the oauthProfiles patch unchanged", async () => {
+      mockRpcCall.mockResolvedValue({
+        agentId: "my-agent",
+        config: { oauthProfiles: { "openai-codex": "openai-codex:user@example.com" } },
+        updated: true,
+      });
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-r8-1", {
+          action: "update",
+          agent_id: "my-agent",
+          config: {
+            oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
+          },
+        } as never),
+      );
+      expect(mockRpcCall).toHaveBeenCalledWith("agents.update", {
+        agentId: "my-agent",
+        config: {
+          oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
+        },
+        _trustLevel: "admin",
+      });
+    });
+
+    it("downstream Zod (PerAgentConfigSchema) rejects malformed profile-id in oauthProfiles", async () => {
+      // The tool's TypeBox structured-config branch documents oauthProfiles
+      // as a Record<string, string>. Format validation (the colon shape, the
+      // forbidden-character defense-in-depth) lives in the Zod refine added
+      // in plan 02 (R1) — that's the canonical gate. This test asserts that
+      // a malformed value reaches the Zod layer and is rejected with an
+      // error message that names validateProfileId.
+      const { PerAgentConfigSchema } = await import("@comis/core");
+      const parsed = PerAgentConfigSchema.safeParse({
+        oauthProfiles: { "openai-codex": "no-colon" },
+      });
+      expect(parsed.success).toBe(false);
+      if (!parsed.success) {
+        const issuesJson = JSON.stringify(parsed.error.issues);
+        expect(issuesJson).toMatch(/Invalid profile ID|validateProfileId/);
+      }
+    });
+
+    it("MANAGED_SECTIONS.agents.exampleArgs.config includes an oauthProfiles example AND round-trips through TypeBox", async () => {
+      const { MANAGED_SECTIONS } = await import("@comis/core");
+      const agentsEntry = MANAGED_SECTIONS.find((s) => s.pathPrefix === "agents");
+      expect(agentsEntry).toBeDefined();
+      const cfg = (agentsEntry!.exampleArgs as { config: Record<string, unknown> }).config;
+      // The oauthProfiles example MUST be present on managed-sections so the
+      // LLM sees it advertised in the schemaFragment hint.
+      expect(cfg.oauthProfiles).toBeDefined();
+      expect(typeof cfg.oauthProfiles).toBe("object");
+
+      // Round-trip the entire example through the tool's TypeBox parameters.
+      const args = JSON.parse(JSON.stringify(agentsEntry!.exampleArgs)) as Record<string, unknown>;
+      args.agent_id = "round-trip-agent";
+      const c = args.config as Record<string, unknown>;
+      c.name = "Round Trip";
+      c.model = "claude-sonnet-4-5";
+      c.provider = "anthropic";
+      const tool = createAgentsManageTool(mockRpcCall, mockLogger);
+      expect(Value.Check(tool.parameters, args)).toBe(true);
+    });
+  });
+
   describe("schema accepts both object and string config", () => {
     it("parameters TypeBox validates for object config", () => {
       const tool = createAgentsManageTool(mockRpcCall, mockLogger);

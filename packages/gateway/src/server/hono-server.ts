@@ -21,6 +21,11 @@ import { createRestApi, ActivityRingBuffer, subscribeActivityBuffer } from "../w
 import { createSseEndpoint } from "../web/sse-endpoint.js";
 import { createStaticMiddleware } from "../web/static-middleware.js";
 import { createWebhookEndpoint, type WebhookHandler } from "../webhook/webhook-endpoint.js";
+import {
+  createOAuthCallbackRoute,
+  type PendingFlow,
+} from "../oauth/oauth-callback-route.js";
+import type { OAuthCredentialStorePort } from "@comis/core";
 
 /**
  * Logger interface for gateway server (minimal pino-compatible).
@@ -56,6 +61,18 @@ export interface GatewayServerDeps {
     onWebhook: WebhookHandler;
     algorithm?: HmacAlgorithm;
     headerName?: string;
+  };
+  /**
+   * Phase 11 SC11-2: optional OAuth callback deps. When provided, the
+   * gateway mounts GET /oauth/callback/:provider for browser-redirect
+   * OAuth flows (web-UI-initiated logins). Pending-flow map is owned by
+   * the caller (e.g., setup-gateway.ts in a future phase) so daemon
+   * restart cleanly drops all in-flight states.
+   */
+  readonly oauthCallbackDeps?: {
+    credentialStore: OAuthCredentialStorePort;
+    eventBus: TypedEventBus;
+    pendingFlows: Map<string, PendingFlow>;
   };
   /** Optional hook runner for lifecycle hooks (no-op when absent) */
   readonly hookRunner?: HookRunner;
@@ -220,6 +237,19 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
   if (deps.webhookDeps) {
     const webhookApp = createWebhookEndpoint(deps.webhookDeps);
     app.route("/hooks", webhookApp);
+  }
+
+  // Phase 11 SC11-2: mount OAuth callback at GET /oauth/callback/:provider
+  if (deps.oauthCallbackDeps) {
+    const oauthApp = createOAuthCallbackRoute({
+      ...deps.oauthCallbackDeps,
+      logger,
+    });
+    app.route("/oauth", oauthApp);
+    logger.debug(
+      { module: "oauth-callback" },
+      "OAuth callback route mounted at /oauth/callback/:provider",
+    );
   }
 
   // Mount web dashboard routes (if configured)

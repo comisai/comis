@@ -32,6 +32,29 @@ import {
 } from "../index.js";
 import { getModels, type KnownProvider } from "@mariozechner/pi-ai";
 
+// ---- Phase 8 (D-03) OAuth interactive-flow imports ----
+// CLI cannot import from packages/daemon (dep-direction); the OAuth
+// runner + selector + remote-env detector live in @comis/agent (Phase 8
+// plan 01 moved selectOAuthCredentialStore there). The browser opener is
+// the `open` package (exact-pinned in @comis/cli per CLAUDE.md
+// supply-chain invariants).
+import { homedir } from "node:os";
+import open from "open";
+import {
+  loginOpenAICodexOAuth,
+  isRemoteEnvironment,
+  selectOAuthCredentialStore,
+  redactEmailForLog,
+} from "@comis/agent";
+import {
+  loadConfigFile,
+  validateConfig,
+  safePath,
+  type OAuthCredentialStorePort,
+  type OAuthProfile,
+} from "@comis/core";
+import { createLogger } from "@comis/infra";
+
 // ---------- Provider Help URLs ----------
 
 const PROVIDER_HELP_URLS: Record<string, string> = {
@@ -75,7 +98,7 @@ const AUTH_METHOD_PROVIDERS: Record<
   openai: {
     options: [
       { value: "apikey", label: "API Key", hint: "sk-..." },
-      { value: "oauth", label: "OAuth Token", hint: "From OAuth app flow" },
+      { value: "oauth", label: "OAuth (interactive)", hint: "Opens browser or accepts manual paste" },
     ],
     helpUrls: {
       apikey: "https://platform.openai.com/api-keys",
@@ -83,7 +106,7 @@ const AUTH_METHOD_PROVIDERS: Record<
     },
     helpNotes: {
       apikey: null,
-      oauth: "Use the token from your OAuth application flow.",
+      oauth: "Interactive OAuth flow with ChatGPT — your browser will open (or you'll paste the URL on a remote host).",
     },
   },
 };
@@ -306,25 +329,35 @@ async function handleCustomEndpoint(
 
 /**
  * Branch C: Standard provider -- help URL, format pre-check, live validation, retry loop.
+ *
+ * Phase 8 D-03: accepts an optional `preResolvedAuthMethod` parameter so the
+ * dispatcher (credentialsStep.execute) can hoist the auth-method select
+ * BEFORE deciding which branch handler to run. When set, the internal
+ * select is skipped — preventing a double-prompt for AUTH_METHOD_PROVIDERS
+ * entries (anthropic + openai). When undefined, behavior matches the
+ * pre-Phase-8 path (the internal select runs as before).
  */
 async function handleStandardProvider(
   state: WizardState,
   prompter: WizardPrompter,
   providerId: string,
+  preResolvedAuthMethod?: AuthMethod,
 ): Promise<WizardState> {
   // Auth method selection for providers that support OAuth
-  let authMethod: AuthMethod | undefined;
+  let authMethod: AuthMethod | undefined = preResolvedAuthMethod;
   const authConfig = AUTH_METHOD_PROVIDERS[providerId];
 
-  if (authConfig) {
+  if (authConfig && authMethod === undefined) {
     authMethod = await prompter.select<AuthMethod>({
       message: `${providerId} authentication method`,
       options: authConfig.options,
     });
+  }
 
+  if (authConfig) {
     // Show help URL or note based on auth method
-    const helpUrl = authConfig.helpUrls[authMethod];
-    const helpNote = authConfig.helpNotes[authMethod];
+    const helpUrl = authConfig.helpUrls[authMethod!];
+    const helpNote = authConfig.helpNotes[authMethod!];
     if (helpUrl) {
       prompter.note(info(`Get your API key at: ${helpUrl}`), `${providerId} API Key`);
     } else if (helpNote) {
@@ -422,6 +455,159 @@ async function handleStandardProvider(
   return state;
 }
 
+// ---------- Branch D: OpenAI OAuth (Phase 8 D-03) ----------
+
+const wizardLogger = createLogger({ name: "wizard-oauth" });
+
+/**
+ * Open the OAuth credential store from the current config (mirrors the
+ * helper plan 03 will install in `auth.ts`). Defaults to file storage when
+ * config is absent or doesn't set `oauth.storage`. Encrypted-mode CLI
+ * wiring requires SECRETS_MASTER_KEY + secretsDb — if `storage='encrypted'`,
+ * the wizard surfaces a fail-fast error (operator can switch to file mode
+ * for the wizard, then back to encrypted after).
+ */
+async function openWizardOAuthStore(): Promise<OAuthCredentialStorePort> {
+  const dataDir = safePath(homedir(), ".comis");
+  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager (matches doctor.ts:45 / health.ts:43 precedent)
+  const envPaths = process.env["COMIS_CONFIG_PATHS"];
+  const configPath = envPaths?.split(":")[0] ??
+    safePath(homedir(), ".comis", "config.yaml");
+  const loadResult = loadConfigFile(configPath);
+  if (!loadResult.ok) {
+    return selectOAuthCredentialStore({ storage: "file", dataDir });
+  }
+  const validated = validateConfig(loadResult.value);
+  if (!validated.ok) {
+    return selectOAuthCredentialStore({ storage: "file", dataDir });
+  }
+  const storage = validated.value.oauth?.storage ?? "file";
+  if (storage === "encrypted") {
+    throw new Error(
+      "OAuth storage mode is 'encrypted' but the wizard cannot bootstrap the encrypted store. " +
+        "Hint: set appConfig.oauth.storage to 'file' temporarily for the wizard, or run " +
+        "`comis auth login --provider openai-codex` from a shell where SECRETS_MASTER_KEY is exported.",
+    );
+  }
+  return selectOAuthCredentialStore({ storage: "file", dataDir });
+}
+
+/**
+ * Branch D: OpenAI OAuth — interactive flow via @comis/agent's
+ * loginOpenAICodexOAuth (D-03 inline placement). REPLACES the pre-Phase-8
+ * pre-generated-token paste path. Mirrors handleStandardProvider's 3-attempt
+ * retry-loop pattern per RESEARCH §Open Q4.
+ *
+ * On success: writes the profile to the OAuth store AND updates wizard
+ * state with apiKey + oauthProfileId + validated=true. SPEC R6 acceptance
+ * requires the profile to exist in ~/.comis/auth-profiles.json after the
+ * wizard advances past step 04.
+ */
+async function handleOpenAIOAuth(
+  state: WizardState,
+  prompter: WizardPrompter,
+): Promise<WizardState> {
+  const isRemote = isRemoteEnvironment({ env: process.env });
+  const maxRetries = 3;
+
+  // Display the helpNote so the operator sees what the OAuth flow will
+  // do BEFORE the runner is invoked. handleStandardProvider's
+  // helpNote presentation lives inside its own dispatch path, which is
+  // BYPASSED for the openai+oauth case — surface it here.
+  const authConfig = AUTH_METHOD_PROVIDERS["openai"];
+  const helpNote = authConfig?.helpNotes.oauth;
+  if (helpNote) {
+    prompter.note(info(helpNote), "openai OAuth");
+  }
+
+  let store: OAuthCredentialStorePort;
+  try {
+    store = await openWizardOAuthStore();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    prompter.log.error(msg);
+    return state;
+  }
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const result = await loginOpenAICodexOAuth({
+      prompter,
+      isRemote,
+      openUrl: open,
+      logger: wizardLogger,
+    });
+
+    if (result.ok) {
+      const v = result.value;
+      const profile: OAuthProfile = {
+        provider: "openai-codex",
+        profileId: v.profileId,
+        access: v.access,
+        refresh: v.refresh,
+        expires: v.expires,
+        accountId: v.accountId,
+        email: v.email,
+        displayName: v.displayName,
+        version: 1,
+      };
+      const writeResult = await store.set(v.profileId, profile);
+      if (!writeResult.ok) {
+        prompter.log.error(
+          `Failed to persist OAuth profile: ${writeResult.error.message}`,
+        );
+        if (attempt === maxRetries) return state;
+        continue;
+      }
+
+      wizardLogger.info(
+        {
+          provider: "openai-codex",
+          profileId: v.profileId,
+          identity:
+            redactEmailForLog(v.email) ?? `id-${v.accountId ?? "<unknown>"}`,
+          action: "wizard-login",
+          module: "wizard-oauth",
+        },
+        "OAuth profile written by wizard",
+      );
+
+      // SPEC R6 acceptance — wizard state carries oauthProfileId for downstream
+      // (Phase 9 multi-account); apiKey holds the access token for
+      // backward-compat with handleStandardProvider's downstream consumers.
+      return updateState(state, {
+        provider: {
+          id: "openai",
+          authMethod: "oauth",
+          apiKey: v.access,
+          oauthProfileId: v.profileId,
+          validated: true,
+        } as ProviderConfig,
+      });
+    }
+
+    // Failure path — surface the rewritten error + recovery options.
+    prompter.log.warn(result.error.message);
+    if (result.error.hint) prompter.log.info(result.error.hint);
+
+    const isLastAttempt = attempt === maxRetries;
+    const recoveryOptions = isLastAttempt
+      ? [{ value: "skip" as const, label: "Skip provider setup" }]
+      : [
+          { value: "retry" as const, label: "Try again" },
+          { value: "skip" as const, label: "Skip provider setup" },
+        ];
+
+    const choice = await prompter.select<"retry" | "skip">({
+      message: "What would you like to do?",
+      options: recoveryOptions,
+    });
+    if (choice === "skip") return state;
+    // choice === "retry" → continue loop
+  }
+
+  return state;
+}
+
 // ---------- Step Implementation ----------
 
 export const credentialsStep: WizardStep = {
@@ -448,7 +634,33 @@ export const credentialsStep: WizardStep = {
       return handleCustomEndpoint(state, prompter);
     }
 
-    // Branch C: Standard provider
-    return handleStandardProvider(state, prompter, providerId);
+    // Phase 8 D-03 + Pitfall 8: hoisted auth-method select runs UP FRONT
+    // for providers in AUTH_METHOD_PROVIDERS so the dispatcher can branch
+    // to the right handler before handleStandardProvider runs. Without
+    // this hoist, the auth-method select is buried inside
+    // handleStandardProvider and we cannot route openai+oauth to the
+    // interactive runner without a double-prompt.
+    let authMethod: AuthMethod | undefined;
+    // eslint-disable-next-line security/detect-object-injection -- read of static const map indexed by validated provider string
+    const authConfig = AUTH_METHOD_PROVIDERS[providerId];
+    if (authConfig) {
+      authMethod = await prompter.select<AuthMethod>({
+        message: `${providerId} authentication method`,
+        options: authConfig.options,
+      });
+    }
+
+    // Branch D: OpenAI OAuth — interactive flow (Phase 8 D-03).
+    // REPLACES the pre-Phase-8 pre-generated-token paste path.
+    // Anthropic OAuth still flows through handleStandardProvider unchanged
+    // (RESEARCH §Pitfall 8 — claude setup-token paste is the source of truth
+    // for those tokens; pi-ai has no equivalent loginAnthropic to wire).
+    if (providerId === "openai" && authMethod === "oauth") {
+      return handleOpenAIOAuth(state, prompter);
+    }
+
+    // Branch C: Standard provider — pass the hoisted authMethod so the
+    // handler doesn't double-prompt.
+    return handleStandardProvider(state, prompter, providerId, authMethod);
   },
 };

@@ -9,9 +9,9 @@ dataDir: ""
 agents:
   router-alpha:
     name: "RouterAlpha"
-    model: default
+    model: claude-opus-4-6
     thinkingLevel: "off"
-    provider: default
+    provider: anthropic
     maxSteps: 5
     budgets:
       perExecution: 500000
@@ -30,9 +30,9 @@ agents:
         deny: []
   router-beta:
     name: "RouterBeta"
-    model: default
+    model: claude-opus-4-6
     thinkingLevel: "off"
-    provider: default
+    provider: anthropic
     maxSteps: 5
     budgets:
       perExecution: 500000
@@ -51,9 +51,9 @@ agents:
         deny: []
   router-gamma:
     name: "RouterGamma"
-    model: default
+    model: claude-opus-4-6
     thinkingLevel: "off"
-    provider: default
+    provider: anthropic
     maxSteps: 5
     budgets:
       perExecution: 500000
@@ -118,3 +118,6 @@ monitoring:
     enabled: false
   git:
     enabled: false
+
+models:
+  defaultProvider: anthropic

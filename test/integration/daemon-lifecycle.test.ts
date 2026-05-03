@@ -116,6 +116,9 @@ describe("Daemon Lifecycle", () => {
         if (msg.includes("Canary secret not configured")) return false;
         // Exclude gateway TLS production warning (test configs use plain HTTP)
         if (msg.includes("Gateway running without TLS")) return false;
+        // Exclude capability-override drift warning (PROVIDER_OVERRIDES contains
+        // entries for providers not in pi-ai's live catalog — informational signal)
+        if (msg.includes("Capability override has no matching pi-ai provider")) return false;
         return true;
       });
 

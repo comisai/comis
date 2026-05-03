@@ -316,4 +316,33 @@ describe("createSqliteSecretStore", () => {
       store2.close();
     });
   });
+
+  // Phase 7 plan 08 task 08.1 (W6 fix):
+  // The factory now returns SqliteSecretStoreHandle (= SecretStorePort + readonly db).
+  // The encrypted OAuth profile adapter shares this same db handle rather than
+  // opening a second connection to the same secrets.db file.
+  describe("SqliteSecretStoreHandle.db field (Phase 7 W6)", () => {
+    it("exposes the underlying better-sqlite3 handle on the factory return", () => {
+      const store = createSqliteSecretStore(dbPath, crypto);
+
+      // db field is present and looks like a Database instance.
+      expect(store.db).toBeDefined();
+      expect(typeof store.db.prepare).toBe("function");
+      expect(typeof store.db.exec).toBe("function");
+      expect(typeof store.db.close).toBe("function");
+
+      // The shared handle can prepare statements against the same secrets table
+      // that the port methods use — proving it's the SAME connection, not a
+      // freshly-opened one. (A freshly-opened connection on a not-yet-WAL-flushed
+      // file would still see the canary, but proving prepare/exec on the shared
+      // handle is sufficient for the shared-handle property the encrypted
+      // OAuth adapter relies on.)
+      const row = store.db
+        .prepare("SELECT COUNT(*) AS n FROM secrets")
+        .get() as { n: number };
+      expect(row.n).toBeGreaterThanOrEqual(1); // at least the canary row exists
+
+      store.close();
+    });
+  });
 });

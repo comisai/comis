@@ -7,10 +7,11 @@
  * @module
  */
 
-import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, PerAgentConfigSchema, type AppContainer, type InjectionRateLimiter, type PerAgentConfig } from "@comis/core";
+import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, PerAgentConfigSchema, type AppContainer, type InjectionRateLimiter, type OAuthCredentialStorePort, type SecretsCrypto, type PerAgentConfig } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { createHmac } from "node:crypto";
 import type { ComisLogger } from "@comis/infra";
+import type Database from "better-sqlite3";
 import type { SqliteMemoryAdapter, createSessionStore } from "@comis/memory";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync } from "node:fs";
@@ -28,6 +29,8 @@ import {
   createComisSessionManager,
   cleanupStaleLocks,
   createAuthStorageAdapter,
+  createAuthProvider,
+  selectOAuthCredentialStore,
   createModelRegistryAdapter,
   registerCustomProviders,
   createProviderHealthMonitor,
@@ -57,6 +60,14 @@ import {
 // Types inferred from adapter return types to avoid adding
 // @mariozechner/pi-coding-agent as a daemon dependency.
 type PiSessionAdapter = ReturnType<typeof createComisSessionManager>;
+
+// Phase 8 D-08: once-per-daemon-process WARN flag for the encrypted-store
+// hot-reload limitation. Lifted to module scope so the flag survives across
+// per-agent setupSingleAgent calls AND any future re-invocations of
+// setupAgents within the same process. Operator-friendly notice — fires
+// exactly once per daemon process so the operator sees it in startup logs
+// without N-times-per-agent noise.
+let encryptedModeWarnFired = false;
 
 // ---------------------------------------------------------------------------
 // Single-agent dependency and result types (extracted for hot-add reuse)
@@ -101,6 +112,34 @@ export interface SingleAgentDeps {
   backgroundTaskManager?: import("@comis/agent").BackgroundTaskManager;
   /** Callback to send completion notifications for background tasks. */
   backgroundNotifyFn?: import("@comis/agent").NotifyFn;
+  /**
+   * SecretsCrypto engine bound to SECRETS_MASTER_KEY. Defined when the daemon
+   * was started with a valid master key (encrypted-secrets mode). Required
+   * when `appConfig.oauth.storage === "encrypted"` — selectOAuthCredentialStore
+   * fails fast with an operator hint when missing.
+   * Phase 7 plan 08 (B5 + W6).
+   */
+  secretsCrypto?: SecretsCrypto;
+  /**
+   * Shared better-sqlite3 handle to secrets.db (the SqliteSecretStoreHandle.db
+   * field, plumbed through from daemon.ts after createSqliteSecretStore).
+   * Required when `appConfig.oauth.storage === "encrypted"` so the OAuth
+   * profile adapter can share the existing connection rather than opening a
+   * second handle to the same DB file (W6 fix — eliminates the dual-handle
+   * lifecycle hazards: close-order, schema-init double-execution,
+   * prepared-statement cache fragmentation).
+   * Phase 7 plan 08 (B5 + W6).
+   */
+  secretsDb?: Database.Database;
+  /**
+   * Phase 9 R7 (plan 09-06): the daemon-level OAuthCredentialStore handle.
+   * Constructed ONCE in setupAgents() and passed down to every per-agent
+   * setupSingleAgent call AND surfaced on AgentsResult so daemon.ts can
+   * thread it into RpcDispatchDeps for `agents.update` existence checks.
+   * Single shared handle (file backend is stateless on a shared path;
+   * encrypted backend shares the secretsDb connection per Phase 7 W6).
+   */
+  oauthCredentialStore: OAuthCredentialStorePort;
 }
 
 /** Per-agent outputs from setupSingleAgent(), matching the Maps in AgentsResult. */
@@ -151,6 +190,12 @@ export interface AgentsResult {
   singleAgentDeps: SingleAgentDeps;
   /** Global provider health monitor for daemon-level health metrics */
   providerHealth: ProviderHealthMonitor;
+  /**
+   * Daemon-level OAuthCredentialStore handle. Threaded into
+   * RpcDispatchDeps so agents.update can validate oauthProfiles patches
+   * via has() (Phase 9 R7/D-11, plan 09-06).
+   */
+  oauthCredentialStore: OAuthCredentialStorePort;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +308,89 @@ export async function setupSingleAgent(
     secretManager: scopedManager,
     customProviderEntries,
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 7 plan 08 (B5 + W3 + W6): FIRST daemon-side OAuth wiring.
+  //
+  // Closes RESEARCH §4 landmine #1 — the createAuthProvider symbol was
+  // exported by @comis/agent but never called by the daemon, so refreshed
+  // OAuth tokens lived only in the in-memory cache and silently disappeared
+  // on restart. Plan 07 (the 07a half) made AuthProviderConfig.oauth
+  // credentialStore + logger + dataDir REQUIRED so this wiring is now
+  // type-checked at compile time — future regressions surface as TS errors,
+  // not silent runtime failures.
+  //
+  // W3: all path constructions in this block use safePath from @comis/core
+  // (NOT path.join — AGENTS.md §2.2 ESLint security rule).
+  // W6: when storage === "encrypted", the OAuth profile adapter SHARES the
+  // existing secretsDb handle from createSqliteSecretStore (no dual-handle).
+  // -------------------------------------------------------------------------
+  const oauthStorageMode = container.config.oauth.storage;
+  const dataDirAbs =
+    container.config.dataDir && container.config.dataDir.length > 0
+      ? container.config.dataDir
+      : safePath(homedir(), ".comis");
+
+  // Phase 9 R7 (plan 09-06): use the daemon-level OAuthCredentialStore
+  // handle that setupAgents() constructed once and threaded through
+  // SingleAgentDeps. Same store reference is also exposed on AgentsResult
+  // so daemon.ts can plumb it into RpcDispatchDeps for the agents.update
+  // oauthProfiles existence check (D-11).
+  const oauthCredentialStore = deps.oauthCredentialStore;
+
+  const authProvider = createAuthProvider({
+    secretManager: scopedManager,
+    additionalProviderKeys: undefined,
+    oauth: {
+      eventBus: container.eventBus,
+      credentialStore: oauthCredentialStore,
+      logger: agentLogger.child({ module: "oauth-token-manager" }),
+      dataDir: dataDirAbs,
+      keyPrefix: "OAUTH_",
+      // Phase 8 D-05: pass auth-profiles.json path when file adapter active
+      // so OAuthTokenManager can register the chokidar watcher and pick up
+      // CLI-written profiles within ~250ms without a daemon restart.
+      // Encrypted-mode (D-08): undefined -> no watcher; documented limitation.
+      watchPath:
+        oauthStorageMode === "file"
+          ? safePath(dataDirAbs, "auth-profiles.json")
+          : undefined,
+      // Phase 9 D-05/D-08 (plan 09-04 revision iter 1 — Option B
+      // closure-stability fix): the closure dereferences
+      // container.config.agents[agentId]?.oauthProfiles on every call.
+      // This is the only correct shape because:
+      //   1. Line ~222 above writes effectiveConfig (a NEW object built
+      //      from { ...agentConfig, model, provider }) into
+      //      container.config.agents[agentId]. The local `agentConfig`
+      //      parameter diverges from the daemon's map immediately at
+      //      startup — capturing it would observe the wrong value.
+      //   2. agents.update at agent-handlers.ts:341 executes
+      //      `deps.agents[agentId] = parsedConfig`, REPLACING the
+      //      reference at that key with a new validated object. Capturing
+      //      the local agentConfig parameter would miss this hot-update.
+      //   3. daemon.ts:594, 634 confirm `deps.agents` and
+      //      `container.config.agents` are THE SAME map object — the
+      //      daemon's single per-process Container.config instance.
+      // The map identity is stable; only the value at the agent key
+      // changes. The closure-evaluated dereference observes (1) at
+      // startup AND (2) on every agents.update without an event-bus
+      // invalidation or daemon restart, satisfying SC#4 ("agents_manage
+      // tool can update without daemon restart").
+      getAgentOauthProfiles: () =>
+        container.config.agents?.[agentId]?.oauthProfiles,
+    },
+  });
+
+  agentLogger.debug(
+    {
+      agentId,
+      oauthStorage: oauthStorageMode,
+      dataDir: dataDirAbs,
+      module: "setup-agents",
+    },
+    "OAuth credential store + auth provider + per-LLM-call dispatch wired",
+  );
+
   const piModelRegistry = createModelRegistryAdapter(piAuthStorage);
   const { registered: customProviderCount, providerAliases } = registerCustomProviders(
     piModelRegistry,
@@ -444,6 +572,11 @@ export async function setupSingleAgent(
     eventBus: container.eventBus,
     logger: perAgentLogger,
     authStorage: piAuthStorage,
+    // Phase 9 R3: thread OAuthTokenManager into the executor so the
+    // per-LLM-call dispatch hook (PiExecutor.execute pre-hook + the two
+    // compaction getApiKey callbacks in executor-context-engine-setup.ts)
+    // can resolve OAuth tokens via resolveProviderApiKey.
+    oauthManager: authProvider.oauth,
     modelRegistry: piModelRegistry,
     providerAliases,
     fallbackModels: fallbackModelStrings.length > 0 ? fallbackModelStrings : undefined,
@@ -561,6 +694,18 @@ export async function setupAgents(deps: {
   backgroundTaskManager?: import("@comis/agent").BackgroundTaskManager;
   /** Callback to send completion notifications for background tasks. */
   backgroundNotifyFn?: import("@comis/agent").NotifyFn;
+  /**
+   * SecretsCrypto engine bound to SECRETS_MASTER_KEY (Phase 7 plan 08).
+   * Defined when daemon was started with a valid master key. Required for
+   * `appConfig.oauth.storage === "encrypted"` mode.
+   */
+  secretsCrypto?: SecretsCrypto;
+  /**
+   * Shared better-sqlite3 handle to secrets.db (Phase 7 plan 08).
+   * Plumbed from daemon.ts where createSqliteSecretStore now exposes its db
+   * field. Required for `appConfig.oauth.storage === "encrypted"` mode.
+   */
+  secretsDb?: Database.Database;
 }): Promise<AgentsResult> {
   const { container, memoryAdapter, sessionStore, agentLogger } = deps;
 
@@ -569,6 +714,25 @@ export async function setupAgents(deps: {
 
   // Inject module-level logger for tool schema normalization pipeline
   setToolNormalizationLogger(agentLogger.child({ module: "tool-normalize" }));
+
+  // Phase 8 D-08: once-per-daemon WARN for the encrypted-store hot-reload
+  // limitation. Placed in setupAgents() body (NOT setupSingleAgent) so the
+  // notice fires exactly once per daemon process — not N times for N agents
+  // (RESEARCH §Open Q3 recommendation). Operator sees this in startup logs
+  // without surprise; daemon restart is required to pick up CLI-written
+  // OAuth profiles in encrypted-store mode.
+  const overallStorageMode = container.config.oauth.storage;
+  if (overallStorageMode === "encrypted" && !encryptedModeWarnFired) {
+    encryptedModeWarnFired = true;
+    agentLogger.warn(
+      {
+        hint: "CLI auth login changes require daemon restart in encrypted mode (file-watch unsupported on encrypted SQLite WAL)",
+        errorKind: "limitation_known",
+        module: "setup-agents",
+      },
+      "OAuth hot-reload disabled in encrypted-store mode",
+    );
+  }
 
   const agents = container.config.agents; // Always populated after schema transform
   const routingConfig = container.config.routing;
@@ -635,6 +799,22 @@ export async function setupAgents(deps: {
   // Global last-known-working model tracker (shared across all agents)
   const lastKnownModel = createLastKnownModelTracker();
 
+  // Phase 9 R7 (plan 09-06): construct the daemon-level OAuthCredentialStore
+  // handle ONCE (instead of per-agent inside setupSingleAgent). Same handle
+  // is reused across every agent setup AND surfaced on AgentsResult so
+  // daemon.ts can plumb it into RpcDispatchDeps for the agents.update
+  // oauthProfiles existence check (D-11).
+  const dataDirAbsForOauth =
+    container.config.dataDir && container.config.dataDir.length > 0
+      ? container.config.dataDir
+      : safePath(homedir(), ".comis");
+  const oauthCredentialStore = selectOAuthCredentialStore({
+    storage: container.config.oauth.storage,
+    dataDir: dataDirAbsForOauth,
+    secretsCrypto: deps.secretsCrypto,
+    secretsDb: deps.secretsDb,
+  });
+
   // Construct shared deps struct once before the loop (for hot-add reuse)
   const singleAgentDeps: SingleAgentDeps = {
     container,
@@ -662,6 +842,12 @@ export async function setupAgents(deps: {
     getChannelMaxChars: deps.getChannelMaxChars,
     backgroundTaskManager: deps.backgroundTaskManager,
     backgroundNotifyFn: deps.backgroundNotifyFn,
+    // Phase 7 plan 08: secrets bootstrap output for OAuth wiring.
+    secretsCrypto: deps.secretsCrypto,
+    secretsDb: deps.secretsDb,
+    // Phase 9 R7 (plan 09-06): daemon-level OAuth credential store handle
+    // (constructed once above, reused per-agent + threaded into RPC deps).
+    oauthCredentialStore,
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
@@ -724,6 +910,10 @@ export async function setupAgents(deps: {
     lockCleanupTimer,
     singleAgentDeps,
     providerHealth,
+    // Phase 9 R7 (plan 09-06): daemon-level OAuth credential store, plumbed
+    // by daemon.ts into RpcDispatchDeps.oauthCredentialStore so
+    // agents.update can validate oauthProfiles patches via has() (D-11).
+    oauthCredentialStore,
   };
 }
 
@@ -826,3 +1016,10 @@ function deriveCanaryFallback(baseSecret: string, agentId: string): string {
     .update(`canary-fallback:${agentId}`)
     .digest("hex");
 }
+
+// ---------------------------------------------------------------------------
+// OAuth credential store selection — moved to @comis/agent in Phase 8 plan 01
+// (RESEARCH override 4: CLI cannot import from @comis/daemon, so the helper
+// must live in @comis/agent where both daemon and CLI consume it).
+// See: packages/agent/src/model/oauth-credential-store-selector.ts
+// ---------------------------------------------------------------------------

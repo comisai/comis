@@ -14,6 +14,7 @@
 import { createRequire } from "node:module";
 import { Command } from "commander";
 import { registerAgentCommand } from "./commands/agent.js";
+import { registerAuthCommand } from "./commands/auth.js";
 import { registerChannelCommand } from "./commands/channel.js";
 import { registerConfigCommand } from "./commands/config.js";
 import { registerDaemonCommand } from "./commands/daemon.js";
@@ -44,6 +45,7 @@ program.name("comis").description("Comis AI agent management CLI").version(cliPk
 registerDaemonCommand(program);
 registerConfigCommand(program);
 registerAgentCommand(program);
+registerAuthCommand(program);
 registerChannelCommand(program);
 registerMemoryCommand(program);
 registerSecurityCommand(program);

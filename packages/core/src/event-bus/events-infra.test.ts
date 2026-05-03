@@ -144,6 +144,7 @@ describe("InfraEvents payload structure", () => {
     const payload: EventMap["auth:token_rotated"] = {
       provider: "google",
       profileName: "gmail-oauth",
+      profileId: "google:gmail-oauth",
       expiresAtMs: expiresAt,
       timestamp: Date.now(),
     };

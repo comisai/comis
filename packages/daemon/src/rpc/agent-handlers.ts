@@ -15,7 +15,13 @@
  */
 
 import { PerAgentConfigSchema } from "@comis/core";
-import type { PerAgentConfig, ProviderEntry, ModelOperationType, OperationModels } from "@comis/core";
+import type {
+  PerAgentConfig,
+  ProviderEntry,
+  ModelOperationType,
+  OperationModels,
+  OAuthCredentialStorePort,
+} from "@comis/core";
 import {
   resolveWorkspaceDir,
   resolveOperationModel,
@@ -56,6 +62,25 @@ export interface AgentHandlerDeps {
   secretManager?: { has(key: string): boolean; get(key: string): string | undefined };
   /** Provider entries map for probe lookups when agents switch providers. */
   providerEntries?: Record<string, ProviderEntry>;
+  /**
+   * Phase 9 R7/D-11: optional OAuth credential store for validating that
+   * `oauthProfiles` patches reference existing stored profile IDs. The
+   * agents.update handler iterates over each (provider, profileId) entry
+   * in the patched config and calls `has(profileId)`; on miss it throws
+   * with the documented "not found in store" wording BEFORE the
+   * `deps.agents[agentId] = parsedConfig` reference-replacement at the
+   * end of the handler — failure leaves the daemon's in-memory map AND
+   * the YAML both unchanged. When this field is absent (e.g. test
+   * contexts without OAuth wiring) the validation block is a no-op so
+   * existing behavior is preserved.
+   */
+  oauthCredentialStore?: OAuthCredentialStorePort;
+  /**
+   * Models config — passed to the credential resolver so that
+   * `provider: "default"` is resolved to `models.defaultProvider` for the
+   * key check, mirroring runtime resolution in `resolveAgentModel`.
+   */
+  modelsConfig?: { defaultProvider?: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +148,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       const credCheck = resolveProviderCredential(parsedConfig.provider, {
         providerEntries: deps.providerEntries ?? {},
         secretManager: deps.secretManager,
+        modelsConfig: deps.modelsConfig,
       });
       if (!credCheck.ok) {
         throw new Error(credCheck.reason!);
@@ -299,6 +325,32 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       const merged = { ...existing, ...config };
       const parsedConfig = PerAgentConfigSchema.parse(merged);
 
+      // Phase 9 D-11: validate oauthProfiles patch — each profileId must
+      // exist in the OAuth credential store. Skipped when no
+      // oauthCredentialStore is wired (test contexts; non-OAuth-aware
+      // setups). Critical: this throws BEFORE the
+      // `deps.agents[agentId] = parsedConfig` reference-replacement at
+      // the end of the handler, so on failure the daemon's in-memory map
+      // AND the YAML are both unchanged (D-11 contract). The Zod-layer
+      // format check (R1, plan 02) has already run during
+      // PerAgentConfigSchema.parse(merged) above — this block ONLY
+      // checks existence in the store.
+      if (parsedConfig.oauthProfiles !== undefined && deps.oauthCredentialStore) {
+        for (const [provider, profileId] of Object.entries(parsedConfig.oauthProfiles)) {
+          const has = await deps.oauthCredentialStore.has(profileId);
+          if (!has.ok || !has.value) {
+            throw new Error(
+              `profile ${profileId} not found in store. Run "comis auth list" to see available profiles.`,
+            );
+          }
+          // The provider variable is iterated for completeness; the
+          // existence check is keyed on profileId alone (validateProfileId
+          // — invoked by R1's Zod refine — already enforced that the
+          // profile-id's provider portion equals the map key).
+          void provider;
+        }
+      }
+
       // Credential guard + probe (260501-2pz): when provider OR model
       // changes, (a) GUARD — fail-loud if the resulting provider's API key
       // is not resolvable from any source (no silent skip), then (b) PROBE
@@ -314,6 +366,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         const resolution = resolveProviderCredential(targetProvider, {
           providerEntries: deps.providerEntries ?? {},
           secretManager: deps.secretManager,
+          modelsConfig: deps.modelsConfig,
         });
         if (!resolution.ok) {
           throw new Error(resolution.reason!);

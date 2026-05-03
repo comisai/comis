@@ -80,10 +80,11 @@ describe("CLI entry point", () => {
       "secrets",
       "signal-setup",
       "uninstall",
+      "auth",
     ] as const;
 
-    it("registers exactly 19 commands", () => {
-      expect(program.commands).toHaveLength(19);
+    it("registers exactly 20 commands", () => {
+      expect(program.commands).toHaveLength(20);
     });
 
     it.each(expectedCommands)("registers the '%s' command", (name) => {

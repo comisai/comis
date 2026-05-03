@@ -28,8 +28,54 @@ vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
   };
 });
 
+// Phase 8 R6 — mock @comis/agent's interactive OAuth flow for the
+// dispatch tests. The mock returns a controllable Result so the dispatch
+// branches can be exercised without a real browser open or callback
+// server. selectOAuthCredentialStore is stubbed to an in-memory port
+// so the test never touches ~/.comis/auth-profiles.json on the test
+// host's filesystem.
+vi.mock("@comis/agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/agent")>();
+  return {
+    ...actual,
+    loginOpenAICodexOAuth: vi.fn(),
+    isRemoteEnvironment: vi.fn().mockReturnValue(false),
+    selectOAuthCredentialStore: vi.fn().mockImplementation(() => {
+      const inMemory = new Map<string, unknown>();
+      return {
+        get: async (id: string) => ({ ok: true as const, value: inMemory.get(id) }),
+        set: async (id: string, p: unknown) => {
+          inMemory.set(id, p);
+          return { ok: true as const, value: undefined };
+        },
+        delete: async (id: string) => {
+          const had = inMemory.delete(id);
+          return { ok: true as const, value: had };
+        },
+        list: async () => ({ ok: true as const, value: Array.from(inMemory.values()) }),
+        has: async (id: string) => ({ ok: true as const, value: inMemory.has(id) }),
+      };
+    }),
+    redactEmailForLog: actual.redactEmailForLog,
+  };
+});
+
+// Phase 8 R6 — mock loadConfigFile to return "no config" so the wizard
+// defaults to file storage (the selectOAuthCredentialStore mock above
+// intercepts the result anyway). validateConfig is pass-through.
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    loadConfigFile: vi
+      .fn()
+      .mockReturnValue({ ok: false, error: new Error("no config") }),
+  };
+});
+
 import { credentialsStep } from "./04-credentials.js";
 import { getModels } from "@mariozechner/pi-ai";
+import { loginOpenAICodexOAuth, isRemoteEnvironment } from "@comis/agent";
 
 // Capture the un-mocked `getModels` so D5/D6 can compose URLs against the
 // real pi-ai catalog (the module-level `vi.mock` returns a sentinel baseUrl).
@@ -317,12 +363,24 @@ describe("credentialsStep", () => {
     );
   });
 
-  it("shows auth method selector for openai and skips live validation for OAuth", async () => {
+  // REPLACED in Phase 8 plan 04 (D-03): the previous "shows auth method
+  // selector for openai and skips live validation for OAuth" test exercised
+  // the pre-Phase-8 paste-based OpenAI OAuth path which the new dispatcher
+  // REPLACES with the interactive loginOpenAICodexOAuth runner. The new
+  // OpenAI+OAuth behavior — auth-method select hoisted to the dispatcher,
+  // openai+oauth routes to handleOpenAIOAuth — is covered by the R6
+  // dispatch tests in the "Phase 8 OAuth dispatch (R6)" describe block.
+  // The apikey path for openai is preserved here.
+  it("shows auth method selector for openai (apikey path retained — OAuth path covered by R6 dispatch tests)", async () => {
     const prompter = createMockPrompter();
-    vi.mocked(prompter.select).mockResolvedValueOnce("oauth");
+    vi.mocked(prompter.select).mockResolvedValueOnce("apikey");
     vi.mocked(prompter.password).mockResolvedValueOnce(
-      "oat-some-openai-oauth-token-value-here-12345",
+      "sk-validkey1234567890abcdefghijklmnopqrstuv",
     );
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+    } as Response);
 
     const state: WizardState = {
       ...INITIAL_STATE,
@@ -336,10 +394,8 @@ describe("credentialsStep", () => {
         message: "openai authentication method",
       }),
     );
-    // OAuth skips live validation
-    expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(result.provider?.validated).toBe(true);
-    expect(result.provider?.authMethod).toBe("oauth");
+    expect(result.provider?.authMethod).toBe("apikey");
   });
 
   it("does not show auth method selector for non-OAuth providers", async () => {
@@ -645,5 +701,127 @@ describe("credentialsStep", () => {
       expect(result.provider?.validated).toBe(true);
       vi.unstubAllGlobals();
     }
+  });
+});
+
+// ---------- Phase 8 R6 — OAuth dispatch tests ----------
+
+describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
+  beforeEach(() => {
+    vi.mocked(loginOpenAICodexOAuth).mockReset();
+    vi.mocked(isRemoteEnvironment).mockReturnValue(false);
+    // The describe-level beforeEach in the parent suite stubs fetch +
+    // clearAllMocks; vitest runs ALL parent beforeEach hooks before this
+    // child block, so we only need to reset OUR mocks here. Stub fetch
+    // explicitly because vi.unstubAllGlobals in the parent afterEach
+    // might leave it undefined for the next describe.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("R6 wizard OAuth: provider=openai + authMethod=oauth → loginOpenAICodexOAuth called → state.provider.oauthProfileId set", async () => {
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: true,
+      value: {
+        access: "test_access_token",
+        refresh: "test_refresh_token",
+        expires: Date.now() + 3_600_000,
+        accountId: "acct_test_001",
+        email: "alice@example.com",
+        displayName: "Alice",
+        profileId: "openai-codex:alice@example.com",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    // Hoisted auth-method select returns "oauth" → dispatcher routes to
+    // handleOpenAIOAuth which calls the mocked loginOpenAICodexOAuth.
+    vi.mocked(prompter.select).mockResolvedValueOnce("oauth");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai" } as ProviderConfig,
+    };
+    const result = await credentialsStep.execute(startState, prompter);
+
+    expect(loginOpenAICodexOAuth).toHaveBeenCalledTimes(1);
+    expect(result.provider?.oauthProfileId).toBe(
+      "openai-codex:alice@example.com",
+    );
+    expect(result.provider?.authMethod).toBe("oauth");
+    expect(result.provider?.validated).toBe(true);
+    expect(result.provider?.apiKey).toBe("test_access_token");
+    expect(result.provider?.id).toBe("openai");
+  });
+
+  it("R6 Anthropic regression: provider=anthropic + authMethod=oauth → handleStandardProvider path (loginOpenAICodexOAuth NOT called)", async () => {
+    const prompter = createMockPrompter();
+    // Hoisted auth-method select returns "oauth" → because providerId is
+    // "anthropic" (not "openai"), the dispatcher does NOT branch to
+    // handleOpenAIOAuth. Instead it falls through to handleStandardProvider
+    // with preResolvedAuthMethod="oauth", which prompts for the OAuth
+    // token paste via prompter.password (the existing claude setup-token
+    // paste flow).
+    vi.mocked(prompter.select).mockResolvedValueOnce("oauth");
+    vi.mocked(prompter.password).mockResolvedValueOnce(
+      "sk-ant-oat01-fake-token-1234567890",
+    );
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "anthropic" } as ProviderConfig,
+    };
+    const result = await credentialsStep.execute(startState, prompter);
+
+    // CRITICAL Pitfall 8 assertion — the OpenAI runner must NOT be called
+    // for any other provider. Anthropic OAuth keeps its claude setup-token
+    // paste flow.
+    expect(loginOpenAICodexOAuth).not.toHaveBeenCalled();
+    // Sanity-check the existing Anthropic OAuth path still produces a
+    // validated profile in the wizard state.
+    expect(result.provider?.authMethod).toBe("oauth");
+    expect(result.provider?.apiKey).toBe(
+      "sk-ant-oat01-fake-token-1234567890",
+    );
+    expect(result.provider?.oauthProfileId).toBeUndefined();
+  });
+
+  it("OpenAI OAuth failure: surfaces hint and offers retry/skip recovery (mirrors handleStandardProvider loop)", async () => {
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: false,
+      error: {
+        code: "callback_validation_failed",
+        message: "state mismatch",
+        hint: "Restart the login flow.",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    // First select = auth-method "oauth" (dispatcher hoist).
+    // Second select = recovery choice "skip" after the runner fails.
+    vi.mocked(prompter.select)
+      .mockResolvedValueOnce("oauth")
+      .mockResolvedValueOnce("skip");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai" } as ProviderConfig,
+    };
+    const result = await credentialsStep.execute(startState, prompter);
+
+    expect(loginOpenAICodexOAuth).toHaveBeenCalledTimes(1);
+    expect(prompter.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("state mismatch"),
+    );
+    expect(prompter.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("Restart the login flow."),
+    );
+    // State unchanged (no provider mutation) because user chose "skip".
+    expect(result.provider?.id).toBe("openai");
+    expect(result.provider?.oauthProfileId).toBeUndefined();
+    expect(result.provider?.validated).toBeUndefined();
   });
 });

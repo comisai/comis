@@ -8,6 +8,7 @@ import { NotificationConfigSchema } from "./schema-notification.js";
 import { VerbosityConfigSchema } from "./schema-verbosity.js";
 import { BackgroundTasksConfigSchema } from "./schema-background-tasks.js";
 import { MemoryReviewConfigSchema } from "./schema-memory-review.js";
+import { validateProfileId } from "../ports/oauth-credential-store.js";
 
 // ── Model Selection Schemas ─────────────────────────────────────────────
 
@@ -907,6 +908,26 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   backgroundTasks: BackgroundTasksConfigSchema.optional(),
   /** Periodic memory review configuration (session history extraction) */
   memoryReview: MemoryReviewConfigSchema.optional(),
+  /**
+   * Per-provider OAuth profile preferences (provider -> profileId map).
+   * When set, the OAuthTokenManager resolves the named profile for that
+   * provider's LLM calls. Each value must match the `<provider>:<identity>`
+   * format enforced by `validateProfileId` from `@comis/core`.
+   *
+   * Phase 9 R1: see `.planning/phases/09-codex-oauth-multi-account-profile-selection/09-SPEC.md`.
+   */
+  oauthProfiles: z
+    .record(
+      z.string().min(1),
+      z
+        .string()
+        .min(1)
+        .refine((val) => validateProfileId(val).ok, {
+          message:
+            'Invalid profile ID: expected "<provider>:<identity>" format (use validateProfileId from @comis/core to verify).',
+        }),
+    )
+    .optional(),
 });
 
 /** Agents map: keyed by agent ID string to per-agent configuration. */

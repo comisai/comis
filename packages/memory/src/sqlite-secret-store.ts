@@ -12,6 +12,7 @@
  * Persists encrypted secrets across daemon restarts.
  */
 
+import type Database from "better-sqlite3";
 import { err, tryCatch } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import type {
@@ -24,6 +25,31 @@ import { initSecretSchema, validateCanary, CANARY_NAME } from "./secret-store-sc
 import { openSqliteDatabase, chmodDbFiles } from "./sqlite-adapter-base.js";
 
 /**
+ * Concrete return type of createSqliteSecretStore.
+ *
+ * Implements SecretStorePort and additionally exposes the underlying
+ * better-sqlite3 handle for adapters that need to share the same
+ * connection (e.g., the encrypted OAuth profile store in Phase 7).
+ *
+ * The `db` field is intentionally additive — `SecretStorePort` itself is
+ * unchanged and remains the canonical port boundary. Consumers that only
+ * need port-level operations should accept `SecretStorePort`, not
+ * `SqliteSecretStoreHandle`.
+ */
+export interface SqliteSecretStoreHandle extends SecretStorePort {
+  /**
+   * Underlying better-sqlite3 handle.
+   *
+   * Use for sharing the connection with sibling tables in the same DB
+   * file (e.g., `oauth_profiles` alongside `secrets`). Eliminates the
+   * dual-handle hazard (close-order, schema-init double-execution,
+   * prepared-statement cache fragmentation) that two separate handles
+   * to the same WAL-mode SQLite file would introduce.
+   */
+  readonly db: Database.Database;
+}
+
+/**
  * Create a SqliteSecretStore bound to the given database path.
  *
  * Initialization sequence:
@@ -34,17 +60,18 @@ import { openSqliteDatabase, chmodDbFiles } from "./sqlite-adapter-base.js";
  * 5. Validate canary (master key mismatch detection)
  * 6. Second chmod pass (SQLite may create WAL/SHM during canary)
  * 7. Prepare all SQL statements once
- * 8. Return frozen SecretStorePort object
+ * 8. Return frozen SqliteSecretStoreHandle (SecretStorePort + db field)
  *
  * @param dbPath - Absolute path to the secrets.db file
  * @param crypto - SecretsCrypto engine bound to the current master key
- * @returns SecretStorePort implementation
+ * @returns SqliteSecretStoreHandle — a SecretStorePort that also exposes
+ *          the underlying better-sqlite3 handle on `.db`
  * @throws Error if schema init, canary validation, or DB open fails
  */
 export function createSqliteSecretStore(
   dbPath: string,
   crypto: SecretsCrypto,
-): SecretStorePort {
+): SqliteSecretStoreHandle {
   // Steps 1-5: Open database with standardized lifecycle (mkdir, pragmas, chmod, schema)
   const db = openSqliteDatabase({
     dbPath,
@@ -234,5 +261,12 @@ export function createSqliteSecretStore(
     },
   };
 
-  return Object.freeze(store);
+  // W6 fix (Phase 7 plan 08): expose the underlying db handle on the factory
+  // return so the encrypted OAuth profile adapter (oauth-profile-store-encrypted)
+  // can share this same connection rather than opening a second handle to the
+  // same secrets.db file. The SecretStorePort surface itself is unchanged —
+  // consumers that only need port-level operations should accept
+  // SecretStorePort, not SqliteSecretStoreHandle.
+  const handle: SqliteSecretStoreHandle = { ...store, db };
+  return Object.freeze(handle);
 }

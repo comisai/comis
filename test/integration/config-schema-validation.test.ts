@@ -52,7 +52,8 @@ describe("Config Schema Validation (119-01)", () => {
       // Snapshot-style guard: bump this count when a new top-level section is
       // added so the change surfaces in code review. Count reflects all scalars
       // plus all object sections currently in AppConfigSchema.shape.
-      expect(allKeys).toHaveLength(37);
+      // Phase 7 plan 03 added "oauth" (38 — was 37 pre-Phase-7).
+      expect(allKeys).toHaveLength(38);
     });
 
     it("empty config {} produces valid defaults for all sections", () => {

@@ -62,3 +62,6 @@ integrations:
       maxLinks: 3
       fetchTimeoutMs: 15000
       maxContentChars: 5000
+
+models:
+  defaultProvider: anthropic

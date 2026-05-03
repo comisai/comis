@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
-import { resolveAgentModel, setupSingleAgent } from "./setup-agents.js";
+import {
+  resolveAgentModel,
+  setupSingleAgent,
+} from "./setup-agents.js";
+// Phase 8 plan 01: selectOAuthCredentialStore moved to @comis/agent
+// (RESEARCH override 4 — CLI cannot import from @comis/daemon).
+import { selectOAuthCredentialStore } from "@comis/agent";
+import type { OAuthCredentialStorePort, SecretsCrypto } from "@comis/core";
+import type Database from "better-sqlite3";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -198,6 +206,134 @@ describe("setup-agents skills directory creation", () => {
     const registryPos = source.indexOf("const skillRegistry = createSkillRegistry(");
     expect(mkdirPos).toBeGreaterThan(-1);
     expect(registryPos).toBeGreaterThan(mkdirPos);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 7 plan 08 (B5 + W3 + W6): OAuth credential store wiring
+// ---------------------------------------------------------------------------
+
+describe("setupSingleAgent OAuth wiring (Phase 7 plan 08)", () => {
+  const source = readFileSync(join(__dirname, "setup-agents.ts"), "utf-8");
+
+  it("invokes createAuthProvider({ oauth: ... }) — closes RESEARCH §4 landmine #1 (unwired-OAuth gap)", () => {
+    // RESEARCH §4 landmine #1: createAuthProvider was exported by @comis/agent
+    // but never called by the daemon, so refreshed OAuth tokens lived only in
+    // the in-memory cache and silently disappeared on restart. Plan 08 adds
+    // the FIRST daemon-side call.
+    expect(source).toContain("createAuthProvider({");
+    expect(source).toMatch(/createAuthProvider\(\s*{[\s\S]*?oauth:\s*{/);
+  });
+
+  it("uses safePath (NOT path.join) for all newly-added path constructions (W3 fix)", () => {
+    // W3: AGENTS.md §2.2 ESLint security rule forbids path.join in new code.
+    // The pre-existing setup-agents.ts source body still uses path.{resolve,
+    // dirname, join} via the imports up top for unrelated paths (skills
+    // discovery), but the NEW Phase 7 OAuth wiring must use safePath only.
+    expect(source).not.toMatch(/path\.join\(/);
+    expect(source).not.toMatch(/path\.resolve\(/);
+    // The OAuth wiring's dataDir construction must use safePath.
+    const phase7Section = source.slice(
+      source.indexOf("Phase 7 plan 08"),
+      source.indexOf("createAuthProvider({"),
+    );
+    expect(phase7Section).toContain("safePath(");
+  });
+
+  it("selects encrypted-mode adapter via selectOAuthCredentialStore branch", () => {
+    // Daemon side: only the call site lives here now (Phase 8 plan 01 moved
+    // the helper definition to @comis/agent per RESEARCH override 4).
+    expect(source).toContain("selectOAuthCredentialStore({");
+    // Encrypted branch lives inside selectOAuthCredentialStore (helper) — pulls
+    // both secretsCrypto + secretsDb through deps. Read the helper from its
+    // new home in @comis/agent.
+    const selectorSource = readFileSync(
+      join(__dirname, "..", "..", "..", "agent", "src", "model", "oauth-credential-store-selector.ts"),
+      "utf-8",
+    );
+    const helperBody = selectorSource.slice(
+      selectorSource.indexOf("export function selectOAuthCredentialStore"),
+    );
+    expect(helperBody).toContain('storage === "encrypted"');
+    expect(helperBody).toContain("encryptedFactory(secretsDb, secretsCrypto)");
+    expect(helperBody).toContain("fileFactory({ dataDir })");
+  });
+});
+
+describe("selectOAuthCredentialStore (Phase 7 plan 08 — B5 + W6)", () => {
+  /** Mock OAuthCredentialStorePort returned by injected factories. */
+  function makeMockPort(): OAuthCredentialStorePort {
+    return {
+      get: vi.fn(),
+      set: vi.fn(),
+      delete: vi.fn(),
+      list: vi.fn(),
+      has: vi.fn(),
+    } as unknown as OAuthCredentialStorePort;
+  }
+
+  it("file mode: invokes createOAuthCredentialStoreFile with { dataDir }", () => {
+    const fileMock = vi.fn(() => makeMockPort());
+    const encryptedMock = vi.fn(() => makeMockPort());
+    const port = selectOAuthCredentialStore({
+      storage: "file",
+      dataDir: "/tmp/comis-test-w3",
+      factories: {
+        file: fileMock as unknown as typeof import("@comis/agent").createOAuthCredentialStoreFile,
+        encrypted: encryptedMock as unknown as typeof import("@comis/memory").createOAuthProfileStoreEncrypted,
+      },
+    });
+    expect(port).toBeDefined();
+    expect(fileMock).toHaveBeenCalledTimes(1);
+    expect(fileMock).toHaveBeenCalledWith({ dataDir: "/tmp/comis-test-w3" });
+    expect(encryptedMock).not.toHaveBeenCalled();
+  });
+
+  it("encrypted mode: passes the SAME db handle (W6 — no dual-handle) and shares secretsCrypto", () => {
+    const fileMock = vi.fn(() => makeMockPort());
+    const encryptedMock = vi.fn(() => makeMockPort());
+    // Use sentinel object identities so we can assert reference-equality.
+    const sentinelDb = { __sentinel: "shared-db" } as unknown as Database.Database;
+    const sentinelCrypto = { __sentinel: "crypto" } as unknown as SecretsCrypto;
+    const port = selectOAuthCredentialStore({
+      storage: "encrypted",
+      dataDir: "/tmp/comis-test-w6",
+      secretsCrypto: sentinelCrypto,
+      secretsDb: sentinelDb,
+      factories: {
+        file: fileMock as unknown as typeof import("@comis/agent").createOAuthCredentialStoreFile,
+        encrypted: encryptedMock as unknown as typeof import("@comis/memory").createOAuthProfileStoreEncrypted,
+      },
+    });
+    expect(port).toBeDefined();
+    expect(encryptedMock).toHaveBeenCalledTimes(1);
+    // CRITICAL W6 assertion: the EXACT db reference passed in is the EXACT
+    // db reference handed to the encrypted factory — proves shared-handle,
+    // not a freshly-opened one.
+    expect(encryptedMock).toHaveBeenCalledWith(sentinelDb, sentinelCrypto);
+    expect(fileMock).not.toHaveBeenCalled();
+  });
+
+  it("encrypted mode + missing secretsCrypto: throws Error mentioning SECRETS_MASTER_KEY", () => {
+    expect(() =>
+      selectOAuthCredentialStore({
+        storage: "encrypted",
+        dataDir: "/tmp/comis-test-encrypted-no-crypto",
+        secretsCrypto: undefined,
+        secretsDb: { __sentinel: "db" } as unknown as Database.Database,
+      }),
+    ).toThrow(/SECRETS_MASTER_KEY/);
+  });
+
+  it("encrypted mode + missing secretsDb: throws Error mentioning SECRETS_MASTER_KEY (BOTH fields are required together)", () => {
+    expect(() =>
+      selectOAuthCredentialStore({
+        storage: "encrypted",
+        dataDir: "/tmp/comis-test-encrypted-no-db",
+        secretsCrypto: { __sentinel: "crypto" } as unknown as SecretsCrypto,
+        secretsDb: undefined,
+      }),
+    ).toThrow(/SECRETS_MASTER_KEY/);
   });
 });
 

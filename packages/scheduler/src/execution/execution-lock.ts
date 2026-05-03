@@ -21,6 +21,22 @@ export interface ExecutionLockOptions {
   updateMs: number;
   /** Callback when lock is compromised (e.g., external release). */
   onCompromised?: (err: Error) => void;
+  /**
+   * Optional lock-acquisition retry budget. Forwarded to proper-lockfile's
+   * own retry option (uses a built-in incremental backoff). When undefined
+   * (default), retries: 0 — fail fast on contention. Phase 7 plan 08 added
+   * this so the OAuth manager can wait for a sibling refresh to complete
+   * (concurrent-refresh acceptance) without callers having to roll their own
+   * retry loop.
+   */
+  retries?:
+    | number
+    | {
+        retries: number;
+        minTimeout?: number;
+        maxTimeout?: number;
+        factor?: number;
+      };
 }
 
 const DEFAULT_OPTIONS: ExecutionLockOptions = {
@@ -61,7 +77,7 @@ export async function withExecutionLock<T>(
     release = await lockfile.lock(lockPath, {
       stale: opts.staleMs,
       update: opts.updateMs,
-      retries: 0,
+      retries: opts.retries ?? 0,
       onCompromised: opts.onCompromised ?? (() => {}),
     });
   } catch (lockErr: unknown) {

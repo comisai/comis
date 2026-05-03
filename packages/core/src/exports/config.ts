@@ -110,6 +110,7 @@ export {
   ModelCostSchema,
   OperationModelEntrySchema,
   OperationModelsSchema,
+  OAuthConfigSchema,
   substituteEnvVars,
   warnSuspiciousEnvValues,
   loadConfigFile,
@@ -259,4 +260,5 @@ export type {
   OperationModelEntry,
   OperationModels,
   ModelOperationType,
+  OAuthConfig,
 } from "../config/index.js";

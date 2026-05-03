@@ -14,9 +14,9 @@ dataDir: ""
 agents:
   default:
     name: "QueueTestAgent"
-    model: default
+    model: claude-opus-4-6
     thinkingLevel: "off"
-    provider: default
+    provider: anthropic
     maxSteps: 10
     budgets:
       perExecution: 500000
@@ -31,9 +31,9 @@ agents:
 
   budget-limited:
     name: "BudgetLimitedAgent"
-    model: default
+    model: claude-opus-4-6
     thinkingLevel: "off"
-    provider: default
+    provider: anthropic
     maxSteps: 1
     budgets:
       perExecution: 100
@@ -48,9 +48,9 @@ agents:
 
   step-limited:
     name: "StepLimitedAgent"
-    model: default
+    model: claude-opus-4-6
     thinkingLevel: "off"
-    provider: default
+    provider: anthropic
     maxSteps: 1
     budgets:
       perExecution: 500000
@@ -103,3 +103,6 @@ monitoring:
     enabled: false
   git:
     enabled: false
+
+models:
+  defaultProvider: anthropic
