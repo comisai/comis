@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
-import type { SecretManager } from "@comis/core";
+import { ok } from "@comis/shared";
+import type { SecretManager, OAuthCredentialStorePort, OAuthProfile } from "@comis/core";
 import { createAuthProvider, type AuthProvider } from "./auth-provider.js";
 
 // ---------------------------------------------------------------------------
@@ -21,6 +22,37 @@ function makeSecretManager(secrets: Record<string, string>): SecretManager {
 
 function makeEventBus(): { emit: ReturnType<typeof vi.fn> } {
   return { emit: vi.fn() };
+}
+
+/**
+ * Mock OAuthCredentialStorePort backed by vi.fn() — defaults to empty store.
+ * Mirrors the helper in oauth-token-manager.test.ts; co-located here so the
+ * facade tests can wire createAuthProvider({ oauth: { ... } }) with the
+ * Phase 7 required fields. Exported helper consumers (plan 08 task 07.4
+ * integration tests) can lift this into packages/agent/src/test-helpers/
+ * if they prefer a cross-file shared helper.
+ */
+function makeMockCredentialStore(): OAuthCredentialStorePort {
+  return {
+    get: vi.fn(async (_id: string) => ok(undefined)),
+    set: vi.fn(async (_id: string, _profile: OAuthProfile) => ok(undefined)),
+    delete: vi.fn(async (_id: string) => ok(false)),
+    list: vi.fn(async (_filter?: { provider?: string }) => ok([] as OAuthProfile[])),
+    has: vi.fn(async (_id: string) => ok(false)),
+  };
+}
+
+/** Mock Pino-shaped logger with all standard levels + child(). */
+function makeMockLogger() {
+  return {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: vi.fn(function (this: unknown) {
+      return this;
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +222,9 @@ describe("createAuthProvider", () => {
       secretManager: makeSecretManager({}),
       oauth: {
         eventBus: eventBus as any,  // eslint-disable-line @typescript-eslint/no-explicit-any
+        credentialStore: makeMockCredentialStore(),
+        logger: makeMockLogger() as any,  // eslint-disable-line @typescript-eslint/no-explicit-any
+        dataDir: "/tmp/comis-auth-provider-test",
       },
     });
 
@@ -272,6 +307,9 @@ describe("createAuthProvider", () => {
       cooldownCapMs: 3_600_000,
       oauth: {
         eventBus: eventBus as any,  // eslint-disable-line @typescript-eslint/no-explicit-any
+        credentialStore: makeMockCredentialStore(),
+        logger: makeMockLogger() as any,  // eslint-disable-line @typescript-eslint/no-explicit-any
+        dataDir: "/tmp/comis-auth-provider-test",
         keyPrefix: "OAUTH_",
       },
     });

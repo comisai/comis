@@ -25,6 +25,8 @@ import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { ExecutionOverrides } from "./types.js";
 import { resolveOperationModel, resolveProviderFamily } from "../model/operation-model-resolver.js";
+import type { OAuthTokenManager } from "../model/oauth-token-manager.js";
+import { resolveProviderApiKey } from "../model/resolve-provider-api-key.js";
 import {
   getBreakpointIndex,
   getBreakpointIndexMapSize,
@@ -49,6 +51,12 @@ export interface ContextEngineSetupDeps {
   getPromptSkillsXml?: () => string;
   contextStore?: import("@comis/memory").ContextStore;
   db?: unknown;
+  /**
+   * Phase 9 R3: optional OAuth token manager. When provided, compaction LLM
+   * calls route through resolveProviderApiKey for OAuth-eligible providers,
+   * with fallthrough to authStorage for non-OAuth providers.
+   */
+  oauthManager?: OAuthTokenManager;
 }
 
 /** Parameters for context engine creation. */
@@ -223,9 +231,17 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
           reasoning: model?.reasoning ?? false,
         };
       },
-      getApiKey: async () => {
-        return (await deps.authStorage.getApiKey(config.provider)) ?? "";
-      },
+      // Phase 9 R3: route compaction's primary getApiKey through the shared
+      // dispatch helper so OAuth-eligible providers refresh through
+      // OAuthTokenManager + setRuntimeApiKey on every call. Non-OAuth
+      // providers (anthropic, openai, etc.) still fall through to
+      // authStorage.getApiKey unchanged.
+      getApiKey: async () =>
+        resolveProviderApiKey(config.provider, {
+          authStorage: deps.authStorage,
+          oauthManager: deps.oauthManager,
+          agentConfig: config,
+        }),
       // Resolve compaction model via 5-level priority chain
       // contextEngineOverrides removed -- invocationOverride path eliminated
       //   Path 1: operationModels.compaction (operator config) -> explicit_config (Level 2)
@@ -252,8 +268,18 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
               return {
                 overrideModel: {
                   model: compactionModel,
+                  // Phase 9 R3: route the override-model getApiKey through
+                  // the shared dispatch helper (Risk 2: each callsite passes
+                  // its OWN providerId — config.provider above for the
+                  // primary, compactionResolution.provider here for the
+                  // override — both correctly resolve the right OAuth
+                  // profile via agentConfig.oauthProfiles[providerId]).
                   getApiKey: async () =>
-                    (await deps.authStorage.getApiKey(compactionResolution.provider)) ?? "",
+                    resolveProviderApiKey(compactionResolution.provider, {
+                      authStorage: deps.authStorage,
+                      oauthManager: deps.oauthManager,
+                      agentConfig: config,
+                    }),
                 },
               };
             }

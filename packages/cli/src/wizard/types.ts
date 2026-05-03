@@ -112,6 +112,13 @@ export type ProviderConfig = {
   customEndpoint?: string;
   compatMode?: "openai" | "anthropic";
   validated?: boolean;
+  /**
+   * Phase 8 R6 — set when authMethod === "oauth" and the interactive
+   * loginOpenAICodexOAuth flow succeeded. Carries the canonical
+   * `<provider>:<identity>` profile-store key so downstream consumers
+   * (Phase 9 multi-account selection) can locate the persisted profile.
+   */
+  oauthProfileId?: string;
 };
 
 // ---------- State ----------

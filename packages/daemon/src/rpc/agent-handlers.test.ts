@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAgentHandlers } from "./agent-handlers.js";
 import type { AgentHandlerDeps } from "./agent-handlers.js";
 import type { PersistToConfigDeps } from "./persist-to-config.js";
-import type { ProviderEntry } from "@comis/core";
+import type { ProviderEntry, OAuthCredentialStorePort } from "@comis/core";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Mock persist-to-config module to avoid real filesystem operations
@@ -1463,6 +1464,164 @@ describe("createAgentHandlers", () => {
         expect(op.crossProvider).toBe(false);
         expect(op.apiKeyConfigured).toBe(true);
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 9 D-11 / R7: agents.update validates oauthProfiles patches via
+  // oauthCredentialStore.has() BEFORE the existing
+  // `deps.agents[agentId] = parsedConfig` reference-replacement at line 341.
+  // On miss → throw with the documented "not found in store" wording → the
+  // daemon's in-memory map AND YAML are both unchanged (failure leaves
+  // state untouched). On success → reference-replacement preserved (the
+  // contract Plan 04's Option B closure depends on; pinned by Test 5
+  // below as a regression guard).
+  // -------------------------------------------------------------------------
+
+  describe("agents.update oauthProfiles validation (Phase 9 D-11)", () => {
+    /**
+     * Build a minimal OAuthCredentialStorePort mock. Tests pass a
+     * `hasResult` factory so each call's return is configurable per
+     * profileId — the multi-key test exercises this.
+     */
+    function makeStoreMock(
+      hasResult: (profileId: string) => Awaited<ReturnType<OAuthCredentialStorePort["has"]>>,
+    ): OAuthCredentialStorePort {
+      const hasFn = vi.fn(async (id: string) => hasResult(id));
+      return {
+        get: vi.fn(async () => ok(undefined)),
+        set: vi.fn(async () => ok(undefined)),
+        delete: vi.fn(async () => ok(true)),
+        list: vi.fn(async () => ok([])),
+        has: hasFn,
+      };
+    }
+
+    it("succeeds when all referenced profileIds exist in the store and replaces the agent reference", async () => {
+      const store = makeStoreMock(() => ok(true));
+      const deps = makeDeps({ oauthCredentialStore: store });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: {
+          oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
+        },
+        _trustLevel: "admin",
+      })) as { agentId: string; updated: boolean; config: Record<string, unknown> };
+
+      expect(result.updated).toBe(true);
+      expect(store.has).toHaveBeenCalledWith("openai-codex:user@example.com");
+      expect(deps.agents["default"]!.oauthProfiles).toEqual({
+        "openai-codex": "openai-codex:user@example.com",
+      });
+    });
+
+    it("throws with 'not found in store' wording when a referenced profileId is missing", async () => {
+      const store = makeStoreMock(() => ok(false));
+      const deps = makeDeps({ oauthCredentialStore: store });
+      const originalRef = deps.agents["default"]!;
+      const handlers = createAgentHandlers(deps);
+
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "default",
+          config: {
+            oauthProfiles: { "openai-codex": "openai-codex:nope@example.com" },
+          },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/profile openai-codex:nope@example\.com not found in store/);
+
+      // D-11: failure path leaves the daemon's in-memory map UNCHANGED —
+      // the reference at the agent key is still the original object (the
+      // throw happens BEFORE the deps.agents[agentId] = parsedConfig
+      // assignment at line 341).
+      expect(deps.agents["default"]).toBe(originalRef);
+    });
+
+    it("does NOT call oauthCredentialStore.has when oauthProfiles is absent from the patch", async () => {
+      const store = makeStoreMock(() => ok(true));
+      const deps = makeDeps({ oauthCredentialStore: store });
+      const handlers = createAgentHandlers(deps);
+
+      await handlers["agents.update"]!({
+        agentId: "default",
+        config: { name: "Renamed Agent" },
+        _trustLevel: "admin",
+      });
+
+      expect(store.has).not.toHaveBeenCalled();
+    });
+
+    it("rejects multi-key oauthProfiles when any one profileId is missing (Object.entries iteration)", async () => {
+      // First key exists; second key missing → throw on the second.
+      const store = makeStoreMock((id) =>
+        ok(id === "openai-codex:user@example.com"),
+      );
+      const deps = makeDeps({ oauthCredentialStore: store });
+      const originalRef = deps.agents["default"]!;
+      const handlers = createAgentHandlers(deps);
+
+      await expect(
+        handlers["agents.update"]!({
+          agentId: "default",
+          config: {
+            oauthProfiles: {
+              "openai-codex": "openai-codex:user@example.com",
+              anthropic: "anthropic:nope@example.com",
+            },
+          },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/profile anthropic:nope@example\.com not found in store/);
+
+      // Failure path: agent reference unchanged.
+      expect(deps.agents["default"]).toBe(originalRef);
+    });
+
+    it("REPLACES the agent reference at deps.agents[agentId] on success (does NOT mutate in place) — pin Plan 04 closure-stability contract", async () => {
+      const store = makeStoreMock(() => ok(true));
+      const deps = makeDeps({ oauthCredentialStore: store });
+      const originalRef = deps.agents["default"]!;
+      const handlers = createAgentHandlers(deps);
+
+      await handlers["agents.update"]!({
+        agentId: "default",
+        config: {
+          oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
+        },
+        _trustLevel: "admin",
+      });
+
+      // Reference replacement (NOT in-place mutation). Plan 04's Option B
+      // closure dereferences container.config.agents[agentId] on every
+      // getApiKey call; this contract is what makes hot-update of
+      // oauthProfiles observable without daemon restart (SC#4).
+      expect(deps.agents["default"]).not.toBe(originalRef);
+      expect(deps.agents["default"]!.oauthProfiles).toEqual({
+        "openai-codex": "openai-codex:user@example.com",
+      });
+    });
+
+    it("skips validation when no oauthCredentialStore is wired (defensive no-op for non-OAuth-aware contexts)", async () => {
+      // No oauthCredentialStore in deps — the existing test surface (no
+      // OAuth wiring) must continue to work unchanged.
+      const deps = makeDeps();
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: {
+          oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
+        },
+        _trustLevel: "admin",
+      })) as { updated: boolean };
+
+      expect(result.updated).toBe(true);
+      expect(deps.agents["default"]!.oauthProfiles).toEqual({
+        "openai-codex": "openai-codex:user@example.com",
+      });
     });
   });
 

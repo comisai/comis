@@ -410,6 +410,100 @@ describe("PerAgentConfigSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
+// PerAgentConfigSchema oauthProfiles (Phase 9 R1)
+// ---------------------------------------------------------------------------
+
+describe("PerAgentConfigSchema oauthProfiles (Phase 9 R1)", () => {
+  it("accepts a valid single-entry record", () => {
+    const result = PerAgentConfigSchema.safeParse({
+      oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.oauthProfiles).toEqual({
+        "openai-codex": "openai-codex:user_a@example.com",
+      });
+    }
+  });
+
+  it("accepts a multi-provider record", () => {
+    const result = PerAgentConfigSchema.safeParse({
+      oauthProfiles: {
+        "openai-codex": "openai-codex:user_a@example.com",
+        "anthropic": "anthropic:user_b@example.com",
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(Object.keys(result.data.oauthProfiles!)).toHaveLength(2);
+      expect(result.data.oauthProfiles!["openai-codex"]).toBe(
+        "openai-codex:user_a@example.com",
+      );
+      expect(result.data.oauthProfiles!["anthropic"]).toBe(
+        "anthropic:user_b@example.com",
+      );
+    }
+  });
+
+  it("rejects a malformed profile-ID (no colon)", () => {
+    const result = PerAgentConfigSchema.safeParse({
+      oauthProfiles: { "openai-codex": "no-colon" },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = JSON.stringify(result.error.issues);
+      expect(message).toMatch(/Invalid profile ID/);
+      expect(message).toMatch(/validateProfileId/);
+      // Path includes oauthProfiles + the failing key
+      expect(result.error.issues.some((i) => i.path.includes("oauthProfiles"))).toBe(true);
+      expect(result.error.issues.some((i) => i.path.includes("openai-codex"))).toBe(true);
+    }
+  });
+
+  it("rejects a profile-ID with forbidden characters (slash)", () => {
+    const result = PerAgentConfigSchema.safeParse({
+      oauthProfiles: { "openai-codex": "openai-codex:bad/path" },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(JSON.stringify(result.error.issues)).toMatch(/Invalid profile ID/);
+    }
+  });
+
+  it("rejects an empty profile-ID value", () => {
+    const result = PerAgentConfigSchema.safeParse({
+      oauthProfiles: { "openai-codex": "" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an empty provider key", () => {
+    const result = PerAgentConfigSchema.safeParse({
+      oauthProfiles: { "": "openai-codex:user_a@example.com" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("treats oauthProfiles as optional (undefined accepted)", () => {
+    const result = PerAgentConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.oauthProfiles).toBeUndefined();
+    }
+  });
+
+  it("accepts an empty record (no entries set)", () => {
+    const result = PerAgentConfigSchema.safeParse({
+      oauthProfiles: {},
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.oauthProfiles).toEqual({});
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // DeferredToolsConfigSchema
 // ---------------------------------------------------------------------------
 

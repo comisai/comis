@@ -129,6 +129,8 @@ export {
 export { MonitoringConfigSchema } from "./schema-observability.js";
 export { ObservabilityConfigSchema } from "./schema-observability.js";
 export type { ObservabilityConfig, ObservabilityPersistenceConfig } from "./schema-observability.js";
+export { OAuthConfigSchema } from "./schema-oauth.js";
+export type { OAuthConfig } from "./schema-oauth.js";
 export { PluginsConfigSchema, PluginEntrySchema } from "./schema-plugins.js";
 export {
   QueueConfigSchema,

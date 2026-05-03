@@ -371,7 +371,15 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
       fatal: vi.fn(),
       trace: vi.fn(),
     } as any,
-    authStorage: {} as any,
+    // Phase 9 R3: minimal stub now needs getApiKey + setRuntimeApiKey to
+    // satisfy the resolveProviderApiKey pre-execute hook in pi-executor.
+    // No oauthManager wired into the test deps, so the hook falls through
+    // to authStorage.getApiKey for both OAuth-eligible (anthropic) and
+    // non-OAuth providers — both branches need a callable getApiKey stub.
+    authStorage: {
+      getApiKey: vi.fn().mockResolvedValue(undefined),
+      setRuntimeApiKey: vi.fn(),
+    } as any,
     modelRegistry: {
       find: vi.fn().mockReturnValue({ provider: "anthropic", id: "claude-sonnet-4-5-20250929" }),
       getAll: vi.fn().mockReturnValue([]),

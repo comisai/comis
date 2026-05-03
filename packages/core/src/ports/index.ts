@@ -116,6 +116,8 @@ export type {
   SecretMetadata,
 } from "./secret-store.js";
 export type { CredentialMappingPort } from "./credential-mapping.js";
+export type { OAuthCredentialStorePort, OAuthProfile } from "./oauth-credential-store.js";
+export { validateProfileId, PROFILE_ID_RE } from "./oauth-credential-store.js";
 export type { Provider, ImageGenInput, ImageGenOutput, ImageGenerationPort } from "./provider.js";
 export type {
   DeliveryQueuePort,

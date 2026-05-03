@@ -170,6 +170,11 @@ export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = [
         model: "<model-id>",
         provider: "<provider>",
         maxSteps: 100,
+        // Phase 9 R8 (plan 06): advertise the per-agent OAuth profile
+        // preference to the LLM. Maps provider → "<provider>:<identity>"
+        // stored profile ID. Validated end-to-end by Plan 02's Zod refine
+        // and Plan 06's daemon-side has() existence check.
+        oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
       },
     },
     fullyManaged: true,

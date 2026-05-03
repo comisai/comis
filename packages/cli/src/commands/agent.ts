@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Agent management commands: list, create, configure, delete, models.
+ * Agent management commands: list, create, configure, delete, models, set-oauth-profile.
  *
- * Provides `comis agent [list|create|configure|delete|models]` subcommands
- * for managing agent configurations via the daemon RPC interface.
+ * Provides `comis agent [list|create|configure|delete|models|set-oauth-profile]`
+ * subcommands for managing agent configurations via the daemon RPC interface.
  *
  * @module
  */
 
-import type { AgentConfig } from "@comis/core";
+import { validateProfileId, type AgentConfig } from "@comis/core";
 import type { Command } from "commander";
 import { ensureWorkspace, resolveWorkspaceDir } from "@comis/agent";
 import chalk from "chalk";
@@ -150,6 +150,54 @@ export function registerAgentCommand(program: Command): void {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to update agent: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // agent set-oauth-profile <agentId> <profileId>
+  //
+  // Phase 9 R7: pin a per-agent OAuth profile preference. The provider is
+  // derived from the profile-id's `<provider>:<identity>` portion — there is
+  // NO separate --provider flag (D-10 single-source-of-truth). Validation
+  // runs client-side via validateProfileId; the daemon's agents.update
+  // handler additionally rejects unknown profile IDs via
+  // OAuthCredentialStore.has(). Daemon errors substring-matching "not
+  // found" are surfaced verbatim with exit 1; format violations exit 2.
+  agent
+    .command("set-oauth-profile <agentId> <profileId>")
+    .description(
+      "Set the OAuth profile preference for an agent (provider derived from profile-id)",
+    )
+    .action(async (agentId: string, profileId: string) => {
+      const validated = validateProfileId(profileId);
+      if (!validated.ok) {
+        error(
+          `Invalid profile ID: ${validated.error.message}. Expected format: <provider>:<identity>.`,
+        );
+        process.exit(2);
+      }
+      const { provider } = validated.value;
+      try {
+        await withSpinner(`Setting OAuth profile for "${agentId}"...`, () =>
+          withClient(async (client) => {
+            return await client.call("agents.update", {
+              agentId,
+              config: { oauthProfiles: { [provider]: profileId } },
+            });
+          }),
+        );
+        success(`Set agent ${agentId} oauthProfiles[${provider}] = ${profileId}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Phase 9 D-11: daemon's PROFILE_NOT_FOUND surfaces with "not found" in
+        // the message. Substring-match to surface as exit 1 with the daemon's
+        // actionable wording (which already names the profile and references
+        // `comis auth list`).
+        if (msg.includes("not found")) {
+          error(msg);
+          process.exit(1);
+        }
+        error(`Failed to set oauth profile: ${msg}`);
         process.exit(1);
       }
     });

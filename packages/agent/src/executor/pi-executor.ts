@@ -66,6 +66,8 @@ import type { MessageSendLimiter } from "../safety/message-send-limiter.js";
 import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
 import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";
+import type { OAuthTokenManager } from "../model/oauth-token-manager.js";
+import { resolveProviderApiKey } from "../model/resolve-provider-api-key.js";
 import type { ActiveRunRegistry, RunHandle } from "./active-run-registry.js";
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../session/orphaned-message-repair.js";
 import { scrubRedactedToolCalls } from "../session/scrub-redacted-tool-calls.js";
@@ -300,6 +302,18 @@ export interface PiExecutorDeps {
   fallbackModels?: string[];
   /** Optional auth rotation adapter for multi-key providers. */
   authRotation?: AuthRotationAdapter;
+  /**
+   * Phase 9 R3: optional OAuth token manager. When provided, the per-LLM-call
+   * dispatch hook in execute() resolves the OAuth token via the resolver
+   * chain (agent-config -> lastGood -> first available) and sets it into
+   * authStorage's runtime override Map for pi-coding-agent's outbound LLM
+   * call.
+   *
+   * F-09 Option 1: single hook per execute() — long-running execute()s
+   * (>= 1 hour) may see token expire mid-loop; revisit Phase 10 if observed
+   * in production.
+   */
+  oauthManager?: OAuthTokenManager;
   /** Active run registry for mid-execution steering. */
   activeRunRegistry?: ActiveRunRegistry;
   /** Daemon-level tracing defaults for rotation. */
@@ -416,6 +430,28 @@ export function createPiExecutor(
     ): Promise<ExecutionResult> {
       // a. Record execution start time
       const executionStartMs = Date.now();
+
+      // a-bis. Phase 9 R3: pre-resolve OAuth token before any pi-coding-agent
+      // dispatch. The setRuntimeApiKey side-effect inside resolveProviderApiKey
+      // carries the token into pi-coding-agent's outbound LLM request via the
+      // runtime-override priority path (RESEARCH F-02). For OAuth-eligible
+      // providers (openai-codex, anthropic, github-copilot via pi-ai's
+      // built-in registry) the resolver chain (agent-config -> lastGood ->
+      // first available) runs and refreshes the token if expired. For
+      // non-OAuth providers the helper falls through to authStorage.getApiKey.
+      //
+      // F-09 Option 1 (throw-propagation): on OAuthError the helper throws
+      // an Error containing the OAuthError.message. Outer async callers
+      // (gateway routes via Hono, channel handlers via try/catch) lift the
+      // throw into a user-facing error response. CONTEXT D-02: OAuthError
+      // is fatal — no env-var fallback, no retry, no silent rotation.
+      // CLAUDE.md "no empty catch" honored because we don't add a catch
+      // here at all; the resolver itself logs via the oauth-resolver module.
+      await resolveProviderApiKey(config.provider, {
+        authStorage: deps.authStorage,
+        oauthManager: deps.oauthManager,
+        agentConfig: config,
+      });
 
       // b. Initialize result
       const result: ExecutionResult = {

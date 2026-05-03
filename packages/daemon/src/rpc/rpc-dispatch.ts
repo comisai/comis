@@ -242,6 +242,12 @@ export interface RpcDispatchDeps {
 
   // Image generation deps (Proactive v1 -- IMGN)
   imageHandlerDeps?: ImageHandlerDeps;
+
+  // Phase 9 R7 (plan 09-06): daemon-level OAuth credential store handle
+  // for the agents.update oauthProfiles existence check (D-11). When
+  // absent (e.g. tests), the validation block in agent-handlers becomes
+  // a no-op and existing behavior is preserved.
+  oauthCredentialStore?: import("@comis/core").OAuthCredentialStorePort;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +308,14 @@ export function createRpcDispatch(deps: RpcDispatchDeps): RpcCall {
       ...deps,
       secretManager: deps.container?.secretManager,
       providerEntries: deps.container.config.providers.entries,
+      // Phase 9 R7 (plan 09-06): thread the daemon-level OAuth credential
+      // store into agents.update so the oauthProfiles existence check
+      // (D-11) can run via has(). When unset (e.g. unwired test setups)
+      // the validation block in agent-handlers becomes a no-op.
+      oauthCredentialStore: deps.oauthCredentialStore,
+      // Resolves `provider: "default"` to `models.defaultProvider` in the
+      // credential check, mirroring `resolveAgentModel` runtime resolution.
+      modelsConfig: deps.container.config.models,
       persistDeps: {
         container: deps.container,
         configPaths: deps.configPaths,

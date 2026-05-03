@@ -19,6 +19,7 @@ import { MessagesConfigSchema } from "./schema-messages.js";
 import { ModelsConfigSchema } from "./schema-models.js";
 import { MonitoringConfigSchema } from "./schema-observability.js";
 import { ObservabilityConfigSchema } from "./schema-observability.js";
+import { OAuthConfigSchema } from "./schema-oauth.js";
 import { PluginsConfigSchema } from "./schema-plugins.js";
 import { ProvidersConfigSchema } from "./schema-providers.js";
 import { QueueConfigSchema } from "./schema-queue.js";
@@ -69,6 +70,8 @@ export const AppConfigSchema = z.strictObject({
     monitoring: MonitoringConfigSchema.default(() => MonitoringConfigSchema.parse({})),
     /** Observability persistence configuration */
     observability: ObservabilityConfigSchema.default(() => ObservabilityConfigSchema.parse({})),
+    /** OAuth credential storage configuration (storage backend selector) */
+    oauth: OAuthConfigSchema.default(() => OAuthConfigSchema.parse({})),
     /** Plugin system configuration */
     plugins: PluginsConfigSchema.default(() => PluginsConfigSchema.parse({})),
     /** Command queue configuration for session serialization and concurrency control */

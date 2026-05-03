@@ -112,3 +112,7 @@ monitoring:
     enabled: false
   git:
     enabled: false
+
+models:
+  defaultProvider: anthropic
+  defaultModel: claude-opus-4-7

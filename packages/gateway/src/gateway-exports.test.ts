@@ -46,6 +46,19 @@ describe("gateway barrel exports smoke test", () => {
     expect(typeof gateway.getPresetMappings).toBe("function");
   });
 
+  // Phase 11 — OAuth callback route exports
+  it("exports createOAuthCallbackRoute", () => {
+    expect(typeof gateway.createOAuthCallbackRoute).toBe("function");
+  });
+
+  it("exports insertPendingFlow", () => {
+    expect(typeof gateway.insertPendingFlow).toBe("function");
+  });
+
+  it("exports PENDING_FLOW_TIMEOUT_MS", () => {
+    expect(typeof gateway.PENDING_FLOW_TIMEOUT_MS).toBe("number");
+  });
+
   // Web — media routes
   it("exports createMediaRoutes", () => {
     expect(typeof gateway.createMediaRoutes).toBe("function");

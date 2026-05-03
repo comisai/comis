@@ -74,3 +74,6 @@ monitoring:
     enabled: false
   git:
     enabled: false
+
+models:
+  defaultProvider: anthropic

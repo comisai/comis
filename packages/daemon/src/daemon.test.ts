@@ -166,6 +166,9 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
       tenantId: "default",
       logLevel: "info",
       agentDir: "/tmp/test-agent-dir",
+      // Phase 7 plan 08: setupSingleAgent now reads container.config.oauth.storage
+      // for OAuth credential store wiring. Default to "file" (the YAML default).
+      oauth: { storage: "file" as const },
     } as unknown as AppContainer["config"],
     eventBus: createMockEventBus(),
     secretManager: {

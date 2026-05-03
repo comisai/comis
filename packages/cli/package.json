@@ -5,9 +5,22 @@
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "description": "Command-line interface for the Comis AI agent platform",
-  "keywords": ["comis", "ai", "agent", "cli", "chatbot", "discord", "telegram", "slack"],
-  "engines": { "node": ">=22" },
-  "files": ["dist"],
+  "keywords": [
+    "comis",
+    "ai",
+    "agent",
+    "cli",
+    "chatbot",
+    "discord",
+    "telegram",
+    "slack"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist"
+  ],
   "bin": {
     "comis": "./dist/cli.js"
   },
@@ -47,6 +60,7 @@
     "chalk": "5.6.2",
     "cli-table3": "0.6.5",
     "commander": "14.0.3",
+    "open": "10.1.2",
     "ora": "9.4.0",
     "ws": "8.20.0",
     "yaml": "2.8.3"

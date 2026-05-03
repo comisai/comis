@@ -30,10 +30,17 @@ export { registerSignalSetupCommand } from "./commands/signal-setup.js";
 export { registerSecretsCommand } from "./commands/secrets.js";
 export { registerUninstallCommand } from "./commands/uninstall.js";
 
+// Wizard steps (Phase 8 R6 — exported for integration tests in
+// test/integration/oauth-login.test.ts which dynamically imports
+// `credentialsStep` to drive the R6 wizard-state assertion end-to-end
+// against the mock OAuth server)
+export { credentialsStep } from "./wizard/steps/04-credentials.js";
+
 // ── Dead Export Audit ─────────────────────────────────────────────────
-// Total exports: 29 (28 value, 1 type)
-// Exports with external consumers: 1
+// Total exports: 30 (29 value, 1 type)
+// Exports with external consumers: 2
 //   - withClient (test/integration/env-vars-unit.test.ts, test/integration/env-vars-daemon.test.ts)
+//   - credentialsStep (Phase 8 R6 — consumed by test/integration/oauth-login.test.ts)
 // Exports with zero external consumers: 28
 //   All register* command exports and output utilities are consumed only by the CLI's
 //   own main.ts binary (not importable as @comis/cli by other packages).
@@ -42,7 +49,7 @@ export { registerUninstallCommand } from "./commands/uninstall.js";
 // Types (1):
 //   RpcClient
 //
-// Values (28):
+// Values (29):
 //   createRpcClient, withClient, success, error, warn, info, json,
 //   renderTable, renderKeyValue, withSpinner, registerDaemonCommand,
 //   registerConfigCommand, registerAgentCommand, registerChannelCommand,
@@ -50,4 +57,4 @@ export { registerUninstallCommand } from "./commands/uninstall.js";
 //   registerInitCommand, registerConfigureCommand, registerStatusCommand,
 //   registerHealthCommand, registerModelsCommand, registerPm2Command,
 //   registerSessionsCommand, registerResetCommand, registerSignalSetupCommand,
-//   registerSecretsCommand
+//   registerSecretsCommand, credentialsStep

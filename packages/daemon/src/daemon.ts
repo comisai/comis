@@ -57,6 +57,7 @@ import { registerGracefulShutdown } from "./process/graceful-shutdown.js";
 import { createProcessMonitor } from "./process/process-monitor.js";
 import { startWatchdog } from "./health/watchdog.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
+import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-preflight.js";
 import { randomUUID, createHmac } from "node:crypto";
 import { existsSync, chmodSync, statSync, mkdirSync, readFileSync, unlinkSync, cpSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
@@ -316,6 +317,11 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
 
   let mergedEnv: Record<string, string | undefined> = process.env as Record<string, string | undefined>;
   let secretStore: SecretStorePort | undefined;
+  // Phase 7 plan 08 (B5 + W6): captured here so setupAgents can wire the
+  // encrypted-mode OAuth profile adapter against the SAME db handle (no
+  // dual-handle to the same secrets.db file).
+  let secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
+  let secretsDb: import("better-sqlite3").Database | undefined;
 
   if (!secretsBootResult.ok) {
     // Invalid master key -- fatal error
@@ -327,6 +333,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     const { crypto, dbPath } = secretsBootResult.value;
     const store = createSqliteSecretStore(dbPath, crypto);
     secretStore = store;
+    // Capture for downstream OAuth wiring in setupAgents.
+    secretsCrypto = crypto;
+    secretsDb = store.db;
 
     const decryptResult = store.decryptAll();
     if (!decryptResult.ok) {
@@ -588,6 +597,10 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     defaultAgentId, defaultWorkspaceDir, getExecutor, piSessionAdapters,
     skillWatcherHandles, skillRegistries, lockCleanupTimer, singleAgentDeps, providerHealth,
+    // Phase 9 R7 (plan 09-06): daemon-level OAuth credential store, threaded
+    // into RpcDispatchDeps below so agents.update can validate oauthProfiles
+    // patches via has() (D-11).
+    oauthCredentialStore,
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
@@ -614,6 +627,11 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     },
     backgroundTaskManager,  // Auto-background middleware in executor pipeline
     backgroundNotifyFn: bgNotifyFn,  // Completion notification via deferred notificationService ref
+    // Phase 7 plan 08 (B5 + W6): plumb the secrets bootstrap result through
+    // so setup-agents can wire the OAuth credential store. encrypted-mode
+    // shares the existing better-sqlite3 connection (no dual-handle).
+    secretsCrypto,
+    secretsDb,
   });
 
   // Log operation model resolutions at startup (dry-run validation)
@@ -1324,6 +1342,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
       logger: skillsLogger,
       getChannelAdapter: (channelType: string) => adaptersByType.get(channelType),
     } : undefined,
+    // Phase 9 R7 (plan 09-06): daemon-level OAuth credential store handle
+    // for the agents.update oauthProfiles existence check (D-11).
+    oauthCredentialStore,
   };
   wireDispatch(rpcDispatchDeps);
 
@@ -1599,6 +1620,13 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // startup banner. No-op outside containers. Wired here so the WARN lands
   // in `docker logs` next to the banner, where operators look first.
   emitDockerRestartPolicyWarn(daemonLogger);
+
+  // Phase 10 SC-10-1: boot-time TLS preflight against auth.openai.com.
+  // Fire-and-forget — daemon is already serving by this point; the WARN
+  // is purely advisory. Skipped when no OAuth-using agent is configured.
+  if (hasAnyOAuthAgent(container.config.agents)) {
+    void emitOAuthTlsPreflightWarn(daemonLogger);
+  }
 
   // Snapshot current config as last-known-good after successful startup
   if (configPaths.length > 0) {

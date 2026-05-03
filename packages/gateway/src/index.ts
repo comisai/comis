@@ -27,6 +27,17 @@ export { WsConnectionManager } from "./rpc/ws-handler.js";
 export { createMappedWebhookEndpoint } from "./webhook/webhook-endpoint.js";
 export { getPresetMappings } from "./webhook/webhook-presets.js";
 
+// Phase 11: OAuth callback route exports
+export {
+  createOAuthCallbackRoute,
+  insertPendingFlow,
+  PENDING_FLOW_TIMEOUT_MS,
+} from "./oauth/oauth-callback-route.js";
+export type {
+  OAuthCallbackDeps,
+  PendingFlow,
+} from "./oauth/oauth-callback-route.js";
+
 // Web -- media routes
 export { createMediaRoutes } from "./web/index.js";
 

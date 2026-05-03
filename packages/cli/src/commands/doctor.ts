@@ -23,18 +23,20 @@ import { daemonHealthCheck } from "../doctor/checks/daemon-health.js";
 import { gatewayHealthCheck } from "../doctor/checks/gateway-health.js";
 import { channelHealthCheck } from "../doctor/checks/channel-health.js";
 import { workspaceHealthCheck } from "../doctor/checks/workspace-health.js";
+import { oauthHealthCheck } from "../doctor/checks/oauth-health.js";
 import { repairConfig } from "../doctor/repairs/repair-config.js";
 import { repairDaemon } from "../doctor/repairs/repair-daemon.js";
 import { repairWorkspace } from "../doctor/repairs/repair-workspace.js";
 import type { DoctorContext } from "../doctor/types.js";
 
-/** All doctor checks in execution order (5 categories). */
+/** All doctor checks in execution order (6 categories -- Phase 10 added oauth). */
 const ALL_CHECKS = [
   configHealthCheck,
   daemonHealthCheck,
   gatewayHealthCheck,
   channelHealthCheck,
   workspaceHealthCheck,
+  oauthHealthCheck,
 ];
 
 /**
@@ -110,21 +112,40 @@ function buildDoctorContext(configPaths: string[]): DoctorContext {
  * Register the `doctor` command on the program.
  *
  * Provides:
- * - `comis doctor` -- run 5 health check categories
+ * - `comis doctor` -- run 6 health check categories (config, daemon, gateway,
+ *   channel, workspace, OAuth)
  * - `comis doctor --repair` -- auto-fix repairable issues
+ * - `comis doctor --refresh-test` -- Phase 10 SC-10-2 opt-in refresh probe
+ *   per profile. WARNING: rotates the refresh token at OpenAI.
  *
  * @param program - The root Commander program
  */
 export function registerDoctorCommand(program: Command): void {
   program
     .command("doctor")
-    .description("Diagnose configuration, daemon, gateway, channel, and workspace health")
+    .description(
+      "Diagnose configuration, daemon, gateway, channel, workspace, and OAuth health",
+    )
     .option("--repair", "Auto-fix repairable issues")
     .option("-c, --config <paths...>", "Config file paths to check")
     .option("--format <format>", 'Output format: "table" or "json"', "table")
-    .action(async (options: { repair?: boolean; config?: string[]; format: string }) => {
+    .option(
+      "--refresh-test",
+      "Run a real OAuth refresh against the provider per profile. " +
+        "WARNING: rotates the refresh token at OpenAI; the stored token will " +
+        "be stale after this check. Default: OFF (opt-in).",
+    )
+    .action(async (options: {
+      repair?: boolean;
+      config?: string[];
+      format: string;
+      refreshTest?: boolean;
+    }) => {
       const configPaths = options.config ?? resolveDefaultConfigPaths();
-      const context = buildDoctorContext(configPaths);
+      const context: DoctorContext = {
+        ...buildDoctorContext(configPaths),
+        refreshTest: options.refreshTest,
+      };
 
       const result = await withSpinner("Running diagnostics...", () =>
         runDoctorChecks(ALL_CHECKS, context),
@@ -173,8 +194,12 @@ export function registerDoctorCommand(program: Command): void {
 
         // Re-run diagnostics after repairs
         info("Re-running diagnostics...");
+        const rerunContext: DoctorContext = {
+          ...buildDoctorContext(configPaths),
+          refreshTest: options.refreshTest,
+        };
         const rerunResult = await withSpinner("Verifying repairs...", () =>
-          runDoctorChecks(ALL_CHECKS, buildDoctorContext(configPaths)),
+          runDoctorChecks(ALL_CHECKS, rerunContext),
         );
 
         if (options.format === "json") {

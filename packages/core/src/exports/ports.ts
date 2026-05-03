@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // @comis/core exports — Port interfaces (hexagonal architecture boundaries)
 
-export { ChannelCapabilitySchema, createNoOpDeliveryQueue, createNoOpDeliveryMirror } from "../ports/index.js";
+export {
+  ChannelCapabilitySchema,
+  createNoOpDeliveryQueue,
+  createNoOpDeliveryMirror,
+  validateProfileId,
+  PROFILE_ID_RE,
+} from "../ports/index.js";
 export type {
   ChannelPort,
   MessageHandler,
@@ -87,6 +93,8 @@ export type {
   SecretStorePort,
   SecretMetadata,
   CredentialMappingPort,
+  OAuthCredentialStorePort,
+  OAuthProfile,
   DeliveryQueuePort,
   DeliveryQueueEntry,
   DeliveryQueueEnqueueInput,

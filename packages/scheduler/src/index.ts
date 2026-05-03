@@ -19,6 +19,10 @@ export type { CronScheduler } from "./cron/index.js";
 export { createExecutionTracker } from "./execution/index.js";
 export type { ExecutionTracker, ExecutionLogEntry } from "./execution/index.js";
 
+// File-based execution lock (consumed by @comis/agent OAuth file adapter + token manager)
+export { withExecutionLock, isLocked } from "./execution/execution-lock.js";
+export type { ExecutionLockOptions } from "./execution/execution-lock.js";
+
 // Heartbeat monitoring
 export { HEARTBEAT_OK_TOKEN, createHeartbeatRunner } from "./heartbeat/index.js";
 export type { HeartbeatCheckResult, HeartbeatSourcePort, HeartbeatRunner } from "./heartbeat/index.js";

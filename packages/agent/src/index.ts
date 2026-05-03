@@ -86,6 +86,61 @@ export type { ScanResult, ModelScanner, ModelScannerDeps } from "./model/model-s
 export { createOAuthTokenManager } from "./model/oauth-token-manager.js";
 export type { OAuthTokenManager, OAuthTokenManagerDeps, OAuthError } from "./model/oauth-token-manager.js";
 
+// Per-LLM-call OAuth dispatch helper (Phase 9 plan 09-04 — shared helper used by
+// PiExecutor.execute() pre-hook and the two compaction getApiKey callbacks. Re-exported
+// so plan 09-07's integration test can drive the same resolver hook the executor uses).
+export { resolveProviderApiKey } from "./model/resolve-provider-api-key.js";
+export type { ResolveProviderApiKeyDeps } from "./model/resolve-provider-api-key.js";
+
+// OAuth identity (Phase 7 plan 04 — pure-function JWT decoder + identity resolver + redaction helper)
+export { decodeCodexJwtPayload, resolveCodexAuthIdentity, resolveCodexStableSubject, resolveCodexAccessTokenExpiry, redactEmailForLog } from "./model/oauth-identity.js";
+
+// OAuth credential store — file adapter (Phase 7 plan 05 — plaintext file-backed adapter with atomic write + per-profile lock + schema versioning)
+export { createOAuthCredentialStoreFile } from "./model/oauth-credential-store-file.js";
+export type { OAuthCredentialStoreFileConfig } from "./model/oauth-credential-store-file.js";
+
+// OAuth credential store selector (Phase 8 plan 01 — moved from @comis/daemon per RESEARCH override 4 so the CLI process can instantiate the same adapter the daemon uses)
+export { selectOAuthCredentialStore } from "./model/oauth-credential-store-selector.js";
+export type {
+  SelectOAuthCredentialStoreInput,
+  OAuthStorageMode,
+} from "./model/oauth-credential-store-selector.js";
+
+// OAuth env detection (Phase 8 D-04 — pure function for VPS/headless heuristic)
+export { isRemoteEnvironment } from "./model/oauth-env.js";
+export type { IsRemoteEnvironmentInput } from "./model/oauth-env.js";
+
+// OAuth login runner (Phase 8 D-01/D-02 — interactive login orchestrator)
+export { loginOpenAICodexOAuth } from "./model/oauth-login-runner.js";
+export type {
+  LoginError,
+  LoginRunnerSuccess,
+  LoginRunnerParams,
+  RunnerPrompter,
+} from "./model/oauth-login-runner.js";
+
+// Phase 11: device-code OAuth flow
+export { loginOpenAICodexDeviceCode } from "./model/oauth-device-code.js";
+export type {
+  DeviceCodeVerificationPrompt,
+  LoginOpenAICodexDeviceCodeOptions,
+} from "./model/oauth-device-code.js";
+
+// OAuth TLS preflight (Phase 10 R10-01)
+export { runOAuthTlsPreflight } from "./model/oauth-tls-preflight.js";
+export type {
+  TlsPreflightResult,
+  TlsPreflightFailureKind,
+  RunOAuthTlsPreflightOptions,
+} from "./model/oauth-tls-preflight.js";
+
+// OAuth error catalogue (Phase 10 SC-10-3)
+export { rewriteOAuthError } from "./model/oauth-errors.js";
+export type {
+  OAuthErrorCode,
+  RewrittenOAuthError,
+} from "./model/oauth-errors.js";
+
 // Auth usage tracker (from 62-05)
 export { createAuthUsageTracker } from "./model/auth-usage-tracker.js";
 export type { AuthUsageTracker, ProfileStats, ProfileUsageInput } from "./model/auth-usage-tracker.js";
