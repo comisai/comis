@@ -78,7 +78,7 @@ export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = [
     // Flat parameter shape -- verified against mcp-manage-tool.ts McpManageToolParams.
     exampleArgs: {
       action: "connect",
-      name: "<server-name>",
+      server_name: "<server-name>",
       transport: "stdio",
       command: "<command>",
       args: [],
@@ -92,7 +92,7 @@ export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = [
     schemaFragment: {
       actions: ["list", "status", "connect", "disconnect", "reconnect"],
       requiredByAction: {
-        connect: ["name", "transport", "command"],
+        connect: ["server_name", "transport", "command"],
       },
     },
   },

@@ -147,13 +147,13 @@ describe("MCP RPC Handlers", () => {
   describe("mcp.status", () => {
     it("throws on missing name param", async () => {
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      await expect(handlers["mcp.status"]({})).rejects.toThrow("Missing required parameter: name");
+      await expect(handlers["mcp.status"]({})).rejects.toThrow("Missing required parameter: server_name");
     });
 
     it("throws when server not found", async () => {
       (manager.getConnection as any).mockReturnValue(undefined);
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      await expect(handlers["mcp.status"]({ name: "unknown" })).rejects.toThrow('not found: "unknown"');
+      await expect(handlers["mcp.status"]({ server_name: "unknown" })).rejects.toThrow('not found: "unknown"');
     });
 
     it("returns detailed status with tools", async () => {
@@ -161,7 +161,7 @@ describe("MCP RPC Handlers", () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("ctx7", [tool]));
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      const result = await handlers["mcp.status"]({ name: "ctx7" }) as any;
+      const result = await handlers["mcp.status"]({ server_name: "ctx7" }) as any;
 
       expect(result.name).toBe("ctx7");
       expect(result.status).toBe("connected");
@@ -179,7 +179,7 @@ describe("MCP RPC Handlers", () => {
       (manager.getConnection as any).mockReturnValue(conn);
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      const result = await handlers["mcp.status"]({ name: "ctx7" }) as any;
+      const result = await handlers["mcp.status"]({ server_name: "ctx7" }) as any;
 
       expect(result.instructions).toBe("Use search for queries");
       expect(result.capabilities).toEqual({ tools: {}, resources: {}, prompts: {} });
@@ -190,7 +190,7 @@ describe("MCP RPC Handlers", () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("basic", [makeTool("ping")]));
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      const result = await handlers["mcp.status"]({ name: "basic" }) as any;
+      const result = await handlers["mcp.status"]({ server_name: "basic" }) as any;
 
       expect(result.instructions).toBeUndefined();
       expect(result.capabilities).toBeUndefined();
@@ -205,7 +205,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       const result = await handlers["mcp.connect"]({
-        name: "new-srv",
+        server_name: "new-srv",
         transport: "stdio",
         command: "npx",
         args: ["-y", "some-mcp"],
@@ -226,7 +226,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await handlers["mcp.connect"]({
-        name: "remote",
+        server_name: "remote",
         transport: "sse",
         url: "https://example.com/mcp",
       });
@@ -242,7 +242,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await handlers["mcp.connect"]({
-        name: "authed",
+        server_name: "authed",
         transport: "http",
         url: "https://example.com/mcp",
         headers: { "Authorization": "Bearer token123" },
@@ -259,7 +259,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await expect(
-        handlers["mcp.connect"]({ name: "bad", transport: "stdio", command: "nope" }),
+        handlers["mcp.connect"]({ server_name: "bad", transport: "stdio", command: "nope" }),
       ).rejects.toThrow("Failed to connect");
     });
   });
@@ -269,7 +269,7 @@ describe("MCP RPC Handlers", () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("ctx7"));
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      const result = await handlers["mcp.disconnect"]({ name: "ctx7" }) as any;
+      const result = await handlers["mcp.disconnect"]({ server_name: "ctx7" }) as any;
 
       expect(manager.disconnect).toHaveBeenCalledWith("ctx7");
       expect(result.status).toBe("disconnected");
@@ -279,7 +279,7 @@ describe("MCP RPC Handlers", () => {
       (manager.getConnection as any).mockReturnValue(undefined);
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      await expect(handlers["mcp.disconnect"]({ name: "nope" })).rejects.toThrow("not found");
+      await expect(handlers["mcp.disconnect"]({ server_name: "nope" })).rejects.toThrow("not found");
     });
   });
 
@@ -290,7 +290,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       const result = await handlers["mcp.reconnect"]({
-        name: "ctx7",
+        server_name: "ctx7",
       }) as any;
 
       expect(manager.reconnect).toHaveBeenCalledWith("ctx7");
@@ -304,7 +304,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       const result = await handlers["mcp.reconnect"]({
-        name: "ctx7",
+        server_name: "ctx7",
         transport: "stdio",
         command: "npx",
         args: ["-y", "@upstash/context7-mcp"],
@@ -319,7 +319,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await expect(
-        handlers["mcp.reconnect"]({ name: "unknown" }),
+        handlers["mcp.reconnect"]({ server_name: "unknown" }),
       ).rejects.toThrow("not found and no transport specified");
     });
   });
@@ -449,7 +449,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await handlers["mcp.reconnect"]({
-        name: "recon-srv",
+        server_name: "recon-srv",
         transport: "http",
         url: "https://example.com/mcp",
         headers: { "Authorization": "Bearer recon-token" },

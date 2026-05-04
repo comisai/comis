@@ -243,14 +243,14 @@ export function registerAllToolMetadata(): void {
 
   registerToolMetadata("mcp_manage", {
     validActions: ["list", "status", "connect", "disconnect", "reconnect"],
-    validKeys: ["action", "name", "transport", "command", "args", "url", "headers"],
-    // connect requires [name, transport]; command (stdio) / url (sse|http) are
+    validKeys: ["action", "server_name", "transport", "command", "args", "url", "headers"],
+    // connect requires [server_name, transport]; command (stdio) / url (sse|http) are
     // transport-conditional and validated downstream by the handler.
     requiredByAction: {
-      status:     ["name"],
-      connect:    ["name", "transport"],
-      disconnect: ["name"],
-      reconnect:  ["name"],
+      status:     ["server_name"],
+      connect:    ["server_name", "transport"],
+      disconnect: ["server_name"],
+      reconnect:  ["server_name"],
     },
   });
 

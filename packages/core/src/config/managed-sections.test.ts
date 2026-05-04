@@ -270,9 +270,9 @@ describe("schemaFragment (Bug B)", () => {
       "disconnect",
       "reconnect",
     ]);
-    // Required-for-stdio-connect set: name + transport always; command for stdio.
+    // Required-for-stdio-connect set: server_name + transport always; command for stdio.
     expect(redirect.schemaFragment!.requiredByAction!.connect).toEqual([
-      "name",
+      "server_name",
       "transport",
       "command",
     ]);
@@ -358,7 +358,7 @@ describe("schemaFragment (Bug B)", () => {
       "Tool actions: list, status, connect, disconnect, reconnect",
     );
     expect(hint).toContain(
-      "Required fields for `connect`: name, transport, command",
+      "Required fields for `connect`: server_name, transport, command",
     );
   });
 });

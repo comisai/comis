@@ -734,10 +734,10 @@ describe("tool-metadata-registry -- tool-entry schema metadata (260504-cac)", ()
   it("mcp_manage requiredByAction matches the connect / status / disconnect / reconnect spec", () => {
     const meta = getToolMetadata("mcp_manage");
     expect(meta?.requiredByAction).toEqual({
-      status: ["name"],
-      connect: ["name", "transport"],
-      disconnect: ["name"],
-      reconnect: ["name"],
+      status: ["server_name"],
+      connect: ["server_name", "transport"],
+      disconnect: ["server_name"],
+      reconnect: ["server_name"],
     });
   });
 

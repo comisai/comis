@@ -53,8 +53,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     "mcp.status": async (params) => {
-      const name = params.name as string;
-      if (!name) throw new Error("Missing required parameter: name");
+      const name = params.server_name as string;
+      if (!name) throw new Error("Missing required parameter: server_name");
 
       const manager = deps.mcpClientManager;
       const conn = manager.getConnection(name);
@@ -84,9 +84,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     "mcp.connect": async (params) => {
-      const name = params.name as string;
+      const name = params.server_name as string;
       const transport = params.transport as string;
-      if (!name) throw new Error("Missing required parameter: name");
+      if (!name) throw new Error("Missing required parameter: server_name");
       if (!transport) throw new Error("Missing required parameter: transport");
 
       const manager = deps.mcpClientManager;
@@ -116,8 +116,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     "mcp.disconnect": async (params) => {
-      const name = params.name as string;
-      if (!name) throw new Error("Missing required parameter: name");
+      const name = params.server_name as string;
+      if (!name) throw new Error("Missing required parameter: server_name");
 
       const manager = deps.mcpClientManager;
       const conn = manager.getConnection(name);
@@ -179,8 +179,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     "mcp.reconnect": async (params) => {
-      const name = params.name as string;
-      if (!name) throw new Error("Missing required parameter: name");
+      const name = params.server_name as string;
+      if (!name) throw new Error("Missing required parameter: server_name");
 
       const manager = deps.mcpClientManager;
 
