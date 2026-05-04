@@ -289,7 +289,17 @@ export function createRpcDispatch(deps: RpcDispatchDeps): RpcCall {
     ...createSessionHandlers(deps),
     ...createMessageHandlers(deps),
     ...createMediaHandlers(deps),
-    ...createConfigHandlers(deps),
+    // quick-260504-irq: thread the daemon-level OAuth credential store into
+    // config.patch's credential guard so model/provider patches on OAuth-only
+    // providers (e.g. openai-codex) can resolve via Source C
+    // (agents.<id>.oauthProfiles -> ~/.comis/auth-profiles.json). Explicit
+    // pass-through mirrors the createAgentHandlers wiring below; do not
+    // simplify back to `...createConfigHandlers(deps)` (the structural-typing
+    // inheritance is fragile to future deps-shape narrowing).
+    ...createConfigHandlers({
+      ...deps,
+      oauthCredentialStore: deps.oauthCredentialStore,
+    }),
     ...createEnvHandlers(deps),
     ...createBrowserHandlers(deps),
     ...createSubagentHandlers(deps),
