@@ -25,7 +25,7 @@
     "test:cleanup": "npx tsx test/support/cleanup-test-artifacts.ts"
   },
   "devDependencies": {
-    "@agentclientprotocol/sdk": "0.20.0",
+    "@agentclientprotocol/sdk": "0.21.0",
     "@eslint/js": "10.0.1",
     "@types/node": "22.19.17",
     "eslint": "10.2.1",
@@ -37,7 +37,7 @@
     "typescript-eslint": "8.59.0",
     "vitest": "4.1.5",
     "yaml": "2.8.3",
-    "zod": "4.3.6"
+    "zod": "4.4.1"
   },
   "pnpm": {
     "overrides": {
