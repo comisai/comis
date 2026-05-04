@@ -33,10 +33,13 @@ describe("emitDockerRestartPolicyWarn", () => {
 
     expect(logger.warn).toHaveBeenCalledTimes(1);
     const [fields, msg] = logger.warn.mock.calls[0]!;
+    // 260504-ij6: the redundant `module: "daemon" as const` field was
+    // deleted (parent logger already binds module: "daemon"); the test no
+    // longer asserts on it. errorKind/hint remain required-by-contract.
     expect(fields).toMatchObject({
-      module: "daemon",
       errorKind: "config",
     });
+    expect(fields).not.toHaveProperty("module");
     expect((fields as { hint: string }).hint).toContain("unless-stopped");
     expect((fields as { hint: string }).hint).toContain("docker inspect");
     expect(msg).toBe(

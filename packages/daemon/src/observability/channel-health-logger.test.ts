@@ -335,7 +335,7 @@ describe("setupChannelHealthLogging", () => {
       }
     });
 
-    it("all log events include module: channel-health", () => {
+    it("all log events include submodule: channel-health", () => {
       // WARN event
       eventBus.emit("channel:health_changed", {
         channelType: "t", previousState: "healthy", currentState: "disconnected",
@@ -351,9 +351,9 @@ describe("setupChannelHealthLogging", () => {
         channelType: "t", state: "healthy", responseTimeMs: 5, timestamp: 0,
       });
 
-      expect(logger.warn.mock.calls[0][0].module).toBe("channel-health");
-      expect(logger.info.mock.calls[0][0].module).toBe("channel-health");
-      expect(logger.debug.mock.calls[0][0].module).toBe("channel-health");
+      expect(logger.warn.mock.calls[0][0].submodule).toBe("channel-health");
+      expect(logger.info.mock.calls[0][0].submodule).toBe("channel-health");
+      expect(logger.debug.mock.calls[0][0].submodule).toBe("channel-health");
     });
   });
 });

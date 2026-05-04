@@ -3560,10 +3560,10 @@ describe("createPiEventBridge", () => {
       listener(
         makeTurnEndWithContent([thinkingBlock("orig", "sig-1")], "resp-X-second") as any,
       );
-      // No ERROR with module agent.bridge.hash-invariant should have fired from
+      // No ERROR with submodule bridge.hash-invariant should have fired from
       // the bridge listener itself.
       const hashInvariantErrors = (error.mock.calls as Array<[Record<string, unknown>, string]>)
-        .filter((c) => (c[0] as { module?: string })?.module === "agent.bridge.hash-invariant");
+        .filter((c) => (c[0] as { submodule?: string })?.submodule === "bridge.hash-invariant");
       expect(hashInvariantErrors).toHaveLength(0);
     });
   });
@@ -3632,12 +3632,12 @@ describe("createPiEventBridge", () => {
       return { type: "thinking", thinking: text, thinkingSignature: sig };
     }
 
-    /** Filter info mock calls by module field. */
+    /** Filter info mock calls by submodule field. */
     function infoCallsByModule(deps: PiEventBridgeDeps, mod: string) {
       const calls = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls as Array<
         [Record<string, unknown>, string]
       >;
-      return calls.filter((c) => c[0]?.module === mod);
+      return calls.filter((c) => c[0]?.submodule === mod);
     }
 
     /** Filter info mock calls by message string. */
@@ -3980,14 +3980,14 @@ describe("createPiEventBridge", () => {
       // log. (260501-jfk: replaced racy setImmediate x3 drain — see test G.)
       await vi.waitFor(
         () => {
-          const messages = infoCallsByModule(localDeps, "agent.bridge.wire-diff").map((c) => c[1]);
+          const messages = infoCallsByModule(localDeps, "bridge.wire-diff").map((c) => c[1]);
           expect(messages).toContain("Wire-edge diff dispatch complete");
         },
         { timeout: 2000, interval: 10 },
       );
 
       // Both wire-diff INFO logs should appear, in order.
-      const wireDiffCalls = infoCallsByModule(localDeps, "agent.bridge.wire-diff");
+      const wireDiffCalls = infoCallsByModule(localDeps, "bridge.wire-diff");
       const messages = wireDiffCalls.map((c) => c[1]);
       expect(messages).toContain("Wire-edge diff dispatch decision");
       expect(messages).toContain("Wire-edge diff dispatch complete");
