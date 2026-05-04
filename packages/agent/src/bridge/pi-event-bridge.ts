@@ -503,18 +503,40 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // assert/restore semantics are observable.
           const restoredCount = mismatchesLogged;
 
-          deps.logger.info(
-            {
-              module: "agent.bridge.hash-invariant",
-              candidatesChecked,
-              mismatchesLogged,
-              restoredCount,
-              anyResponseIdMatched,
-              hashStoreSize,
-              canonicalStoreSize,
-            },
-            "Pre-call assertion ran",
-          );
+          // 260504-ieh: bump per-execute counters BEFORE dispatching the log,
+          // so the bookend "Execution complete" summary can roll them up. The
+          // increments fire on every walk regardless of outcome (matching the
+          // existing log's "always fires" semantics, including the
+          // getSessionMessages-throws path which still falls through here).
+          m.hashAssertionsRan++;
+          m.hashAssertionMismatches += mismatchesLogged;
+
+          // 260504-ieh: conditional log level. Routine clean walks demote to
+          // DEBUG (CLAUDE.md: "N times per request → DEBUG"). Mismatch walks
+          // escalate to WARN with required `hint` + `errorKind` per the
+          // project's logging convention; the surrounding heal pipeline runs
+          // unaffected.
+          const hashAssertionPayload = {
+            module: "agent.bridge.hash-invariant",
+            candidatesChecked,
+            mismatchesLogged,
+            restoredCount,
+            anyResponseIdMatched,
+            hashStoreSize,
+            canonicalStoreSize,
+          };
+          if (mismatchesLogged > 0) {
+            deps.logger.warn(
+              {
+                ...hashAssertionPayload,
+                hint: "Cross-turn thinking-block mutation detected; pre-call restore pass will heal before next API serialize. Investigate if this fires repeatedly without the heal succeeding (canonicalStoreSize === 0).",
+                errorKind: "internal" as const,
+              },
+              "Pre-call assertion ran",
+            );
+          } else {
+            deps.logger.debug(hashAssertionPayload, "Pre-call assertion ran");
+          }
           break;
         }
 

@@ -3648,6 +3648,25 @@ describe("createPiEventBridge", () => {
       return calls.filter((c) => c[1] === msg);
     }
 
+    /** 260504-ieh: filter debug mock calls by message string. The clean-walk
+     *  branch of "Pre-call assertion ran" lives at DEBUG now. */
+    function debugCallsByMessage(deps: PiEventBridgeDeps, msg: string) {
+      const calls = (deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls as Array<
+        [Record<string, unknown>, string]
+      >;
+      return calls.filter((c) => c[1] === msg);
+    }
+
+    /** 260504-ieh: filter warn mock calls by message string. The mismatch
+     *  branch of "Pre-call assertion ran" escalates to WARN with `hint` +
+     *  `errorKind` populated. */
+    function warnCallsByMessage(deps: PiEventBridgeDeps, msg: string) {
+      const calls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls as Array<
+        [Record<string, unknown>, string]
+      >;
+      return calls.filter((c) => c[1] === msg);
+    }
+
     // ----- Site 1: turn_start pre-call entry log -----
 
     it("A. pre-call entry log fires with candidatesChecked > 0, mismatchesLogged: 0 on full match", () => {
@@ -3664,7 +3683,9 @@ describe("createPiEventBridge", () => {
       // Now fire turn_start; the pre-call entry log must fire with counters.
       listener({ type: "turn_start", turnIndex: 1, timestamp: Date.now() } as any);
 
-      const calls = infoCallsByMessage(localDeps, "Pre-call assertion ran");
+      // 260504-ieh: clean-walk branch demoted from INFO to DEBUG.
+      expect(infoCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
+      const calls = debugCallsByMessage(localDeps, "Pre-call assertion ran");
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload).toMatchObject({
@@ -3692,7 +3713,9 @@ describe("createPiEventBridge", () => {
 
       listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any);
 
-      const calls = infoCallsByMessage(localDeps, "Pre-call assertion ran");
+      // 260504-ieh: clean-walk branch demoted from INFO to DEBUG.
+      expect(infoCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
+      const calls = debugCallsByMessage(localDeps, "Pre-call assertion ran");
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload).toMatchObject({
@@ -3712,7 +3735,9 @@ describe("createPiEventBridge", () => {
 
       listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any);
 
-      const calls = infoCallsByMessage(localDeps, "Pre-call assertion ran");
+      // 260504-ieh: clean-walk branch demoted from INFO to DEBUG.
+      expect(infoCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
+      const calls = debugCallsByMessage(localDeps, "Pre-call assertion ran");
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload).toMatchObject({
@@ -3735,7 +3760,11 @@ describe("createPiEventBridge", () => {
 
       listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any);
 
-      const calls = infoCallsByMessage(localDeps, "Pre-call assertion ran");
+      // 260504-ieh: clean-walk branch demoted from INFO to DEBUG; the
+      // getSessionMessages-throws path still emits the log because the
+      // catch falls through to the same dispatch site.
+      expect(infoCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
+      const calls = debugCallsByMessage(localDeps, "Pre-call assertion ran");
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload.candidatesChecked).toBe(0);
@@ -3756,7 +3785,11 @@ describe("createPiEventBridge", () => {
       listener(makeTurnEndWithContent([origBlock], "resp-mut") as any);
       listener({ type: "turn_start", turnIndex: 1, timestamp: Date.now() } as any);
 
-      const calls = infoCallsByMessage(localDeps, "Pre-call assertion ran");
+      // 260504-ieh: mismatch branch escalated from INFO to WARN with required
+      // `hint` + `errorKind` per the project's logging convention.
+      expect(infoCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
+      expect(debugCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
+      const calls = warnCallsByMessage(localDeps, "Pre-call assertion ran");
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload).toMatchObject({
@@ -3765,7 +3798,43 @@ describe("createPiEventBridge", () => {
         mismatchesLogged: 1,
         restoredCount: 1,
         anyResponseIdMatched: true,
+        errorKind: "internal",
       });
+      expect(payload.hint).toEqual(expect.any(String));
+      expect((payload.hint as string).length).toBeGreaterThan(0);
+    });
+
+    // ----- 260504-ieh: bridge counter increments -----
+
+    it("Test 6 (260504-ieh): pre-call assertion increments BridgeMetricsState counters across walks", () => {
+      const origBlock = thinkingBlock("orig", "sig-1");
+      const mutatedBlock = thinkingBlock("mutated-text", "sig-1");
+
+      // First walk: clean (mismatchesLogged === 0). Second walk: mutated
+      // (mismatchesLogged === 1). Counters must accumulate across both.
+      let liveContent: ReadonlyArray<unknown> = [origBlock];
+      const getSessionMessages = vi.fn().mockImplementation(() => [
+        { role: "assistant", responseId: "resp-counter", content: liveContent },
+      ]);
+      const localDeps = createMockDeps({ getSessionMessages });
+      const { listener, getResult } = createPiEventBridge(localDeps);
+
+      // Prime the hash store and the canonical store.
+      listener(makeTurnEndWithContent([origBlock], "resp-counter") as any);
+
+      // Walk 1: clean — both counters bump as: hashAssertionsRan: 1, mismatches: 0.
+      listener({ type: "turn_start", turnIndex: 1, timestamp: Date.now() } as any);
+      const result1 = getResult();
+      expect(result1.hashAssertionsRan).toBe(1);
+      expect(result1.hashAssertionMismatches).toBe(0);
+
+      // Walk 2: live message now diverged from stored hash → mismatchesLogged === 1.
+      // Counters accumulate: hashAssertionsRan: 2, mismatches: 1.
+      liveContent = [mutatedBlock];
+      listener({ type: "turn_start", turnIndex: 2, timestamp: Date.now() } as any);
+      const result2 = getResult();
+      expect(result2.hashAssertionsRan).toBe(2);
+      expect(result2.hashAssertionMismatches).toBe(1);
     });
 
     // ----- Site 2A: wire-diff dispatch decision log -----
