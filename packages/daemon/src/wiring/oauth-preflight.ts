@@ -125,7 +125,7 @@ export async function emitOAuthTlsPreflightWarn(logger: ComisLogger): Promise<vo
     const hint = caCertificatesInstallHint(os);
     logger.warn(
       {
-        module: MODULE_NAME,
+        submodule: MODULE_NAME,
         errorKind: "oauth_tls_cert",
         hint,
         code: result.code,
@@ -138,7 +138,7 @@ export async function emitOAuthTlsPreflightWarn(logger: ComisLogger): Promise<vo
   // kind === "network" — transient outage / DNS / firewall. DEBUG only.
   logger.debug(
     {
-      module: MODULE_NAME,
+      submodule: MODULE_NAME,
       errorKind: "oauth_tls_network",
       message: result.message,
     },

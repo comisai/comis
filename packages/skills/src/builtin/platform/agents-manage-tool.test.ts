@@ -414,7 +414,7 @@ describe("agents_manage tool", () => {
       expect(mockLogger.info).toHaveBeenCalledTimes(1);
       const [fields, msg] = mockLogger.info.mock.calls[0]!;
       expect(fields).toEqual({
-        module: "skill.agents-manage",
+        submodule: "skill.agents-manage",
         action: "create",
         agentId: "ta-fundamentals",
         workspaceDir: "/home/comis/.comis/workspace-ta-fundamentals",
@@ -440,7 +440,7 @@ describe("agents_manage tool", () => {
       expect(mockLogger.info).toHaveBeenCalledTimes(1);
       const [fields] = mockLogger.info.mock.calls[0]!;
       expect(fields).toEqual({
-        module: "skill.agents-manage",
+        submodule: "skill.agents-manage",
         action: "create",
         agentId: "ta-bear",
         workspaceDir: null,

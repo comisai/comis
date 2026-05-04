@@ -3689,7 +3689,7 @@ describe("createPiEventBridge", () => {
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload).toMatchObject({
-        module: "agent.bridge.hash-invariant",
+        submodule: "bridge.hash-invariant",
         candidatesChecked: 1,
         mismatchesLogged: 0,
         restoredCount: 0,
@@ -3719,7 +3719,7 @@ describe("createPiEventBridge", () => {
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload).toMatchObject({
-        module: "agent.bridge.hash-invariant",
+        submodule: "bridge.hash-invariant",
         candidatesChecked: 0,
         mismatchesLogged: 0,
         restoredCount: 0,
@@ -3741,7 +3741,7 @@ describe("createPiEventBridge", () => {
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload).toMatchObject({
-        module: "agent.bridge.hash-invariant",
+        submodule: "bridge.hash-invariant",
         candidatesChecked: 0,
         mismatchesLogged: 0,
         restoredCount: 0,
@@ -3793,7 +3793,7 @@ describe("createPiEventBridge", () => {
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload).toMatchObject({
-        module: "agent.bridge.hash-invariant",
+        submodule: "bridge.hash-invariant",
         candidatesChecked: 1,
         mismatchesLogged: 1,
         restoredCount: 1,
@@ -3849,7 +3849,7 @@ describe("createPiEventBridge", () => {
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload).toMatchObject({
-        module: "agent.bridge.wire-diff",
+        submodule: "bridge.wire-diff",
         regexMatched: false,
         candidatesFound: 0,
         jsonlPathPresent: false,
@@ -3877,7 +3877,7 @@ describe("createPiEventBridge", () => {
       expect(calls).toHaveLength(1);
       const [payload] = calls[0]!;
       expect(payload).toMatchObject({
-        module: "agent.bridge.wire-diff",
+        submodule: "bridge.wire-diff",
         regexMatched: true,
         candidatesFound: 1,
         jsonlPathPresent: true,
@@ -3952,7 +3952,7 @@ describe("createPiEventBridge", () => {
       expect(completionCalls).toHaveLength(1);
       const [payload] = completionCalls[0]!;
       expect(payload).toMatchObject({
-        module: "agent.bridge.wire-diff",
+        submodule: "bridge.wire-diff",
         candidatesProcessed: 1,
         totalDivergences: 0,
         persistedNotFound: 0,
@@ -4117,7 +4117,7 @@ describe("createPiEventBridge", () => {
 
       expect(localDeps.logger.info).toHaveBeenCalledWith(
         expect.objectContaining({
-          module: "agent.bridge.auto-retry-abort",
+          submodule: "bridge.auto-retry-abort",
           attempt: 2,
           maxAttempts: 3,
           delayMs: 7500,

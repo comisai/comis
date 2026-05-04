@@ -71,7 +71,7 @@ export interface RunPostBatchContinuationDeps {
 // Implementation
 // ---------------------------------------------------------------------------
 
-const MODULE = "agent.executor.post-batch-continuation";
+const SUBMODULE = "executor.post-batch-continuation";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function isToolCallBlock(block: any): boolean {
@@ -152,7 +152,7 @@ export async function runPostBatchContinuation(
   // Step 1: disable check.
   if (!config.enabled || config.maxRetries === 0) {
     logger.info(
-      { module: MODULE, agentId, decision: "skip", reason: "disabled" },
+      { submodule: SUBMODULE, agentId, decision: "skip", reason: "disabled" },
       "Post-batch continuation skipped",
     );
     return ok({
@@ -169,7 +169,7 @@ export async function runPostBatchContinuation(
   const msgs = messages as any[];
   if (!Array.isArray(msgs) || msgs.length === 0) {
     logger.info(
-      { module: MODULE, agentId, decision: "skip", reason: "non_empty_final" },
+      { submodule: SUBMODULE, agentId, decision: "skip", reason: "non_empty_final" },
       "Post-batch continuation skipped",
     );
     return ok({
@@ -191,7 +191,7 @@ export async function runPostBatchContinuation(
 
   if (!lastIsEmpty) {
     logger.info(
-      { module: MODULE, agentId, decision: "skip", reason: "non_empty_final" },
+      { submodule: SUBMODULE, agentId, decision: "skip", reason: "non_empty_final" },
       "Post-batch continuation skipped",
     );
     return ok({
@@ -222,7 +222,7 @@ export async function runPostBatchContinuation(
 
   if (priorToolCallCount === 0) {
     logger.info(
-      { module: MODULE, agentId, decision: "skip", reason: "no_tool_calls" },
+      { submodule: SUBMODULE, agentId, decision: "skip", reason: "no_tool_calls" },
       "Post-batch continuation skipped",
     );
     return ok({
@@ -237,7 +237,7 @@ export async function runPostBatchContinuation(
   // Step 4: decision-log fire.
   logger.info(
     {
-      module: MODULE,
+      submodule: SUBMODULE,
       agentId,
       decision: "fire",
       reason: "empty_after_tool_batch",
@@ -259,7 +259,7 @@ export async function runPostBatchContinuation(
     const outcomeForLog = text && text.length > 0 ? "recovered" : "still_empty";
     logger.info(
       {
-        module: MODULE,
+        submodule: SUBMODULE,
         agentId,
         attempt,
         maxAttempts: config.maxRetries,

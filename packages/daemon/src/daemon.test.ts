@@ -570,7 +570,7 @@ describe("daemon main()", () => {
       expect.objectContaining({
         hint: expect.stringContaining("PROVIDER_OVERRIDES"),
         errorKind: "config",
-        module: "agent.capabilities",
+        submodule: "capabilities",
       }),
       "Capability override has no matching pi-ai provider",
     );
@@ -700,7 +700,7 @@ describe("runPreflightDoctor", () => {
     expect(writes).toHaveLength(1);
     const record = JSON.parse(writes[0]!.trim());
     expect(record.level).toBe(60);
-    expect(record.module).toBe("preflight");
+    expect(record.submodule).toBe("preflight");
     expect(record.errorKind).toBe("dependency");
     expect(record.err).toContain("Cannot find module 'bindings'");
     expect(record.hint).toMatch(/npm rebuild better-sqlite3/);

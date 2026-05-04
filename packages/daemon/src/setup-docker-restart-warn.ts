@@ -31,7 +31,6 @@ export function emitDockerRestartPolicyWarn(
       hint:
         "Wizard 'Restart' actions, gateway.restart, gateway.env_set, and gateway.patch on restart-triggering paths all require the container to have --restart unless-stopped (or compose restart: unless-stopped). Verify from your host with: docker inspect <name> --format '{{.HostConfig.RestartPolicy.Name}}'",
       errorKind: "config" as const,
-      module: "daemon" as const,
     },
     "Running in Docker — restart policy required for config-reload operations",
   );

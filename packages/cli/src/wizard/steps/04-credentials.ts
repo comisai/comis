@@ -608,7 +608,7 @@ async function handleCodexOAuth(
           identity:
             redactEmailForLog(v.email) ?? `id-${v.accountId ?? "<unknown>"}`,
           action: "wizard-login",
-          module: "wizard-oauth",
+          submodule: "wizard-oauth",
         },
         "OAuth profile written by wizard",
       );

@@ -271,7 +271,7 @@ describe("writeInlineWorkspaceFiles", () => {
     expect(deps.logger.warn).toHaveBeenCalledTimes(1);
     expect(deps.logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
-        module: "daemon.rpc.agent-handlers",
+        submodule: "rpc.agent-handlers",
         agentId: "acl",
         file: "ROLE.md",
         errorKind: "resource",
@@ -299,7 +299,7 @@ describe("writeInlineWorkspaceFiles", () => {
     expect(deps.logger.info).toHaveBeenCalledTimes(1);
     expect(deps.logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        module: "daemon.rpc.agent-handlers",
+        submodule: "rpc.agent-handlers",
         agentId: "info-bot",
         roleBytes: role.length,
         identityBytes: identity.length,

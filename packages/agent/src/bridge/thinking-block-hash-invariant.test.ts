@@ -159,7 +159,7 @@ describe("assertThinkingBlocksUnchanged", () => {
       oldSigLen: SIG_B.length,
       newSigLen: SIG_B.length,
       errorKind: "internal",
-      module: "agent.bridge.hash-invariant",
+      submodule: "bridge.hash-invariant",
     });
     expect(typeof payload.newHash).toBe("string");
     expect(payload.newHash).not.toBe(prior[1]!.hash);
@@ -449,7 +449,7 @@ describe("restoreCanonicalThinkingBlocks", () => {
     expect(info).toHaveBeenCalledTimes(1);
     const [payload, msg] = info.mock.calls[0]!;
     expect(payload).toMatchObject({
-      module: "agent.bridge.canonical-restore",
+      submodule: "bridge.canonical-restore",
       restoredCount: 1,
       affectedResponseIds: ["resp_1"],
     });
@@ -563,7 +563,7 @@ describe("restoreCanonicalThinkingBlocks", () => {
     expect(info).toHaveBeenCalledTimes(1);
     const [payload] = info.mock.calls[0]!;
     expect(payload).toMatchObject({
-      module: "agent.bridge.canonical-restore",
+      submodule: "bridge.canonical-restore",
       restoredCount: 3,
       affectedResponseIds: ["resp_1", "resp_3"],
     });
@@ -629,7 +629,7 @@ describe("restoreCanonicalThinkingBlocks", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     const [payload] = warn.mock.calls[0]!;
     expect(payload).toMatchObject({
-      module: "agent.bridge.canonical-restore",
+      submodule: "bridge.canonical-restore",
       errorKind: "internal",
     });
     expect(typeof payload.hint).toBe("string");
@@ -675,7 +675,7 @@ describe("restoreCanonicalThinkingBlocks", () => {
     expect(error).toHaveBeenCalledTimes(1);
     const [errPayload] = error.mock.calls[0]!;
     expect(errPayload).toMatchObject({
-      module: "agent.bridge.hash-invariant",
+      submodule: "bridge.hash-invariant",
       blockIndex: 0,
       responseId: "resp_test_int",
     });
@@ -694,7 +694,7 @@ describe("restoreCanonicalThinkingBlocks", () => {
     expect(info).toHaveBeenCalledTimes(1);
     const [infoPayload] = info.mock.calls[0]!;
     expect(infoPayload).toMatchObject({
-      module: "agent.bridge.canonical-restore",
+      submodule: "bridge.canonical-restore",
       restoredCount: 1,
       affectedResponseIds: ["resp_test_int"],
     });
@@ -855,7 +855,7 @@ describe("diffThinkingBlocksAgainstPersisted", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     const [payload, msg] = warn.mock.calls[0]!;
     expect(payload).toMatchObject({
-      module: "agent.bridge.wire-diff",
+      submodule: "bridge.wire-diff",
       errorKind: "internal",
       responseId: "resp_missing",
       jsonlPath: "/test/session.jsonl",
@@ -880,7 +880,7 @@ describe("diffThinkingBlocksAgainstPersisted", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     const [payload] = warn.mock.calls[0]!;
     expect(payload).toMatchObject({
-      module: "agent.bridge.wire-diff",
+      submodule: "bridge.wire-diff",
       errorKind: "internal",
       jsonlPath: "/test/missing.jsonl",
       responseId: "resp_5",

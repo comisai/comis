@@ -306,7 +306,7 @@ describe("runPostBatchContinuation", () => {
     );
     expect(decisionCall).toBeDefined();
     expect(decisionCall![0]).toMatchObject({
-      module: "agent.executor.post-batch-continuation",
+      submodule: "executor.post-batch-continuation",
       decision: "fire",
       reason: "empty_after_tool_batch",
       priorToolCallCount: 3,
@@ -319,7 +319,7 @@ describe("runPostBatchContinuation", () => {
     );
     expect(attemptCall).toBeDefined();
     expect(attemptCall![0]).toMatchObject({
-      module: "agent.executor.post-batch-continuation",
+      submodule: "executor.post-batch-continuation",
       attempt: 1,
       maxAttempts: 2,
       priorToolCallCount: 3,

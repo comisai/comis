@@ -133,7 +133,7 @@ function isOAuthError(value: unknown): value is OAuthError {
 
 // Module-scoped logger. The CLI process runs short-lived commands; one
 // logger instance is shared across all 4 subcommands. Per CLAUDE.md, every
-// log call also sets `module: "auth-cli"` for filterability. The plan body
+// log call also sets `submodule: "auth-cli"` for filterability. The plan body
 // referenced `logLevelManager.getLogger(...)` — that helper does not exist
 // in @comis/infra (only `createLogger` is exported); auto-fix per Rule 3.
 const logger = createLogger({ name: "auth-cli" });
@@ -339,7 +339,7 @@ export function registerAuthCommand(program: Command): void {
               identity:
                 redactEmailForLog(v.email) ?? `id-${v.accountId ?? "<unknown>"}`,
               action: "login",
-              module: "auth-cli",
+              submodule: "auth-cli",
             },
             "OAuth profile written by CLI",
           );
@@ -443,7 +443,7 @@ export function registerAuthCommand(program: Command): void {
           {
             profileId: opts.profile,
             action: "logout",
-            module: "auth-cli",
+            submodule: "auth-cli",
           },
           "OAuth profile removed by CLI",
         );

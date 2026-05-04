@@ -234,7 +234,7 @@ export function recoverEmptyFinalResponse(params: {
 
         logger.info(
           {
-            module: "agent.executor.empty-turn-recovery",
+            submodule: "executor.empty-turn-recovery",
             recoveryPass: "tool-call-synthesis",
             toolCallCount: toolCallSummaries.length,
             toolNames: [...toolNamesSet],

@@ -232,7 +232,7 @@ describe("gateway tool", () => {
       expect(mockLogger.warn).toHaveBeenCalledTimes(1);
       const [fields, msg] = mockLogger.warn.mock.calls[0]!;
       expect(fields).toMatchObject({
-        module: "skill.gateway",
+        submodule: "skill.gateway",
         errorKind: "config",
       });
       expect((fields as { hint: string }).hint).toContain("unless-stopped");

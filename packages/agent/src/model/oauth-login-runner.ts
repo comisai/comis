@@ -18,7 +18,7 @@
  * UX: browser-open vs manual-paste, fallback timing, error mapping, identity
  * derivation via Phase 7's resolveCodexAuthIdentity.
  *
- * Logging discipline (CLAUDE.md): module: "oauth-login" on every call.
+ * Logging discipline (CLAUDE.md): submodule: "oauth-login" on every call.
  * NEVER log access tokens, refresh tokens, PKCE state, or callback `code`.
  * Identity in success logs uses redactEmailForLog (semi-redacted).
  *
@@ -333,7 +333,7 @@ function deriveLoginRunnerSuccess(
         provider: PROVIDER,
         errorKind: rewritten.code,
         hint: rewritten.hint,
-        module: "oauth-login",
+        submodule: "oauth-login",
       },
       "OAuth login failed — identity could not be derived",
     );
@@ -376,7 +376,7 @@ export async function loginOpenAICodexOAuth(
   }
 
   logger.info(
-    { provider: PROVIDER, isRemote: params.isRemote, module: "oauth-login" },
+    { provider: PROVIDER, isRemote: params.isRemote, submodule: "oauth-login" },
     "OAuth login starting",
   );
 
@@ -404,7 +404,7 @@ export async function loginOpenAICodexOAuth(
   const onAuth = async (event: { url: string }): Promise<void> => {
     logger.debug(
       {
-        module: "oauth-login",
+        submodule: "oauth-login",
         // RESEARCH constraint — log URL but redact the state param.
         url: event.url.replace(/state=[^&]+/, "state=***"),
       },
@@ -458,7 +458,7 @@ export async function loginOpenAICodexOAuth(
           redactEmailForLog(successResult.value.email) ??
           successResult.value.displayName ??
           `id-${(creds as { accountId?: string }).accountId ?? "<unknown>"}`,
-        module: "oauth-login",
+        submodule: "oauth-login",
       },
       "OAuth login complete",
     );
@@ -473,7 +473,7 @@ export async function loginOpenAICodexOAuth(
         errorKind: rewritten.code,
         hint: rewritten.hint,
         err: caught,
-        module: "oauth-login",
+        submodule: "oauth-login",
       },
       "OAuth login failed",
     );
@@ -507,7 +507,7 @@ async function loginOpenAICodexDeviceCodeRunner(
       provider: PROVIDER,
       isRemote: params.isRemote,
       method: "device-code",
-      module: "oauth-login",
+      submodule: "oauth-login",
     },
     "Device-code OAuth login starting",
   );
@@ -538,7 +538,7 @@ async function loginOpenAICodexDeviceCodeRunner(
         provider: PROVIDER,
         errorKind: result.error.code,
         hint: result.error.hint,
-        module: "oauth-login",
+        submodule: "oauth-login",
       },
       "Device-code login failed",
     );
@@ -561,7 +561,7 @@ async function loginOpenAICodexDeviceCodeRunner(
         redactEmailForLog(successResult.value.email) ??
         successResult.value.displayName ??
         "id-unknown",
-      module: "oauth-login",
+      submodule: "oauth-login",
     },
     "Device-code login complete",
   );

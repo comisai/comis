@@ -241,7 +241,7 @@ export function createGatewayTool(
                   hint:
                     "Container must have --restart unless-stopped (or compose restart: unless-stopped) for the restart to bring it back. Otherwise run 'docker restart <name>' from your host after the daemon exits.",
                   errorKind: "config" as const,
-                  module: "skill.gateway",
+                  submodule: "skill.gateway",
                 },
                 "Daemon restart requested inside Docker container — relies on container restart policy",
               );

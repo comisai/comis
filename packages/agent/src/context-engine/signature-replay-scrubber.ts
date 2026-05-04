@@ -252,7 +252,7 @@ export function createSignatureReplayScrubber(
       // never log at this site.
       if (scrubbedAssistantMessages > 0) {
         const payload = {
-          module: "agent.context-engine.signature-replay-scrub",
+          submodule: "context-engine.signature-replay-scrub",
           scrubbedAssistantMessages,
           blocksAffected,
           toolCallsAffected,

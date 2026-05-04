@@ -29,7 +29,7 @@
  *
  * Logging surface follows CLAUDE.md canonical Pino fields:
  * - object-first signature: `error({...fields}, "msg")`
- * - `module: "agent.bridge.hash-invariant"`
+ * - `submodule: "bridge.hash-invariant"` (parent logger binds `module: "agent"`)
  * - `errorKind: "internal"` (classification per AGENTS.md §2.1)
  * - `hint`: actionable next step for the on-call diagnoser
  * - `responseId`, `blockIndex`, `oldHash`, `newHash`,
@@ -94,7 +94,7 @@ const HINT =
   "(likely between turn_end and the next pi-ai serialize step). " +
   "Compare oldText.firstChars vs newText.firstChars to identify mutation type.";
 
-const MODULE_FIELD = "agent.bridge.hash-invariant";
+const SUBMODULE_FIELD = "bridge.hash-invariant";
 
 const ERROR_KIND = "internal";
 
@@ -209,7 +209,7 @@ export function assertThinkingBlocksUnchanged(
       safeLog(
         deps,
         {
-          module: MODULE_FIELD,
+          submodule: SUBMODULE_FIELD,
           responseId,
           blockIndex: old.blockIndex,
           oldHash: old.hash,
@@ -231,7 +231,7 @@ export function assertThinkingBlocksUnchanged(
       safeLog(
         deps,
         {
-          module: MODULE_FIELD,
+          submodule: SUBMODULE_FIELD,
           responseId,
           blockIndex: old.blockIndex,
           oldHash: old.hash,
@@ -264,7 +264,7 @@ export function assertThinkingBlocksUnchanged(
 // mutation before the heal overwrites it.
 // ---------------------------------------------------------------------------
 
-const RESTORE_MODULE_FIELD = "agent.bridge.canonical-restore";
+const RESTORE_SUBMODULE_FIELD = "bridge.canonical-restore";
 
 const RESTORE_WARN_HINT =
   "Canonical restore aborted on malformed input; in-memory messages " +
@@ -326,7 +326,7 @@ function safeRestoreLog(
  * Never throws. On any unexpected error during the walk (e.g. malformed
  * canonical entry whose getter throws), the entire result is `{ messages:
  * <input ref>, restoredCount: 0, affectedResponseIds: [] }` and ONE WARN log
- * fires with `module: RESTORE_MODULE_FIELD, errorKind: "internal"`.
+ * fires with `submodule: RESTORE_SUBMODULE_FIELD, errorKind: "internal"`.
  */
 export function restoreCanonicalThinkingBlocks(
   messages: ReadonlyArray<unknown> | undefined | null,
@@ -378,7 +378,7 @@ export function restoreCanonicalThinkingBlocks(
       deps,
       "info",
       {
-        module: RESTORE_MODULE_FIELD,
+        submodule: RESTORE_SUBMODULE_FIELD,
         restoredCount,
         affectedResponseIds,
       },
@@ -393,7 +393,7 @@ export function restoreCanonicalThinkingBlocks(
       deps,
       "warn",
       {
-        module: RESTORE_MODULE_FIELD,
+        submodule: RESTORE_SUBMODULE_FIELD,
         errorKind: "internal",
         hint: RESTORE_WARN_HINT,
       },
@@ -524,7 +524,7 @@ function blockHash(block: unknown): string {
 // - Caller passes a resolved `jsonlPath`; this helper does not compose paths.
 // ---------------------------------------------------------------------------
 
-const WIRE_DIFF_MODULE_FIELD = "agent.bridge.wire-diff";
+const WIRE_DIFF_SUBMODULE_FIELD = "bridge.wire-diff";
 
 export const WIRE_DIFF_HINT_FILE_MISSING =
   "JSONL session file unreadable; wire-edge diff skipped. " +
@@ -637,7 +637,7 @@ export async function diffThinkingBlocksAgainstPersisted(
         deps,
         "warn",
         {
-          module: WIRE_DIFF_MODULE_FIELD,
+          submodule: WIRE_DIFF_SUBMODULE_FIELD,
           errorKind: ERROR_KIND,
           hint: WIRE_DIFF_HINT_FILE_MISSING,
           jsonlPath,
@@ -681,7 +681,7 @@ export async function diffThinkingBlocksAgainstPersisted(
         deps,
         "warn",
         {
-          module: WIRE_DIFF_MODULE_FIELD,
+          submodule: WIRE_DIFF_SUBMODULE_FIELD,
           errorKind: ERROR_KIND,
           hint: WIRE_DIFF_HINT_NOT_FOUND,
           jsonlPath,
@@ -734,7 +734,7 @@ export async function diffThinkingBlocksAgainstPersisted(
       deps,
       "warn",
       {
-        module: WIRE_DIFF_MODULE_FIELD,
+        submodule: WIRE_DIFF_SUBMODULE_FIELD,
         errorKind: ERROR_KIND,
         hint: WIRE_DIFF_HINT_INTERNAL,
         jsonlPath,

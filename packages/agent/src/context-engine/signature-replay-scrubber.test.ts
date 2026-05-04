@@ -145,7 +145,7 @@ describe("createSignatureReplayScrubber", () => {
     expect(logger.debug).toHaveBeenCalledTimes(1);
     expect(logger.debug).toHaveBeenCalledWith(
       {
-        module: "agent.context-engine.signature-replay-scrub",
+        submodule: "context-engine.signature-replay-scrub",
         scrubbedAssistantMessages: 1,
         blocksAffected: 1,
         toolCallsAffected: 0,
@@ -206,7 +206,7 @@ describe("createSignatureReplayScrubber", () => {
     expect(logger.debug).toHaveBeenCalledTimes(1);
     expect(logger.debug).toHaveBeenCalledWith(
       {
-        module: "agent.context-engine.signature-replay-scrub",
+        submodule: "context-engine.signature-replay-scrub",
         scrubbedAssistantMessages: 2,
         blocksAffected: 2,
         toolCallsAffected: 0,
@@ -259,7 +259,7 @@ describe("createSignatureReplayScrubber", () => {
     expect(logger.info).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalledWith(
       {
-        module: "agent.context-engine.signature-replay-scrub",
+        submodule: "context-engine.signature-replay-scrub",
         scrubbedAssistantMessages: 4,
         blocksAffected: 4,
         toolCallsAffected: 4,
@@ -541,7 +541,7 @@ describe("createSignatureReplayScrubber", () => {
 
     expect(logger.info).toHaveBeenCalledWith(
       {
-        module: "agent.context-engine.signature-replay-scrub",
+        submodule: "context-engine.signature-replay-scrub",
         scrubbedAssistantMessages: 3,
         blocksAffected: 3,
         toolCallsAffected: 3,

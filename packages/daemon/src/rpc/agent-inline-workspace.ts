@@ -108,7 +108,7 @@ async function attemptWrite(
     const message = e instanceof Error ? e.message : String(e);
     deps.logger.warn(
       {
-        module: "daemon.rpc.agent-handlers",
+        submodule: "rpc.agent-handlers",
         agentId,
         file: filename,
         err: e,
@@ -193,7 +193,7 @@ export async function writeInlineWorkspaceFiles(
   if (roleWritten || identityWritten) {
     deps.logger.info(
       {
-        module: "daemon.rpc.agent-handlers",
+        submodule: "rpc.agent-handlers",
         agentId: params.agentId,
         roleBytes: roleWritten ? params.role!.length : 0,
         identityBytes: identityWritten ? params.identity!.length : 0,

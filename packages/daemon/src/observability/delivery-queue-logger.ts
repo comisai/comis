@@ -28,7 +28,7 @@ export function setupDeliveryQueueLogging(deps: {
 }): void {
   const { eventBus, logger } = deps;
   const MODULE = "delivery-queue";
-  const log = logger.child({ module: MODULE });
+  const log = logger.child({ submodule: MODULE });
 
   // 1. Enqueue: message enters queue (boundary event -> INFO)
   eventBus.on("delivery:enqueued", (data) => {

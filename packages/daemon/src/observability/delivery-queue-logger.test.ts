@@ -326,8 +326,8 @@ describe("setupDeliveryQueueLogging", () => {
       expect(fields).toHaveProperty("errorKind");
     });
 
-    it("child logger is created with module: delivery-queue", () => {
-      expect(logger.child).toHaveBeenCalledWith({ module: "delivery-queue" });
+    it("child logger is created with submodule: delivery-queue", () => {
+      expect(logger.child).toHaveBeenCalledWith({ submodule: "delivery-queue" });
     });
   });
 });

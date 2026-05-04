@@ -503,21 +503,11 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // assert/restore semantics are observable.
           const restoredCount = mismatchesLogged;
 
-          // 260504-ieh: bump per-execute counters BEFORE dispatching the log,
-          // so the bookend "Execution complete" summary can roll them up. The
-          // increments fire on every walk regardless of outcome (matching the
-          // existing log's "always fires" semantics, including the
-          // getSessionMessages-throws path which still falls through here).
           m.hashAssertionsRan++;
           m.hashAssertionMismatches += mismatchesLogged;
 
-          // 260504-ieh: conditional log level. Routine clean walks demote to
-          // DEBUG (CLAUDE.md: "N times per request → DEBUG"). Mismatch walks
-          // escalate to WARN with required `hint` + `errorKind` per the
-          // project's logging convention; the surrounding heal pipeline runs
-          // unaffected.
           const hashAssertionPayload = {
-            module: "agent.bridge.hash-invariant",
+            submodule: "bridge.hash-invariant",
             candidatesChecked,
             mismatchesLogged,
             restoredCount,
@@ -1194,7 +1184,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           if (classification.category === "rate_limited") {
             deps.logger.info(
               {
-                module: "agent.bridge.auto-retry-abort",
+                submodule: "bridge.auto-retry-abort",
                 attempt,
                 maxAttempts,
                 delayMs,
@@ -1290,7 +1280,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
             deps.logger.info(
               {
-                module: "agent.bridge.wire-diff",
+                submodule: "bridge.wire-diff",
                 regexMatched,
                 candidatesFound: candidates.length,
                 jsonlPathPresent,
@@ -1332,7 +1322,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     for (const entry of entries) {
                       deps.logger.error(
                         {
-                          module: "agent.bridge.wire-diff",
+                          submodule: "bridge.wire-diff",
                           responseId: c.responseId,
                           blockIndex: entry.blockIndex,
                           persistedHash: entry.persistedHash,
@@ -1358,7 +1348,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 // or when every helper call hit a read error.
                 deps.logger.info(
                   {
-                    module: "agent.bridge.wire-diff",
+                    submodule: "bridge.wire-diff",
                     candidatesProcessed,
                     totalDivergences,
                     persistedNotFound,

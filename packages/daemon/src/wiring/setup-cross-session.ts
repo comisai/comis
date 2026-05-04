@@ -717,7 +717,7 @@ export function setupCrossSession(deps: {
     maxAgeMs: 3_600_000,
     maxEntries: 100,
     eventBus: container.eventBus,
-    logger: deps.logger?.child({ module: "dead-letter-queue" }),
+    logger: deps.logger?.child({ submodule: "dead-letter-queue" }),
   });
 
   // Create announcement batcher for coalescing near-simultaneous sub-agent completions

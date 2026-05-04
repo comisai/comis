@@ -574,7 +574,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis (L3)", () => {
     });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        module: "agent.executor.empty-turn-recovery",
+        submodule: "executor.empty-turn-recovery",
         recoveryPass: "tool-call-synthesis",
         toolCallCount: 3,
         toolNames: ["agents_manage"],
