@@ -101,6 +101,30 @@ export interface LogFields {
    */
   module: string;
 
+  /**
+   * Finer-grained scope inside an existing `module` binding.
+   *
+   * Use at call sites instead of overriding `module:` in the payload.
+   * Pino concatenates parent-bound fields (pre-serialized JSON fragment)
+   * with the call-site object without deduplication, so passing
+   * `{ module: "agent.bridge.X" }` against a parent already bound with
+   * `module: "agent"` emits BOTH keys on the same line. JSON parsers
+   * keep the last, but the polluted output wastes bytes and confuses
+   * log consumers.
+   *
+   * `submodule` sidesteps the duplicate-key emission entirely:
+   * @example
+   *   logger.info(
+   *     { submodule: "bridge.hash-invariant", agentId, durationMs },
+   *     "Hash invariant assertion ran",
+   *   );
+   *
+   * Convention: omit any redundant parent-prefix from the value
+   * (e.g., under `module: "agent"`, prefer `submodule: "bridge.X"`
+   * over `submodule: "agent.bridge.X"`).
+   */
+  submodule: string;
+
   // --- Pipeline fields ---
 
   /**
