@@ -139,6 +139,95 @@ comis agent delete old-agent --yes
 
 ---
 
+### `comis auth`
+
+OAuth authentication management for subscription-based providers (currently OpenAI Codex). Profiles are written to the [OAuthCredentialStorePort](/security/oauth#storage-backends) — separate from `SecretStorePort`, with refresh + per-profile-ID locking semantics.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `auth login` | Log in to an OAuth-enabled provider (browser or device-code flow) |
+| `auth list` | List stored OAuth profiles |
+| `auth logout` | Remove a stored OAuth profile |
+| `auth status` | Show per-provider OAuth state (expiry, last refresh) |
+
+#### `auth login`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--provider <id>` | `string` | _required_ | OAuth provider id. Must be `openai-codex` (other providers ship in later phases). |
+| `--remote` | `boolean` | _auto_ | Force remote/headless mode (no browser open). Auto-detected via `SSH_CLIENT`, `SSH_TTY`, missing `DISPLAY`. |
+| `--local` | `boolean` | _auto_ | Force local/desktop mode (attempt browser open). Inverse of `--remote`. |
+| `--profile <id>` | `string` | _derived_ | Override the auto-derived profile id (`<provider>:<email-from-jwt>`). Provider portion of the override must match `--provider`. |
+| `--method <method>` | `browser` \| `device-code` | `browser` | Login method. Use `device-code` for SSH/no-clipboard environments. |
+
+```bash
+# Local desktop (browser auto-open)
+comis auth login --provider openai-codex
+
+# Headless / SSH host (device-code flow — short code displayed; type it on a phone)
+comis auth login --provider openai-codex --method device-code
+
+# Multi-account: tag the new profile with a custom alias
+comis auth login --provider openai-codex --profile openai-codex:work@company.com
+```
+
+**Exit codes (`auth login`):**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Login completed; profile persisted |
+| `1` | Login flow failed (network, OAuth server error, store-write failure) |
+| `2` | Invalid arguments (`--provider` not `openai-codex`; malformed `--profile`; provider mismatch in `--profile`; `--method device-code` on a non-codex provider) |
+
+#### `auth list`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--provider <id>` | `string` | - | Filter to one provider. |
+
+```bash
+# All profiles
+comis auth list
+
+# Only Codex profiles
+comis auth list --provider openai-codex
+```
+
+**Exit codes:** `0` success (including empty store with informative message); `1` config load / store open failure.
+
+#### `auth logout`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--profile <id>` | `string` | _required_ | Profile id to remove (e.g., `openai-codex:user@example.com`). |
+
+```bash
+comis auth logout --profile openai-codex:user@example.com
+```
+
+**Exit codes:** `0` profile removed; `1` profile not found in store.
+
+#### `auth status`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--provider <id>` | `string` | - | Filter to one provider. |
+
+Reports per-provider state: profile id, identity (email or accountId), expiry timestamp, status (`active` / `expired`), and last refresh time.
+
+```bash
+comis auth status
+comis auth status --provider openai-codex
+```
+
+<Tip>
+Errors from any `auth` subcommand are classified into 6 categories — see [OAuth concepts → Error classification](/security/oauth#error-classification). The CLI prints both `userMessage` and an actionable `hint` (e.g., `Re-authenticate with: comis auth login --provider openai-codex`).
+</Tip>
+
+---
+
 ### `comis channel`
 
 Channel management commands for viewing the connection status of configured chat platform adapters.
