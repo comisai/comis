@@ -62,9 +62,6 @@ describe("normalizeProviderId", () => {
   it.each([
     ["aws-bedrock", "amazon-bedrock"],
     ["bedrock", "amazon-bedrock"],
-    ["vertex", "anthropic-vertex"],
-    ["vertex-ai", "anthropic-vertex"],
-    ["azure", "azure-openai"],
     ["azure-responses", "azure-openai-responses"],
     ["codex", "openai-codex"],
     ["gcp", "google"],
@@ -99,10 +96,9 @@ describe("normalizeProviderId", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveProviderCapabilities", () => {
-  // Anthropic family (3 providers)
+  // Anthropic family (2 providers)
   it.each([
     "anthropic",
-    "anthropic-vertex",
     "amazon-bedrock",
   ])("'%s' returns providerFamily 'anthropic' with dropThinkingBlockModelHints ['claude']", (provider) => {
     const caps = resolveProviderCapabilities(provider);
@@ -112,10 +108,9 @@ describe("resolveProviderCapabilities", () => {
     expect(caps.transcriptToolCallIdModelHints).toEqual([]);
   });
 
-  // OpenAI family (4 providers)
+  // OpenAI family (3 providers)
   it.each([
     "openai",
-    "azure-openai",
     "azure-openai-responses",
     "openai-codex",
   ])("'%s' returns providerFamily 'openai'", (provider) => {
@@ -192,7 +187,6 @@ describe("isAnthropicFamily", () => {
   it.each([
     "anthropic",
     "amazon-bedrock",
-    "anthropic-vertex",
   ])("returns true for '%s'", (provider) => {
     expect(isAnthropicFamily(provider)).toBe(true);
   });
@@ -213,7 +207,6 @@ describe("isAnthropicFamily", () => {
 describe("isOpenAiFamily", () => {
   it.each([
     "openai",
-    "azure-openai",
     "azure-openai-responses",
     "openai-codex",
   ])("returns true for '%s'", (provider) => {
@@ -381,7 +374,7 @@ describe("Layer 3B: ANTHROPIC_FAMILY de-duplication regression", () => {
 describe("validateProviderOverrides", () => {
   // Currently-known PROVIDER_OVERRIDES keys (from capabilities.ts).
   // If this list changes, update `OVERRIDE_KEYS_COUNT` to match.
-  const OVERRIDE_KEYS_COUNT = 10;
+  const OVERRIDE_KEYS_COUNT = 8;
 
   beforeEach(() => {
     getProvidersMock.mockReset();
@@ -398,7 +391,7 @@ describe("validateProviderOverrides", () => {
     const warn = vi.fn();
     const result = validateProviderOverrides({ warn });
 
-    // 10 override keys, only 2 present in mocked catalog -> 8 orphans
+    // 8 override keys, only 2 present in mocked catalog -> 6 orphans
     expect(result.checked).toBe(OVERRIDE_KEYS_COUNT);
     expect(result.orphans).toHaveLength(OVERRIDE_KEYS_COUNT - 2);
     expect(warn).toHaveBeenCalledTimes(OVERRIDE_KEYS_COUNT - 2);
@@ -406,9 +399,8 @@ describe("validateProviderOverrides", () => {
     // Orphans returned should include the override keys NOT in sparseProviders
     expect(result.orphans).toEqual(
       expect.arrayContaining([
-        "anthropic-vertex", "amazon-bedrock", "azure-openai",
-        "azure-openai-responses", "openai-codex", "google",
-        "google-vertex", "mistral",
+        "amazon-bedrock", "azure-openai-responses",
+        "openai-codex", "google", "google-vertex", "mistral",
       ]),
     );
     // anthropic and openai are live, must NOT be in orphans
@@ -436,8 +428,8 @@ describe("validateProviderOverrides", () => {
   it("emits no WARN when all override keys are in the live catalog", () => {
     // Mock catalog to include every PROVIDER_OVERRIDES key
     const allOverrideKeys = [
-      "anthropic", "anthropic-vertex", "amazon-bedrock",
-      "openai", "azure-openai", "azure-openai-responses", "openai-codex",
+      "anthropic", "amazon-bedrock",
+      "openai", "azure-openai-responses", "openai-codex",
       "google", "google-vertex",
       "mistral",
     ];

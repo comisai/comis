@@ -5,7 +5,7 @@
  * Resolution order:
  *   1. DEFAULTS -- complete ProviderCapabilities with safe fallback values
  *   2. PROVIDER_OVERRIDES[normalizeProviderId(provider)] -- built-in overrides
- *      for known providers (12 entries covering Anthropic, OpenAI, Google, Mistral)
+ *      for known providers (8 entries covering Anthropic, OpenAI, Google, Mistral)
  *   3. userOverrides -- user-supplied config from YAML `providers.entries.*.capabilities`
  *
  * Providers NOT in PROVIDER_OVERRIDES (cerebras, groq, xai, etc.) get clean
@@ -31,9 +31,9 @@ export const DEFAULTS: ProviderCapabilities = {
 /**
  * Built-in overrides for providers that differ from DEFAULTS.
  *
- * 10 entries covering:
- * - Anthropic family (3): anthropic, anthropic-vertex, amazon-bedrock
- * - OpenAI family (4): openai, azure-openai, azure-openai-responses, openai-codex
+ * 8 entries covering:
+ * - Anthropic family (2): anthropic, amazon-bedrock
+ * - OpenAI family (3): openai, azure-openai-responses, openai-codex
  * - Google family (2): google, google-vertex
  * - Mistral (1): strict9 tool call ID mode with 7 model hints
  *
@@ -42,12 +42,10 @@ export const DEFAULTS: ProviderCapabilities = {
 const PROVIDER_OVERRIDES: Record<string, Partial<ProviderCapabilities>> = {
   // Anthropic family
   "anthropic": { providerFamily: "anthropic", dropThinkingBlockModelHints: ["claude"] },
-  "anthropic-vertex": { providerFamily: "anthropic", dropThinkingBlockModelHints: ["claude"] },
   "amazon-bedrock": { providerFamily: "anthropic", dropThinkingBlockModelHints: ["claude"] },
 
   // OpenAI family
   "openai": { providerFamily: "openai" },
-  "azure-openai": { providerFamily: "openai" },
   "azure-openai-responses": { providerFamily: "openai" },
   "openai-codex": { providerFamily: "openai" },
 
@@ -68,17 +66,10 @@ const PROVIDER_OVERRIDES: Record<string, Partial<ProviderCapabilities>> = {
 /**
  * Provider ID alias table. Maps user-friendly shorthand names to canonical
  * provider IDs used in PROVIDER_OVERRIDES.
- *
- * AMBIGUITY NOTE: "vertex" maps to "anthropic-vertex" (Anthropic API via
- * Google Cloud), NOT "google-vertex". Users targeting Google Vertex AI
- * should use "google-vertex" or "gcp-vertex".
  */
 const ALIASES: Record<string, string> = {
   "aws-bedrock": "amazon-bedrock",
   "bedrock": "amazon-bedrock",
-  "vertex": "anthropic-vertex",
-  "vertex-ai": "anthropic-vertex",
-  "azure": "azure-openai",
   "azure-responses": "azure-openai-responses",
   "codex": "openai-codex",
   "gcp": "google",
@@ -119,7 +110,7 @@ export function resolveProviderCapabilities(
 
 /**
  * Check if a provider belongs to the Anthropic family.
- * True for: anthropic, anthropic-vertex, amazon-bedrock (and their aliases).
+ * True for: anthropic, amazon-bedrock (and their aliases).
  */
 export function isAnthropicFamily(provider: string): boolean {
   return resolveProviderCapabilities(provider).providerFamily === "anthropic";
@@ -127,7 +118,7 @@ export function isAnthropicFamily(provider: string): boolean {
 
 /**
  * Check if a provider belongs to the OpenAI family.
- * True for: openai, azure-openai, azure-openai-responses, openai-codex (and their aliases).
+ * True for: openai, azure-openai-responses, openai-codex (and their aliases).
  */
 export function isOpenAiFamily(provider: string): boolean {
   return resolveProviderCapabilities(provider).providerFamily === "openai";

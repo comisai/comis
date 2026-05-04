@@ -230,16 +230,11 @@ describe("resolveBreakpointStrategy", () => {
     expect(resolveBreakpointStrategy("auto", "anthropic")).toBe("multi-zone");
   });
 
-  it("resolves 'auto' to 'multi-zone' for anthropic-vertex", () => {
-    expect(resolveBreakpointStrategy("auto", "anthropic-vertex")).toBe("multi-zone");
-  });
-
   it("resolves 'auto' to 'multi-zone' for amazon-bedrock", () => {
     expect(resolveBreakpointStrategy("auto", "amazon-bedrock")).toBe("multi-zone");
   });
 
   it("respects explicit 'single' override regardless of provider", () => {
-    expect(resolveBreakpointStrategy("single", "anthropic-vertex")).toBe("single");
     expect(resolveBreakpointStrategy("single", "amazon-bedrock")).toBe("single");
   });
 

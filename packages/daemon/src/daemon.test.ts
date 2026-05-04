@@ -551,23 +551,23 @@ describe("daemon main()", () => {
   // Layer 3C (260501-07g): boot-time PROVIDER_OVERRIDES staleness validator
   // -------------------------------------------------------------------------
   // The daemon calls validateProviderOverrides during the "3.6" startup step.
-  // Against the LIVE pi-ai catalog, two override keys are currently orphans
-  // (anthropic-vertex, azure-openai). The validator emits one structured WARN
-  // per orphan key with errorKind:"config" and module:"agent.capabilities".
+  // Against the LIVE pi-ai catalog, every PROVIDER_OVERRIDES key is currently
+  // backed by a real provider, so the validator emits zero orphan WARNs at
+  // boot. This regression guards against the override map drifting ahead of
+  // pi-ai's catalog (which would re-introduce orphan WARNs per boot).
 
-  it("emits structured WARNs for orphaned PROVIDER_OVERRIDES keys at boot", async () => {
+  it("emits no orphan PROVIDER_OVERRIDES WARNs at boot against the live pi-ai catalog", async () => {
     const { overrides, mocks } = buildOverrides();
 
     await main(overrides);
 
     // The mock LogLevelManager returns the same mock logger for every
-    // getLogger() call -- assert at least one warn carrying the validator's
+    // getLogger() call -- assert that no warn carrying the validator's
     // signature was emitted during boot.
     const sharedMockLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>)
       .mock.results[0]?.value;
-    expect(sharedMockLogger.warn).toHaveBeenCalledWith(
+    expect(sharedMockLogger.warn).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        provider: expect.any(String),
         hint: expect.stringContaining("PROVIDER_OVERRIDES"),
         errorKind: "config",
         module: "agent.capabilities",
