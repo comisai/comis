@@ -67,6 +67,40 @@ describe("tool metadata registry", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tool-entry schema tests (quick-260504-cac): validActions, validKeys,
+// requiredByAction support the generic schema-validator wired into
+// wrapWithMetadataEnforcement before the per-tool validateInput hook.
+// ---------------------------------------------------------------------------
+
+describe("tool metadata -- tool-entry schema (validActions/validKeys/requiredByAction)", () => {
+  it("stores and retrieves validActions", () => {
+    registerToolMetadata("reg_test_valid_actions", { validActions: ["a", "b"] });
+    const meta = getToolMetadata("reg_test_valid_actions");
+    expect(meta).toBeDefined();
+    expect(meta!.validActions).toEqual(["a", "b"]);
+  });
+
+  it("stores and retrieves validKeys + requiredByAction together", () => {
+    registerToolMetadata("reg_test_keys_required", {
+      validKeys: ["k1", "k2"],
+      requiredByAction: { a: ["k1"] },
+    });
+    const meta = getToolMetadata("reg_test_keys_required");
+    expect(meta).toBeDefined();
+    expect(meta!.validKeys).toEqual(["k1", "k2"]);
+    expect(meta!.requiredByAction).toEqual({ a: ["k1"] });
+  });
+
+  it("spread-merge preserves earlier fields when adding entry-shape metadata later", () => {
+    registerToolMetadata("reg_test_schema_merge", { isReadOnly: true });
+    registerToolMetadata("reg_test_schema_merge", { validActions: ["x"] });
+    const meta = getToolMetadata("reg_test_schema_merge");
+    expect(meta!.isReadOnly).toBe(true);
+    expect(meta!.validActions).toEqual(["x"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // coDiscoverWith tests (quick-260414-ppo)
 // ---------------------------------------------------------------------------
 
