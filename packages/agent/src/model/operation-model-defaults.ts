@@ -13,9 +13,10 @@
  *    (because the old map was Anthropic/OpenAI/Google only).
  *
  * Tier picking: filter to text-capable models with non-zero cost, sort
- * ascending by total cost (input + output), pick 10th-percentile = `fast`,
- * 50th-percentile = `mid`. All-free-models providers (e.g. local Ollama,
- * Z.AI most models) fall back to "first text-capable id" for both slots.
+ * ascending by total cost (input + output), pick top-of-cohort (lex-greatest
+ * within the cost bucket) at the 10th-percentile = `fast`, 50th-percentile =
+ * `mid`. All-free-models providers (e.g. local Ollama, Z.AI most models)
+ * fall back to "first text-capable id" for both slots.
  *
  * @module
  */
@@ -36,6 +37,34 @@ function totalCost(m: { cost?: { input?: number; output?: number } }): number {
 }
 
 /**
+ * Pick the "top of cohort" model from a cost-ascending list.
+ *
+ * Identifies the cost bucket the given percentile lands in, then returns
+ * the lex-greatest ID within that bucket. Lex-greatest is a deterministic
+ * proxy for "newest/highest version" across the providers we ship — for
+ * dated IDs (YYYY-MM-DD, YYMM) and semver-ish IDs (claude-sonnet-4-6 >
+ * claude-sonnet-4-5) the lex order matches recency.
+ *
+ * Why not just take `sortedAsc[idx]`? JavaScript's stable sort preserves
+ * original-array order within a cost-tied block, so the previous algorithm
+ * picked whatever the catalog happened to enumerate first. With 9 priced
+ * Anthropic Sonnets all at $18/MTok, that was `claude-sonnet-4-5` — picked
+ * by accident, not by quality signal.
+ *
+ * Module-internal — not exported.
+ */
+function pickFromCohort(
+  sortedAsc: ReadonlyArray<{ id: string; cost?: { input?: number; output?: number } }>,
+  percentile: number,
+): string | undefined {
+  if (sortedAsc.length === 0) return undefined;
+  const idx = Math.min(sortedAsc.length - 1, Math.floor(sortedAsc.length * percentile));
+  const cohortCost = totalCost(sortedAsc[idx]!);
+  const cohort = sortedAsc.filter((m) => totalCost(m) === cohortCost);
+  return [...cohort].sort((a, b) => b.id.localeCompare(a.id))[0]?.id;
+}
+
+/**
  * Resolve cost-tier model defaults for a given native pi-ai provider.
  *
  * Returns `{ fast, mid }` model IDs (without provider prefix) selected from
@@ -48,7 +77,11 @@ function totalCost(m: { cost?: { input?: number; output?: number } }): number {
  *   3. Filter to non-zero cost (eliminates free/local-only models from
  *      ranking — they won't be reachable in production).
  *   4. Sort ascending by total cost.
- *   5. `fast` = 10th percentile, `mid` = 50th percentile.
+ *   5. `fast` and `mid` are top-of-cohort at the 10th and 50th percentile
+ *      respectively (lex-greatest ID within the cost bucket the percentile
+ *      lands in). Cost ties broken by lex-greatest ID — avoids picking a
+ *      model purely because of catalog iteration order (e.g. 9 Anthropic
+ *      Sonnets all at $18/MTok).
  *   6. If post-filter set is empty (all-free provider), use the first
  *      text-capable model id for both slots.
  *
@@ -76,12 +109,9 @@ export function resolveOperationDefaults(provider: string): { fast?: string; mid
     return { fast: fallback, mid: fallback };
   }
 
-  // Math.min clamp guards single-element arrays (10% of 1 -> 0).
-  const fastIdx = Math.min(priced.length - 1, Math.floor(priced.length * 0.1));
-  const midIdx = Math.min(priced.length - 1, Math.floor(priced.length * 0.5));
   return {
-    fast: priced[fastIdx].id,
-    mid: priced[midIdx].id,
+    fast: pickFromCohort(priced, 0.1),
+    mid: pickFromCohort(priced, 0.5),
   };
 }
 
