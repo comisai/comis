@@ -31,7 +31,7 @@ const McpManageToolParams = Type.Object({
     ],
     { description: "MCP server management action. Valid values: list (all servers with status), status (detailed single server info), connect (add new server), disconnect (remove server), reconnect (restart server connection)" },
   ),
-  name: Type.Optional(
+  server_name: Type.Optional(
     Type.String({
       description: "MCP server name. Required for status/connect/disconnect/reconnect.",
     }),
@@ -101,14 +101,14 @@ export function createMcpManageTool(
           return rpcCall("mcp.list", { _trustLevel: ctx.trustLevel });
         },
         async status(p, rpcCall, ctx) {
-          const name = readStringParam(p, "name");
-          return rpcCall("mcp.status", { name, _trustLevel: ctx.trustLevel });
+          const name = readStringParam(p, "server_name");
+          return rpcCall("mcp.status", { server_name: name, _trustLevel: ctx.trustLevel });
         },
         async connect(p, rpcCall, ctx) {
-          const name = readStringParam(p, "name");
+          const name = readStringParam(p, "server_name");
           const transport = readStringParam(p, "transport");
           return rpcCall("mcp.connect", {
-            name,
+            server_name: name,
             transport,
             command: p.command,
             args: p.args,
@@ -118,13 +118,13 @@ export function createMcpManageTool(
           });
         },
         async disconnect(p, rpcCall, ctx) {
-          const name = readStringParam(p, "name");
-          return rpcCall("mcp.disconnect", { name, _trustLevel: ctx.trustLevel });
+          const name = readStringParam(p, "server_name");
+          return rpcCall("mcp.disconnect", { server_name: name, _trustLevel: ctx.trustLevel });
         },
         async reconnect(p, rpcCall, ctx) {
-          const name = readStringParam(p, "name");
+          const name = readStringParam(p, "server_name");
           return rpcCall("mcp.reconnect", {
-            name,
+            server_name: name,
             transport: p.transport,
             command: p.command,
             args: p.args,
