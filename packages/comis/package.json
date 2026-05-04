@@ -185,6 +185,7 @@
     "music-metadata": "11.12.3",
     "node-llama-cpp": "3.18.1",
     "nodemailer": "8.0.7",
+    "open": "10.1.2",
     "openai": "6.34.0",
     "ora": "9.4.0",
     "p-queue": "9.2.0",

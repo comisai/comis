@@ -460,6 +460,9 @@ importers:
       nodemailer:
         specifier: '>=8.0.5'
         version: 8.0.7
+      open:
+        specifier: 10.1.2
+        version: 10.1.2
       openai:
         specifier: 6.34.0
         version: 6.34.0(ws@8.20.0)(zod@4.3.6)
