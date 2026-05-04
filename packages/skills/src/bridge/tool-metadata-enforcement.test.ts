@@ -353,4 +353,81 @@ describe("wrapWithMetadataEnforcement", () => {
       expect(result.isError).toBe(true);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Generic tool-entry schema validation (260504-cac)
+  //
+  // The new schema-validator runs BEFORE the per-tool validateInput hook in
+  // wrapWithMetadataEnforcement. These tests pin the wiring + the 2026-05-03
+  // outage payload regression.
+  // -------------------------------------------------------------------------
+  describe("generic tool-entry schema validation (260504-cac)", () => {
+    it("rejects {action:'connect', server_name:'yfinance'} (2026-05-03 outage payload)", async () => {
+      registerToolMetadata("enf_mcp_outage", {
+        validActions: ["list", "connect", "disconnect"],
+        validKeys: ["action", "name", "transport", "command", "args", "url", "headers"],
+        requiredByAction: { connect: ["name", "transport"] },
+      });
+
+      const executeFn = vi.fn();
+      const tool = createMockTool("enf_mcp_outage", executeFn);
+      const wrapped = wrapWithMetadataEnforcement(tool);
+
+      let captured: Error | undefined;
+      try {
+        await wrapped.execute("call-1", { action: "connect", server_name: "yfinance" });
+      } catch (e) {
+        captured = e as Error;
+      }
+
+      expect(captured).toBeDefined();
+      const msg = captured!.message;
+      // The wrapper prepends [invalid_value]; the validator returns the raw msg.
+      expect(msg).toContain("[invalid_value]");
+      expect(msg).toContain("unknown key 'server_name'");
+      expect(msg).toContain("did you mean 'name'?");
+      expect(msg).toContain("missing for action='connect':");
+      expect(msg).toContain("transport");
+      expect(msg).toContain("valid keys:");
+      // errorKind classification preserved for the SDK audit wrapper.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- match existing pattern
+      expect((captured as any).errorKind).toBe("validation");
+      // Inner tool body must NEVER run when validation fails.
+      expect(executeFn).not.toHaveBeenCalled();
+    });
+
+    it("schema validator runs BEFORE per-tool validateInput (short-circuit on shape error)", async () => {
+      const businessRule = vi.fn().mockReturnValue("tool-specific business rule failed");
+      registerToolMetadata("enf_dual_validate", {
+        validActions: ["a", "b"],
+        validKeys: ["action"],
+        validateInput: businessRule,
+      });
+
+      const tool = createMockTool("enf_dual_validate");
+      const wrapped = wrapWithMetadataEnforcement(tool);
+
+      // Invalid action -> generic validator fires first, short-circuits.
+      await expect(wrapped.execute("call-1", { action: "c" })).rejects.toThrow(
+        /invalid action 'c'/,
+      );
+      expect(businessRule).not.toHaveBeenCalled();
+    });
+
+    it("per-tool validateInput still runs when shape is valid", async () => {
+      registerToolMetadata("enf_dual_validate_pass", {
+        validActions: ["a", "b"],
+        validKeys: ["action"],
+        validateInput: () => "tool-specific business rule failed",
+      });
+
+      const tool = createMockTool("enf_dual_validate_pass");
+      const wrapped = wrapWithMetadataEnforcement(tool);
+
+      // Valid shape -> generic gate passes -> per-tool validator fires.
+      await expect(wrapped.execute("call-1", { action: "a" })).rejects.toThrow(
+        "[invalid_value] tool-specific business rule failed",
+      );
+    });
+  });
 });
