@@ -38,10 +38,14 @@ import { randomUUID } from "node:crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const CONFIG_PATH = resolve(
+const SOURCE_CONFIG_PATH = resolve(
   __dirname,
   "../config/config.test-approval-gate-e2e.yaml",
 );
+// persistToConfig (RPC handler) writes created agents back to the source
+// YAML. To keep the checked-in fixture pristine across runs, the test copies
+// the source config to a tmp path and starts the daemon against that copy.
+const CONFIG_PATH = "/tmp/comis-test-approval-gate-e2e-config.yaml";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -150,8 +154,14 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
     // (restart-approvals.json) from a prior test run -- those would
     // auto-approve / auto-deny new requests via cache hits and break the
     // deterministic pending-count and denial-flow assertions below.
-    const { rmSync } = await import("node:fs");
+    const { rmSync, copyFileSync } = await import("node:fs");
     rmSync("/tmp/comis-test-approval-gate-e2e", { recursive: true, force: true });
+    rmSync(CONFIG_PATH, { force: true });
+
+    // Copy the source config to a tmp location so persistToConfig
+    // (which writes back the agents created by TEST-06-08/09) does not
+    // mutate the checked-in fixture between runs.
+    copyFileSync(SOURCE_CONFIG_PATH, CONFIG_PATH);
 
     handle = await startTestDaemon({ configPath: CONFIG_PATH });
 
@@ -590,12 +600,17 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
     it(
       "TEST-06-08: Tool wrapper triggers approval and completes on approve",
+      // Disable vitest's auto-retry. The first attempt creates the agent
+      // in-memory and persists it to the (tmp) config; a retry would re-run
+      // against a daemon that already has the agent and fail with "Agent
+      // already exists" before the approval gate check.
+      { retry: 0 },
       async () => {
         // 1. Create the tool wired to daemon's rpcCall and approvalGate
         // Wrap rpcCall to inject _trustLevel: "admin" so mutating RPC calls succeed
         const adminRpcCall: typeof rpcCall = (method, params) =>
           rpcCall(method, { ...params, _trustLevel: "admin" });
-        const tool = createAgentsManageTool(adminRpcCall, approvalGate);
+        const tool = createAgentsManageTool(adminRpcCall, handle.daemon.logger, approvalGate);
 
         // 2. Start tool execute in a runWithContext scope with admin trust level
         const executePromise = runWithContext(
@@ -643,9 +658,14 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         // 6. Await the execute promise
         const result = await executePromise;
 
-        // 7. Assert the result is successful (no error in details)
-        expect(result.content).toHaveLength(1);
-        expect(result.content[0]!.text).not.toContain("Error:");
+        // 7. Assert the result is successful (no error in details).
+        // agents.create returns a 2-text-block contract: block 0 is the
+        // next-step contract (260428-sw2 Layer 1), block 1 is the JSON
+        // payload. Neither block should contain "Error:".
+        expect(result.content.length).toBeGreaterThanOrEqual(1);
+        for (const block of result.content) {
+          expect(block.text).not.toContain("Error:");
+        }
         expect(result.details).toBeDefined();
         expect((result.details as Record<string, unknown>).error).toBeUndefined();
 
@@ -674,7 +694,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         // Wrap rpcCall to inject _trustLevel: "admin" so mutating RPC calls succeed.
         const adminRpcCall: typeof rpcCall = (method, params) =>
           rpcCall(method, { ...params, _trustLevel: "admin" });
-        const tool = createAgentsManageTool(adminRpcCall, approvalGate);
+        const tool = createAgentsManageTool(adminRpcCall, handle.daemon.logger, approvalGate);
 
         // 2. Start tool execute in a runWithContext scope with admin trust level.
         // Use a distinct sessionKey from TEST-06-08 to avoid the batch-approval
