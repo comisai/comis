@@ -359,4 +359,88 @@ describe("writeConfigStep", () => {
     const envContent = envWriteCall![1] as string;
     expect(envContent).toContain("COMIS_GATEWAY_PASSWORD=my-secret-password");
   });
+
+  // ---------- 260504-gge: oauthProfiles emission + openai-codex defaults ----------
+
+  it("emits oauthProfiles on agent config when state.provider.oauthProfileId is set", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      provider: {
+        id: "openai-codex",
+        authMethod: "oauth",
+        apiKey: "test_access_token",
+        oauthProfileId: "openai-codex:user_a@example.com",
+        validated: true,
+      },
+    };
+    const prompter = createMockPrompter();
+    await writeConfigStep.execute(state, prompter);
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    expect(configWriteCall).toBeDefined();
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.agents.default.oauthProfiles).toEqual({
+      "openai-codex": "openai-codex:user_a@example.com",
+    });
+  });
+
+  it("omits oauthProfiles when no oauthProfileId on state.provider", async () => {
+    const prompter = createMockPrompter();
+    await writeConfigStep.execute(populatedState(), prompter);
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    expect(configWriteCall).toBeDefined();
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.agents.default.oauthProfiles).toBeUndefined();
+  });
+
+  it("openai-codex provider skips OPENAI_API_KEY env line (no PROVIDER_ENV_KEYS entry)", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      provider: {
+        id: "openai-codex",
+        authMethod: "oauth",
+        apiKey: "test_access_token",
+        oauthProfileId: "openai-codex:user_a@example.com",
+        validated: true,
+      },
+    };
+    const prompter = createMockPrompter();
+    await writeConfigStep.execute(state, prompter);
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const envWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall).toBeDefined();
+    const envContent = envWriteCall![1] as string;
+    expect(envContent).not.toContain("OPENAI_API_KEY=");
+    expect(envContent).not.toContain("test_access_token");
+  });
+
+  it("openai-codex default model is 'gpt-5.1' when state.model unset", async () => {
+    const state: WizardState = {
+      ...populatedState(),
+      provider: {
+        id: "openai-codex",
+        authMethod: "oauth",
+        apiKey: "test_access_token",
+        oauthProfileId: "openai-codex:user_a@example.com",
+        validated: true,
+      },
+      model: undefined,
+    };
+    const prompter = createMockPrompter();
+    await writeConfigStep.execute(state, prompter);
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    expect(configWriteCall).toBeDefined();
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.agents.default.model).toBe("gpt-5.1");
+  });
 });

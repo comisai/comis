@@ -53,7 +53,8 @@ interface ProviderUiHint {
  */
 const PROVIDER_UI_HINTS: Record<string, ProviderUiHint> = {
   anthropic: { label: "Anthropic (Claude)", hint: "Recommended for agents", category: "recommended" },
-  openai: { label: "OpenAI (GPT)", hint: "GPT-4o, o1, o3 models", category: "recommended" },
+  openai: { label: "OpenAI (GPT)", hint: "GPT-4o, o1, o3 — API key (pay per token)", category: "recommended" },
+  "openai-codex": { label: "OpenAI Codex", hint: "ChatGPT/Codex subscription — OAuth login", category: "recommended" },
   google: { label: "Google (Gemini)", hint: "Gemini models", category: "other" },
   groq: { label: "Groq", hint: "Fast inference (Llama, Mixtral)", category: "other" },
   mistral: { label: "Mistral", hint: "Mistral models", category: "other" },
