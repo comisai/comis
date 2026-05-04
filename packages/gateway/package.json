@@ -38,7 +38,7 @@
     "@comis/agent": "workspace:*",
     "@comis/core": "workspace:*",
     "@comis/shared": "workspace:*",
-    "hono": "4.12.15",
+    "hono": "4.12.16",
     "hono-rate-limiter": "0.5.3",
     "json-rpc-2.0": "1.7.1",
     "zod": "4.3.6"
