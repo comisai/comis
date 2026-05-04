@@ -70,8 +70,6 @@ describe("normalizeProviderId", () => {
     ["gcp", "google"],
     ["gcp-vertex", "google-vertex"],
     ["gemini", "google"],
-    ["gemini-cli", "google-gemini-cli"],
-    ["antigravity", "google-antigravity"],
     ["grok", "xai"],
   ])("maps '%s' to '%s'", (input, expected) => {
     expect(normalizeProviderId(input)).toBe(expected);
@@ -128,11 +126,9 @@ describe("resolveProviderCapabilities", () => {
     expect(caps.transcriptToolCallIdModelHints).toEqual([]);
   });
 
-  // Google family (4 providers)
+  // Google family (2 providers)
   it.each([
     "google",
-    "google-gemini-cli",
-    "google-antigravity",
     "google-vertex",
   ])("'%s' returns providerFamily 'google'", (provider) => {
     const caps = resolveProviderCapabilities(provider);
@@ -240,8 +236,6 @@ describe("isOpenAiFamily", () => {
 describe("isGoogleFamily", () => {
   it.each([
     "google",
-    "google-gemini-cli",
-    "google-antigravity",
     "google-vertex",
   ])("returns true for '%s'", (provider) => {
     expect(isGoogleFamily(provider)).toBe(true);
@@ -252,8 +246,6 @@ describe("isGoogleFamily", () => {
     "gcp",
     "gemini",
     "gcp-vertex",
-    "gemini-cli",
-    "antigravity",
   ])("returns true for alias '%s'", (alias) => {
     expect(isGoogleFamily(alias)).toBe(true);
   });
@@ -285,11 +277,7 @@ describe("isGoogleAIStudio", () => {
   // Other Google family members are NOT AI Studio
   it.each([
     "google-vertex",
-    "google-gemini-cli",
-    "google-antigravity",
     "gcp-vertex",
-    "gemini-cli",
-    "antigravity",
   ])("returns false for '%s' (Google family but not AI Studio)", (provider) => {
     expect(isGoogleAIStudio(provider)).toBe(false);
   });
@@ -393,7 +381,7 @@ describe("Layer 3B: ANTHROPIC_FAMILY de-duplication regression", () => {
 describe("validateProviderOverrides", () => {
   // Currently-known PROVIDER_OVERRIDES keys (from capabilities.ts).
   // If this list changes, update `OVERRIDE_KEYS_COUNT` to match.
-  const OVERRIDE_KEYS_COUNT = 12;
+  const OVERRIDE_KEYS_COUNT = 10;
 
   beforeEach(() => {
     getProvidersMock.mockReset();
@@ -410,7 +398,7 @@ describe("validateProviderOverrides", () => {
     const warn = vi.fn();
     const result = validateProviderOverrides({ warn });
 
-    // 12 override keys, only 2 present in mocked catalog -> 10 orphans
+    // 10 override keys, only 2 present in mocked catalog -> 8 orphans
     expect(result.checked).toBe(OVERRIDE_KEYS_COUNT);
     expect(result.orphans).toHaveLength(OVERRIDE_KEYS_COUNT - 2);
     expect(warn).toHaveBeenCalledTimes(OVERRIDE_KEYS_COUNT - 2);
@@ -420,7 +408,7 @@ describe("validateProviderOverrides", () => {
       expect.arrayContaining([
         "anthropic-vertex", "amazon-bedrock", "azure-openai",
         "azure-openai-responses", "openai-codex", "google",
-        "google-gemini-cli", "google-antigravity", "google-vertex", "mistral",
+        "google-vertex", "mistral",
       ]),
     );
     // anthropic and openai are live, must NOT be in orphans
@@ -450,7 +438,7 @@ describe("validateProviderOverrides", () => {
     const allOverrideKeys = [
       "anthropic", "anthropic-vertex", "amazon-bedrock",
       "openai", "azure-openai", "azure-openai-responses", "openai-codex",
-      "google", "google-gemini-cli", "google-antigravity", "google-vertex",
+      "google", "google-vertex",
       "mistral",
     ];
     getProvidersMock.mockReturnValue(allOverrideKeys);

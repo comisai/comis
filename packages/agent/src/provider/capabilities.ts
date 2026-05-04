@@ -31,10 +31,10 @@ export const DEFAULTS: ProviderCapabilities = {
 /**
  * Built-in overrides for providers that differ from DEFAULTS.
  *
- * 12 entries covering:
+ * 10 entries covering:
  * - Anthropic family (3): anthropic, anthropic-vertex, amazon-bedrock
  * - OpenAI family (4): openai, azure-openai, azure-openai-responses, openai-codex
- * - Google family (4): google, google-gemini-cli, google-antigravity, google-vertex
+ * - Google family (2): google, google-vertex
  * - Mistral (1): strict9 tool call ID mode with 7 model hints
  *
  * Providers NOT in this map fall through to DEFAULTS via spread.
@@ -53,8 +53,6 @@ const PROVIDER_OVERRIDES: Record<string, Partial<ProviderCapabilities>> = {
 
   // Google family
   "google": { providerFamily: "google" },
-  "google-gemini-cli": { providerFamily: "google" },
-  "google-antigravity": { providerFamily: "google" },
   "google-vertex": { providerFamily: "google" },
 
   // Mistral -- strict9 tool call ID normalization
@@ -86,8 +84,6 @@ const ALIASES: Record<string, string> = {
   "gcp": "google",
   "gcp-vertex": "google-vertex",
   "gemini": "google",
-  "gemini-cli": "google-gemini-cli",
-  "antigravity": "google-antigravity",
   "grok": "xai",
 };
 
@@ -139,7 +135,7 @@ export function isOpenAiFamily(provider: string): boolean {
 
 /**
  * Check if a provider belongs to the Google family.
- * True for: google, google-gemini-cli, google-antigravity, google-vertex (and their aliases).
+ * True for: google, google-vertex (and their aliases).
  */
 export function isGoogleFamily(provider: string): boolean {
   return resolveProviderCapabilities(provider).providerFamily === "google";
@@ -148,7 +144,7 @@ export function isGoogleFamily(provider: string): boolean {
 /**
  * Check if a provider is Google AI Studio (api.google.dev, NOT Vertex AI).
  * True for: "google" only (and aliases: "gcp", "gemini").
- * Excludes: google-vertex, google-gemini-cli, google-antigravity.
+ * Excludes: google-vertex.
  *
  * Only Google AI Studio supports the Caches API used by GeminiCacheManager.
  */
