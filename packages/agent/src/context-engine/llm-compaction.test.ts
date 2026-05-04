@@ -1133,7 +1133,7 @@ describe("three-zone middle-out compaction", () => {
   // -------------------------------------------------------------------------
 
   it("skips compaction when middle zone is too small", async () => {
-    const { deps } = createMockDeps();
+    const { deps, logger } = createMockDeps();
     const layer = createLlmCompactionLayer(
       { compactionCooldownTurns: 0, compactionPrefixAnchorTurns: 2 },
       deps,
@@ -1161,6 +1161,14 @@ describe("three-zone middle-out compaction", () => {
     // Middle too small, so compaction is skipped
     expect(mockGenerateSummary).not.toHaveBeenCalled();
     expect(result).toBe(messages);
+
+    // V5 regression: when compaction is structurally infeasible (middle too small),
+    // the trigger warn must NOT fire — otherwise we get a per-turn warn storm.
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const triggerWarnCalls = warnCalls.filter(
+      (c) => typeof c[1] === "string" && c[1].includes("LLM compaction triggered"),
+    );
+    expect(triggerWarnCalls).toHaveLength(0);
   });
 
   // -------------------------------------------------------------------------
@@ -1269,7 +1277,7 @@ describe("three-zone middle-out compaction", () => {
   // -------------------------------------------------------------------------
 
   it("empty middle with all messages fitting in head+tail returns unchanged", async () => {
-    const { deps } = createMockDeps();
+    const { deps, logger } = createMockDeps();
     const layer = createLlmCompactionLayer(
       { compactionCooldownTurns: 0, compactionPrefixAnchorTurns: 2 },
       deps,
@@ -1295,5 +1303,70 @@ describe("three-zone middle-out compaction", () => {
     // Middle is 0 (< MIN_MIDDLE_MESSAGES_FOR_COMPACTION), so no compaction
     expect(mockGenerateSummary).not.toHaveBeenCalled();
     expect(result).toBe(messages);
+
+    // V5 regression: trigger warn must not fire when nothing was compacted.
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const triggerWarnCalls = warnCalls.filter(
+      (c) => typeof c[1] === "string" && c[1].includes("LLM compaction triggered"),
+    );
+    expect(triggerWarnCalls).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Test 8: V5 regression — block-count storm with structurally-empty middle
+  // -------------------------------------------------------------------------
+
+  it("does not warn-storm when block_count exceeds threshold but middle is structurally empty", async () => {
+    // Reproduces the V5 production incident:
+    //   messageCount climbs past CACHE_AWARE_COMPACTION_BLOCK_THRESHOLD (60)
+    //   while every message is small enough that head+tail absorbs everything,
+    //   leaving middle empty. Pre-fix, every apply() call logged the trigger
+    //   warn; we observed 19 warns in 90s while the count climbed 61 -> 113.
+    const { deps, logger } = createMockDeps();
+    const layer = createLlmCompactionLayer(
+      // cooldown=0 so the storm path is exercised on every call
+      { compactionCooldownTurns: 0, compactionPrefixAnchorTurns: 2 },
+      deps,
+    );
+
+    // Build 70 small messages (> 60 block threshold) of tool_use/tool_result
+    // pairs, all tiny — total chars stay well under the budget so the tail
+    // absorbs everything below the head, leaving an empty middle.
+    const messages: AgentMessage[] = [
+      makeUserMsg("Q0: kick off"),
+      makeAssistantMsg("A0: starting"),
+    ];
+    for (let i = 0; i < 34; i++) {
+      messages.push({
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: `tc${i}`, name: "exec", input: { command: "x" } },
+        ],
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "test-model",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "tool_use",
+        timestamp: Date.now(),
+      } as AgentMessage);
+      messages.push(makeToolResult(`tc${i}`, "exec", `Failed: short ${i}`));
+    }
+    expect(messages.length).toBeGreaterThan(60); // confirm we trip block_count
+
+    // Drive 20 consecutive apply() calls to mirror many LLM round-trips.
+    for (let i = 0; i < 20; i++) {
+      const result = await layer.apply(messages, BUDGET);
+      expect(result).toBe(messages); // unchanged each turn
+    }
+
+    // generateSummary must never be called — middle is empty every iteration.
+    expect(mockGenerateSummary).not.toHaveBeenCalled();
+
+    // The trigger warn must fire ZERO times across all 20 calls.
+    const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const triggerWarnCalls = warnCalls.filter(
+      (c) => typeof c[1] === "string" && c[1].includes("LLM compaction triggered"),
+    );
+    expect(triggerWarnCalls).toHaveLength(0);
   });
 });
