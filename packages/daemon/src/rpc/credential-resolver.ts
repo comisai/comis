@@ -9,7 +9,20 @@
  * Resolution chain (matches pi-coding-agent runtime semantics):
  *   1. KEYLESS_PROVIDER_TYPES.has(entry.type) — ollama / lm-studio
  *   2. providers.entries.<provider>.apiKeyName → secretManager.has(...)
- *   3. pi-ai's getEnvApiKey(provider) — canonical env + OAuth + ADC + AWS
+ *   3. pi-ai's getEnvApiKey(provider) — canonical env vars (incl. ANTHROPIC_OAUTH_TOKEN
+ *      and AWS/ADC special-cases). Does NOT cover comis-managed OAuth profiles in
+ *      ~/.comis/auth-profiles.json (e.g. openai-codex).
+ *   4. Comis OAuth profiles — agent.oauthProfiles[provider] resolved against an
+ *      injected oauthProfileLoader (the OAuthCredentialStorePort handle held by
+ *      the daemon, adapted to a synchronous has-check at the call site).
+ *
+ * Note on synchronous loader facade (quick-260504-irq): `OAuthCredentialStorePort.has`
+ * is async (returns Promise<Result<boolean, Error>>). To avoid an async cascade
+ * through every call site, this resolver remains SYNCHRONOUS and accepts a
+ * sync facade (`oauthProfileLoader: { has(profileId: string): boolean }`).
+ * The async port `has()` call MUST be performed at the daemon edge
+ * (config-handlers / agent-handlers) and adapted into the closure. This keeps
+ * the port-side validator I/O-free (Hexagonal: validator does no I/O).
  *
  * @module
  */
@@ -37,6 +50,21 @@ export interface CredentialResolverDeps {
    * pointing the operator at `models.defaultProvider`.
    */
   modelsConfig?: { defaultProvider?: string };
+  /**
+   * Per-agent OAuth profile map (Record<provider, profileId>) sourced from
+   * `agents.<id>.oauthProfiles` on the daemon's container.config. When an
+   * entry exists for the resolved provider AND `oauthProfileLoader.has`
+   * returns true, the resolver returns ok with source: "oauth_profile".
+   */
+  oauthProfiles?: Record<string, string>;
+  /**
+   * Synchronous facade over OAuthCredentialStorePort.has. The async port
+   * call MUST be performed at the daemon edge (config-handlers /
+   * agent-handlers) and adapted to this sync shape — the resolver itself
+   * does no I/O (hexagonal: port-side validator). Pass a closure such as
+   * `{ has: () => storeHasResult.ok && storeHasResult.value }`.
+   */
+  oauthProfileLoader?: { has(profileId: string): boolean };
 }
 
 export interface CredentialResolution {
@@ -44,7 +72,7 @@ export interface CredentialResolution {
   /** When ok=false: actionable error message ready to throw. */
   reason?: string;
   /** When ok=true: which source resolved. Useful for debug logs. */
-  source?: "keyless" | "providers_entry" | "env_canonical";
+  source?: "keyless" | "providers_entry" | "env_canonical" | "oauth_profile";
   /** When ok=true: the provider name actually checked (after "default" resolution). */
   resolvedProvider?: string;
 }
@@ -101,18 +129,47 @@ export function resolveProviderCredential(
     return { ok: true, source: "providers_entry", resolvedProvider: effectiveProvider };
   }
 
-  // 3. Source B: pi-ai canonical env / OAuth / ADC chain
+  // 3. Source C: comis OAuth profile (per-agent agents.<id>.oauthProfiles).
+  //    Covers OAuth-only providers like openai-codex whose tokens live in
+  //    ~/.comis/auth-profiles.json — pi-ai's getEnvApiKey does NOT see them.
+  //    Inserted before Source B so OAuth profiles win over env-canonical when
+  //    both would resolve (the operator explicitly configured the profile).
+  // eslint-disable-next-line security/detect-object-injection -- typed Record<string, string> read; effectiveProvider validated above
+  const configuredProfileId = deps.oauthProfiles?.[effectiveProvider];
+  if (configuredProfileId && deps.oauthProfileLoader?.has(configuredProfileId)) {
+    return { ok: true, source: "oauth_profile", resolvedProvider: effectiveProvider };
+  }
+
+  // 4. Source B: pi-ai canonical env / OAuth / ADC chain
   if (getEnvApiKey(effectiveProvider)) {
     return { ok: true, source: "env_canonical", resolvedProvider: effectiveProvider };
   }
 
-  return { ok: false, reason: buildRejectionMessage(effectiveProvider, entry) };
+  return { ok: false, reason: buildRejectionMessage(effectiveProvider, entry, configuredProfileId) };
 }
 
 function buildRejectionMessage(
   targetProvider: string,
   entry: ProviderEntry | undefined,
+  configuredProfileId: string | undefined,
 ): string {
+  // OAuth-aware rejection: when the agent has an oauthProfiles entry for this
+  // provider but the loader could not confirm the profile, the failure mode is
+  // a missing OAuth profile (not a missing API key). Point the operator at
+  // `comis auth login` rather than env_set / apiKeyName recovery.
+  if (configuredProfileId) {
+    const lines: string[] = [];
+    lines.push(
+      `Cannot set agent provider to "${targetProvider}": OAuth profile "${configuredProfileId}" is configured but not found in the OAuth credential store (~/.comis/auth-profiles.json).`,
+    );
+    lines.push(`Recovery:`);
+    lines.push(
+      `  Run \`comis auth login --provider ${targetProvider}\` to (re)authenticate and create the profile, then retry this patch.`,
+    );
+    lines.push(`  Run \`comis auth list\` to see currently stored profiles.`);
+    return lines.join("\n");
+  }
+
   const lines: string[] = [];
   lines.push(`Cannot set agent provider to "${targetProvider}": no API key found.`);
   if (entry?.apiKeyName) {
