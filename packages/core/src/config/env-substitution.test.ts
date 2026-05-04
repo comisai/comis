@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { substituteEnvVars, warnSuspiciousEnvValues, extractReferencedSecretNames } from "./env-substitution.js";
+import {
+  substituteEnvVars,
+  warnSuspiciousEnvValues,
+  extractReferencedSecretNames,
+  findUnresolvedEnvRefs,
+  formatMissingEnvRefError,
+} from "./env-substitution.js";
 
 /**
  * Helper: create a simple secret getter from a map.
@@ -388,6 +394,119 @@ describe("config/env-substitution", () => {
       });
 
       expect(new Set(asked)).toEqual(extracted);
+    });
+  });
+
+  describe("findUnresolvedEnvRefs", () => {
+    it("returns empty array when all refs resolve", () => {
+      const getSecret = createSecretGetter({
+        ANTHROPIC_API_KEY: "sk-test",
+        FINNHUB_API_KEY: "abc",
+      });
+      const obj = {
+        providers: { anthropic: { apiKey: "${ANTHROPIC_API_KEY}" } },
+        env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+      };
+      expect(findUnresolvedEnvRefs(obj, getSecret)).toEqual([]);
+    });
+
+    it("returns one entry when a single ${VAR} is missing", () => {
+      const getSecret = createSecretGetter({});
+      const obj = { env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" } };
+      const result = findUnresolvedEnvRefs(obj, getSecret);
+      expect(result).toEqual([
+        { path: "env.FINNHUB_API_KEY", varName: "FINNHUB_API_KEY" },
+      ]);
+    });
+
+    it("walks nested objects and arrays with [N] path notation", () => {
+      const getSecret = createSecretGetter({});
+      const obj = {
+        servers: [
+          { name: "a", env: { FOO: "${FOO}" } },
+          { name: "b", env: { BAR: "${BAR}" } },
+        ],
+      };
+      const result = findUnresolvedEnvRefs(obj, getSecret);
+      // Sort for deterministic comparison — internal walk order is structural.
+      const sorted = [...result].sort((a, b) => a.path.localeCompare(b.path));
+      expect(sorted).toEqual([
+        { path: "servers[0].env.FOO", varName: "FOO" },
+        { path: "servers[1].env.BAR", varName: "BAR" },
+      ]);
+    });
+
+    it("detects whole-string bare $VAR (agent shorthand)", () => {
+      const getSecret = createSecretGetter({});
+      const obj = { env: { GEMINI_API_KEY: "$GEMINI_API_KEY" } };
+      const result = findUnresolvedEnvRefs(obj, getSecret);
+      expect(result).toEqual([
+        { path: "env.GEMINI_API_KEY", varName: "GEMINI_API_KEY" },
+      ]);
+    });
+
+    it("does NOT flag escaped $${VAR} sequences (literal, not a ref)", () => {
+      const getSecret = createSecretGetter({});
+      const obj = { literal: "$${VAR}" };
+      expect(findUnresolvedEnvRefs(obj, getSecret)).toEqual([]);
+    });
+
+    it("treats empty string from getSecret as a valid resolved value", () => {
+      // Mirrors substituteEnvVars semantics: undefined = missing, "" = present.
+      const getSecret = createSecretGetter({ EMPTY: "" });
+      const obj = { env: { EMPTY: "${EMPTY}" } };
+      expect(findUnresolvedEnvRefs(obj, getSecret)).toEqual([]);
+    });
+
+    it("returns one entry per location when same var is missing in multiple paths", () => {
+      const getSecret = createSecretGetter({});
+      const obj = {
+        a: { env: { SHARED: "${SHARED}" } },
+        b: { env: { SHARED: "${SHARED}" } },
+      };
+      const result = findUnresolvedEnvRefs(obj, getSecret);
+      expect(result).toHaveLength(2);
+      const paths = result.map((r) => r.path).sort();
+      expect(paths).toEqual(["a.env.SHARED", "b.env.SHARED"]);
+      expect(result.every((r) => r.varName === "SHARED")).toBe(true);
+    });
+
+    it("returns multiple entries with same path when one string has multiple missing refs", () => {
+      const getSecret = createSecretGetter({});
+      const obj = { header: "Bearer ${MISSING_A} ${MISSING_B}" };
+      const result = findUnresolvedEnvRefs(obj, getSecret);
+      expect(result).toHaveLength(2);
+      // Both refs share the same string-location path; varNames differ.
+      expect(result.every((r) => r.path === "header")).toBe(true);
+      expect(new Set(result.map((r) => r.varName))).toEqual(new Set(["MISSING_A", "MISSING_B"]));
+    });
+  });
+
+  describe("formatMissingEnvRefError", () => {
+    it("formats single-var case with singular 'env var' wording", () => {
+      const msg = formatMissingEnvRefError("finnhub", ["FINNHUB_API_KEY"]);
+      expect(msg).toContain("[invalid_value]");
+      expect(msg).toContain('enabled MCP server "finnhub"');
+      expect(msg).toContain("references env var FINNHUB_API_KEY");
+      expect(msg).toContain('secrets_manage({action:"set", name:"FINNHUB_API_KEY"');
+      expect(msg).toContain("Drop the env block");
+      expect(msg).toContain("Set enabled:false");
+      expect(msg).not.toContain("(+");
+    });
+
+    it("formats three-var case alphabetically with plural 'env vars' wording", () => {
+      const msg = formatMissingEnvRefError("multi", ["GAMMA", "ALPHA", "BETA"]);
+      expect(msg).toContain('enabled MCP server "multi"');
+      expect(msg).toContain("references env vars ALPHA, BETA, GAMMA");
+      // Recovery option (1) references the FIRST missing var (alphabetical).
+      expect(msg).toContain('secrets_manage({action:"set", name:"ALPHA"');
+      expect(msg).not.toContain("(+");
+    });
+
+    it("truncates beyond 3 names and appends (+N more)", () => {
+      const msg = formatMissingEnvRefError("big", ["D", "C", "B", "A"]);
+      expect(msg).toContain("references env vars A, B, C (+1 more)");
+      expect(msg).toContain('secrets_manage({action:"set", name:"A"');
     });
   });
 });

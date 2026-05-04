@@ -336,7 +336,15 @@ export { resolveIncludes, MAX_INCLUDE_DEPTH } from "./include-resolver.js";
 export type { IncludeResolverDeps } from "./include-resolver.js";
 
 // Environment variable substitution (${VAR} processing)
-export { substituteEnvVars, warnSuspiciousEnvValues, extractReferencedSecretNames, type EnvValueWarning } from "./env-substitution.js";
+export {
+  substituteEnvVars,
+  warnSuspiciousEnvValues,
+  extractReferencedSecretNames,
+  findUnresolvedEnvRefs,
+  formatMissingEnvRefError,
+  type EnvValueWarning,
+  type UnresolvedEnvRef,
+} from "./env-substitution.js";
 
 // Config migration (legacy key transformation)
 export { migrateConfig } from "./migrate.js";
