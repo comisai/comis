@@ -45,8 +45,13 @@ function isContainer(): boolean {
  * `available()` only checks if `bwrap` is on PATH, so without this probe the
  * daemon would log "provider: bwrap" even when bwrap is non-functional.
  * ~50ms one-shot at startup.
+ *
+ * Returns the raw `stderr` and `signal` from bwrap so the caller can include
+ * them in the warn payload — operators reading the log see the actual bwrap
+ * error message (e.g. "Creating new namespace failed: Operation not
+ * permitted") without having to enable DEBUG logging.
  */
-function bwrapSmokeTest(): boolean {
+function bwrapSmokeTest(): { ok: boolean; stderr: string; signal: NodeJS.Signals | null } {
   const sysBinds = SYSTEM_RO_PATHS
     .filter((p) => existsSync(p))
     .flatMap((p) => ["--ro-bind", p, p]);
@@ -62,7 +67,11 @@ function bwrapSmokeTest(): boolean {
     ],
     { encoding: "utf8", timeout: 5000 },
   );
-  return r.status === 0;
+  return {
+    ok: r.status === 0,
+    stderr: (r.stderr ?? "").trim(),
+    signal: r.signal ?? null,
+  };
 }
 
 /**
@@ -74,7 +83,8 @@ export function detectSandboxProvider(logger?: DetectLogger): SandboxProvider | 
   if (process.platform === "linux") {
     const bwrap = new BwrapProvider();
     if (bwrap.available()) {
-      if (!bwrapSmokeTest()) {
+      const smoke = bwrapSmokeTest();
+      if (!smoke.ok) {
         // bwrap is on PATH but the kernel rejects the isolation flags
         // (typically Docker Desktop's linuxkit on macOS/Windows). Behaviour
         // diverges by environment:
@@ -92,12 +102,18 @@ export function detectSandboxProvider(logger?: DetectLogger): SandboxProvider | 
         //    (rare on stock Linux). Surface it loudly and return the
         //    provider so exec fails via bwrap's stderr until the operator
         //    fixes the kernel/userns config — never silently degrade
-        //    sandboxing on a bare-metal host.
+        //    sandboxing on a bare-metal host. The warn payload now includes
+        //    `stderr` (the actual bwrap error) and `signal` so operators
+        //    don't have to enable DEBUG logging to diagnose; the hint
+        //    points at stderr first and demotes kernel sysctls to a
+        //    secondary fallback.
         if (isContainer()) {
           logger?.warn(
             {
               hint: "Kernel rejected --unshare-pid + --proc /proc (typically Docker Desktop linuxkit on macOS/Windows). Sandbox auto-disabled so agent exec is functional for development. PRODUCTION DEPLOYMENTS MUST USE A REAL LINUX HOST — see docs/operations/docker.mdx → Platform Support.",
               errorKind: "config",
+              stderr: smoke.stderr,
+              signal: smoke.signal,
             },
             "Exec sandbox DISABLED (kernel limitation; container host) -- shell commands will run UNSANDBOXED. Dev/testing only.",
           );
@@ -105,8 +121,10 @@ export function detectSandboxProvider(logger?: DetectLogger): SandboxProvider | 
         }
         logger?.warn(
           {
-            hint: "Kernel rejected --unshare-pid + --proc /proc on a bare-metal host. Check `kernel.unprivileged_userns_clone` and AppArmor's `apparmor_restrict_unprivileged_userns`. Exec calls will fail until bwrap can run.",
+            hint: "Check the `stderr` field above for the actual bwrap error — that's the primary signal. If stderr mentions namespaces or 'Operation not permitted' on a bare-metal host, then as a secondary diagnostic verify `sysctl kernel.unprivileged_userns_clone=1` and AppArmor's `apparmor_restrict_unprivileged_userns=0` (Ubuntu 23.10+). Exec calls will fail until bwrap can run.",
             errorKind: "config",
+            stderr: smoke.stderr,
+            signal: smoke.signal,
           },
           "bwrap installed but smoke test failed -- exec sandbox is non-functional on this kernel",
         );

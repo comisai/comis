@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const mockBwrapAvailable = vi.fn();
 const mockSbexecAvailable = vi.fn();
 const mockExistsSync = vi.fn<(p: string) => boolean>();
-const mockSpawnSync = vi.fn<(cmd: string, args: string[], opts: object) => { status: number; stdout: string; stderr: string }>();
+const mockSpawnSync = vi.fn<(cmd: string, args: string[], opts: object) => { status: number | null; stdout: string; stderr: string; signal?: NodeJS.Signals | null }>();
 
 vi.mock("./bwrap-provider.js", () => {
   // Mirror of SYSTEM_RO_PATHS from bwrap-provider.ts — keep in sync (co-located
@@ -188,6 +188,7 @@ describe("detectSandboxProvider", () => {
       status: 1,
       stdout: "",
       stderr: "bwrap: Creating new namespace failed: Operation not permitted",
+      signal: null,
     });
     // Default mockExistsSync is false → not a container.
     const logger = createMockLogger();
@@ -204,6 +205,34 @@ describe("detectSandboxProvider", () => {
     expect(logger.calls[0]!.msg).toContain("smoke test failed");
     expect(logger.calls[0]!.obj.hint).toContain("bare-metal host");
     expect(logger.calls[0]!.obj.errorKind).toBe("config");
+    // Real bwrap stderr must be in the payload so operators don't have to enable DEBUG.
+    expect(logger.calls[0]!.obj.stderr).toContain("Creating new namespace failed: Operation not permitted");
+    expect(logger.calls[0]!.obj.signal).toBeNull();
+    // Hint structure: stderr-first, kernel sysctls demoted to secondary.
+    expect(logger.calls[0]!.obj.hint).toMatch(/stderr/i);
+    expect(logger.calls[0]!.obj.hint).toContain("kernel.unprivileged_userns_clone");
+    expect(logger.calls[0]!.obj.hint).toContain("apparmor_restrict_unprivileged_userns");
+    // Order matters: stderr guidance must precede kernel sysctl guidance.
+    const hint = String(logger.calls[0]!.obj.hint);
+    expect(hint.toLowerCase().indexOf("stderr"))
+      .toBeLessThan(hint.indexOf("kernel.unprivileged_userns_clone"));
+  });
+
+  it("smoke-test failure log includes signal field when bwrap is killed by signal", () => {
+    setPlatform("linux");
+    mockBwrapAvailable.mockReturnValue(true);
+    mockSpawnSync.mockReturnValue({
+      status: null,
+      stdout: "",
+      stderr: "",
+      signal: "SIGTERM",
+    });
+    const logger = createMockLogger();
+
+    detectSandboxProvider(logger);
+
+    expect(logger.calls).toHaveLength(1);
+    expect(logger.calls[0]!.obj.signal).toBe("SIGTERM");
   });
 
   it("returns undefined inside a container when smoke test fails (auto-disable for dev/testing)", () => {
