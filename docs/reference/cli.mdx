@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis ships **50+ leaf commands grouped into 19 command groups** (verified against `packages/cli/src/cli.ts` at version 1.0.35). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
+Comis ships **50+ leaf commands grouped into 20 command groups** (verified against `packages/cli/src/cli.ts` at version 1.0.35). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
 
 <Snippet file="invocation-modes.mdx" />
 
@@ -387,13 +387,14 @@ comis daemon logs -n 100
 
 ### `comis doctor`
 
-Run diagnostic health checks across five categories: configuration, daemon, gateway, channels, and workspace. Supports auto-repair mode for fixable issues.
+Run diagnostic health checks across six categories: configuration, daemon, gateway, channels, workspace, and oauth. Supports auto-repair mode for fixable issues. The `oauth` category covers JWT expiry, schema mismatch, ca-certificates, HTTPS_PROXY drift, and TLS preflight — see [OAuth concepts → Error classification](/security/oauth#error-classification).
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--repair` | `boolean` | `false` | Auto-fix repairable issues |
 | `-c, --config <paths...>` | `string[]` | - | Config file paths to check |
 | `--format <format>` | `table` \| `json` | `table` | Output format |
+| `--refresh-test` | `boolean` | `false` | OAuth: actively test refresh against the provider. **Warning:** this rotates the refresh token at OpenAI. |
 
 ```bash
 # Run full diagnostics
@@ -494,6 +495,27 @@ comis init
 comis init --non-interactive --accept-risk \
   --provider anthropic --api-key "$ANTHROPIC_API_KEY" \
   --start-daemon --json
+```
+
+#### Non-interactive rejection: `--provider openai-codex`
+
+`comis init --non-interactive --provider openai-codex` is **deliberately rejected** because the Codex OAuth flow requires interactive UI (browser callback, device-code prompt, or manual paste). The CLI exits non-zero with the literal error:
+
+> openai-codex requires interactive login; run `comis init` interactively or run `comis auth login --provider openai-codex --method device-code` separately.
+
+For headless / CI environments, you have three options:
+
+1. Run `comis init` interactively (in a TTY).
+2. Run `comis init --non-interactive` with a different provider, then run [`comis auth login --method device-code`](#comis-auth) afterwards to add the Codex profile.
+3. Pre-seed the OAuth credential via the [`OAUTH_OPENAI_CODEX`](/reference/environment-variables#oauth_openai_codex) environment variable on the daemon's first start. The daemon's env-var bootstrap path is read once when the credential store is empty for that provider; subsequent drift triggers a one-shot WARN.
+
+```bash
+# Wrong — exits non-zero with the error above
+comis init --non-interactive --provider openai-codex
+
+# Right — drop --provider and add the profile interactively afterward
+comis init --non-interactive
+comis auth login --provider openai-codex --method device-code
 ```
 
 ---
