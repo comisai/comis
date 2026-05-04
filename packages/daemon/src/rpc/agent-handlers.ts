@@ -145,13 +145,32 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       // ordering — runs BEFORE the in-memory commit so rejection prevents
       // assignment, file persist, and hot-add. Same helper as the patch /
       // update call sites for cross-handler consistency.
-      const credCheck = resolveProviderCredential(parsedConfig.provider, {
-        providerEntries: deps.providerEntries ?? {},
-        secretManager: deps.secretManager,
-        modelsConfig: deps.modelsConfig,
-      });
-      if (!credCheck.ok) {
-        throw new Error(credCheck.reason!);
+      //
+      // quick-260504-irq: also plumb agents.<id>.oauthProfiles + the
+      // daemon-level OAuth credential store so OAuth-only providers (e.g.
+      // openai-codex) can resolve via Source C. Pre-resolve has() so the
+      // resolver itself stays synchronous (port-side validator does no I/O).
+      {
+        const targetProvider = parsedConfig.provider;
+        // eslint-disable-next-line security/detect-object-injection -- typed Record<string, string> read; targetProvider validated by schema parse
+        const configuredProfileId = parsedConfig.oauthProfiles?.[targetProvider];
+        let loaderHasProfile = false;
+        if (configuredProfileId && deps.oauthCredentialStore) {
+          const hasResult = await deps.oauthCredentialStore.has(configuredProfileId);
+          loaderHasProfile = hasResult.ok && hasResult.value === true;
+        }
+        const credCheck = resolveProviderCredential(targetProvider, {
+          providerEntries: deps.providerEntries ?? {},
+          secretManager: deps.secretManager,
+          modelsConfig: deps.modelsConfig,
+          oauthProfiles: parsedConfig.oauthProfiles,
+          oauthProfileLoader: configuredProfileId
+            ? { has: (id) => id === configuredProfileId && loaderHasProfile }
+            : undefined,
+        });
+        if (!credCheck.ok) {
+          throw new Error(credCheck.reason!);
+        }
       }
 
       deps.agents[agentId] = parsedConfig;
@@ -351,22 +370,43 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         }
       }
 
-      // Credential guard + probe (260501-2pz): when provider OR model
-      // changes, (a) GUARD — fail-loud if the resulting provider's API key
-      // is not resolvable from any source (no silent skip), then (b) PROBE
-      // — preexisting wire validation when an explicit providers.entries
+      // Credential guard + probe (260501-2pz): when provider changes,
+      // (a) GUARD — fail-loud if the resulting provider's API key is not
+      // resolvable from any source (no silent skip), then (b) PROBE —
+      // preexisting wire validation when an explicit providers.entries
       // record with apiKeyName exists. Order matters: guard runs first
       // (cheap, all paths), probe runs second (only when applicable).
+      //
+      // quick-260504-irq: model-only changes with unchanged provider DO
+      // NOT fire the guard or probe — they introduce no new credential
+      // surface. Stale-broken-config detection moves to the next chat
+      // turn (fail-loud at the request boundary), where the message is
+      // correctly shaped for the actual failure mode (not a pre-emptive
+      // API-key prompt that is wrong for OAuth providers like
+      // openai-codex). Also plumbs agents.<id>.oauthProfiles + the
+      // daemon-level OAuth credential store so Source C can fire.
       const providerChanging = config.provider !== undefined && config.provider !== existing.provider;
-      const modelChanging = config.model !== undefined && config.model !== existing.model;
-      if (providerChanging || modelChanging) {
+      if (providerChanging) {
         const targetProvider = parsedConfig.provider;
+
+        // Pre-resolve has() at the daemon edge so the resolver stays sync.
+        // eslint-disable-next-line security/detect-object-injection -- typed Record<string, string> read; targetProvider validated by schema parse
+        const configuredProfileId = parsedConfig.oauthProfiles?.[targetProvider];
+        let loaderHasProfile = false;
+        if (configuredProfileId && deps.oauthCredentialStore) {
+          const hasResult = await deps.oauthCredentialStore.has(configuredProfileId);
+          loaderHasProfile = hasResult.ok && hasResult.value === true;
+        }
 
         // (a) GUARD — fail-loud if no credential source resolves
         const resolution = resolveProviderCredential(targetProvider, {
           providerEntries: deps.providerEntries ?? {},
           secretManager: deps.secretManager,
           modelsConfig: deps.modelsConfig,
+          oauthProfiles: parsedConfig.oauthProfiles,
+          oauthProfileLoader: configuredProfileId
+            ? { has: (id) => id === configuredProfileId && loaderHasProfile }
+            : undefined,
         });
         if (!resolution.ok) {
           throw new Error(resolution.reason!);

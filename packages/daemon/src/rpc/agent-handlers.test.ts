@@ -1699,10 +1699,12 @@ describe("createAgentHandlers", () => {
       expect(mockProbeProviderAuth).toHaveBeenCalledOnce();
     });
 
-    it("agents.update with model-only change rejects when current provider has no resolvable key (regression detector)", async () => {
+    it("agents.update with model-only change does NOT invoke guard when provider is unchanged (quick-260504-irq)", async () => {
       // Seed an agent that points at an unauthenticated provider directly.
-      // Per Plan-checker fix #4: bypass agents.create (which would now
-      // reject) by populating deps.agents directly.
+      // The new policy: model-only patches with unchanged provider DO NOT
+      // trigger the guard or probe. The runtime auth chain that just
+      // authenticated the LLM call making this patch will keep working.
+      // Stale-broken-config detection moves to the next chat turn.
       const deps = makeDeps({
         agents: {
           stale: {
@@ -1718,13 +1720,44 @@ describe("createAgentHandlers", () => {
       });
       const handlers = createAgentHandlers(deps);
 
-      await expect(
-        handlers["agents.update"]!({
-          agentId: "stale",
-          config: { model: "anthropic/claude-3-haiku" }, // model-only patch
-          _trustLevel: "admin",
-        }),
-      ).rejects.toThrow(/Cannot set agent provider to "openrouter"/);
+      const result = (await handlers["agents.update"]!({
+        agentId: "stale",
+        config: { model: "anthropic/claude-3-haiku" }, // model-only patch
+        _trustLevel: "admin",
+      })) as { updated: boolean };
+
+      expect(result.updated).toBe(true);
+      expect(deps.agents["stale"]!.model).toBe("anthropic/claude-3-haiku");
+      // Guard did not fire → probe likewise did not fire
+      expect(mockProbeProviderAuth).not.toHaveBeenCalled();
+    });
+
+    it("agents.update with provider change to OAuth-only provider succeeds when profile is loadable (Source C)", async () => {
+      const deps = makeDeps({
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+        oauthCredentialStore: {
+          has: async (id: string) => ({ ok: true, value: id === "openai-codex:user_a@example.com" }),
+          get: async () => ({ ok: true, value: undefined }),
+          set: async () => ({ ok: true, value: undefined }),
+          delete: async () => ({ ok: true, value: false }),
+          list: async () => ({ ok: true, value: [] }),
+        } as unknown as OAuthCredentialStorePort,
+      });
+      const handlers = createAgentHandlers(deps);
+
+      const result = (await handlers["agents.update"]!({
+        agentId: "default",
+        config: {
+          provider: "openai-codex",
+          model: "gpt-5.3-codex",
+          oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+        },
+        _trustLevel: "admin",
+      })) as { updated: boolean; config: Record<string, unknown> };
+
+      expect(result.updated).toBe(true);
+      expect(result.config.provider).toBe("openai-codex");
     });
 
     it("agents.update with non-provider/model patch (skills) does not invoke guard", async () => {
@@ -1810,6 +1843,41 @@ describe("createAgentHandlers", () => {
       expect(result.created).toBe(true);
       expect(deps.agents["new-bot"]).toBeDefined();
       expect(deps.agents["new-bot"]!.provider).toBe("openrouter");
+    });
+
+    it("agents.create with OAuth-only provider + missing profile rejects with auth-login recovery copy (quick-260504-irq)", async () => {
+      // The agents.update path can't directly exercise the OAuth-aware
+      // rejection copy because the D-11 oauthProfiles existence check
+      // (agent-handlers.ts:357-371) runs BEFORE the credential guard and
+      // throws first when has() returns false. agents.create has no D-11
+      // block, so it's the cleanest place to assert the credential guard's
+      // OAuth-aware rejection copy path.
+      const deps = makeDeps({
+        providerEntries: {},
+        secretManager: { has: () => false, get: () => undefined },
+        oauthCredentialStore: {
+          has: async () => ({ ok: true, value: false }),
+          get: async () => ({ ok: true, value: undefined }),
+          set: async () => ({ ok: true, value: undefined }),
+          delete: async () => ({ ok: true, value: false }),
+          list: async () => ({ ok: true, value: [] }),
+        } as unknown as OAuthCredentialStorePort,
+      });
+      const handlers = createAgentHandlers(deps);
+
+      await expect(
+        handlers["agents.create"]!({
+          agentId: "codex-bot",
+          config: {
+            name: "Codex",
+            provider: "openai-codex",
+            model: "gpt-5.3-codex",
+            oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+          },
+          _trustLevel: "admin",
+        }),
+      ).rejects.toThrow(/comis auth login --provider openai-codex/);
+      expect(deps.agents["codex-bot"]).toBeUndefined();
     });
   });
 });

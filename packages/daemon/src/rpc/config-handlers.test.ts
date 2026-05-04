@@ -1839,11 +1839,13 @@ describe("config.patch credential guard (260501-2pz)", () => {
     expect(result).toMatchObject({ patched: true });
   });
 
-  it("rejects agents.<id>.model patch when current provider has no resolvable key", async () => {
+  it("does NOT fire on model-only patches when provider is unchanged (quick-260504-irq)", async () => {
     const deps = makeDeps(tempConfig.configPath);
-    // Seed agent at an unauthenticated provider DIRECTLY (cannot use
-    // agents.create here — config-handlers tests don't drive that handler;
-    // the underlying config has agents.default with no auth chain set).
+    // Seed agent at a provider that has NO resolvable credential — guard
+    // would reject if it fired. Patch only `.model` (not `.provider`); the
+    // resolved targetProvider equals the current provider, so the guard
+    // must short-circuit. Stale-broken-config detection moves to the next
+    // chat turn (fail-loud at the request boundary), not at patch time.
     (deps.container.config as { agents: Record<string, unknown> }).agents["default"] = {
       name: "Stale",
       model: "qwen/qwen3-coder",
@@ -1852,13 +1854,89 @@ describe("config.patch credential guard (260501-2pz)", () => {
     };
     const handlers = createConfigHandlers(deps);
 
+    const result = await handlers["config.patch"]!({
+      section: "agents",
+      key: "default.model",
+      value: "qwen/qwen3-coder-latest",
+      _trustLevel: "admin",
+    });
+    expect(result).toMatchObject({ patched: true });
+  });
+
+  it("succeeds when OAuth-only provider has a configured + loadable profile (Source C)", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    // Seed an oauthCredentialStore stub that confirms the profile exists.
+    (deps as ConfigHandlerDeps).oauthCredentialStore = {
+      has: async (id: string) => ({ ok: true, value: id === "openai-codex:user_a@example.com" }),
+      get: async () => ({ ok: true, value: undefined }),
+      set: async () => ({ ok: true, value: undefined }),
+      delete: async () => ({ ok: true, value: false }),
+      list: async () => ({ ok: true, value: [] }),
+    } as unknown as ConfigHandlerDeps["oauthCredentialStore"];
+    // Seed the agent's oauthProfiles config so the resolver consults Source C.
+    (deps.container.config as { agents: Record<string, unknown> }).agents["default"] = {
+      name: "Codex",
+      model: "claude-sonnet-4-5-20250929",
+      provider: "anthropic", // start somewhere arbitrary
+      oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+      maxSteps: 25,
+    };
+    const handlers = createConfigHandlers(deps);
+
+    const result = await handlers["config.patch"]!({
+      section: "agents",
+      key: "default.provider",
+      value: "openai-codex",
+      _trustLevel: "admin",
+    });
+    expect(result).toMatchObject({ patched: true });
+  });
+
+  it("rejects with OAuth-aware copy when OAuth profile is configured but loader reports missing", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    (deps as ConfigHandlerDeps).oauthCredentialStore = {
+      has: async () => ({ ok: true, value: false }),
+      get: async () => ({ ok: true, value: undefined }),
+      set: async () => ({ ok: true, value: undefined }),
+      delete: async () => ({ ok: true, value: false }),
+      list: async () => ({ ok: true, value: [] }),
+    } as unknown as ConfigHandlerDeps["oauthCredentialStore"];
+    (deps.container.config as { agents: Record<string, unknown> }).agents["default"] = {
+      name: "Codex",
+      model: "claude-sonnet-4-5-20250929",
+      provider: "anthropic",
+      oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+      maxSteps: 25,
+    };
+    const handlers = createConfigHandlers(deps);
+
     await expect(
       handlers["config.patch"]!({
         section: "agents",
-        key: "default.model",
-        value: "qwen/qwen3-coder-latest",
+        key: "default.provider",
+        value: "openai-codex",
         _trustLevel: "admin",
       }),
-    ).rejects.toThrow(/Cannot set agent provider to "openrouter"/);
+    ).rejects.toThrow(/comis auth login --provider openai-codex/);
+  });
+
+  it("provider-change to OAuth-only provider with NO oauthProfiles config falls through to standard rejection", async () => {
+    const deps = makeDeps(tempConfig.configPath);
+    (deps.container.config as { agents: Record<string, unknown> }).agents["default"] = {
+      name: "Plain",
+      model: "claude-sonnet-4-5-20250929",
+      provider: "anthropic",
+      maxSteps: 25,
+    };
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "agents",
+        key: "default.provider",
+        value: "openai-codex",
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/Cannot set agent provider to "openai-codex"/);
   });
 });
