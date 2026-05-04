@@ -18,8 +18,14 @@ import type { SandboxOptions, SandboxProvider } from "./types.js";
 /**
  * System paths to bind read-only. Filtered by existsSync once at
  * first buildArgs() call and cached for the provider's lifetime.
+ *
+ * Exported so the bwrap smoke test in detect-provider.ts consumes the
+ * same list — drift between smoke and production binds caused a real
+ * false-negative on usrmerge x86-64 hosts (smoke test missed /lib64
+ * → /bin/true's dynamic linker unreachable → smoke EPERMs while the
+ * production sandbox actually works fine).
  */
-const SYSTEM_RO_PATHS = [
+export const SYSTEM_RO_PATHS = [
   "/usr",
   "/bin",
   "/sbin",
@@ -40,7 +46,7 @@ const SYSTEM_RO_PATHS = [
   "/etc/passwd",
   "/etc/group",
   "/etc/nsswitch.conf",
-];
+] as const;
 
 /**
  * Per-user config paths to bind read-only. Resolved against the daemon

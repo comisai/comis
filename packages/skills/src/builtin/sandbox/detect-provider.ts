@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 import type { SandboxProvider } from "./types.js";
-import { BwrapProvider } from "./bwrap-provider.js";
+import { BwrapProvider, SYSTEM_RO_PATHS } from "./bwrap-provider.js";
 import { SandboxExecProvider } from "./sandbox-exec-provider.js";
 
 /** Minimal logger interface for sandbox detection. */
@@ -32,24 +32,31 @@ function isContainer(): boolean {
 }
 
 /**
- * Smoke-test the bwrap binary against the isolation flags BwrapProvider
- * actually uses (--unshare-pid + --proc /proc). On Docker Desktop's linuxkit
- * kernel and similar restricted environments this combo EPERMs at the
- * procfs mount step, even with apparmor/seccomp unconfined — every later
- * exec call would silently fail. `available()` only checks if `bwrap` is on
- * PATH, so without this probe the daemon would log "provider: bwrap" even
- * when bwrap is non-functional. ~50ms one-shot at startup.
+ * Smoke-test bwrap against the same SYSTEM_RO_PATHS BwrapProvider.buildArgs()
+ * uses, plus --unshare-pid + --proc /proc — the kernel-feature combo we
+ * actually need to detect. Reusing the production bind list prevents drift
+ * (e.g. /lib64 must be present on usrmerge x86-64 hosts where /bin/true's
+ * dynamic linker lives there; without it the smoke spawn EPERMs at execvp
+ * even though the production sandbox itself runs fine).
+ *
+ * On Docker Desktop's linuxkit kernel and similar restricted environments
+ * --unshare-pid + --proc /proc EPERMs at the procfs mount step, even with
+ * apparmor/seccomp unconfined — every later exec call would silently fail.
+ * `available()` only checks if `bwrap` is on PATH, so without this probe the
+ * daemon would log "provider: bwrap" even when bwrap is non-functional.
+ * ~50ms one-shot at startup.
  */
 function bwrapSmokeTest(): boolean {
+  const sysBinds = SYSTEM_RO_PATHS
+    .filter((p) => existsSync(p))
+    .flatMap((p) => ["--ro-bind", p, p]);
   const r = spawnSync(
     "bwrap",
     [
       "--unshare-user",
       "--unshare-pid",
       "--proc", "/proc",
-      "--ro-bind", "/usr", "/usr",
-      "--ro-bind", "/bin", "/bin",
-      "--ro-bind", "/lib", "/lib",
+      ...sysBinds,
       "--tmpfs", "/tmp",
       "/bin/true",
     ],

@@ -9,6 +9,32 @@ const mockExistsSync = vi.fn<(p: string) => boolean>();
 const mockSpawnSync = vi.fn<(cmd: string, args: string[], opts: object) => { status: number; stdout: string; stderr: string }>();
 
 vi.mock("./bwrap-provider.js", () => {
+  // Mirror of SYSTEM_RO_PATHS from bwrap-provider.ts — keep in sync (co-located
+  // test, drift breaks regression coverage). Inlined here because vi.mock
+  // factories are hoisted above all module-level statements; referencing an
+  // outer const triggers TDZ on hoist.
+  const SYSTEM_RO_PATHS = [
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib64",
+    "/lib32",
+    "/etc/resolv.conf",
+    "/etc/hosts",
+    "/etc/hostname",
+    "/etc/ssl",
+    "/etc/ca-certificates",
+    "/etc/pki",
+    "/etc/ld.so.cache",
+    "/etc/ld.so.conf",
+    "/etc/ld.so.conf.d",
+    "/etc/alternatives",
+    "/etc/localtime",
+    "/etc/passwd",
+    "/etc/group",
+    "/etc/nsswitch.conf",
+  ];
   return {
     BwrapProvider: class {
       readonly name = "bwrap";
@@ -16,6 +42,7 @@ vi.mock("./bwrap-provider.js", () => {
         return mockBwrapAvailable();
       }
     },
+    SYSTEM_RO_PATHS,
   };
 });
 
@@ -113,6 +140,45 @@ describe("detectSandboxProvider", () => {
     expect(cmd).toBe("bwrap");
     expect(args).toContain("--unshare-pid");
     expect(args).toContain("--proc");
+  });
+
+  it("smoke test binds /lib64 when present (usrmerge x86-64 regression — fixes false-negative)", () => {
+    setPlatform("linux");
+    mockBwrapAvailable.mockReturnValue(true);
+    // Simulate Ubuntu 24.04 usrmerge layout: /usr /bin /lib /lib64 all exist;
+    // /sbin and /lib32 absent (they would be filtered out).
+    mockExistsSync.mockImplementation((p: string) =>
+      ["/usr", "/bin", "/lib", "/lib64", "/etc/resolv.conf", "/etc/hosts", "/etc/passwd"].includes(p),
+    );
+    mockSpawnSync.mockReturnValue({ status: 0, stdout: "", stderr: "" });
+
+    detectSandboxProvider();
+
+    expect(mockSpawnSync).toHaveBeenCalledTimes(1);
+    const args = mockSpawnSync.mock.calls[0]![1];
+    // /lib64 must be bound — this is the bug fix.
+    const lib64Idx = args.indexOf("/lib64");
+    expect(lib64Idx).toBeGreaterThan(-1);
+    expect(args[lib64Idx - 1]).toBe("--ro-bind");
+    expect(args[lib64Idx + 1]).toBe("/lib64");
+    // Absent paths must NOT be bound (existsSync filter must run).
+    expect(args).not.toContain("/sbin");
+    expect(args).not.toContain("/lib32");
+  });
+
+  it("smoke test still uses --unshare-pid + --proc /proc after refactor", () => {
+    setPlatform("linux");
+    mockBwrapAvailable.mockReturnValue(true);
+    mockExistsSync.mockImplementation((p: string) => p === "/usr" || p === "/bin" || p === "/lib");
+    mockSpawnSync.mockReturnValue({ status: 0, stdout: "", stderr: "" });
+
+    detectSandboxProvider();
+
+    const args = mockSpawnSync.mock.calls[0]![1];
+    expect(args).toContain("--unshare-pid");
+    expect(args).toContain("--proc");
+    expect(args).toContain("/proc");
+    expect(args).toContain("/bin/true");
   });
 
   it("returns BwrapProvider but WARNs when smoke test fails on a bare-metal host", () => {
