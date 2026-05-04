@@ -39,9 +39,12 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 // ===========================================================================
 
 describe("tool-metadata-registry -- registry count", () => {
-  it("registers exactly 50 unique tools (registry count assertion)", () => {
+  it("registers exactly 51 unique tools (registry count assertion)", () => {
+    // 51 = 50 prior tools + providers_manage (added 260504-cac alongside the
+    // tool-entry schema metadata). providers_manage already existed as a tool
+    // file but was not previously surfaced in the metadata registry.
     const all = getAllToolMetadata();
-    expect(all.size).toBe(50);
+    expect(all.size).toBe(51);
   });
 });
 
@@ -669,7 +672,7 @@ describe("tool-metadata-registry -- search hints", () => {
 // ===========================================================================
 
 describe("tool-metadata-registry -- completeness", () => {
-  it("all 50 TOOL_SUMMARIES tools have at least one metadata field", () => {
+  it("all 51 TOOL_SUMMARIES tools have at least one metadata field", () => {
     const ALL_TOOLS = [
       "read", "edit", "write", "grep", "find", "ls", "apply_patch",
       "exec", "process",
@@ -684,11 +687,11 @@ describe("tool-metadata-registry -- completeness", () => {
       "ctx_search", "ctx_inspect", "ctx_expand", "ctx_recall",
       "agents_manage", "obs_query", "sessions_manage", "memory_manage",
       "channels_manage", "tokens_manage", "models_manage", "skills_manage",
-      "mcp_manage", "heartbeat_manage",
+      "mcp_manage", "heartbeat_manage", "providers_manage",
       "discover_tools",
     ];
 
-    expect(ALL_TOOLS.length).toBe(50);
+    expect(ALL_TOOLS.length).toBe(51);
 
     const missing: string[] = [];
     for (const tool of ALL_TOOLS) {
@@ -698,6 +701,96 @@ describe("tool-metadata-registry -- completeness", () => {
       }
     }
     expect(missing).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// Tool-Entry Schema metadata (260504-cac)
+// ===========================================================================
+
+describe("tool-metadata-registry -- tool-entry schema metadata (260504-cac)", () => {
+  it.each([
+    ["mcp_manage",       ["list", "status", "connect", "disconnect", "reconnect"], 7],
+    ["agents_manage",    ["create", "get", "update", "delete", "suspend", "resume", "list"], 3],
+    ["tokens_manage",    ["list", "create", "revoke", "rotate"], 3],
+    ["providers_manage", ["list", "get", "create", "update", "delete", "enable", "disable"], 3],
+    ["channels_manage",  ["list", "get", "enable", "disable", "restart", "configure"], 4],
+    ["sessions_manage",  ["delete", "reset", "export", "compact"], 3],
+    ["skills_manage",    ["list", "import", "delete", "create", "update"], 6],
+    ["memory_manage",    ["stats", "browse", "delete", "flush", "export"], 10],
+    ["models_manage",    ["list", "test", "list_providers"], 3],
+    ["heartbeat_manage", ["get", "update", "status", "trigger"], 21],
+  ] as const)(
+    "registers entry-shape metadata for %s",
+    (name, validActions, validKeysCount) => {
+      const meta = getToolMetadata(name);
+      expect(meta?.validActions).toEqual(validActions);
+      expect(meta?.validKeys).toBeDefined();
+      expect(meta?.validKeys).toHaveLength(validKeysCount);
+      expect(meta?.requiredByAction).toBeDefined();
+    },
+  );
+
+  it("mcp_manage requiredByAction matches the connect / status / disconnect / reconnect spec", () => {
+    const meta = getToolMetadata("mcp_manage");
+    expect(meta?.requiredByAction).toEqual({
+      status: ["name"],
+      connect: ["name", "transport"],
+      disconnect: ["name"],
+      reconnect: ["name"],
+    });
+  });
+
+  it("heartbeat_manage registers an empty requiredByAction (every action's params are optional)", () => {
+    const meta = getToolMetadata("heartbeat_manage");
+    expect(meta?.requiredByAction).toEqual({});
+  });
+
+  it("memory_manage requires only ids for delete (scope filters have defaults)", () => {
+    const meta = getToolMetadata("memory_manage");
+    expect(meta?.requiredByAction).toEqual({ delete: ["ids"] });
+  });
+
+  it("registry's validKeys covers every field listed in managed-sections schemaFragment.requiredByAction", async () => {
+    // Cross-consistency parity (Task 5): MANAGED_SECTIONS is on the public
+    // @comis/core export, so we can assert that every field a managed-section
+    // marks as required-for-this-redirect is at least a VALID key on the
+    // registry's runtime gate.
+    //
+    // Why validKeys (not requiredByAction): managed-section schemaFragments
+    // intentionally describe a single transport-specific happy path (e.g.
+    // mcp_manage.connect lists [name, transport, command] for stdio; sse|http
+    // would substitute `url` for `command`). The registry's requiredByAction
+    // captures only the universal requirements; transport-specific handling
+    // stays in the per-tool handler. The weaker but always-true invariant is:
+    // every redirect-hint field is at least a recognized top-level key.
+    const { MANAGED_SECTIONS } = await import("@comis/core");
+    const sections = MANAGED_SECTIONS.filter((s) => s.schemaFragment?.requiredByAction);
+    expect(sections.length).toBeGreaterThan(0);
+    for (const section of sections) {
+      const meta = getToolMetadata(section.tool);
+      const validKeys = meta?.validKeys;
+      const ms = section.schemaFragment!.requiredByAction!;
+      expect(
+        validKeys,
+        `${section.tool}: validKeys missing on registry`,
+      ).toBeDefined();
+      for (const [action, fields] of Object.entries(ms)) {
+        // Action must be in validActions if registered.
+        if (meta?.validActions !== undefined) {
+          expect(
+            meta.validActions,
+            `${section.tool}: managed-section action '${action}' not in registry's validActions`,
+          ).toContain(action);
+        }
+        for (const f of fields) {
+          expect(
+            validKeys,
+            `${section.tool}.${action}: managed-section field '${f}' is not a valid registry key`,
+          ).toContain(f);
+        }
+      }
+    }
   });
 });
 

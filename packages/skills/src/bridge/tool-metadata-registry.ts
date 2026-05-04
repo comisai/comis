@@ -224,6 +224,147 @@ export function registerAllToolMetadata(): void {
   });
 
   // =========================================================================
+  // Tool-Entry Schema (260504-cac)
+  //
+  // Generic action enum + valid keys + per-action required fields. Consumed
+  // by validateToolEntry() in ./schema-validator.ts via
+  // wrapWithMetadataEnforcement BEFORE per-tool validateInput runs.
+  //
+  // Each tool's shape is sourced from its TypeBox Type.Union([Type.Literal(...)])
+  // action enum + each action handler's readStringParam(p, X) /
+  // throwToolError("missing_param", ...) calls in its actionOverrides.
+  //
+  // Cross-consistency: managed-section entries in
+  // @comis/core/src/config/managed-sections.ts also declare
+  // requiredByAction for the redirect-hint payload. The registrations
+  // here are the runtime gate; the managed-section entries are the
+  // user-facing redirect hint.
+  // =========================================================================
+
+  registerToolMetadata("mcp_manage", {
+    validActions: ["list", "status", "connect", "disconnect", "reconnect"],
+    validKeys: ["action", "name", "transport", "command", "args", "url", "headers"],
+    // connect requires [name, transport]; command (stdio) / url (sse|http) are
+    // transport-conditional and validated downstream by the handler.
+    requiredByAction: {
+      status:     ["name"],
+      connect:    ["name", "transport"],
+      disconnect: ["name"],
+      reconnect:  ["name"],
+    },
+  });
+
+  registerToolMetadata("agents_manage", {
+    validActions: ["create", "get", "update", "delete", "suspend", "resume", "list"],
+    validKeys: ["action", "agent_id", "config"],
+    // agent_id is required for every action except list.
+    requiredByAction: {
+      create:  ["agent_id", "config"],
+      get:     ["agent_id"],
+      update:  ["agent_id", "config"],
+      delete:  ["agent_id"],
+      suspend: ["agent_id"],
+      resume:  ["agent_id"],
+    },
+  });
+
+  registerToolMetadata("tokens_manage", {
+    validActions: ["list", "create", "revoke", "rotate"],
+    validKeys: ["action", "token_id", "scopes"],
+    // create: token_id is auto-generated when omitted (per the schema +
+    // handler's non-required readStringParam call); only scopes is strictly
+    // required.
+    requiredByAction: {
+      create: ["scopes"],
+      revoke: ["token_id"],
+      rotate: ["token_id"],
+    },
+  });
+
+  registerToolMetadata("providers_manage", {
+    validActions: ["list", "get", "create", "update", "delete", "enable", "disable"],
+    validKeys: ["action", "provider_id", "config"],
+    requiredByAction: {
+      get:     ["provider_id"],
+      create:  ["provider_id", "config"],
+      update:  ["provider_id", "config"],
+      delete:  ["provider_id"],
+      enable:  ["provider_id"],
+      disable: ["provider_id"],
+    },
+  });
+
+  registerToolMetadata("channels_manage", {
+    validActions: ["list", "get", "enable", "disable", "restart", "configure"],
+    validKeys: ["action", "channel_type", "setting", "enabled"],
+    requiredByAction: {
+      get:       ["channel_type"],
+      enable:    ["channel_type"],
+      disable:   ["channel_type"],
+      restart:   ["channel_type"],
+      configure: ["channel_type", "setting", "enabled"],
+    },
+  });
+
+  registerToolMetadata("sessions_manage", {
+    validActions: ["delete", "reset", "export", "compact"],
+    validKeys: ["action", "session_key", "instructions"],
+    requiredByAction: {
+      delete:  ["session_key"],
+      reset:   ["session_key"],
+      export:  ["session_key"],
+      compact: ["session_key"],
+    },
+  });
+
+  registerToolMetadata("skills_manage", {
+    validActions: ["list", "import", "delete", "create", "update"],
+    validKeys: ["action", "url", "name", "content", "description", "scope"],
+    requiredByAction: {
+      import: ["url"],
+      delete: ["name"],
+      create: ["name", "content"],
+      update: ["name", "content"],
+    },
+  });
+
+  registerToolMetadata("memory_manage", {
+    validActions: ["stats", "browse", "delete", "flush", "export"],
+    validKeys: [
+      "action", "tenant_id", "agent_id", "ids", "offset", "limit", "sort",
+      "memory_type", "trust_level", "tags",
+    ],
+    // tenant_id / agent_id are scope filters with defaults; only ids is
+    // strictly required (for delete).
+    requiredByAction: {
+      delete: ["ids"],
+    },
+  });
+
+  registerToolMetadata("models_manage", {
+    validActions: ["list", "test", "list_providers"],
+    validKeys: ["action", "provider", "model"],
+    requiredByAction: {
+      test: ["provider", "model"],
+    },
+  });
+
+  registerToolMetadata("heartbeat_manage", {
+    validActions: ["get", "update", "status", "trigger"],
+    validKeys: [
+      "action", "agent_id", "enabled", "interval_ms", "prompt", "model",
+      "target_channel_type", "target_channel_id", "target_chat_id", "target_is_dm",
+      "light_context", "show_ok", "show_alerts", "allow_dm",
+      "skip_heartbeat_only_delivery", "ack_max_chars", "response_prefix", "session",
+      "alert_threshold", "alert_cooldown_ms", "stale_ms",
+    ],
+    // Every action's params beyond `action` are Type.Optional. Empty
+    // requiredByAction still gates unknown action values + unknown keys via
+    // validActions / validKeys.
+    requiredByAction: {},
+  });
+
+  // =========================================================================
   // Output Schemas
   // =========================================================================
 
