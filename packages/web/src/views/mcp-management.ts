@@ -523,7 +523,7 @@ export class IcMcpManagement extends LitElement {
     if (!this.rpcClient) return;
     this._detailLoading = true;
     try {
-      const detail = await this.rpcClient.call("mcp.status", { name }) as McpServerDetail;
+      const detail = await this.rpcClient.call("mcp.status", { server_name: name }) as McpServerDetail;
       this._serverDetail = detail;
       this._expandedServer = name;
     } catch {
@@ -572,7 +572,7 @@ export class IcMcpManagement extends LitElement {
     this._disconnectTarget = null;
     if (!name || !this.rpcClient) return;
     try {
-      await this.rpcClient.call("mcp.disconnect", { name });
+      await this.rpcClient.call("mcp.disconnect", { server_name: name });
       IcToast.show(`Disconnected ${name}`, "success");
       if (this._expandedServer === name) {
         this._expandedServer = null;
@@ -591,7 +591,7 @@ export class IcMcpManagement extends LitElement {
   private async _handleReconnect(name: string): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      await this.rpcClient.call("mcp.reconnect", { name });
+      await this.rpcClient.call("mcp.reconnect", { server_name: name });
       IcToast.show(`Reconnected ${name}`, "success");
       void this._loadData();
     } catch {

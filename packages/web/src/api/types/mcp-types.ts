@@ -73,7 +73,7 @@ export interface McpToolEntry {
 
 /** MCP connect params for runtime server connection. */
 export interface McpConnectParams {
-  readonly name: string;
+  readonly server_name: string;
   readonly transport: "stdio" | "sse" | "http";
   readonly command?: string;
   readonly args?: string[];
