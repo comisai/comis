@@ -302,7 +302,17 @@ export function createContextEngine(
     const getReplayDriftMode = deps.getReplayDriftMode;
     layers.push(createSignatureReplayScrubber({
       getReplayDriftMode,
-      onScrubbed: (stats) => { callbackState.signatureReplayScrubber = stats; },
+      onScrubbed: (stats) => {
+        // Snapshot the latest stats for the existing post-pipeline DEBUG
+        // summary at lines ~720-727 (preserves legacy aliases dropped /
+        // signaturesStripped / reason).
+        callbackState.signatureReplayScrubber = stats;
+        // 260504-ieh: also forward stats to the optional per-execute
+        // accumulator wired in by executor-context-engine-setup.ts. The two
+        // callbacks are deliberately separate: the snapshot consumer
+        // overwrites per-call, the accumulator sums across calls.
+        deps.onSignatureReplayScrubbed?.(stats);
+      },
       logger: deps.logger,
     }));
   }

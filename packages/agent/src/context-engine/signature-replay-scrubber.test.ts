@@ -140,8 +140,10 @@ describe("createSignatureReplayScrubber", () => {
     expect(m0.content).toHaveLength(1);
     expect(m0.content[0]).toEqual(makeTextBlock("a"));
 
-    expect(logger.info).toHaveBeenCalledTimes(1);
-    expect(logger.info).toHaveBeenCalledWith(
+    // 260504-ieh: toolCallsAffected===0 path demoted to DEBUG.
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledTimes(1);
+    expect(logger.debug).toHaveBeenCalledWith(
       {
         module: "agent.context-engine.signature-replay-scrub",
         scrubbedAssistantMessages: 1,
@@ -199,8 +201,10 @@ describe("createSignatureReplayScrubber", () => {
     expect(result[0]).toBe(messages[0]);
     expect(result[2]).toBe(messages[2]);
 
-    expect(logger.info).toHaveBeenCalledTimes(1);
-    expect(logger.info).toHaveBeenCalledWith(
+    // 260504-ieh: toolCallsAffected===0 path demoted to DEBUG.
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledTimes(1);
+    expect(logger.debug).toHaveBeenCalledWith(
       {
         module: "agent.context-engine.signature-replay-scrub",
         scrubbedAssistantMessages: 2,

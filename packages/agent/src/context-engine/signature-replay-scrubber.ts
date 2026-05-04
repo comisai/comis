@@ -240,19 +240,35 @@ export function createSignatureReplayScrubber(
         reason: undefined,
       });
 
-      // Emit INFO once per execute() when at least one assistant message
-      // was actually scrubbed. Pino object-first; no string interp.
+      // Emit once per execute() when at least one assistant message was
+      // actually scrubbed. Pino object-first; no string interp.
+      //
+      // 260504-ieh: conditional log level — DEBUG when toolCallsAffected===0
+      // (pure-thinking-block scrub, the routine high-frequency case per
+      // CLAUDE.md "N times per request -> DEBUG"); INFO when >0
+      // (post-incident-visibility case where a tool_call's thoughtSignature
+      // was stripped, the originally documented diagnostic value). The outer
+      // `scrubbedAssistantMessages > 0` gate is unchanged — empty scrubs
+      // never log at this site.
       if (scrubbedAssistantMessages > 0) {
-        deps.logger.info(
-          {
-            module: "agent.context-engine.signature-replay-scrub",
-            scrubbedAssistantMessages,
-            blocksAffected,
-            toolCallsAffected,
-            latestAssistantIdx: latestIdx,
-          },
-          "Dropped thinking signatures from all assistant messages (cross-turn replay)",
-        );
+        const payload = {
+          module: "agent.context-engine.signature-replay-scrub",
+          scrubbedAssistantMessages,
+          blocksAffected,
+          toolCallsAffected,
+          latestAssistantIdx: latestIdx,
+        };
+        if (toolCallsAffected > 0) {
+          deps.logger.info(
+            payload,
+            "Dropped thinking signatures from all assistant messages (cross-turn replay)",
+          );
+        } else {
+          deps.logger.debug(
+            payload,
+            "Dropped thinking signatures from all assistant messages (cross-turn replay)",
+          );
+        }
       }
 
       // Zero-allocation early return when nothing was actually changed.
