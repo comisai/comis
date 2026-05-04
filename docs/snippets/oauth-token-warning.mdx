@@ -1,0 +1,7 @@
+<Warning>
+**OAuth refresh tokens grant ongoing access to your ChatGPT account.** Treat them like passwords: never commit them to version control, never paste them into chat, never email them.
+
+The Comis daemon stores them at mode `0o600` on disk (file backend) or as
+AES-256-GCM ciphertext with HKDF-SHA256-derived per-row keys (`encrypted` backend),
+and never logs them at any level (Pino auto-redaction is the safety net).
+</Warning>
