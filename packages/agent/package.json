@@ -49,7 +49,7 @@
     "@comis/shared": "workspace:*",
     "@google/genai": "1.50.1",
     "@mariozechner/pi-agent-core": "0.70.6",
-    "@mariozechner/pi-ai": "0.71.0",
+    "@mariozechner/pi-ai": "0.71.1",
     "@mariozechner/pi-coding-agent": "0.70.6",
     "chokidar": "5.0.0",
     "diff": "8.0.4",
