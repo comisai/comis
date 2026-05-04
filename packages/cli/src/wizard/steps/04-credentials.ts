@@ -72,7 +72,13 @@ const PROVIDER_HELP_URLS: Record<string, string> = {
 
 // ---------- Auth Method Options ----------
 
-/** Providers that offer an OAuth token alternative to API keys. */
+/**
+ * Providers that offer an OAuth token alternative to API keys.
+ *
+ * 260504-gge: openai is now API-key-only -- OAuth lives exclusively on the
+ * separate `openai-codex` provider id (which has its own dedicated branch
+ * with a method picker). Only anthropic remains here.
+ */
 const AUTH_METHOD_PROVIDERS: Record<
   string,
   {
@@ -93,20 +99,6 @@ const AUTH_METHOD_PROVIDERS: Record<
     helpNotes: {
       apikey: null,
       oauth: "Generate with: claude setup-token",
-    },
-  },
-  openai: {
-    options: [
-      { value: "apikey", label: "API Key", hint: "sk-..." },
-      { value: "oauth", label: "OAuth (interactive)", hint: "Opens browser or accepts manual paste" },
-    ],
-    helpUrls: {
-      apikey: "https://platform.openai.com/api-keys",
-      oauth: null,
-    },
-    helpNotes: {
-      apikey: null,
-      oauth: "Interactive OAuth flow with ChatGPT — your browser will open (or you'll paste the URL on a remote host).",
     },
   },
 };
@@ -455,7 +447,7 @@ async function handleStandardProvider(
   return state;
 }
 
-// ---------- Branch D: OpenAI OAuth (Phase 8 D-03) ----------
+// ---------- Branch D: openai-codex OAuth (260504-gge) ----------
 
 const wizardLogger = createLogger({ name: "wizard-oauth" });
 
@@ -493,31 +485,80 @@ async function openWizardOAuthStore(): Promise<OAuthCredentialStorePort> {
 }
 
 /**
- * Branch D: OpenAI OAuth — interactive flow via @comis/agent's
- * loginOpenAICodexOAuth (D-03 inline placement). REPLACES the pre-Phase-8
- * pre-generated-token paste path. Mirrors handleStandardProvider's 3-attempt
- * retry-loop pattern per RESEARCH §Open Q4.
+ * Branch D: openai-codex OAuth — interactive method picker + runner dispatch.
  *
- * On success: writes the profile to the OAuth store AND updates wizard
- * state with apiKey + oauthProfileId + validated=true. SPEC R6 acceptance
- * requires the profile to exist in ~/.comis/auth-profiles.json after the
- * wizard advances past step 04.
+ * 260504-gge: surfaces the runner's three login methods (browser auto-open,
+ * browser manual paste, device-code) plus a "skip for now" escape hatch.
+ * Pre-260504, this lived under provider=openai+authMethod=oauth and only
+ * exposed the runner's default browser path; the new shape moves OAuth to
+ * its own provider id so the openai (API-key) flow is straight-through.
+ *
+ * On runner success: writes the profile to the OAuth store AND updates
+ * wizard state with apiKey + oauthProfileId + validated=true. The matching
+ * `oauthProfiles` config emission in step 10 wires the daemon to resolve
+ * this identity for openai-codex calls.
+ *
+ * On "skip for now": leaves the wizard advancing with provider.id set but
+ * validated=false; logs the literal hint pointing to `comis auth login`.
  */
-async function handleOpenAIOAuth(
+async function handleCodexOAuth(
   state: WizardState,
   prompter: WizardPrompter,
 ): Promise<WizardState> {
-  const isRemote = isRemoteEnvironment({ env: process.env });
+  const isRemoteDefault = isRemoteEnvironment({ env: process.env });
   const maxRetries = 3;
 
-  // Display the helpNote so the operator sees what the OAuth flow will
-  // do BEFORE the runner is invoked. handleStandardProvider's
-  // helpNote presentation lives inside its own dispatch path, which is
-  // BYPASSED for the openai+oauth case — surface it here.
-  const authConfig = AUTH_METHOD_PROVIDERS["openai"];
-  const helpNote = authConfig?.helpNotes.oauth;
-  if (helpNote) {
-    prompter.note(info(helpNote), "openai OAuth");
+  // Inline helpNote -- AUTH_METHOD_PROVIDERS no longer has an openai entry,
+  // so we cannot pull the note from the map. Keep the wording user-facing
+  // and explicit about what the picker will do.
+  prompter.note(
+    info(
+      "OpenAI Codex uses your ChatGPT/Codex subscription -- no API key needed. Choose how you want to sign in.",
+    ),
+    "openai-codex OAuth",
+  );
+
+  // Method picker -- four options, with isRemoteDefault driving the default.
+  type MethodChoice = "browser-auto" | "browser-manual" | "device-code" | "skip";
+  const methodChoice = await prompter.select<MethodChoice>({
+    message: "How do you want to sign in?",
+    options: [
+      { value: "browser-auto", label: "Browser (auto-open)", hint: "Local desktop, opens default browser" },
+      { value: "browser-manual", label: "Browser (manual paste)", hint: "VPS, you paste callback URL after sign-in" },
+      { value: "device-code", label: "Device code (phone)", hint: "SSH/headless, type a short code on a phone" },
+      { value: "skip", label: "Skip for now", hint: "finish wizard, run `comis auth login` later" },
+    ],
+    initialValue: isRemoteDefault ? "device-code" : "browser-auto",
+  });
+
+  if (methodChoice === "skip") {
+    prompter.log.info(
+      "Skipped OAuth -- run `comis auth login --provider openai-codex` before starting the daemon.",
+    );
+    return updateState(state, {
+      provider: { id: "openai-codex", validated: false } as ProviderConfig,
+    });
+  }
+
+  // Compute runner params from the method choice. The runner ignores
+  // isRemote when method === "device-code" but we still pass the detected
+  // value for log fidelity. browser-manual forces isRemote=true so the
+  // manual-paste handlers run regardless of detection.
+  let method: "browser" | "device-code";
+  let isRemote: boolean;
+  switch (methodChoice) {
+    case "browser-auto":
+      method = "browser";
+      isRemote = false;
+      break;
+    case "browser-manual":
+      method = "browser";
+      isRemote = true;
+      break;
+    case "device-code":
+      method = "device-code";
+      isRemote = isRemoteDefault;
+      break;
   }
 
   let store: OAuthCredentialStorePort;
@@ -535,6 +576,7 @@ async function handleOpenAIOAuth(
       isRemote,
       openUrl: open,
       logger: wizardLogger,
+      method,
     });
 
     if (result.ok) {
@@ -571,12 +613,9 @@ async function handleOpenAIOAuth(
         "OAuth profile written by wizard",
       );
 
-      // SPEC R6 acceptance — wizard state carries oauthProfileId for downstream
-      // (Phase 9 multi-account); apiKey holds the access token for
-      // backward-compat with handleStandardProvider's downstream consumers.
       return updateState(state, {
         provider: {
-          id: "openai",
+          id: "openai-codex",
           authMethod: "oauth",
           apiKey: v.access,
           oauthProfileId: v.profileId,
@@ -585,7 +624,7 @@ async function handleOpenAIOAuth(
       });
     }
 
-    // Failure path — surface the rewritten error + recovery options.
+    // Failure path -- surface the rewritten error + recovery options.
     prompter.log.warn(result.error.message);
     if (result.error.hint) prompter.log.info(result.error.hint);
 
@@ -602,7 +641,7 @@ async function handleOpenAIOAuth(
       options: recoveryOptions,
     });
     if (choice === "skip") return state;
-    // choice === "retry" → continue loop
+    // choice === "retry" -> continue loop
   }
 
   return state;
@@ -634,12 +673,17 @@ export const credentialsStep: WizardStep = {
       return handleCustomEndpoint(state, prompter);
     }
 
-    // Phase 8 D-03 + Pitfall 8: hoisted auth-method select runs UP FRONT
-    // for providers in AUTH_METHOD_PROVIDERS so the dispatcher can branch
-    // to the right handler before handleStandardProvider runs. Without
-    // this hoist, the auth-method select is buried inside
-    // handleStandardProvider and we cannot route openai+oauth to the
-    // interactive runner without a double-prompt.
+    // Branch D: openai-codex OAuth (260504-gge) -- dedicated method picker
+    // dispatching to loginOpenAICodexOAuth. Kept ABOVE the auth-method
+    // hoist so openai-codex never sees the apikey/oauth select prompt.
+    if (providerId === "openai-codex") {
+      return handleCodexOAuth(state, prompter);
+    }
+
+    // Hoisted auth-method select runs UP FRONT for providers in
+    // AUTH_METHOD_PROVIDERS so the dispatcher can branch on the chosen
+    // method before handleStandardProvider runs. After 260504-gge only
+    // anthropic remains in the map -- openai is now API-key-only.
     let authMethod: AuthMethod | undefined;
     // eslint-disable-next-line security/detect-object-injection -- read of static const map indexed by validated provider string
     const authConfig = AUTH_METHOD_PROVIDERS[providerId];
@@ -650,17 +694,9 @@ export const credentialsStep: WizardStep = {
       });
     }
 
-    // Branch D: OpenAI OAuth — interactive flow (Phase 8 D-03).
-    // REPLACES the pre-Phase-8 pre-generated-token paste path.
-    // Anthropic OAuth still flows through handleStandardProvider unchanged
-    // (RESEARCH §Pitfall 8 — claude setup-token paste is the source of truth
-    // for those tokens; pi-ai has no equivalent loginAnthropic to wire).
-    if (providerId === "openai" && authMethod === "oauth") {
-      return handleOpenAIOAuth(state, prompter);
-    }
-
-    // Branch C: Standard provider — pass the hoisted authMethod so the
-    // handler doesn't double-prompt.
+    // Branch C: Standard provider -- pass the hoisted authMethod so the
+    // handler doesn't double-prompt. Anthropic OAuth still flows through
+    // here for the existing claude setup-token paste path.
     return handleStandardProvider(state, prompter, providerId, authMethod);
   },
 };
