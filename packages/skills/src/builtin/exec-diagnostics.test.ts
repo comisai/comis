@@ -20,6 +20,10 @@ function uniqDir(prefix: string): string {
 const MNF = (pkg: string): string =>
   `Traceback (most recent call last):\n  File "<frozen runpy>", line 198, in _run_module_as_main\nModuleNotFoundError: No module named '${pkg}'\n`;
 
+/** Bare runpy CLI form, e.g. `python3 -m missingpkg` when missingpkg is not in sys.path. */
+const RUNPY_CLI = (pkg: string): string =>
+  `/Library/Frameworks/Python.framework/Versions/3.12/bin/python3: No module named ${pkg}\n`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -98,6 +102,25 @@ describe("matchExecRecoveryHint — Python ModuleNotFoundError matcher", () => {
 
     expect(result).not.toBeNull();
     expect(result!).toContain("news_trading_system");
+  });
+
+  it("positive — bare runpy CLI form: matches `<python>: No module named foo` (the most common real-world case)", () => {
+    // python3 -m missingpkg with src/missingpkg/ but no pyproject.toml
+    // produces this stderr exactly — there is no `ModuleNotFoundError:` prefix
+    // because runpy raises the CLI error before any traceback.
+    mkdirSync(join(cwd, "src", "missingpkg"), { recursive: true });
+    writeFileSync(join(cwd, "src", "missingpkg", "__init__.py"), "");
+
+    const result = matchExecRecoveryHint({
+      stderr: RUNPY_CLI("missingpkg"),
+      exitCode: 1,
+      cwd,
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!).toMatch(/^RECOVERY HINT:/);
+    expect(result!).toContain("pyproject.toml");
+    expect(result!).toContain("missingpkg");
   });
 
   // -------------------------------------------------------------------------

@@ -1873,3 +1873,90 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Recovery hints — integration: matchExecRecoveryHint wired into stderr
+// finalization in executeForeground. Verifies the full exec pipeline
+// produces a `RECOVERY HINT:` line at the head of stderr when a real
+// `python3 -m <pkg>` invocation fails against a workspace with the
+// expected layout but no pyproject.toml.
+// ---------------------------------------------------------------------------
+
+function python3Available(): boolean {
+  try {
+    const r = spawnSync("python3", ["--version"], { encoding: "utf8", timeout: 3000 });
+    return r.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+const HAVE_PYTHON3 = python3Available();
+
+describe.skipIf(!HAVE_PYTHON3)("recovery hints (Python ModuleNotFoundError integration)", () => {
+  let recoveryRegistry: ProcessRegistry;
+  const recoveryDirs: string[] = [];
+
+  function makeWs(prefix: string): string {
+    const dir = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    recoveryDirs.push(dir);
+    return dir;
+  }
+
+  beforeEach(() => {
+    recoveryRegistry = createProcessRegistry();
+  });
+
+  afterEach(async () => {
+    await recoveryRegistry?.cleanup();
+    for (const d of recoveryDirs.splice(0)) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+
+  it("positive — real `python3 -m missingpkg` failure produces RECOVERY HINT at head of stderr", async () => {
+    const ws = makeWs("comis-recovery-pos");
+    mkdirSync(join(ws, "src", "missingpkg"), { recursive: true });
+    writeFileSync(join(ws, "src", "missingpkg", "__init__.py"), "");
+
+    const tool = createExecTool(ws, recoveryRegistry, STUB_SM, STUB_PLATFORM_NAMES);
+    const result = await tool.execute("rec-pos-1", {
+      command: "python3 -m missingpkg",
+      timeoutMs: 10_000,
+    });
+    const details = result.details as { exitCode: number; stderr: string; stdout: string };
+
+    expect(details.exitCode).not.toBe(0);
+    expect(details.stderr.startsWith("RECOVERY HINT:")).toBe(true);
+    expect(details.stderr).toContain("pyproject.toml");
+    expect(details.stderr).toContain("pip install -e .");
+    expect(details.stderr).toContain("missingpkg");
+    // Original Python error must still be present below the hint. The exact
+    // form depends on Python version: runpy emits `<binary>: No module named foo`
+    // (no quotes, no traceback) when -m can't find the top-level package.
+    expect(details.stderr).toContain("No module named");
+  });
+
+  it("negative — pyproject.toml present: stderr is unchanged (no RECOVERY HINT)", async () => {
+    const ws = makeWs("comis-recovery-neg");
+    mkdirSync(join(ws, "src", "missingpkg"), { recursive: true });
+    writeFileSync(join(ws, "src", "missingpkg", "__init__.py"), "");
+    writeFileSync(
+      join(ws, "pyproject.toml"),
+      '[project]\nname = "missingpkg"\nversion = "0.1.0"\n',
+    );
+
+    const tool = createExecTool(ws, recoveryRegistry, STUB_SM, STUB_PLATFORM_NAMES);
+    const result = await tool.execute("rec-neg-1", {
+      command: "python3 -m missingpkg",
+      timeoutMs: 10_000,
+    });
+    const details = result.details as { exitCode: number; stderr: string };
+
+    expect(details.exitCode).not.toBe(0);
+    expect(details.stderr.startsWith("RECOVERY HINT:")).toBe(false);
+    // Original error still present (runpy form, not the traceback form)
+    expect(details.stderr).toContain("No module named");
+  });
+});
