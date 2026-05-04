@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMcpHandlers } from "./mcp-handlers.js";
 import type { McpClientManager, McpConnection, McpToolDefinition } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
+import { createSecretManager } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -459,6 +460,136 @@ describe("MCP RPC Handlers", () => {
         name: "recon-srv",
         headers: { "Authorization": "Bearer recon-token" },
       }));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // mcp.connect env var validation (Layer 3 of 2026-05-03 outage fix)
+  // -------------------------------------------------------------------------
+  describe("mcp.connect env var validation", () => {
+    // Test H — pre-spawn rejection: missing env var produces the structured
+    // [invalid_value] error and manager.connect is NOT called.
+    it("Test H — rejects pre-spawn when env block references a missing ${VAR}", async () => {
+      const sm = createSecretManager({}); // FINNHUB_API_KEY absent
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+      });
+
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "finnhub",
+          transport: "stdio",
+          command: "uvx",
+          args: ["mcp-finnhub"],
+          env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+        }),
+      ).rejects.toThrow(
+        /\[invalid_value\] enabled MCP server "finnhub" references env var FINNHUB_API_KEY/,
+      );
+
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    // Test I — strict tightening: same env block, secret present → passes
+    // through and calls manager.connect as before.
+    it("Test I — accepts and connects when ${VAR} resolves", async () => {
+      const sm = createSecretManager({ FINNHUB_API_KEY: "abc123" });
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("finnhub", [makeTool("quote")])));
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+      });
+
+      const result = await handlers["mcp.connect"]({
+        server_name: "finnhub",
+        transport: "stdio",
+        command: "uvx",
+        args: ["mcp-finnhub"],
+        env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+      }) as any;
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "finnhub",
+          env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+        }),
+      );
+      expect(result.status).toBe("connected");
+    });
+
+    // Test J — params with no env block: validator is a no-op, existing
+    // connect behavior preserved (e.g., stdio servers without secrets).
+    it("Test J — passes through when params have no env block", async () => {
+      const sm = createSecretManager({});
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+      });
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "@upstash/context7-mcp"],
+      });
+
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    // Test K — defensive: secretManager unwired (legacy/test setup) → check
+    // is skipped, existing behavior preserved. Production always wires it.
+    it("Test K — skips validator entirely when secretManager is undefined", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("legacy", [])));
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        // secretManager intentionally omitted — simulates legacy/test wiring.
+      });
+
+      await handlers["mcp.connect"]({
+        server_name: "legacy",
+        transport: "stdio",
+        command: "noop",
+        env: { SOME_VAR: "${SOME_VAR}" },
+      });
+
+      // No throw, manager.connect was called (legacy behavior preserved).
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    // Test L — 3+ unresolved vars: error lists 3 alphabetically + (+N more).
+    // Identical wording to config.patch via shared formatMissingEnvRefError.
+    it("Test L — caps 4 missing vars to first 3 alphabetically with (+1 more)", async () => {
+      const sm = createSecretManager({});
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+      });
+
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "many",
+          transport: "stdio",
+          command: "noop",
+          env: {
+            VAR_A: "${A}",
+            VAR_B: "${B}",
+            VAR_C: "${C}",
+            VAR_D: "${D}",
+          },
+        }),
+      ).rejects.toThrow(/references env vars A, B, C \(\+1 more\)/);
+
+      expect(manager.connect).not.toHaveBeenCalled();
     });
   });
 });
