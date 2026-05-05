@@ -5,7 +5,7 @@
  * Resolution order:
  *   1. DEFAULTS -- complete ProviderCapabilities with safe fallback values
  *   2. PROVIDER_OVERRIDES[normalizeProviderId(provider)] -- built-in overrides
- *      for known providers (12 entries covering Anthropic, OpenAI, Google, Mistral)
+ *      for known providers (8 entries covering Anthropic, OpenAI, Google, Mistral)
  *   3. userOverrides -- user-supplied config from YAML `providers.entries.*.capabilities`
  *
  * Providers NOT in PROVIDER_OVERRIDES (cerebras, groq, xai, etc.) get clean
@@ -31,10 +31,10 @@ export const DEFAULTS: ProviderCapabilities = {
 /**
  * Built-in overrides for providers that differ from DEFAULTS.
  *
- * 12 entries covering:
- * - Anthropic family (3): anthropic, anthropic-vertex, amazon-bedrock
- * - OpenAI family (4): openai, azure-openai, azure-openai-responses, openai-codex
- * - Google family (4): google, google-gemini-cli, google-antigravity, google-vertex
+ * 8 entries covering:
+ * - Anthropic family (2): anthropic, amazon-bedrock
+ * - OpenAI family (3): openai, azure-openai-responses, openai-codex
+ * - Google family (2): google, google-vertex
  * - Mistral (1): strict9 tool call ID mode with 7 model hints
  *
  * Providers NOT in this map fall through to DEFAULTS via spread.
@@ -42,19 +42,15 @@ export const DEFAULTS: ProviderCapabilities = {
 const PROVIDER_OVERRIDES: Record<string, Partial<ProviderCapabilities>> = {
   // Anthropic family
   "anthropic": { providerFamily: "anthropic", dropThinkingBlockModelHints: ["claude"] },
-  "anthropic-vertex": { providerFamily: "anthropic", dropThinkingBlockModelHints: ["claude"] },
   "amazon-bedrock": { providerFamily: "anthropic", dropThinkingBlockModelHints: ["claude"] },
 
   // OpenAI family
   "openai": { providerFamily: "openai" },
-  "azure-openai": { providerFamily: "openai" },
   "azure-openai-responses": { providerFamily: "openai" },
   "openai-codex": { providerFamily: "openai" },
 
   // Google family
   "google": { providerFamily: "google" },
-  "google-gemini-cli": { providerFamily: "google" },
-  "google-antigravity": { providerFamily: "google" },
   "google-vertex": { providerFamily: "google" },
 
   // Mistral -- strict9 tool call ID normalization
@@ -70,24 +66,15 @@ const PROVIDER_OVERRIDES: Record<string, Partial<ProviderCapabilities>> = {
 /**
  * Provider ID alias table. Maps user-friendly shorthand names to canonical
  * provider IDs used in PROVIDER_OVERRIDES.
- *
- * AMBIGUITY NOTE: "vertex" maps to "anthropic-vertex" (Anthropic API via
- * Google Cloud), NOT "google-vertex". Users targeting Google Vertex AI
- * should use "google-vertex" or "gcp-vertex".
  */
 const ALIASES: Record<string, string> = {
   "aws-bedrock": "amazon-bedrock",
   "bedrock": "amazon-bedrock",
-  "vertex": "anthropic-vertex",
-  "vertex-ai": "anthropic-vertex",
-  "azure": "azure-openai",
   "azure-responses": "azure-openai-responses",
   "codex": "openai-codex",
   "gcp": "google",
   "gcp-vertex": "google-vertex",
   "gemini": "google",
-  "gemini-cli": "google-gemini-cli",
-  "antigravity": "google-antigravity",
   "grok": "xai",
 };
 
@@ -123,7 +110,7 @@ export function resolveProviderCapabilities(
 
 /**
  * Check if a provider belongs to the Anthropic family.
- * True for: anthropic, anthropic-vertex, amazon-bedrock (and their aliases).
+ * True for: anthropic, amazon-bedrock (and their aliases).
  */
 export function isAnthropicFamily(provider: string): boolean {
   return resolveProviderCapabilities(provider).providerFamily === "anthropic";
@@ -131,7 +118,7 @@ export function isAnthropicFamily(provider: string): boolean {
 
 /**
  * Check if a provider belongs to the OpenAI family.
- * True for: openai, azure-openai, azure-openai-responses, openai-codex (and their aliases).
+ * True for: openai, azure-openai-responses, openai-codex (and their aliases).
  */
 export function isOpenAiFamily(provider: string): boolean {
   return resolveProviderCapabilities(provider).providerFamily === "openai";
@@ -139,7 +126,7 @@ export function isOpenAiFamily(provider: string): boolean {
 
 /**
  * Check if a provider belongs to the Google family.
- * True for: google, google-gemini-cli, google-antigravity, google-vertex (and their aliases).
+ * True for: google, google-vertex (and their aliases).
  */
 export function isGoogleFamily(provider: string): boolean {
   return resolveProviderCapabilities(provider).providerFamily === "google";
@@ -148,7 +135,7 @@ export function isGoogleFamily(provider: string): boolean {
 /**
  * Check if a provider is Google AI Studio (api.google.dev, NOT Vertex AI).
  * True for: "google" only (and aliases: "gcp", "gemini").
- * Excludes: google-vertex, google-gemini-cli, google-antigravity.
+ * Excludes: google-vertex.
  *
  * Only Google AI Studio supports the Caches API used by GeminiCacheManager.
  */

@@ -131,6 +131,19 @@ export function validateNonInteractiveOptions(
     );
   }
 
+  // 260504-gge: openai-codex requires interactive OAuth login (browser
+  // callback, device-code prompt, or manual paste). Non-interactive mode
+  // has no way to drive the OAuth flow, so reject up front with a clear
+  // hint pointing at `comis auth login --method device-code`. Placed
+  // BEFORE the soft "unknown provider" warning so the literal error
+  // fires even though openai-codex IS in the pi-ai catalog.
+  if (opts.provider === "openai-codex") {
+    throw new NonInteractiveError(
+      "openai-codex requires interactive login; run `comis init` interactively or run `comis auth login --provider openai-codex --method device-code` separately.",
+      "provider",
+    );
+  }
+
   // Soft validation: warn for unknown providers but do not throw.
   // Daemon-side guards (260501-2pz credential-resolver, 260501-gyy
   // builtin-provider-guard) catch genuinely-invalid providers downstream

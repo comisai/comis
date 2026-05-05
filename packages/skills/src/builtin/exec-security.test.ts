@@ -612,6 +612,116 @@ describe("Category K -- sed dangerous operation blocking", () => {
   });
 });
 
+describe("Category D + F -- auth-profiles.json blocking", () => {
+  describe("read block (Category D)", () => {
+    it("blocks cat ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("cat ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks head -n 5 ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("head -n 5 ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks tail ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("tail ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks grep refresh_token ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("grep refresh_token ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks python3 -c reading ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand(
+        "python3 -c \"import json,os; print(open(os.path.expanduser('~/.comis/auth-profiles.json')).read())\"",
+      );
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+  });
+
+  describe("write block (Category F)", () => {
+    it("blocks sed -i on ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("sed -i 's/.*/X/' ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks awk on ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("awk '{print $1}' ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks tee ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("tee ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks cp /tmp/payload ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("cp /tmp/payload ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks mv /tmp/payload ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("mv /tmp/payload ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks perl -i on ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("perl -i -pe 's/x/y/' ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks ruby -i on ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("ruby -i -pe '...' ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks echo redirect to ~/.comis/auth-profiles.json", () => {
+      const result = validateCommand("echo '{}' > ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+
+    it("blocks reverse-order: cat ~/.comis/auth-profiles.json | sed", () => {
+      const result = validateCommand("cat ~/.comis/auth-profiles.json | sed 's/x/y/'");
+      expect(result).not.toBeNull();
+      expect(result).toMatch(/auth-profiles\.json/);
+    });
+  });
+
+  describe("pipeline integration", () => {
+    it("validateExecCommand cat ~/.comis/auth-profiles.json returns blocker denylist", () => {
+      const result = validateExecCommand("cat ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result!.blocker).toBe("denylist");
+    });
+
+    it("validateExecCommand sed -i ~/.comis/auth-profiles.json returns blocker denylist", () => {
+      const result = validateExecCommand("sed -i 's/.*/X/' ~/.comis/auth-profiles.json");
+      expect(result).not.toBeNull();
+      expect(result!.blocker).toBe("denylist");
+    });
+  });
+
+  it("does not match auth-profiles.json outside ~/.comis/", () => {
+    expect(validateCommand("cat ./auth-profiles.json")).toBeNull();
+  });
+});
+
 describe("env allowlist validation", () => {
   // ALLOW
   it("allows NODE_ENV", () => {

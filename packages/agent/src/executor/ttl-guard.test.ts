@@ -301,31 +301,6 @@ describe("TTL guard", () => {
       expect(onTtlExpiry).toHaveBeenCalledOnce();
     });
 
-    it("performs TTL check for 'anthropic-vertex' provider", async () => {
-      const onTtlExpiry = vi.fn();
-      const next = createMockNext();
-      const logger = createMockLogger();
-      const sessionKey = "session-vertex";
-
-      vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "short");
-      vi.setSystemTime(new Date(300_001));
-
-      const wrapper = createTtlGuard({
-        sessionKey,
-        getRetention: () => "short",
-        onTtlExpiry,
-        logger,
-      });
-
-      const stream = wrapper(next);
-      for await (const _ of stream(createMockModel("anthropic-vertex"), createMockContext())) {
-        // consume
-      }
-
-      expect(onTtlExpiry).toHaveBeenCalledOnce();
-    });
-
     it("performs TTL check for 'amazon-bedrock' provider", async () => {
       const onTtlExpiry = vi.fn();
       const next = createMockNext();

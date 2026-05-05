@@ -308,6 +308,13 @@ export const DANGEROUS_COMMAND_PATTERNS: ReadonlyArray<{
       "to see which secret names are configured (names only, no values). " +
       "Secret values are never returned to the agent.",
   },
+  {
+    pattern: /\.comis\/auth-profiles\.json/,
+    reason:
+      "Access to the OAuth credential store (auth-profiles.json) is blocked. " +
+      "It contains refresh and access tokens for every connected provider. " +
+      "Use the gateway tool to manage OAuth profiles -- token values are never returned to the agent.",
+  },
   // Category E -- Config file modification bypass
   // Defense-in-depth: the agent system prompt is the primary guard.
   // These regexes can be bypassed via quoting, variable expansion, etc.
@@ -389,6 +396,21 @@ export const DANGEROUS_COMMAND_PATTERNS: ReadonlyArray<{
     pattern: /\.comis\/\.env.*(?:sed|awk|tee|cat\s*>|echo\s*>)/,
     reason:
       "Direct .env file modification bypasses SecretManager and audit. Credentials must be managed through secure channels.",
+  },
+  {
+    pattern: /(?:sed|awk|tee|cp|mv|perl|ruby)\b.*\.comis\/auth-profiles\.json/,
+    reason:
+      "Direct OAuth credential store (auth-profiles.json) modification bypasses atomic-write, per-profile-lock, and schema-version validation in oauth-credential-store-file.ts. Use the gateway tool to manage OAuth profiles.",
+  },
+  {
+    pattern: /(?:echo|cat)\b.*>.*\.comis\/auth-profiles\.json/,
+    reason:
+      "Direct OAuth credential store (auth-profiles.json) modification bypasses atomic-write, per-profile-lock, and schema-version validation in oauth-credential-store-file.ts. Use the gateway tool to manage OAuth profiles.",
+  },
+  {
+    pattern: /\.comis\/auth-profiles\.json.*(?:sed|awk|tee|cat\s*>|echo\s*>)/,
+    reason:
+      "Direct OAuth credential store (auth-profiles.json) modification bypasses atomic-write, per-profile-lock, and schema-version validation in oauth-credential-store-file.ts. Use the gateway tool to manage OAuth profiles.",
   },
 ];
 

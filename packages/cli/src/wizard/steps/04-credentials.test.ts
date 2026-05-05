@@ -363,17 +363,12 @@ describe("credentialsStep", () => {
     );
   });
 
-  // REPLACED in Phase 8 plan 04 (D-03): the previous "shows auth method
-  // selector for openai and skips live validation for OAuth" test exercised
-  // the pre-Phase-8 paste-based OpenAI OAuth path which the new dispatcher
-  // REPLACES with the interactive loginOpenAICodexOAuth runner. The new
-  // OpenAI+OAuth behavior — auth-method select hoisted to the dispatcher,
-  // openai+oauth routes to handleOpenAIOAuth — is covered by the R6
-  // dispatch tests in the "Phase 8 OAuth dispatch (R6)" describe block.
-  // The apikey path for openai is preserved here.
-  it("shows auth method selector for openai (apikey path retained — OAuth path covered by R6 dispatch tests)", async () => {
+  // 260504-gge: openai is now API-key-only -- the auth-method selector was
+  // removed because OAuth lives exclusively on `openai-codex`. The dispatcher
+  // skips the auth-method select for openai and routes directly to the
+  // standard API-key paste flow.
+  it("openai uses standard API-key path (no auth-method selector after 260504-gge refactor)", async () => {
     const prompter = createMockPrompter();
-    vi.mocked(prompter.select).mockResolvedValueOnce("apikey");
     vi.mocked(prompter.password).mockResolvedValueOnce(
       "sk-validkey1234567890abcdefghijklmnopqrstuv",
     );
@@ -389,13 +384,11 @@ describe("credentialsStep", () => {
 
     const result = await credentialsStep.execute(state, prompter);
 
-    expect(prompter.select).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "openai authentication method",
-      }),
-    );
+    // No auth-method picker for openai any more (only anthropic still has one).
+    expect(prompter.select).not.toHaveBeenCalled();
     expect(result.provider?.validated).toBe(true);
-    expect(result.provider?.authMethod).toBe("apikey");
+    expect(result.provider?.authMethod).toBeUndefined();
+    expect(result.provider?.id).toBe("openai");
   });
 
   it("does not show auth method selector for non-OAuth providers", async () => {
@@ -722,7 +715,7 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("R6 wizard OAuth: provider=openai + authMethod=oauth → loginOpenAICodexOAuth called → state.provider.oauthProfileId set", async () => {
+  it("260504-gge: provider=openai-codex routes to loginOpenAICodexOAuth via method picker (browser-auto)", async () => {
     vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
       ok: true,
       value: {
@@ -737,24 +730,119 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     });
 
     const prompter = createMockPrompter();
-    // Hoisted auth-method select returns "oauth" → dispatcher routes to
-    // handleOpenAIOAuth which calls the mocked loginOpenAICodexOAuth.
-    vi.mocked(prompter.select).mockResolvedValueOnce("oauth");
+    // No hoisted auth-method select for openai-codex -- only the method picker.
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-auto");
 
     const startState: WizardState = {
       ...INITIAL_STATE,
-      provider: { id: "openai" } as ProviderConfig,
+      provider: { id: "openai-codex" } as ProviderConfig,
     };
     const result = await credentialsStep.execute(startState, prompter);
 
     expect(loginOpenAICodexOAuth).toHaveBeenCalledTimes(1);
+    expect(loginOpenAICodexOAuth).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "browser", isRemote: false }),
+    );
+    expect(result.provider?.id).toBe("openai-codex");
     expect(result.provider?.oauthProfileId).toBe(
       "openai-codex:alice@example.com",
     );
     expect(result.provider?.authMethod).toBe("oauth");
     expect(result.provider?.validated).toBe(true);
     expect(result.provider?.apiKey).toBe("test_access_token");
-    expect(result.provider?.id).toBe("openai");
+  });
+
+  it("260504-gge: openai-codex device-code dispatch (isRemote=true)", async () => {
+    vi.mocked(isRemoteEnvironment).mockReturnValueOnce(true);
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: true,
+      value: {
+        access: "tok_dev",
+        refresh: "ref_dev",
+        expires: Date.now() + 3_600_000,
+        accountId: "acct_dev",
+        email: "user_a@example.com",
+        displayName: "User A",
+        profileId: "openai-codex:user_a@example.com",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("device-code");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+    const result = await credentialsStep.execute(startState, prompter);
+
+    expect(loginOpenAICodexOAuth).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "device-code", isRemote: true }),
+    );
+    expect(result.provider?.id).toBe("openai-codex");
+    expect(result.provider?.validated).toBe(true);
+  });
+
+  it("260504-gge: openai-codex browser-manual dispatch forces isRemote=true", async () => {
+    // isRemoteEnvironment returns false (local desktop) but the user picks
+    // "browser-manual" -- the dispatcher must still pass isRemote: true so
+    // the runner uses the remote/manual-paste handlers regardless of detection.
+    vi.mocked(isRemoteEnvironment).mockReturnValueOnce(false);
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: true,
+      value: {
+        access: "tok_manual",
+        refresh: "ref_manual",
+        expires: Date.now() + 3_600_000,
+        accountId: "acct_manual",
+        email: "user_a@example.com",
+        displayName: "User A",
+        profileId: "openai-codex:user_a@example.com",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("browser-manual");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+    const result = await credentialsStep.execute(startState, prompter);
+
+    expect(loginOpenAICodexOAuth).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "browser", isRemote: true }),
+    );
+    expect(result.provider?.id).toBe("openai-codex");
+    expect(result.provider?.validated).toBe(true);
+  });
+
+  it("260504-gge: openai-codex skip emits hint and sets unvalidated state", async () => {
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("skip");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+    const result = await credentialsStep.execute(startState, prompter);
+
+    expect(loginOpenAICodexOAuth).not.toHaveBeenCalled();
+    // Hint contains the literal command for resuming OAuth post-wizard.
+    const infoCalls = vi.mocked(prompter.log.info).mock.calls.map(([m]) => m);
+    expect(
+      infoCalls.some((m) =>
+        typeof m === "string" &&
+        m.includes("comis auth login --provider openai-codex"),
+      ),
+    ).toBe(true);
+    expect(result.provider).toEqual({
+      id: "openai-codex",
+      validated: false,
+    });
+    expect(result.provider?.apiKey).toBeUndefined();
+    expect(result.provider?.oauthProfileId).toBeUndefined();
+    expect(result.provider?.authMethod).toBeUndefined();
   });
 
   it("R6 Anthropic regression: provider=anthropic + authMethod=oauth → handleStandardProvider path (loginOpenAICodexOAuth NOT called)", async () => {
@@ -789,7 +877,7 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     expect(result.provider?.oauthProfileId).toBeUndefined();
   });
 
-  it("OpenAI OAuth failure: surfaces hint and offers retry/skip recovery (mirrors handleStandardProvider loop)", async () => {
+  it("260504-gge: openai-codex OAuth failure surfaces hint and offers retry/skip recovery", async () => {
     vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
       ok: false,
       error: {
@@ -800,15 +888,15 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     });
 
     const prompter = createMockPrompter();
-    // First select = auth-method "oauth" (dispatcher hoist).
+    // First select = method picker ("browser-auto").
     // Second select = recovery choice "skip" after the runner fails.
     vi.mocked(prompter.select)
-      .mockResolvedValueOnce("oauth")
+      .mockResolvedValueOnce("browser-auto")
       .mockResolvedValueOnce("skip");
 
     const startState: WizardState = {
       ...INITIAL_STATE,
-      provider: { id: "openai" } as ProviderConfig,
+      provider: { id: "openai-codex" } as ProviderConfig,
     };
     const result = await credentialsStep.execute(startState, prompter);
 
@@ -819,8 +907,8 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     expect(prompter.log.info).toHaveBeenCalledWith(
       expect.stringContaining("Restart the login flow."),
     );
-    // State unchanged (no provider mutation) because user chose "skip".
-    expect(result.provider?.id).toBe("openai");
+    // State unchanged on skip -- provider id stays as set, no oauthProfileId.
+    expect(result.provider?.id).toBe("openai-codex");
     expect(result.provider?.oauthProfileId).toBeUndefined();
     expect(result.provider?.validated).toBeUndefined();
   });

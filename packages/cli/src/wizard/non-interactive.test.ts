@@ -262,6 +262,39 @@ describe("validateNonInteractiveOptions", () => {
     const src = readFileSync(resolve(here, "non-interactive.ts"), "utf-8");
     expect(src).not.toMatch(/RECOMMENDED_MODELS/);
   });
+
+  // ---------- 260504-gge: openai-codex non-interactive rejection ----------
+
+  it("rejects --provider openai-codex with the literal interactive-login hint", () => {
+    const opts: NonInteractiveOptions = {
+      nonInteractive: true,
+      acceptRisk: true,
+      provider: "openai-codex",
+    };
+    expect(() => validateNonInteractiveOptions(opts)).toThrow(
+      NonInteractiveError,
+    );
+    try {
+      validateNonInteractiveOptions(opts);
+    } catch (e) {
+      expect(e).toBeInstanceOf(NonInteractiveError);
+      const err = e as NonInteractiveError;
+      expect(err.field).toBe("provider");
+      expect(err.message).toBe(
+        "openai-codex requires interactive login; run `comis init` interactively or run `comis auth login --provider openai-codex --method device-code` separately.",
+      );
+    }
+  });
+
+  it("260504-gge: accepts other providers (smoke check the gate is not too broad)", () => {
+    const opts: NonInteractiveOptions = {
+      nonInteractive: true,
+      acceptRisk: true,
+      provider: "anthropic",
+      apiKey: "sk-ant-api03-test-key-1234567890",
+    };
+    expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
+  });
 });
 
 // ==========================================================================
