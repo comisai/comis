@@ -247,6 +247,15 @@ export class BwrapProvider implements SandboxProvider {
       PIP_CACHE_DIR: path.join(cacheDir, "pip"),
 
       XDG_CACHE_HOME: cacheDir,
+      // XDG_STATE_HOME (~/.local/state by default): pipx logs, some Python
+      // tools, runtime state. The ~/.local parent bind is RO (getUserRoPaths)
+      // and getDevToolRwPaths only carves out ~/.local/share, so anything
+      // defaulting to ~/.local/state would EROFS without this redirect.
+      // pipx happens to survive (PIPX_HOME captures all pipx state) but other
+      // XDG-state-using tools would not. Defensive belt-and-suspenders matching
+      // the existing XDG_CACHE_HOME pattern.
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      XDG_STATE_HOME: path.join(workspacePath, ".local", "state"),
       // Python: redirect user packages into workspace.
       // PYTHONNOUSERSITE is NOT set — sandbox read paths cover dirs that
       // pip needs to scan. Removing it lets Python find packages installed

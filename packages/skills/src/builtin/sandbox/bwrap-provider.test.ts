@@ -542,6 +542,10 @@ describe("BwrapProvider", () => {
       expect(env.NPM_CONFIG_CACHE).toBe("/tmp/ws/.cache/npm");
       expect(env.PIP_CACHE_DIR).toBe("/tmp/ws/.cache/pip");
       expect(env.XDG_CACHE_HOME).toBe("/tmp/ws/.cache");
+      // XDG_STATE_HOME redirected so tools defaulting to ~/.local/state don't
+      // EROFS (~/.local is RO under getUserRoPaths; only ~/.local/share is
+      // carved out RW by getDevToolRwPaths).
+      expect(env.XDG_STATE_HOME).toBe("/tmp/ws/.local/state");
       expect(env.PYTHONUSERBASE).toBe("/tmp/ws/.local");
       expect(env.MPLCONFIGDIR).toBe("/tmp/ws/.cache/matplotlib");
       expect(env.MPLBACKEND).toBe("Agg");
