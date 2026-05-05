@@ -789,6 +789,85 @@ PROFILE
         || ui_warn "apparmor_parser -r failed — exec sandbox may fail until bwrap profile is loaded"
 }
 
+# install_egress_logging
+# ----------------------
+# Phase 1 of the network egress allowlist (audit-checklist Section 9).
+#
+# The agent's exec sandbox runs with bwrap --share-net (full host network
+# access) because the daemon's regex command filter cannot inspect the contents
+# of files the agent writes and then executes. Without an OS-level egress
+# restriction, a malicious skill, MCP server, or prompt injection can write a
+# script that opens an outbound connection and bypass every command-string
+# defense. The actual security boundary has to be a uid-scoped iptables
+# allowlist (or seccomp BPF filter on connect()) — this function lays the
+# groundwork.
+#
+# Phase 1 (this function): create the COMIS_EGRESS chain in LOG-only mode and
+# wire every outbound packet from the comis uid through it. ACCEPT continues
+# unchanged so nothing breaks. The kernel logs every connection to
+# /var/log/kern.log (or `journalctl -k`) tagged "comis-egress: " so the
+# operator can enumerate the legitimate destinations over 24-48 hours of
+# normal use.
+#
+# Phase 2 (operator, not automated): after the observation window, the
+# operator replaces the catch-all ACCEPT with destination-specific ACCEPTs
+# (api.anthropic.com, api.telegram.org, etc.) followed by a final DROP. See
+# audit-checklist Section 9 for the templated commands.
+#
+# Idempotent: skipped if the chain already exists. Skipped silently if
+# iptables is unavailable, the comis user does not yet exist, or
+# COMIS_NO_EGRESS_LOG=1 is set. Non-fatal — failures degrade gracefully so
+# they cannot block the rest of the install.
+install_egress_logging() {
+    [ "${COMIS_NO_EGRESS_LOG:-}" = "1" ] && {
+        ui_info "Egress logging skipped (COMIS_NO_EGRESS_LOG=1)"
+        return 0
+    }
+
+    if ! command -v iptables >/dev/null 2>&1; then
+        ui_warn "iptables not available — skipping egress-logging primer"
+        return 0
+    fi
+
+    if ! id "$COMIS_USER" >/dev/null 2>&1; then
+        ui_warn "Skipping egress-logging primer (user '$COMIS_USER' does not exist yet)"
+        return 0
+    fi
+
+    local sudo_prefix=""
+    if ! is_root; then
+        sudo_prefix="sudo "
+    fi
+
+    # Idempotent: skip if our chain already exists
+    if $sudo_prefix iptables -L COMIS_EGRESS -n >/dev/null 2>&1; then
+        ui_info "Egress logging already configured (chain COMIS_EGRESS exists)"
+        return 0
+    fi
+
+    if ! $sudo_prefix iptables -N COMIS_EGRESS 2>/dev/null; then
+        ui_warn "Could not create COMIS_EGRESS chain — skipping egress-logging primer"
+        return 0
+    fi
+
+    # LOG every packet, then ACCEPT unchanged (Phase 1 — no enforcement yet).
+    # Log level 6 (informational) so it lands in journald without flooding syslog.
+    $sudo_prefix iptables -A COMIS_EGRESS -j LOG --log-prefix "comis-egress: " --log-level 6 2>/dev/null \
+        || ui_warn "Could not add LOG rule to COMIS_EGRESS"
+    $sudo_prefix iptables -A COMIS_EGRESS -j ACCEPT 2>/dev/null \
+        || ui_warn "Could not add ACCEPT rule to COMIS_EGRESS"
+
+    # Hook the chain into OUTPUT, scoped to the comis uid only.
+    $sudo_prefix iptables -A OUTPUT -m owner --uid-owner "$COMIS_USER" -j COMIS_EGRESS 2>/dev/null \
+        || { ui_warn "Could not wire COMIS_EGRESS into OUTPUT — egress-logging primer skipped"; return 0; }
+
+    ui_success "Egress logging enabled (LOG mode) for user '$COMIS_USER'"
+    ui_info "  Review captured destinations:  journalctl -k | grep 'comis-egress:'"
+    ui_info "  After 24-48h, flip to enforced allowlist (audit-checklist Section 9)"
+    ui_info "  Disable next install with:     COMIS_NO_EGRESS_LOG=1"
+    return 0
+}
+
 install_uv() {
     # uv/uvx: Python package runner used by MCP servers that distribute via PyPI
     # (e.g. nanobanana). Installed system-wide via the official Astral script so
@@ -4044,6 +4123,10 @@ main() {
     if should_create_dedicated_user; then
         install_system_deps_as_root
         create_comis_user
+        # Egress-logging primer for the comis user — Phase 1 of the network
+        # allowlist (audit-checklist Section 9). LOG-only mode, no enforcement
+        # yet, idempotent. Non-fatal — failures don't block the install.
+        install_egress_logging || true
         reexec_as_comis_user
         local user_rc=$?
         if [[ "$user_rc" -ne 0 ]]; then
