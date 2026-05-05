@@ -335,6 +335,31 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       const sessionStrategy = payload.sessionStrategy ?? "fresh";
       const maxHistoryTurns = payload.maxHistoryTurns ?? 3;
 
+      // Cadence-aware cache-waste guard: rolling/accumulate strategies on long cadences
+      // guarantee cache-write waste because the prompt cache TTL is short (5 min for "cron"
+      // operations — see OPERATION_CACHE_DEFAULTS.cron in @comis/agent). Threshold = 2x TTL
+      // so we don't warn on borderline-useful 6-9 min cadences. Operator intent is preserved
+      // (no auto-downgrade) — this is informational only. Scoped to schedule.kind === "every"
+      // because cron-expression cadence is not threaded through the event payload.
+      const CRON_CACHE_TTL_2X_MS = 600_000;
+      if (
+        sessionStrategy !== "fresh" &&
+        payload.cadenceMs !== undefined &&
+        payload.cadenceMs > CRON_CACHE_TTL_2X_MS
+      ) {
+        logger.warn(
+          {
+            jobName,
+            agentId: payload.agentId,
+            sessionStrategy,
+            cadenceMs: payload.cadenceMs,
+            hint: "Cadence exceeds cache TTL by 2x; rolling/accumulate guarantees per-tick cache-write waste. Set sessionStrategy:'fresh' unless cross-tick session memory is essential.",
+            errorKind: "config" as const,
+          },
+          "Cron sessionStrategy may waste cache writes at this cadence",
+        );
+      }
+
       // Resolve cron operation model via 5-level priority chain
       const agentConfig = agents[payload.agentId];
       let cronOverrides: { model: string; operationType: "cron"; promptTimeout: { promptTimeoutMs: number }; cacheRetention?: "none" | "short" | "long" } | undefined;

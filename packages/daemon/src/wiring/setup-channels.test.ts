@@ -686,6 +686,138 @@ describe("setupChannels", () => {
     });
 
     // -----------------------------------------------------------------------
+    // Cadence-aware cache-waste warn (Task 260505-f5l Layer 2)
+    //
+    // Guard fires only for kind: "every" jobs (where cadenceMs is a literal
+    // number from the schedule). cron-expression and one-shot "at" schedules
+    // emit cadenceMs: undefined and are out of scope for this guard.
+    // -----------------------------------------------------------------------
+
+    describe("cadence-aware cache-waste warn", () => {
+      function makeBaseAgentTurnPayload(
+        overrides: Record<string, unknown> = {},
+      ): Record<string, unknown> {
+        return {
+          deliveryTarget: { channelType: "telegram", channelId: "chat123", tenantId: "t1", userId: "u1" },
+          result: "prompt",
+          jobName: "cadence-test-job",
+          payloadKind: "agent_turn",
+          jobId: "j-cadence",
+          agentId: "agent1",
+          ...overrides,
+        };
+      }
+
+      function makeCadenceTestDeps() {
+        mockAdaptersByType.set("telegram", mockAdapter);
+        const mockExecutor = {
+          execute: vi.fn(async () => ({
+            response: "Agent reply",
+            tokensUsed: { input: 50, output: 50, total: 100 },
+            cost: { total: 0.001 },
+            stepsExecuted: 0,
+            llmCalls: 1,
+          })),
+        };
+        const executors = new Map([["agent1", mockExecutor as any]]);
+        const { container, eventHandlers } = makeContainer();
+        const deps = makeDeps({ container, executors });
+        return { deps, container, eventHandlers };
+      }
+
+      function findCadenceWarn(loggerWarn: ReturnType<typeof vi.fn>) {
+        return loggerWarn.mock.calls.find((args) => {
+          const ctx = args[0] as { hint?: string } | undefined;
+          return typeof ctx?.hint === "string" && ctx.hint.includes("Cadence exceeds cache TTL");
+        });
+      }
+
+      it("warns when sessionStrategy is 'rolling' AND cadenceMs > 600_000", async () => {
+        const { deps, eventHandlers } = makeCadenceTestDeps();
+        await setupChannels(deps);
+
+        const cronHandler = eventHandlers.find((h) => h.event === "scheduler:job_result")?.callback;
+        await cronHandler!(makeBaseAgentTurnPayload({
+          sessionStrategy: "rolling",
+          cadenceMs: 900_000, // 15 min — well above the 10-min threshold
+        }));
+
+        const warnCall = findCadenceWarn(deps.logger.warn as ReturnType<typeof vi.fn>);
+        expect(warnCall).toBeDefined();
+        expect(warnCall![0]).toMatchObject({
+          jobName: "cadence-test-job",
+          agentId: "agent1",
+          sessionStrategy: "rolling",
+          cadenceMs: 900_000,
+          errorKind: "config",
+        });
+        expect(warnCall![1]).toBe("Cron sessionStrategy may waste cache writes at this cadence");
+      });
+
+      it("warns when sessionStrategy is 'accumulate' AND cadenceMs > 600_000", async () => {
+        const { deps, eventHandlers } = makeCadenceTestDeps();
+        await setupChannels(deps);
+
+        const cronHandler = eventHandlers.find((h) => h.event === "scheduler:job_result")?.callback;
+        await cronHandler!(makeBaseAgentTurnPayload({
+          sessionStrategy: "accumulate",
+          cadenceMs: 1_800_000, // 30 min
+        }));
+
+        const warnCall = findCadenceWarn(deps.logger.warn as ReturnType<typeof vi.fn>);
+        expect(warnCall).toBeDefined();
+        expect(warnCall![0]).toMatchObject({
+          sessionStrategy: "accumulate",
+          cadenceMs: 1_800_000,
+          errorKind: "config",
+        });
+        expect((warnCall![0] as { hint: string }).hint).toContain("Cadence exceeds cache TTL");
+      });
+
+      it("does NOT warn when sessionStrategy is 'fresh' regardless of cadenceMs", async () => {
+        const { deps, eventHandlers } = makeCadenceTestDeps();
+        await setupChannels(deps);
+
+        const cronHandler = eventHandlers.find((h) => h.event === "scheduler:job_result")?.callback;
+        await cronHandler!(makeBaseAgentTurnPayload({
+          sessionStrategy: "fresh",
+          cadenceMs: 3_600_000, // 1 hour — well above threshold but fresh is safe
+        }));
+
+        const warnCall = findCadenceWarn(deps.logger.warn as ReturnType<typeof vi.fn>);
+        expect(warnCall).toBeUndefined();
+      });
+
+      it("does NOT warn when cadenceMs is undefined (cron-expression schedule)", async () => {
+        const { deps, eventHandlers } = makeCadenceTestDeps();
+        await setupChannels(deps);
+
+        const cronHandler = eventHandlers.find((h) => h.event === "scheduler:job_result")?.callback;
+        await cronHandler!(makeBaseAgentTurnPayload({
+          sessionStrategy: "rolling",
+          cadenceMs: undefined,
+        }));
+
+        const warnCall = findCadenceWarn(deps.logger.warn as ReturnType<typeof vi.fn>);
+        expect(warnCall).toBeUndefined();
+      });
+
+      it("does NOT warn when cadenceMs is exactly at the 600_000 threshold", async () => {
+        const { deps, eventHandlers } = makeCadenceTestDeps();
+        await setupChannels(deps);
+
+        const cronHandler = eventHandlers.find((h) => h.event === "scheduler:job_result")?.callback;
+        await cronHandler!(makeBaseAgentTurnPayload({
+          sessionStrategy: "rolling",
+          cadenceMs: 600_000, // exactly 10 min — guard uses strict >, so no warn
+        }));
+
+        const warnCall = findCadenceWarn(deps.logger.warn as ReturnType<typeof vi.fn>);
+        expect(warnCall).toBeUndefined();
+      });
+    });
+
+    // -----------------------------------------------------------------------
     // Cron agentTurn model resolution
     // -----------------------------------------------------------------------
 
