@@ -1640,6 +1640,11 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     container, logger, logLevelManager, tokenTracker, latencyRecorder,
     processMonitor, shutdownHandle, watchdogHandle, cronSchedulers, resetSchedulers,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
+    // Phase 13: expose the delivery-queue-side adapter map and the queue port
+    // itself so integration tests can register adapters that the recurring
+    // drainer sees and assert on queue depth (SPEC AC-2).
+    deliveryAdapters: channelAdaptersRef,
+    deliveryQueue,
     rpcCall, deviceIdentity, diagnosticCollector, billingEstimator,
     channelActivityTracker, deliveryTracer, approvalGate, channelHealthMonitor, sessionStoreBridge,
   };
