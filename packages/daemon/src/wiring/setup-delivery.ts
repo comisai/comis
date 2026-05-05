@@ -6,8 +6,9 @@
  * Queue two-phase lifecycle resolves the circular dependency between the
  * queue and channel adapters:
  *   1. setupDeliveryQueue() creates the adapter immediately (before setupChannels).
- *   2. drainAndStartPrune() runs drain + starts prune timer AFTER setupChannels
- *      populates channelAdapters.
+ *   2. drainAndStart() recovers in_flight rows, runs startup drain, then starts
+ *      both the recurring drain timer (SPEC-R1) and the prune timer AFTER
+ *      setupChannels populates channelAdapters.
  * Crash-Safe Delivery Queue.
  * Session Mirroring.
  * @module setup-delivery — Delivery subsystem wiring (queue + mirror)
@@ -18,7 +19,7 @@ import { createNoOpDeliveryQueue, createNoOpDeliveryMirror } from "@comis/core";
 import { createSqliteDeliveryQueue, createSqliteDeliveryMirror } from "@comis/memory";
 import { isPermanentError, computeQueueBackoff, type DeliveryAdapter } from "@comis/channels";
 import type { ComisLogger } from "@comis/infra";
-import { ok } from "@comis/shared";
+import { ok, suppressError } from "@comis/shared";
 import { createHash } from "node:crypto";
 import type { PluginRegistry } from "@comis/core";
 
@@ -33,9 +34,9 @@ import type { PluginRegistry } from "@comis/core";
 export interface DeliveryQueueResult {
   /** The delivery queue adapter (real or no-op), available immediately. */
   deliveryQueue: DeliveryQueuePort;
-  /** Runs startup drain then starts periodic prune timer. Call AFTER setupChannels. */
-  drainAndStartPrune: () => Promise<void>;
-  /** Clears the prune interval timer (call on shutdown). */
+  /** Recovers in_flight rows, runs startup drain, then starts the recurring drain + prune timers. Call AFTER setupChannels. */
+  drainAndStart: () => Promise<void>;
+  /** Clears the recurring drain interval AND the prune interval (call on shutdown). */
   shutdown: () => void;
 }
 
@@ -59,35 +60,67 @@ export async function setupDeliveryQueue(deps: {
     logger.debug("Delivery queue disabled by config");
     return {
       deliveryQueue: createNoOpDeliveryQueue(),
-      drainAndStartPrune: async () => {},
+      drainAndStart: async () => {},
       shutdown: () => {},
     };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- db is better-sqlite3 Database; typed as unknown to avoid cross-package type dependency
-  const deliveryQueue = createSqliteDeliveryQueue(db as any);
+  const deliveryQueue = createSqliteDeliveryQueue(db as any, eventBus);
   logger.info(
     { maxQueueDepth: queueConfig.maxQueueDepth, defaultMaxAttempts: queueConfig.defaultMaxAttempts },
     "Delivery queue enabled",
   );
 
   let pruneInterval: ReturnType<typeof setInterval> | undefined;
+  let drainInterval: ReturnType<typeof setInterval> | undefined;
+  // Single-tick gate per CONTEXT D-01: in-flight Promise prevents overlapping ticks.
+  let draining: Promise<void> | null = null;
 
-  // 2. Startup drain + 3. Periodic prune (deferred until channelAdapters populated)
-  const drainAndStartPrune = async (): Promise<void> => {
-    // --- Drain ---
-    if (queueConfig.drainOnStartup) {
-      await drainDeliveryQueue({
-        deliveryQueue,
-        channelAdapters,
-        eventBus,
-        logger,
-        drainBudgetMs: queueConfig.drainBudgetMs,
-        defaultMaxAttempts: queueConfig.defaultMaxAttempts,
-      });
+  // Inner helper: one drain pass. Reused by startup drain AND each recurring tick.
+  const runOneDrainPass = async (): Promise<void> => {
+    await drainDeliveryQueue({
+      deliveryQueue,
+      channelAdapters,
+      eventBus,
+      logger,
+      drainBudgetMs: queueConfig.drainBudgetMs,
+      defaultMaxAttempts: queueConfig.defaultMaxAttempts,
+    });
+  };
+
+  // 2. Startup drain + recurring drain timer + prune timer (deferred until channelAdapters populated)
+  const drainAndStart = async (): Promise<void> => {
+    // --- Step 1: Recover in_flight rows (per SPEC-R3 + CONTEXT D-03). ---
+    // Runs UNCONDITIONALLY -- independent of drainOnStartup policy. An 'in_flight'
+    // row from a prior crash is a correctness bug regardless of the drain policy.
+    const recoverResult = await deliveryQueue.recoverInFlight();
+    if (!recoverResult.ok) {
+      logger.warn(
+        { err: recoverResult.error, hint: "Could not recover in_flight rows on startup; messages may stall until next restart", errorKind: "internal" as const },
+        "Delivery queue: recoverInFlight failed",
+      );
+    } else if (recoverResult.value > 0) {
+      logger.info({ recovered: recoverResult.value }, "Delivery queue: recovered in_flight rows to pending");
     }
 
-    // --- Prune timer ---
+    // --- Step 2: Startup drain (existing behavior, unchanged). ---
+    if (queueConfig.drainOnStartup) {
+      await runOneDrainPass();
+    }
+
+    // --- Step 3: Recurring drain timer (per SPEC-R1 + CONTEXT D-01). ---
+    drainInterval = setInterval(() => {
+      if (draining) return;                          // single-tick gate
+      draining = runOneDrainPass().finally(() => { draining = null; });
+      // Fire-and-forget: failures inside drainDeliveryQueue are already logged
+      // and do not propagate (it never throws). suppressError satisfies the
+      // no-floating-promise lint without altering semantics.
+      suppressError(draining, "delivery queue recurring drain tick");
+    }, queueConfig.drainIntervalMs);
+    drainInterval.unref();
+
+    // --- Step 4: Prune timer (existing behavior, unchanged). ---
     pruneInterval = setInterval(async () => {
       const result = await deliveryQueue.pruneExpired();
       if (result.ok && result.value > 0) {
@@ -98,20 +131,24 @@ export async function setupDeliveryQueue(deps: {
   };
 
   const shutdown = (): void => {
+    if (drainInterval) {
+      clearInterval(drainInterval);
+      drainInterval = undefined;
+    }
     if (pruneInterval) {
       clearInterval(pruneInterval);
       pruneInterval = undefined;
     }
   };
 
-  return { deliveryQueue, drainAndStartPrune, shutdown };
+  return { deliveryQueue, drainAndStart, shutdown };
 }
 
 // ---------------------------------------------------------------------------
 // Drain implementation
 // ---------------------------------------------------------------------------
 
-async function drainDeliveryQueue(deps: {
+export async function drainDeliveryQueue(deps: {
   deliveryQueue: DeliveryQueuePort;
   channelAdapters: Map<string, DeliveryAdapter>;
   eventBus: TypedEventBus;

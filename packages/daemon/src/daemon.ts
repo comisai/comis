@@ -789,9 +789,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
 
   // 6.6.7.8. Delivery queue: create adapter BEFORE setupChannels.
   // channelAdapters map is passed by reference -- populated after setupChannels.
-  // drainAndStartPrune() is called AFTER setupChannels (two-phase lifecycle).
+  // drainAndStart() is called AFTER setupChannels (two-phase lifecycle).
   const channelAdaptersRef = new Map<string, import("@comis/channels").DeliveryAdapter>();
-  const { deliveryQueue, drainAndStartPrune: drainAndStartDeliveryPrune, shutdown: shutdownDeliveryQueue } = await setupDeliveryQueue({
+  const { deliveryQueue, drainAndStart: drainAndStartDeliveryPrune, shutdown: shutdownDeliveryQueue } = await setupDeliveryQueue({
     db, config: container.config, eventBus: container.eventBus, logger: daemonLogger, channelAdapters: channelAdaptersRef,
   });
 
