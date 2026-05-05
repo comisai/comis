@@ -23,32 +23,32 @@ function buildTask(overrides: Partial<BackgroundTask> = {}): BackgroundTask {
   };
 }
 
-describe("formatCompletionAnnouncement (Phase 14 SPEC R1)", () => {
-  it("Test 1: success header tag (AC-1)", () => {
+describe("formatCompletionAnnouncement", () => {
+  it("success header tag", () => {
     const task = buildTask({ status: "completed", result: "ok" });
     const out = formatCompletionAnnouncement(task);
     expect(out.startsWith("[Background Task: exec]")).toBe(true);
   });
 
-  it("Test 2: failure header tag (AC-1)", () => {
+  it("failure header tag", () => {
     const task = buildTask({ status: "failed", error: "boom", result: undefined });
     const out = formatCompletionAnnouncement(task);
     expect(out.startsWith("[Background Task Failed: exec]")).toBe(true);
   });
 
-  it("Test 3: success body present", () => {
+  it("success body present", () => {
     const task = buildTask({ status: "completed", result: "RESULT_BODY" });
     const out = formatCompletionAnnouncement(task);
     expect(out).toContain("RESULT_BODY");
   });
 
-  it("Test 4: failure body present", () => {
+  it("failure body present", () => {
     const task = buildTask({ status: "failed", error: "ERROR_BODY", result: undefined });
     const out = formatCompletionAnnouncement(task);
     expect(out).toContain("ERROR_BODY");
   });
 
-  it("Test 5: trailing instruction byte-identical to narrative-caster.ts (AC-2)", () => {
+  it("trailing instruction byte-identical to narrative-caster.ts", () => {
     // First: confirm the re-exported constant equals the source.
     expect(TRAILING_INSTRUCTION).toBe(NARRATIVE_TRAILING);
     // Second: assert formatter output ends with the constant.
@@ -57,7 +57,7 @@ describe("formatCompletionAnnouncement (Phase 14 SPEC R1)", () => {
     expect(out.endsWith(TRAILING_INSTRUCTION)).toBe(true);
   });
 
-  it("Test 6: D-05 size cap truncates body, preserves header + trailing", () => {
+  it("size cap truncates body, preserves header + trailing", () => {
     // Body large enough to force total > 32768.
     const massiveResult = "X".repeat(40_000);
     const task = buildTask({ status: "completed", result: massiveResult });
@@ -68,7 +68,7 @@ describe("formatCompletionAnnouncement (Phase 14 SPEC R1)", () => {
     expect(out).toContain("…[truncated]");
   });
 
-  it("Test 7: D-09 restart-recovery announcement uses explicit copy", () => {
+  it("restart-recovery announcement uses explicit copy", () => {
     const task = buildTask({
       status: "failed",
       error: "Daemon restarted while task was running",

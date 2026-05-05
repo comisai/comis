@@ -470,7 +470,7 @@ export interface InfraEvents {
   };
 
   /** Background task completed successfully. `origin` carries originating
-   *  session attribution so subscribers (Phase 14 completion runner) can
+   *  session attribution so subscribers (the completion runner) can
    *  re-enter the right session without a synchronous round-trip through
    *  the manager. */
   "background_task:completed": {
@@ -496,10 +496,9 @@ export interface InfraEvents {
   };
 
   /** Background completion runner is about to invoke executor.execute() on
-   *  the originating session (Phase 14 SPEC R3 + R6 latency-instrumentation
-   *  hook). Subscribers may compute the delta from
-   *  background_task:completed.timestamp to this event for SLO tracking
-   *  (SPEC AC-9: p95 ≤ 1000ms over 50 trials). */
+   *  the originating session (latency-instrumentation hook). Subscribers
+   *  may compute the delta from background_task:completed.timestamp to
+   *  this event for SLO tracking (target: p95 ≤ 1000ms over 50 trials). */
   "background_task:reentered": {
     taskId: string;
     agentId: string;

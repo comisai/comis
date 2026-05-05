@@ -2,23 +2,21 @@
 /**
  * Background completion runner: subscribes to background_task:completed and
  * background_task:failed events from the TypedEventBus and re-enters the
- * originating agent session with a formatted completion announcement
- * (Phase 14 SPEC R3 + R5).
+ * originating agent session with a formatted completion announcement.
  *
  * Per-session lock serialization is delegated to the existing session
  * manager (ComisSessionManager.withSession in packages/agent/src/session/).
  * The runner does NOT introduce its own queueing -- one turn per completion
- * event, ordering follows the existing per-session lock (SPEC R5 / D-07).
+ * event, ordering follows the existing per-session lock.
  *
  * Recursion bound: per-task incoming hop count + 1 must stay below
  * `maxBackgroundHops` (default 3). When the cap is hit, the runner emits
- * the fallback notification instead of triggering executor.execute()
- * (SPEC R4 / D-03). The hop count is read from `task.origin.backgroundHopCount`
- * (added in plan 14-01; populated by the originResolver in plan 14-03).
+ * the fallback notification instead of triggering executor.execute().
+ * The hop count is read from `task.origin.backgroundHopCount`
+ * (populated by the originResolver).
  *
- * SPEC R6 latency-instrumentation hook: emits `background_task:reentered`
- * (event payload declared in plan 14-01) immediately before
- * executor.execute(). The integration test in plan 14-06 computes the delta
+ * Latency-instrumentation hook: emits `background_task:reentered`
+ * immediately before executor.execute(). Integration tests compute the delta
  * from `background_task:completed.timestamp` to this event for SLO tracking.
  *
  * Failure isolation: each handler is wrapped in suppressError so a single
@@ -43,7 +41,7 @@ export interface BackgroundCompletionRunner {
   shutdown(): Promise<void>;
 }
 
-/** Minimal session-store contract the runner needs (D-08 fallback gate). */
+/** Minimal session-store contract the runner needs (fallback gate). */
 export interface RunnerSessionStore {
   loadByFormattedKey(sessionKey: string): unknown | undefined;
 }
@@ -96,15 +94,15 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // D-14: legacy task without origin -- emit fallback, keep file for audit.
+    // Legacy task without origin -- emit fallback, keep file for audit.
     const origin = task.origin;
     if (!origin || !origin.sessionKey || !origin.agentId) {
       await fallbackForTask(task.toolName, task.origin?.agentId ?? "default", `Background task "${task.toolName}" completed.`);
       return;
     }
 
-    // SPEC R4 / D-03: hop cap. Read incoming hop count from origin (plan 14-01
-    // schema field, populated by plan 14-03's originResolver).
+    // Hop cap. Read incoming hop count from origin (schema field populated
+    // by the originResolver).
     const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
     if (nextHopCount >= deps.maxBackgroundHops) {
       log.info(
@@ -119,7 +117,7 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // D-08: missing session -> fallback to literal-text user notification.
+    // Missing session -> fallback to literal-text user notification.
     const sessionExists = deps.sessionStore.loadByFormattedKey(origin.sessionKey) !== undefined;
     if (!sessionExists) {
       log.info(
@@ -145,10 +143,10 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // Format the announcement (SPEC R1, AC-2 byte-identical trailing instruction).
+    // Format the announcement (byte-identical trailing instruction).
     const announcement = formatCompletionAnnouncement(task);
 
-    // Construct the synthetic NormalizedMessage (D-04 + D-01 hop counter in metadata).
+    // Construct the synthetic NormalizedMessage (hop counter in metadata).
     const syntheticMsg: NormalizedMessage = {
       id: randomUUID(),
       channelId: origin.channelId,
@@ -171,8 +169,8 @@ export function createBackgroundCompletionRunner(
       "Background completion runner: invoking executor",
     );
 
-    // SPEC R6: emit background_task:reentered immediately before executor.execute().
-    // Plan 14-06's integration test computes p95 latency from
+    // Emit background_task:reentered immediately before executor.execute().
+    // Integration tests compute p95 latency from
     // background_task:completed.timestamp to this event's timestamp.
     deps.eventBus.emit("background_task:reentered", {
       taskId: task.id,
@@ -182,7 +180,7 @@ export function createBackgroundCompletionRunner(
       timestamp: Date.now(),
     });
 
-    // SPEC R5 / D-07: one turn per event. Existing session lock orders concurrent calls.
+    // One turn per event. Existing session lock orders concurrent calls.
     try {
       await deps.executor.execute(
         syntheticMsg,

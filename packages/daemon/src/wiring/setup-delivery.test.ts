@@ -423,11 +423,11 @@ describe("setupDeliveryQueue", () => {
   });
 
   // ========================================================================
-  // Recurring drain timer (SPEC-R1, SPEC-R3 sweep half, SPEC-R4) + invariants
+  // Recurring drain timer + invariants
   // ========================================================================
 
   describe("recurring drain timer", () => {
-    it("starts recurring drain timer after startup drain (SPEC-R1)", async () => {
+    it("starts recurring drain timer after startup drain", async () => {
       vi.useFakeTimers();
       vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValue(ok([]));
       vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
@@ -453,7 +453,7 @@ describe("setupDeliveryQueue", () => {
       vi.useRealTimers();
     });
 
-    it("recoverInFlight runs BEFORE startup drain (SPEC-R3)", async () => {
+    it("recoverInFlight runs BEFORE startup drain", async () => {
       vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValue(ok([]));
       vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(2));
 
@@ -492,7 +492,7 @@ describe("setupDeliveryQueue", () => {
       result.shutdown();
     });
 
-    it("deferred row not delivered before scheduled_at (SPEC-R4)", async () => {
+    it("deferred row not delivered before scheduled_at", async () => {
       vi.useFakeTimers();
       vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
       // Simulate: pendingEntries returns [] for the first 4 ticks (row's scheduled_at > now),
@@ -536,7 +536,7 @@ describe("setupDeliveryQueue", () => {
       vi.useRealTimers();
     });
 
-    it("shutdown clears both drain and prune timers (SPEC AC-7)", async () => {
+    it("shutdown clears both drain and prune timers", async () => {
       vi.useFakeTimers();
       vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
       vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValue(ok([]));
@@ -565,7 +565,7 @@ describe("setupDeliveryQueue", () => {
       vi.useRealTimers();
     });
 
-    it("single-tick gate prevents concurrent drains (CONTEXT D-01)", async () => {
+    it("single-tick gate prevents concurrent drains", async () => {
       vi.useFakeTimers();
       vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
       const entry = makeEntry({ id: "slow-1", channelType: "telegram" });
@@ -615,7 +615,7 @@ describe("setupDeliveryQueue", () => {
       vi.useRealTimers();
     });
 
-    it("empty-queue ticks do not emit delivery:queue_drained (CONTEXT specifics -- silent ticks)", async () => {
+    it("empty-queue ticks do not emit delivery:queue_drained (silent ticks)", async () => {
       vi.useFakeTimers();
       vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
       vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValue(ok([]));
@@ -663,7 +663,7 @@ describe("setupDeliveryQueue", () => {
       vi.useRealTimers();
     });
 
-    it("recurring tick delivers a post-startup entry within drainIntervalMs + 500ms (SPEC AC-1)", async () => {
+    it("recurring tick delivers a post-startup entry within drainIntervalMs + 500ms", async () => {
       vi.useFakeTimers();
       vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
       const entry = makeEntry({ id: "post-startup-1", channelType: "telegram" });
@@ -695,7 +695,7 @@ describe("setupDeliveryQueue", () => {
       vi.useRealTimers();
     });
 
-    it("budget exhaustion still yields after the recurring-timer addition (CONTEXT D-02)", async () => {
+    it("budget exhaustion still yields after the recurring-timer addition", async () => {
       // Mirror the existing budget-exhaustion test shape but on a single tick of
       // the recurring drainer to confirm the budget yield still works post-refactor.
       const entries = [
@@ -744,20 +744,19 @@ describe("setupDeliveryQueue", () => {
   });
 
   // ========================================================================
-  // SPEC-R2 row-selection invariant -- uses REAL SQLite adapter, NOT the mock.
+  // Row-selection invariant -- uses REAL SQLite adapter, NOT the mock.
   //
-  // Per CONTEXT D-08: "the goal is to catch the row-selection race, which is
-  // fully observable in-process." This test seeds 100 'in_flight' rows + 100
-  // 'pending' rows simultaneously and proves the recurring drainer's WHERE
-  // filter NEVER picks 'in_flight'. Plan 13-04's integration test exercises
-  // the recurring-drainer notification-path throughput (SPEC-R1); this test
-  // exercises the row-selection race-safety invariant (SPEC-R2). Together
-  // they cover the SPEC AC-3 100-concurrent intent: throughput at integration
-  // tier, race-safety at unit tier -- cleaner than retrofitting an integration
-  // RPC that doesn't exist.
+  // The goal is to catch the row-selection race, which is fully observable
+  // in-process. This test seeds 100 'in_flight' rows + 100 'pending' rows
+  // simultaneously and proves the recurring drainer's WHERE filter NEVER
+  // picks 'in_flight'. The integration test exercises the recurring-drainer
+  // notification-path throughput; this test exercises the row-selection
+  // race-safety invariant. Together they cover the 100-concurrent intent:
+  // throughput at integration tier, race-safety at unit tier -- cleaner than
+  // retrofitting an integration RPC that doesn't exist.
   // ========================================================================
 
-  describe("SPEC-R2 row-selection invariant (real SQLite adapter)", () => {
+  describe("row-selection invariant (real SQLite adapter)", () => {
     it("drainer never picks 'in_flight' rows even when 100 in_flight + 100 pending coexist", async () => {
       // Bypass the file-level vi.mock("@comis/memory") so we exercise the REAL
       // adapter's WHERE status='pending' filter. This is the invariant under test.
@@ -834,7 +833,7 @@ describe("setupDeliveryQueue", () => {
 
       // INVARIANT 1: every adapter send was for a 'pending' seed, never for 'in_flight'.
       for (const id of sentIds) {
-        expect(inFlightIds.has(id)).toBe(false); // hard assertion -- SPEC-R2
+        expect(inFlightIds.has(id)).toBe(false); // hard assertion
         expect(pendingIds.has(id)).toBe(true);
       }
 

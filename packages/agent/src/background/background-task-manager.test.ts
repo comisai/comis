@@ -247,7 +247,7 @@ describe("BackgroundTaskManager", () => {
 
   describe("recoverOnStartup", () => {
     it("recovers running tasks and emits failed events", () => {
-      // Pre-persist a "running" task to disk (with origin, as required by Phase 14)
+      // Pre-persist a "running" task to disk (with origin, as required)
       const task: PersistedTaskState = {
         id: "recovered-1",
         toolName: "tool1",
@@ -287,8 +287,8 @@ describe("BackgroundTaskManager", () => {
     });
   });
 
-  describe("Phase 14: origin capture (SPEC AC-3 + AC-4)", () => {
-    it("Test 1: promote(validOrigin) returns ok(taskId) and task.origin matches", () => {
+  describe("origin capture", () => {
+    it("promote(validOrigin) returns ok(taskId) and task.origin matches", () => {
       const origin = buildOrigin({ agentId: "agent-test", sessionKey: "agent-test:echo:ch1:u1" });
       const result = manager.promote("my_tool", new Promise(() => {}), new AbortController(), origin);
 
@@ -300,7 +300,7 @@ describe("BackgroundTaskManager", () => {
       expect(task!.origin).toEqual(origin);
     });
 
-    it("Test 2: promote(undefined origin) returns Result.err with 'origin' in message", () => {
+    it("promote(undefined origin) returns Result.err with 'origin' in message", () => {
       const result = manager.promote("my_tool", new Promise(() => {}), new AbortController(), undefined as unknown as BackgroundTaskOrigin);
 
       expect(result.ok).toBe(false);
@@ -308,7 +308,7 @@ describe("BackgroundTaskManager", () => {
       expect(result.error.message).toMatch(/origin/i);
     });
 
-    it("Test 3: promote with empty agentId returns Result.err", () => {
+    it("promote with empty agentId returns Result.err", () => {
       const result = manager.promote("my_tool", new Promise(() => {}), new AbortController(), {
         agentId: "",
         sessionKey: "k",
@@ -323,7 +323,7 @@ describe("BackgroundTaskManager", () => {
       expect(result.error.message).toContain("agentId");
     });
 
-    it("Test 4: promote with empty sessionKey returns Result.err (SPEC AC-3 mentions sessionKey explicitly)", () => {
+    it("promote with empty sessionKey returns Result.err", () => {
       const result = manager.promote("my_tool", new Promise(() => {}), new AbortController(), {
         agentId: "a",
         sessionKey: "",
@@ -338,7 +338,7 @@ describe("BackgroundTaskManager", () => {
       expect(result.error.message).toContain("sessionKey");
     });
 
-    it("Test 5: complete(taskId) emits background_task:completed with origin in payload", () => {
+    it("complete(taskId) emits background_task:completed with origin in payload", () => {
       const origin = buildOrigin({ agentId: "agent-5" });
       const result = manager.promote("tool5", new Promise(() => {}), new AbortController(), origin);
       if (!result.ok) return;
@@ -351,7 +351,7 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
-    it("Test 6: fail(taskId) emits background_task:failed with origin in payload", () => {
+    it("fail(taskId) emits background_task:failed with origin in payload", () => {
       const origin = buildOrigin({ agentId: "agent-6" });
       const result = manager.promote("tool6", new Promise(() => {}), new AbortController(), origin);
       if (!result.ok) return;
@@ -364,7 +364,7 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
-    it("Test 7: getTasks(agentId) filters by origin.agentId", () => {
+    it("getTasks(agentId) filters by origin.agentId", () => {
       manager.promote("t1", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "filter-agent" }));
       manager.promote("t2", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "other-agent" }));
       manager.promote("t3", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "filter-agent" }));
@@ -374,7 +374,7 @@ describe("BackgroundTaskManager", () => {
       expect(tasks.every((t) => t.origin.agentId === "filter-agent")).toBe(true);
     });
 
-    it("Test 8: recoverOnStartup emits failed event with origin populated (restart-recovery path)", () => {
+    it("recoverOnStartup emits failed event with origin populated (restart-recovery path)", () => {
       const testDir = safePath(tmpdir(), `comis-bg-mgr-rec-${randomUUID()}`);
       mkdirSync(testDir, { recursive: true });
 
@@ -419,12 +419,12 @@ describe("BackgroundTaskManager", () => {
       }
     });
 
-    it("Test 9: recoverOnStartup skips persisted tasks missing origin field with logger.warn", () => {
+    it("recoverOnStartup skips persisted tasks missing origin field with logger.warn", () => {
       const testDir = safePath(tmpdir(), `comis-bg-mgr-skip-${randomUUID()}`);
       mkdirSync(testDir, { recursive: true });
 
       try {
-        // Write a legacy pre-Phase-14 file without origin
+        // Write a legacy file without origin
         const agentDir = safePath(testDir, "legacy-agent");
         mkdirSync(agentDir, { recursive: true });
         const filePath = safePath(agentDir, "legacy-task-1.json");
@@ -436,7 +436,7 @@ describe("BackgroundTaskManager", () => {
           startedAt: Date.now() - 10000,
           completedAt: Date.now() - 9000,
           error: "Daemon restarted while task was running",
-          // No origin field — pre-Phase-14 format
+          // No origin field — legacy format
         };
         writeFileSync(filePath, JSON.stringify(legacyState, null, 2), "utf-8");
 

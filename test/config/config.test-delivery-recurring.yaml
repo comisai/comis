@@ -1,6 +1,6 @@
-# Comis Test Configuration (Phase 13: Continuous Delivery-Queue Drainer Tests)
+# Comis Test Configuration — Continuous Delivery-Queue Drainer Tests
 #
-# Variant of config.test-channel-crash.yaml for Phase 13 integration tests:
+# Variant of config.test-channel-crash.yaml for delivery-queue drainer integration tests:
 # - Separate port (8478) to avoid conflicts with other test suites
 # - Separate memory database (test-memory-delivery-recurring.db) for isolation
 # - RAG disabled (no embeddings needed)

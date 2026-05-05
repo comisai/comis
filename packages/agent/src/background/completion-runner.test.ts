@@ -59,7 +59,7 @@ function makeLogger() {
   } as unknown as import("@comis/infra").ComisLogger;
 }
 
-describe("createBackgroundCompletionRunner (Phase 14 SPEC R3, R4, R5, R6)", () => {
+describe("createBackgroundCompletionRunner", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
@@ -86,7 +86,7 @@ describe("createBackgroundCompletionRunner (Phase 14 SPEC R3, R4, R5, R6)", () =
     });
   }
 
-  it("Test 1: completed event triggers executor.execute with synthetic message AND emits background_task:reentered (AC-4 + R6)", async () => {
+  it("Test 1: completed event triggers executor.execute with synthetic message AND emits background_task:reentered", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
 
@@ -109,7 +109,7 @@ describe("createBackgroundCompletionRunner (Phase 14 SPEC R3, R4, R5, R6)", () =
     expect(msg.metadata.backgroundHopCount).toBe(1);
     expect(passedAgentId).toBe("default");
     expect(parsedKey).toBeDefined();
-    // SPEC R6: reentered event fired exactly once with hopCount = 1.
+    // reentered event fired exactly once with hopCount = 1.
     expect(reenteredEvents).toHaveLength(1);
     const reentered = reenteredEvents[0] as { taskId: string; hopCount: number; sessionKey: string };
     expect(reentered.taskId).toBe(task.id);
@@ -118,7 +118,7 @@ describe("createBackgroundCompletionRunner (Phase 14 SPEC R3, R4, R5, R6)", () =
     await runner.shutdown();
   });
 
-  it("Test 2: failed event triggers executor.execute with failure header (AC-5)", async () => {
+  it("Test 2: failed event triggers executor.execute with failure header", async () => {
     const task = buildTask({ status: "failed", error: "boom", result: undefined });
     taskManager.getTask.mockReturnValue(task);
     const runner = build();
@@ -134,7 +134,7 @@ describe("createBackgroundCompletionRunner (Phase 14 SPEC R3, R4, R5, R6)", () =
     await runner.shutdown();
   });
 
-  it("Test 3: missing session triggers fallbackNotifyFn instead of executor (AC-6)", async () => {
+  it("Test 3: missing session triggers fallbackNotifyFn instead of executor", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
 
@@ -158,7 +158,7 @@ describe("createBackgroundCompletionRunner (Phase 14 SPEC R3, R4, R5, R6)", () =
     await runner.shutdown();
   });
 
-  it("Test 4: hop cap reached triggers fallbackNotifyFn (AC-7)", async () => {
+  it("Test 4: hop cap reached triggers fallbackNotifyFn", async () => {
     // Seed task.origin with backgroundHopCount = maxBackgroundHops - 1 so
     // the increment lands at the cap. With maxBackgroundHops = 3 and
     // incoming = 2, nextHopCount = 3 = cap -> fallback fires.
@@ -212,7 +212,7 @@ describe("createBackgroundCompletionRunner (Phase 14 SPEC R3, R4, R5, R6)", () =
     expect(executor.execute).not.toHaveBeenCalled();
   });
 
-  it("Test 7: D-09 restart-recovery announcement uses recovery copy", async () => {
+  it("Test 7: restart-recovery announcement uses recovery copy", async () => {
     const task = buildTask({
       status: "failed",
       error: "Daemon restarted while task was running",

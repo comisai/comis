@@ -22,7 +22,7 @@ describe("BackgroundTaskOriginSchema", () => {
     });
   });
 
-  it("Test 2: accepts traceId: null (optional/nullable per D-06)", () => {
+  it("Test 2: accepts traceId: null (optional/nullable)", () => {
     const result = BackgroundTaskOriginSchema.parse({
       agentId: "default",
       sessionKey: "default:echo:test:user1",

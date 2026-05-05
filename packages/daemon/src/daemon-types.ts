@@ -64,7 +64,7 @@ export interface DaemonInstance {
   readonly gatewayHandle?: GatewayServerHandle;
   readonly adapterRegistry: Map<string, ChannelPort>;
   /**
-   * Delivery-queue-side adapter map (Phase 13). Adapters registered here are
+   * Delivery-queue-side adapter map. Adapters registered here are
    * used by the recurring delivery-queue drainer for crash-safe outbound
    * delivery. Distinct from `adapterRegistry` (which serves direct dispatch
    * via the RPC message.* path) -- daemon.ts populates this map AFTER
@@ -73,12 +73,12 @@ export interface DaemonInstance {
    */
   readonly deliveryAdapters: Map<string, DeliveryAdapter>;
   /**
-   * Crash-safe delivery queue port (Phase 13). Exposed for tests that need
-   * to assert on queue depth (SPEC AC-2: depth returns to 0 after drain).
+   * Crash-safe delivery queue port. Exposed for tests that need
+   * to assert on queue depth (depth returns to 0 after drain).
    */
   readonly deliveryQueue: DeliveryQueuePort;
   /**
-   * Background task manager (Phase 14). Exposed for integration tests that
+   * Background task manager. Exposed for integration tests that
    * need to promote synthetic tasks and call complete()/fail() to drive the
    * completion runner pipeline without a live LLM.
    */

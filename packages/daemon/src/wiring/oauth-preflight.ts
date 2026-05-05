@@ -16,12 +16,12 @@
  *        - `kind: "tls-cert"` → exactly one WARN with module + errorKind +
  *          distro-aware install hint + OpenSSL `code` + raw `message`.
  *        - `kind: "network"` → a single DEBUG (no WARN — transient failures
- *          should not pollute the boot path; see RESEARCH §Pitfall 4).
+ *          should not pollute the boot path).
  *        - `{ ok: true }` → silent (operators do not want noise on boot).
  *
  * The 4000 ms timeout is intentionally tighter than the CLI doctor variant's
- * 5000 ms (RESEARCH §Pitfall 4) — boot must stay under PM2 / systemd
- * watchdog windows even on the worst case.
+ * 5000 ms — boot must stay under PM2 / systemd watchdog windows even on the
+ * worst case.
  *
  * Distro detection (`/etc/os-release` parser + 5-distro install-hint switch)
  * is duplicated inline from `packages/cli/src/doctor/checks/oauth-health.ts`.
@@ -66,8 +66,8 @@ interface OsRelease {
  * Parses `/etc/os-release` into `{ id, idLike }`. Returns `null` on read
  * error (missing file, permission denied, malformed contents).
  *
- * Verbatim duplication from Plan 10-04's `oauth-health.ts` — see module
- * JSDoc for the AGENTS.md §2.3 deferral rationale.
+ * Verbatim duplication from `oauth-health.ts` — see module JSDoc for the
+ * AGENTS.md §2.3 deferral rationale.
  */
 async function readOsRelease(path = "/etc/os-release"): Promise<OsRelease | null> {
   try {
@@ -88,8 +88,8 @@ async function readOsRelease(path = "/etc/os-release"): Promise<OsRelease | null
 /**
  * Produces a distro-aware install command for the system CA bundle.
  *
- * Verbatim duplication from Plan 10-04's `oauth-health.ts` — see module
- * JSDoc for the AGENTS.md §2.3 deferral rationale.
+ * Verbatim duplication from `oauth-health.ts` — see module JSDoc for the
+ * AGENTS.md §2.3 deferral rationale.
  */
 function caCertificatesInstallHint(os: OsRelease | null): string {
   if (!os) return "Install ca-certificates via your distro's package manager and retry";

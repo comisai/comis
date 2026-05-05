@@ -189,7 +189,7 @@ describe("Typed Graph Approval-Gate Integration (TEST-07)", () => {
         expect(graphId).toBeDefined();
 
         // 2. Wait for the gate node to reach "running" state before emitting reply.
-        //    This ensures the wait_for_input listener is registered (Pitfall 2).
+        //    This ensures the wait_for_input listener is registered.
         const runningDeadline = Date.now() + 30_000;
         let gateRunning = false;
 

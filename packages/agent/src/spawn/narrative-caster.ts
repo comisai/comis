@@ -56,7 +56,7 @@ const MAX_LABEL_LENGTH = 100;
  * for AnnouncementBatcher.stripSystemPrefix() compatibility.
  *
  * Exported so packages/agent/src/background/completion-formatter.ts can
- * reuse the byte-identical string (SPEC AC-2). Do NOT change the string
+ * reuse the byte-identical string. Do NOT change the string
  * without updating both consumers AND announcement-batcher.ts:81.
  */
 export const TRAILING_INSTRUCTION =

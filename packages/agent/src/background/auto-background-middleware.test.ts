@@ -265,8 +265,8 @@ describe("wrapToolForAutoBackground", () => {
     expect(result.details).toBeDefined();
   });
 
-  describe("Phase 14: originResolver threading (D-02 / SPEC AC-12)", () => {
-    it("Test 4: originResolver is called before manager.promote()", async () => {
+  describe("originResolver threading", () => {
+    it("originResolver is called before manager.promote()", async () => {
       const originResolver = vi.fn().mockReturnValue(buildOrigin({ agentId: "resolver-agent" }));
       const tool = createMockTool({ resolveAfterMs: 200 });
       const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, originResolver);
@@ -276,7 +276,7 @@ describe("wrapToolForAutoBackground", () => {
       expect(originResolver).toHaveBeenCalled();
     });
 
-    it("Test 5: when originResolver returns undefined, falls through to foreground (no promote)", async () => {
+    it("when originResolver returns undefined, falls through to foreground (no promote)", async () => {
       const originResolver = vi.fn().mockReturnValue(undefined);
       const promoteSpy = vi.spyOn(manager, "promote");
       const tool = createMockTool({ resolveAfterMs: 200, result: toolOk("foreground-result") });
@@ -288,7 +288,7 @@ describe("wrapToolForAutoBackground", () => {
       expect((result.content[0] as { text: string }).text).toBe("foreground-result");
     });
 
-    it("Test 6: when originResolver returns valid origin, promote is called with (tool.name, taskPromise, ac, origin)", async () => {
+    it("when originResolver returns valid origin, promote is called with (tool.name, taskPromise, ac, origin)", async () => {
       const expectedOrigin = buildOrigin({ agentId: "origin-agent" });
       const originResolver = vi.fn().mockReturnValue(expectedOrigin);
       const promoteSpy = vi.spyOn(manager, "promote");
@@ -305,7 +305,7 @@ describe("wrapToolForAutoBackground", () => {
       );
     });
 
-    it("Test 7: placeholder text contains \"I'll continue when it completes.\" and not \"user will be notified\"", async () => {
+    it("placeholder text contains \"I'll continue when it completes.\" and not \"user will be notified\"", async () => {
       const tool = createMockTool({ resolveAfterMs: 200 });
       const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-7" }));
 

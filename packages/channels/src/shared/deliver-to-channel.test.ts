@@ -828,7 +828,7 @@ describe("deliverToChannel", () => {
 
       // delivery:enqueued is no longer emitted by deliver-to-channel.ts; the
       // SqliteDeliveryQueueAdapter emits it inside enqueueInFlight (single
-      // source of truth, SPEC-R5 / Phase 13). Our mock queue does not emit,
+      // source of truth). Our mock queue does not emit,
       // so eventBus sees zero delivery:enqueued events.
       const enqueuedEvents = eventBus.emit.mock.calls.filter(
         (call: unknown[]) => call[0] === "delivery:enqueued",
@@ -848,10 +848,10 @@ describe("deliverToChannel", () => {
     });
 
     // -----------------------------------------------------------------------
-    // delivery-queue integration (Phase 13) -- enqueueInFlight + no delivery:enqueued
+    // delivery-queue integration -- enqueueInFlight + no delivery:enqueued
     // -----------------------------------------------------------------------
 
-    describe("delivery-queue integration (Phase 13)", () => {
+    describe("delivery-queue integration", () => {
       it("calls enqueueInFlight (not enqueue) for channel-side sends", async () => {
         const queue = createMockDeliveryQueue();
         const adapter = createMockAdapter("telegram");

@@ -35,9 +35,9 @@ export interface SetupBackgroundCompletionRunnerDeps {
   executor: AgentExecutor;
   sessionStore: RunnerSessionStore;
   taskManager: Pick<BackgroundTaskManager, "getTask">;
-  /** Phase-13 bgNotifyFn closure used when the originating session is gone (D-08). */
+  /** bgNotifyFn closure used when the originating session is gone. */
   fallbackNotifyFn: NotifyFn;
-  /** From config.backgroundTasks.maxBackgroundHops (default 3). NOT config.workflow.* (CONTEXT D-03). */
+  /** From config.backgroundTasks.maxBackgroundHops (default 3). NOT config.workflow.*. */
   maxBackgroundHops: number;
   logger: ComisLogger;
 }

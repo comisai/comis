@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the boot-time OAuth TLS preflight wiring helper (SC-10-1).
+ * Tests for the boot-time OAuth TLS preflight wiring helper.
  *
  * Two exported helpers under test:
  *   1. `hasAnyOAuthAgent(agents)` — boolean gate; true iff any agent's

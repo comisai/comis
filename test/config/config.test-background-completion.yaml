@@ -1,14 +1,14 @@
-# Comis Test Configuration (Phase 14: Background-task completion re-triggers agent session)
+# Comis Test Configuration — Background-task completion re-triggers agent session
 #
-# Variant of config.test-delivery-recurring.yaml for Phase 14 integration tests:
+# Variant of config.test-delivery-recurring.yaml for background-completion integration tests:
 # - Separate port (8479) to avoid conflicts with other test suites
 # - Separate memory database (test-memory-bg-completion.db) for isolation
 # - RAG disabled (no embeddings needed)
 # - Cron disabled (not testing scheduler)
 # - All monitoring disabled
-# - deliveryQueue.drainIntervalMs: 250 -- fast tick (inherits Phase 13 pattern)
+# - deliveryQueue.drainIntervalMs: 250 -- fast tick (inherits delivery-recurring pattern)
 # - backgroundTasks.autoBackgroundMs: 100 -- so test_sleep(500ms) auto-backgrounds quickly
-# - backgroundTasks.maxBackgroundHops: 3 -- default cap for SPEC R4 boundary tests
+# - backgroundTasks.maxBackgroundHops: 3 -- default cap for boundary tests
 
 tenantId: "test"
 logLevel: "warn"

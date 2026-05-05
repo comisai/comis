@@ -20,7 +20,7 @@ export interface BackgroundTask {
   error?: string;
   /** Originating session attribution (incl. backgroundHopCount) -- captured at
    *  promote-time, persisted on disk, preserved across recoverOnStartup.
-   *  Required (no silent fallback per SPEC AC-3). */
+   *  Required (no silent fallback). */
   origin: BackgroundTaskOrigin;
   // In-memory only (not serialized):
   _promise?: Promise<unknown>;
@@ -38,6 +38,6 @@ export interface PersistedTaskState {
   result?: string;
   error?: string;
   /** Persisted origin -- read back by recoverOnStartup so completion routing
-   *  survives daemon restarts (SPEC AC-11). */
+   *  survives daemon restarts. */
   origin: BackgroundTaskOrigin;
 }

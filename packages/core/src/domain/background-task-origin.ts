@@ -32,12 +32,11 @@ export const BackgroundTaskOriginSchema = z.strictObject({
   channelId: z.string().min(1),
   /** Per-execution trace identifier; null when no trace was active. */
   traceId: z.string().nullable(),
-  /** Recursion-bound counter (SPEC R4 + AC-7). Captured at promote-time
-   *  from the inbound NormalizedMessage's metadata.backgroundHopCount
-   *  (defaults to 0 for top-level user messages). The Phase 14 completion
-   *  runner increments this when constructing the outgoing synthetic
-   *  message, and falls back to fallbackNotifyFn when
-   *  (incomingHopCount + 1) >= maxBackgroundHops. */
+  /** Recursion-bound counter. Captured at promote-time from the inbound
+   *  NormalizedMessage's metadata.backgroundHopCount (defaults to 0 for
+   *  top-level user messages). The completion runner increments this
+   *  when constructing the outgoing synthetic message, and falls back to
+   *  fallbackNotifyFn when (incomingHopCount + 1) >= maxBackgroundHops. */
   backgroundHopCount: z.number().int().nonnegative().default(0),
 });
 

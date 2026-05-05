@@ -5,8 +5,8 @@
  * agent's session as a synthetic NormalizedMessage.
  *
  * Mirrors the shape of packages/agent/src/spawn/narrative-caster.ts (the
- * sub-agent announcement formatter). Phase 14 simplifies: no condensation
- * levels, no metadata stats, no labels -- just a single tool result with
+ * sub-agent announcement formatter). Simplified: no condensation levels,
+ * no metadata stats, no labels -- just a single tool result with
  * toolName + result/error.
  *
  * The trailing instruction is byte-identical to TRAILING_INSTRUCTION in
@@ -21,14 +21,14 @@
 import type { BackgroundTask } from "./background-task-types.js";
 import { TRAILING_INSTRUCTION } from "../spawn/narrative-caster.js";
 
-/** Re-export so consumers (tests, plan 14-04 Task 4 runner) can assert byte-identity. */
+/** Re-export so consumers (tests, completion runner) can assert byte-identity. */
 export { TRAILING_INSTRUCTION } from "../spawn/narrative-caster.js";
 
 /** NormalizedMessageSchema.text caps at 32768 chars. Reserve headroom for header + trailing instruction. */
 const MAX_ANNOUNCEMENT_CHARS = 32768;
 const TRUNCATION_MARKER = "\n…[truncated]";
 
-/** Recovery announcement body for tasks failed via recoverOnStartup (D-09). */
+/** Recovery announcement body for tasks failed via recoverOnStartup. */
 const RESTART_RECOVERY_BODY =
   "This background task was interrupted by a daemon restart. The result is unavailable; let the user know if relevant.";
 const RESTART_RECOVERY_ERROR = "Daemon restarted while task was running";
@@ -41,10 +41,10 @@ const RESTART_RECOVERY_ERROR = "Daemon restarted while task was running";
  *   - failure: `[Background Task Failed: ${toolName}]`
  *
  * Body:
- *   - success: `task.result` (already capped at 100 KB by manager.truncateResult; D-05 leaves it).
+ *   - success: `task.result` (already capped at 100 KB by manager.truncateResult).
  *   - generic failure: `task.error`.
  *   - restart-recovery failure (`task.error === "Daemon restarted while task was running"`):
- *     uses the explicit recovery copy from D-09.
+ *     uses the explicit recovery copy.
  *
  * Total-length cap: NormalizedMessageSchema.text limits at 32768 chars.
  * If the assembled string would exceed the cap, only the body section is
@@ -72,7 +72,7 @@ export function formatCompletionAnnouncement(task: BackgroundTask): string {
   sections.push(TRAILING_INSTRUCTION);
   let assembled = sections.join("\n");
 
-  // D-05: enforce NormalizedMessageSchema.text.max(32768). Truncate the body section
+  // Enforce NormalizedMessageSchema.text.max(32768). Truncate the body section
   // ONLY if needed; header and trailing instruction are byte-identical guarantees.
   if (assembled.length > MAX_ANNOUNCEMENT_CHARS) {
     const headerSection = `${header}\n\n`;

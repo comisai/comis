@@ -34,7 +34,7 @@ export interface SetupBackgroundTasksDeps {
  * background_task:{completed,failed}. If recovery fires before the runner
  * subscribes, the synthesized failure events for restart-interrupted tasks
  * land in an empty handler set and the user never sees the recovery
- * announcement (SPEC AC-11).
+ * announcement.
  * @param deps - Daemon-level dependencies
  * @returns BackgroundTasksContext with manager instance
  */

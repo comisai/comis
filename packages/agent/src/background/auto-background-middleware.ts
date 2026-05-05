@@ -45,8 +45,8 @@ export interface ToolDefinition {
  * resolve a valid origin (e.g., during a non-session-bound subagent path) --
  * in that case the wrapper falls through to foreground execution (no promote).
  *
- * Per D-02: explicit threading, NOT AsyncLocalStorage. Origin flows through
- * factory params end-to-end.
+ * Explicit threading, NOT AsyncLocalStorage. Origin flows through factory
+ * params end-to-end.
  *
  * If the tool is in `config.excludeTools`, returns unchanged.
  * If the tool completes before `config.autoBackgroundMs`, returns the result directly.
@@ -110,7 +110,7 @@ export function wrapToolForAutoBackground(
       }
 
       // Timeout: resolve origin synchronously before yielding to the background.
-      // Per D-02: explicit threading, NOT AsyncLocalStorage.
+      // Explicit threading, NOT AsyncLocalStorage.
       const origin = originResolver();
       if (!origin) {
         // No originating session context (e.g., wrap-site is a subagent without

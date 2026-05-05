@@ -7,7 +7,7 @@
  * queue and channel adapters:
  *   1. setupDeliveryQueue() creates the adapter immediately (before setupChannels).
  *   2. drainAndStart() recovers in_flight rows, runs startup drain, then starts
- *      both the recurring drain timer (SPEC-R1) and the prune timer AFTER
+ *      both the recurring drain timer and the prune timer AFTER
  *      setupChannels populates channelAdapters.
  * Crash-Safe Delivery Queue.
  * Session Mirroring.
@@ -74,7 +74,7 @@ export async function setupDeliveryQueue(deps: {
 
   let pruneInterval: ReturnType<typeof setInterval> | undefined;
   let drainInterval: ReturnType<typeof setInterval> | undefined;
-  // Single-tick gate per CONTEXT D-01: in-flight Promise prevents overlapping ticks.
+  // Single-tick gate: in-flight Promise prevents overlapping ticks.
   let draining: Promise<void> | null = null;
 
   // Inner helper: one drain pass. Reused by startup drain AND each recurring tick.
@@ -91,7 +91,7 @@ export async function setupDeliveryQueue(deps: {
 
   // 2. Startup drain + recurring drain timer + prune timer (deferred until channelAdapters populated)
   const drainAndStart = async (): Promise<void> => {
-    // --- Step 1: Recover in_flight rows (per SPEC-R3 + CONTEXT D-03). ---
+    // --- Step 1: Recover in_flight rows. ---
     // Runs UNCONDITIONALLY -- independent of drainOnStartup policy. An 'in_flight'
     // row from a prior crash is a correctness bug regardless of the drain policy.
     const recoverResult = await deliveryQueue.recoverInFlight();
@@ -109,7 +109,7 @@ export async function setupDeliveryQueue(deps: {
       await runOneDrainPass();
     }
 
-    // --- Step 3: Recurring drain timer (per SPEC-R1 + CONTEXT D-01). ---
+    // --- Step 3: Recurring drain timer. ---
     drainInterval = setInterval(() => {
       if (draining) return;                          // single-tick gate
       draining = runOneDrainPass().finally(() => { draining = null; });

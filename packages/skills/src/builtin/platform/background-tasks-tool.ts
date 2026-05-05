@@ -31,7 +31,7 @@ interface TaskInfo {
   completedAt?: number;
   result?: string;
   error?: string;
-  /** Phase 14: agentId moved to origin.agentId */
+  /** agentId is nested under origin.agentId */
   origin: { agentId: string };
 }
 

@@ -40,7 +40,7 @@ const { parse: parseYaml } = coreRequire("yaml") as { parse: (s: string) => unkn
 // Temp directory for YAML fixtures
 // ---------------------------------------------------------------------------
 
-const tmpDir = join(tmpdir(), `comis-test-config-119-env-include-${Date.now()}`);
+const tmpDir = join(tmpdir(), `comis-test-config-env-include-${Date.now()}`);
 
 // ---------------------------------------------------------------------------
 // IncludeResolverDeps using real filesystem
@@ -75,7 +75,7 @@ const includeDeps = {
   resolvePath: (base: string, inc: string) => ok(resolve(base, inc)),
 };
 
-describe("Config Env Substitution & $include E2E (119-01)", () => {
+describe("Config Env Substitution & $include E2E", () => {
   beforeAll(() => {
     mkdirSync(tmpDir, { recursive: true });
   });

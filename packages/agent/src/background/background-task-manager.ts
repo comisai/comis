@@ -89,7 +89,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
   const manager: BackgroundTaskManager = {
     promote(toolName, promise, ac, origin) {
-      // SPEC AC-3: reject calls with missing/invalid origin (no silent fallback).
+      // Reject calls with missing/invalid origin (no silent fallback).
       if (!origin || typeof origin !== "object") {
         return err(new Error("BackgroundTaskOrigin is required (received undefined or non-object)"));
       }
@@ -264,14 +264,13 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       let skipped = 0;
       for (const persisted of recovered) {
         if (!persisted.origin || typeof persisted.origin !== "object" || !persisted.origin.agentId || !persisted.origin.sessionKey) {
-          // Legacy file without origin (pre-Phase-14). Per SPEC "Out of scope:
-          // backward-compat shims", skip with a warning -- the file remains on
-          // disk for audit, but the manager doesn't import it.
+          // Legacy file without origin. Skip with a warning -- the file
+          // remains on disk for audit, but the manager doesn't import it.
           skipped++;
           logger.warn(
             {
               taskId: persisted.id,
-              hint: "Pre-Phase-14 task file lacks origin; skipping recovery -- delete the file or wait for cleanup",
+              hint: "Legacy task file lacks origin; skipping recovery -- delete the file or wait for cleanup",
               errorKind: "internal" as const,
             },
             "Skipping recovered task without origin",
@@ -303,10 +302,10 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         logger.warn(
           {
             skipped,
-            hint: "Pre-Phase-14 task files cannot be recovered without origin -- they remain on disk for audit",
+            hint: "Legacy task files cannot be recovered without origin -- they remain on disk for audit",
             errorKind: "internal" as const,
           },
-          "Skipped pre-Phase-14 task files during recovery",
+          "Skipped legacy task files during recovery",
         );
       }
     },

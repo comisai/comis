@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 14: background-task completion re-triggers agent session — integration tests.
+ * Background-task completion re-triggers agent session — integration tests.
  *
- * Verifies SPEC acceptance criteria AC-8, AC-9, AC-10, AC-11 against a real
- * daemon with the full background-task completion pipeline wired:
+ * Verifies acceptance criteria against a real daemon with the full
+ * background-task completion pipeline wired:
  *   BackgroundTaskManager.complete() → background_task:completed event →
  *   completion runner → background_task:reentered event → executor.execute()
  *
@@ -14,14 +14,13 @@
  * is irrelevant — the runner's suppressError absorbs LLM failures gracefully).
  *
  * The `background_task:reentered` event (emitted immediately before
- * executor.execute() per plan 14-04 + SPEC R6) is the observable proxy for
- * "runner fired and is about to invoke executor". It is the p95 measurement
- * endpoint for AC-9 and the execution-start proof for AC-10.
+ * executor.execute()) is the observable proxy for "runner fired and is about
+ * to invoke executor". It is the p95 latency measurement endpoint and the
+ * execution-start proof.
  *
- * AC-11 (restart-recovery) promotes a task then calls fail() with
- * error === "Daemon restarted while task was running" (D-09 copy) and
- * verifies the runner emits background_task:reentered with the formatted
- * restart announcement.
+ * Restart-recovery test promotes a task then calls fail() with
+ * error === "Daemon restarted while task was running" and verifies the runner
+ * emits background_task:reentered with the formatted restart announcement.
  *
  * @module
  */
@@ -109,7 +108,7 @@ function promoteSyntheticTask(
   };
 }
 
-describe("Phase 14: background-task completion re-triggers agent session (integration)", () => {
+describe("background-task completion re-triggers agent session (integration)", () => {
   let handle: TestDaemonHandle;
   let echoAdapter: EchoChannelAdapter;
 
@@ -150,19 +149,19 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // SPEC AC-10: backgrounded tool completion triggers the re-entry pipeline.
+  // Backgrounded tool completion triggers the re-entry pipeline.
   //
   // Drive: promote → complete → background_task:completed event →
   //   runner emits background_task:reentered (right before executor.execute).
   //
-  // The reentered event is emitted immediately before executor.execute() per
-  // plan 14-04 SPEC R6 contract. The executor call itself may fail in test
-  // environments without a real LLM key (runner's suppressError absorbs it);
-  // the test only asserts the pipeline entry-point fired correctly.
+  // The reentered event is emitted immediately before executor.execute().
+  // The executor call itself may fail in test environments without a real LLM
+  // key (runner's suppressError absorbs it); the test only asserts the
+  // pipeline entry-point fired correctly.
   // ---------------------------------------------------------------------------
 
   it(
-    "SPEC AC-10: background_task:completed → runner emits background_task:reentered within 2000ms",
+    "background_task:completed → runner emits background_task:reentered within 2000ms",
     async () => {
       const origin = makeTestOrigin();
       const { taskId, completeTask } = promoteSyntheticTask(handle, "test_sleep", origin);
@@ -196,7 +195,7 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
       );
 
       // Trigger completion. manager.complete() emits background_task:completed,
-      // which the runner (wired in plan 14-05) consumes.
+      // which the runner consumes.
       completeTask('{"slept":500}');
 
       // Wait for reentered event (runner fires it just before executor.execute).
@@ -207,16 +206,16 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
   );
 
   // ---------------------------------------------------------------------------
-  // SPEC AC-9 / R6: p95 latency from manager.complete() to executor.execute()
-  // start is ≤ 1000ms across ≥ 50 trials.
+  // p95 latency from manager.complete() to executor.execute() start is
+  // ≤ 1000ms across ≥ 50 trials.
   //
   // Measurement: delta between background_task:completed.timestamp
   // (set by manager.complete()) and background_task:reentered.timestamp
-  // (emitted immediately before executor.execute per plan 14-04 R6 contract).
+  // (emitted immediately before executor.execute).
   // ---------------------------------------------------------------------------
 
   it(
-    "SPEC AC-9 / R6: p95 latency background_task:completed → background_task:reentered ≤ 1000ms over 50 trials",
+    "p95 latency background_task:completed → background_task:reentered ≤ 1000ms over 50 trials",
     async () => {
       const latencies: number[] = [];
       const TRIALS = 50;
@@ -283,7 +282,7 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
 
       // eslint-disable-next-line no-console -- intentional observability for latency SLO
       console.log(
-        `[Phase 14 AC-9] latencies: count=${latencies.length} min=${latencies[0]} p50=${p50} p95=${p95} max=${latencies[latencies.length - 1]}`,
+        `[latency] count=${latencies.length} min=${latencies[0]} p50=${p50} p95=${p95} max=${latencies[latencies.length - 1]}`,
       );
 
       expect(p95).toBeLessThanOrEqual(1000);
@@ -292,8 +291,8 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
   );
 
   // ---------------------------------------------------------------------------
-  // SPEC AC-8 / R5: concurrent background_task:completed events for the same
-  // sessionKey are serialized by the existing session lock.
+  // Concurrent background_task:completed events for the same sessionKey are
+  // serialized by the existing session lock.
   //
   // Two tasks are completed near-simultaneously. Both should trigger
   // background_task:reentered (i.e., executor.execute is called for each).
@@ -302,7 +301,7 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
   // ---------------------------------------------------------------------------
 
   it(
-    "SPEC AC-8 / R5: two concurrent background_task:completed for same sessionKey both reach executor.execute (session-lock serialization)",
+    "two concurrent background_task:completed for same sessionKey both reach executor.execute (session-lock serialization)",
     async () => {
       const origin = makeTestOrigin();
       const { taskId: taskId1, completeTask: completeTask1 } = promoteSyntheticTask(
@@ -355,7 +354,7 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
               () =>
                 reject(
                   new Error(
-                    `AC-8: only ${reentered.length}/2 reentered events fired within 10s`,
+                    `only ${reentered.length}/2 reentered events fired within 10s`,
                   ),
                 ),
               10_000,
@@ -376,15 +375,15 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
   );
 
   // ---------------------------------------------------------------------------
-  // SPEC AC-11: daemon restart-recovery surfaces "task interrupted by daemon
-  // restart" announcement to the user.
+  // Daemon restart-recovery surfaces "task interrupted by daemon restart"
+  // announcement to the user.
   //
   // Drive: promote → fail() with error "Daemon restarted while task was
-  // running" (the exact error string recoverOnStartup uses per plan 14-05 / D-09).
+  // running" (the exact error string recoverOnStartup uses).
   //
   // The completion runner handles background_task:failed events the same way
   // as completed. For the restart-recovery error, completion-formatter.ts
-  // formats the D-09 copy: "This background task was interrupted by a daemon
+  // formats the copy: "This background task was interrupted by a daemon
   // restart..."
   //
   // Verification: background_task:reentered fires (runner invoked executor).
@@ -392,7 +391,7 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
   // ---------------------------------------------------------------------------
 
   it(
-    "SPEC AC-11: background_task:failed with restart error → runner emits background_task:reentered (recovery pipeline)",
+    "background_task:failed with restart error → runner emits background_task:reentered (recovery pipeline)",
     async () => {
       // Use a fresh session key for this test to isolate from prior state.
       const restartSessionKey = "test:restart-user:bg-restart-test";
@@ -423,7 +422,7 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
             handle.daemon.container.eventBus.off("background_task:reentered", handler);
             rejectP(
               new Error(
-                "AC-11: background_task:reentered not emitted within 5000ms for restart-recovery",
+                "background_task:reentered not emitted within 5000ms for restart-recovery",
               ),
             );
           }, 5_000);
@@ -443,7 +442,7 @@ describe("Phase 14: background-task completion re-triggers agent session (integr
       );
 
       // Fail the task with the exact restart-recovery error string.
-      // This mirrors what recoverOnStartup() does (plan 14-05 / D-09).
+      // This mirrors what recoverOnStartup() does.
       failTask("Daemon restarted while task was running");
 
       // Runner should pick up the failed event, format the restart-recovery

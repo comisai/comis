@@ -11,7 +11,7 @@
  *   ERR:         Unregistered methods return -32601 (method not found)
  *   BATCH:       Cross-namespace batch RPC returns per-method results
  *
- * Uses the dual-token config from Plan 01 (port 8492, admin + rpc-only tokens).
+ * Uses the dual-token config (port 8492, admin + rpc-only tokens).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
