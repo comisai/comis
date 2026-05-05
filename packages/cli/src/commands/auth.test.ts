@@ -16,6 +16,24 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { Command } from "commander";
 import { registerAuthCommand } from "./auth.js";
 
+// loginOpenAICodexOAuth makes real network calls (device-code polling, browser
+// OAuth server). Mock it so action-body tests exit:1 immediately instead of
+// hanging until the 5s Vitest timeout.
+vi.mock("@comis/agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/agent")>();
+  return {
+    ...actual,
+    loginOpenAICodexOAuth: vi.fn(async () => ({
+      ok: false as const,
+      error: {
+        code: "callback_timeout" as const,
+        message: "mock: login flow not executed in unit test",
+        hint: "",
+      },
+    })),
+  };
+});
+
 describe("registerAuthCommand", () => {
   afterEach(() => {
     vi.restoreAllMocks();

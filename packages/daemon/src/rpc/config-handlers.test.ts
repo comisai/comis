@@ -1496,7 +1496,7 @@ describe("config.patch type coercion", () => {
   // integrations.mcp.servers (the MAX_REQUESTS_PER_HOUR="20" cascade bug).
   // -------------------------------------------------------------------------
   it("config.patch preserves z.record(string,string) env values on integrations.mcp.servers", async () => {
-    const deps = makeDeps(tempConfig.configPath);
+    const deps = makeDepsWithEnv(tempConfig.configPath, { GEMINI_API_KEY: "test-gemini-key" });
     const handlers = createConfigHandlers(deps);
 
     const result = await handlers["config.patch"]!({
