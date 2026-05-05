@@ -23,6 +23,13 @@ export const BackgroundTasksConfigSchema = z.strictObject({
   maxBackgroundDurationMs: z.number().int().positive().default(300_000),
   /** Tool names excluded from auto-background promotion. */
   excludeTools: z.array(z.string()).default([]),
+  /** Recursion bound for background-task completion re-trigger (maxBackgroundHops).
+   *  Each completion re-enters the originating session as a fresh turn;
+   *  the hop counter prevents a runaway chain when an announcement
+   *  triggers another background task. Default 3 — enough headroom for
+   *  normal "install then generate then send" sequences, low enough that
+   *  loops surface quickly. Runner reads config.backgroundTasks.maxBackgroundHops. */
+  maxBackgroundHops: z.number().int().positive().default(3),
 });
 
 export type BackgroundTasksConfig = z.infer<typeof BackgroundTasksConfigSchema>;
