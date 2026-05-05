@@ -99,7 +99,7 @@ export interface MemoryApi {
  * and memory config.
  *
  * The factory function pattern is consistent with createSessionStore and
- * createSecretManager from Phase 1.
+ * createSecretManager.
  */
 export function createMemoryApi(
   db: Database.Database,

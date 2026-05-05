@@ -10,7 +10,7 @@ If the daemon crashes or restarts mid-delivery, pending messages are
 automatically re-delivered on the next startup.
 
 When disabled, Comis uses a no-op adapter and messages are sent directly
-without persistence (fire-and-forget, the pre-Phase 499 behavior).
+without persistence (fire-and-forget, without the write-ahead queue).
 
 ## Configuration
 
@@ -122,5 +122,4 @@ deliveryQueue:
 ```
 
 When disabled, a no-op adapter is injected and all delivery proceeds directly
-through the platform adapter without any SQLite writes. This is backward-compatible
-with the pre-Phase 499 behavior.
+through the platform adapter without any SQLite writes.

@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createMockOAuthServer, type MockOAuthServer } from "./mock-oauth-server.js";
 
 // Build a urlencoded refresh-request body exactly as pi-ai sends it
-// (RESEARCH §Q8 / openai-codex.js:107-110).
+// (openai-codex.js:107-110).
 function refreshTokenBody(): string {
   return new URLSearchParams({
     grant_type: "refresh_token",
@@ -128,11 +128,11 @@ describe("createMockOAuthServer", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 9 D-13: POST /codex/responses route + getLlmRequests() capture log
+  // POST /codex/responses route + getLlmRequests() capture log
   // ---------------------------------------------------------------------------
   // The fixture must record per-call Authorization + chatgpt-account-id headers
-  // so the integration test in plan 07 can assert per-agent token routing at
-  // the network boundary (SC#2 falsifiable evidence).
+  // so integration tests can assert per-agent token routing at
+  // the network boundary.
   // ---------------------------------------------------------------------------
 
   async function postCodexResponses(

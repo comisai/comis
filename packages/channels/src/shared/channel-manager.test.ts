@@ -798,11 +798,11 @@ describe("createChannelManager", () => {
   });
 
   describe("onMessageReceived / onMessageProcessed timing", () => {
-    // Pin the timing contract that fixes the r4i-A flaw: onMessageReceived
-    // MUST fire BEFORE await processInboundMessage on both code paths so the
-    // continuation tracker is populated before any in-flight tool call could
-    // trigger SIGUSR2. onMessageProcessed retains its post-processing
-    // semantics (sessionTrackerRef.ref deferred-wiring requirement).
+    // Pin the timing contract: onMessageReceived MUST fire BEFORE await
+    // processInboundMessage on both code paths so the continuation tracker
+    // is populated before any in-flight tool call could trigger SIGUSR2.
+    // onMessageProcessed retains its post-processing semantics
+    // (sessionTrackerRef.ref deferred-wiring requirement).
 
     /** Build a deferred promise the test can resolve at will. */
     function makeDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -992,12 +992,11 @@ describe("createChannelManager", () => {
       expect(onMessageProcessed).not.toHaveBeenCalled();
     });
 
-    it("r4i-A regression pin: onMessageReceived fires while processing is still in flight", async () => {
-      // This pins the specific bug fixed by 260430-s4m: in r4i-A, the only
-      // callback (onMessageProcessed) fired AFTER processInboundMessage
-      // resolved -- so a SIGUSR2 mid-execution observed an empty
-      // continuation tracker. Wiring tracker.track to onMessageReceived
-      // closes that timing window.
+    it("regression pin: onMessageReceived fires while processing is still in flight", async () => {
+      // Previously, the only callback (onMessageProcessed) fired AFTER
+      // processInboundMessage resolved -- so a SIGUSR2 mid-execution
+      // observed an empty continuation tracker. Wiring tracker.track to
+      // onMessageReceived closes that timing window.
       const deferred = (() => {
         let resolveFn: (v: {
           response: string;

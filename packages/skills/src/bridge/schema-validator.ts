@@ -3,8 +3,8 @@
  * Generic tool-entry schema validator.
  *
  * Pre-flight, action-aware shape gate that runs BEFORE per-tool
- * `validateInput`. Catches the 2026-05-03 outage shape
- * (`mcp_manage({action:"connect", server_name:"yfinance"})`) at the
+ * `validateInput`. Catches malformed shapes such as
+ * `mcp_manage({action:"connect", server_name:"yfinance"})` at the
  * tool-entry boundary and produces a self-correcting message:
  *
  *     "[invalid_value] unknown key 'server_name' -- did you mean 'name'?.
@@ -34,10 +34,10 @@ import { levenshteinSimilarity } from "../builtin/file/path-suggest.js";
  *
  * We score with `tokenAwareSimilarity` (max of full-string similarity and
  * the best per-token similarity after splitting on `_`/`-`). This catches
- * the 2026-05-03 outage payload `server_name -> name` (token "name"
- * matches exactly, score 1.0) without spurious matches against short
- * unrelated keys (`x`, `srver` -> max < 0.3 across all candidates in the
- * 7-key mcp_manage shape, well below threshold).
+ * payloads like `server_name -> name` (token "name" matches exactly,
+ * score 1.0) without spurious matches against short unrelated keys (`x`,
+ * `srver` -> max < 0.3 across all candidates in the 7-key mcp_manage
+ * shape, well below threshold).
  *
  * 0.5 was chosen empirically: `conect -> connect` scores 0.857 (fires);
  * `srver -> headers` scores 0.286 (does not fire); the closest false

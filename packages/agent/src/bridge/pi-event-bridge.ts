@@ -88,7 +88,7 @@ export interface PiEventBridgeDeps {
    *  internal retry. Rate-limit windows are per-minute (longer than the SDK's
    *  ~30s retry budget), so retrying within the window cannot succeed.
    *  Non-`rate_limited` retryable errors (overloaded, network, 5xx) bypass this
-   *  hook -- the SDK's normal retry-with-backoff proceeds. (260501-dkl) */
+   *  hook -- the SDK's normal retry-with-backoff proceeds. */
   onAbortRetry?: () => void;
   /** SDK context usage accessor -- returns live context metrics from AgentSession. */
   getContextUsage?: () => ContextUsageData | undefined;
@@ -130,7 +130,7 @@ export interface PiEventBridgeDeps {
   sepMessageText?: string;
   /** Execution start timestamp for SEP timing metrics. */
   sepExecutionStartMs?: number;
-  /** Cache break detection Phase 2 callback. Returns CacheBreakEvent if break detected. */
+  /** Cache break detection callback. Returns CacheBreakEvent if break detected. */
   checkCacheBreak?: (input: { sessionKey: string; provider: string; cacheReadTokens: number; cacheWriteTokens: number; totalInputTokens: number; apiError?: boolean }) => import("../executor/cache-break-detection.js").CacheBreakEvent | null;
   /** Called on each turn_end with the per-turn usage.input tokens.
    *  Used by pi-executor to update the TokenAnchor for API-grounded estimation. */
@@ -145,27 +145,27 @@ export interface PiEventBridgeDeps {
   graphId?: string;
   /** Graph node ID for cache write signal emission. Set only for graph subagents. */
   nodeId?: string;
-  /** + 49-01: Shared mutable TTL split estimate. Populated by request-body-injector
+  /** Shared mutable TTL split estimate. Populated by request-body-injector
    *  on each API call, read by the bridge on turn_end for per-TTL cost calculation.
    *  The bridge normalizes these estimates against the actual SDK-reported cacheWriteTokens. */
   ttlSplit?: TtlSplitEstimate;
-  /** 260428-hoy pre-call hook: invoked once per `turn_start` event, BEFORE
-   *  pi-ai serializes the next request. The closure (defined in pi-executor)
-   *  walks `session.agent.state.messages`, asserts the cross-turn
-   *  hash-invariant per assistant message with a stored hash entry (logs
-   *  ERROR on mutation), then runs the canonical-restore helper against the
-   *  canonical store (heals any mutation in-place by writing the result
-   *  back to `session.agent.state.messages`). The return value is unused by
-   *  the bridge -- the side effect is the heal write-back. Optional: when
+  /** Pre-call hook: invoked once per `turn_start` event, BEFORE pi-ai
+   *  serializes the next request. The closure (defined in pi-executor) walks
+   *  `session.agent.state.messages`, asserts the cross-turn hash-invariant
+   *  per assistant message with a stored hash entry (logs ERROR on mutation),
+   *  then runs the canonical-restore helper against the canonical store
+   *  (heals any mutation in-place by writing the result back to
+   *  `session.agent.state.messages`). The return value is unused by the
+   *  bridge -- the side effect is the heal write-back. Optional: when
    *  omitted, both the diagnostic and the heal are silently disabled
    *  (e.g., unit tests that don't drive a full agent session). */
   getSessionMessages?: () => ReadonlyArray<unknown> | undefined;
-  /** 260428-iag wire-edge diagnostic: returns the absolute path to the
-   *  per-session JSONL on disk. The bridge invokes this only when the LLM
-   *  error path detects the signed-replay rejection signature, then
-   *  diff'd against the persisted canonical to surface mutation that
-   *  occurred AFTER the bridge's restoration hook. Optional — when
-   *  omitted, the wire-edge diagnostic is a silent no-op. */
+  /** Wire-edge diagnostic: returns the absolute path to the per-session JSONL
+   *  on disk. The bridge invokes this only when the LLM error path detects
+   *  the signed-replay rejection signature, then diff'd against the persisted
+   *  canonical to surface mutation that occurred AFTER the bridge's
+   *  restoration hook. Optional — when omitted, the wire-edge diagnostic is
+   *  a silent no-op. */
   getSessionJsonlPath?: () => string | null;
 }
 
@@ -185,12 +185,12 @@ export interface PiEventBridgeResult {
   getResult: () => Partial<ExecutionResult> & { contextUsage?: ContextUsageData; textEmitted?: boolean; cumulativeLlmDurationMs?: number; cumulativeToolDurationMs?: number; cumulativeToolWallclockMs?: number; toolCallHistory?: string[]; lastActiveToolName?: string; lastLlmErrorMessage?: string; failedToolCalls?: number; failedTools?: string[]; toolExecResults?: Array<{ toolName: string; success: boolean; durationMs: number; errorText?: string }>; turnCount?: number; lastStopReason?: string; cacheWrite5mTokens?: number; cacheWrite1hTokens?: number; sessionCostUsd?: number; sessionCacheSavedUsd?: number; thinkingTokens?: number; budgetWarningEmitted?: boolean };
   /** Accumulate estimated cost from a timed-out API request. */
   addGhostCost: (estimated: GhostCostEstimate) => void;
-  /** 260428-hoy: ReadonlyMap views of the per-responseId hash store and
-   *  canonical-snapshot store, both populated at stream-close in lockstep.
-   *  The executor's pre-LLM-call closure reads both stores to drive the
-   *  hash-invariant assertion plus the canonical restore helper. Returns
-   *  ReadonlyMap views to preserve internal-state encapsulation -- the
-   *  underlying `m` object is never exported. */
+  /** ReadonlyMap views of the per-responseId hash store and canonical-snapshot
+   *  store, both populated at stream-close in lockstep. The executor's
+   *  pre-LLM-call closure reads both stores to drive the hash-invariant
+   *  assertion plus the canonical restore helper. Returns ReadonlyMap views
+   *  to preserve internal-state encapsulation -- the underlying `m` object is
+   *  never exported. */
   getThinkingBlockStores: () => {
     hashes: ReadonlyMap<string, ReadonlyArray<ThinkingBlockHash>>;
     canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;
@@ -395,7 +395,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           });
 
           // Reset prompt timeout after each tool completion so slow tools
-          // do not starve subsequent LLM turns (Quick 215).
+          // do not starve subsequent LLM turns.
           deps.onToolExecutionEnd?.();
 
           // Safety: check step limit (delegated to bridge-safety-controls)
@@ -438,20 +438,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // LLM turn about to start (pre-serialize hook for assert+restore)
         // -----------------------------------------------------------------
         case "turn_start": {
-          // 260428-hoy: Run the executor-supplied pre-call closure once per
-          // turn, before pi-ai reads `session.agent.state.messages` to
-          // serialize the next API request. The closure performs the
-          // assert-then-restore pass over the live transcript and writes the
-          // healed array back into session state when at least one swap
-          // happens, so the bytes Anthropic sees match the canonical
-          // stream-close snapshot. The closure swallows its own throws; the
-          // wrapper here is belt-and-braces.
+          // Run the executor-supplied pre-call closure once per turn, before
+          // pi-ai reads `session.agent.state.messages` to serialize the next
+          // API request. The closure performs the assert-then-restore pass
+          // over the live transcript and writes the healed array back into
+          // session state when at least one swap happens, so the bytes
+          // Anthropic sees match the canonical stream-close snapshot. The
+          // closure swallows its own throws; the wrapper here is
+          // belt-and-braces.
           //
-          // 260428-j0v: ALWAYS emit ONE INFO log carrying the counters the
-          // bridge can derive — even when the closure is unwired or returns
-          // undefined / no candidates. This closes the silent-success
-          // ambiguity observed on trace c5680133 where ZERO agent.bridge.*
-          // events appeared despite the helpers having shipped.
+          // ALWAYS emit ONE INFO log carrying the counters the bridge can
+          // derive — even when the closure is unwired or returns undefined /
+          // no candidates. This closes the silent-success ambiguity where
+          // ZERO agent.bridge.* events appeared despite the helpers having
+          // shipped.
           //
           // Counters are computed by the bridge's own walk of the messages
           // returned by the closure (or empty when unwired) so the executor
@@ -576,14 +576,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 "Assistant message block accounting at stream close",
               );
 
-              // Bug A diagnostic + 260428-hoy heal: capture hashes AND a
-              // canonical (pre-mutation) snapshot of the full content array,
-              // keyed by responseId, in lockstep across both stores. The
-              // hash store powers the assertion ERROR log (mutation
-              // diagnostic); the canonical store powers the pre-call
-              // restore pass that heals cross-turn mutation before the next
-              // API serialize. Both stores are FIFO-evicted at 32 entries
-              // in lockstep so they always share the same keyset.
+              // Diagnostic + heal: capture hashes AND a canonical (pre-mutation)
+              // snapshot of the full content array, keyed by responseId, in
+              // lockstep across both stores. The hash store powers the
+              // assertion ERROR log (mutation diagnostic); the canonical
+              // store powers the pre-call restore pass that heals cross-turn
+              // mutation before the next API serialize. Both stores are
+              // FIFO-evicted at 32 entries in lockstep so they always share
+              // the same keyset.
               if (typeof responseIdForLog === "string") {
                 const hashes = computeThinkingBlockHashes(blocks);
                 if (hashes.length > 0) {
@@ -594,11 +594,11 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                     m.thinkingBlockCanonical.delete(oldestKey);
                   }
                   m.thinkingBlockHashes.set(responseIdForLog, hashes);
-                  // 260428-hoy: capture canonical (pre-mutation) full
-                  // content array so the pre-LLM-call restore pass can heal
-                  // any cross-turn mutation before pi-ai serializes the
-                  // next request. structuredClone is a Node 22 global; the
-                  // try/catch is defensive against rare exotic input shapes.
+                  // Capture canonical (pre-mutation) full content array so
+                  // the pre-LLM-call restore pass can heal any cross-turn
+                  // mutation before pi-ai serializes the next request.
+                  // structuredClone is a Node 22 global; the try/catch is
+                  // defensive against rare exotic input shapes.
                   try {
                     const canonical = Object.freeze(structuredClone(blocks)) as ReadonlyArray<unknown>;
                     m.thinkingBlockCanonical.set(responseIdForLog, canonical);
@@ -621,7 +621,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           m.cumulativeLlmDurationMs += llmLatencyMs;
           m.turnToolDurationMs = 0;
 
-          // R-04: Extract responseId from assistant message (optional -- not all providers supply it)
+          // Extract responseId from assistant message (optional -- not all providers supply it)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
           const responseId = (assistantMsg as any)?.responseId as string | undefined;
 
@@ -668,7 +668,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               deps.onTurnWithCacheWrite(cacheWriteTokens);
             }
 
-            // Cache break detection Phase 2 (all providers, unconditional)
+            // Cache break detection (all providers, unconditional)
             // MUST NOT guard with cacheReadTokens > 0 -- complete cache misses (drop to 0) must be detected
             if (deps.checkCacheBreak) {
               // Detect API errors -- zero usage with error stop reason
@@ -701,7 +701,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               }
             }
 
-            // R-08: Extract cacheCreation breakdown (future upstream -- runtime check)
+            // Extract cacheCreation breakdown (future upstream -- runtime check)
             const rawUsage = usage as unknown as Record<string, unknown>;
             const cacheCreation = rawUsage.cacheCreation && typeof rawUsage.cacheCreation === "object"
               // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
@@ -725,7 +725,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Record usage in budget guard (token-based, not cost-based -- stays before correction)
             deps.budgetGuard.recordUsage(usage.totalTokens);
 
-            // 49-01 + COST-FIX ordering: Normalize TTL split estimates BEFORE cost correction.
+            // COST-FIX ordering: Normalize TTL split estimates BEFORE cost correction.
             // The injector provides raw per-TTL estimates; normalize so they sum to the
             // SDK-reported total (eliminates the 28% estimation error).
             // Mutate in-place so per-TTL cost and accumulation use normalized values.
@@ -817,11 +817,11 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               deps.onTurnCacheSavings(savedVsUncached);
             }
 
-            // 1.3: Accumulate session-cumulative costs alongside per-turn values
+            // Accumulate session-cumulative costs alongside per-turn values
             m.sessionCumulativeCostUsd += cost.total;
             m.sessionCumulativeCacheSavedUsd += savedVsUncached;
 
-            // 1.5: Track thinking tokens from SDK usage object.
+            // Track thinking tokens from SDK usage object.
             // The pi-ai SDK Usage type does not have a dedicated thinking/reasoning field,
             // but future versions or raw API responses may include `reasoningTokens`.
             // Runtime-check the raw usage object for this field.
@@ -835,9 +835,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               }
             }
 
-            // 49-01: Populate cacheCreation from bridge metrics TTL split when SDK doesn't provide it.
-            // SDK-sourced cacheCreation (from R-08 extraction) takes priority; bridge metrics
-            // provide the fallback when pi-ai doesn't surface per-TTL breakdown.
+            // Populate cacheCreation from bridge metrics TTL split when SDK doesn't provide it.
+            // SDK-sourced cacheCreation takes priority; bridge metrics provide the fallback
+            // when pi-ai doesn't surface per-TTL breakdown.
             const effectiveCacheCreation = cacheCreation ?? (
               (m.totalCacheWrite5mTokens > 0 || m.totalCacheWrite1hTokens > 0)
                 ? { shortTtl: m.totalCacheWrite5mTokens, longTtl: m.totalCacheWrite1hTokens }
@@ -1172,7 +1172,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         }
 
         // -----------------------------------------------------------------
-        // SDK auto-retry loop: abort on rate_limited (260501-dkl)
+        // SDK auto-retry loop: abort on rate_limited
         // -----------------------------------------------------------------
         case "auto_retry_start": {
           const errorMessage = (event as { errorMessage?: string }).errorMessage ?? "";
@@ -1221,20 +1221,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             },
             "LLM call returned error",
           );
-          // 260428-iag wire-edge diagnostic: when the LLM error matches the
-          // Anthropic signed-replay rejection signature ("thinking blocks ...
-          // cannot be modified"), diff the in-memory content against the
-          // persisted JSONL canonical and emit one ERROR per divergent block.
-          // Fully async / fire-and-forget — never blocks the existing error
-          // path. Silent no-op when the signature doesn't match or when
-          // either getSessionMessages / getSessionJsonlPath is unwired.
+          // Wire-edge diagnostic: when the LLM error matches the Anthropic
+          // signed-replay rejection signature ("thinking blocks ... cannot
+          // be modified"), diff the in-memory content against the persisted
+          // JSONL canonical and emit one ERROR per divergent block. Fully
+          // async / fire-and-forget — never blocks the existing error path.
+          // Silent no-op when the signature doesn't match or when either
+          // getSessionMessages / getSessionJsonlPath is unwired.
           //
-          // 260428-j0v: ALWAYS emit ONE dispatch-decision INFO log carrying
-          // boolean flags that explain WHY the wire-diff dispatch was or was
-          // not entered (regex match, candidate count, callback presence) —
-          // even when regexMatched is false or callbacks are unwired. When
-          // the dispatch IS entered, emit a second dispatch-completion INFO
-          // after the async candidates loop completes.
+          // ALWAYS emit ONE dispatch-decision INFO log carrying boolean flags
+          // that explain WHY the wire-diff dispatch was or was not entered
+          // (regex match, candidate count, callback presence) — even when
+          // regexMatched is false or callbacks are unwired. When the dispatch
+          // IS entered, emit a second dispatch-completion INFO after the
+          // async candidates loop completes.
           //
           // The signature regex matches Anthropic's actual 400 message:
           // "messages.N.content.M: thinking blocks cannot be modified"
@@ -1395,9 +1395,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
     m.timedOutRequests += 1;
   };
 
-  // 260428-hoy: typed ReadonlyMap accessor for the executor's pre-call
-  // closure. Returns views over the live maps -- the executor never receives
-  // the mutable `m` object itself.
+  // Typed ReadonlyMap accessor for the executor's pre-call closure.
+  // Returns views over the live maps -- the executor never receives the
+  // mutable `m` object itself.
   const getThinkingBlockStores = (): {
     hashes: ReadonlyMap<string, ReadonlyArray<ThinkingBlockHash>>;
     canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;

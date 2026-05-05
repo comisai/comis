@@ -1,7 +1,7 @@
 # Comis Test Configuration (v13.0 Structural Non-LLM Tests)
 #
 # Validates v13.0 Agent Intelligence features at the daemon level:
-# - reactionLevel config propagation (Phase 176)
+# - reactionLevel config propagation
 # - Daemon bootstrap with all v13.0 config fields
 # - No LLM API keys required
 #

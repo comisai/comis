@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for oauth-tls-preflight.ts (Phase 10 R10-01).
+ * Unit tests for oauth-tls-preflight.ts.
  *
  * Pure-function tests using DI fetch seam — NO vi.mock, NO vi.useFakeTimers,
  * NO vi.spyOn. The `fetchImpl?: typeof fetch` option exists for exactly

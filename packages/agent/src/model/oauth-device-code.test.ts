@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for oauth-device-code.ts (Phase 11 SC11-1 / SC11-3).
+ * Unit tests for oauth-device-code.ts.
  *
  * Pure-function tests using DI fetch seam — NO vi.mock, NO vi.useFakeTimers,
  * NO vi.spyOn. The `fetchFn?: typeof fetch` option exists for exactly this
@@ -42,9 +42,9 @@ describe("loginOpenAICodexDeviceCode", () => {
       const onVerification = vi.fn();
       const onProgress = vi.fn();
       // interval: 1 → 1000ms; clamped to MIN_INTERVAL_MS (1000ms). Two retries
-      // = ~2s total wait. interval: 0 would fall through to the 5_000ms default
-      // per the verbatim port (RESEARCH §Pitfall 7-adjacent — the min-interval
-      // clamp at MIN_INTERVAL_MS=1000ms is a rate-limit defense, not bypassable).
+      // = ~2s total wait. interval: 0 would fall through to the 5_000ms default.
+      // The min-interval clamp at MIN_INTERVAL_MS=1000ms is a rate-limit defense,
+      // not bypassable.
       const result = await loginOpenAICodexDeviceCode({
         fetchFn: makeSequentialFetch([
           { status: 200, body: { device_auth_id: "auth-id-1", user_code: "ABCD-1234", interval: 1 } },
@@ -74,7 +74,7 @@ describe("loginOpenAICodexDeviceCode", () => {
     10_000,
   );
 
-  it.todo("returns err(callback_timeout) when polling exceeds 15-minute deadline (requires fake timers — Plan 02 wires real timers, fake clock here is a Plan-02 enhancement)");
+  it.todo("returns err(callback_timeout) when polling exceeds 15-minute deadline (requires fake timers)");
 
   it("returns err on fatal poll status (500)", async () => {
     const result = await loginOpenAICodexDeviceCode({

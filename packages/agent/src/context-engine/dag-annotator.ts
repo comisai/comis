@@ -16,8 +16,7 @@
  * - Already-annotated and already-masked results are skipped
  * - Recent tool results within the keep window are preserved
  *
- * DAG Assembly & Annotation.
- * Phase 8: Tier-aware annotation.
+ * DAG Assembly & Annotation. Tier-aware annotation.
  *
  * @module
  */

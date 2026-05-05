@@ -317,11 +317,10 @@ describe("createSqliteSecretStore", () => {
     });
   });
 
-  // Phase 7 plan 08 task 08.1 (W6 fix):
-  // The factory now returns SqliteSecretStoreHandle (= SecretStorePort + readonly db).
+  // The factory returns SqliteSecretStoreHandle (= SecretStorePort + readonly db).
   // The encrypted OAuth profile adapter shares this same db handle rather than
   // opening a second connection to the same secrets.db file.
-  describe("SqliteSecretStoreHandle.db field (Phase 7 W6)", () => {
+  describe("SqliteSecretStoreHandle.db field", () => {
     it("exposes the underlying better-sqlite3 handle on the factory return", () => {
       const store = createSqliteSecretStore(dbPath, crypto);
 

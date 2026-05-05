@@ -166,3 +166,9 @@ If full validation is impractical, document what was run and what was skipped.
 - **Imports**: `.js` extension required (Node ESM). Named imports preferred. Type imports use `import type`.
 - **Build output**: `packages/*/dist/` and `*.tsbuildinfo` (gitignored).
 - **Package exports**: `"main": "./dist/index.js"`, `"types": "./dist/index.d.ts"`.
+
+## 10) Companion Agent Files
+
+- `AGENTS.md` is the authoritative protocol for all coding agents in this repository.
+- `CLAUDE.md` may contain Claude-specific operational shortcuts, daemon notes, or release notes, but it must not weaken or override this file.
+- If `CLAUDE.md` and `AGENTS.md` conflict, follow `AGENTS.md` and update the stale companion file.

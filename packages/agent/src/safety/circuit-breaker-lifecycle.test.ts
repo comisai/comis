@@ -142,19 +142,19 @@ describe("circuit breaker full lifecycle", () => {
       halfOpenTimeoutMs: 2000,
     });
 
-    // Phase 1: closed -> open
+    // closed -> open
     expect(cb.getState()).toBe("closed");
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
     expect(cb.getState()).toBe("open");
 
-    // Phase 2: open -> halfOpen
+    // open -> halfOpen
     vi.advanceTimersByTime(5000);
     expect(cb.isOpen()).toBe(false); // triggers lazy transition
     expect(cb.getState()).toBe("halfOpen");
 
-    // Phase 3: halfOpen -> closed
+    // halfOpen -> closed
     cb.recordSuccess();
     expect(cb.getState()).toBe("closed");
 

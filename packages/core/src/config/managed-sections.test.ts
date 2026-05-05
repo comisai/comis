@@ -81,7 +81,7 @@ describe("getManagedSectionRedirect", () => {
 });
 
 describe("formatRedirectHint", () => {
-  // 260428-oyc Task 1.4: rephrased Recovery wording -- single-step "Recovery: call <tool>(<example>)."
+  // Rephrased Recovery wording -- single-step "Recovery: call <tool>(<example>)."
   // (the discover_tools clause is dropped; on Anthropic Sonnet/Opus 4.x the model never has a
   // discover_tools tool to call, and on every provider the dedicated tool auto-loads on first
   // direct invocation).
@@ -92,7 +92,7 @@ describe("formatRedirectHint", () => {
     expect(hint).toContain("Recovery: call agents_manage(");
     expect(hint).toContain('"action":"create"');
     expect(hint).toContain('"agent_id":"<new-agent-id>"');
-    // The literal "discover_tools" must NOT appear -- regression pin for 260428-oyc.
+    // The literal "discover_tools" must NOT appear -- regression pin.
     expect(hint).not.toContain("discover_tools");
   });
 
@@ -106,11 +106,11 @@ describe("formatRedirectHint", () => {
     expect(hint).toContain("entry that ALREADY exists");
   });
 
-  // 260428-rrr Bug A regression: with the dead "agents.*.persona" override
+  // Bug A regression: with the dead "agents.*.persona" override
   // removed, the consumer-level hint must no longer mention persona. Pinned
   // to getMutableOverridesForSection so any future re-introduction of a
   // persona override (whether real or accidental) flips this test red.
-  it("260428-rrr: hint does NOT mention persona (dead override removed)", () => {
+  it("hint does NOT mention persona (dead override removed)", () => {
     const redirect = getManagedSectionRedirect("agents")!;
     const hint = formatRedirectHint(
       redirect,
@@ -153,8 +153,8 @@ describe("formatRedirectHint", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 260428-oyc Task 1.5: D1-D5 regression tests (drop discover_tools from
-  // every formatRedirectHint output path).
+  // D1-D5 regression tests (drop discover_tools from every formatRedirectHint
+  // output path).
   // -------------------------------------------------------------------------
 
   it("D1: NO MANAGED_SECTIONS entry produces a hint containing 'discover_tools'", () => {
@@ -233,7 +233,7 @@ describe("formatRedirectHint", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bug B (260428-gj6): schemaFragment inline in rejection hint
+// Bug B: schemaFragment inline in rejection hint
 // ---------------------------------------------------------------------------
 
 describe("schemaFragment (Bug B)", () => {
@@ -341,7 +341,7 @@ describe("schemaFragment (Bug B)", () => {
   it("formatRedirectHint positions schema fragment AFTER Recovery example and BEFORE mutablePaths block", () => {
     const redirect = getManagedSectionRedirect("agents")!;
     const hint = formatRedirectHint(redirect, ["agents.coding.model"]);
-    // 260428-oyc: Recovery is now a single-step "Recovery: call <tool>(<example>)." line.
+    // Recovery is a single-step "Recovery: call <tool>(<example>)." line.
     const recoveryIdx = hint.indexOf("Recovery: call agents_manage(");
     const actionsIdx = hint.indexOf("Tool actions:");
     const mutableIdx = hint.indexOf("entry that ALREADY exists");

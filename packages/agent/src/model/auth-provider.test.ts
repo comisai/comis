@@ -28,9 +28,9 @@ function makeEventBus(): { emit: ReturnType<typeof vi.fn> } {
  * Mock OAuthCredentialStorePort backed by vi.fn() — defaults to empty store.
  * Mirrors the helper in oauth-token-manager.test.ts; co-located here so the
  * facade tests can wire createAuthProvider({ oauth: { ... } }) with the
- * Phase 7 required fields. Exported helper consumers (plan 08 task 07.4
- * integration tests) can lift this into packages/agent/src/test-helpers/
- * if they prefer a cross-file shared helper.
+ * required fields. Exported helper consumers (integration tests) can lift
+ * this into packages/agent/src/test-helpers/ if they prefer a cross-file
+ * shared helper.
  */
 function makeMockCredentialStore(): OAuthCredentialStorePort {
   return {

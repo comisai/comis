@@ -29,7 +29,7 @@ import { repairDaemon } from "../doctor/repairs/repair-daemon.js";
 import { repairWorkspace } from "../doctor/repairs/repair-workspace.js";
 import type { DoctorContext } from "../doctor/types.js";
 
-/** All doctor checks in execution order (6 categories -- Phase 10 added oauth). */
+/** All doctor checks in execution order (6 categories). */
 const ALL_CHECKS = [
   configHealthCheck,
   daemonHealthCheck,
@@ -115,8 +115,8 @@ function buildDoctorContext(configPaths: string[]): DoctorContext {
  * - `comis doctor` -- run 6 health check categories (config, daemon, gateway,
  *   channel, workspace, OAuth)
  * - `comis doctor --repair` -- auto-fix repairable issues
- * - `comis doctor --refresh-test` -- Phase 10 SC-10-2 opt-in refresh probe
- *   per profile. WARNING: rotates the refresh token at OpenAI.
+ * - `comis doctor --refresh-test` -- opt-in refresh probe per profile.
+ *   WARNING: rotates the refresh token at OpenAI.
  *
  * @param program - The root Commander program
  */

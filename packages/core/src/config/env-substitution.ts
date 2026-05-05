@@ -280,8 +280,7 @@ export interface UnresolvedEnvRef {
  * Path format mirrors `warnSuspiciousEnvValues`: `parent.child[N].leaf`,
  * with the dot prefix omitted at the root.
  *
- * Layer 3 of the 2026-05-03 outage fix (quick task `260504-dlz`). Layer 1
- * (`260504-cac` — env-substitution skip on disabled MCP servers) made the
+ * The env-substitution skip on disabled MCP servers makes the
  * `enabled:false + ${VAR}` placeholder pattern harmless at bootstrap; this
  * helper lets the daemon's config-write paths reject `enabled:true + missing
  * ${VAR}` *at write time* so it never reaches disk.
@@ -370,8 +369,7 @@ function collectUnresolvedFromString(
  * server whose `env` block references env vars not in the secrets store.
  *
  * Used identically by `config.patch` and `mcp.connect` to keep the agent-
- * facing message in lockstep across the two RPC surfaces (Layer 3 of the
- * 2026-05-03 outage fix, quick task `260504-dlz`).
+ * facing message in lockstep across the two RPC surfaces.
  *
  * Behavior:
  * - `missingVarNames` is sorted lexicographically for deterministic output.

@@ -156,13 +156,13 @@ export function registerAgentCommand(program: Command): void {
 
   // agent set-oauth-profile <agentId> <profileId>
   //
-  // Phase 9 R7: pin a per-agent OAuth profile preference. The provider is
-  // derived from the profile-id's `<provider>:<identity>` portion — there is
-  // NO separate --provider flag (D-10 single-source-of-truth). Validation
-  // runs client-side via validateProfileId; the daemon's agents.update
-  // handler additionally rejects unknown profile IDs via
-  // OAuthCredentialStore.has(). Daemon errors substring-matching "not
-  // found" are surfaced verbatim with exit 1; format violations exit 2.
+  // Pin a per-agent OAuth profile preference. The provider is derived from
+  // the profile-id's `<provider>:<identity>` portion — there is NO separate
+  // --provider flag (single-source-of-truth). Validation runs client-side
+  // via validateProfileId; the daemon's agents.update handler additionally
+  // rejects unknown profile IDs via OAuthCredentialStore.has(). Daemon
+  // errors substring-matching "not found" are surfaced verbatim with
+  // exit 1; format violations exit 2.
   agent
     .command("set-oauth-profile <agentId> <profileId>")
     .description(
@@ -189,8 +189,8 @@ export function registerAgentCommand(program: Command): void {
         success(`Set agent ${agentId} oauthProfiles[${provider}] = ${profileId}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        // Phase 9 D-11: daemon's PROFILE_NOT_FOUND surfaces with "not found" in
-        // the message. Substring-match to surface as exit 1 with the daemon's
+        // The daemon's PROFILE_NOT_FOUND surfaces with "not found" in the
+        // message. Substring-match to surface as exit 1 with the daemon's
         // actionable wording (which already names the profile and references
         // `comis auth list`).
         if (msg.includes("not found")) {

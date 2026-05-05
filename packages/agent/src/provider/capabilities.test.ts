@@ -330,14 +330,14 @@ describe("resolveToolCallIdMode", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 10. ANTHROPIC_FAMILY de-duplication regression (Layer 3B -- 260501-07g)
+// 10. ANTHROPIC_FAMILY de-duplication regression
 // ---------------------------------------------------------------------------
 //
-// Phase 3B replaced three duplicate `ANTHROPIC_FAMILY` Sets in the executor
+// Three duplicate `ANTHROPIC_FAMILY` Sets in the executor were replaced
 // with calls to `isAnthropicFamily` from this module. These regressions guard
 // against the Sets reappearing as future "quick fix" copies.
 
-describe("Layer 3B: ANTHROPIC_FAMILY de-duplication regression", () => {
+describe("ANTHROPIC_FAMILY de-duplication regression", () => {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 
   it.each([
@@ -364,7 +364,7 @@ describe("Layer 3B: ANTHROPIC_FAMILY de-duplication regression", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 11. validateProviderOverrides (Layer 3C -- 260501-07g)
+// 11. validateProviderOverrides
 // ---------------------------------------------------------------------------
 //
 // Boot-time staleness validator. Emits structured WARNs for keys in

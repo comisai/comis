@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 8 OAuth hot-reload integration tests (R7).
+ * OAuth hot-reload integration tests.
  *
  * Note: test/vitest.config.ts already enforces maxConcurrency: 1 + retry: 1
- * + pool: "forks", so a per-file sequential annotation is REDUNDANT
- * (RESEARCH override 3). Don't add it.
+ * + pool: "forks", so a per-file sequential annotation is REDUNDANT.
+ * Don't add it.
  *
  * Run with: `pnpm test:integration test/integration/oauth-hot-reload.test.ts`
  * (after `pnpm build`).
  *
  * Coverage:
- * - R7 file hot-reload (change event): External rewrite of auth-profiles.json
+ * - File hot-reload (change event): External rewrite of auth-profiles.json
  *   triggers chokidar `change` -> cache invalidation within 250ms. Subsequent
  *   getApiKey returns the new token without contacting the OAuth server.
- * - R7 logout (unlink event): Watcher subscribes to `unlink` too, so
+ * - Logout (unlink event): Watcher subscribes to `unlink` too, so
  *   external file deletion (the logout path) also invalidates cache.
- * - R7 encrypted limitation: When watchPath is undefined (encrypted-mode
+ * - Encrypted limitation: When watchPath is undefined (encrypted-mode
  *   path), no watcher is registered; manager keeps the cached token even
  *   after an external rewrite.
  */
@@ -47,7 +47,7 @@ import { makeMockLogger } from "../support/mock-logger.js";
 
 const PROVIDER_ID = "openai-codex";
 
-// Mock-server lifecycle (mirrors Phase 7).
+// Mock-server lifecycle.
 let mockServer: MockOAuthServer;
 let mockBaseUrl: string;
 let originalFetch: typeof globalThis.fetch;
@@ -163,10 +163,10 @@ async function waitForCacheInvalidation(
 }
 
 // ---------------------------------------------------------------------------
-// R7 — file adapter hot-reload (change event)
+// File adapter hot-reload (change event)
 // ---------------------------------------------------------------------------
 
-describe("R7 OAuth file hot-reload (change event)", () => {
+describe("OAuth file hot-reload (change event)", () => {
   it("Manager picks up T2 after external rewrite without contacting OAuth server", async () => {
     const tmpDir = freshTmpDataDir();
     try {
@@ -260,7 +260,7 @@ describe("R7 OAuth file hot-reload (change event)", () => {
         expect(r1.ok).toBe(true);
 
         // Externally delete the file (simulates `comis auth logout` purging the last profile).
-        // The Phase 7 file adapter rewrites the file as `{version:1, profiles:{}}` on
+        // The file adapter rewrites the file as `{version:1, profiles:{}}` on
         // empty-state delete; for this test we simulate the harder case (file unlinked).
         fs.unlinkSync(watchPath);
 
@@ -277,10 +277,10 @@ describe("R7 OAuth file hot-reload (change event)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R7 — encrypted limitation (no watcher when watchPath is undefined)
+// Encrypted limitation (no watcher when watchPath is undefined)
 // ---------------------------------------------------------------------------
 
-describe("R7 OAuth encrypted-mode limitation (documented)", () => {
+describe("OAuth encrypted-mode limitation (documented)", () => {
   it("When watchPath is undefined (encrypted-mode path), external rewrite is NOT picked up — manager keeps cached T1", async () => {
     const tmpDir = freshTmpDataDir();
     try {

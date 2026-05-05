@@ -7,7 +7,7 @@
  * readability extraction -> context injection.
  *
  * No API key required -- uses public HTTP endpoints.
- * Phase 113 tool provider integration tests.
+ * Tool provider integration tests.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";

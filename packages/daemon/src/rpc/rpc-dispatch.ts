@@ -243,10 +243,10 @@ export interface RpcDispatchDeps {
   // Image generation deps (Proactive v1 -- IMGN)
   imageHandlerDeps?: ImageHandlerDeps;
 
-  // Phase 9 R7 (plan 09-06): daemon-level OAuth credential store handle
-  // for the agents.update oauthProfiles existence check (D-11). When
-  // absent (e.g. tests), the validation block in agent-handlers becomes
-  // a no-op and existing behavior is preserved.
+  // Daemon-level OAuth credential store handle for the agents.update
+  // oauthProfiles existence check. When absent (e.g. tests), the validation
+  // block in agent-handlers becomes a no-op and existing behavior is
+  // preserved.
   oauthCredentialStore?: import("@comis/core").OAuthCredentialStorePort;
 }
 
@@ -289,9 +289,9 @@ export function createRpcDispatch(deps: RpcDispatchDeps): RpcCall {
     ...createSessionHandlers(deps),
     ...createMessageHandlers(deps),
     ...createMediaHandlers(deps),
-    // quick-260504-irq: thread the daemon-level OAuth credential store into
-    // config.patch's credential guard so model/provider patches on OAuth-only
-    // providers (e.g. openai-codex) can resolve via Source C
+    // Thread the daemon-level OAuth credential store into config.patch's
+    // credential guard so model/provider patches on OAuth-only providers
+    // (e.g. openai-codex) can resolve via Source C
     // (agents.<id>.oauthProfiles -> ~/.comis/auth-profiles.json). Explicit
     // pass-through mirrors the createAgentHandlers wiring below; do not
     // simplify back to `...createConfigHandlers(deps)` (the structural-typing
@@ -318,10 +318,10 @@ export function createRpcDispatch(deps: RpcDispatchDeps): RpcCall {
       ...deps,
       secretManager: deps.container?.secretManager,
       providerEntries: deps.container.config.providers.entries,
-      // Phase 9 R7 (plan 09-06): thread the daemon-level OAuth credential
-      // store into agents.update so the oauthProfiles existence check
-      // (D-11) can run via has(). When unset (e.g. unwired test setups)
-      // the validation block in agent-handlers becomes a no-op.
+      // Thread the daemon-level OAuth credential store into agents.update
+      // so the oauthProfiles existence check can run via has(). When unset
+      // (e.g. unwired test setups) the validation block in agent-handlers
+      // becomes a no-op.
       oauthCredentialStore: deps.oauthCredentialStore,
       // Resolves `provider: "default"` to `models.defaultProvider` in the
       // credential check, mirroring `resolveAgentModel` runtime resolution.
@@ -374,9 +374,9 @@ export function createRpcDispatch(deps: RpcDispatchDeps): RpcCall {
     ...createMcpHandlers({
       mcpClientManager: deps.mcpClientManager,
       logger: deps.logger,
-      // Threaded for env-ref validation on mcp.connect (Layer 3 of 2026-05-03
-      // outage fix, quick task 260504-dlz). Same pattern as agent/provider
-      // handlers above. When undefined the validator becomes a no-op.
+      // Threaded for env-ref validation on mcp.connect. Same pattern as
+      // agent/provider handlers above. When undefined the validator becomes
+      // a no-op.
       secretManager: deps.container?.secretManager,
     }),
     ...createDaemonHandlers({ logLevelManager: deps.logLevelManager }),

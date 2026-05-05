@@ -131,12 +131,12 @@ export function validateNonInteractiveOptions(
     );
   }
 
-  // 260504-gge: openai-codex requires interactive OAuth login (browser
-  // callback, device-code prompt, or manual paste). Non-interactive mode
-  // has no way to drive the OAuth flow, so reject up front with a clear
-  // hint pointing at `comis auth login --method device-code`. Placed
-  // BEFORE the soft "unknown provider" warning so the literal error
-  // fires even though openai-codex IS in the pi-ai catalog.
+  // openai-codex requires interactive OAuth login (browser callback,
+  // device-code prompt, or manual paste). Non-interactive mode has no
+  // way to drive the OAuth flow, so reject up front with a clear hint
+  // pointing at `comis auth login --method device-code`. Placed BEFORE
+  // the soft "unknown provider" warning so the literal error fires
+  // even though openai-codex IS in the pi-ai catalog.
   if (opts.provider === "openai-codex") {
     throw new NonInteractiveError(
       "openai-codex requires interactive login; run `comis init` interactively or run `comis auth login --provider openai-codex --method device-code` separately.",
@@ -145,11 +145,11 @@ export function validateNonInteractiveOptions(
   }
 
   // Soft validation: warn for unknown providers but do not throw.
-  // Daemon-side guards (260501-2pz credential-resolver, 260501-gyy
-  // builtin-provider-guard) catch genuinely-invalid providers downstream
-  // when the agent attempts to use the config. This loosening enables
-  // forward compat when a new pi-ai version adds a provider before
-  // comis releases. The "custom" provider is always allowed (synthetic).
+  // Daemon-side guards (credential-resolver, builtin-provider-guard)
+  // catch genuinely-invalid providers downstream when the agent
+  // attempts to use the config. This loosening enables forward compat
+  // when a new pi-ai version adds a provider before comis releases.
+  // The "custom" provider is always allowed (synthetic).
   if (opts.provider !== "custom") {
     try {
       const catalog = createModelCatalog();
@@ -287,9 +287,9 @@ export function buildNonInteractiveState(
 
   // Model selection -- delegate to daemon when not specified.
   // The literal "default" is resolved at agent-execution time via the
-  // pi-ai catalog (builtin-provider-guard.ts:45 baseUrl pattern). Pre-
-  // 260501-kqq, this read a hardcoded provider->model map; that lookup
-  // was removed -- the daemon decides at runtime.
+  // pi-ai catalog (builtin-provider-guard.ts:45 baseUrl pattern). The
+  // previous hardcoded provider->model map was removed -- the daemon
+  // decides at runtime.
   const model = opts.model ?? "default";
 
   // Channel configs

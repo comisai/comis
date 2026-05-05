@@ -58,7 +58,7 @@ export type { SqliteAdapterOptions } from "./sqlite-adapter-base.js";
 // SQLite secret store (SecretStorePort implementation)
 export { createSqliteSecretStore } from "./sqlite-secret-store.js";
 
-// OAuth profile schema + encrypted SQLite OAuthCredentialStorePort adapter (Phase 7 SPEC R3)
+// OAuth profile schema + encrypted SQLite OAuthCredentialStorePort adapter
 export { initOAuthProfileSchema } from "./oauth-profile-schema.js";
 export { createOAuthProfileStoreEncrypted } from "./oauth-profile-store-encrypted.js";
 

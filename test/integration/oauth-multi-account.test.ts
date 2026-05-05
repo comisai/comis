@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 9 SC#2 evidence: two-agent end-to-end test asserting per-agent
- * OAuth profile preference is honored at every LLM call.
+ * Two-agent end-to-end test asserting per-agent OAuth profile preference is
+ * honored at every LLM call.
  *
- * R3 + R8 SC#2 evidence: end-to-end test that two agents configured with
- * different `oauthProfiles` preferences each invoke the mock LLM endpoint
- * with their respective profile's access token in the Authorization header.
+ * End-to-end test that two agents configured with different `oauthProfiles`
+ * preferences each invoke the mock LLM endpoint with their respective
+ * profile's access token in the Authorization header.
  *
  * Test inventory (5 tests):
- *   1. SC#2 main: agentA -> TOKEN_A, agentB -> TOKEN_B (Bearer header + chatgpt-account-id header).
+ *   1. Main: agentA -> TOKEN_A, agentB -> TOKEN_B (Bearer header + chatgpt-account-id header).
  *   2. JWT cross-check: decoded `chatgpt_account_id` claim per request matches the configured profile.
- *   3a. R7 round-trip - closure-mutation contract (low-level invariant): mutate the shared
+ *   3a. Round-trip - closure-mutation contract (low-level invariant): mutate the shared
  *       agents map directly, assert next call uses the new profile.
- *   3b. R7 round-trip - END-TO-END via actual `agents.update` RPC handler. Drives the real
+ *   3b. Round-trip - END-TO-END via actual `agents.update` RPC handler. Drives the real
  *       production hot-update path through `createAgentHandlers` + `handlers["agents.update"]`,
- *       asserting that Plan 06's reference-replacement at agent-handlers.ts:386 is observed by
- *       Plan 04's Option B closure on the very next outbound LLM call. THIS IS THE FALSIFIABLE
- *       PROOF OF SC#4 closure-stability.
+ *       asserting that the reference-replacement in agent-handlers.ts is observed by
+ *       the Option B closure on the very next outbound LLM call. THIS IS THE FALSIFIABLE
+ *       PROOF OF closure-stability.
  *   4. PROFILE_NOT_FOUND propagation: configured profileId not in store -> resolve throws
  *       before any LLM call is dispatched.
  *
- * Architecture note (revision iter 1):
+ * Architecture note:
  *   The test simulates the executor's pre-LLM-call dispatch hook + the wrapped
  *   pi-ai outbound call by:
  *     (a) Building an OAuthTokenManager with `getAgentOauthProfiles: () => agents[agentId]?.oauthProfiles`.
@@ -29,19 +29,19 @@
  *     (b) Calling `resolveProviderApiKey(...)` — the same helper PiExecutor.execute() uses at
  *         line 450 of pi-executor.ts to pre-resolve the OAuth token AND set the runtime API key.
  *     (c) Issuing a direct fetch to https://chatgpt.com/backend-api/codex/responses with
- *         the same headers pi-ai's `streamOpenAICodexResponses` sets per RESEARCH F-01
+ *         the same headers pi-ai's `streamOpenAICodexResponses` sets
  *         (Authorization: Bearer <token>, chatgpt-account-id: <accountId from JWT>). The
  *         fetch-spy redirects this URL to the in-process mock, which captures the headers.
  *         This faithful inline reproduction avoids cross-package importing pi-ai (which
  *         resolves only inside @comis/agent's node_modules, not at the test root) while
  *         exercising every byte of the production header surface.
  *   This shape exercises the FULL falsifiable contract:
- *     - Plan 04 Option B closure observes the shared map.
- *     - Plan 06's `agents.update` reference-replacement (line 386) propagates to that closure.
+ *     - Option B closure observes the shared map.
+ *     - The `agents.update` reference-replacement propagates to that closure.
  *     - The resulting outbound HTTP call carries the resolved OAuth token in `Bearer ${token}`.
  *
  * Note: test/vitest.config.ts already enforces maxConcurrency: 1 + pool: "forks" + retry: 1,
- * so a per-file `describe.sequential` annotation is REDUNDANT (RESEARCH override 3). Don't add it.
+ * so a per-file `describe.sequential` annotation is REDUNDANT. Don't add it.
  *
  * Run with: `pnpm build && pnpm vitest run --config test/vitest.config.ts test/integration/oauth-multi-account.test.ts`.
  *
@@ -115,7 +115,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  tmpDir = mkdtempSync(path.join(os.tmpdir(), "comis-09-multi-account-"));
+  tmpDir = mkdtempSync(path.join(os.tmpdir(), "comis-multi-account-"));
   store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
   vi.spyOn(globalThis, "fetch").mockImplementation(
     async (input: string | URL | Request, init?: RequestInit) => {
@@ -125,8 +125,8 @@ beforeEach(() => {
           : input instanceof URL
             ? input.toString()
             : input.url;
-      // Phase 9 D-13 + RESEARCH F-01: redirect BOTH the OAuth refresh
-      // endpoint AND the Codex LLM endpoint to the in-process mock.
+      // Redirect BOTH the OAuth refresh endpoint AND the Codex LLM endpoint
+      // to the in-process mock.
       if (url.startsWith(TOKEN_URL_PREFIX)) {
         return originalFetch(`${mockBaseUrl}/oauth/token`, init);
       }
@@ -157,9 +157,8 @@ afterEach(() => {
 /**
  * Build a realistic-shape JWT inline. The mock-oauth-server fixture defines
  * `makeRealisticJwt` but does not export it; this is a deliberate ~10-LoC
- * duplication kept consistent with the fixture's payload shape (Phase 9
- * PATTERNS.md "do NOT add describe.sequential — fixture pattern is fine to
- * inline").
+ * duplication kept consistent with the fixture's payload shape ("do NOT add
+ * describe.sequential — fixture pattern is fine to inline").
  */
 function makeJwt(payload: Record<string, unknown>): string {
   const headerB64 = Buffer.from(
@@ -217,8 +216,8 @@ async function seedProfile(
 /**
  * Build an OAuthTokenManager wired with a closure that dereferences the
  * shared `agents` map for `agentId`'s oauthProfiles (mirrors daemon's
- * container.config.agents pattern at daemon.ts:594/634, plus Plan 04
- * Option B closure-stability fix).
+ * container.config.agents pattern at daemon.ts:594/634, plus the Option B
+ * closure-stability fix).
  */
 function buildOAuthManager(
   credentialStore: OAuthCredentialStorePort,
@@ -232,9 +231,9 @@ function buildOAuthManager(
     logger: makeSilentLogger(),
     dataDir: tmpDir,
     keyPrefix: "OAUTH_",
-    // Phase 9 D-05/Option B: closure dereferences the shared agents map
-    // handle on every getApiKey() call. Map identity stays stable;
-    // only the value at agentId changes via reference-replacement.
+    // Option B: closure dereferences the shared agents map handle on every
+    // getApiKey() call. Map identity stays stable; only the value at agentId
+    // changes via reference-replacement.
     getAgentOauthProfiles: () => agents?.[agentId]?.oauthProfiles,
   });
 }
@@ -284,9 +283,9 @@ function makeAgent(profileId: string): PerAgentConfig {
  *       1. resolveProviderApiKey(...) — pre-hook at line 450 of pi-executor.ts.
  *       2. Pi-ai's outbound LLM call reading the apiKey from setRuntimeApiKey
  *          (or via the explicit `apiKey` option, equivalent runtime priority).
- *   - Both steps are exercised here verbatim. Plan 04's closure + Plan 06's
- *     reference-replacement contracts are observed end-to-end. The captured
- *     Authorization header is the falsifiable assertion target.
+ *   - Both steps are exercised here verbatim. The closure + reference-replacement
+ *     contracts are observed end-to-end. The captured Authorization header is
+ *     the falsifiable assertion target.
  */
 async function executeOAuthLLMCall(
   agentId: string,
@@ -316,11 +315,11 @@ async function executeOAuthLLMCall(
   //     where pi-ai isn't hoisted. Adding pi-ai to the root devDependencies
   //     would broaden the dependency graph for an integration concern.
   //   - The integration value is verifying Comis's OAuth resolution chain:
-  //     Plan 04's closure observes the shared agents map, Plan 06's
-  //     reference-replacement is observed by that closure, the resolved
-  //     token lands in the outbound HTTP request as `Bearer <token>`.
+  //     the closure observes the shared agents map, reference-replacement
+  //     is observed by that closure, the resolved token lands in the
+  //     outbound HTTP request as `Bearer <token>`.
   //     None of these require pi-ai's request-body assembly machinery —
-  //     just the outbound headers, which we mirror exactly per RESEARCH F-01:
+  //     just the outbound headers, which we mirror exactly:
   //       Authorization: Bearer <token>
   //       chatgpt-account-id: <accountId from JWT>
   //       OpenAI-Beta: responses=experimental
@@ -389,7 +388,7 @@ function extractAccountIdFromJwt(token: string): string {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("Phase 9 multi-account profile selection (R3 + R8 SC#2)", () => {
+describe("multi-account profile selection", () => {
   it("Test 1: routes each agent's LLM call to its configured oauthProfile (Bearer header + chatgpt-account-id header)", async () => {
     const TOKEN_A = await seedProfile(
       store,
@@ -412,27 +411,26 @@ describe("Phase 9 multi-account profile selection (R3 + R8 SC#2)", () => {
     const managerA = buildOAuthManager(store, agents, "agent-a");
     const managerB = buildOAuthManager(store, agents, "agent-b");
 
-    // Sequential execution per CONTEXT D-16. The vitest config enforces
-    // maxConcurrency: 1 across files; within this file, we serialize
-    // explicitly to make per-call assertions order-independent of any
-    // future test infrastructure change.
+    // Sequential execution. The vitest config enforces maxConcurrency: 1
+    // across files; within this file, we serialize explicitly to make
+    // per-call assertions order-independent of any future test
+    // infrastructure change.
     await executeOAuthLLMCall("agent-a", agents, managerA);
     await executeOAuthLLMCall("agent-b", agents, managerB);
 
     const calls = mockServer.getLlmRequests();
 
-    // Risk-6 sanity: assert calls were captured BEFORE asserting specific
-    // header values. If the WebSocket transport had silently bypassed the
-    // fetch-spy, calls.length would be 0 and this would fail with a clear
-    // diagnostic instead of a misleading "Bearer X did not equal Bearer Y".
+    // Sanity: assert calls were captured BEFORE asserting specific header
+    // values. If the WebSocket transport had silently bypassed the fetch-spy,
+    // calls.length would be 0 and this would fail with a clear diagnostic
+    // instead of a misleading "Bearer X did not equal Bearer Y".
     expect(calls.length).toBeGreaterThanOrEqual(2);
 
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN_A}`);
     expect(calls[1]!.authorization).toBe(`Bearer ${TOKEN_B}`);
 
-    // chatgpt-account-id header (sent by pi-ai per RESEARCH F-01 — pi-ai
-    // extracts this from the JWT's `chatgpt_account_id` claim and sets
-    // it as a separate header).
+    // chatgpt-account-id header (sent by pi-ai — pi-ai extracts this from
+    // the JWT's `chatgpt_account_id` claim and sets it as a separate header).
     expect(calls[0]!.accountId).toBe("ACC_A");
     expect(calls[1]!.accountId).toBe("ACC_B");
   });
@@ -483,7 +481,7 @@ describe("Phase 9 multi-account profile selection (R3 + R8 SC#2)", () => {
     expect(extractAccountId(calls[1]!.authorization)).toBe("ACC_B");
   });
 
-  it("Test 3a (R7 round-trip - closure-mutation contract): direct in-place oauthProfiles mutation updates the next call's profile", async () => {
+  it("Test 3a (round-trip - closure-mutation contract): direct in-place oauthProfiles mutation updates the next call's profile", async () => {
     // Low-level test: documents the closure-stability contract at the
     // OAuthTokenManager getter boundary. Does NOT drive the actual RPC
     // handler. Test 3b below is the production-path round-trip.
@@ -526,14 +524,13 @@ describe("Phase 9 multi-account profile selection (R3 + R8 SC#2)", () => {
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN_B}`);
   });
 
-  it("Test 3b (R7 round-trip - END-TO-END via actual agents.update RPC handler; falsifiable proof of SC#4 closure-stability per revision iter 1)", async () => {
+  it("Test 3b (round-trip - END-TO-END via actual agents.update RPC handler; falsifiable proof of closure-stability)", async () => {
     // Production-path test: drives the actual `handlers["agents.update"]`
     // RPC, which executes the reference-replacement at agent-handlers.ts:386
     // (`deps.agents[agentId] = parsedConfig`). The OAuthTokenManager's
     // getAgentOauthProfiles closure dereferences the SAME shared `agents`
-    // map handle on every getApiKey call (Plan 04 Option B). This test is
-    // the only evidence that the entire production hot-update path works
-    // correctly.
+    // map handle on every getApiKey call (Option B). This test is the only
+    // evidence that the entire production hot-update path works correctly.
 
     const TOKEN_A = await seedProfile(
       store,
@@ -571,7 +568,7 @@ describe("Phase 9 multi-account profile selection (R3 + R8 SC#2)", () => {
       oauthCredentialStore: store,
       // No persistDeps — memory-only mode (the integration test only cares
       // about the in-memory map mutation; YAML persistence is exercised by
-      // Plan 06's unit tests, not this integration).
+      // unit tests, not this integration).
       // No hotAdd/hotRemove — agents.update doesn't invoke those.
     };
     const handlers = createAgentHandlers(handlerDeps);
@@ -599,7 +596,7 @@ describe("Phase 9 multi-account profile selection (R3 + R8 SC#2)", () => {
     expect(updateResult).toBeDefined();
 
     // Pin the reference-replacement contract: agents["agent-b"] is a NEW
-    // object after update. (Plan 06 Test 5 also pins this at the unit-test
+    // object after update. (A unit test also pins this at the unit-test
     // level; this integration test pins it for end-to-end belt-and-suspenders.)
     expect(agents[agentBId]).not.toBe(originalAgentBRef);
     expect(agents[agentBId]!.oauthProfiles).toEqual({
@@ -609,8 +606,8 @@ describe("Phase 9 multi-account profile selection (R3 + R8 SC#2)", () => {
     // Second call: the OAuthTokenManager's getAgentOauthProfiles closure
     // dereferences `agents?.[agentBId]?.oauthProfiles` — observes the
     // new value. Resolver chain tier (a) returns the new profile's token
-    // (TOKEN_B). Falsifiable: if Plan 04's Option B closure ever regresses
-    // to capturing the local agentConfig variable, this test fails because
+    // (TOKEN_B). Falsifiable: if the Option B closure ever regresses to
+    // capturing the local agentConfig variable, this test fails because
     // the closure-captured reference would still be the OLD object
     // (originalAgentBRef), not the NEW one in the map.
     mockServer.reset();
@@ -635,9 +632,9 @@ describe("Phase 9 multi-account profile selection (R3 + R8 SC#2)", () => {
     const manager = buildOAuthManager(store, agents, "agent-c");
 
     // resolveProviderApiKey throws when the OAuth manager returns an
-    // err(OAuthError) per Plan 04 D-02. The throw propagates up to the
-    // caller; the mock LLM endpoint MUST NOT receive a request because
-    // the resolver short-circuited before pi-ai dispatched.
+    // err(OAuthError). The throw propagates up to the caller; the mock LLM
+    // endpoint MUST NOT receive a request because the resolver
+    // short-circuited before pi-ai dispatched.
     await expect(
       executeOAuthLLMCall("agent-c", agents, manager),
     ).rejects.toThrow(/not found in store/);

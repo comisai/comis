@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * VPS / headless environment detection (Phase 8 D-04).
+ * VPS / headless environment detection.
  *
  * Pure function: given the env block + optional override, returns true when
  * the current process is on a remote/headless host (no DISPLAY, SSH session,
@@ -25,8 +25,7 @@ export interface IsRemoteEnvironmentInput {
 /**
  * Decide whether to skip browser-open and go straight to manual-paste.
  *
- * Heuristic per SPEC R2 (locked from CONTEXT D-04, simplified from OpenClaw's
- * remote-env.ts to match the SPEC R2 6-case acceptance — no WAYLAND_DISPLAY,
+ * Heuristic (simplified from OpenClaw's remote-env.ts — no WAYLAND_DISPLAY,
  * no isWSLEnv check; Comis is Linux-only per CLAUDE.md):
  *   - force === "remote" → true
  *   - force === "local"  → false

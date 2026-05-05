@@ -46,7 +46,7 @@ describe("gateway barrel exports smoke test", () => {
     expect(typeof gateway.getPresetMappings).toBe("function");
   });
 
-  // Phase 11 — OAuth callback route exports
+  // OAuth callback route exports
   it("exports createOAuthCallbackRoute", () => {
     expect(typeof gateway.createOAuthCallbackRoute).toBe("function");
   });

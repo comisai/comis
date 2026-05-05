@@ -3,13 +3,12 @@ import { describe, it, expect } from "vitest";
 import { SkillsConfigSchema } from "./schema-skills.js";
 
 /**
- * Regression tests for 260423-irr: tighten `minBm25Score` to z.number().min(0).max(1).
+ * Regression tests for tightening `minBm25Score` to z.number().min(0).max(1).
  *
- * As of 2026-04-23, discover_tools normalizes BM25 scores to [0, 1] before the
- * floor applies (see .planning/design/discover-tools-bm25-fallback-fix.md §5.3).
+ * discover_tools normalizes BM25 scores to [0, 1] before the floor applies.
  * A stale raw-score override like `2.5` would produce zero matches under the
  * new normalized semantics — hard-fail at config load is safer than silently
- * broken discovery (AGENTS.md §3.4 fail-fast, design §5.6).
+ * broken discovery (AGENTS.md §3.4 fail-fast).
  */
 describe("SkillsConfigSchema -- toolDiscovery.minBm25Score [.max(1) tightening]", () => {
   it("minBm25Score > 1.0 fails validation", () => {

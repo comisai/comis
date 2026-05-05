@@ -2,13 +2,13 @@
 /**
  * System Gateway Validation Integration Tests
  *
- * Covers the following phases from the comprehensive system test plan:
+ * Covers:
  *
- *   Phase 1 — Auth edge cases (malformed headers, invalid tokens, CORS)
- *   Phase 2 — REST API data endpoint gaps (channels, activity limits, chat/history)
- *   Phase 3 — Chat endpoint validation (content-type, body shape, empty/non-string message)
- *   Phase 6 — OpenAI-compatible API edge cases (empty messages, missing auth)
- *   Phase 12 — Error handling (JSON 404, large request body, concurrent requests)
+ *   Auth edge cases (malformed headers, invalid tokens, CORS)
+ *   REST API data endpoint gaps (channels, activity limits, chat/history)
+ *   Chat endpoint validation (content-type, body shape, empty/non-string message)
+ *   OpenAI-compatible API edge cases (empty messages, missing auth)
+ *   Error handling (JSON 404, large request body, concurrent requests)
  *
  * None of these tests require an LLM API key — they validate gateway-level
  * HTTP contract enforcement without triggering real agent execution.
@@ -54,10 +54,10 @@ describe("System Gateway Validation", () => {
   }, 30_000);
 
   // ===========================================================================
-  // Phase 1: Auth Edge Cases
+  // Auth Edge Cases
   // ===========================================================================
 
-  describe("Phase 1: Auth Edge Cases", () => {
+  describe("Auth Edge Cases", () => {
     it("AUTH-EDGE-01: malformed auth header (no Bearer prefix) returns 401", async () => {
       const response = await fetch(`${gatewayUrl}/api/agents`, {
         headers: { Authorization: authToken },
@@ -99,10 +99,10 @@ describe("System Gateway Validation", () => {
   });
 
   // ===========================================================================
-  // Phase 1.6: CORS Headers
+  // CORS Headers
   // ===========================================================================
 
-  describe("Phase 1.6: CORS Headers", () => {
+  describe("CORS Headers", () => {
     it("CORS-01: OPTIONS preflight returns CORS headers", async () => {
       const response = await fetch(`${gatewayUrl}/api/agents`, {
         method: "OPTIONS",
@@ -140,10 +140,10 @@ describe("System Gateway Validation", () => {
   });
 
   // ===========================================================================
-  // Phase 2: REST API Data Endpoint Gaps
+  // REST API Data Endpoint Gaps
   // ===========================================================================
 
-  describe("Phase 2: REST API Data Endpoints", () => {
+  describe("REST API Data Endpoints", () => {
     it("REST-DATA-01: GET /api/channels returns channels array", async () => {
       const response = await fetch(`${gatewayUrl}/api/channels`, {
         headers: makeAuthHeaders(authToken),
@@ -257,10 +257,10 @@ describe("System Gateway Validation", () => {
   });
 
   // ===========================================================================
-  // Phase 3: Chat Endpoint Validation
+  // Chat Endpoint Validation
   // ===========================================================================
 
-  describe("Phase 3: Chat Endpoint Validation", () => {
+  describe("Chat Endpoint Validation", () => {
     it("CHAT-VAL-01: POST /api/chat with text/plain Content-Type returns 415", async () => {
       const response = await fetch(`${gatewayUrl}/api/chat`, {
         method: "POST",
@@ -338,10 +338,10 @@ describe("System Gateway Validation", () => {
   });
 
   // ===========================================================================
-  // Phase 6: OpenAI-Compatible API Edge Cases
+  // OpenAI-Compatible API Edge Cases
   // ===========================================================================
 
-  describe("Phase 6: OpenAI-Compatible API Edge Cases", () => {
+  describe("OpenAI-Compatible API Edge Cases", () => {
     it("OPENAI-EDGE-01: POST /v1/chat/completions with empty messages returns 400", async () => {
       const response = await fetch(`${gatewayUrl}/v1/chat/completions`, {
         method: "POST",
@@ -435,10 +435,10 @@ describe("System Gateway Validation", () => {
   });
 
   // ===========================================================================
-  // Phase 12: Error Handling & Edge Cases
+  // Error Handling & Edge Cases
   // ===========================================================================
 
-  describe("Phase 12: Error Handling & Edge Cases", () => {
+  describe("Error Handling & Edge Cases", () => {
     it("ERR-01: GET /nonexistent returns 404", async () => {
       const response = await fetch(`${gatewayUrl}/nonexistent/route`);
       expect(response.status).toBe(404);
@@ -500,10 +500,10 @@ describe("System Gateway Validation", () => {
   });
 
   // ===========================================================================
-  // Phase 5: WebSocket JSON-RPC (additional edge cases)
+  // WebSocket JSON-RPC (additional edge cases)
   // ===========================================================================
 
-  describe("Phase 5: WebSocket Edge Cases", () => {
+  describe("WebSocket Edge Cases", () => {
     it("WS-EDGE-01: unauthenticated WebSocket connection is rejected with 4001", async () => {
       const port = handle.daemon.container.config.gateway.port;
       const wsUrl = `ws://127.0.0.1:${port}/ws`;

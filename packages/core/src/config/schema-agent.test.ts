@@ -410,10 +410,10 @@ describe("PerAgentConfigSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
-// PerAgentConfigSchema oauthProfiles (Phase 9 R1)
+// PerAgentConfigSchema oauthProfiles
 // ---------------------------------------------------------------------------
 
-describe("PerAgentConfigSchema oauthProfiles (Phase 9 R1)", () => {
+describe("PerAgentConfigSchema oauthProfiles", () => {
   it("accepts a valid single-entry record", () => {
     const result = PerAgentConfigSchema.safeParse({
       oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },

@@ -8,8 +8,8 @@ import {
   resolveAgentModel,
   setupSingleAgent,
 } from "./setup-agents.js";
-// Phase 8 plan 01: selectOAuthCredentialStore moved to @comis/agent
-// (RESEARCH override 4 — CLI cannot import from @comis/daemon).
+// selectOAuthCredentialStore lives in @comis/agent (CLI cannot import from
+// @comis/daemon).
 import { selectOAuthCredentialStore } from "@comis/agent";
 import type { OAuthCredentialStorePort, SecretsCrypto } from "@comis/core";
 import type Database from "better-sqlite3";
@@ -64,9 +64,9 @@ describe("setupAgents OutputGuard wiring", () => {
 
 describe("resolveAgentModel", () => {
   // Behavioral assertions: avoid pinning literal model IDs (which would
-  // re-introduce per-pi-ai-release staleness — the bug Phase 2 closes).
-  // Tests assert catalog membership and the priority chain (explicit YAML
-  // wins over catalog heuristic; explicit per-agent value wins over both).
+  // re-introduce per-pi-ai-release staleness). Tests assert catalog
+  // membership and the priority chain (explicit YAML wins over catalog
+  // heuristic; explicit per-agent value wins over both).
 
   it("resolves model: 'default' to models.defaultModel (explicit YAML wins)", () => {
     const result = resolveAgentModel(
@@ -184,9 +184,9 @@ describe("resolveAgentModel", () => {
   });
 
   it("catalog heuristic with empty model defaultModel for openrouter provider returns an OpenRouter model (not Anthropic)", () => {
-    // Phase 2 bugfix regression guard: when an operator picks
-    // `provider: openrouter` with `model: default`, the resolved model must
-    // be an OpenRouter id, not a Claude id.
+    // Regression guard: when an operator picks `provider: openrouter` with
+    // `model: default`, the resolved model must be an OpenRouter id, not a
+    // Claude id.
     const result = resolveAgentModel(
       { model: "default", provider: "openrouter" },
       { defaultModel: "", defaultProvider: "" },
@@ -210,39 +210,40 @@ describe("setup-agents skills directory creation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 7 plan 08 (B5 + W3 + W6): OAuth credential store wiring
+// OAuth credential store wiring
 // ---------------------------------------------------------------------------
 
-describe("setupSingleAgent OAuth wiring (Phase 7 plan 08)", () => {
+describe("setupSingleAgent OAuth wiring", () => {
   const source = readFileSync(join(__dirname, "setup-agents.ts"), "utf-8");
 
-  it("invokes createAuthProvider({ oauth: ... }) — closes RESEARCH §4 landmine #1 (unwired-OAuth gap)", () => {
-    // RESEARCH §4 landmine #1: createAuthProvider was exported by @comis/agent
-    // but never called by the daemon, so refreshed OAuth tokens lived only in
-    // the in-memory cache and silently disappeared on restart. Plan 08 adds
-    // the FIRST daemon-side call.
+  it("invokes createAuthProvider({ oauth: ... }) — closes the unwired-OAuth gap", () => {
+    // createAuthProvider was previously exported by @comis/agent but never
+    // called by the daemon, so refreshed OAuth tokens lived only in the
+    // in-memory cache and silently disappeared on restart. The daemon-side
+    // call closes that gap.
     expect(source).toContain("createAuthProvider({");
     expect(source).toMatch(/createAuthProvider\(\s*{[\s\S]*?oauth:\s*{/);
   });
 
-  it("uses safePath (NOT path.join) for all newly-added path constructions (W3 fix)", () => {
-    // W3: AGENTS.md §2.2 ESLint security rule forbids path.join in new code.
+  it("uses safePath (NOT path.join) for all newly-added path constructions", () => {
+    // AGENTS.md ESLint security rule forbids path.join in new code.
     // The pre-existing setup-agents.ts source body still uses path.{resolve,
     // dirname, join} via the imports up top for unrelated paths (skills
-    // discovery), but the NEW Phase 7 OAuth wiring must use safePath only.
+    // discovery), but the OAuth wiring must use safePath only.
     expect(source).not.toMatch(/path\.join\(/);
     expect(source).not.toMatch(/path\.resolve\(/);
     // The OAuth wiring's dataDir construction must use safePath.
-    const phase7Section = source.slice(
-      source.indexOf("Phase 7 plan 08"),
+    const oauthSection = source.slice(
+      source.indexOf("FIRST daemon-side OAuth wiring"),
       source.indexOf("createAuthProvider({"),
     );
-    expect(phase7Section).toContain("safePath(");
+    expect(oauthSection).toContain("safePath(");
   });
 
   it("selects encrypted-mode adapter via selectOAuthCredentialStore branch", () => {
-    // Daemon side: only the call site lives here now (Phase 8 plan 01 moved
-    // the helper definition to @comis/agent per RESEARCH override 4).
+    // Daemon side: only the call site lives here now (the helper definition
+    // moved to @comis/agent so the CLI can import it without depending on
+    // @comis/daemon).
     expect(source).toContain("selectOAuthCredentialStore({");
     // Encrypted branch lives inside selectOAuthCredentialStore (helper) — pulls
     // both secretsCrypto + secretsDb through deps. Read the helper from its
@@ -260,7 +261,7 @@ describe("setupSingleAgent OAuth wiring (Phase 7 plan 08)", () => {
   });
 });
 
-describe("selectOAuthCredentialStore (Phase 7 plan 08 — B5 + W6)", () => {
+describe("selectOAuthCredentialStore", () => {
   /** Mock OAuthCredentialStorePort returned by injected factories. */
   function makeMockPort(): OAuthCredentialStorePort {
     return {

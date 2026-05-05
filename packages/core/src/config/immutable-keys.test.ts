@@ -256,12 +256,12 @@ describe("isImmutableConfigPath", () => {
     expect(isImmutableConfigPath("agents", "default.maxSteps")).toBe(false);
   });
 
-  // 260428-rrr regression: persona is no longer a mutable override (Bug A);
+  // Bug A regression: persona is no longer a mutable override;
   // it was a dead reference -- PerAgentConfigSchema is z.strictObject and has
   // no `persona` field, so the override entry only leaked a misleading
   // capability hint to LLMs. With the entry removed, the agents immutable
   // prefix wins and these paths are now rejected.
-  it("rejects agents.default.persona (260428-rrr: dead override removed)", () => {
+  it("rejects agents.default.persona (dead override removed)", () => {
     expect(isImmutableConfigPath("agents", "default.persona")).toBe(true);
   });
 
@@ -334,7 +334,7 @@ describe("isImmutableConfigPath", () => {
 
 describe("MUTABLE_CONFIG_OVERRIDES", () => {
   it("contains exactly 11 override patterns", () => {
-    // 260428-rrr Bug A: down from 12 (dead "agents.*.persona" removed).
+    // Bug A: down from 12 (dead "agents.*.persona" removed).
     expect(MUTABLE_CONFIG_OVERRIDES).toHaveLength(11);
   });
 
@@ -353,7 +353,7 @@ describe("matchesOverridePattern", () => {
   // Note: tests use agents.*.maxSteps as the wildcard fixture (a real entry in
   // MUTABLE_CONFIG_OVERRIDES). The function is generic; the pattern choice is
   // illustrative only. (Previously these tests used agents.*.persona; that
-  // entry was removed in 260428-rrr Bug A.)
+  // entry was removed in Bug A.)
   it("matches exact path to pattern", () => {
     expect(matchesOverridePattern("agents.default.maxSteps", "agents.*.maxSteps")).toBe(true);
   });
@@ -409,7 +409,7 @@ describe("getMutableOverridesForSection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 260428-rrr Bug A regression: dead "agents.*.persona" override removed.
+// Bug A regression: dead "agents.*.persona" override removed.
 // PerAgentConfigSchema is z.strictObject and has no `persona` field, so the
 // override entry could never produce a successful patch -- it only leaked a
 // misleading capability hint to LLMs (formatRedirectHint emitted "you can
@@ -417,7 +417,7 @@ describe("getMutableOverridesForSection", () => {
 // `persona:` in agents_manage.create config, triggering Zod
 // unrecognized_keys rejection (18 fleet-creation failures in production).
 // ---------------------------------------------------------------------------
-describe("MUTABLE_CONFIG_OVERRIDES (260428-rrr regression: persona removed)", () => {
+describe("MUTABLE_CONFIG_OVERRIDES (regression: persona removed)", () => {
   it("does NOT contain the dead 'agents.*.persona' override", () => {
     expect(MUTABLE_CONFIG_OVERRIDES).not.toContain("agents.*.persona");
   });

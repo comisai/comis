@@ -5,7 +5,7 @@ import type { ModelOperationType } from "@comis/core";
  * Per-agent/channel/execution cost record.
  *
  * Captures token counts and cost breakdown for attribution
- * and observability. Persistence via event bus comes in Phase 6.
+ * and observability. Persistence via event bus is planned.
  */
 export interface CostRecord {
   timestamp: number;

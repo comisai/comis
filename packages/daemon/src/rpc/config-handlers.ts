@@ -180,12 +180,11 @@ export interface ConfigHandlerDeps {
   /** Config change webhook config (from container.config.daemon.configWebhook) */
   configWebhook?: { url?: string; timeoutMs?: number; secret?: string };
   /**
-   * quick-260504-irq: optional OAuth credential store, used by the
-   * credential guard to confirm that an agent's `oauthProfiles[provider]`
-   * entry refers to a profile that actually exists in
-   * ~/.comis/auth-profiles.json (or the encrypted-SQLite equivalent).
-   * When absent, the OAuth branch of the resolver is a no-op — existing
-   * API-key behavior is preserved.
+   * Optional OAuth credential store, used by the credential guard to
+   * confirm that an agent's `oauthProfiles[provider]` entry refers to a
+   * profile that actually exists in ~/.comis/auth-profiles.json (or the
+   * encrypted-SQLite equivalent). When absent, the OAuth branch of the
+   * resolver is a no-op — existing API-key behavior is preserved.
    */
   oauthCredentialStore?: OAuthCredentialStorePort;
 }
@@ -523,7 +522,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         // pre-flight and bridge metadata validator catch this earlier for
         // LLM tool calls -- this path is reached when those layers are
         // bypassed. Emit the same redirect hint so all clients see
-        // identical, model-agnostic recovery instructions (quick-260425-t40).
+        // identical, model-agnostic recovery instructions.
         if (isImmutableConfigPath(section, key)) {
           const redirect = getManagedSectionRedirect(section, key);
           const suffix = redirect
@@ -534,21 +533,20 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
           );
         }
 
-        // Credential guard (260501-2pz): when a patch targets an agent's
-        // provider/model field, verify the resulting provider's API key is
-        // resolvable from at least one source pi-coding-agent will consult
-        // at runtime. Fail-loud here rather than letting an unauthorized
-        // provider config persist and explode at the next chat turn.
-        // See `.planning/design/daemon-credential-guard/PLAN.md`.
+        // Credential guard: when a patch targets an agent's provider/model
+        // field, verify the resulting provider's API key is resolvable from
+        // at least one source pi-coding-agent will consult at runtime.
+        // Fail-loud here rather than letting an unauthorized provider
+        // config persist and explode at the next chat turn.
         //
-        // quick-260504-irq: model-only patches with unchanged provider
-        // introduce no new credential surface — short-circuit the guard
-        // entirely. The runtime auth chain that just authenticated the
-        // LLM call making this patch will keep working. Stale-broken-
-        // config detection moves back to the next chat turn (fail-loud
-        // at the request boundary), where the message is correctly
-        // shaped for the actual failure mode (not a pre-emptive API-key
-        // prompt that is wrong for OAuth providers like openai-codex).
+        // Model-only patches with unchanged provider introduce no new
+        // credential surface — short-circuit the guard entirely. The
+        // runtime auth chain that just authenticated the LLM call making
+        // this patch will keep working. Stale-broken-config detection
+        // moves back to the next chat turn (fail-loud at the request
+        // boundary), where the message is correctly shaped for the actual
+        // failure mode (not a pre-emptive API-key prompt that is wrong for
+        // OAuth providers like openai-codex).
         if (section === "agents" && isAgentProviderOrModelKey(key)) {
           const targetProvider = extractTargetProvider(
             key!,
@@ -685,11 +683,10 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         }
 
         // Reject patches that reference env vars not in the secrets store, on
-        // enabled MCP servers only. Layer 3 of 2026-05-03 outage fix (quick
-        // task 260504-dlz). Layer 1 (env-substitution skip on disabled
-        // servers, 260504-cac) made `enabled:false + ${VAR}` harmless at
-        // bootstrap; this gate forbids the partially-valid `enabled:true +
-        // missing ${VAR}` that triggered the outage.
+        // enabled MCP servers only. The env-substitution skip on disabled
+        // servers makes `enabled:false + ${VAR}` harmless at bootstrap; this
+        // gate forbids the partially-valid `enabled:true + missing ${VAR}`
+        // shape.
         //
         // We walk `patch` (not the deep-merged config) because we only
         // validate what's being WRITTEN this RPC. `restoreMcpServerEnv` above
@@ -863,7 +860,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
 
         // Check immutable paths -- entire section is being replaced.
         // Backstop for direct-RPC clients; LLM tool calls hit the same redirect
-        // earlier via gateway-tool / bridge validator (quick-260425-t40).
+        // earlier via gateway-tool / bridge validator.
         if (isImmutableConfigPath(section)) {
           const redirect = getManagedSectionRedirect(section);
           const suffix = redirect

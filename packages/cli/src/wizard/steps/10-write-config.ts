@@ -40,8 +40,8 @@ function getDefaultModel(provider?: string): string {
   const defaults: Record<string, string> = {
     anthropic: "claude-sonnet-4-5-20250929",
     openai: "gpt-4o",
-    // 260504-gge: pi-ai catalog's first entry for openai-codex (verified
-    // via getModels("openai-codex")[0].id). If pi-ai shuffles its catalog,
+    // pi-ai catalog's first entry for openai-codex (verified via
+    // getModels("openai-codex")[0].id). If pi-ai shuffles its catalog,
     // the daemon's runtime default kicks in (same path as unknown providers).
     "openai-codex": "gpt-5.1",
     google: "gemini-2.0-flash",
@@ -78,10 +78,10 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
     agentConfig.compatMode = state.provider.compatMode;
   }
 
-  // 260504-gge: OAuth profile wiring -- when handleCodexOAuth (step 04)
-  // produced a profile, emit it onto the agent so the daemon resolves the
-  // right identity for this provider's LLM calls. PerAgentConfigSchema
-  // accepts oauthProfiles as Record<provider, profileId> with the literal
+  // OAuth profile wiring -- when handleCodexOAuth (step 04) produced a
+  // profile, emit it onto the agent so the daemon resolves the right
+  // identity for this provider's LLM calls. PerAgentConfigSchema accepts
+  // oauthProfiles as Record<provider, profileId> with the literal
   // <provider>:<identity> format already validated at runner time.
   if (state.provider?.oauthProfileId && state.provider?.id) {
     agentConfig.oauthProfiles = {

@@ -50,7 +50,7 @@ describe("createMapReduceDriver", () => {
       },
     });
 
-    // Phase 1: initialize spawns all mappers
+    // initialize spawns all mappers
     const init = driver.initialize(ctx);
     expect(init).toEqual({
       action: "spawn_all",
@@ -68,7 +68,7 @@ describe("createMapReduceDriver", () => {
       reducerPrompt: undefined,
     });
 
-    // Phase 2: onParallelTurnComplete spawns reducer
+    // onParallelTurnComplete spawns reducer
     const parallel = driver.onParallelTurnComplete!(ctx, [
       { agentId: "m1", output: "O1" },
       { agentId: "m2", output: "O2" },
@@ -88,7 +88,7 @@ describe("createMapReduceDriver", () => {
     const stateAfterReduce = ctx.getState<{ phase: string }>();
     expect(stateAfterReduce!.phase).toBe("reducing");
 
-    // Phase 3: onTurnComplete completes with reducer output
+    // onTurnComplete completes with reducer output
     const complete = driver.onTurnComplete(ctx, "Reduced output");
     expect(complete).toEqual({ action: "complete", output: "Reduced output" });
   });

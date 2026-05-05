@@ -1,35 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `comis auth` CLI command tree (Phase 8 D-13 + R4/R5; Phase 9 R4/R5/R6).
+ * `comis auth` CLI command tree.
  *
  * Four subcommands operating directly against the OAuthCredentialStorePort
  * (no daemon RPC — store is the IPC primitive between CLI and daemon, with
- * the daemon picking up changes via the chokidar watcher in plan 05):
+ * the daemon picking up changes via the chokidar watcher):
  *
  * - `comis auth login`   — interactive OAuth login (browser + manual paste).
  *                          Accepts `--profile <id>` to override the storage
- *                          key (Phase 9 R4); the user-supplied id replaces
- *                          the JWT-derived `<provider>:<email>` while the
+ *                          key; the user-supplied id replaces the
+ *                          JWT-derived `<provider>:<email>` while the
  *                          identity fields on the persisted profile remain
  *                          JWT-derived. Provider portion of `--profile` must
  *                          equal `--provider` or the command exits 2.
  * - `comis auth list`    — list stored profiles in a 5-column table; supports
- *                          `--provider <id>` filter (Phase 9 R5) — pure
- *                          client-side string match, no validation against
- *                          pi-ai's known list.
+ *                          `--provider <id>` filter — pure client-side string
+ *                          match, no validation against pi-ai's known list.
  * - `comis auth logout`  — remove a profile by ID
  * - `comis auth status`  — per-provider summary (count + nextExpiry); supports
- *                          `--provider <id>` filter (Phase 9 R6) with the
- *                          same semantics as `auth list`.
+ *                          `--provider <id>` filter with the same semantics
+ *                          as `auth list`.
  *
- * Phase 8 only supports `--provider openai-codex` for `auth login`. Other
- * providers ship in later phases (D-15 + SPEC R4 negative test). The
- * `--provider` filter on `list` / `status` is unconstrained because the
- * filter is purely cosmetic.
+ * Only `--provider openai-codex` is supported for `auth login` today. Other
+ * providers ship later. The `--provider` filter on `list` / `status` is
+ * unconstrained because the filter is purely cosmetic.
  *
  * All commands run in the CLI process; the local OAuth callback server
  * (pi-ai's hardcoded localhost:1455) binds to the user's interactive
- * machine — daemon may be on a remote host (SPEC.md constraints line 112).
+ * machine — daemon may be on a remote host.
  *
  * @module
  */
@@ -59,10 +57,10 @@ import { formatRelativeExpiry } from "../output/relative-time.js";
 import { createClackAdapter } from "../wizard/clack-adapter.js";
 
 const PROVIDER_OPENAI_CODEX = "openai-codex" as const;
-const ACTIVE_THRESHOLD_MS = 5 * 60_000; // 5 minutes — match D-16 status logic
+const ACTIVE_THRESHOLD_MS = 5 * 60_000; // 5 minutes — match status logic
 
 // ---------------------------------------------------------------------------
-// Phase 10 SC-10-4: OAuthError discrimination helpers (Plan 10-06).
+// OAuthError discrimination helpers.
 //
 // `exitOnOAuthError` translates a structured OAuthError into stderr output +
 // exit code 1; `isOAuthError` is a defensive type guard so the catch blocks
@@ -72,17 +70,17 @@ const ACTIVE_THRESHOLD_MS = 5 * 60_000; // 5 minutes — match D-16 status logic
 //
 // Per CLAUDE.md "Logging" — CLI uses `format.ts` (stderr/stdout) NOT Pino;
 // this is the documented exception. The literal "Re-authenticate with: comis
-// auth login --provider <providerId>" line is the SC-10-4 acceptance literal
-// the integration test grep-asserts (test/integration/oauth-refresh-token-reused.test.ts).
+// auth login --provider <providerId>" line is the acceptance literal the
+// integration test grep-asserts (test/integration/oauth-refresh-token-reused.test.ts).
 // ---------------------------------------------------------------------------
 
 /**
  * Translate a structured OAuthError into stderr output + exit code 1.
  *
- * Phase 10 SC-10-4: when `errorKind === "refresh_token_reused"`, the CLI
- * prints the canonical re-login command with exit code 1. Other errorKinds
- * (invalid_grant, etc.) get tailored messages; unknown OAuthErrors fall
- * through to the generic shape.
+ * When `errorKind === "refresh_token_reused"`, the CLI prints the canonical
+ * re-login command with exit code 1. Other errorKinds (invalid_grant, etc.)
+ * get tailored messages; unknown OAuthErrors fall through to the generic
+ * shape.
  *
  * Returns `never` — always exits the process.
  */
@@ -109,10 +107,10 @@ function exitOnOAuthError(err: OAuthError): never {
 
 /**
  * Type guard: detect an OAuthError shape on a caught unknown value.
- * Distinguishes the structured Phase 7+ error from generic JS errors so the
- * CLI can route through `exitOnOAuthError` (above). Match against the 5
- * known `OAuthError.code` values to avoid false positives on third-party
- * errors that happen to carry `code`/`providerId`/`message` keys.
+ * Distinguishes the structured error from generic JS errors so the CLI can
+ * route through `exitOnOAuthError` (above). Match against the 5 known
+ * `OAuthError.code` values to avoid false positives on third-party errors
+ * that happen to carry `code`/`providerId`/`message` keys.
  */
 function isOAuthError(value: unknown): value is OAuthError {
   if (!value || typeof value !== "object") return false;
@@ -133,15 +131,13 @@ function isOAuthError(value: unknown): value is OAuthError {
 
 // Module-scoped logger. The CLI process runs short-lived commands; one
 // logger instance is shared across all 4 subcommands. Per CLAUDE.md, every
-// log call also sets `submodule: "auth-cli"` for filterability. The plan body
-// referenced `logLevelManager.getLogger(...)` — that helper does not exist
-// in @comis/infra (only `createLogger` is exported); auto-fix per Rule 3.
+// log call also sets `submodule: "auth-cli"` for filterability.
 const logger = createLogger({ name: "auth-cli" });
 
 // ---------------------------------------------------------------------------
 // Internal: open the OAuth credential store using the same selector the
-// daemon uses (D-13). Reads appConfig.oauth.storage from the user's config
-// file with safe defaults when no config exists (e.g., daemon never set up).
+// daemon uses. Reads appConfig.oauth.storage from the user's config file
+// with safe defaults when no config exists (e.g., daemon never set up).
 //
 // Both loadConfigFile and validateConfig are Result-typed (per @comis/core),
 // so this function never throws — config errors fall through to the file
@@ -178,13 +174,12 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
   const storage = validateResult.value.oauth.storage;
 
   if (storage === "encrypted") {
-    // Per RESEARCH §Security T-08-OAUTH-ENCRYPTED-NO-KEY: encrypted-mode
-    // bootstrap from CLI requires SECRETS_MASTER_KEY + the secrets DB.
-    // The CLI does NOT spin up the SecretsCrypto/secretsDb here — for Phase 8
-    // we surface a fail-fast error pointing at the daemon's encrypted-mode
-    // path. Operators with encrypted storage must run `comis auth login`
-    // from the daemon host (where SECRETS_MASTER_KEY is exported), or
-    // switch to file storage.
+    // Encrypted-mode bootstrap from CLI requires SECRETS_MASTER_KEY + the
+    // secrets DB. The CLI does NOT spin up the SecretsCrypto/secretsDb
+    // here — surface a fail-fast error pointing at the daemon's
+    // encrypted-mode path. Operators with encrypted storage must run
+    // `comis auth login` from the daemon host (where SECRETS_MASTER_KEY
+    // is exported), or switch to file storage.
     error(
       "OAuth storage mode is 'encrypted' but the CLI cannot bootstrap the encrypted store. " +
         "Hint: Either (1) export SECRETS_MASTER_KEY in this shell and rerun, or (2) change " +
@@ -224,7 +219,7 @@ export function registerAuthCommand(program: Command): void {
     .description("Log in to an OAuth-enabled provider")
     .requiredOption(
       "--provider <id>",
-      "OAuth provider id (must be 'openai-codex' for Phase 8)",
+      "OAuth provider id (must be 'openai-codex')",
     )
     .option("--remote", "Force remote/headless mode (no browser)")
     .option("--local", "Force local/desktop mode (try to open browser)")
@@ -244,17 +239,17 @@ export function registerAuthCommand(program: Command): void {
         profile?: string;
         method?: string;
       }) => {
-        // D-15 + SPEC R4 negative — provider must be openai-codex.
+        // Provider must be openai-codex.
         if (opts.provider !== PROVIDER_OPENAI_CODEX) {
           error(
-            "--provider must be 'openai-codex' (other providers ship in later phases)",
+            "--provider must be 'openai-codex' (other providers ship later)",
           );
           process.exit(2);
         }
-        // Phase 9 R4 — validate --profile override when supplied.
+        // Validate --profile override when supplied.
         // The user-supplied id becomes the storage key; the provider portion
         // MUST match --provider (defense against accidentally writing an
-        // anthropic profile under an openai-codex login flow — T-09-V5).
+        // anthropic profile under an openai-codex login flow).
         if (opts.profile) {
           const validated = validateProfileId(opts.profile);
           if (!validated.ok) {
@@ -271,10 +266,10 @@ export function registerAuthCommand(program: Command): void {
           }
         }
 
-        // Phase 11 SC11-1: validate --method flag.
-        // Defense-in-depth (T-11-04-01): any value other than "device-code"
-        // silently maps to "browser" — the CLI never crashes on an unknown
-        // method, it falls back to the safe default.
+        // Validate --method flag.
+        // Defense-in-depth: any value other than "device-code" silently
+        // maps to "browser" — the CLI never crashes on an unknown method,
+        // it falls back to the safe default.
         const method: "browser" | "device-code" =
           opts.method === "device-code" ? "device-code" : "browser";
         if (method === "device-code" && opts.provider !== PROVIDER_OPENAI_CODEX) {
@@ -308,7 +303,7 @@ export function registerAuthCommand(program: Command): void {
           }
 
           const v = result.value;
-          // Phase 9 R4 — when --profile is set, override the storage key.
+          // When --profile is set, override the storage key.
           // email/accountId/displayName remain JWT-derived (preserved on the
           // profile object) so the operator can still identify which upstream
           // account backs the alias.
@@ -331,7 +326,7 @@ export function registerAuthCommand(program: Command): void {
             process.exit(1);
           }
 
-          // D-14 — silent overwrite policy; INFO-log records every login write.
+          // Silent overwrite policy; INFO-log records every login write.
           logger.info(
             {
               provider: PROVIDER_OPENAI_CODEX,
@@ -348,9 +343,9 @@ export function registerAuthCommand(program: Command): void {
             `Logged in as ${v.email ?? v.displayName ?? v.profileId} (profile: ${finalProfileId})`,
           );
         } catch (err) {
-          // Phase 10 SC-10-4 (Plan 10-06): structured OAuthError values
-          // route through `exitOnOAuthError` for the canonical re-login hint;
-          // generic errors fall through to the existing pattern.
+          // Structured OAuthError values route through `exitOnOAuthError`
+          // for the canonical re-login hint; generic errors fall through to
+          // the existing pattern.
           if (isOAuthError(err)) {
             exitOnOAuthError(err);
           }
@@ -377,9 +372,9 @@ export function registerAuthCommand(program: Command): void {
           process.exit(1);
         }
         const profiles = listResult.value;
-        // Phase 9 R5 — client-side string-match filter; SPEC explicitly opts
-        // OUT of validating the provider value against pi-ai's known list
-        // (the filter is purely an in-memory display sieve).
+        // Client-side string-match filter; we explicitly opt OUT of
+        // validating the provider value against pi-ai's known list (the
+        // filter is purely an in-memory display sieve).
         const filtered = opts.provider
           ? profiles.filter((p) => p.provider === opts.provider)
           : profiles;
@@ -402,7 +397,7 @@ export function registerAuthCommand(program: Command): void {
           ]),
         );
       } catch (err) {
-        // Phase 10 SC-10-4 — structured OAuthError gets the re-login hint.
+        // Structured OAuthError gets the re-login hint.
         if (isOAuthError(err)) {
           exitOnOAuthError(err);
         }
@@ -449,7 +444,7 @@ export function registerAuthCommand(program: Command): void {
         );
         success(`Logged out of ${opts.profile}`);
       } catch (err) {
-        // Phase 10 SC-10-4 — structured OAuthError gets the re-login hint.
+        // Structured OAuthError gets the re-login hint.
         if (isOAuthError(err)) {
           exitOnOAuthError(err);
         }
@@ -493,16 +488,16 @@ export function registerAuthCommand(program: Command): void {
           arr.push(p);
           byProvider.set(p.provider, arr);
         }
-        // Phase 9 R6 — empty filter case: store has profiles, but none for
-        // the requested provider. Print provider-specific empty-state per
-        // SPEC line 53 wording and exit 0 (the standard `return` here, since
-        // a missing provider in a populated store is not an error).
+        // Empty filter case: store has profiles, but none for the requested
+        // provider. Print provider-specific empty-state and exit 0 (the
+        // standard `return` here, since a missing provider in a populated
+        // store is not an error).
         if (opts.provider && !byProvider.has(opts.provider)) {
           info(`No OAuth profiles stored for provider "${opts.provider}".`);
           return;
         }
         for (const [provider, group] of byProvider) {
-          // Phase 9 R6 — skip non-matching groups when filter is set.
+          // Skip non-matching groups when filter is set.
           if (opts.provider && provider !== opts.provider) continue;
           info(
             `${provider} (${group.length} profile${group.length !== 1 ? "s" : ""})`,
@@ -515,7 +510,7 @@ export function registerAuthCommand(program: Command): void {
           }
         }
       } catch (err) {
-        // Phase 10 SC-10-4 — structured OAuthError gets the re-login hint.
+        // Structured OAuthError gets the re-login hint.
         if (isOAuthError(err)) {
           exitOnOAuthError(err);
         }

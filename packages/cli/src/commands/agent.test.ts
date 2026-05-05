@@ -10,8 +10,8 @@ import { Command } from "commander";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { registerAgentCommand } from "./agent.js";
 
-// Mock the RPC client so the Phase 9 R7 tests can drive `agents.update`
-// without spinning a daemon. Default returns success for set-oauth-profile;
+// Mock the RPC client so the set-oauth-profile tests can drive
+// `agents.update` without spinning a daemon. Default returns success;
 // individual tests override per-call to assert error propagation.
 vi.mock("../client/rpc-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
@@ -185,15 +185,15 @@ describe("agent delete confirmation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 9 R7: agent set-oauth-profile <agentId> <profileId>
+// agent set-oauth-profile <agentId> <profileId>
 //
-// Six tests covering: subcommand existence + description, malformed-profile
+// Tests cover: subcommand existence + description, malformed-profile
 // rejection (exit 2), valid-input RPC call shape, "not found" daemon error
 // (exit 1), generic daemon error (exit 1), and the updated subcommands
 // roster (covered above in the registerAgentCommand block).
 // ---------------------------------------------------------------------------
 
-describe("agent set-oauth-profile (Phase 9 R7)", () => {
+describe("agent set-oauth-profile", () => {
   let program: Command;
 
   beforeEach(() => {

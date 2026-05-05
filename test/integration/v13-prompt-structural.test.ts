@@ -6,7 +6,7 @@
  * and log cleanliness WITHOUT requiring LLM API keys. Tests cover:
  *
  *   1. Daemon boots cleanly with v13.0 config (health + gateway.status)
- *   2. config.get returns reactionLevel for default agent (Phase 176)
+ *   2. config.get returns reactionLevel for default agent
  *   3. Agent config has expected v13.0 shape (name, model, provider, budgets)
  *   4. Daemon logs contain no unexpected errors or warnings
  *

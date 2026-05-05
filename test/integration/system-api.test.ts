@@ -3,11 +3,11 @@
  * SYSTEM API TEST: REST API, WebSocket protocol, and log quality tests.
  *
  * Split from comprehensive-system.test.ts for isolated failures and
- * faster debugging. Covers Phases 15-17:
+ * faster debugging. Covers:
  *
- *  15.  REST API
- *  16.  WebSocket Protocol
- *  17.  Log Quality Validation
+ *   REST API
+ *   WebSocket Protocol
+ *   Log Quality Validation
  *
  * Uses config.test-system-api.yaml (port 8603, 3 tokens with different scopes).
  *
@@ -123,10 +123,10 @@ describe("SYSTEM API TEST: REST API, WebSocket, log quality", () => {
   }, 30_000);
 
   // =========================================================================
-  // Phase 15: REST API (6 tests)
+  // REST API (6 tests)
   // =========================================================================
 
-  describe("Phase 15: REST API", () => {
+  describe("REST API", () => {
     it("GET /health returns 200 with JSON body", async () => {
       const resp = await fetch(`${handle.gatewayUrl}/health`);
       expect(resp.status).toBe(200);
@@ -177,10 +177,10 @@ describe("SYSTEM API TEST: REST API, WebSocket, log quality", () => {
   });
 
   // =========================================================================
-  // Phase 16: WebSocket Protocol (3 tests)
+  // WebSocket Protocol (3 tests)
   // =========================================================================
 
-  describe("Phase 16: WebSocket Protocol", () => {
+  describe("WebSocket Protocol", () => {
     it("WebSocket connects with valid token", () => {
       // Admin WS was opened in beforeAll — verify it's open
       expect(ws.readyState).toBe(WebSocket.OPEN);
@@ -232,10 +232,10 @@ describe("SYSTEM API TEST: REST API, WebSocket, log quality", () => {
   });
 
   // =========================================================================
-  // Phase 17: Log Quality Validation (4 tests)
+  // Log Quality Validation (4 tests)
   // =========================================================================
 
-  describe("Phase 17: Log Quality Validation", () => {
+  describe("Log Quality Validation", () => {
     let entries: LogEntry[];
     let report: ReturnType<typeof validateLogs>;
 

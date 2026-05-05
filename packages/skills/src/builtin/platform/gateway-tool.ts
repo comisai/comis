@@ -230,11 +230,11 @@ export function createGatewayTool(
                 hint: "Ask the user to confirm this restart, then call again with _confirmed: true.",
               };
             }
-            // 260428-qrn: Inside Docker the restart relies entirely on the
-            // container's restart policy to bring the daemon back. Surface
-            // a structured WARN so the operator gets a breadcrumb in
-            // `docker logs` pointing at `--restart unless-stopped`. Tool
-            // result schema unchanged (Pino-only -- no extra content blocks).
+            // Inside Docker the restart relies entirely on the container's
+            // restart policy to bring the daemon back. Surface a structured
+            // WARN so the operator gets a breadcrumb in `docker logs`
+            // pointing at `--restart unless-stopped`. Tool result schema
+            // unchanged (Pino-only -- no extra content blocks).
             if (isDocker()) {
               logger.warn(
                 {

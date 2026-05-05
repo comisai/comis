@@ -96,9 +96,9 @@ const STEPS: StepDef[] = [
  * (`CUSTOM_PROVIDER_KEY`) appended after catalog providers for OpenAI-
  * compatible custom proxies that aren't in the catalog.
  *
- * Phase 3A (260501-07g): replaced the static `PROVIDERS` array (and its
- * hardcoded `defaultModel` per entry) with this UX-only hints map. Models
- * are populated dynamically from `models.list provider:<name>`.
+ * Replaced the static `PROVIDERS` array (and its hardcoded `defaultModel`
+ * per entry) with this UX-only hints map. Models are populated dynamically
+ * from `models.list provider:<name>`.
  */
 const PROVIDER_UI_HINTS: Record<string, ProviderUiHint> = {
   anthropic: {
@@ -820,7 +820,7 @@ export class IcSetupWizard extends LitElement {
   @state() private _applyDone = false;
   @state() private _validationErrors: Record<string, string> = {};
 
-  // Layer 3A (260501-07g): live provider catalog state.
+  // Live provider catalog state.
   // _catalogProviders is fetched via `models.list_providers` on first mount.
   // _modelOptions is fetched per-provider via `models.list provider:<name>`.
   @state() private _catalogProviders: string[] = [];
@@ -987,8 +987,8 @@ export class IcSetupWizard extends LitElement {
       ...this._wizardData,
       providerName: key,
       // Custom providers stay as `type: "openai"` (passthrough);
-      // native providers send `type: <key>` and Phase 1's auto-promote
-      // handler echoes the native type back -- no special-casing here.
+      // native providers send `type: <key>` and the auto-promote handler
+      // echoes the native type back -- no special-casing here.
       providerType: isCustom ? "openai" : key,
       apiKey: "",
       baseUrl: hint.defaultBaseUrl ?? "",

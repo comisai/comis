@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the `comis auth` CLI command tree (Phase 8 plan 03).
+ * Tests for the `comis auth` CLI command tree.
  *
  * Scope: argv parsing + dispatch shape only — full end-to-end behavior
- * (against the mock OAuth server) is covered by the Phase 8 plan 06
- * integration test `test/integration/oauth-login.test.ts`.
+ * (against the mock OAuth server) is covered by the integration test
+ * `test/integration/oauth-login.test.ts`.
  *
  * These tests catch commander wiring regressions (e.g., a typo that
  * loses a subcommand, or a missing requiredOption).
@@ -57,13 +57,11 @@ describe("registerAuthCommand", () => {
     exitSpy.mockRestore();
   });
 
-  // Phase 9 R4 — `--profile` is no longer rejected; it is validated as an
-  // override. The legacy "exit 2 on any --profile value" test was removed
-  // because it asserted Phase 8 behavior that R4 deliberately replaces.
-  // Coverage for the new acceptance / mismatch / malformed cases lives below
-  // (and in the dedicated mock-driven file `auth.profile-override.test.ts`).
+  // `--profile` is validated as an override. Coverage for acceptance /
+  // mismatch / malformed cases lives below (and in the dedicated mock-driven
+  // file `auth.profile-override.test.ts`).
 
-  it("rejects --profile with malformed value (forbidden character) with exit 2 (R4)", async () => {
+  it("rejects --profile with malformed value (forbidden character) with exit 2", async () => {
     const program = buildProgram();
     const exitSpy = spyExit();
     const stderr = spyStderr();
@@ -88,7 +86,7 @@ describe("registerAuthCommand", () => {
     exitSpy.mockRestore();
   });
 
-  it("rejects --profile when provider portion does not match --provider with exit 2 (R4)", async () => {
+  it("rejects --profile when provider portion does not match --provider with exit 2", async () => {
     const program = buildProgram();
     const exitSpy = spyExit();
     const stderr = spyStderr();
@@ -113,7 +111,7 @@ describe("registerAuthCommand", () => {
     exitSpy.mockRestore();
   });
 
-  it("preserves the existing --provider rejection for non-codex providers (R4)", async () => {
+  it("preserves the existing --provider rejection for non-codex providers", async () => {
     const program = buildProgram();
     const exitSpy = spyExit();
     spyStderr();
@@ -159,7 +157,7 @@ describe("registerAuthCommand", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 11 SC11-1 — --method device-code flag
+  // --method device-code flag
   // -------------------------------------------------------------------------
 
   it("rejects --method device-code with non-codex provider (exit 2)", async () => {

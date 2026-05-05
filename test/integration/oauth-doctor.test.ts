@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Integration test for SC-10-2: `comis doctor` OAuth subsystem (Phase 10
- * plan 06 Task 3).
+ * Integration test for `comis doctor` OAuth subsystem.
  *
  * Spawns the CLI as a child process, captures stdout (JSON via
  * `--format json`), asserts on the OAuth findings shape. Daemon is NOT
- * required (per Phase 8 D-13: doctor reads OAuth profiles directly via
- * selectOAuthCredentialStore).
+ * required: doctor reads OAuth profiles directly via
+ * selectOAuthCredentialStore.
  *
  * Test inventory (5 tests):
- *   1. Per-profile expiry — healthy + near-expiry warn (SC-10-2 main).
+ *   1. Per-profile expiry — healthy + near-expiry warn.
  *   2. Schema-version mismatch surfaces verbatim from the file adapter
- *      (Phase 7 D-07 verbatim hint contract preserved).
- *   3. --refresh-test default OFF — no `refresh test` findings without flag
- *      (D-10-04-01).
+ *      (verbatim hint contract preserved).
+ *   3. --refresh-test default OFF — no `refresh test` findings without flag.
  *   4. TLS preflight finding present (status varies with network — assert
- *      only existence per D-10-04-04).
- *   5. No token leakage in JSON output (RESEARCH §Pitfall 2 / T-10-03 — the
- *      access-token sentinel must NEVER appear in stdout).
+ *      only existence).
+ *   5. No token leakage in JSON output — the access-token sentinel must
+ *      NEVER appear in stdout.
  *
  * Test isolation per `packages/cli/src/commands/doctor.ts:85`
  * (`config?.dataDir || os.homedir() + "/.comis"`): the doctor resolves
@@ -190,11 +188,11 @@ function parseDoctorJson(stdout: string): DoctorJsonOutput {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("SC-10-2 — comis doctor OAuth health (integration)", () => {
+describe("comis doctor OAuth health (integration)", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(path.join(os.tmpdir(), "comis-10-06-doctor-"));
+    tmpDir = mkdtempSync(path.join(os.tmpdir(), "comis-doctor-"));
     mkdirSync(tmpDir, { recursive: true });
   });
 
@@ -208,7 +206,7 @@ describe("SC-10-2 — comis doctor OAuth health (integration)", () => {
     }
   });
 
-  it("Test 1: reports per-profile expiry — healthy + near-expiry warn", async () => {
+  it("reports per-profile expiry — healthy + near-expiry warn", async () => {
     const now = Date.now();
     seedProfilesFile(tmpDir, {
       version: 1,
@@ -257,7 +255,7 @@ describe("SC-10-2 — comis doctor OAuth health (integration)", () => {
     expect(profileB!.status).toBe("warn");
     expect(profileB!.suggestion).toContain("comis auth login");
 
-    // SC-10-2 contract: profile findings carry numeric `secsUntilExpiry`.
+    // Contract: profile findings carry numeric `secsUntilExpiry`.
     expect(typeof profileA!.secsUntilExpiry).toBe("number");
     expect(typeof profileB!.secsUntilExpiry).toBe("number");
     // 3 days < secsUntilExpiry < 30 days for the near-expiry profile.
@@ -265,10 +263,10 @@ describe("SC-10-2 — comis doctor OAuth health (integration)", () => {
     expect(profileB!.secsUntilExpiry!).toBeLessThan(7 * 24 * 60 * 60);
   });
 
-  it("Test 2: surfaces schema-version mismatch verbatim from adapter", async () => {
+  it("surfaces schema-version mismatch verbatim from adapter", async () => {
     // Adapter throws a hard-fail Error with 'version mismatch' substring
     // (oauth-credential-store-file.ts:177) — doctor surfaces it verbatim
-    // through a fail finding (per Phase 7 D-07 hint-preservation contract).
+    // through a fail finding (hint-preservation contract).
     seedProfilesFile(tmpDir, { version: 99, profiles: {} });
     const tempConfigYaml = writeTempConfig(tmpDir);
 
@@ -282,7 +280,7 @@ describe("SC-10-2 — comis doctor OAuth health (integration)", () => {
     expect(failFinding!.message).toContain("version mismatch");
   });
 
-  it("Test 3: --refresh-test default OFF — no refresh-test findings without flag", async () => {
+  it("--refresh-test default OFF — no refresh-test findings without flag", async () => {
     seedProfilesFile(tmpDir, {
       version: 1,
       profiles: {
@@ -300,7 +298,7 @@ describe("SC-10-2 — comis doctor OAuth health (integration)", () => {
     });
     const tempConfigYaml = writeTempConfig(tmpDir);
 
-    // Note: no --refresh-test arg — D-10-04-01 default OFF.
+    // Note: no --refresh-test arg — default OFF.
     const { stdout } = await runDoctor({
       COMIS_CONFIG_PATHS: tempConfigYaml,
     });
@@ -313,7 +311,7 @@ describe("SC-10-2 — comis doctor OAuth health (integration)", () => {
     expect(refreshTestFindings).toHaveLength(0);
   });
 
-  it("Test 4: TLS preflight finding emitted (status varies with network)", async () => {
+  it("TLS preflight finding emitted (status varies with network)", async () => {
     // Empty store but valid schema — the TLS preflight + ca-certificates +
     // HTTPS_PROXY env-checks still run.
     seedProfilesFile(tmpDir, { version: 1, profiles: {} });
@@ -327,11 +325,11 @@ describe("SC-10-2 — comis doctor OAuth health (integration)", () => {
       (f) => f.category === "oauth" && f.check === "TLS preflight",
     );
     // Asserting only EXISTENCE — status varies with network reachability
-    // to auth.openai.com (D-10-04-04 acceptable indeterminism).
+    // to auth.openai.com (acceptable indeterminism).
     expect(tlsFinding, "expected TLS preflight finding").toBeDefined();
   });
 
-  it("Test 5: no token leakage in JSON output (T-10-03)", async () => {
+  it("no token leakage in JSON output", async () => {
     seedProfilesFile(tmpDir, {
       version: 1,
       profiles: {

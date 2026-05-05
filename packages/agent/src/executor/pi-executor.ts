@@ -303,14 +303,14 @@ export interface PiExecutorDeps {
   /** Optional auth rotation adapter for multi-key providers. */
   authRotation?: AuthRotationAdapter;
   /**
-   * Phase 9 R3: optional OAuth token manager. When provided, the per-LLM-call
+   * Optional OAuth token manager. When provided, the per-LLM-call
    * dispatch hook in execute() resolves the OAuth token via the resolver
    * chain (agent-config -> lastGood -> first available) and sets it into
    * authStorage's runtime override Map for pi-coding-agent's outbound LLM
    * call.
    *
-   * F-09 Option 1: single hook per execute() — long-running execute()s
-   * (>= 1 hour) may see token expire mid-loop; revisit Phase 10 if observed
+   * Single hook per execute() — long-running execute()s
+   * (>= 1 hour) may see token expire mid-loop; revisit if observed
    * in production.
    */
   oauthManager?: OAuthTokenManager;
@@ -431,19 +431,19 @@ export function createPiExecutor(
       // a. Record execution start time
       const executionStartMs = Date.now();
 
-      // a-bis. Phase 9 R3: pre-resolve OAuth token before any pi-coding-agent
+      // a-bis. Pre-resolve OAuth token before any pi-coding-agent
       // dispatch. The setRuntimeApiKey side-effect inside resolveProviderApiKey
       // carries the token into pi-coding-agent's outbound LLM request via the
-      // runtime-override priority path (RESEARCH F-02). For OAuth-eligible
+      // runtime-override priority path. For OAuth-eligible
       // providers (openai-codex, anthropic, github-copilot via pi-ai's
       // built-in registry) the resolver chain (agent-config -> lastGood ->
       // first available) runs and refreshes the token if expired. For
       // non-OAuth providers the helper falls through to authStorage.getApiKey.
       //
-      // F-09 Option 1 (throw-propagation): on OAuthError the helper throws
+      // Throw-propagation: on OAuthError the helper throws
       // an Error containing the OAuthError.message. Outer async callers
       // (gateway routes via Hono, channel handlers via try/catch) lift the
-      // throw into a user-facing error response. CONTEXT D-02: OAuthError
+      // throw into a user-facing error response. OAuthError
       // is fatal — no env-var fallback, no retry, no silent rotation.
       // CLAUDE.md "no empty catch" honored because we don't add a catch
       // here at all; the resolver itself logs via the oauth-resolver module.
@@ -1168,7 +1168,7 @@ export function createPiExecutor(
               session.abortCompaction();
               suppressError(session.abort(), "session abort on compaction cancel");
             },
-            // 260501-dkl: cancel the SDK's internal auto-retry loop when the
+            // Cancel the SDK's internal auto-retry loop when the
             // bridge classifies the auto_retry_start error as `rate_limited`.
             // Rate-limit windows (per-minute) outlast the SDK's retry budget
             // (~30s), so retrying within the window cannot succeed.
@@ -1212,7 +1212,7 @@ export function createPiExecutor(
             sepConfig: sepEnabled ? { maxSteps: config.sep?.maxSteps ?? 15, minSteps: config.sep?.minSteps ?? 3 } : undefined,
             sepMessageText: sepEnabled ? (msg.text ?? "") : undefined,
             sepExecutionStartMs: sepEnabled ? executionStartMs : undefined,
-            // Cache break detection Phase 2 callback.
+            // Cache break detection post-call callback.
             // Enrich with elapsed time for tiered server-side attribution.
             checkCacheBreak: (input) => cacheBreakDetector.checkResponseForCacheBreak({
               ...input,
@@ -1233,7 +1233,7 @@ export function createPiExecutor(
                 timestamp: Date.now(),
               };
             },
-            // 260428-hoy: pre-LLM-call hook -- runs once per `turn_start`,
+            // Pre-LLM-call hook -- runs once per `turn_start`,
             // BEFORE pi-ai serializes the next request. Asserts the
             // cross-turn hash invariant (logs ERROR per mutated block, with
             // module:"agent.bridge.hash-invariant"), then heals any mutated
@@ -1283,7 +1283,7 @@ export function createPiExecutor(
               }
               return live;
             },
-            // 260428-iag wire-edge diagnostic: resolves the per-session JSONL
+            // Wire-edge diagnostic: resolves the per-session JSONL
             // path on demand. The bridge invokes this only after detecting the
             // signed-replay rejection signature on a 400 — never on the happy
             // path. Path comes from the same sessionAdapter that already
@@ -1528,7 +1528,7 @@ export function createPiExecutor(
               getTruncationSummary, getTurnBudgetSummary,
               executionPlanRef, sepEnabled, isOnboarding,
               geminiCacheHit, geminiCachedTokens, modelTier,
-              // 260505-gqe: provider attribution tag for the bookend log.
+              // Provider attribution tag for the bookend log.
               // resolvedModel?.provider is the post-resolution / post-override
               // provider; falling back to config.provider records operator
               // INTENT on the silent-fallback misconfig path (resolvedModel

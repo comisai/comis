@@ -2,24 +2,24 @@
 /**
  * OAuth Token Manager: Wraps pi-ai's OAuth subsystem for Comis patterns.
  *
- * Phase 7 rewire (SPEC R6+R7):
+ * Architecture:
  * - Reads + writes credentials through OAuthCredentialStorePort (no in-memory map
  *   as source of truth; refreshed credentials persist to disk and survive restart).
  * - Per-profile-ID file lock via withExecutionLock from @comis/scheduler — concurrent
  *   refresh attempts from multiple processes serialize; different profiles refresh
- *   in parallel (D-02).
+ *   in parallel.
  * - 30s timeout wrapper around pi-ai's getOAuthApiKey to prevent indefinite hang
- *   when auth.openai.com is unreachable (RESEARCH Q1 fix).
- * - Real-refresh detection via newCredentials.refresh !== profile.refresh (RESEARCH
- *   Q1 fix — the original !!newCredentials check was a no-op since pi-ai always
- *   returns truthy newCredentials).
- * - 9 log events per D-12 with submodule: "oauth-token-manager".
- * - 3 event-bus events per D-13: auth:token_rotated (extended with profileId),
- *   auth:profile_bootstrapped (NEW), auth:refresh_failed (NEW).
+ *   when auth.openai.com is unreachable.
+ * - Real-refresh detection via newCredentials.refresh !== profile.refresh — the
+ *   original !!newCredentials check was a no-op since pi-ai always returns truthy
+ *   newCredentials.
+ * - Log events with submodule: "oauth-token-manager".
+ * - Event-bus events: auth:token_rotated (extended with profileId),
+ *   auth:profile_bootstrapped, auth:refresh_failed.
  * - Env-var bootstrap: empty store + valid OAUTH_<PROVIDER> env writes profile
- *   to store, decodes JWT identity, emits auth:profile_bootstrapped (R7a).
+ *   to store, decodes JWT identity, emits auth:profile_bootstrapped.
  * - Env-var conflict: stored profile + different env-var refresh → WARN once
- *   per (provider, process) with hint=env-override-ignored (R7c).
+ *   per (provider, process) with hint=env-override-ignored.
  *
  * Supported OAuth providers (via pi-ai built-in):
  * - Anthropic (Claude Pro/Max)
@@ -66,10 +66,10 @@ import { rewriteOAuthError } from "./oauth-errors.js";
 /**
  * Error codes returned by OAuthTokenManager operations.
  *
- * Phase 10 SC-10-4: extended with `errorKind`, `profileId`, `hint` (all
- * optional) so CLI consumers can pattern-match on `errorKind ===
- * "refresh_token_reused"` without breaking existing consumers that only
- * read `code` + `message` + `providerId`.
+ * Extended with `errorKind`, `profileId`, `hint` (all optional) so CLI
+ * consumers can pattern-match on `errorKind === "refresh_token_reused"`
+ * without breaking existing consumers that only read `code` + `message` +
+ * `providerId`.
  */
 export interface OAuthError {
   code:
@@ -80,11 +80,11 @@ export interface OAuthError {
     | "PROFILE_NOT_FOUND";
   message: string;
   providerId: string;
-  /** Phase 10: free-form classification (e.g. "refresh_token_reused", "invalid_grant", "timeout"). */
+  /** Free-form classification (e.g. "refresh_token_reused", "invalid_grant", "timeout"). */
   errorKind?: string;
-  /** Phase 10: profile that failed (mirrors auth:refresh_failed event payload field). */
+  /** Profile that failed (mirrors auth:refresh_failed event payload field). */
   profileId?: string;
-  /** Phase 10: operator action recommendation; mirrors the WARN log `hint` field. */
+  /** Operator action recommendation; mirrors the WARN log `hint` field. */
   hint?: string;
 }
 
@@ -94,28 +94,28 @@ export interface OAuthTokenManagerDeps {
   secretManager: SecretManager;
   /** EventBus for emitting auth events (3 typed events: token_rotated, profile_bootstrapped, refresh_failed). */
   eventBus: TypedEventBus;
-  /** Credential store for persistent refresh — REQUIRED (Phase 7). */
+  /** Credential store for persistent refresh — REQUIRED. */
   credentialStore: OAuthCredentialStorePort;
-  /** Logger for D-12 log events — REQUIRED (Phase 7). */
+  /** Logger for log events — REQUIRED. */
   logger: ComisLogger;
-  /** Data directory for lock-file path resolution — REQUIRED (Phase 7). */
+  /** Data directory for lock-file path resolution — REQUIRED. */
   dataDir: string;
   /** Prefix for SecretManager key names (default: "OAUTH_"). */
   keyPrefix?: string;
   /**
-   * Phase 8 D-05: absolute path to auth-profiles.json. When set, the manager
-   * registers a chokidar watcher on this path and invalidates its in-memory
-   * cache when the file changes externally (e.g. CLI auth login). When
-   * undefined (encrypted-store mode per D-08), no watcher is registered.
+   * Absolute path to auth-profiles.json. When set, the manager registers a
+   * chokidar watcher on this path and invalidates its in-memory cache when
+   * the file changes externally (e.g. CLI auth login). When undefined
+   * (encrypted-store mode), no watcher is registered.
    */
   watchPath?: string;
   /**
-   * Phase 9 D-05: getter for the agent's oauthProfiles map (Record<provider, profileId>).
+   * Getter for the agent's oauthProfiles map (Record<provider, profileId>).
    * Called fresh on every getApiKey() invocation (no caching). Fallback when callers
    * do not pass agentContext directly (e.g., env-var bootstrap path).
    *
-   * The fresh-on-every-call contract is required by SPEC R2: agents_manage update
-   * mutates the in-memory PerAgentConfig in place; the getter re-reads through that
+   * The fresh-on-every-call contract is required: agents_manage update mutates
+   * the in-memory PerAgentConfig in place; the getter re-reads through that
    * parent reference so the resolver observes the new value without restart.
    */
   getAgentOauthProfiles?: () => Record<string, string> | undefined;
@@ -125,10 +125,9 @@ export interface OAuthTokenManagerDeps {
 export interface OAuthTokenManager {
   /**
    * Get a valid API key for an OAuth provider. Auto-refreshes if token is
-   * expired or near-expiry. Phase 9 R2: dual-surface signature with optional
-   * agentContext for per-agent profile preference; the resolver chain
-   * (agent-config → lastGood → first available) hard-fails on
-   * configured-but-missing.
+   * expired or near-expiry. Dual-surface signature with optional agentContext
+   * for per-agent profile preference; the resolver chain (agent-config →
+   * lastGood → first available) hard-fails on configured-but-missing.
    *
    * @param providerId - OAuth provider id (e.g., "openai-codex")
    * @param agentContext - Optional agent context for per-agent profile preference.
@@ -147,7 +146,7 @@ export interface OAuthTokenManager {
   /** Get the list of pi-ai built-in OAuth provider IDs. */
   getSupportedProviders(): string[];
   /**
-   * Phase 8 D-05: close the file watcher and clear the debounce timer.
+   * Close the file watcher and clear the debounce timer.
    * No-op when watchPath was undefined at construction. Idempotent.
    */
   dispose(): Promise<void>;
@@ -160,14 +159,14 @@ export interface OAuthTokenManager {
 const LOCK_OPTIONS = {
   staleMs: 30_000,
   updateMs: 5_000,
-  // Phase 7 plan 08 — retries enable two concurrent getApiKey() callers
-  // (different manager instances, same process or cross-process) to wait
-  // for a sibling refresh to complete instead of immediately failing with
-  // err("locked"). proper-lockfile's incremental-backoff retry helps the
-  // SPEC R6 concurrent-refresh acceptance: two parallel calls → exactly 1
-  // refresh request → both return the SAME access token. The retry budget
-  // of 5 with 50ms..1s backoff fits well within the 30s REFRESH_TIMEOUT_MS
-  // (worst case: ~5s waiting for the holder to finish a slow refresh).
+  // Retries enable two concurrent getApiKey() callers (different manager
+  // instances, same process or cross-process) to wait for a sibling refresh
+  // to complete instead of immediately failing with err("locked").
+  // proper-lockfile's incremental-backoff retry supports the concurrent-
+  // refresh contract: two parallel calls → exactly 1 refresh request → both
+  // return the SAME access token. The retry budget of 5 with 50ms..1s backoff
+  // fits well within the 30s REFRESH_TIMEOUT_MS (worst case: ~5s waiting for
+  // the holder to finish a slow refresh).
   retries: { retries: 5, minTimeout: 50, maxTimeout: 1_000, factor: 2 },
 };
 const LOCKS_SUBDIR = ".locks";
@@ -194,15 +193,15 @@ function sanitizeProfileIdForLockPath(profileId: string): string {
 
 function lockSentinelPath(dataDir: string, profileId: string): string {
   // Sentinel name is "auth-refresh__<sanitized>.lock" — distinct from the
-  // file adapter's "auth-profile__<sanitized>.lock" (plan 05). This separation
+  // file adapter's "auth-profile__<sanitized>.lock". This separation
   // is intentional: the manager's lock guards the "refresh transaction"
   // (don't make two concurrent pi-ai requests for the same profile), while
   // the adapter's lock guards the "file-write transaction" (don't race two
   // load-mutate-atomic-write sequences). Both protect the same profile but
   // at different layers, so they MUST use different sentinel paths or
   // credentialStore.set() inside refreshUnderLock would self-deadlock under
-  // proper-lockfile's default retries: 0 (Phase 7 plan 08 — discovered when
-  // wiring the file adapter through the manager end-to-end for the first time).
+  // proper-lockfile's default retries: 0 (discovered when wiring the file
+  // adapter through the manager end-to-end for the first time).
   return safePath(
     dataDir,
     LOCKS_SUBDIR,
@@ -257,10 +256,10 @@ async function withTimeout<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 10 SC-10-4: bypass pi-ai for OpenAI Codex refresh so we can parse the
-// HTTP response body for clean error classification (refresh_token_reused
-// detection). pi-ai 0.71's getOAuthApiKey discards the wire body in a generic
-// error (Phase 7 RESEARCH §Q1 verified) — the body never reaches our wrapper.
+// Bypass pi-ai for OpenAI Codex refresh so we can parse the HTTP response body
+// for clean error classification (refresh_token_reused detection). pi-ai
+// 0.71's getOAuthApiKey discards the wire body in a generic error — the body
+// never reaches our wrapper.
 //
 // Source: ports the body of pi-ai's refreshOpenAICodexToken
 // (node_modules/.pnpm/@mariozechner+pi-ai@0.71.0/.../oauth/openai-codex.js
@@ -287,7 +286,7 @@ type LocalRefreshOutcome = LocalRefreshSuccess | LocalRefreshFailure;
  * Refresh OpenAI Codex OAuth tokens by calling auth.openai.com directly
  * (bypassing pi-ai's getOAuthApiKey wrapper). On HTTP error, parses the
  * response body so refresh_token_reused / invalid_grant can be classified
- * by `rewriteOAuthError` (Plan 10-02).
+ * by `rewriteOAuthError`.
  *
  * Used ONLY when providerId === "openai-codex"; other providers continue to
  * use pi-ai's wrapper (which works correctly for them — they don't need the
@@ -336,8 +335,7 @@ async function refreshOpenAICodexTokenLocal(
     try {
       parsed = JSON.parse(text) as typeof parsed;
     } catch {
-      // T-10-05 mitigation: malformed body → empty parse, classifier falls
-      // back to default case.
+      // Malformed body → empty parse, classifier falls back to default case.
     }
     return {
       ok: false,
@@ -462,7 +460,7 @@ function buildBootstrapProfile(
 /**
  * Create an OAuth token manager wrapping pi-ai's OAuth subsystem.
  *
- * Phase 7 architecture:
+ * Architecture:
  *   1. Resolve candidate profileId (env-var seed JWT > stored list > env-bootstrap sentinel).
  *   2. Acquire per-profile lock via withExecutionLock.
  *   3. Inside lock: TOCTOU re-read profile, run pi-ai with 30s timeout.
@@ -490,22 +488,22 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   const bootstrappedProviders = new Set<string>();
   const warnedConflictProviders = new Set<string>();
 
-  // Phase 9 D-07: per-instance lastGood map. Records the most-recently-resolved
-  // profileId per provider for this agent's OAuthTokenManager. Resets on daemon
-  // restart (in-memory only per SPEC). Updated inside the per-profile-ID lock
-  // (F-05) on every successful resolve (refresh OR cached-hit).
+  // Per-instance lastGood map. Records the most-recently-resolved profileId
+  // per provider for this agent's OAuthTokenManager. Resets on daemon restart
+  // (in-memory only). Updated inside the per-profile-ID lock on every
+  // successful resolve (refresh OR cached-hit).
   const lastGood = new Map<string, string>();
 
-  // Phase 9 logger de-dup: fire INFO once per (provider, configured-profile,
-  // process) when the configured profile is first used. Mirrors
-  // bootstrappedProviders pattern.
+  // Logger de-dup: fire INFO once per (provider, configured-profile, process)
+  // when the configured profile is first used. Mirrors bootstrappedProviders
+  // pattern.
   const loggedConfiguredProviders = new Set<string>();
 
   // -------------------------------------------------------------------------
-  // Phase 8 D-05/D-06/D-07: chokidar watcher on auth-profiles.json (file
-  // adapter only). RESEARCH override 1 — chokidar's atomic: 100 coalesces
-  // Phase 7's tmp+rename atomic-write sequence into a single change event;
-  // raw fs.watch detaches across the rename on Linux ext4 (inode tracking).
+  // chokidar watcher on auth-profiles.json (file adapter only). chokidar's
+  // atomic: 100 coalesces the tmp+rename atomic-write sequence into a single
+  // change event; raw fs.watch detaches across the rename on Linux ext4
+  // (inode tracking).
   // -------------------------------------------------------------------------
 
   const { watchPath } = deps;
@@ -513,7 +511,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   // Snapshot of profileIds the manager has seen — used to diff against
   // store.list() after a watcher fire to emit auth:profile_added for new
-  // profiles only (D-07).
+  // profiles only.
   const seenProfileIds = new Set<string>();
 
   async function emitProfileAddedEventsAfterReload(): Promise<void> {
@@ -524,7 +522,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     for (const profile of listResult.value) {
       seenProfileIds.add(profile.profileId);
       if (!before.has(profile.profileId)) {
-        // RESEARCH override 2: source: "external" always (drop discriminator).
+        // source: "external" always (drop discriminator).
         eventBus.emit("auth:profile_added", {
           provider: profile.provider,
           profileId: profile.profileId,
@@ -543,7 +541,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       debounceTimer = null;
-      // D-06: invalidate the ENTIRE hot cache (file is rewritten as a whole;
+      // Invalidate the ENTIRE hot cache (file is rewritten as a whole;
       // per-profile diffing is YAGNI for a sub-1MB JSON).
       cache.clear();
       logger.debug(
@@ -554,7 +552,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         },
         "OAuth store change detected; cache invalidated",
       );
-      // D-07: emit auth:profile_added for newly-discovered profiles.
+      // Emit auth:profile_added for newly-discovered profiles.
       // Best-effort — failure is logged inside the helper but not surfaced
       // (the next getApiKey call will repopulate cache from store anyway).
       void emitProfileAddedEventsAfterReload().catch((emitErr: unknown) => {
@@ -774,10 +772,10 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             } as OAuthCredentials,
           };
 
-          // Phase 10 SC-10-4: bypass pi-ai for openai-codex so we can parse
-          // the wire response body for clean error classification (refresh_
-          // token_reused detection). Other providers continue to use pi-ai
-          // (which works correctly when the body is not needed).
+          // Bypass pi-ai for openai-codex so we can parse the wire response
+          // body for clean error classification (refresh_token_reused
+          // detection). Other providers continue to use pi-ai (which works
+          // correctly when the body is not needed).
           const isCodex = providerId === "openai-codex";
 
           // Both branches end with `apiKeyResult` populated to the pi-ai
@@ -793,7 +791,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             // pi-ai's getOAuthApiKey performs this check internally for
             // non-codex providers; the codex bypass must mirror it or every
             // getApiKey() call would re-hit the token endpoint and break the
-            // R6 "restart-survives-refresh" contract. 60s buffer keeps callers
+            // "restart-survives-refresh" contract. 60s buffer keeps callers
             // from racing the actual expiry.
             const REFRESH_EXPIRY_BUFFER_MS = 60_000;
             if (typeof profile.expires === "number"
@@ -909,7 +907,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             };
           } else {
             // Non-Codex: original pi-ai path UNCHANGED.
-            // 30s timeout wrapper (RESEARCH Q1 fix — pi-ai has no built-in timeout).
+            // 30s timeout wrapper — pi-ai has no built-in timeout.
             const piAiCall = fromPromise(getOAuthApiKey(providerId, credsRecord));
             const raceResult = await withTimeout(piAiCall, REFRESH_TIMEOUT_MS);
 
@@ -988,7 +986,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             });
           }
 
-          // RESEARCH Q1 fix — real refresh detection compares the refresh-token
+          // Real refresh detection compares the refresh-token
           // value, not the always-truthy newCredentials marker.
           const refreshed = oauthResult.newCredentials.refresh !== profile.refresh;
 
@@ -1015,7 +1013,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             }
             cache.set(profile.profileId, newProfile);
             // pi-ai's OAuthCredentials.expires is already milliseconds since epoch
-            // (RESEARCH Q1 landmine 4) — use directly, do NOT multiply by 1000.
+            // — use directly, do NOT multiply by 1000.
             eventBus.emit("auth:token_rotated", {
               provider: providerId,
               profileName: toSecretKey(providerId, keyPrefix),
@@ -1040,10 +1038,10 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             "OAuth refresh complete",
           );
 
-          // Phase 9 D-07 + F-05: lastGood update inside the lock-held window.
-          // Updated on every successful resolve (refresh OR cached-hit) so the
-          // tier-(b) lookup in subsequent getApiKey calls (no agent-level
-          // config) short-circuits to the just-resolved profile.
+          // lastGood update inside the lock-held window. Updated on every
+          // successful resolve (refresh OR cached-hit) so the tier-(b) lookup
+          // in subsequent getApiKey calls (no agent-level config)
+          // short-circuits to the just-resolved profile.
           const previousLastGood = lastGood.get(providerId);
           lastGood.set(providerId, profile.profileId);
           if (previousLastGood !== profile.profileId) {
@@ -1123,17 +1121,17 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         });
       }
 
-      // Phase 9 R2: resolve oauthProfiles fresh on every call (no caching).
-      // Dual-surface: prefer the explicit agentContext argument; fall back to
-      // the deps getter for callers without an agent context (e.g., env-var
-      // bootstrap path, tests).
+      // Resolve oauthProfiles fresh on every call (no caching). Dual-surface:
+      // prefer the explicit agentContext argument; fall back to the deps
+      // getter for callers without an agent context (e.g., env-var bootstrap
+      // path, tests).
       const oauthProfiles =
         agentContext?.oauthProfiles ?? deps.getAgentOauthProfiles?.();
       const configured = oauthProfiles?.[providerId];
 
-      // Tier (a) — Agent-config-named profile. Hard-fail on missing per
-      // SPEC R2 acceptance a2; this is the security keystone — never silently
-      // fall through to a different account when the configured one is gone.
+      // Tier (a) — Agent-config-named profile. Hard-fail on missing; this is
+      // the security keystone — never silently fall through to a different
+      // account when the configured one is gone.
       if (configured !== undefined) {
         const hasResult = await credentialStore.has(configured);
         if (!hasResult.ok) {
@@ -1196,7 +1194,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         }
         if (!getResult.value) {
           // Race: profile existed at .has() but vanished by .get(). Treat as
-          // PROFILE_NOT_FOUND with a retry hint per threat T-09-Race-store-mutation-mid-call.
+          // PROFILE_NOT_FOUND with a retry hint.
           return err({
             code: "PROFILE_NOT_FOUND",
             message: `OAuth profile "${configured}" disappeared from store between has() and get(). Retry the operation.`,
@@ -1208,7 +1206,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
 
       // Tier (b) — lastGood (in-process Map; only consulted when no agent-level
       // config). Stale entries (profile deleted post-lastGood-set) cause
-      // fall-through to tier (c) per threat T-09-StaleData-stale-lastGood.
+      // fall-through to tier (c).
       const lg = lastGood.get(providerId);
       if (lg !== undefined) {
         const hasResult = await credentialStore.has(lg);
@@ -1262,7 +1260,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         }
       }
 
-      // Phase 7 env-bootstrap fallback: tiers (a)/(b)/(c) all came up empty.
+      // Env-bootstrap fallback: tiers (a)/(b)/(c) all came up empty.
       // Discover candidate profileId + env-var seed from the legacy resolver.
       const { profileId: candidateProfileId, envSeed } =
         await resolveCandidateProfileId(providerId);

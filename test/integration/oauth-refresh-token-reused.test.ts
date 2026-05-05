@@ -1,26 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Integration test for SC-10-3 + SC-10-4: OAuth refresh-failure error
- * classification end-to-end (Phase 10 plan 06 Task 2).
+ * Integration test for OAuth refresh-failure error classification end-to-end.
  *
  * Validates the full chain:
  *   mock OAuth server returns wire-shape error
- *   → OAuthTokenManager.getApiKey() bypasses pi-ai (Plan 10-03)
- *   → fetch body parsed → rewriteOAuthError classifies (Plan 10-02)
+ *   → OAuthTokenManager.getApiKey() bypasses pi-ai
+ *   → fetch body parsed → rewriteOAuthError classifies
  *   → auth:refresh_failed event + WARN log + OAuthError all carry structured
  *     errorKind/hint/profileId
  *
  * Test inventory (5 tests):
- *   1. SC-10-4 + SC-10-3 case 4 — refresh_token_reused full chain.
- *   2. SC-10-3 case 1 — unsupported_country_region_territory.
- *   3. SC-10-3 case 2 — state mismatch (direct rewriteOAuthError call;
- *      this case happens at the LOCAL callback validation in pi-ai's login
- *      handler, NOT at OpenAI's HTTP boundary, so it is exercised as a
- *      unit-style test inside the integration file — covers the SC-10-3
- *      wire-detection invariant by asserting the catalogue's classification).
- *   4. SC-10-3 case 3 — invalid_grant generic (NOT reused).
+ *   1. refresh_token_reused full chain.
+ *   2. unsupported_country_region_territory.
+ *   3. state mismatch (direct rewriteOAuthError call; this case happens at
+ *      the LOCAL callback validation in pi-ai's login handler, NOT at
+ *      OpenAI's HTTP boundary, so it is exercised as a unit-style test
+ *      inside the integration file — covers the wire-detection invariant
+ *      by asserting the catalogue's classification).
+ *   4. invalid_grant generic (NOT reused).
  *   5. CRITICAL ordering invariant — refresh_token_reused beats
- *      invalid_grant when BOTH substrings are present (RESEARCH §Q3).
+ *      invalid_grant when BOTH substrings are present.
  *
  * Per AGENTS.md §2.5: imports from dist/ — requires `pnpm build` first.
  * Runs sequentially (maxConcurrency: 1) per test/vitest.config.ts.
@@ -174,7 +173,7 @@ interface BuiltManager {
 async function buildManagerWithSeededExpiredProfile(
   refreshSeed = "rt_initial_seed",
 ): Promise<BuiltManager> {
-  const tmpDir = mkdtempSync(`${os.tmpdir()}/comis-10-06-rt-reused-`);
+  const tmpDir = mkdtempSync(`${os.tmpdir()}/comis-rt-reused-`);
   const store: OAuthCredentialStorePort = createOAuthCredentialStoreFile({
     dataDir: tmpDir,
   });
@@ -204,8 +203,8 @@ async function buildManagerWithSeededExpiredProfile(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
-  it("Test 1: classifies refresh_token_reused → emits auth:refresh_failed with errorKind, returns OAuthError with hint (SC-10-4 full chain)", async () => {
+describe("refresh-failure error classification", () => {
+  it("classifies refresh_token_reused → emits auth:refresh_failed with errorKind, returns OAuthError with hint (full chain)", async () => {
     mockServer.setNextResponse({
       status: 400,
       body: {
@@ -221,7 +220,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
 
       // (a) Event-bus payload carries the structured errorKind + hint.
       // Falsifiable shape match — pins the literal { errorKind: "refresh_token_reused" }
-      // contract per Plan 10-06 SC-10-4 acceptance.
+      // contract.
       expect(events).toHaveLength(1);
       expect(events[0]).toMatchObject({
         provider: PROVIDER_ID,
@@ -234,7 +233,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
       //     errorKind / hint.
       const warnCalls = logger._calls("warn");
       const refreshWarn = warnCalls.find(
-        (c) => c.payload?.module === "oauth-token-manager",
+        (c) => c.payload?.submodule === "oauth-token-manager",
       );
       expect(refreshWarn).toBeDefined();
       expect(refreshWarn!.payload.errorKind).toBe("refresh_token_reused");
@@ -242,7 +241,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
       expect(refreshWarn!.payload.profileId).toBe(TEST_PROFILE_ID);
 
       // (c) Returned OAuthError shape — code + errorKind + profileId + hint
-      //     + the SC-10-4 re-login literal in the message.
+      //     + the re-login literal in the message.
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.code).toBe("REFRESH_FAILED");
@@ -258,7 +257,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
     }
   });
 
-  it("Test 2: classifies unsupported_country_region_territory (SC-10-3 case 1)", async () => {
+  it("classifies unsupported_country_region_territory", async () => {
     mockServer.setNextResponse({
       status: 400,
       body: { error: "unsupported_country_region_territory" },
@@ -269,7 +268,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
     try {
       const result = await manager.getApiKey(PROVIDER_ID);
 
-      // Event payload — SC-10-3 case 1 carries unsupported_region.
+      // Event payload — carries unsupported_region.
       expect(events).toHaveLength(1);
       expect(events[0]!.errorKind).toBe("unsupported_region");
       expect(events[0]!.hint).toContain("HTTPS_PROXY");
@@ -277,7 +276,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
       // WARN log fields agree with the event.
       const refreshWarn = logger
         ._calls("warn")
-        .find((c) => c.payload?.module === "oauth-token-manager");
+        .find((c) => c.payload?.submodule === "oauth-token-manager");
       expect(refreshWarn).toBeDefined();
       expect(refreshWarn!.payload.errorKind).toBe("unsupported_region");
       expect(refreshWarn!.payload.hint).toContain("HTTPS_PROXY");
@@ -294,12 +293,12 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
     }
   });
 
-  it("Test 3: rewriteOAuthError classifies state mismatch directly (SC-10-3 case 2 — local validation)", async () => {
-    // SC-10-3 case 2 ("state mismatch") happens at the LOCAL callback
-    // validation in pi-ai's login handler — NOT at OpenAI's HTTP boundary —
-    // so the wire path can't reach it. Cover the catalogue invariant by
-    // calling the classifier directly on the canonical error message; this
-    // is the same input rewriteOAuthError sees from pi-ai's login runner.
+  it("rewriteOAuthError classifies state mismatch directly (local validation)", async () => {
+    // "state mismatch" happens at the LOCAL callback validation in pi-ai's
+    // login handler — NOT at OpenAI's HTTP boundary — so the wire path
+    // can't reach it. Cover the catalogue invariant by calling the
+    // classifier directly on the canonical error message; this is the same
+    // input rewriteOAuthError sees from pi-ai's login runner.
     const result = rewriteOAuthError(new Error("state mismatch"));
     expect(result.code).toBe("callback_validation_failed");
     expect(result.errorKind).toBe("callback_validation_failed");
@@ -312,7 +311,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
     expect(altResult.code).toBe("callback_validation_failed");
   });
 
-  it("Test 4: classifies generic invalid_grant (SC-10-3 case 3)", async () => {
+  it("classifies generic invalid_grant", async () => {
     mockServer.setNextResponse({
       status: 400,
       body: { error: "invalid_grant", error_description: "some other reason" },
@@ -323,9 +322,9 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
     try {
       const result = await manager.getApiKey(PROVIDER_ID);
 
-      // Event payload — SC-10-3 case 3 carries the generic invalid_grant
-      // classification (NOT refresh_token_reused — the description
-      // 'some other reason' does not match the more-specific substring set).
+      // Event payload — carries the generic invalid_grant classification
+      // (NOT refresh_token_reused — the description 'some other reason'
+      // does not match the more-specific substring set).
       expect(events).toHaveLength(1);
       expect(events[0]!.errorKind).toBe("invalid_grant");
       expect(events[0]!.hint).toContain("re-login required");
@@ -333,7 +332,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
       // WARN log agrees.
       const refreshWarn = logger
         ._calls("warn")
-        .find((c) => c.payload?.module === "oauth-token-manager");
+        .find((c) => c.payload?.submodule === "oauth-token-manager");
       expect(refreshWarn).toBeDefined();
       expect(refreshWarn!.payload.errorKind).toBe("invalid_grant");
 
@@ -351,7 +350,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
     }
   });
 
-  it("Test 5: refresh_token_reused beats invalid_grant in priority ordering (RESEARCH §Q3 invariant)", async () => {
+  it("refresh_token_reused beats invalid_grant in priority ordering", async () => {
     // Both substrings are present in the wire payload: `error: invalid_grant`
     // AND `error_description: refresh_token_reused`. The CRITICAL ORDERING
     // contract (oauth-errors.ts:55-71) tests the more-specific

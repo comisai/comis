@@ -317,9 +317,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
 
   let mergedEnv: Record<string, string | undefined> = process.env as Record<string, string | undefined>;
   let secretStore: SecretStorePort | undefined;
-  // Phase 7 plan 08 (B5 + W6): captured here so setupAgents can wire the
-  // encrypted-mode OAuth profile adapter against the SAME db handle (no
-  // dual-handle to the same secrets.db file).
+  // Captured here so setupAgents can wire the encrypted-mode OAuth profile
+  // adapter against the SAME db handle (no dual-handle to the same secrets.db
+  // file).
   let secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
   let secretsDb: import("better-sqlite3").Database | undefined;
 
@@ -431,7 +431,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     daemonLogger.warn({ hint: "Set approvals.enabled: true or remove unused rules", errorKind: "config" as const }, approvalsWarning);
   }
 
-  // 3.6. Validate PROVIDER_OVERRIDES vs live pi-ai catalog (Layer 3C -- 260501-07g).
+  // 3.6. Validate PROVIDER_OVERRIDES vs live pi-ai catalog.
   // Emits one structured WARN per orphaned override key (provider listed in
   // PROVIDER_OVERRIDES that pi-ai no longer ships). Fire-and-forget: never
   // throws, daemon continues to boot with dead override entries.
@@ -597,9 +597,8 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     defaultAgentId, defaultWorkspaceDir, getExecutor, piSessionAdapters,
     skillWatcherHandles, skillRegistries, lockCleanupTimer, singleAgentDeps, providerHealth,
-    // Phase 9 R7 (plan 09-06): daemon-level OAuth credential store, threaded
-    // into RpcDispatchDeps below so agents.update can validate oauthProfiles
-    // patches via has() (D-11).
+    // Daemon-level OAuth credential store, threaded into RpcDispatchDeps
+    // below so agents.update can validate oauthProfiles patches via has().
     oauthCredentialStore,
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, outboundMediaEnabled: true,
@@ -627,9 +626,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     },
     backgroundTaskManager,  // Auto-background middleware in executor pipeline
     backgroundNotifyFn: bgNotifyFn,  // Completion notification via deferred notificationService ref
-    // Phase 7 plan 08 (B5 + W6): plumb the secrets bootstrap result through
-    // so setup-agents can wire the OAuth credential store. encrypted-mode
-    // shares the existing better-sqlite3 connection (no dual-handle).
+    // Plumb the secrets bootstrap result through so setup-agents can wire the
+    // OAuth credential store. encrypted-mode shares the existing
+    // better-sqlite3 connection (no dual-handle).
     secretsCrypto,
     secretsDb,
   });
@@ -847,7 +846,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     // Task extraction callback (gated by config.scheduler.tasks.enabled)
     onTaskExtraction: extractFromConversation,
     // Restart continuation: track recently-active sessions for SIGUSR2 replay.
-    // Two-callback timing split (260430-s4m corrects the r4i-A flaw):
+    // Two-callback timing split:
     //   onMessageReceived fires BEFORE processInboundMessage so the tracker
     //     Map is populated before any tool call could trigger SIGUSR2 mid-
     //     execution. Without this, multi-restart chains saw 0 captured records
@@ -1342,8 +1341,8 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
       logger: skillsLogger,
       getChannelAdapter: (channelType: string) => adaptersByType.get(channelType),
     } : undefined,
-    // Phase 9 R7 (plan 09-06): daemon-level OAuth credential store handle
-    // for the agents.update oauthProfiles existence check (D-11).
+    // Daemon-level OAuth credential store handle for the agents.update
+    // oauthProfiles existence check.
     oauthCredentialStore,
   };
   wireDispatch(rpcDispatchDeps);
@@ -1621,7 +1620,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // in `docker logs` next to the banner, where operators look first.
   emitDockerRestartPolicyWarn(daemonLogger);
 
-  // Phase 10 SC-10-1: boot-time TLS preflight against auth.openai.com.
+  // Boot-time TLS preflight against auth.openai.com.
   // Fire-and-forget — daemon is already serving by this point; the WARN
   // is purely advisory. Skipped when no OAuth-using agent is configured.
   if (hasAnyOAuthAgent(container.config.agents)) {

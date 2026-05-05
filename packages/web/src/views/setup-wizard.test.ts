@@ -224,13 +224,14 @@ describe("Step 1 - Basics", () => {
 });
 
 /* ================================================================== */
-/*  Step 2 - Provider (Layer 3A: live catalog -- 260501-07g)           */
+/*  Step 2 - Provider (live catalog)                                   */
 /* ================================================================== */
 //
-// Phase 3A replaced the static 12-entry PROVIDERS array with a runtime
-// fetch via the gateway RPC `models.list_providers`. These tests mock
-// the RPC to drive the catalog state and assert behavioral rendering
-// (loading / error / dynamic grid / Custom synthetic key / model dropdown).
+// Live-catalog rendering replaced the static 12-entry PROVIDERS array
+// with a runtime fetch via the gateway RPC `models.list_providers`.
+// These tests mock the RPC to drive the catalog state and assert
+// behavioral rendering (loading / error / dynamic grid / Custom
+// synthetic key / model dropdown).
 
 /**
  * Build a mock RpcClient that answers `models.list_providers` with a fixed
@@ -470,9 +471,10 @@ describe("Step 2 - Provider (live catalog)", () => {
   });
 
   it("regression: setup-wizard.ts has no hardcoded PROVIDERS: ProviderOption[] array", () => {
-    // Hard-coded provider table is the staleness pattern Phase 3A removed.
-    // happy-dom doesn't expose the Node URL constructor, so we resolve the
-    // source path via process.cwd() (vitest runs from packages/web).
+    // Hard-coded provider table is the staleness pattern the live-catalog
+    // rendering removed. happy-dom doesn't expose the Node URL constructor,
+    // so we resolve the source path via process.cwd() (vitest runs from
+    // packages/web).
     const source = readProjectFile("src/views/setup-wizard.ts");
     expect(source).not.toMatch(/const\s+PROVIDERS\s*:\s*ProviderOption\s*\[\]/);
     // No hardcoded model literals -- these were the staleness vectors.

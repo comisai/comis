@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for oauth-callback-route.ts (Phase 11 SC11-2 + SC11-4).
- *
- * RED stubs created in Plan 11-01 (wave 0) and turned GREEN in Plan 11-03 (wave 1).
+ * Unit tests for oauth-callback-route.ts.
  *
  * Coverage:
- *   1. SC11-2: 400 when state query param is missing
- *   2. SC11-2: 400 when code query param is missing
- *   3. SC11-2: 400 when state is not in pendingFlows map (stale/forged state)
- *   4. SC11-2: 400 when state's flow.provider does not match URL provider param
- *   5. SC11-4: pendingFlows entry deleted BEFORE token exchange (verified on
+ *   1. 400 when state query param is missing
+ *   2. 400 when code query param is missing
+ *   3. 400 when state is not in pendingFlows map (stale/forged state)
+ *   4. 400 when state's flow.provider does not match URL provider param
+ *   5. pendingFlows entry deleted BEFORE token exchange (verified on
  *      exchange-failure path — store.set throws, but pendingFlows.has(state)
  *      is still false because delete fired before the exchange try block)
- *   6. SC11-4: insertPendingFlow auto-deletes the map entry after
+ *   6. insertPendingFlow auto-deletes the map entry after
  *      PENDING_FLOW_TIMEOUT_MS (vi.useFakeTimers + advanceTimersByTime)
- *   7. (todo) Full happy-path with fetch mocking — covered by Plan 11-05
- *      integration test; stays it.todo here per plan acceptance criteria.
+ *   7. (todo) Full happy-path with fetch mocking — covered by the
+ *      integration test; stays it.todo here.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

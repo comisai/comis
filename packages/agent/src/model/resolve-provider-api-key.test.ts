@@ -50,12 +50,12 @@ function makeFakeOAuthProvider(id: string) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("resolveProviderApiKey (Phase 9 R3)", () => {
+describe("resolveProviderApiKey", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("Test 1: routes OAuth-eligible provider through manager and writes runtime override", async () => {
+  it("routes OAuth-eligible provider through manager and writes runtime override", async () => {
     mockGetOAuthProvider.mockReturnValue(makeFakeOAuthProvider("openai-codex"));
     const authStorage = makeAuthStorage();
     const manager = makeOAuthManager();
@@ -71,7 +71,7 @@ describe("resolveProviderApiKey (Phase 9 R3)", () => {
     expect(authStorage.getApiKey).not.toHaveBeenCalled();
   });
 
-  it("Test 2: throws on OAuthError without writing runtime override", async () => {
+  it("throws on OAuthError without writing runtime override", async () => {
     mockGetOAuthProvider.mockReturnValue(makeFakeOAuthProvider("openai-codex"));
     const authStorage = makeAuthStorage();
     const manager = makeOAuthManager();
@@ -91,7 +91,7 @@ describe("resolveProviderApiKey (Phase 9 R3)", () => {
     expect(authStorage.setRuntimeApiKey).not.toHaveBeenCalled();
   });
 
-  it("Test 3: non-OAuth-eligible provider falls through to authStorage.getApiKey", async () => {
+  it("non-OAuth-eligible provider falls through to authStorage.getApiKey", async () => {
     mockGetOAuthProvider.mockReturnValue(undefined);
     const authStorage = makeAuthStorage();
     (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue("AUTHSTORAGE_KEY");
@@ -108,7 +108,7 @@ describe("resolveProviderApiKey (Phase 9 R3)", () => {
     expect(authStorage.getApiKey).toHaveBeenCalledWith("anthropic");
   });
 
-  it("Test 4: OAuth-eligible but oauthManager undefined → falls through to authStorage", async () => {
+  it("OAuth-eligible but oauthManager undefined → falls through to authStorage", async () => {
     mockGetOAuthProvider.mockReturnValue(makeFakeOAuthProvider("openai-codex"));
     const authStorage = makeAuthStorage();
     (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue("AUTHSTORAGE_FALLBACK");
@@ -123,7 +123,7 @@ describe("resolveProviderApiKey (Phase 9 R3)", () => {
     expect(authStorage.getApiKey).toHaveBeenCalledWith("openai-codex");
   });
 
-  it("Test 5: authStorage.getApiKey returns undefined → helper returns empty string", async () => {
+  it("authStorage.getApiKey returns undefined → helper returns empty string", async () => {
     mockGetOAuthProvider.mockReturnValue(undefined);
     const authStorage = makeAuthStorage();
     (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -135,7 +135,7 @@ describe("resolveProviderApiKey (Phase 9 R3)", () => {
     expect(token).toBe("");
   });
 
-  it("Test 6: forwards agentConfig.oauthProfiles to manager as agentContext", async () => {
+  it("forwards agentConfig.oauthProfiles to manager as agentContext", async () => {
     mockGetOAuthProvider.mockReturnValue(makeFakeOAuthProvider("openai-codex"));
     const authStorage = makeAuthStorage();
     const manager = makeOAuthManager();
@@ -156,7 +156,7 @@ describe("resolveProviderApiKey (Phase 9 R3)", () => {
     });
   });
 
-  it("Test 7: undefined agentConfig → passes { oauthProfiles: undefined } to manager", async () => {
+  it("undefined agentConfig → passes { oauthProfiles: undefined } to manager", async () => {
     mockGetOAuthProvider.mockReturnValue(makeFakeOAuthProvider("openai-codex"));
     const authStorage = makeAuthStorage();
     const manager = makeOAuthManager();

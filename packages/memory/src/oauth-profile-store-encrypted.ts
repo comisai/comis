@@ -5,16 +5,14 @@
  * Mirrors credential-mapping-store's factory pattern (takes a pre-opened
  * Database instance, does NOT open its own). The lifecycle is owned by
  * the caller — we share the existing secrets.db connection to keep all
- * encrypted-at-rest data in one DB file (D-03).
+ * encrypted-at-rest data in one DB file.
  *
- * Per D-04, the entire OAuthProfile JSON payload is encrypted as one
- * AES-256-GCM blob per row. One ciphertext+iv+authTag+salt set per profile.
- * Atomic update — no half-rotated state where access changes but refresh
- * doesn't.
+ * The entire OAuthProfile JSON payload is encrypted as one AES-256-GCM
+ * blob per row. One ciphertext+iv+authTag+salt set per profile. Atomic
+ * update — no half-rotated state where access changes but refresh doesn't.
  *
- * Denormalized expires_at column stays in sync on every write (RESEARCH
- * landmine 8) so Phase 10 doctor can query expiring profiles without
- * decrypting any blob.
+ * Denormalized expires_at column stays in sync on every write so the
+ * doctor can query expiring profiles without decrypting any blob.
  *
  * @module
  */

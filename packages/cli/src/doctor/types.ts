@@ -28,12 +28,11 @@ export interface DoctorFinding {
   readonly suggestion?: string;
   readonly repairable: boolean;
   /**
-   * Phase 10 SC-10-2 (Plan 10-04): numeric seconds until profile expiry.
+   * Numeric seconds until profile expiry.
    *
-   * ROADMAP success criterion 2 names this field by name -- exposed as a
-   * structured numeric so JSON-format consumers (log aggregators,
-   * dashboards) can compare it against thresholds without parsing the
-   * human-readable `message` string. Only `oauth-health.ts`
+   * Exposed as a structured numeric so JSON-format consumers (log
+   * aggregators, dashboards) can compare it against thresholds without
+   * parsing the human-readable `message` string. Only `oauth-health.ts`
    * `profileExpiryFinding` populates this; all other doctor-check findings
    * leave it undefined. Value is `Math.floor(msUntilExpiry / 1000)`
    * (negative for already-expired profiles to preserve sign-of-direction).
@@ -66,11 +65,11 @@ export interface DoctorContext {
   readonly daemonPidFile: string;
   readonly gatewayUrl?: string;
   /**
-   * Phase 10 SC-10-2 (Plan 10-04): opt-in refresh-test toggle from the
-   * `--refresh-test` flag on `comis doctor`. When true, the OAuth health
-   * check performs a real refresh against the provider per profile -- a
-   * side effect that rotates the refresh token at OpenAI's end (D-10-04-01
-   * mandates default OFF; D-10-04-02 mandates --help warns the operator).
+   * Opt-in refresh-test toggle from the `--refresh-test` flag on
+   * `comis doctor`. When true, the OAuth health check performs a real
+   * refresh against the provider per profile -- a side effect that rotates
+   * the refresh token at OpenAI's end (default OFF; --help warns the
+   * operator).
    */
   readonly refreshTest?: boolean;
 }

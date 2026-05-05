@@ -72,7 +72,7 @@ export interface PostExecutionBridgeResult {
   sessionCacheSavedUsd?: number;
   /** 1.5: Thinking tokens from SDK reasoningTokens field. */
   thinkingTokens?: number;
-  // 260504-ieh: per-execute diagnostic counters surfaced into the bookend log.
+  // Per-execute diagnostic counters surfaced into the bookend log.
   /** Number of pre-LLM-call hash-assertion walks performed (one per turn_start). */
   hashAssertionsRan?: number;
   /** Total cross-turn thinking-block hash mismatches surfaced across all walks. */
@@ -110,9 +110,9 @@ export interface PostExecutionParams {
   contextEngineRef: { current?: ContextEngine };
   ceSetup: {
     getContextEngineDurationMs(): number;
-    // 260504-ieh: per-execute signature-replay scrub counters rolled up into
-    // the bookend "Execution complete" INFO log (replaces the per-event INFO
-    // emissions demoted to DEBUG in signature-replay-scrubber.ts).
+    // Per-execute signature-replay scrub counters rolled up into the bookend
+    // "Execution complete" INFO log (replaces the per-event INFO emissions
+    // demoted to DEBUG in signature-replay-scrubber.ts).
     getSignatureScrubCounters(): {
       signatureScrubs: number;
       signatureScrubsToolCallsAffected: number;
@@ -418,9 +418,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // Truncation summary from bouncer + turn budget summary
   const truncSummary = getTruncationSummary();
   const turnBudgetSummary = getTurnBudgetSummary();
-  // 260504-ieh: snapshot the scrub counters once before composing the bookend
-  // log so both fields read from the same observation (the getter is cheap
-  // but the read-twice pattern would still be a micro-divergence risk).
+  // Snapshot the scrub counters once before composing the bookend log so both
+  // fields read from the same observation (the getter is cheap but the
+  // read-twice pattern would still be a micro-divergence risk).
   const scrubCounters = ceSetup.getSignatureScrubCounters();
   deps.logger.info(
     {
@@ -472,10 +472,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       toolFailureRate: (result.stepsExecuted ?? 0) > 0
         ? Math.round(((bridgeResult.failedToolCalls ?? 0) / (result.stepsExecuted ?? 0)) * 100)
         : 0,
-      // 260504-ieh: per-execute diagnostic counters rolled up from the two
-      // demoted log sites. Always populated (no `> 0` gate) — `0` is itself
-      // meaningful ("no scrubs/assertions this execute") and gating would
-      // lose that signal. hashAssertions* come from the bridge metrics path;
+      // Per-execute diagnostic counters rolled up from the two demoted log
+      // sites. Always populated (no `> 0` gate) — `0` is itself meaningful
+      // ("no scrubs/assertions this execute") and gating would lose that
+      // signal. hashAssertions* come from the bridge metrics path;
       // signatureScrubs* come from ceSetup since the scrubber doesn't write
       // to bridge state.
       hashAssertionsRan: bridgeResult.hashAssertionsRan ?? 0,

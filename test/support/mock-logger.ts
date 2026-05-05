@@ -30,11 +30,11 @@ export function createMockLogger(overrides?: Partial<ComisLogger>): ComisLogger 
 }
 
 // ---------------------------------------------------------------------------
-// Phase 7 plan 08 (W5 fix — log-capture infrastructure):
+// Log-capture infrastructure:
 // makeMockLogger — capture every log call into an in-memory list so tests
-// can assert on the env-override-ignored WARN dedup semantics (R7c).
-// Mirrors the helper inside packages/agent/src/model/oauth-token-manager.test.ts
-// (added in plan 07-07). Hosted here in test/support/ for cross-test reuse —
+// can assert on the env-override-ignored WARN dedup semantics.
+// Mirrors the helper inside packages/agent/src/model/oauth-token-manager.test.ts.
+// Hosted here in test/support/ for cross-test reuse —
 // integration tests import from dist/ so they cannot reach into per-package
 // src/test-helpers without polluting the public export surface.
 // ---------------------------------------------------------------------------

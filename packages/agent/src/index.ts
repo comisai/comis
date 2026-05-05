@@ -30,7 +30,7 @@ export type { ToolResultSizeGuard, TruncationMetadata, ToolResultSizeGuardOption
 // Token estimator
 export { estimateMessageChars, estimateContextChars, estimateMessageTokens, estimateContextTokens, CHARS_PER_TOKEN, IMAGE_TOKEN_ESTIMATE } from "./safety/token-estimator.js";
 
-// Overflow recovery ()
+// Overflow recovery
 export type { OverflowRecoveryConfig, OverflowRecoveryResult } from "./executor/overflow-recovery.js";
 export { createOverflowRecovery, createOverflowRecoveryWrapper } from "./executor/overflow-recovery.js";
 
@@ -54,7 +54,7 @@ export type { AuthProfileManager, AuthProfile, OrderingStrategy } from "./model/
 export { createAuthRotationAdapter } from "./model/auth-rotation-adapter.js";
 export type { AuthRotationAdapter, AuthRotationAdapterOptions } from "./model/auth-rotation-adapter.js";
 
-// Image-aware model routing (existing + image fallback chain from 62-05)
+// Image-aware model routing (existing + image fallback chain)
 export { resolveModelForMessage, isVisionCapable, createImageFallbackChain } from "./model/image-router.js";
 export type { ImageRouterParams, ImageRouterResult, ImageFallbackChain, ImageFallbackChainConfig } from "./model/image-router.js";
 
@@ -82,35 +82,36 @@ export type { CacheProviderInfo } from "./executor/cache-usage-helpers.js";
 export { createModelScanner } from "./model/model-scanner.js";
 export type { ScanResult, ModelScanner, ModelScannerDeps } from "./model/model-scanner.js";
 
-// OAuth token manager (from 62-03)
+// OAuth token manager
 export { createOAuthTokenManager } from "./model/oauth-token-manager.js";
 export type { OAuthTokenManager, OAuthTokenManagerDeps, OAuthError } from "./model/oauth-token-manager.js";
 
-// Per-LLM-call OAuth dispatch helper (Phase 9 plan 09-04 — shared helper used by
-// PiExecutor.execute() pre-hook and the two compaction getApiKey callbacks. Re-exported
-// so plan 09-07's integration test can drive the same resolver hook the executor uses).
+// Per-LLM-call OAuth dispatch helper — shared helper used by PiExecutor.execute()
+// pre-hook and the two compaction getApiKey callbacks. Re-exported so the
+// integration test can drive the same resolver hook the executor uses.
 export { resolveProviderApiKey } from "./model/resolve-provider-api-key.js";
 export type { ResolveProviderApiKeyDeps } from "./model/resolve-provider-api-key.js";
 
-// OAuth identity (Phase 7 plan 04 — pure-function JWT decoder + identity resolver + redaction helper)
+// OAuth identity — pure-function JWT decoder + identity resolver + redaction helper
 export { decodeCodexJwtPayload, resolveCodexAuthIdentity, resolveCodexStableSubject, resolveCodexAccessTokenExpiry, redactEmailForLog } from "./model/oauth-identity.js";
 
-// OAuth credential store — file adapter (Phase 7 plan 05 — plaintext file-backed adapter with atomic write + per-profile lock + schema versioning)
+// OAuth credential store — file adapter (plaintext file-backed adapter with atomic write + per-profile lock + schema versioning)
 export { createOAuthCredentialStoreFile } from "./model/oauth-credential-store-file.js";
 export type { OAuthCredentialStoreFileConfig } from "./model/oauth-credential-store-file.js";
 
-// OAuth credential store selector (Phase 8 plan 01 — moved from @comis/daemon per RESEARCH override 4 so the CLI process can instantiate the same adapter the daemon uses)
+// OAuth credential store selector — lives here so the CLI process can
+// instantiate the same adapter the daemon uses
 export { selectOAuthCredentialStore } from "./model/oauth-credential-store-selector.js";
 export type {
   SelectOAuthCredentialStoreInput,
   OAuthStorageMode,
 } from "./model/oauth-credential-store-selector.js";
 
-// OAuth env detection (Phase 8 D-04 — pure function for VPS/headless heuristic)
+// OAuth env detection — pure function for VPS/headless heuristic
 export { isRemoteEnvironment } from "./model/oauth-env.js";
 export type { IsRemoteEnvironmentInput } from "./model/oauth-env.js";
 
-// OAuth login runner (Phase 8 D-01/D-02 — interactive login orchestrator)
+// OAuth login runner — interactive login orchestrator
 export { loginOpenAICodexOAuth } from "./model/oauth-login-runner.js";
 export type {
   LoginError,
@@ -119,14 +120,14 @@ export type {
   RunnerPrompter,
 } from "./model/oauth-login-runner.js";
 
-// Phase 11: device-code OAuth flow
+// Device-code OAuth flow
 export { loginOpenAICodexDeviceCode } from "./model/oauth-device-code.js";
 export type {
   DeviceCodeVerificationPrompt,
   LoginOpenAICodexDeviceCodeOptions,
 } from "./model/oauth-device-code.js";
 
-// OAuth TLS preflight (Phase 10 R10-01)
+// OAuth TLS preflight
 export { runOAuthTlsPreflight } from "./model/oauth-tls-preflight.js";
 export type {
   TlsPreflightResult,
@@ -134,14 +135,14 @@ export type {
   RunOAuthTlsPreflightOptions,
 } from "./model/oauth-tls-preflight.js";
 
-// OAuth error catalogue (Phase 10 SC-10-3)
+// OAuth error catalogue
 export { rewriteOAuthError } from "./model/oauth-errors.js";
 export type {
   OAuthErrorCode,
   RewrittenOAuthError,
 } from "./model/oauth-errors.js";
 
-// Auth usage tracker (from 62-05)
+// Auth usage tracker
 export { createAuthUsageTracker } from "./model/auth-usage-tracker.js";
 export type { AuthUsageTracker, ProfileStats, ProfileUsageInput } from "./model/auth-usage-tracker.js";
 
@@ -326,7 +327,7 @@ export type { ErrorCategory, ClassifiedError } from "./executor/error-classifier
 export type { StreamFnWrapper, ConfigResolverConfig, RequestBodyInjectorConfig, CacheTraceConfig, ApiPayloadTraceConfig, TruncationSummary, ToolResultSizeBouncerResult } from "./executor/stream-wrappers/index.js";
 export { composeStreamWrappers, createConfigResolver, createRequestBodyInjector, createCacheTraceWriter, createApiPayloadTraceWriter, createToolResultSizeBouncer, clearSessionRenderedToolCache } from "./executor/stream-wrappers/index.js";
 
-// Active run registry (-- tracks running sessions for mid-stream steering)
+// Active run registry (tracks running sessions for mid-stream steering)
 export { createActiveRunRegistry } from "./executor/active-run-registry.js";
 export type { ActiveRunRegistry, RunHandle } from "./executor/active-run-registry.js";
 
@@ -334,7 +335,7 @@ export type { ActiveRunRegistry, RunHandle } from "./executor/active-run-registr
 export { clearCacheBreakDetectorSession, extractGeminiPromptState } from "./executor/cache-break-detection.js";
 export type { CacheBreakDetector, CacheBreakEvent, CacheBreakReason, RecordPromptStateInput, CheckCacheBreakInput, PendingChanges, PromptStateSnapshot } from "./executor/cache-break-detection.js";
 
-// Cache break diff writer ()
+// Cache break diff writer
 export { createCacheBreakDiffWriter } from "./executor/cache-break-diff-writer.js";
 export type { CacheBreakDiffWriterConfig, CacheBreakDiffPayload } from "./executor/cache-break-diff-writer.js";
 
@@ -342,7 +343,7 @@ export type { CacheBreakDiffWriterConfig, CacheBreakDiffPayload } from "./execut
 export { createGeminiCacheInjector } from "./executor/gemini-cache-injector.js";
 export type { GeminiCacheInjectorConfig } from "./executor/gemini-cache-injector.js";
 
-// Gemini cache manager ()
+// Gemini cache manager
 export { createGeminiCacheManager, computeCacheContentHash } from "./executor/gemini-cache-manager.js";
 export type { GeminiCacheManager, GeminiCacheManagerConfig, CacheEntry, CacheRequest } from "./executor/gemini-cache-manager.js";
 
@@ -430,7 +431,7 @@ export { createLifecycleHooks, deriveSubagentContextEngineConfig } from "./spawn
 export type { LifecycleHooksDeps } from "./spawn/index.js";
 export { createEphemeralComisSessionManager } from "./spawn/index.js";
 
-// Context engine (, )
+// Context engine
 export { createContextEngine } from "./context-engine/index.js";
 export { createThinkingBlockCleaner } from "./context-engine/index.js";
 export { computeTokenBudget } from "./context-engine/index.js";
@@ -444,7 +445,7 @@ export type {
   LayerCircuitBreaker,
 } from "./context-engine/index.js";
 
-// DAG reconciliation, compaction, integrity, and assembler (Phases 411-414)
+// DAG reconciliation, compaction, integrity, and assembler
 export {
   reconcileJsonlToDag,
   installDagIngestionHook,
@@ -486,7 +487,7 @@ export type { ProviderOverridesValidatorLogger } from "./provider/capabilities.j
 // Model compatibility auto-detection (xAI compat flags)
 export { normalizeModelCompat } from "./provider/model-compat.js";
 
-// Model ID normalization ()
+// Model ID normalization
 export { normalizeModelId } from "./provider/model-id-normalize.js";
 export type { ModelIdNormalizationResult } from "./provider/model-id-normalize.js";
 
@@ -494,12 +495,12 @@ export type { ModelIdNormalizationResult } from "./provider/model-id-normalize.j
 export { sanitizeAssistantResponse, setSanitizeLogger, extractFinalTagContent } from "./provider/response/sanitize-pipeline.js";
 export type { SanitizeOptions } from "./provider/response/sanitize-pipeline.js";
 
-// Response filter utilities ( -- used by ThinkingTagFilter)
+// Response filter utilities (used by ThinkingTagFilter)
 export { stripReasoningTagsFromText } from "./response-filter/reasoning-tags.js";
 export { findCodeRegions, isInsideCode } from "./response-filter/code-regions.js";
 export type { CodeRegion } from "./response-filter/code-regions.js";
 
-// Thinking tag filter ( -- moved from @comis/channels)
+// Thinking tag filter (moved from @comis/channels)
 export { createThinkingTagFilter } from "./response-filter/thinking-tag-filter.js";
 export type { ThinkingTagFilter, ThinkingTagFilterOptions } from "./response-filter/thinking-tag-filter.js";
 

@@ -3,15 +3,15 @@
  * SYSTEM CRUD TEST: Config, agent, memory, session, channel, token, and model CRUD tests.
  *
  * Split from comprehensive-system.test.ts for isolated failures and
- * faster debugging. Covers Phases 4, 6-8, 10-12:
+ * faster debugging. Covers:
  *
- *   4.  Config Infrastructure
- *   6.  Agent CRUD
- *   7.  Memory
- *   8.  Sessions
- *  10.  Channels
- *  11.  Tokens
- *  12.  Models
+ *   Config Infrastructure
+ *   Agent CRUD
+ *   Memory
+ *   Sessions
+ *   Channels
+ *   Tokens
+ *   Models
  *
  * Uses config.test-system-crud.yaml (port 8601, 3 tokens with different scopes).
  *
@@ -126,10 +126,10 @@ describe("SYSTEM CRUD TEST: Config, agents, memory, sessions, channels, tokens, 
   }, 30_000);
 
   // =========================================================================
-  // Phase 4: Config Infrastructure (7 tests)
+  // Config Infrastructure (7 tests)
   // =========================================================================
 
-  describe("Phase 4: Config Infrastructure", () => {
+  describe("Config Infrastructure", () => {
     it("config.read returns full config", async () => {
       const resp = (await sendJsonRpc(
         ws,
@@ -242,10 +242,10 @@ describe("SYSTEM CRUD TEST: Config, agents, memory, sessions, channels, tokens, 
   });
 
   // =========================================================================
-  // Phase 6: Agent CRUD (7 tests)
+  // Agent CRUD (7 tests)
   // =========================================================================
 
-  describe("Phase 6: Agent CRUD", () => {
+  describe("Agent CRUD", () => {
     const TEST_AGENT = "comprehensive-test-agent";
 
     it("agents.create creates a new agent", async () => {
@@ -362,10 +362,10 @@ describe("SYSTEM CRUD TEST: Config, agents, memory, sessions, channels, tokens, 
   });
 
   // =========================================================================
-  // Phase 7: Memory (5 tests)
+  // Memory (5 tests)
   // =========================================================================
 
-  describe("Phase 7: Memory", () => {
+  describe("Memory", () => {
     it("memory.stats returns memory statistics", async () => {
       const resp = (await sendJsonRpc(
         ws,
@@ -439,10 +439,10 @@ describe("SYSTEM CRUD TEST: Config, agents, memory, sessions, channels, tokens, 
   });
 
   // =========================================================================
-  // Phase 8: Sessions (7 tests)
+  // Sessions (7 tests)
   // =========================================================================
 
-  describe("Phase 8: Sessions", () => {
+  describe("Sessions", () => {
     it("session.status returns agent-level stats", async () => {
       const resp = (await sendJsonRpc(
         ws,
@@ -550,10 +550,10 @@ describe("SYSTEM CRUD TEST: Config, agents, memory, sessions, channels, tokens, 
   });
 
   // =========================================================================
-  // Phase 10: Channels (5 tests)
+  // Channels (5 tests)
   // =========================================================================
 
-  describe("Phase 10: Channels", () => {
+  describe("Channels", () => {
     it("channels.list returns channel list", async () => {
       const resp = (await sendJsonRpc(
         ws,
@@ -631,10 +631,10 @@ describe("SYSTEM CRUD TEST: Config, agents, memory, sessions, channels, tokens, 
   });
 
   // =========================================================================
-  // Phase 11: Tokens (5 tests)
+  // Tokens (5 tests)
   // =========================================================================
 
-  describe("Phase 11: Tokens", () => {
+  describe("Tokens", () => {
     let createdTokenId: string | undefined;
 
     it("tokens.list returns token list", async () => {
@@ -716,10 +716,10 @@ describe("SYSTEM CRUD TEST: Config, agents, memory, sessions, channels, tokens, 
   });
 
   // =========================================================================
-  // Phase 12: Models (2 tests)
+  // Models (2 tests)
   // =========================================================================
 
-  describe("Phase 12: Models", () => {
+  describe("Models", () => {
     it("models.list returns model list", async () => {
       const resp = (await sendJsonRpc(
         ws,

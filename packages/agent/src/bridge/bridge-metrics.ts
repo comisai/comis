@@ -50,7 +50,7 @@ export interface BridgeMetricsState {
   failedToolCount: number;
   failedToolNames: string[];
 
-  // / 49-01: TTL-split cache write token tracking (estimated, normalized to SDK total)
+  // TTL-split cache write token tracking (estimated, normalized to SDK total)
   totalCacheWrite5mTokens: number;
   totalCacheWrite1hTokens: number;
 
@@ -81,34 +81,34 @@ export interface BridgeMetricsState {
   ghostCostUsd: number;
   timedOutRequests: number;
 
-  // 1.3: Session-cumulative cost tracking (accumulated across all turns in the session)
+  // Session-cumulative cost tracking (accumulated across all turns in the session)
   sessionCumulativeCostUsd: number;
   sessionCumulativeCacheSavedUsd: number;
 
-  // 1.5: Thinking token tracking (gap between SDK output and visible completion)
+  // Thinking token tracking (gap between SDK output and visible completion)
   totalThinkingTokens: number;
 
   // Budget trajectory warning: tracks whether the approaching-exhaustion warning has been emitted
   budgetWarningEmitted: boolean;
 
-  // Bug A diagnostic: SHA-256 hashes of thinking blocks captured at each
+  // Diagnostic: SHA-256 hashes of thinking blocks captured at each
   // assistant turn_end, keyed by responseId. Used to detect cross-turn
   // mutation of signed thinking blocks (logs only -- never alters flow).
   // Capped at 32 entries with FIFO eviction to prevent unbounded growth on
   // long-running sessions.
   thinkingBlockHashes: Map<string, ThinkingBlockHash[]>;
 
-  /** 260428-hoy: Canonical (pre-mutation) snapshot of each assistant message's
-   *  full content array, captured at stream close in lockstep with thinkingBlockHashes.
+  /** Canonical (pre-mutation) snapshot of each assistant message's full
+   *  content array, captured at stream close in lockstep with thinkingBlockHashes.
    *  Keyed by responseId; capped at 32 with FIFO eviction in lockstep with the
    *  hash store. Used by the pre-LLM-call restoration pass to heal cross-turn
    *  mutation of signed thinking blocks before pi-ai serializes the next request. */
   thinkingBlockCanonical: Map<string, ReadonlyArray<unknown>>;
 
-  // 260504-ieh: Per-execute diagnostic counters rolled up into the
-  // "Execution complete" bookend INFO log. Demote per-event INFO emissions
-  // (which fire N times per request) to DEBUG and surface aggregate counts
-  // in the once-per-request bookend instead.
+  // Per-execute diagnostic counters rolled up into the "Execution complete"
+  // bookend INFO log. Demote per-event INFO emissions (which fire N times per
+  // request) to DEBUG and surface aggregate counts in the once-per-request
+  // bookend instead.
   /** Number of pre-LLM-call hash-assertion walks performed (one per turn_start). */
   hashAssertionsRan: number;
   /** Total cross-turn thinking-block hash mismatches surfaced across all walks. */
@@ -166,7 +166,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     budgetWarningEmitted: false,
     thinkingBlockHashes: new Map(),
     thinkingBlockCanonical: new Map(),
-    // 260504-ieh: per-execute diagnostic counters
+    // per-execute diagnostic counters
     hashAssertionsRan: 0,
     hashAssertionMismatches: 0,
     signatureScrubs: 0,
@@ -203,7 +203,7 @@ export function buildBridgeResult(
   sessionCacheSavedUsd?: number;
   thinkingTokens?: number;
   budgetWarningEmitted?: boolean;
-  // 260504-ieh: diagnostic counters surfaced for the "Execution complete" bookend.
+  // diagnostic counters surfaced for the "Execution complete" bookend.
   hashAssertionsRan?: number;
   hashAssertionMismatches?: number;
   signatureScrubs?: number;
@@ -242,16 +242,16 @@ export function buildBridgeResult(
     lastStopReason: metrics.lastStopReason,
     cacheWrite5mTokens: metrics.totalCacheWrite5mTokens,
     cacheWrite1hTokens: metrics.totalCacheWrite1hTokens,
-    // 1.3: Session-cumulative cost fields
+    // Session-cumulative cost fields
     sessionCostUsd: metrics.sessionCumulativeCostUsd,
     sessionCacheSavedUsd: metrics.sessionCumulativeCacheSavedUsd,
-    // 1.5: Thinking tokens (omitted when 0 to avoid log noise)
+    // Thinking tokens (omitted when 0 to avoid log noise)
     thinkingTokens: metrics.totalThinkingTokens > 0 ? metrics.totalThinkingTokens : undefined,
     // Budget trajectory warning flag
     budgetWarningEmitted: metrics.budgetWarningEmitted || undefined,
-    // 260504-ieh: per-execute diagnostic counters. Always populated (no `> 0`
-    // gate) — a `0` in the bookend log is itself meaningful ("no scrubs/
-    // assertions this execute") and gating would lose that signal.
+    // Per-execute diagnostic counters. Always populated (no `> 0` gate) — a
+    // `0` in the bookend log is itself meaningful ("no scrubs/assertions
+    // this execute") and gating would lose that signal.
     hashAssertionsRan: metrics.hashAssertionsRan,
     hashAssertionMismatches: metrics.hashAssertionMismatches,
     signatureScrubs: metrics.signatureScrubs,

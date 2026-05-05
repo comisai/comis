@@ -152,7 +152,7 @@ export interface ContextEngineDeps {
    *  Used by cache break detector to suppress false-positive CacheBreakEvents. */
   onContentModified?: () => void;
 
-  // --- 260504-ieh: signature-replay scrub counter accumulation ---
+  // --- signature-replay scrub counter accumulation ---
   /** Optional sink for the signature-replay scrubber's per-apply stats.
    *  Receives the SAME shape the scrubber emits to its `onScrubbed` callback,
    *  so callers can accumulate per-execute totals without the scrubber owning

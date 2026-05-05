@@ -26,7 +26,7 @@ import { loginOpenAICodex } from "@mariozechner/pi-ai/oauth";
 
 /**
  * Minimal JWT with the chatgpt_account_id claim pi-ai requires + email
- * claim Phase 7's resolveCodexAuthIdentity reads. Exp is far-future.
+ * claim resolveCodexAuthIdentity reads. Exp is far-future.
  */
 function makeFixtureJwt(payload: Record<string, unknown> = {}): string {
   const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
@@ -72,11 +72,11 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// SPEC R1 acceptance — 5 cases
+// Acceptance — 5 cases
 // ---------------------------------------------------------------------------
 
-describe("loginOpenAICodexOAuth — R1 acceptance", () => {
-  it("local mode openUrl is called with the authorize URL (R1.a)", async () => {
+describe("loginOpenAICodexOAuth — acceptance", () => {
+  it("local mode openUrl is called with the authorize URL", async () => {
     const openUrl = vi.fn<(url: string) => Promise<unknown>>().mockResolvedValue({} as never);
     vi.mocked(loginOpenAICodex).mockImplementation(async (cb: any) => {
       await cb.onAuth({ url: "https://auth.openai.com/oauth/authorize?state=abc" });
@@ -98,7 +98,7 @@ describe("loginOpenAICodexOAuth — R1 acceptance", () => {
     );
   });
 
-  it("remote mode no openUrl is called; manual paste prompt fires (R1.b)", async () => {
+  it("remote mode no openUrl is called; manual paste prompt fires", async () => {
     const openUrl = vi.fn<(url: string) => Promise<unknown>>().mockResolvedValue({} as never);
     const prompter = makeMockPrompter({
       textResponses: ["http://localhost:1455/cb?code=X&state=abc"],
@@ -126,7 +126,7 @@ describe("loginOpenAICodexOAuth — R1 acceptance", () => {
     expect(prompter.text).toHaveBeenCalled();
   });
 
-  it("manual-paste timing fires at 15_000ms + 1_000ms grace (R1.c)", async () => {
+  it("manual-paste timing fires at 15_000ms + 1_000ms grace", async () => {
     vi.useFakeTimers();
     const openUrl = vi.fn<(url: string) => Promise<unknown>>().mockResolvedValue({} as never);
     const prompter = makeMockPrompter({
@@ -163,7 +163,7 @@ describe("loginOpenAICodexOAuth — R1 acceptance", () => {
     );
   });
 
-  it("unsupported region maps to LoginError code:'unsupported_region' with HTTPS_PROXY hint (R1.d)", async () => {
+  it("unsupported region maps to LoginError code:'unsupported_region' with HTTPS_PROXY hint", async () => {
     vi.mocked(loginOpenAICodex).mockRejectedValue(
       new Error("unsupported_country_region_territory"),
     );
@@ -178,7 +178,7 @@ describe("loginOpenAICodexOAuth — R1 acceptance", () => {
     expect(result.error.hint).toContain("HTTPS_PROXY");
   });
 
-  it("state mismatch maps to LoginError code:'callback_validation_failed' (R1.e)", async () => {
+  it("state mismatch maps to LoginError code:'callback_validation_failed'", async () => {
     vi.mocked(loginOpenAICodex).mockRejectedValue(new Error("state mismatch"));
     const result = await loginOpenAICodexOAuth({
       prompter: makeMockPrompter(),
@@ -192,7 +192,7 @@ describe("loginOpenAICodexOAuth — R1 acceptance", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Edge cases (per VALIDATION.md)
+// Edge cases
 // ---------------------------------------------------------------------------
 
 describe("loginOpenAICodexOAuth — edge cases", () => {
@@ -201,7 +201,7 @@ describe("loginOpenAICodexOAuth — edge cases", () => {
       textResponses: ["http://localhost:1455/cb?code=Y&state=abc"],
     });
     vi.mocked(loginOpenAICodex).mockImplementation(async (cb: any) => {
-      // No onAuth call (browser callback was unavailable per RESEARCH §Pitfall 3),
+      // No onAuth call (browser callback was unavailable),
       // jump straight to manual paste.
       const code = await cb.onManualCodeInput!();
       expect(code).toContain("code=Y");
@@ -222,7 +222,7 @@ describe("loginOpenAICodexOAuth — edge cases", () => {
 
   it("malformed JWT (identity decode fails) returns LoginError code:'identity_decode_failed'", async () => {
     // Pi-ai itself can throw "Failed to extract accountId from token" if the
-    // JWT lacks chatgpt_account_id (RESEARCH §Pitfall 2).
+    // JWT lacks chatgpt_account_id.
     vi.mocked(loginOpenAICodex).mockRejectedValue(
       new Error("Failed to extract accountId from token"),
     );
@@ -236,7 +236,7 @@ describe("loginOpenAICodexOAuth — edge cases", () => {
     expect(result.error.code).toBe("identity_decode_failed");
   });
 
-  it("originator 'comis' is passed to pi-ai (RESEARCH §Pitfall 4)", async () => {
+  it("originator 'comis' is passed to pi-ai", async () => {
     vi.mocked(loginOpenAICodex).mockResolvedValue({
       access: makeFixtureJwt(),
       refresh: "rt_test",
@@ -273,10 +273,10 @@ describe("loginOpenAICodexOAuth — edge cases", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 11 SC11-1 — method: "device-code" dispatch
+// method: "device-code" dispatch
 // ---------------------------------------------------------------------------
 
-describe("loginOpenAICodexOAuth — method: 'device-code' dispatch (Phase 11 SC11-1)", () => {
+describe("loginOpenAICodexOAuth — method: 'device-code' dispatch", () => {
   it("when method is 'device-code' it does NOT call pi-ai's loginOpenAICodex (browser path)", async () => {
     // Stub pi-ai's loginOpenAICodex; if the device-code branch dispatches
     // correctly, this mock is never invoked. The device-code module makes

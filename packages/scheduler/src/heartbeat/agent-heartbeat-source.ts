@@ -287,7 +287,7 @@ export function createAgentHeartbeatSource(
 
       // 9. Resolve model (for logging)
       const model = resolveHeartbeatModel(
-        undefined, // per-agent heartbeat model removed in Phase 2
+        undefined, // per-agent heartbeat model not in schema
         undefined, // global heartbeat model not yet in schema
         agentConfig.model,
       );

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Mock OAuth server fixture for Phase 7 integration tests.
+ * Mock OAuth server fixture for integration tests.
  *
  * In-process HTTP server that emulates OpenAI Codex's `POST /oauth/token`
  * endpoint so tests can exercise `OAuthTokenManager` refresh flows without
@@ -16,7 +16,7 @@
  *   await mock.stop();
  *
  * Default response (when `setNextResponse` not called) matches the OpenAI
- * Codex token-endpoint contract (RESEARCH §Q4):
+ * Codex token-endpoint contract:
  *   { access_token: <RS256 JWT>, refresh_token: <hex>, expires_in: 3600 }
  *
  * Security posture (T-MOCK-EXPOSED-PORT): binds to 127.0.0.1 only — never
@@ -35,7 +35,7 @@ export interface MockOAuthServer {
   stop(): Promise<void>;
   /** Total request count, optionally filtered by grant_type. Returns 0 for unseen types. */
   getRequestCount(grantType?: string): number;
-  /** Captured inbound LLM requests (Phase 9 D-13). Returns array in arrival order. */
+  /** Captured inbound LLM requests. Returns array in arrival order. */
   getLlmRequests(): ReadonlyArray<{ authorization: string; accountId: string; body: string }>;
   /** Configure the next single response (status defaults to 200). Consumed once. */
   setNextResponse(opts: { status?: number; body: object }): void;
@@ -65,12 +65,12 @@ function makeRealisticJwt(payloadOverrides: Record<string, unknown> = {}): strin
 export function createMockOAuthServer(): MockOAuthServer {
   let server: Server | undefined;
   const requestCounts = new Map<string, number>();
-  // Phase 9 D-13: per-request capture log for the /codex/responses LLM route.
+  // Per-request capture log for the /codex/responses LLM route.
   // Each entry records the inbound Authorization + chatgpt-account-id headers
   // plus the raw request body, in arrival order. Cleared by reset().
   const llmRequests: Array<{ authorization: string; accountId: string; body: string }> = [];
   let nextResponse: { status: number; body: object } | undefined;
-  // Phase 11: device-code polling state. deviceCodePollCount counts how many
+  // Device-code polling state. deviceCodePollCount counts how many
   // POSTs to /api/accounts/deviceauth/token have arrived since the last reset();
   // deviceCodePollsUntilSuccess controls how many 403 responses the handler
   // emits before flipping to 200 with the authorization_code + code_verifier.
@@ -78,13 +78,13 @@ export function createMockOAuthServer(): MockOAuthServer {
   let deviceCodePollCount = 0;
   let deviceCodePollsUntilSuccess = 2;
 
-  // Phase 8 D-09 contract:
-  // This handler serves BOTH grant_type=refresh_token (Phase 7 use) AND
-  // grant_type=authorization_code (Phase 8 use — login flow). The response
+  // Token endpoint contract:
+  // This handler serves BOTH grant_type=refresh_token AND
+  // grant_type=authorization_code (login flow). The response
   // shape is identical — pi-ai's loginOpenAICodex and refreshOpenAICodexToken
   // both expect {access_token, refresh_token, expires_in}. Per-grant-type
   // queueing via setNextResponse already works (the response is consulted
-  // once per request regardless of grant_type). Phase 8 integration tests
+  // once per request regardless of grant_type). Integration tests
   // assert flow distinction via getRequestCount('authorization_code') vs
   // getRequestCount('refresh_token').
   function handler(req: IncomingMessage, res: ServerResponse): void {
@@ -93,7 +93,7 @@ export function createMockOAuthServer(): MockOAuthServer {
       body += typeof chunk === "string" ? chunk : chunk.toString("utf8");
     });
     req.on("end", () => {
-      // Phase 9 D-13: LLM endpoint capture for SC#2 evidence.
+      // LLM endpoint capture for evidence.
       // Match BEFORE the urlencoded body parse so /codex/responses traffic
       // never touches the token-endpoint counters.
       if (req.url?.startsWith("/codex/responses")) {
@@ -112,7 +112,7 @@ export function createMockOAuthServer(): MockOAuthServer {
         return;
       }
 
-      // Phase 11: device-code usercode request endpoint.
+      // Device-code usercode request endpoint.
       // Match BEFORE the urlencoded body parse so device-code POSTs never
       // touch the /oauth/token grant_type counters.
       if (req.url?.startsWith("/api/accounts/deviceauth/usercode")) {
@@ -132,7 +132,7 @@ export function createMockOAuthServer(): MockOAuthServer {
         return;
       }
 
-      // Phase 11: device-code poll endpoint.
+      // Device-code poll endpoint.
       // Returns 403 (authorization_pending) deviceCodePollsUntilSuccess times,
       // then 200 with the authorization_code + code_verifier on the following
       // poll. Counters track total deviceauth/token requests for assertions.
@@ -220,9 +220,9 @@ export function createMockOAuthServer(): MockOAuthServer {
     reset() {
       requestCounts.clear();
       nextResponse = undefined;
-      // Phase 9 D-13: clear captured LLM requests so cross-test state does not leak.
+      // Clear captured LLM requests so cross-test state does not leak.
       llmRequests.length = 0;
-      // Phase 11: reset device-code polling state so cross-test polling counts
+      // Reset device-code polling state so cross-test polling counts
       // do not leak. The default of 2 mirrors the documented "polls 1+2 are 403,
       // poll 3 is 200" behavior.
       deviceCodePollCount = 0;

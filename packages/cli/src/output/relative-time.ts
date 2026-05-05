@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Relative-time formatter for OAuth expiry rendering (Phase 8 D-16).
+ * Relative-time formatter for OAuth expiry rendering.
  *
  * Produces compact strings like "5m", "27d", or "expired" for UI tables.
  * Used by `comis auth list` (expiresIn column) and `comis auth status`
  * (per-provider nextExpiry field).
  *
- * Branches per D-16:
+ * Branches:
  *   - delta <= 0       → "expired"
  *   - delta < 1h       → "<m>m" (e.g., "5m", "32m")
  *   - 1h <= delta < 1d → "<h>h"

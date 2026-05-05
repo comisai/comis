@@ -4,9 +4,8 @@
  *
  * Observed problem: Anthropic 400 `messages.N.content.M: thinking/redacted_thinking
  * blocks cannot be modified` errors keep firing in production even after the
- * surrogate-guard, drift-scrubber, and signed-replay-detector layers shipped
- * (260425-rvm), and even after the immutable-section redirect (260425-t40).
- * Trace `c7b91328-9dc5-4618-9ae8-ca207b4b93df` on 2026-04-28 hit a 400 ~2.2s
+ * surrogate-guard, drift-scrubber, and signed-replay-detector layers shipped,
+ * and even after the immutable-section redirect. A trace hit a 400 ~2.2s
  * after `turn_end` -- meaning *some other layer* mutates a signed thinking
  * block between the assistant turn and the next replay. We don't know which.
  *
@@ -24,8 +23,8 @@
  * - NEVER mutates inputs. Pure read; only output is the structured log.
  * - NEVER alters request flow. The mismatch is observable signal only --
  *   Anthropic's 400 still surfaces through the existing error path
- *   (signed-replay-detector -> executor-prompt-runner). Bug A behavior fix
- *   is a separate quick task gated on what this diagnostic reveals.
+ *   (signed-replay-detector -> executor-prompt-runner). The behavior fix
+ *   for the underlying bug is gated on what this diagnostic reveals.
  *
  * Logging surface follows CLAUDE.md canonical Pino fields:
  * - object-first signature: `error({...fields}, "msg")`
@@ -256,7 +255,7 @@ export function assertThinkingBlocksUnchanged(
 }
 
 // ---------------------------------------------------------------------------
-// 260428-hoy: Canonical thinking-block restoration
+// Canonical thinking-block restoration
 //
 // Heals cross-turn mutation of signed thinking blocks before pi-ai serializes
 // the next API request. Pure / idempotent / never-throws. Runs AFTER
@@ -505,16 +504,16 @@ function blockHash(block: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// 260428-iag: Wire-edge diagnostic — diff in-memory thinking blocks against
-// persisted JSONL canonical.
+// Wire-edge diagnostic — diff in-memory thinking blocks against persisted
+// JSONL canonical.
 //
 // Fires from the pi-event-bridge LLM-error path when Anthropic returns 400
 // with a "thinking blocks ... cannot be modified" signature, even after the
-// 260428-hoy canonical-restore layer ran pre-serialize. The persisted JSONL
-// is the only truly immutable record of the assistant message — written
-// byte-for-byte from Anthropic's stream at receipt time. A divergence between
-// in-memory content and persisted canonical at this point implies the
-// mutation occurred AFTER the bridge restoration hook (likely inside pi-ai's
+// canonical-restore layer ran pre-serialize. The persisted JSONL is the only
+// truly immutable record of the assistant message — written byte-for-byte
+// from Anthropic's stream at receipt time. A divergence between in-memory
+// content and persisted canonical at this point implies the mutation
+// occurred AFTER the bridge restoration hook (likely inside pi-ai's
 // `sanitizeSurrogates` during request serialization).
 //
 // Behavior contract (mirrors the rest of this module):

@@ -201,9 +201,9 @@ describe("gateway tool", () => {
       }
     });
 
-    // 260428-qrn: when the daemon is in Docker, agent-invoked restart relies
-    // on the container's restart policy to bring it back. We surface that as
-    // a structured Pino WARN so docker logs leaves a breadcrumb pointing the
+    // When the daemon is in Docker, agent-invoked restart relies on the
+    // container's restart policy to bring it back. We surface that as a
+    // structured Pino WARN so docker logs leaves a breadcrumb pointing the
     // operator at `--restart unless-stopped`.
     it("inside Docker -> emits structured WARN with unless-stopped hint, tool result unchanged", async () => {
       mockedIsDocker.mockReturnValue(true);
@@ -695,8 +695,8 @@ describe("gateway tool", () => {
       const rpcCall = createMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
 
-      // Updated for quick-260425-t40: agents now redirects to agents_manage
-      // with the override paths surfaced as the "in-place updates" branch.
+      // Agents now redirects to agents_manage with the override paths
+      // surfaced as the "in-place updates" branch.
       await expect(
         tool.execute("call-imm1", {
           action: "patch",
@@ -818,7 +818,7 @@ describe("gateway tool", () => {
       const msg = captured!.message;
       expect(msg).toContain("[permission_denied]");
       expect(msg).toContain('Use the "agents_manage" tool');
-      // 260428-oyc: discover_tools clause dropped from Recovery framing.
+      // discover_tools clause dropped from Recovery framing.
       expect(msg).toContain("Recovery: call agents_manage(");
       expect(msg).not.toContain("discover_tools");
       expect(msg).toContain('"action":"create"');
@@ -844,9 +844,9 @@ describe("gateway tool", () => {
       expect(captured).toBeDefined();
       const msg = captured!.message;
       expect(msg).toContain("[permission_denied]");
-      // 260428-oyc: single-step Recovery framing -- "Recovery: call <tool>(<example>)."
+      // Single-step Recovery framing -- "Recovery: call <tool>(<example>)."
       expect(msg).toContain("Recovery: call agents_manage(");
-      // No discover_tools mention anywhere in the redirect hint after 260428-oyc.
+      // No discover_tools mention anywhere in the redirect hint.
       expect(msg).not.toContain("discover_tools");
       // Mutable override paths are still surfaced for the in-place-update case
       expect(msg).toContain("agents.coding.model");
@@ -871,7 +871,7 @@ describe("gateway tool", () => {
       expect(captured).toBeDefined();
       const msg = captured!.message;
       expect(msg).toContain('Use the "channels_manage" tool');
-      // 260428-oyc: no-exampleArgs branch now says "Call <tool> directly; it will auto-load on first invocation."
+      // No-exampleArgs branch now says "Call <tool> directly; it will auto-load on first invocation."
       expect(msg).toContain("Call channels_manage directly");
       expect(msg).toContain("auto-load on first invocation");
       expect(msg).not.toContain("discover_tools");
@@ -883,11 +883,11 @@ describe("gateway tool", () => {
     });
   });
 
-  // Bug B (260428-gj6): inline schema fragment in immutable-section rejection
-  // hint so the LLM can call the dedicated *_manage tool without burning a
-  // discover_tools round-trip. The hint must include the action enum and
-  // required-field list pinned to each tool's TypeBox source.
-  describe("immutability schema-fragment hints (Bug B)", () => {
+  // Inline schema fragment in immutable-section rejection hint so the LLM
+  // can call the dedicated *_manage tool without burning a discover_tools
+  // round-trip. The hint must include the action enum and required-field
+  // list pinned to each tool's TypeBox source.
+  describe("immutability schema-fragment hints", () => {
     it("agents/patch rejection includes agents_manage, discover_tools, and Tool actions: with create literal", async () => {
       const rpcCall = createMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
@@ -910,8 +910,8 @@ describe("gateway tool", () => {
       expect(captured).toBeDefined();
       const msg = captured!.message;
       expect(msg).toContain("agents_manage");
-      // 260428-oyc: discover_tools clause was dropped from the rejection hint.
-      // The Recovery framing now points at agents_manage directly.
+      // discover_tools clause was dropped from the rejection hint. The
+      // Recovery framing now points at agents_manage directly.
       expect(msg).toContain("Recovery: call agents_manage(");
       expect(msg).not.toContain("discover_tools");
       expect(msg).toContain("Tool actions:");

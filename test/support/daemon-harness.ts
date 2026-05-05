@@ -58,6 +58,19 @@ const DEFAULT_CONFIG_PATH = resolve(__dirname, "../config/config.test.yaml");
 const HEALTH_POLL_ATTEMPTS = 10;
 const HEALTH_POLL_DELAY_MS = 500;
 
+/**
+ * Provider API-key env vars that the daemon credential guard
+ * (agents.create → resolveProviderCredential) checks for non-empty values.
+ * Integration tests that exercise agent CRUD do not make real LLM calls,
+ * so a dummy non-empty value is sufficient.
+ */
+const PROVIDER_API_KEY_ENV_VARS = [
+  "ANTHROPIC_API_KEY",
+  "OPENROUTER_API_KEY",
+] as const;
+
+const DUMMY_API_KEY_VALUE = "test-fixture-not-a-real-key";
+
 // ---------------------------------------------------------------------------
 // Double-start guard
 // ---------------------------------------------------------------------------
@@ -145,6 +158,12 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
 
   // Set config path env var (the daemon reads this)
   process.env["COMIS_CONFIG_PATHS"] = configPath;
+
+  // Seed dummy provider API keys so the credential guard at agents.create
+  // (packages/daemon/src/rpc/agent-handlers.ts) does not reject test agents
+  // that never make real LLM calls. Real env values (set by the parent shell)
+  // are preserved untouched.
+  const restoreProviderEnv = seedDummyProviderApiKeys();
 
   // Build overrides: prevent process.exit, optionally redirect logs
   const overrides: Record<string, unknown> = {
@@ -235,6 +254,7 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
       }
     } finally {
       delete process.env["COMIS_CONFIG_PATHS"];
+      restoreProviderEnv();
       // Dispose signal handlers to prevent leaks between test suites
       daemon.shutdownHandle.dispose();
       // Reset double-start guard
@@ -327,4 +347,44 @@ async function waitForHealth(gatewayUrl: string): Promise<void> {
   throw new Error(
     `Gateway health check failed after ${HEALTH_POLL_ATTEMPTS} attempts at ${gatewayUrl}/health`,
   );
+}
+
+/**
+ * Inject dummy values for provider API-key env vars that are unset or empty.
+ * Returns a rollback function that restores the original env state.
+ *
+ * Real values (set by the parent shell) are preserved untouched — the dummy
+ * is written ONLY when the variable is undefined or the empty string. This
+ * keeps the harness safe to use in CI alongside developer machines that
+ * already export real provider keys.
+ *
+ * Why this exists: the daemon credential guard at
+ * `packages/daemon/src/rpc/agent-handlers.ts` calls
+ * `resolveProviderCredential(provider)` on `agents.create` and rejects the
+ * RPC if no provider key is found in the env. Integration tests that
+ * exercise agent CRUD do not make real LLM calls, so a non-empty placeholder
+ * is sufficient to satisfy the guard.
+ */
+function seedDummyProviderApiKeys(): () => void {
+  const restorers: Array<() => void> = [];
+  for (const name of PROVIDER_API_KEY_ENV_VARS) {
+    const existing = process.env[name];
+    if (existing === undefined || existing === "") {
+      process.env[name] = DUMMY_API_KEY_VALUE;
+      // Existed-as-undefined → delete on rollback. Existed-as-"" → restore "".
+      if (existing === undefined) {
+        restorers.push(() => {
+          delete process.env[name];
+        });
+      } else {
+        restorers.push(() => {
+          process.env[name] = "";
+        });
+      }
+    }
+    // else: real value present, preserve it (no restorer needed).
+  }
+  return () => {
+    for (const restore of restorers) restore();
+  };
 }

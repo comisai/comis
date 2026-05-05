@@ -6,7 +6,7 @@
  * real HTTP requests to verify content retrieval and search functionality
  * work end-to-end.
  *
- * Phase 34, Plan 02: Browser & Web Tools integration validation.
+ * Browser & Web Tools integration validation.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";

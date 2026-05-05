@@ -2,6 +2,8 @@
 
 Read `AGENTS.md` before any code change — it is the authoritative engineering protocol.
 
+This file is a Claude-specific operational supplement. If anything here conflicts with `AGENTS.md`, follow `AGENTS.md` and update this file.
+
 ## Project
 
 Comis is a security-first AI agent platform connecting agents to chat channels (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email). TypeScript monorepo, 13 packages, hexagonal architecture (ports + adapters). Node.js >= 22, Linux-only.

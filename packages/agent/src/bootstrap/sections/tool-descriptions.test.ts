@@ -72,8 +72,8 @@ describe("TOOL_GUIDES", () => {
 
   // Credential Discovery rule — appended to the gateway guide so the LLM
   // probes env_list BEFORE asking the user for an API key / token / secret.
-  // Closes the prompt-engineering half of the 2026-04-20 Telegram repro where
-  // the agent asked for GEMINI_API_KEY despite it being in ~/.comis/.env.
+  // Closes the prompt-engineering half of a Telegram repro where the agent
+  // asked for GEMINI_API_KEY despite it being in ~/.comis/.env.
   it("gateway guide includes credential discovery rule", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/env_list/);
     expect(TOOL_GUIDES.gateway).toMatch(/before asking/i);
@@ -89,8 +89,8 @@ describe("TOOL_GUIDES", () => {
   });
 
   // MCP Output Directory rule -- Layer 2 of COMIS-MCP-OUTPUT-SANDBOXING-DESIGN.md.
-  // Closes the session 9eb85fdf cascade where gemini-image-mcp wrote outputs
-  // outside the workspace and message.attach + sandbox-exec (correctly) rejected them.
+  // Closes a cascade where gemini-image-mcp wrote outputs outside the workspace
+  // and message.attach + sandbox-exec (correctly) rejected them.
   it("gateway guide includes MCP output directory rule", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/workspace\/output\//);
     expect(TOOL_GUIDES.gateway).toMatch(/OUTPUT_DIR/);
@@ -117,9 +117,9 @@ describe("TOOL_GUIDES", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 260428-rrr Bug B: prescriptive 2-step creation flow + workspace.profile
-  // enum guardrail. Production trace f099bac9 (session 678314278) showed
-  // 18 fleet-creation failures across 9 agents because the LLM:
+  // Prescriptive 2-step creation flow + workspace.profile enum guardrail.
+  // Production trace showed 18 fleet-creation failures across 9 agents because
+  // the LLM:
   //   (a) embedded persona/role text inside the create config (Zod
   //       unrecognized_keys rejection on z.strictObject), and
   //   (b) probed for non-enum workspace.profile values like "minimal" /
@@ -128,7 +128,7 @@ describe("TOOL_GUIDES", () => {
   // flow (REQUIRED)" block that names ROLE.md as the persona destination
   // and pins the enum to "full"|"specialist" only.
   // -------------------------------------------------------------------------
-  describe("TOOL_GUIDES.agents_manage (260428-rrr: prescriptive 2-step flow)", () => {
+  describe("TOOL_GUIDES.agents_manage (prescriptive 2-step flow)", () => {
     it("contains a 'Two-step creation flow' leading block", () => {
       expect(TOOL_GUIDES.agents_manage).toContain("Two-step creation flow");
     });
@@ -147,21 +147,21 @@ describe("TOOL_GUIDES", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 260428-vyf Layer 2: TOOL_GUIDE rewrite — single-call creation is now
-  // PREFERRED for batch fleet creation; the existing 2-step flow is
-  // relabeled as FALLBACK and ordered after the single-call section.
+  // TOOL_GUIDE rewrite — single-call creation is now PREFERRED for batch
+  // fleet creation; the existing 2-step flow is relabeled as FALLBACK and
+  // ordered after the single-call section.
   //
   // Goal: shrink the LLM's parallel-tool-call surface (3 calls per agent →
   // 1 call per agent) so TOOL_GUIDE prescriptive text is not crowded out
-  // under high parallel-tool-call load (production session 1a8b0d91 turn
-  // 13 silent termination after a 9-agent batch creation).
+  // under high parallel-tool-call load (production session showed silent
+  // termination after a 9-agent batch creation).
   //
-  // The existing 260428-rrr pin tests above MUST continue to pass against
+  // The prescriptive 2-step pin tests above MUST continue to pass against
   // the rewritten guide (FALLBACK section preserves the verbatim 2-step
   // language including "Two-step creation flow", "ROLE.md", "Do NOT pass
   // persona", and "Workspace.profile values").
   // -------------------------------------------------------------------------
-  describe("TOOL_GUIDES.agents_manage (260428-vyf: single-call PREFERRED)", () => {
+  describe("TOOL_GUIDES.agents_manage (single-call PREFERRED)", () => {
     it("Test 10 — contains a 'Single-call creation' PREFERRED block with workspace.role/identity example", () => {
       expect(TOOL_GUIDES.agents_manage).toContain("Single-call creation");
       expect(TOOL_GUIDES.agents_manage).toContain("PREFERRED for batch fleet creation");
@@ -187,12 +187,12 @@ describe("TOOL_GUIDES", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 260501-1zs: Credential Pre-Check section mandates env_list before any
-  // provider switch. Production repro on 2026-05-01: agent silently called
-  // gateway.patch agents.default.{provider,model} without first checking
-  // ~/.comis/.env for OPENROUTER_API_KEY; daemon failed at the next chat
-  // turn with "No API key found for openrouter" and the user saw a generic
-  // "An error occurred" message.
+  // Credential Pre-Check section mandates env_list before any provider
+  // switch. Production repro: agent silently called gateway.patch
+  // agents.default.{provider,model} without first checking ~/.comis/.env for
+  // OPENROUTER_API_KEY; daemon failed at the next chat turn with "No API key
+  // found for openrouter" and the user saw a generic "An error occurred"
+  // message.
   //
   // The fix wraps the brittle "Just store the API key (gateway env_set) and
   // switch the agent directly" shortcut behind a mandatory 4-step pre-check
@@ -200,12 +200,12 @@ describe("TOOL_GUIDES", () => {
   // placed at the TOP of the providers_manage TOOL_GUIDE so the LLM reads
   // it BEFORE the "Built-in vs Custom Provider Check" section.
   //
-  // The 8 anchor pins below verify the 6 truths from the plan's frontmatter
-  // (header present, env_list referenced, ASK THE USER wording, hard-stop
-  // wording, brittle wording GONE, ordering correct, three preconditions
-  // list extended, multi-path enumeration).
+  // The 8 anchor pins below verify the 6 contract truths (header present,
+  // env_list referenced, ASK THE USER wording, hard-stop wording, brittle
+  // wording GONE, ordering correct, three preconditions list extended,
+  // multi-path enumeration).
   // -------------------------------------------------------------------------
-  describe("TOOL_GUIDES.providers_manage (260501-1zs: credential pre-check)", () => {
+  describe("TOOL_GUIDES.providers_manage (credential pre-check)", () => {
     it("Test 1 — providers_manage TOOL_GUIDE contains 'Credential Pre-Check (MANDATORY before any provider switch)' header", () => {
       expect(TOOL_GUIDES.providers_manage).toContain("Credential Pre-Check (MANDATORY before any provider switch)");
     });
@@ -257,10 +257,10 @@ describe("TOOL_GUIDES", () => {
     });
 
     it("Test 9 (hygiene) — 'Credential Workflow' is renamed to 'Credential Workflow Summary'", () => {
-      // Step C of the plan renames the section to clarify that the canonical
-      // entry point is the Credential Pre-Check above; this section just
-      // documents what gets stored where. A bare "Credential Workflow" header
-      // would re-introduce ambiguity.
+      // The section is renamed to clarify that the canonical entry point is
+      // the Credential Pre-Check above; this section just documents what gets
+      // stored where. A bare "Credential Workflow" header would re-introduce
+      // ambiguity.
       expect(TOOL_GUIDES.providers_manage).toContain("Credential Workflow Summary");
     });
   });
@@ -489,11 +489,10 @@ describe("getToolGuideWithSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Layer 1D (260430-vwt) -- providers_manage TOOL_GUIDE generated from
-// the live pi-ai catalog
+// providers_manage TOOL_GUIDE generated from the live pi-ai catalog
 // ---------------------------------------------------------------------------
 
-describe("Layer 1D providers_manage TOOL_GUIDE catalog interpolation", () => {
+describe("providers_manage TOOL_GUIDE catalog interpolation", () => {
   it("Built-in providers list contains every name from getProviders()", async () => {
     const { getProviders } = await import("@mariozechner/pi-ai");
     const guide = TOOL_GUIDES.providers_manage!;
@@ -508,10 +507,10 @@ describe("Layer 1D providers_manage TOOL_GUIDE catalog interpolation", () => {
     expect(guide).toMatch(/list_providers/);
   });
 
-  it("guide describes the post-auto-promote type-field rule (Layer 1C tie-in)", () => {
+  it("guide describes the post-auto-promote type-field rule", () => {
     const guide = TOOL_GUIDES.providers_manage!;
-    // The new section was added as part of the Layer 1C rollout to keep
-    // the agent's documented usage in sync with the daemon's promotion.
+    // The new section keeps the agent's documented usage in sync with the
+    // daemon's promotion behavior.
     expect(guide).toMatch(/auto-?promote/i);
     expect(guide).toMatch(/OMIT/);
   });

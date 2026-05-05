@@ -182,7 +182,7 @@ Pre-seeds the OAuth credential store with a profile for `openai-codex` on the **
 export OAUTH_OPENAI_CODEX='{"access":"EXAMPLE-access","refresh":"EXAMPLE-refresh","expires":1735689600000,"accountId":"EXAMPLE-acct","email":"user@example.com"}'
 ```
 
-**Bootstrap precedence (Phase 7 R7):**
+**Bootstrap precedence:**
 
 1. **Stored profile wins.** If the OAuth credential store already has a profile for `openai-codex`, the daemon uses it and ignores `OAUTH_OPENAI_CODEX` entirely.
 2. **Env var is a one-time seed.** When the store is empty for the provider, the daemon parses the env var and writes the profile. Subsequent token refreshes update the stored profile, not the env var.

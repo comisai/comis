@@ -15,8 +15,6 @@
  * TEST-14: Mode Switch (Pipeline to DAG)
  * TEST-15: Metrics Emission in DAG Mode
  *
- * Phase 415: Integration Testing (Plan 02).
- *
  * @module
  */
 

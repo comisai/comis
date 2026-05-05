@@ -3,8 +3,7 @@
  * Tests for the doctor CLI command registration.
  *
  * Verifies that the doctor command is registered with the expected
- * options: --repair, --config, --format, and --refresh-test
- * (Phase 10 SC-10-2 / Plan 10-04).
+ * options: --repair, --config, --format, and --refresh-test.
  */
 
 import { describe, it, expect } from "vitest";
@@ -18,7 +17,7 @@ describe("registerDoctorCommand", () => {
 
     const doctorCmd = program.commands.find((c) => c.name() === "doctor");
     expect(doctorCmd).toBeDefined();
-    // Phase 10 SC-10-2: description includes OAuth as the 6th subsystem.
+    // Description includes OAuth as the 6th subsystem.
     expect(doctorCmd!.description()).toBe(
       "Diagnose configuration, daemon, gateway, channel, workspace, and OAuth health",
     );
@@ -27,10 +26,10 @@ describe("registerDoctorCommand", () => {
     expect(optionNames).toContain("--repair");
     expect(optionNames).toContain("--config");
     expect(optionNames).toContain("--format");
-    // Phase 10 SC-10-2 (Plan 10-04, D-10-04-01): opt-in refresh probe flag.
+    // Opt-in refresh probe flag.
     expect(optionNames).toContain("--refresh-test");
 
-    // D-10-04-02: --help text MUST warn the operator about token rotation.
+    // --help text MUST warn the operator about token rotation.
     const refreshTestOption = doctorCmd!.options.find(
       (o) => o.long === "--refresh-test",
     );

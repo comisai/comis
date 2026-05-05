@@ -52,7 +52,7 @@ export interface ContextEngineSetupDeps {
   contextStore?: import("@comis/memory").ContextStore;
   db?: unknown;
   /**
-   * Phase 9 R3: optional OAuth token manager. When provided, compaction LLM
+   * Optional OAuth token manager. When provided, compaction LLM
    * calls route through resolveProviderApiKey for OAuth-eligible providers,
    * with fallthrough to authStorage for non-OAuth providers.
    */
@@ -90,7 +90,7 @@ export interface ContextEngineSetupResult {
   contextEngine: ContextEngine;
   /** Getter for accumulated transformContext duration in ms */
   getContextEngineDurationMs: () => number;
-  /** 260504-ieh: per-execute signature-replay scrub counters. `signatureScrubs`
+  /** Per-execute signature-replay scrub counters. `signatureScrubs`
    *  bumps once per non-empty scrubber emission; `signatureScrubsToolCallsAffected`
    *  accumulates the toolCallsAffected field across emissions. Surfaced to
    *  executor-post-execution.ts so the bookend "Execution complete" INFO log
@@ -139,7 +139,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   // consistent decision (cleaner + scrubber must agree). The closure reads
   // the latest model identity each time (handles cycleModel mid-execute).
   // Returns the identity/idle drift only — the kvl tool-defs dimension was
-  // removed in 260428-lm6 in favor of the unconditional latest-message
+  // removed in favor of the unconditional latest-message
   // preserving scrub in signature-replay-scrubber.
   let memoizedDrift: DriftCheck | undefined;
   const computeDriftIfNeeded = (): DriftCheck | undefined => {
@@ -180,7 +180,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     }
   };
 
-  // 260504-ieh: per-execute counters for the signature-replay scrubber. Live
+  // Per-execute counters for the signature-replay scrubber. Live
   // for the lifetime of this setupContextEngine() call (one per execute()),
   // so no reset is needed — the closure goes out of scope at execute end and
   // a fresh setup creates fresh zeroed counters for the next execute.
@@ -212,7 +212,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     getSystemTokensEstimate: getCachedSystemTokensEstimate,
     // G-09: Notify cache break detector when observation masking modifies content
     onContentModified: () => cacheBreakDetector.notifyContentModification(formattedKey),
-    // 260504-ieh: accumulate signature-replay scrub counts per-execute. Only
+    // Accumulate signature-replay scrub counts per-execute. Only
     // counts emissions that actually scrubbed something (zero-touch turns
     // are filtered out — they're not a "scrub" in the post-incident-visibility
     // sense). Sums toolCallsAffected so the bookend "Execution complete" log
@@ -258,7 +258,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
           reasoning: model?.reasoning ?? false,
         };
       },
-      // Phase 9 R3: route compaction's primary getApiKey through the shared
+      // Route compaction's primary getApiKey through the shared
       // dispatch helper so OAuth-eligible providers refresh through
       // OAuthTokenManager + setRuntimeApiKey on every call. Non-OAuth
       // providers (anthropic, openai, etc.) still fall through to
@@ -295,12 +295,12 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
               return {
                 overrideModel: {
                   model: compactionModel,
-                  // Phase 9 R3: route the override-model getApiKey through
-                  // the shared dispatch helper (Risk 2: each callsite passes
+                  // Route the override-model getApiKey through
+                  // the shared dispatch helper. Each callsite passes
                   // its OWN providerId — config.provider above for the
                   // primary, compactionResolution.provider here for the
                   // override — both correctly resolve the right OAuth
-                  // profile via agentConfig.oauthProfiles[providerId]).
+                  // profile via agentConfig.oauthProfiles[providerId].
                   getApiKey: async () =>
                     resolveProviderApiKey(compactionResolution.provider, {
                       authStorage: deps.authStorage,
@@ -449,7 +449,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   return {
     contextEngine,
     getContextEngineDurationMs: () => contextEngineDurationMs,
-    // 260504-ieh: expose per-execute signature-replay scrub counters so the
+    // Expose per-execute signature-replay scrub counters so the
     // bookend "Execution complete" INFO log can roll them up.
     getSignatureScrubCounters: () => ({
       signatureScrubs,

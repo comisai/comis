@@ -53,29 +53,28 @@ export interface AuthProviderConfig {
   oauth?: {
     /** EventBus for emitting auth events (token_rotated, profile_bootstrapped, refresh_failed). */
     eventBus: TypedEventBus;
-    /** Credential store for persistent refresh — REQUIRED (Phase 7). */
+    /** Credential store for persistent refresh — REQUIRED. */
     credentialStore: OAuthCredentialStorePort;
-    /** Logger for D-12 OAuth log events — REQUIRED (Phase 7). */
+    /** Logger for OAuth log events — REQUIRED. */
     logger: ComisLogger;
-    /** Data directory for lock-file path resolution — REQUIRED (Phase 7). */
+    /** Data directory for lock-file path resolution — REQUIRED. */
     dataDir: string;
     /** Prefix for SecretManager key names (default: "OAUTH_"). */
     keyPrefix?: string;
     /**
-     * Phase 8 D-05: absolute path to auth-profiles.json for the chokidar
-     * watcher. When set, OAuthTokenManager registers a file watcher that
-     * invalidates its in-memory cache on external rewrites (CLI auth login).
-     * Pass `undefined` for encrypted-store mode (D-08 documented limitation).
+     * Absolute path to auth-profiles.json for the chokidar watcher. When set,
+     * OAuthTokenManager registers a file watcher that invalidates its in-memory
+     * cache on external rewrites (CLI auth login). Pass `undefined` for
+     * encrypted-store mode (documented limitation).
      */
     watchPath?: string;
     /**
-     * Phase 9 D-05: getter for the agent's oauthProfiles map. Called fresh on
-     * every OAuthTokenManager.getApiKey() invocation. Optional — falls back
-     * to a no-agent-level-preference contract when absent. The closure
-     * implementation should dereference the daemon's stable
-     * `container.config.agents[agentId]?.oauthProfiles` so the value is
-     * observed across `agents.update` reference-replacements without a
-     * daemon restart (Option B per plan 09-04 revision iter 1).
+     * Getter for the agent's oauthProfiles map. Called fresh on every
+     * OAuthTokenManager.getApiKey() invocation. Optional — falls back to a
+     * no-agent-level-preference contract when absent. The closure implementation
+     * should dereference the daemon's stable
+     * `container.config.agents[agentId]?.oauthProfiles` so the value is observed
+     * across `agents.update` reference-replacements without a daemon restart.
      */
     getAgentOauthProfiles?: () => Record<string, string> | undefined;
   };
@@ -172,7 +171,7 @@ export function createAuthProvider(config: AuthProviderConfig): AuthProvider {
       dataDir: oauth.dataDir,
       keyPrefix: oauth.keyPrefix,
       watchPath: oauth.watchPath,
-      // Phase 9 D-05: thread the agent oauthProfiles getter through.
+      // Thread the agent oauthProfiles getter through.
       getAgentOauthProfiles: oauth.getAgentOauthProfiles,
     };
     oauthManager = createOAuthTokenManager(oauthDeps);

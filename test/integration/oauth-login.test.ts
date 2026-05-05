@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 8 OAuth login integration tests (R4 + R5 + R6).
+ * OAuth login integration tests.
  *
  * Note: test/vitest.config.ts already enforces maxConcurrency: 1 +
  * pool: "forks" + retry: 1, so a per-file sequential annotation is
- * REDUNDANT (RESEARCH override 3). Don't add it.
+ * REDUNDANT. Don't add it.
  *
  * Run with: `pnpm test:integration -- oauth-login` (after `pnpm build`).
  *
  * Strategy:
- * - R4 (login flows + provider rejection + --profile rejection): exercise
+ * - Login flows + provider rejection + --profile rejection: exercise
  *   the runner directly via loginOpenAICodexOAuth + the store's port.set,
  *   not the CLI binary. The CLI's argv -> action wiring is unit-tested in
- *   plan 03's auth.test.ts; the integration value here is the runner +
- *   pi-ai + mock-server end-to-end loop.
- * - R5 (list/logout/status): seed profiles directly via store.set, then
+ *   auth.test.ts; the integration value here is the runner + pi-ai +
+ *   mock-server end-to-end loop.
+ * - List/logout/status: seed profiles directly via store.set, then
  *   spawn the CLI binary with HOME override + a real `oauth.storage: file`
  *   config so the CLI talks to the same on-disk file.
- * - R6 (wizard OpenAI OAuth + Anthropic regression): import credentialsStep
+ * - Wizard OpenAI OAuth + Anthropic regression: import credentialsStep
  *   and execute it with a scripted mock prompter, asserting wizard state +
  *   profile presence in the store.
  */
@@ -50,7 +50,7 @@ import {
 const PROVIDER_ID = "openai-codex";
 
 // ---------------------------------------------------------------------------
-// Mock-server lifecycle (mirrors Phase 7 oauth-persistence.test.ts)
+// Mock-server lifecycle (mirrors oauth-persistence.test.ts)
 // ---------------------------------------------------------------------------
 
 let mockServer: MockOAuthServer;
@@ -139,7 +139,7 @@ function cleanupTmpDir(dir: string | undefined): void {
  * builds (it can either parse to `null` and trigger Zod's "Expected object,
  * received null" error, or be treated as an absent file). A real file with
  * the bare `oauth.storage: file` setting routes the CLI deterministically
- * through the file-adapter path that the R4/R5/R6 tests need.
+ * through the file-adapter path that these tests need.
  */
 function writeFakeConfig(fakeComis: string): string {
   const fakeConfig = path.join(fakeComis, "config.yaml");
@@ -178,17 +178,17 @@ function makeMockPrompter(
 /**
  * Stub openUrl that simulates the user's browser by extracting state from
  * the authorize URL and POSTing to pi-ai's hardcoded localhost:1455
- * callback (RESEARCH §End-to-end test pattern, D-09 step 4). Best-effort
- * — pi-ai's callback server may already be torn down or port-busy, in
- * which case the manual-paste fallback handles the flow.
+ * callback. Best-effort — pi-ai's callback server may already be torn
+ * down or port-busy, in which case the manual-paste fallback handles
+ * the flow.
  */
 function makeStubOpenUrl(): ReturnType<typeof vi.fn> {
   return vi.fn(async (authorizeUrl: string) => {
     const url = new URL(authorizeUrl);
     const state = url.searchParams.get("state") ?? "missing-state";
-    // Pi-ai's callback server runs on hardcoded 127.0.0.1:1455
-    // (RESEARCH §Pitfall 3). Fetch with original (un-spied) fetch so the
-    // request is NOT redirected to the mock OAuth server.
+    // Pi-ai's callback server runs on hardcoded 127.0.0.1:1455.
+    // Fetch with original (un-spied) fetch so the request is NOT
+    // redirected to the mock OAuth server.
     void originalFetch(
       `http://localhost:1455/auth/callback?code=test_code&state=${state}`,
     ).catch(() => undefined);
@@ -197,10 +197,10 @@ function makeStubOpenUrl(): ReturnType<typeof vi.fn> {
 }
 
 // ---------------------------------------------------------------------------
-// SPEC R4 — comis auth login flows
+// comis auth login flows
 // ---------------------------------------------------------------------------
 
-describe("R4 comis auth login (end-to-end against mock OAuth server)", () => {
+describe("comis auth login (end-to-end against mock OAuth server)", () => {
   it("local mode: writes profile, exits with success, profile is on disk", async () => {
     const tmpDir = freshTmpDataDir();
     try {
@@ -226,8 +226,8 @@ describe("R4 comis auth login (end-to-end against mock OAuth server)", () => {
 
       // The local-mode happy path requires pi-ai's callback server on
       // 127.0.0.1:1455 to receive the stubOpenUrl POST. If the port is
-      // busy on the test host (RESEARCH §Pitfall 3), pi-ai falls back to
-      // manual paste — also a valid R4 acceptance path.
+      // busy on the test host, pi-ai falls back to manual paste — also
+      // a valid acceptance path.
       expect(result.ok).toBe(true);
       if (!result.ok) return;
 
@@ -249,7 +249,7 @@ describe("R4 comis auth login (end-to-end against mock OAuth server)", () => {
       const writeResult = await store.set(expectedProfileId, profile);
       expect(writeResult.ok).toBe(true);
 
-      // Confirm the profile lives at <tmpDir>/auth-profiles.json (per Phase 7 file adapter).
+      // Confirm the profile lives at <tmpDir>/auth-profiles.json (per file adapter).
       const filePath = path.join(tmpDir, "auth-profiles.json");
       expect(fs.existsSync(filePath)).toBe(true);
       const fileContent = JSON.parse(fs.readFileSync(filePath, "utf-8"));
@@ -327,7 +327,7 @@ describe("R4 comis auth login (end-to-end against mock OAuth server)", () => {
   it("provider rejection: comis auth login --provider anthropic exits 2 with LOCKED stderr", async () => {
     // The CLI binary enforces this BEFORE invoking the runner, so we test it
     // by invoking the binary directly and asserting exit code + stderr.
-    // Per plan 03 task 3.1, the LOCKED stderr string is:
+    // The LOCKED stderr string is:
     //   "--provider must be 'openai-codex' (other providers ship in later phases)"
     const tmpHome = freshTmpDataDir();
     const fakeComis = path.join(tmpHome, ".comis");
@@ -357,11 +357,9 @@ describe("R4 comis auth login (end-to-end against mock OAuth server)", () => {
   });
 
   it("--profile invalid format: comis auth login --provider openai-codex --profile foo exits 2", async () => {
-    // Phase 9 enabled --profile (multi-account selection). The original Phase 8
-    // outright-rejection test is obsolete. The contract now is: the value must
-    // parse as `<provider>:<identity>` and the provider portion must match
-    // --provider. A malformed value like `foo` (no colon) is still rejected
-    // with exit 2 by validateProfileId.
+    // The contract is: the value must parse as `<provider>:<identity>` and
+    // the provider portion must match --provider. A malformed value like
+    // `foo` (no colon) is rejected with exit 2 by validateProfileId.
     const tmpHome = freshTmpDataDir();
     const fakeComis = path.join(tmpHome, ".comis");
     fs.mkdirSync(fakeComis, { recursive: true });
@@ -400,10 +398,10 @@ describe("R4 comis auth login (end-to-end against mock OAuth server)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SPEC R5 — comis auth list / logout / status
+// comis auth list / logout / status
 // ---------------------------------------------------------------------------
 
-describe("R5 comis auth list / logout / status", () => {
+describe("comis auth list / logout / status", () => {
   it("auth list: seed 2 profiles, both shown with active/expired markers", async () => {
     const tmpHome = freshTmpDataDir();
     const fakeComis = path.join(tmpHome, ".comis");
@@ -551,10 +549,10 @@ describe("R5 comis auth list / logout / status", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SPEC R6 — wizard step 04 OpenAI OAuth + Anthropic regression
+// wizard step 04 OpenAI OAuth + Anthropic regression
 // ---------------------------------------------------------------------------
 
-describe("R6 wizard step 04 OAuth dispatch", () => {
+describe("wizard step 04 OAuth dispatch", () => {
   it("OpenAI OAuth: provider=openai + authMethod=oauth -> loginOpenAICodexOAuth called -> state.provider.oauthProfileId set + profile in store", async () => {
     const tmpHome = freshTmpDataDir();
     const fakeComis = path.join(tmpHome, ".comis");
@@ -693,10 +691,9 @@ describe("R6 wizard step 04 OAuth dispatch", () => {
       prompter as never,
     );
 
-    // Pitfall 8 assertion — the OpenAI OAuth runner was NOT invoked for
-    // Anthropic. The mock OAuth server saw zero new authorization_code
-    // grants from this test (any prior count from the R6 OpenAI test
-    // is the baseline).
+    // The OpenAI OAuth runner was NOT invoked for Anthropic. The mock
+    // OAuth server saw zero new authorization_code grants from this test
+    // (any prior count from the OpenAI test is the baseline).
     const afterCount = mockServer.getRequestCount("authorization_code");
     expect(afterCount).toBe(beforeCount);
 

@@ -2,7 +2,7 @@
 /**
  * System Dashboard SPA Integration Tests
  *
- * Covers Phase 16 from the comprehensive system test plan:
+ * Covers:
  *
  *   SPA-01: Root redirect (GET / -> /app/)
  *   SPA-02: Dashboard HTML (GET /app/ serves index.html)
@@ -32,7 +32,7 @@ const WEB_DIST_PATH = resolve(__dirname, "../../packages/web/dist");
 const webDistAvailable = existsSync(resolve(WEB_DIST_PATH, "index.html"));
 
 describe.skipIf(!webDistAvailable)(
-  "System Dashboard SPA (Phase 16)",
+  "System Dashboard SPA",
   () => {
     let handle: TestDaemonHandle;
     let gatewayUrl: string;

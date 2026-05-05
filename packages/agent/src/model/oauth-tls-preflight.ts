@@ -7,13 +7,13 @@
  * fixable via `apt install ca-certificates` etc.) or `network` (DNS,
  * firewall, proxy — operator action required).
  *
- * Verbatim port of OpenClaw's provider-openai-codex-oauth-tls.ts (RESEARCH §Q1)
- * minus the Homebrew prefix-resolution branch and minus the `note()` UI
- * (caller decides how to surface the result; this module is pure).
+ * Verbatim port of OpenClaw's provider-openai-codex-oauth-tls.ts minus the
+ * Homebrew prefix-resolution branch and minus the `note()` UI (caller decides
+ * how to surface the result; this module is pure).
  *
  * The probe URL uses the public OpenAI Codex client_id
- * `app_EMoamEEZ73f0CkXaXp7hrann` (NOT a Comis-distinct value) per
- * RESEARCH §Q6 T-10-01 to avoid fingerprinting in OpenAI logs.
+ * `app_EMoamEEZ73f0CkXaXp7hrann` (NOT a Comis-distinct value) to avoid
+ * fingerprinting in OpenAI logs.
  *
  * This module never logs — the caller is responsible for surfacing
  * the result via Pino (daemon) or DoctorFinding (CLI). Per AGENTS.md §2.4
@@ -54,8 +54,7 @@ export type TlsPreflightFailureKind = "tls-cert" | "network";
  *
  * NOTE on Result<T,E> deviation: this shape predates AGENTS.md §2.1 in
  * the OpenClaw port. Callers pattern-match on `.kind` for actionable
- * routing, which is more ergonomic than `.error.kind`. RESEARCH §Q1
- * sanctions this as the one acceptable deviation in Phase 10.
+ * routing, which is more ergonomic than `.error.kind`.
  */
 export type TlsPreflightResult =
   | { ok: true }

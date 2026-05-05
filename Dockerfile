@@ -106,18 +106,33 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         # Core runtime
         procps \
         curl \
+        wget \
         ca-certificates \
         dumb-init \
+        # Archive utils -- needed by language installers (rustup, npm tarballs,
+        # pipx venv prep, go module fetches, deno/bun installers)
+        unzip \
+        xz-utils \
+        bzip2 \
         # Git (for config versioning / agent operations)
         git \
-        # Python runtime — agent exec tool creates venvs for pip installs
+        # Python runtime + CLI installer (pipx for Python-based agent tools)
         python3 \
         python3-venv \
         python3-pip \
+        pipx \
         # Media processing — TTS, audio/video skills
         ffmpeg \
-        # Sandbox for agent-issued exec
+        # Sandbox for agent-issued exec. Note: inside default Docker the kernel
+        # rejects bwrap's userns/mount setup; detect-provider.ts auto-disables
+        # the sandbox and exec falls back to /bin/bash -c <cmd> with the
+        # container itself as the trust boundary. The binary is still installed
+        # for hosts where bwrap CAN run (rootless Docker with userns mapping,
+        # privileged containers, etc.).
         bubblewrap \
+        # Go toolchain -- agent exec sandbox supports `go install <pkg>` and
+        # similar via $GOPATH workspace redirect (wrapEnv).
+        golang-go \
         # Optional user-specified packages
         ${COMIS_DOCKER_APT_PACKAGES} \
     && rm -rf /var/cache/apt/archives/*.deb
@@ -130,6 +145,33 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN curl -LsSf https://astral.sh/uv/install.sh \
         | env UV_UNMANAGED_INSTALL=/usr/local/bin sh \
     || echo "uv install failed — Python-based MCP servers will be unavailable"
+
+# Install rust toolchain. Mirrors install_rust() in install.sh. CARGO_HOME and
+# RUSTUP_HOME are placed at /usr/local/{cargo,rustup} so they live under the
+# image's read-only system tree. Symlinks into /usr/local/bin put cargo/rustc/
+# rustup on PATH for any user. /etc/profile.d/rustup.sh exports the env vars
+# for login shells (bare-metal install.sh writes the same file). --profile
+# minimal keeps the install lean (~150MB instead of ~500MB). Non-fatal: if the
+# rustup CDN is unreachable, the image still works for non-Rust toolchains.
+RUN curl -LsSf https://sh.rustup.rs \
+        | env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup \
+            sh -s -- -y --no-modify-path --default-toolchain stable --profile minimal \
+    && for bin in cargo rustc rustup; do \
+        ln -sf "/usr/local/cargo/bin/$bin" "/usr/local/bin/$bin"; \
+       done \
+    && printf '%s\n%s\n%s\n' \
+        '# Comis-managed: makes the system rustup install discoverable to all login shells.' \
+        'export RUSTUP_HOME=/usr/local/rustup' \
+        'export CARGO_HOME=/usr/local/cargo' \
+        > /etc/profile.d/rustup.sh \
+    && chmod 644 /etc/profile.d/rustup.sh \
+    || echo "rustup install failed — Rust-based tools will be unavailable"
+
+# Daemon process must see RUSTUP_HOME / CARGO_HOME as well so cargo works for
+# any agent flow that goes through the daemon (mirrors the systemd unit's
+# Environment= lines added in commit e8210af).
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo
 
 # Enable corepack (non-root writable location)
 ENV COREPACK_HOME=/usr/local/share/corepack

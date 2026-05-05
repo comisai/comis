@@ -550,13 +550,13 @@ describe("createProviderHandlers", () => {
     });
 
     // -----------------------------------------------------------------------
-    // Layer 1C (260430-vwt) -- catalog-aware type promotion
+    // Catalog-aware type promotion
     // -----------------------------------------------------------------------
 
-    it("Layer 1C + 260501-gyy: catalog providerId without custom baseUrl is REJECTED by built-in guard before promotion runs", async () => {
-      // After 260501-gyy, the precondition for this Layer 1C path
-      // (catalog providerId + absent baseUrl + type:"openai" passthrough)
-      // is REJECTED by the built-in redundancy guard BEFORE
+    it("catalog providerId without custom baseUrl is REJECTED by built-in guard before promotion runs", async () => {
+      // The precondition for the catalog-aware promotion path (catalog
+      // providerId + absent baseUrl + type:"openai" passthrough) is
+      // REJECTED by the built-in redundancy guard BEFORE
       // normalizeProviderEntry runs. The promotion code remains live for
       // the providers.update path (which still allows in-place type
       // changes on existing entries).
@@ -576,7 +576,7 @@ describe("createProviderHandlers", () => {
       expect(mockPersistToConfig).not.toHaveBeenCalled();
     });
 
-    it("Layer 1C: does NOT promote when user supplied a custom baseUrl (opt-out signal)", async () => {
+    it("does NOT promote when user supplied a custom baseUrl (opt-out signal)", async () => {
       const persistDeps = makePersistDeps();
       const deps = makeDeps({ persistDeps });
       const handlers = createProviderHandlers(deps);
@@ -598,7 +598,7 @@ describe("createProviderHandlers", () => {
       expect(deps.providerEntries["openrouter"]!.type).toBe("openai");
     });
 
-    it("Layer 1C: does NOT promote when providerId is not in the native catalog", async () => {
+    it("does NOT promote when providerId is not in the native catalog", async () => {
       const persistDeps = makePersistDeps();
       const deps = makeDeps({ persistDeps });
       const handlers = createProviderHandlers(deps);
@@ -614,10 +614,10 @@ describe("createProviderHandlers", () => {
       expect(deps.providerEntries["my-custom-proxy"]!.type).toBe("openai");
     });
 
-    it("Layer 1C + 260501-gyy: catalog providerId without baseUrl (and no type) is REJECTED by built-in guard", async () => {
-      // After 260501-gyy: catalog providerId + absent baseUrl is rejected
-      // before normalizeProviderEntry runs (the would-be passthrough-sentinel
-      // promotion path is now superseded by the guard).
+    it("catalog providerId without baseUrl (and no type) is REJECTED by built-in guard", async () => {
+      // Catalog providerId + absent baseUrl is rejected before
+      // normalizeProviderEntry runs (the would-be passthrough-sentinel
+      // promotion path is superseded by the guard).
       const persistDeps = makePersistDeps();
       const deps = makeDeps({ persistDeps });
       const handlers = createProviderHandlers(deps);
@@ -635,10 +635,10 @@ describe("createProviderHandlers", () => {
     });
 
     // -----------------------------------------------------------------------
-    // 260501-gyy FIX 2 -- built-in provider redundancy guard
+    // Built-in provider redundancy guard
     // -----------------------------------------------------------------------
 
-    describe("built-in redundancy guard (260501-gyy)", () => {
+    describe("built-in redundancy guard", () => {
       // Read a catalog provider name + its canonical baseUrl dynamically so
       // the tests stay catalog-agnostic across pi-ai upgrades.
       const catalogProviderId = getProviders()[0]!;
@@ -693,7 +693,7 @@ describe("createProviderHandlers", () => {
         const handlers = createProviderHandlers(deps);
 
         const result = (await handlers["providers.create"]!({
-          providerId: "my-custom-thing-260501-gyy",
+          providerId: "my-custom-thing-redundancy",
           config: {
             type: "openai",
             baseUrl: "https://custom.example.com/v1",

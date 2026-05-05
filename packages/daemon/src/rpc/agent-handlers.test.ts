@@ -15,8 +15,8 @@ vi.mock("./persist-to-config.js", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Mock agent-inline-workspace module so we can drive 260428-vyf inline-write
-// outcomes per-test without touching the real filesystem.
+// Mock agent-inline-workspace module so we can drive inline-write outcomes
+// per-test without touching the real filesystem.
 // ---------------------------------------------------------------------------
 
 vi.mock("./agent-inline-workspace.js", () => ({
@@ -114,9 +114,9 @@ const mockProbeProviderAuth = vi.mocked(probeProviderAuth);
 // ---------------------------------------------------------------------------
 
 function makeDeps(overrides?: Partial<AgentHandlerDeps>): AgentHandlerDeps {
-  // Default provider entries + secretManager so the 260501-2pz credential
-  // guard passes for the test defaults ("default" and "anthropic"). Tests
-  // that need to assert guard rejection override these explicitly.
+  // Default provider entries + secretManager so the credential guard
+  // passes for the test defaults ("default" and "anthropic"). Tests that
+  // need to assert guard rejection override these explicitly.
   const defaultProviderEntries: Record<string, ProviderEntry> = {
     default: {
       type: "ollama",
@@ -390,15 +390,15 @@ describe("createAgentHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 260428-vyf Layer 2: agents.create with inlineContent {role, identity}.
+  // agents.create with inlineContent {role, identity}.
   //
-  // Single-call agent creation: the L1 tool layer strips role/identity from
+  // Single-call agent creation: the tool layer strips role/identity from
   // config.workspace and forwards them as a separate top-level RPC param
   // (`inlineContent`). The daemon writes ROLE.md / IDENTITY.md atomically
   // via the writeInlineWorkspaceFiles helper. role/identity are write-once
   // side-effects, NOT durable state — they NEVER reach config.yaml.
   // -------------------------------------------------------------------------
-  describe("agents.create with inlineContent (260428-vyf)", () => {
+  describe("agents.create with inlineContent", () => {
     it("Test 1 (full inline): forwards role+identity to helper, returns inlineWritesResult on RPC payload", async () => {
       mockWriteInline.mockResolvedValueOnce({
         ok: true,
@@ -1468,17 +1468,17 @@ describe("createAgentHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 9 D-11 / R7: agents.update validates oauthProfiles patches via
+  // agents.update validates oauthProfiles patches via
   // oauthCredentialStore.has() BEFORE the existing
   // `deps.agents[agentId] = parsedConfig` reference-replacement at line 341.
   // On miss → throw with the documented "not found in store" wording → the
   // daemon's in-memory map AND YAML are both unchanged (failure leaves
   // state untouched). On success → reference-replacement preserved (the
-  // contract Plan 04's Option B closure depends on; pinned by Test 5
-  // below as a regression guard).
+  // contract the Option B closure depends on; pinned by the test below as a
+  // regression guard).
   // -------------------------------------------------------------------------
 
-  describe("agents.update oauthProfiles validation (Phase 9 D-11)", () => {
+  describe("agents.update oauthProfiles validation", () => {
     /**
      * Build a minimal OAuthCredentialStorePort mock. Tests pass a
      * `hasResult` factory so each call's return is configurable per
@@ -1533,8 +1533,8 @@ describe("createAgentHandlers", () => {
         }),
       ).rejects.toThrow(/profile openai-codex:nope@example\.com not found in store/);
 
-      // D-11: failure path leaves the daemon's in-memory map UNCHANGED —
-      // the reference at the agent key is still the original object (the
+      // Failure path leaves the daemon's in-memory map UNCHANGED — the
+      // reference at the agent key is still the original object (the
       // throw happens BEFORE the deps.agents[agentId] = parsedConfig
       // assignment at line 341).
       expect(deps.agents["default"]).toBe(originalRef);
@@ -1626,12 +1626,12 @@ describe("createAgentHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Credential guard (260501-2pz): daemon-side fail-loud rejection of
-  // agents.update / agents.create patches that would set the agent's
-  // provider to one whose API key is not resolvable.
+  // Credential guard: daemon-side fail-loud rejection of agents.update /
+  // agents.create patches that would set the agent's provider to one whose
+  // API key is not resolvable.
   // -------------------------------------------------------------------------
 
-  describe("agents.update credential guard (260501-2pz)", () => {
+  describe("agents.update credential guard", () => {
     let originalEnv: NodeJS.ProcessEnv;
     beforeEach(() => {
       originalEnv = { ...process.env };
@@ -1699,7 +1699,7 @@ describe("createAgentHandlers", () => {
       expect(mockProbeProviderAuth).toHaveBeenCalledOnce();
     });
 
-    it("agents.update with model-only change does NOT invoke guard when provider is unchanged (quick-260504-irq)", async () => {
+    it("agents.update with model-only change does NOT invoke guard when provider is unchanged", async () => {
       // Seed an agent that points at an unauthenticated provider directly.
       // The new policy: model-only patches with unchanged provider DO NOT
       // trigger the guard or probe. The runtime auth chain that just
@@ -1780,7 +1780,7 @@ describe("createAgentHandlers", () => {
     });
   });
 
-  describe("agents.create credential guard (260501-2pz)", () => {
+  describe("agents.create credential guard", () => {
     let originalEnv: NodeJS.ProcessEnv;
     beforeEach(() => {
       originalEnv = { ...process.env };
@@ -1845,13 +1845,13 @@ describe("createAgentHandlers", () => {
       expect(deps.agents["new-bot"]!.provider).toBe("openrouter");
     });
 
-    it("agents.create with OAuth-only provider + missing profile rejects with auth-login recovery copy (quick-260504-irq)", async () => {
+    it("agents.create with OAuth-only provider + missing profile rejects with auth-login recovery copy", async () => {
       // The agents.update path can't directly exercise the OAuth-aware
-      // rejection copy because the D-11 oauthProfiles existence check
+      // rejection copy because the oauthProfiles existence check
       // (agent-handlers.ts:357-371) runs BEFORE the credential guard and
-      // throws first when has() returns false. agents.create has no D-11
-      // block, so it's the cleanest place to assert the credential guard's
-      // OAuth-aware rejection copy path.
+      // throws first when has() returns false. agents.create has no
+      // existence-check block, so it's the cleanest place to assert the
+      // credential guard's OAuth-aware rejection copy path.
       const deps = makeDeps({
         providerEntries: {},
         secretManager: { has: () => false, get: () => undefined },

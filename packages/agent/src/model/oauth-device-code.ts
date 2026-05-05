@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OAuth device-code login for OpenAI Codex (Phase 11 SC11-1).
+ * OAuth device-code login for OpenAI Codex.
  *
  * Port of the upstream device-code reference module with Comis-specific
  * adaptations:
- *   1. ORIGINATOR header is the literal "comis" per RESEARCH Pitfall 8.
+ *   1. ORIGINATOR header is the literal "comis".
  *   2. The cosmetic version-header lookup is DROPPED — header is
- *      informational per RESEARCH Pitfall 7; CLAUDE.md forbids reading
- *      runtime env in library code.
+ *      informational; CLAUDE.md forbids reading runtime env in library code.
  *   3. trimNonEmptyString is INLINE (3-line helper) per AGENTS.md §2.3.
- *   4. resolveCodexAccessTokenExpiry is imported from Comis's Phase 7
+ *   4. resolveCodexAccessTokenExpiry is imported from Comis's
  *      oauth-identity.ts module (same signature as the upstream variant).
  *   5. Public boundary returns Result<T,E> per AGENTS.md §2.1 — internal
  *      helpers still throw, but the top-level loginOpenAICodexDeviceCode
@@ -21,9 +20,9 @@
  *      authorization_code + code_verifier; verifier comes FROM the server)
  *   3. POST /oauth/token grant_type=authorization_code -> tokens
  *
- * This module never logs — the caller (oauth-login-runner.ts in Plan 04)
- * is responsible for surfacing progress via prompter.log.info / Pino.
- * Per AGENTS.md §2.4 no logger import.
+ * This module never logs — the caller (oauth-login-runner.ts) is responsible
+ * for surfacing progress via prompter.log.info / Pino. Per AGENTS.md §2.4 no
+ * logger import.
  *
  * @module
  */
@@ -115,8 +114,8 @@ function trimNonEmptyString(value: unknown): string | undefined {
 
 /**
  * Build the 3-key header set for the device-code flow.
- * Adaptation vs upstream: drop the cosmetic version-header lookup (RESEARCH
- * Pitfall 7 + CLAUDE.md §2.2). Header values are fixed strings — no env reads.
+ * Adaptation vs upstream: drop the cosmetic version-header lookup
+ * (CLAUDE.md §2.2). Header values are fixed strings — no env reads.
  */
 function resolveOpenAICodexDeviceCodeHeaders(contentType: string): Record<string, string> {
   return {
@@ -159,7 +158,7 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
 /**
  * Strip ANSI/control characters from upstream error bodies before bubbling
  * the message to a user-facing surface. Defends against terminal hijack via
- * malicious error responses (T-11-02-05).
+ * malicious error responses.
  */
 function sanitizeDeviceCodeErrorText(value: string): string {
   const esc = String.fromCharCode(0x1b);

@@ -181,7 +181,7 @@ export function resolveToolCallingTemperature(modelTier: ModelTier): number {
  * When this returns true, request-body-injector strips client-side
  * `discover_tools` from the API payload and appends `tool_search_tool_regex`
  * instead -- so any model-facing teaching string about `discover_tools`
- * contradicts the actual tool list and must be suppressed (260428-oyc).
+ * contradicts the actual tool list and must be suppressed.
  *
  * Lowercase-normalize so provider-prefixed model ids
  * (`anthropic/claude-sonnet-4`, `bedrock/anthropic.claude-opus-4`) resolve
@@ -269,7 +269,7 @@ export function resolveToolDescription(tool: ToolDefinition): string {
  *   teaching string therefore points at direct invocation + tool-search by
  *   regex, never at `discover_tools`. Without this conditional, the model
  *   reads its own preamble ("call discover_tools") against a tool list that
- *   doesn't contain that tool and gives up (260428-oyc production repro).
+ *   doesn't contain that tool and gives up (production repro).
  *
  * @param entries - Deferred tool entries (remaining after discovery re-inclusion)
  * @param options - Optional flags. `useToolSearch=true` switches the third
@@ -362,7 +362,7 @@ export function applyToolDeferral(
     originalToolMap.set(t.name, t);
   }
 
-  // Phase 1: Rule-based deferral
+  // Rule-based deferral
   for (const rule of DEFERRAL_RULES) {
     if (!rule.activeWhen(deferralContext)) {
       for (const toolName of rule.tools) {
@@ -373,7 +373,7 @@ export function applyToolDeferral(
     }
   }
 
-  // Phase 2: MCP tools deferred by default (only for providers with mid-turn injection)
+  // MCP tools deferred by default (only for providers with mid-turn injection)
   // Providers without mid-turn injection (OpenAI, xAI, etc.) get MCP tools from the start,
   // because sub-agents only call execute() once and there is no "next execution" for
   // discovered tools to appear in.
@@ -389,7 +389,7 @@ export function applyToolDeferral(
     }
   }
 
-  // Phase 3: Small model aggressive deferral
+  // Small model aggressive deferral
   if (deferralContext.modelTier === "small") {
     for (const t of tools) {
       if (!deferredSet.has(t.name) && !CORE_TOOLS.has(t.name) && !deferralContext.recentlyUsedToolNames.has(t.name)) {
@@ -398,7 +398,7 @@ export function applyToolDeferral(
     }
   }
 
-  // Phase 4: Merge lifecycle-demoted tools into deferral set for unified discover_tools
+  // Merge lifecycle-demoted tools into deferral set for unified discover_tools
   // Clear discovery state for lifecycle-demoted tools (prevents appearing
   // in both discoveredTools and deferredEntries simultaneously)
   if (deferralContext.lifecycleDemotedNames) {
@@ -410,7 +410,7 @@ export function applyToolDeferral(
     }
   }
 
-  // Phase 5: Operator overrides (neverDefer / alwaysDefer from DeferredToolsConfigSchema)
+  // Operator overrides (neverDefer / alwaysDefer from DeferredToolsConfigSchema)
   if (deferralContext.neverDefer) {
     for (const name of deferralContext.neverDefer) {
       deferredSet.delete(name);

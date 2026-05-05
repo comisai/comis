@@ -263,7 +263,7 @@ describe("validateNonInteractiveOptions", () => {
     expect(src).not.toMatch(/RECOMMENDED_MODELS/);
   });
 
-  // ---------- 260504-gge: openai-codex non-interactive rejection ----------
+  // ---------- openai-codex non-interactive rejection ----------
 
   it("rejects --provider openai-codex with the literal interactive-login hint", () => {
     const opts: NonInteractiveOptions = {
@@ -286,7 +286,7 @@ describe("validateNonInteractiveOptions", () => {
     }
   });
 
-  it("260504-gge: accepts other providers (smoke check the gate is not too broad)", () => {
+  it("accepts other providers (smoke check the gate is not too broad)", () => {
     const opts: NonInteractiveOptions = {
       nonInteractive: true,
       acceptRisk: true,
@@ -330,11 +330,10 @@ describe("buildNonInteractiveState", () => {
   });
 
   it("delegates --model resolution to daemon when not specified", () => {
-    // Post-260501-kqq: --model defaults to literal "default" (daemon-side
-    // resolution per builtin-provider-guard.ts:45 catalog readback). The
-    // pre-fix RECOMMENDED_MODELS hardcoded provider->model lookup was
-    // removed; daemon decides at runtime. Verify both providers behave
-    // the same.
+    // --model defaults to literal "default" (daemon-side resolution per
+    // builtin-provider-guard.ts:45 catalog readback). The hardcoded
+    // RECOMMENDED_MODELS provider->model lookup was removed; daemon
+    // decides at runtime. Verify both providers behave the same.
     const stateA = buildNonInteractiveState(validOpts({ provider: "anthropic" }));
     expect(stateA.model).toBe("default");
     const stateB = buildNonInteractiveState(validOpts({ provider: "openai" }));

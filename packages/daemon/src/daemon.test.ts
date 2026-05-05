@@ -166,8 +166,8 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
       tenantId: "default",
       logLevel: "info",
       agentDir: "/tmp/test-agent-dir",
-      // Phase 7 plan 08: setupSingleAgent now reads container.config.oauth.storage
-      // for OAuth credential store wiring. Default to "file" (the YAML default).
+      // setupSingleAgent now reads container.config.oauth.storage for OAuth
+      // credential store wiring. Default to "file" (the YAML default).
       oauth: { storage: "file" as const },
     } as unknown as AppContainer["config"],
     eventBus: createMockEventBus(),
@@ -548,7 +548,7 @@ describe("daemon main()", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Layer 3C (260501-07g): boot-time PROVIDER_OVERRIDES staleness validator
+  // Boot-time PROVIDER_OVERRIDES staleness validator
   // -------------------------------------------------------------------------
   // The daemon calls validateProviderOverrides during the "3.6" startup step.
   // Against the LIVE pi-ai catalog, every PROVIDER_OVERRIDES key is currently

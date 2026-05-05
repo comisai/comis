@@ -409,7 +409,7 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
         }
       });
 
-      // Start polling (webhook mode deferred to Phase 6/9)
+      // Start polling (webhook mode deferred)
       if (!deps.webhookUrl) {
         runnerHandle = run(bot);
       }

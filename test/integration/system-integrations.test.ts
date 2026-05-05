@@ -3,12 +3,12 @@
  * SYSTEM INTEGRATIONS TEST: Observability, scheduler, skills, and approvals tests.
  *
  * Split from comprehensive-system.test.ts for isolated failures and
- * faster debugging. Covers Phases 5, 9, 13-14:
+ * faster debugging. Covers:
  *
- *   5.  Observability
- *   9.  Scheduler / Cron
- *  13.  Skills
- *  14.  Approvals
+ *   Observability
+ *   Scheduler / Cron
+ *   Skills
+ *   Approvals
  *
  * Uses config.test-system-integrations.yaml (port 8602, 3 tokens with different scopes).
  *
@@ -119,10 +119,10 @@ describe("SYSTEM INTEGRATIONS TEST: Observability, scheduler, skills, approvals"
   }, 30_000);
 
   // =========================================================================
-  // Phase 5: Observability (12 tests)
+  // Observability (12 tests)
   // =========================================================================
 
-  describe("Phase 5: Observability", () => {
+  describe("Observability", () => {
     it("obs.diagnostics returns diagnostics", async () => {
       const resp = (await sendJsonRpc(
         ws,
@@ -278,10 +278,10 @@ describe("SYSTEM INTEGRATIONS TEST: Observability, scheduler, skills, approvals"
   });
 
   // =========================================================================
-  // Phase 9: Scheduler / Cron (3 tests)
+  // Scheduler / Cron (3 tests)
   // =========================================================================
 
-  describe("Phase 9: Scheduler / Cron", () => {
+  describe("Scheduler / Cron", () => {
     it("cron.list is registered", async () => {
       const resp = (await sendJsonRpc(
         ws,
@@ -332,10 +332,10 @@ describe("SYSTEM INTEGRATIONS TEST: Observability, scheduler, skills, approvals"
   });
 
   // =========================================================================
-  // Phase 13: Skills (2 tests)
+  // Skills (2 tests)
   // =========================================================================
 
-  describe("Phase 13: Skills", () => {
+  describe("Skills", () => {
     it("skills.list returns skills", async () => {
       const resp = (await sendJsonRpc(
         ws,
@@ -368,10 +368,10 @@ describe("SYSTEM INTEGRATIONS TEST: Observability, scheduler, skills, approvals"
   });
 
   // =========================================================================
-  // Phase 14: Approvals (2 tests)
+  // Approvals (2 tests)
   // =========================================================================
 
-  describe("Phase 14: Approvals", () => {
+  describe("Approvals", () => {
     it("admin.approval.pending returns pending approvals", async () => {
       const resp = (await sendJsonRpc(
         ws,

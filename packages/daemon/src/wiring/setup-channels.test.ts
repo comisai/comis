@@ -686,7 +686,7 @@ describe("setupChannels", () => {
     });
 
     // -----------------------------------------------------------------------
-    // Cadence-aware cache-waste warn (Task 260505-f5l Layer 2)
+    // Cadence-aware cache-waste warn
     //
     // Guard fires only for kind: "every" jobs (where cadenceMs is a literal
     // number from the schedule). cron-expression and one-shot "at" schedules

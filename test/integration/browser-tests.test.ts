@@ -16,7 +16,7 @@
  * Tests run sequentially -- order matters (start -> use -> stop).
  * Chrome must be installed; suite is skipped if not found.
  *
- * Uses the daemon rpcCall pattern from Phase 33-02 (internal dispatch, not gateway WebSocket).
+ * Uses the daemon rpcCall pattern (internal dispatch, not gateway WebSocket).
  *
  * All test pages are served via a local HTTP server (data: URLs are blocked by
  * the SSRF protocol guard; about:blank is too simple for content assertions).
