@@ -11,6 +11,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { SandboxExecProvider } from "./sandbox/sandbox-exec-provider.js";
+import { BwrapProvider } from "./sandbox/bwrap-provider.js";
 import { createSecretManager } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -1368,6 +1369,39 @@ function canRealSandbox(): boolean {
 
 const realSandboxAvailable = canRealSandbox();
 
+// canRealBwrapSandbox: gate for the bwrap dev-sandbox matrix integration tests.
+// Linux + bwrap available + opt-in env flag (these tests touch the public
+// network and may take 60+ seconds — gating prevents accidental cost on local
+// `pnpm test`).
+function canRealBwrapSandbox(): boolean {
+  if (process.platform !== "linux") return false;
+  // eslint-disable-next-line no-restricted-syntax -- Test gate, opt-in only
+  if (process.env.COMIS_DEV_SANDBOX_INTEGRATION !== "1") return false;
+  const provider = new BwrapProvider();
+  if (!provider.available()) return false;
+  // Smoke test: actually run a trivial command in bwrap
+  const smokeDir = join(tmpdir(), `comis-bwrap-smoke-${Date.now()}`);
+  mkdirSync(smokeDir, { recursive: true });
+  try {
+    const args = provider.buildArgs({
+      workspacePath: smokeDir,
+      sharedPaths: [],
+      readOnlyPaths: [],
+      cwd: smokeDir,
+      tempDir: smokeDir,
+    });
+    const result = spawnSync(args[0], [...args.slice(1), "/bin/echo", "test"], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    return result.status === 0;
+  } finally {
+    try { rmSync(smokeDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+const realBwrapAvailable = canRealBwrapSandbox();
+
 describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
   let registry: ProcessRegistry;
   const tempDirs: string[] = [];
@@ -1958,5 +1992,119 @@ describe.skipIf(!HAVE_PYTHON3)("recovery hints (Python ModuleNotFoundError integ
     expect(details.stderr.startsWith("RECOVERY HINT:")).toBe(false);
     // Original error still present (runpy form, not the traceback form)
     expect(details.stderr).toContain("No module named");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Real bwrap dev-sandbox matrix integration tests (Linux only)
+// ---------------------------------------------------------------------------
+// These tests prove the exec sandbox is a working development environment for
+// every advertised language toolchain: npm/npx, pipx, uvx, cargo, go.
+//
+// Each test asserts (a) the install succeeds inside bwrap (proves RW binds
+// from getDevToolRwPaths and env redirects from wrapEnv work), and (b) the
+// installed binary is invocable on a SECOND exec call (proves PATH
+// augmentation in wrapEnv works).
+//
+// Gated by canRealBwrapSandbox() which checks Linux + bwrap availability +
+// COMIS_DEV_SANDBOX_INTEGRATION=1 (opt-in: needs network, ~60s per test).
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
+  let bwrapRegistry: ProcessRegistry;
+  const bwrapTempDirs: string[] = [];
+
+  function createTempDir(prefix: string): string {
+    const dir = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(dir, { recursive: true });
+    bwrapTempDirs.push(dir);
+    return dir;
+  }
+
+  function createBwrapConfig(): ExecSandboxConfig {
+    return {
+      sandbox: new BwrapProvider(),
+      sharedPaths: [],
+      readOnlyPaths: [],
+      configReadOnlyPaths: [],
+    };
+  }
+
+  beforeEach(() => {
+    bwrapRegistry = createProcessRegistry();
+  });
+
+  afterEach(async () => {
+    await bwrapRegistry?.cleanup();
+    for (const dir of bwrapTempDirs) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+    bwrapTempDirs.length = 0;
+  });
+
+  // Each matrix case: install a CLI, then on a second exec call invoke it.
+  // The second call validates PATH augmentation — without it, the binary
+  // exists on disk but `command -v <bin>` returns non-zero.
+
+  it("npx: runs npm-distributed CLI without persistent install", { timeout: 120_000 }, async () => {
+    const ws = createTempDir("comis-bwrap-npx");
+    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const result = await tool.execute("tc1", { command: "npx -y cowsay@1 hello", timeoutMs: 90_000 });
+    const details = result.details as { exitCode: number; stdout: string };
+    expect(details.exitCode).toBe(0);
+    expect(details.stdout).toContain("hello");
+  });
+
+  it("pipx: install + invoke survives across exec calls", { timeout: 180_000 }, async () => {
+    const ws = createTempDir("comis-bwrap-pipx");
+    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const installResult = await tool.execute("tc1", {
+      command: "pipx install --quiet pycowsay",
+      timeoutMs: 120_000,
+    });
+    expect((installResult.details as { exitCode: number }).exitCode).toBe(0);
+    // Second exec call — proves PATH includes <ws>/.local/bin
+    const invokeResult = await tool.execute("tc2", { command: "pycowsay hi", timeoutMs: 30_000 });
+    expect((invokeResult.details as { exitCode: number }).exitCode).toBe(0);
+  });
+
+  it("uvx: ephemeral run of pypi-distributed CLI", { timeout: 120_000 }, async () => {
+    const ws = createTempDir("comis-bwrap-uvx");
+    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const result = await tool.execute("tc1", {
+      command: "uvx --quiet cowsay -t hi",
+      timeoutMs: 90_000,
+    });
+    expect((result.details as { exitCode: number }).exitCode).toBe(0);
+  });
+
+  it("cargo: install + invoke survives across exec calls", { timeout: 600_000 }, async () => {
+    const ws = createTempDir("comis-bwrap-cargo");
+    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    // ripgrep is a stable, broadly available choice. The 540s timeout absorbs
+    // the cold-build cost on a fresh sandbox (no shared cargo cache).
+    const installResult = await tool.execute("tc1", {
+      command: "cargo install --quiet --locked ripgrep",
+      timeoutMs: 540_000,
+    });
+    expect((installResult.details as { exitCode: number }).exitCode).toBe(0);
+    // Second exec call — proves PATH includes <ws>/.cache/cargo/bin
+    const invokeResult = await tool.execute("tc2", { command: "rg --version", timeoutMs: 30_000 });
+    const invokeDetails = invokeResult.details as { exitCode: number; stdout: string };
+    expect(invokeDetails.exitCode).toBe(0);
+    expect(invokeDetails.stdout).toMatch(/ripgrep \d+/);
+  });
+
+  it("go: install + invoke survives across exec calls", { timeout: 300_000 }, async () => {
+    const ws = createTempDir("comis-bwrap-go");
+    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const installResult = await tool.execute("tc1", {
+      command: "go install rsc.io/2fa@latest",
+      timeoutMs: 240_000,
+    });
+    expect((installResult.details as { exitCode: number }).exitCode).toBe(0);
+    // Second exec call — proves PATH includes <ws>/.cache/go/bin
+    const invokeResult = await tool.execute("tc2", { command: "command -v 2fa", timeoutMs: 15_000 });
+    expect((invokeResult.details as { exitCode: number }).exitCode).toBe(0);
   });
 });
