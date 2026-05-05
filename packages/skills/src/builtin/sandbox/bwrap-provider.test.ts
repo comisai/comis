@@ -516,7 +516,11 @@ describe("BwrapProvider", () => {
       const provider = new BwrapProvider();
       const env = provider.wrapEnv({ PATH: "/usr/bin" }, "/tmp/ws");
 
-      expect(env.RUSTUP_HOME).toBe("/tmp/ws/.cache/rustup");
+      // RUSTUP_HOME points at the system rustup install (NOT workspace) so
+      // the multiplexer can find the toolchain on first call. CARGO_HOME stays
+      // workspace-rooted so `cargo install` outputs survive in the workspace.
+      // See bwrap-provider.ts comment for rationale.
+      expect(env.RUSTUP_HOME).toBe("/usr/local/rustup");
       expect(env.UV_TOOL_DIR).toBe("/tmp/ws/.cache/uv/tools");
       expect(env.PIPX_HOME).toBe("/tmp/ws/.cache/pipx");
       // PIPX_BIN_DIR aligns with PYTHONUSERBASE/bin so user-installed and

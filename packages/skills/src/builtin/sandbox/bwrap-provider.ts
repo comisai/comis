@@ -273,9 +273,18 @@ export class BwrapProvider implements SandboxProvider {
       GEM_HOME: path.join(cacheDir, "gems"),
       // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
       BUNDLE_PATH: path.join(cacheDir, "bundle"),
-      // Rust: rustup toolchain installs (paired with CARGO_HOME above).
-      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
-      RUSTUP_HOME: path.join(cacheDir, "rustup"),
+      // Rust: rustup multiplexer needs RUSTUP_HOME to locate the toolchain.
+      // Pointed at the system rustup install (written by install.sh's
+      // install_rust at /usr/local/rustup). A workspace-rooted RUSTUP_HOME
+      // would be empty on first call, breaking `cargo install <crate>` with
+      // "rustup could not choose a version of cargo to run, because no default
+      // is configured" — confirmed on a real VPS during the dev-sandbox matrix
+      // test. CARGO_HOME stays workspace-rooted (above) so `cargo install`
+      // outputs land in <workspace>/.cache/cargo/bin and survive.
+      // Tradeoff: agent loses the ability to `rustup install <toolchain>` from
+      // inside exec (would need RW to /usr/local/rustup). Acceptable — the
+      // canonical use case is `cargo install <crate>`, which works.
+      RUSTUP_HOME: "/usr/local/rustup",
       // uv: tool install dir for `uvx` / `uv tool install` (paired with UV_PYTHON_INSTALL_DIR above).
       // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
       UV_TOOL_DIR: path.join(cacheDir, "uv", "tools"),
