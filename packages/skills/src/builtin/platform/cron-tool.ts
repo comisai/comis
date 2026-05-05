@@ -75,7 +75,7 @@ const CronToolParams = Type.Object({
   // session strategy params
   session_strategy: Type.Optional(
     Type.Union([Type.Literal("fresh"), Type.Literal("rolling"), Type.Literal("accumulate")], {
-      description: "Session history strategy for recurring jobs. Valid values: fresh (new session each run), rolling (keep last N turns), accumulate (keep all history). Default: fresh",
+      description: "Session history strategy for recurring jobs. Valid values: fresh (new session each run; default and STRONGLY PREFERRED for cadences ≥ 10 minutes), rolling (keep last N turns; ONLY use when cadence < 5 minutes), accumulate (keep all history; rarely correct, leaks across runs). Rationale: cron uses a 5-minute prompt cache TTL, so any cadence longer than that wastes cache-write spend on rolling/accumulate — the cache is always cold by the next tick. Pick fresh unless cross-tick session memory is essential and cadence is < 5 minutes. Default: fresh",
     }),
   ),
   max_history_turns: Type.Optional(
