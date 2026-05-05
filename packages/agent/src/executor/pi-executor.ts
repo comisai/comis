@@ -107,7 +107,7 @@ import { validateInput } from "./executor-input-guard.js";
 import { scanWithOutputGuard } from "./executor-response-filter.js";
 import { normalizeModelCompat } from "../provider/model-compat.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
-import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";
+import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../provider/capabilities.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
 import { PromptTimeoutError } from "./prompt-timeout.js";
@@ -1528,6 +1528,15 @@ export function createPiExecutor(
               getTruncationSummary, getTurnBudgetSummary,
               executionPlanRef, sepEnabled, isOnboarding,
               geminiCacheHit, geminiCachedTokens, modelTier,
+              // 260505-gqe: provider attribution tag for the bookend log.
+              // resolvedModel?.provider is the post-resolution / post-override
+              // provider; falling back to config.provider records operator
+              // INTENT on the silent-fallback misconfig path (resolvedModel
+              // undefined). resolveProviderCapabilities is computed once here
+              // to keep executor-post-execution.ts free of capability-cascade
+              // imports.
+              provider: resolvedModel?.provider ?? config.provider,
+              providerFamily: resolveProviderCapabilities(resolvedModel?.provider ?? config.provider).providerFamily,
               deferralResult, mergedCustomTools, deliveredGuides,
               deps: {
                 eventBus: deps.eventBus,

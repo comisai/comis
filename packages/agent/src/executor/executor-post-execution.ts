@@ -131,6 +131,21 @@ export interface PostExecutionParams {
   geminiCacheHit: boolean;
   geminiCachedTokens: number;
   modelTier: string | undefined;
+  /**
+   * Provider used for this execution. Sourced from `resolvedModel.provider` in
+   * pi-executor when available; falls back to `config.provider` when the
+   * misconfig silent-fallback path triggers (resolvedModel undefined). The
+   * fallback value records operator INTENT — the actual provider chosen by
+   * pi-coding-agent's silent-fallback logic is opaque at this layer, and intent
+   * is the more useful signal for operator-side cache-hit-rate segmentation.
+   */
+  provider: string;
+  /**
+   * Provider family derived from `resolveProviderCapabilities(provider).providerFamily`.
+   * One of "anthropic" | "openai" | "google" | "default". Pre-computed at the
+   * call site (pi-executor) so this module stays free of capability-cascade dependencies.
+   */
+  providerFamily: string;
   deferralResult: { deferredCount: number };
   mergedCustomTools: Array<{ name: string }>;
   deliveredGuides: Set<string>;
@@ -291,6 +306,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     getTruncationSummary, getTurnBudgetSummary,
     executionPlanRef, isOnboarding,
     geminiCacheHit, geminiCachedTokens, modelTier,
+    provider, providerFamily,
     deferralResult, mergedCustomTools, deliveredGuides,
     deps, sessionAdapter,
     executionCacheRetentionClear, adaptiveRetentionClear,
@@ -446,6 +462,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       geminiCacheHit,
       geminiCachedTokens,
       modelTier,
+      provider,
+      providerFamily,
       deferredCount: deferralResult.deferredCount,
       activeToolCount: mergedCustomTools.length,
       guidesDelivered: deliveredGuides.size,

@@ -999,6 +999,72 @@ describe("PiExecutor", () => {
       expect(fields.signatureScrubs).toBeGreaterThanOrEqual(0);
       expect(fields.signatureScrubsToolCallsAffected).toBeTypeOf("number");
       expect(fields.signatureScrubsToolCallsAffected).toBeGreaterThanOrEqual(0);
+      // 260505-gqe: provider attribution tag — unblocks operator queries
+      // segmenting cache-hit-rate / cost by provider. Default mock returns
+      // resolvedModel.provider === "anthropic", which maps to providerFamily
+      // "anthropic" via PROVIDER_OVERRIDES in capabilities.ts.
+      expect(fields.provider).toBe("anthropic");
+      expect(fields.providerFamily).toBe("anthropic");
+      expect(fields.provider).toBeTypeOf("string");
+      expect(fields.providerFamily).toBeTypeOf("string");
+    });
+
+    // 260505-gqe: silent-fallback path — operator INTENT semantics.
+    // When modelRegistry.find returns undefined (e.g., misconfig:
+    // provider:anthropic + model:gpt-5.5 doesn't resolve), pi-coding-agent
+    // silently falls back to whatever built-in provider has env-var
+    // credentials. That fallback target is opaque to us at this layer, so
+    // we record the configured provider (operator INTENT) — the more
+    // useful signal for cache-hit-rate segmentation than the opaque
+    // resolved fallback target.
+    it("falls back to config.provider when resolvedModel is undefined (silent-fallback misconfig path)", async () => {
+      const deps = createMockDeps({
+        modelRegistry: {
+          find: vi.fn().mockReturnValue(undefined),
+          getAll: vi.fn().mockReturnValue([]),
+          getAvailable: vi.fn().mockReturnValue([]),
+        } as any,
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-fallback");
+
+      const infoCalls = (deps.logger.info as Mock).mock.calls;
+      const bookendCall = infoCalls.find(
+        ([_fields, msg]: [any, string]) => msg === "Execution complete",
+      );
+      expect(bookendCall).toBeDefined();
+      const [fields] = bookendCall!;
+      // testConfig.provider === "anthropic" — the configured intent.
+      expect(fields.provider).toBe("anthropic");
+      // resolveProviderCapabilities("anthropic").providerFamily === "anthropic".
+      expect(fields.providerFamily).toBe("anthropic");
+    });
+
+    // 260505-gqe: post-resolution provider — codex example. When the
+    // registry resolves to openai-codex, both fields reflect the
+    // POST-resolution / POST-override provider, and providerFamily is
+    // mapped via PROVIDER_OVERRIDES (openai-codex → "openai").
+    it("providerFamily reflects post-resolution provider (codex example)", async () => {
+      const deps = createMockDeps({
+        modelRegistry: {
+          find: vi.fn().mockReturnValue({ provider: "openai-codex", id: "gpt-5-codex" }),
+          getAll: vi.fn().mockReturnValue([]),
+          getAvailable: vi.fn().mockReturnValue([]),
+        } as any,
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-codex");
+
+      const infoCalls = (deps.logger.info as Mock).mock.calls;
+      const bookendCall = infoCalls.find(
+        ([_fields, msg]: [any, string]) => msg === "Execution complete",
+      );
+      expect(bookendCall).toBeDefined();
+      const [fields] = bookendCall!;
+      expect(fields.provider).toBe("openai-codex");
+      expect(fields.providerFamily).toBe("openai");
     });
 
     // 260504-ieh: zero-default test — ensures the four counter fields are
