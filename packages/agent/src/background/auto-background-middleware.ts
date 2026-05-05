@@ -12,6 +12,7 @@ import { suppressError } from "@comis/shared";
 import type { BackgroundTasksConfig } from "@comis/core";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { BackgroundTaskManager, NotifyFn } from "./background-task-manager.js";
+import type { BackgroundTaskOrigin } from "./background-task-types.js";
 
 /**
  * Tool definition interface matching pi-agent-core ToolDefinition.
@@ -38,6 +39,15 @@ export interface ToolDefinition {
 /**
  * Wrap a tool's execute() with auto-background promotion on timeout.
  *
+ * `originResolver` is called synchronously at promote-time (before the agent
+ * yields) so the captured origin reflects the originating session, not the
+ * background continuation context. Returns undefined when the wrap-site cannot
+ * resolve a valid origin (e.g., during a non-session-bound subagent path) --
+ * in that case the wrapper falls through to foreground execution (no promote).
+ *
+ * Per D-02: explicit threading, NOT AsyncLocalStorage. Origin flows through
+ * factory params end-to-end.
+ *
  * If the tool is in `config.excludeTools`, returns unchanged.
  * If the tool completes before `config.autoBackgroundMs`, returns the result directly.
  * If the tool exceeds the timeout, promotes to background via manager.promote().
@@ -48,7 +58,7 @@ export function wrapToolForAutoBackground(
   manager: BackgroundTaskManager,
   config: BackgroundTasksConfig,
   notifyFn: NotifyFn,
-  agentId: string,
+  originResolver: () => BackgroundTaskOrigin | undefined,
 ): ToolDefinition {
   if (config.excludeTools.includes(tool.name)) {
     return tool;
@@ -99,8 +109,17 @@ export function wrapToolForAutoBackground(
         return raceResult.value;
       }
 
-      // Timeout: attempt background promotion
-      const promoteResult = manager.promote(agentId, tool.name, taskPromise, ac);
+      // Timeout: resolve origin synchronously before yielding to the background.
+      // Per D-02: explicit threading, NOT AsyncLocalStorage.
+      const origin = originResolver();
+      if (!origin) {
+        // No originating session context (e.g., wrap-site is a subagent without
+        // a captured caller session). Treat like a concurrency-limit fallback:
+        // run the tool in the foreground, no background promotion.
+        return await taskPromise;
+      }
+
+      const promoteResult = manager.promote(tool.name, taskPromise, ac, origin);
       if (!promoteResult.ok) {
         // Concurrency limit hit: fall back to foreground (await normally)
         return await taskPromise;
@@ -126,7 +145,7 @@ export function wrapToolForAutoBackground(
       // cascade (see AGENTS.md / auto-background-middleware.test.ts invariant).
       const placeholderText =
         `Tool "${tool.name}" is taking longer than expected and has been moved to the background. ` +
-        `Task ID: ${taskId}. The user will be notified when it completes.`;
+        `Task ID: ${taskId}. I'll continue when it completes.`;
       return {
         content: [{ type: "text" as const, text: placeholderText }],
         details: {

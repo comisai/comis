@@ -6,6 +6,7 @@
  */
 
 import type { BackgroundTaskOrigin } from "@comis/core";
+export type { BackgroundTaskOrigin };
 
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "cancelled";
 

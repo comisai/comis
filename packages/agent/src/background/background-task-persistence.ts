@@ -89,7 +89,14 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
       const filePath = safePath(agentDir, file);
       try {
         const raw = readFileSync(filePath, "utf-8");
-        const task = JSON.parse(raw) as PersistedTaskState;
+        const parsed = JSON.parse(raw) as Partial<PersistedTaskState>;
+        // Sanity guard: skip completely malformed files (no id or toolName).
+        // Files missing origin (pre-Phase-14) are passed through to the manager
+        // so recoverOnStartup can warn about them and track the skip count.
+        if (!parsed.id || !parsed.toolName) {
+          continue;
+        }
+        const task = parsed as PersistedTaskState;
         if (task.status === "running") {
           task.status = "failed";
           task.error = "Daemon restarted while task was running";
