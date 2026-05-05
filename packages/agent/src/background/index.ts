@@ -6,6 +6,7 @@
  */
 
 export type { BackgroundTask, BackgroundTaskStatus, PersistedTaskState } from "./background-task-types.js";
+export type { BackgroundTaskOrigin } from "@comis/core";
 export {
   persistTaskSync,
   loadTask,
