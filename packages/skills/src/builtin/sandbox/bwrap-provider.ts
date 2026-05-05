@@ -86,6 +86,41 @@ function getClaudeCodeRwPaths(home: string): string[] {
   ].filter((p) => existsSync(p));
 }
 
+/**
+ * Per-user XDG paths that need read-write access for language package managers.
+ *
+ * These paths MUST match the systemd ReadWritePaths in
+ * packages/daemon/systemd/comis.service.template. Without RW access here,
+ * package managers writing to standard XDG paths (npm, uv, pipx, cargo, go,
+ * deno, bun) fail with EROFS at the bwrap mount layer even when the outer
+ * systemd sandbox permits the write.
+ *
+ * Why these specific paths:
+ * - ~/.npm     -- npm/npx default cache + global modules root.
+ * - ~/.cache   -- XDG_CACHE_HOME default; uv archives, deno cache, bun cache,
+ *                pip wheel cache, cargo registry cache, go module cache.
+ *                wrapEnv() also redirects most caches into the workspace, but
+ *                some tools (e.g. uv's archive cache) still touch ~/.cache
+ *                during early bootstrap before env vars take effect.
+ * - ~/.local/share -- XDG_DATA_HOME default; uvx tool installs, pipx venvs,
+ *                    rustup toolchains, generic XDG_DATA consumers.
+ *
+ * Note: this returns a subset of paths bound RO by getUserRoPaths
+ * (specifically ~/.local). The RW bind is emitted AFTER the RO bind in
+ * buildArgs, which causes bwrap to apply the more-permissive RW mount on
+ * top of the RO mount for the ~/.local/share subpath. ~/.local itself
+ * remains RO; only ~/.local/share becomes RW.
+ */
+function getDevToolRwPaths(home: string): string[] {
+  /* eslint-disable no-restricted-syntax -- Trusted: constant subpaths of homedir, no user input */
+  return [
+    path.join(home, ".npm"),
+    path.join(home, ".cache"),
+    path.join(home, ".local", "share"),
+  /* eslint-enable no-restricted-syntax */
+  ].filter((p) => existsSync(p));
+}
+
 export class BwrapProvider implements SandboxProvider {
   readonly name = "bwrap";
 
@@ -145,6 +180,15 @@ export class BwrapProvider implements SandboxProvider {
     // -- claude CLI paths (read-write) --
     for (const cp of getClaudeCodeRwPaths(os.homedir())) {
       args.push("--bind", cp, cp);
+    }
+
+    // -- Dev tool RW paths (read-write) --
+    // MUST come after getUserRoPaths above so the RW bind for ~/.local/share
+    // overrides the RO bind for ~/.local. MUST come before the discovery
+    // readOnlyPaths loop below so caller-supplied RO can't shadow these.
+    // Mirror of systemd ReadWritePaths in comis.service.template.
+    for (const dp of getDevToolRwPaths(os.homedir())) {
+      args.push("--bind", dp, dp);
     }
 
     // -- Read-only paths (discovery paths, custom) --

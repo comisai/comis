@@ -249,6 +249,149 @@ describe("BwrapProvider", () => {
       expect(hasBind("/home/testuser/.local/share/claude")).toBe(true);
     });
 
+    // -- Dev tool RW paths (XDG paths aligned with systemd ReadWritePaths) --
+
+    it("rw-binds ~/.npm, ~/.cache, and ~/.local/share when they all exist", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+      vi.mocked(existsSync).mockImplementation((p) => {
+        const existing = [
+          "/home/testuser/.npm",
+          "/home/testuser/.cache",
+          "/home/testuser/.local/share",
+        ];
+        return existing.includes(String(p));
+      });
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts());
+
+      const hasBindTriple = (target: string) => {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--bind" && args[i + 1] === target && args[i + 2] === target) {
+            return true;
+          }
+        }
+        return false;
+      };
+      expect(hasBindTriple("/home/testuser/.npm")).toBe(true);
+      expect(hasBindTriple("/home/testuser/.cache")).toBe(true);
+      expect(hasBindTriple("/home/testuser/.local/share")).toBe(true);
+    });
+
+    it("rw-binds ~/.local/share AFTER ro-binding ~/.local so RW overrides RO", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+      vi.mocked(existsSync).mockImplementation((p) => {
+        const existing = [
+          "/home/testuser/.local",         // from getUserRoPaths → ro-bound
+          "/home/testuser/.local/share",   // from getDevToolRwPaths → rw-bound, MUST come after
+          "/home/testuser/.cache",
+          "/home/testuser/.npm",
+        ];
+        return existing.includes(String(p));
+      });
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts());
+
+      // Locate the --ro-bind /home/testuser/.local triple and the
+      // --bind /home/testuser/.local/share triple.
+      let roLocalIdx = -1;
+      let rwLocalShareIdx = -1;
+      for (let i = 0; i < args.length - 2; i++) {
+        if (
+          args[i] === "--ro-bind" &&
+          args[i + 1] === "/home/testuser/.local" &&
+          args[i + 2] === "/home/testuser/.local"
+        ) {
+          roLocalIdx = i;
+        }
+        if (
+          args[i] === "--bind" &&
+          args[i + 1] === "/home/testuser/.local/share" &&
+          args[i + 2] === "/home/testuser/.local/share"
+        ) {
+          rwLocalShareIdx = i;
+        }
+      }
+      expect(roLocalIdx).toBeGreaterThan(-1);
+      expect(rwLocalShareIdx).toBeGreaterThan(-1);
+      // The RW bind for the .local/share subpath MUST appear AFTER the RO bind
+      // for .local so bwrap applies the more-permissive mount on top.
+      expect(rwLocalShareIdx).toBeGreaterThan(roLocalIdx);
+    });
+
+    it("rw-binds dev tool paths BEFORE the discovery readOnlyPaths loop", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+      vi.mocked(existsSync).mockImplementation((p) => {
+        const existing = [
+          "/home/testuser/.npm",
+          "/home/testuser/.cache",
+          "/home/testuser/.local/share",
+          "/opt/discovery-ro",
+        ];
+        return existing.includes(String(p));
+      });
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(
+        makeOpts({ readOnlyPaths: ["/opt/discovery-ro"] }),
+      );
+
+      let rwCacheIdx = -1;
+      let roDiscoveryIdx = -1;
+      for (let i = 0; i < args.length - 2; i++) {
+        if (
+          args[i] === "--bind" &&
+          args[i + 1] === "/home/testuser/.cache" &&
+          args[i + 2] === "/home/testuser/.cache"
+        ) {
+          rwCacheIdx = i;
+        }
+        if (
+          args[i] === "--ro-bind" &&
+          args[i + 1] === "/opt/discovery-ro" &&
+          args[i + 2] === "/opt/discovery-ro"
+        ) {
+          roDiscoveryIdx = i;
+        }
+      }
+      expect(rwCacheIdx).toBeGreaterThan(-1);
+      expect(roDiscoveryIdx).toBeGreaterThan(-1);
+      // Dev tool RW MUST come before discovery RO so caller-supplied RO can't
+      // shadow these (i.e. user can't accidentally disable XDG RW by passing
+      // a parent path in readOnlyPaths).
+      expect(rwCacheIdx).toBeLessThan(roDiscoveryIdx);
+    });
+
+    it("skips dev tool paths that don't exist (e.g. ~/.npm missing)", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+      vi.mocked(existsSync).mockImplementation((p) => {
+        // ~/.npm intentionally missing
+        const existing = [
+          "/home/testuser/.cache",
+          "/home/testuser/.local/share",
+        ];
+        return existing.includes(String(p));
+      });
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts());
+
+      const hasBindTriple = (target: string) => {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--bind" && args[i + 1] === target && args[i + 2] === target) {
+            return true;
+          }
+        }
+        return false;
+      };
+      // .cache and .local/share present
+      expect(hasBindTriple("/home/testuser/.cache")).toBe(true);
+      expect(hasBindTriple("/home/testuser/.local/share")).toBe(true);
+      // .npm missing → no bind triple for it
+      expect(hasBindTriple("/home/testuser/.npm")).toBe(false);
+    });
+
     it("includes isolation flags: --unshare-all, --share-net, --die-with-parent, --new-session", () => {
       vi.mocked(existsSync).mockReturnValue(false);
 
