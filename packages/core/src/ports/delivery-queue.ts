@@ -78,6 +78,20 @@ export interface DeliveryQueuePort {
   enqueue(entry: DeliveryQueueEnqueueInput): Promise<Result<string, Error>>;
 
   /**
+   * Enqueue a new outbound message with status='in_flight' (process-local lease).
+   *
+   * Used by the channel-side synchronous-send path: insert as 'in_flight' so the
+   * recurring drainer's `WHERE status='pending'` filter does not race-pick the row
+   * mid-send. Same semantics as enqueue() except for the initial status.
+   * On crash, the startup sweep (recoverInFlight) resets these rows back to 'pending'.
+   *
+   * Emits delivery:enqueued (same event as enqueue()) -- universal observability.
+   *
+   * @returns The assigned entry ID on success.
+   */
+  enqueueInFlight(entry: DeliveryQueueEnqueueInput): Promise<Result<string, Error>>;
+
+  /**
    * Mark an entry as successfully delivered.
    * @param id - The queue entry ID
    * @param messageId - The platform-assigned message ID
@@ -121,6 +135,17 @@ export interface DeliveryQueuePort {
    * @param channelType - Optional filter to restrict counts to a specific channel.
    */
   statusCounts(channelType?: string): Promise<Result<DeliveryQueueStatusCounts, Error>>;
+
+  /**
+   * Reset all rows with status='in_flight' to status='pending', clearing last_error.
+   *
+   * Called once at daemon startup before the existing startup drain. Treats
+   * 'in_flight' as a process-local lease -- any in_flight row left over from a
+   * prior daemon process is by definition stale and must be re-attempted.
+   *
+   * @returns The number of rows recovered (transitioned in_flight -> pending).
+   */
+  recoverInFlight(): Promise<Result<number, Error>>;
 }
 
 /**
@@ -133,6 +158,7 @@ export interface DeliveryQueuePort {
 export function createNoOpDeliveryQueue(): DeliveryQueuePort {
   return Object.freeze({
     enqueue: () => Promise.resolve(ok(randomUUID())),
+    enqueueInFlight: () => Promise.resolve(ok(randomUUID())),
     ack: () => Promise.resolve(ok(undefined)),
     nack: () => Promise.resolve(ok(undefined)),
     fail: () => Promise.resolve(ok(undefined)),
@@ -140,5 +166,6 @@ export function createNoOpDeliveryQueue(): DeliveryQueuePort {
     pruneExpired: () => Promise.resolve(ok(0)),
     depth: () => Promise.resolve(ok(0)),
     statusCounts: () => Promise.resolve(ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 })),
+    recoverInFlight: () => Promise.resolve(ok(0)),
   });
 }
