@@ -29,3 +29,9 @@ export type {
   ToolDefinition,
 } from "./auto-background-middleware.js";
 export { formatCompletionAnnouncement, TRAILING_INSTRUCTION } from "./completion-formatter.js";
+export { createBackgroundCompletionRunner } from "./completion-runner.js";
+export type {
+  BackgroundCompletionRunner,
+  BackgroundCompletionRunnerDeps,
+  RunnerSessionStore,
+} from "./completion-runner.js";
