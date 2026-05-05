@@ -30,8 +30,8 @@ describe("background_tasks tool", () => {
   describe("list action", () => {
     it("returns all tasks for the agent as JSON array", async () => {
       const tasks = [
-        { id: "t1", agentId: AGENT_ID, toolName: "web_fetch", status: "running" as const, startedAt: 1000 },
-        { id: "t2", agentId: AGENT_ID, toolName: "exec", status: "completed" as const, startedAt: 2000, completedAt: 3000 },
+        { id: "t1", origin: { agentId: AGENT_ID }, toolName: "web_fetch", status: "running" as const, startedAt: 1000 },
+        { id: "t2", origin: { agentId: AGENT_ID }, toolName: "exec", status: "completed" as const, startedAt: 2000, completedAt: 3000 },
       ];
       manager = createMockManager({ getTasks: vi.fn(() => tasks) });
       const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
@@ -58,7 +58,7 @@ describe("background_tasks tool", () => {
   describe("get action", () => {
     it("returns task details for valid taskId", async () => {
       const task = {
-        id: "t1", agentId: AGENT_ID, toolName: "web_fetch",
+        id: "t1", origin: { agentId: AGENT_ID }, toolName: "web_fetch",
         status: "completed" as const, startedAt: 1000, completedAt: 2000,
         result: '"done"',
       };
@@ -84,7 +84,7 @@ describe("background_tasks tool", () => {
 
     it("returns error when task belongs to different agent", async () => {
       const task = {
-        id: "t1", agentId: "other-agent", toolName: "web_fetch",
+        id: "t1", origin: { agentId: "other-agent" }, toolName: "web_fetch",
         status: "running" as const, startedAt: 1000,
       };
       manager = createMockManager({ getTask: vi.fn(() => task) });
@@ -99,7 +99,7 @@ describe("background_tasks tool", () => {
 
   describe("cancel action", () => {
     it("cancels a valid running task", async () => {
-      const task = { id: "t1", agentId: AGENT_ID, toolName: "exec", status: "running" as const, startedAt: 1000 };
+      const task = { id: "t1", origin: { agentId: AGENT_ID }, toolName: "exec", status: "running" as const, startedAt: 1000 };
       manager = createMockManager({
         getTask: vi.fn(() => task),
         cancel: vi.fn(() => ok(undefined)),
@@ -114,7 +114,7 @@ describe("background_tasks tool", () => {
     });
 
     it("returns error for non-running task", async () => {
-      const task = { id: "t1", agentId: AGENT_ID, toolName: "exec", status: "running" as const, startedAt: 1000 };
+      const task = { id: "t1", origin: { agentId: AGENT_ID }, toolName: "exec", status: "running" as const, startedAt: 1000 };
       manager = createMockManager({
         getTask: vi.fn(() => task),
         cancel: vi.fn(() => err(new Error("Task t1 is not running"))),
@@ -128,7 +128,7 @@ describe("background_tasks tool", () => {
     });
 
     it("returns error when task belongs to different agent", async () => {
-      const task = { id: "t1", agentId: "other-agent", toolName: "exec", status: "running" as const, startedAt: 1000 };
+      const task = { id: "t1", origin: { agentId: "other-agent" }, toolName: "exec", status: "running" as const, startedAt: 1000 };
       manager = createMockManager({ getTask: vi.fn(() => task) });
       const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
 
@@ -142,7 +142,7 @@ describe("background_tasks tool", () => {
   describe("read_output action", () => {
     it("returns result for completed task", async () => {
       const task = {
-        id: "t1", agentId: AGENT_ID, toolName: "web_fetch",
+        id: "t1", origin: { agentId: AGENT_ID }, toolName: "web_fetch",
         status: "completed" as const, startedAt: 1000, completedAt: 2000,
         result: '{"data":"hello"}',
       };
@@ -157,7 +157,7 @@ describe("background_tasks tool", () => {
 
     it("returns still running message for running task", async () => {
       const task = {
-        id: "t1", agentId: AGENT_ID, toolName: "web_fetch",
+        id: "t1", origin: { agentId: AGENT_ID }, toolName: "web_fetch",
         status: "running" as const, startedAt: 1000,
       };
       manager = createMockManager({ getTask: vi.fn(() => task) });
@@ -171,7 +171,7 @@ describe("background_tasks tool", () => {
 
     it("returns failure message for failed task", async () => {
       const task = {
-        id: "t1", agentId: AGENT_ID, toolName: "web_fetch",
+        id: "t1", origin: { agentId: AGENT_ID }, toolName: "web_fetch",
         status: "failed" as const, startedAt: 1000, completedAt: 2000,
         error: "Connection timeout",
       };
@@ -187,7 +187,7 @@ describe("background_tasks tool", () => {
 
     it("returns cancelled message for cancelled task", async () => {
       const task = {
-        id: "t1", agentId: AGENT_ID, toolName: "web_fetch",
+        id: "t1", origin: { agentId: AGENT_ID }, toolName: "web_fetch",
         status: "cancelled" as const, startedAt: 1000, completedAt: 2000,
       };
       manager = createMockManager({ getTask: vi.fn(() => task) });
