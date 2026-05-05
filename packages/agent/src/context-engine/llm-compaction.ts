@@ -352,25 +352,7 @@ export function createLlmCompactionLayer(
           }
         }
 
-        // Step 4: Unified log (conditional spread keeps JSON shape clean).
-        deps.logger.warn(
-          {
-            messageCount,
-            ...(blockCountExceeded
-              ? { blockThreshold, trigger: "block_count" as const }
-              : { contextTokens, thresholdTokens, trigger: "token_threshold" as const }),
-            windowTokens: budget.windowTokens,
-            errorKind: "resource" as const,
-            hint: blockCountExceeded
-              ? "Message count approaching breakpoint lookback limit; compacting to prevent cache fragmentation"
-              : "Context approaching capacity; LLM compaction will summarize older messages to free space",
-          },
-          blockCountExceeded
-            ? "LLM compaction triggered: message count exceeds cache lookback threshold"
-            : "LLM compaction triggered: context exceeds 85% threshold",
-        );
-
-        // Step 5: Resolve model
+        // Step 4: Resolve model
         /* eslint-disable @typescript-eslint/no-explicit-any */
         let model: any;
         let apiKey: string;
@@ -449,10 +431,32 @@ export function createLlmCompactionLayer(
         // Zone 2: Middle (to be summarized)
         const middleMessages = messages.slice(headEndIndex, tailStartIndex);
 
-        // Skip if middle is empty or too small to warrant summarization
+        // Skip if middle is empty or too small to warrant summarization.
+        // Reset the cooldown counter so we don't re-evaluate (and re-warn)
+        // on every subsequent turn when the conversation shape stays this way.
         if (middleMessages.length < MIN_MIDDLE_MESSAGES_FOR_COMPACTION) {
+          turnsSinceLastCompaction = 0;
           return messages;
         }
+
+        // Trigger log fires only when compaction will actually run, so log
+        // volume reflects real compaction work (not infeasibility re-checks).
+        deps.logger.warn(
+          {
+            messageCount,
+            ...(blockCountExceeded
+              ? { blockThreshold, trigger: "block_count" as const }
+              : { contextTokens, thresholdTokens, trigger: "token_threshold" as const }),
+            windowTokens: budget.windowTokens,
+            errorKind: "resource" as const,
+            hint: blockCountExceeded
+              ? "Message count approaching breakpoint lookback limit; compacting to prevent cache fragmentation"
+              : "Context approaching capacity; LLM compaction will summarize older messages to free space",
+          },
+          blockCountExceeded
+            ? "LLM compaction triggered: message count exceeds cache lookback threshold"
+            : "LLM compaction triggered: context exceeds 85% threshold",
+        );
 
         // Step 7: Summarize ONLY the middle zone (do NOT pass head or tail to generateSummary)
         const compactionResult = await compactWithFallback(

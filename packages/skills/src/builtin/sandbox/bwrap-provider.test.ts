@@ -249,6 +249,149 @@ describe("BwrapProvider", () => {
       expect(hasBind("/home/testuser/.local/share/claude")).toBe(true);
     });
 
+    // -- Dev tool RW paths (XDG paths aligned with systemd ReadWritePaths) --
+
+    it("rw-binds ~/.npm, ~/.cache, and ~/.local/share when they all exist", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+      vi.mocked(existsSync).mockImplementation((p) => {
+        const existing = [
+          "/home/testuser/.npm",
+          "/home/testuser/.cache",
+          "/home/testuser/.local/share",
+        ];
+        return existing.includes(String(p));
+      });
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts());
+
+      const hasBindTriple = (target: string) => {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--bind" && args[i + 1] === target && args[i + 2] === target) {
+            return true;
+          }
+        }
+        return false;
+      };
+      expect(hasBindTriple("/home/testuser/.npm")).toBe(true);
+      expect(hasBindTriple("/home/testuser/.cache")).toBe(true);
+      expect(hasBindTriple("/home/testuser/.local/share")).toBe(true);
+    });
+
+    it("rw-binds ~/.local/share AFTER ro-binding ~/.local so RW overrides RO", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+      vi.mocked(existsSync).mockImplementation((p) => {
+        const existing = [
+          "/home/testuser/.local",         // from getUserRoPaths → ro-bound
+          "/home/testuser/.local/share",   // from getDevToolRwPaths → rw-bound, MUST come after
+          "/home/testuser/.cache",
+          "/home/testuser/.npm",
+        ];
+        return existing.includes(String(p));
+      });
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts());
+
+      // Locate the --ro-bind /home/testuser/.local triple and the
+      // --bind /home/testuser/.local/share triple.
+      let roLocalIdx = -1;
+      let rwLocalShareIdx = -1;
+      for (let i = 0; i < args.length - 2; i++) {
+        if (
+          args[i] === "--ro-bind" &&
+          args[i + 1] === "/home/testuser/.local" &&
+          args[i + 2] === "/home/testuser/.local"
+        ) {
+          roLocalIdx = i;
+        }
+        if (
+          args[i] === "--bind" &&
+          args[i + 1] === "/home/testuser/.local/share" &&
+          args[i + 2] === "/home/testuser/.local/share"
+        ) {
+          rwLocalShareIdx = i;
+        }
+      }
+      expect(roLocalIdx).toBeGreaterThan(-1);
+      expect(rwLocalShareIdx).toBeGreaterThan(-1);
+      // The RW bind for the .local/share subpath MUST appear AFTER the RO bind
+      // for .local so bwrap applies the more-permissive mount on top.
+      expect(rwLocalShareIdx).toBeGreaterThan(roLocalIdx);
+    });
+
+    it("rw-binds dev tool paths BEFORE the discovery readOnlyPaths loop", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+      vi.mocked(existsSync).mockImplementation((p) => {
+        const existing = [
+          "/home/testuser/.npm",
+          "/home/testuser/.cache",
+          "/home/testuser/.local/share",
+          "/opt/discovery-ro",
+        ];
+        return existing.includes(String(p));
+      });
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(
+        makeOpts({ readOnlyPaths: ["/opt/discovery-ro"] }),
+      );
+
+      let rwCacheIdx = -1;
+      let roDiscoveryIdx = -1;
+      for (let i = 0; i < args.length - 2; i++) {
+        if (
+          args[i] === "--bind" &&
+          args[i + 1] === "/home/testuser/.cache" &&
+          args[i + 2] === "/home/testuser/.cache"
+        ) {
+          rwCacheIdx = i;
+        }
+        if (
+          args[i] === "--ro-bind" &&
+          args[i + 1] === "/opt/discovery-ro" &&
+          args[i + 2] === "/opt/discovery-ro"
+        ) {
+          roDiscoveryIdx = i;
+        }
+      }
+      expect(rwCacheIdx).toBeGreaterThan(-1);
+      expect(roDiscoveryIdx).toBeGreaterThan(-1);
+      // Dev tool RW MUST come before discovery RO so caller-supplied RO can't
+      // shadow these (i.e. user can't accidentally disable XDG RW by passing
+      // a parent path in readOnlyPaths).
+      expect(rwCacheIdx).toBeLessThan(roDiscoveryIdx);
+    });
+
+    it("skips dev tool paths that don't exist (e.g. ~/.npm missing)", () => {
+      vi.mocked(os.homedir).mockReturnValue("/home/testuser");
+      vi.mocked(existsSync).mockImplementation((p) => {
+        // ~/.npm intentionally missing
+        const existing = [
+          "/home/testuser/.cache",
+          "/home/testuser/.local/share",
+        ];
+        return existing.includes(String(p));
+      });
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts());
+
+      const hasBindTriple = (target: string) => {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--bind" && args[i + 1] === target && args[i + 2] === target) {
+            return true;
+          }
+        }
+        return false;
+      };
+      // .cache and .local/share present
+      expect(hasBindTriple("/home/testuser/.cache")).toBe(true);
+      expect(hasBindTriple("/home/testuser/.local/share")).toBe(true);
+      // .npm missing → no bind triple for it
+      expect(hasBindTriple("/home/testuser/.npm")).toBe(false);
+    });
+
     it("includes isolation flags: --unshare-all, --share-net, --die-with-parent, --new-session", () => {
       vi.mocked(existsSync).mockReturnValue(false);
 
@@ -355,15 +498,100 @@ describe("BwrapProvider", () => {
       expect(env.BUNDLE_PATH).toBe("/home/agent/workspace/.cache/bundle");
     });
 
-    it("preserves existing env vars", () => {
+    it("preserves existing non-PATH env vars (CUSTOM_VAR untouched)", () => {
       const provider = new BwrapProvider();
       const env = provider.wrapEnv(
         { PATH: "/usr/bin", CUSTOM_VAR: "hello" },
         "/home/agent/workspace",
       );
 
-      expect(env.PATH).toBe("/usr/bin");
+      // PATH gets augmented (asserted in dedicated tests below).
+      // Non-PATH vars must be carried through verbatim.
       expect(env.CUSTOM_VAR).toBe("hello");
+    });
+
+    // -- New toolchain env vars (Task 3) --
+
+    it("sets RUSTUP_HOME, UV_TOOL_DIR, PIPX_HOME, PIPX_BIN_DIR, PNPM_HOME, BUN_INSTALL, DENO_DIR, YARN_CACHE_FOLDER", () => {
+      const provider = new BwrapProvider();
+      const env = provider.wrapEnv({ PATH: "/usr/bin" }, "/tmp/ws");
+
+      // RUSTUP_HOME points at the system rustup install (NOT workspace) so
+      // the multiplexer can find the toolchain on first call. CARGO_HOME stays
+      // workspace-rooted so `cargo install` outputs survive in the workspace.
+      // See bwrap-provider.ts comment for rationale.
+      expect(env.RUSTUP_HOME).toBe("/usr/local/rustup");
+      expect(env.UV_TOOL_DIR).toBe("/tmp/ws/.cache/uv/tools");
+      expect(env.PIPX_HOME).toBe("/tmp/ws/.cache/pipx");
+      // PIPX_BIN_DIR aligns with PYTHONUSERBASE/bin so user-installed and
+      // pipx-installed CLIs share a single PATH entry.
+      expect(env.PIPX_BIN_DIR).toBe("/tmp/ws/.local/bin");
+      expect(env.PNPM_HOME).toBe("/tmp/ws/.cache/pnpm");
+      expect(env.BUN_INSTALL).toBe("/tmp/ws/.cache/bun");
+      expect(env.DENO_DIR).toBe("/tmp/ws/.cache/deno");
+      expect(env.YARN_CACHE_FOLDER).toBe("/tmp/ws/.cache/yarn");
+    });
+
+    it("preserves all pre-existing env redirects (regression guard)", () => {
+      const provider = new BwrapProvider();
+      const env = provider.wrapEnv({ PATH: "/usr/bin" }, "/tmp/ws");
+
+      // Same set as the comprehensive test above, asserted alongside the new keys
+      // to catch any accidental removal during the wrapEnv refactor.
+      expect(env.TMPDIR).toBe("/tmp/ws/.comis-tmp");
+      expect(env.NPM_CONFIG_CACHE).toBe("/tmp/ws/.cache/npm");
+      expect(env.PIP_CACHE_DIR).toBe("/tmp/ws/.cache/pip");
+      expect(env.XDG_CACHE_HOME).toBe("/tmp/ws/.cache");
+      // XDG_STATE_HOME redirected so tools defaulting to ~/.local/state don't
+      // EROFS (~/.local is RO under getUserRoPaths; only ~/.local/share is
+      // carved out RW by getDevToolRwPaths).
+      expect(env.XDG_STATE_HOME).toBe("/tmp/ws/.local/state");
+      expect(env.PYTHONUSERBASE).toBe("/tmp/ws/.local");
+      expect(env.MPLCONFIGDIR).toBe("/tmp/ws/.cache/matplotlib");
+      expect(env.MPLBACKEND).toBe("Agg");
+      expect(env.UV_PYTHON_INSTALL_DIR).toBe("/tmp/ws/.cache/uv/python");
+      expect(env.CARGO_HOME).toBe("/tmp/ws/.cache/cargo");
+      expect(env.GOPATH).toBe("/tmp/ws/.cache/go");
+      expect(env.GOMODCACHE).toBe("/tmp/ws/.cache/go/pkg/mod");
+      expect(env.GEM_HOME).toBe("/tmp/ws/.cache/gems");
+      expect(env.BUNDLE_PATH).toBe("/tmp/ws/.cache/bundle");
+    });
+
+    it("prepends six tool-bin paths to PATH in documented order, then env.PATH", () => {
+      const provider = new BwrapProvider();
+      const env = provider.wrapEnv({ PATH: "/usr/bin:/bin" }, "/tmp/ws");
+
+      // Order is load-bearing: pip --user / pipx CLIs first (most common in
+      // agent flows), then cargo, go, bun, pnpm, deno. env.PATH is appended
+      // last so installed CLIs shadow system tools when same name conflicts.
+      expect(env.PATH.split(":")).toEqual([
+        "/tmp/ws/.local/bin",
+        "/tmp/ws/.cache/cargo/bin",
+        "/tmp/ws/.cache/go/bin",
+        "/tmp/ws/.cache/bun/bin",
+        "/tmp/ws/.cache/pnpm",
+        "/tmp/ws/.cache/deno/bin",
+        "/usr/bin",
+        "/bin",
+      ]);
+    });
+
+    it("produces a valid PATH (no trailing/duplicate colons) when env.PATH is missing", () => {
+      const provider = new BwrapProvider();
+      const env = provider.wrapEnv({}, "/tmp/ws");
+
+      // PATH must NOT end with ':' and must NOT contain '::' (an empty entry)
+      expect(env.PATH).not.toMatch(/:$/);
+      expect(env.PATH).not.toMatch(/::/);
+      // Exactly the six tool-bin paths, in order
+      expect(env.PATH.split(":")).toEqual([
+        "/tmp/ws/.local/bin",
+        "/tmp/ws/.cache/cargo/bin",
+        "/tmp/ws/.cache/go/bin",
+        "/tmp/ws/.cache/bun/bin",
+        "/tmp/ws/.cache/pnpm",
+        "/tmp/ws/.cache/deno/bin",
+      ]);
     });
   });
 });

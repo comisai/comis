@@ -999,6 +999,72 @@ describe("PiExecutor", () => {
       expect(fields.signatureScrubs).toBeGreaterThanOrEqual(0);
       expect(fields.signatureScrubsToolCallsAffected).toBeTypeOf("number");
       expect(fields.signatureScrubsToolCallsAffected).toBeGreaterThanOrEqual(0);
+      // 260505-gqe: provider attribution tag — unblocks operator queries
+      // segmenting cache-hit-rate / cost by provider. Default mock returns
+      // resolvedModel.provider === "anthropic", which maps to providerFamily
+      // "anthropic" via PROVIDER_OVERRIDES in capabilities.ts.
+      expect(fields.provider).toBe("anthropic");
+      expect(fields.providerFamily).toBe("anthropic");
+      expect(fields.provider).toBeTypeOf("string");
+      expect(fields.providerFamily).toBeTypeOf("string");
+    });
+
+    // 260505-gqe: silent-fallback path — operator INTENT semantics.
+    // When modelRegistry.find returns undefined (e.g., misconfig:
+    // provider:anthropic + model:gpt-5.5 doesn't resolve), pi-coding-agent
+    // silently falls back to whatever built-in provider has env-var
+    // credentials. That fallback target is opaque to us at this layer, so
+    // we record the configured provider (operator INTENT) — the more
+    // useful signal for cache-hit-rate segmentation than the opaque
+    // resolved fallback target.
+    it("falls back to config.provider when resolvedModel is undefined (silent-fallback misconfig path)", async () => {
+      const deps = createMockDeps({
+        modelRegistry: {
+          find: vi.fn().mockReturnValue(undefined),
+          getAll: vi.fn().mockReturnValue([]),
+          getAvailable: vi.fn().mockReturnValue([]),
+        } as any,
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-fallback");
+
+      const infoCalls = (deps.logger.info as Mock).mock.calls;
+      const bookendCall = infoCalls.find(
+        ([_fields, msg]: [any, string]) => msg === "Execution complete",
+      );
+      expect(bookendCall).toBeDefined();
+      const [fields] = bookendCall!;
+      // testConfig.provider === "anthropic" — the configured intent.
+      expect(fields.provider).toBe("anthropic");
+      // resolveProviderCapabilities("anthropic").providerFamily === "anthropic".
+      expect(fields.providerFamily).toBe("anthropic");
+    });
+
+    // 260505-gqe: post-resolution provider — codex example. When the
+    // registry resolves to openai-codex, both fields reflect the
+    // POST-resolution / POST-override provider, and providerFamily is
+    // mapped via PROVIDER_OVERRIDES (openai-codex → "openai").
+    it("providerFamily reflects post-resolution provider (codex example)", async () => {
+      const deps = createMockDeps({
+        modelRegistry: {
+          find: vi.fn().mockReturnValue({ provider: "openai-codex", id: "gpt-5-codex" }),
+          getAll: vi.fn().mockReturnValue([]),
+          getAvailable: vi.fn().mockReturnValue([]),
+        } as any,
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-codex");
+
+      const infoCalls = (deps.logger.info as Mock).mock.calls;
+      const bookendCall = infoCalls.find(
+        ([_fields, msg]: [any, string]) => msg === "Execution complete",
+      );
+      expect(bookendCall).toBeDefined();
+      const [fields] = bookendCall!;
+      expect(fields.provider).toBe("openai-codex");
+      expect(fields.providerFamily).toBe("openai");
     });
 
     // 260504-ieh: zero-default test — ensures the four counter fields are
@@ -4567,10 +4633,12 @@ describe("PiExecutor", () => {
       expect(result.response).toBe("");
     });
 
-    it("recovers text when final turn is NO_REPLY silent token", async () => {
-      // Final turn: NO_REPLY → getLastAssistantText returns "NO_REPLY"
+    it("passes NO_REPLY silent token through unchanged (channel-layer filter handles suppression)", async () => {
+      // Contract change (260505-dl3): silent tokens are explicit suppression
+      // signals; the agent layer passes them through unchanged so the
+      // channel-layer filter (packages/channels/src/shared/response-filter.ts)
+      // can suppress delivery downstream.
       mockGetLastAssistantText.mockReturnValue("NO_REPLY");
-      // Bridge says text WAS emitted in earlier turns
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
         cost: { total: 0.05 },
@@ -4579,7 +4647,6 @@ describe("PiExecutor", () => {
         finishReason: "stop",
         textEmitted: true,
       });
-      // Session messages: earlier turn has text, final turn is NO_REPLY
       mockSession.messages = [
         { role: "user", content: "How are you?", timestamp: 1 },
         {
@@ -4605,15 +4672,13 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Should recover text from the earlier assistant turn, not "NO_REPLY"
-      expect(result.response).toContain("Not bad! Let me check something.");
+      expect(result.response).toBe("NO_REPLY");
+      expect(result.response).not.toContain("Not bad!");
       expect(result.finishReason).not.toBe("error");
     });
 
-    it("recovers text when final turn is HEARTBEAT_OK silent token", async () => {
-      // Final turn: HEARTBEAT_OK → getLastAssistantText returns "HEARTBEAT_OK"
+    it("passes HEARTBEAT_OK silent token through unchanged (channel-layer filter handles suppression)", async () => {
       mockGetLastAssistantText.mockReturnValue("HEARTBEAT_OK");
-      // Bridge says text WAS emitted in earlier turns
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
         cost: { total: 0.05 },
@@ -4622,7 +4687,6 @@ describe("PiExecutor", () => {
         finishReason: "stop",
         textEmitted: true,
       });
-      // Session messages: earlier turn has text, final turn is HEARTBEAT_OK
       mockSession.messages = [
         { role: "user", content: "Check status", timestamp: 1 },
         {
@@ -4648,13 +4712,12 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Should recover text from the earlier assistant turn, not "HEARTBEAT_OK"
-      expect(result.response).toContain("All systems are running normally.");
+      expect(result.response).toBe("HEARTBEAT_OK");
+      expect(result.response).not.toContain("All systems are running normally.");
       expect(result.finishReason).not.toBe("error");
     });
 
-    it("skips NO_REPLY-only assistant messages in backward walk", async () => {
-      // Final turn: HEARTBEAT_OK → triggers recovery
+    it("passes HEARTBEAT_OK through unchanged even when prior turns include NO_REPLY (no recovery override)", async () => {
       mockGetLastAssistantText.mockReturnValue("HEARTBEAT_OK");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4664,7 +4727,6 @@ describe("PiExecutor", () => {
         finishReason: "stop",
         textEmitted: true,
       });
-      // Session messages: Turn 1 has real text, Turn 2 is NO_REPLY-only, Turn 3 is HEARTBEAT_OK
       mockSession.messages = [
         { role: "user", content: "Analyze data", timestamp: 1 },
         {
@@ -4699,10 +4761,8 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Should skip both NO_REPLY and HEARTBEAT_OK turns, recover Turn 1's real text
-      expect(result.response).toContain("Here is the analysis result.");
-      expect(result.response).not.toContain("NO_REPLY");
-      expect(result.response).not.toContain("HEARTBEAT_OK");
+      expect(result.response).toBe("HEARTBEAT_OK");
+      expect(result.response).not.toContain("Here is the analysis result.");
       expect(result.finishReason).not.toBe("error");
     });
 

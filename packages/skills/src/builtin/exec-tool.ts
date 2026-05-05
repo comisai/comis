@@ -44,6 +44,7 @@ import { generateSessionId, appendOutput } from "./process-registry.js";
 import { truncateTail, formatSize, DEFAULT_MAX_BYTES } from "./truncate.js";
 import { createOutputCleaner } from "./output-cleaner.js";
 import { extractHeredoc, validateExecCommand, interpretExitCode } from "./exec-security.js";
+import { matchExecRecoveryHint } from "./exec-diagnostics.js";
 import type { TypedEventBus } from "@comis/core";
 import { tryGetContext } from "@comis/core";
 
@@ -898,6 +899,15 @@ function executeForeground(
       }
       if (aborted) {
         finalStderr += (finalStderr ? "\n" : "") + "Process aborted by signal";
+      }
+
+      // Recovery diagnostics: prepend a `RECOVERY HINT:` line for known-recoverable
+      // failures (e.g. Python ModuleNotFoundError + missing pyproject.toml). Same
+      // surfacing pattern as breakSystemWarning on stdout — gives the LLM an
+      // actionable next step at the HEAD of stderr instead of buried in JSON.
+      const recoveryHint = matchExecRecoveryHint({ stderr: finalStderr, exitCode, cwd });
+      if (recoveryHint) {
+        finalStderr = recoveryHint + (finalStderr ? "\n" + finalStderr : "");
       }
 
       const durationMs = Math.round(performance.now() - startTime);

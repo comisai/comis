@@ -205,6 +205,7 @@ describe("setupSchedulers", () => {
       name: "test-job",
       agentId: "agent-1",
       payload: { kind: "system_event", text: "Hello from cron" },
+      schedule: { kind: "every", everyMs: 60_000 },
       deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
     };
 
@@ -275,6 +276,7 @@ describe("setupSchedulers", () => {
       name: "failing-job",
       agentId: "agent-1",
       payload: { kind: "system_event", text: "Will fail" },
+      schedule: { kind: "every", everyMs: 60_000 },
       deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
     };
 
@@ -514,6 +516,7 @@ describe("setupSchedulers", () => {
       name: "strategy-job",
       agentId: "agent-1",
       payload: { kind: "system_event", text: "Hello" },
+      schedule: { kind: "every", everyMs: 60_000 },
       sessionStrategy: "rolling",
       maxHistoryTurns: 5,
       deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
@@ -528,6 +531,91 @@ describe("setupSchedulers", () => {
         maxHistoryTurns: 5,
       }),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // 13.6. cadenceMs derived from schedule.everyMs (kind === "every")
+  // -------------------------------------------------------------------------
+
+  it("propagates cadenceMs from schedule.everyMs when kind === 'every'", async () => {
+    const setupSchedulers = await getSetupSchedulers();
+    const deps = createMinimalDeps({ cronEnabled: true });
+    await setupSchedulers(deps);
+
+    const cronArgs = mockCreateCronScheduler.mock.calls[0][0];
+    const executeJob = cronArgs.executeJob;
+
+    const job = {
+      id: "job-every",
+      name: "every-job",
+      agentId: "agent-1",
+      payload: { kind: "system_event", text: "Hello" },
+      schedule: { kind: "every", everyMs: 900_000 },
+      deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+    };
+
+    await executeJob(job);
+
+    expect(deps.container.eventBus.emit).toHaveBeenCalledWith(
+      "scheduler:job_result",
+      expect.objectContaining({
+        cadenceMs: 900_000,
+      }),
+    );
+  });
+
+  it("emits cadenceMs as undefined for cron-expression schedule (kind === 'cron')", async () => {
+    const setupSchedulers = await getSetupSchedulers();
+    const deps = createMinimalDeps({ cronEnabled: true });
+    await setupSchedulers(deps);
+
+    const cronArgs = mockCreateCronScheduler.mock.calls[0][0];
+    const executeJob = cronArgs.executeJob;
+
+    const job = {
+      id: "job-cron-expr",
+      name: "cron-expr-job",
+      agentId: "agent-1",
+      payload: { kind: "system_event", text: "Hello" },
+      schedule: { kind: "cron", expr: "0 * * * *" },
+      deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+    };
+
+    await executeJob(job);
+
+    const emitCall = vi.mocked(deps.container.eventBus.emit).mock.calls.find(
+      (c) => c[0] === "scheduler:job_result",
+    );
+    expect(emitCall).toBeDefined();
+    const payload = emitCall![1] as { cadenceMs?: number };
+    expect(payload.cadenceMs).toBeUndefined();
+  });
+
+  it("emits cadenceMs as undefined for one-shot 'at' schedule", async () => {
+    const setupSchedulers = await getSetupSchedulers();
+    const deps = createMinimalDeps({ cronEnabled: true });
+    await setupSchedulers(deps);
+
+    const cronArgs = mockCreateCronScheduler.mock.calls[0][0];
+    const executeJob = cronArgs.executeJob;
+
+    const job = {
+      id: "job-at",
+      name: "at-job",
+      agentId: "agent-1",
+      payload: { kind: "system_event", text: "Hello" },
+      schedule: { kind: "at", at: "2026-12-25T00:00:00Z" },
+      deliveryTarget: { channelType: "telegram", channelId: "chat-1" },
+    };
+
+    await executeJob(job);
+
+    const emitCall = vi.mocked(deps.container.eventBus.emit).mock.calls.find(
+      (c) => c[0] === "scheduler:job_result",
+    );
+    expect(emitCall).toBeDefined();
+    const payload = emitCall![1] as { cadenceMs?: number };
+    expect(payload.cadenceMs).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
@@ -621,6 +709,7 @@ describe("setupSchedulers", () => {
       name: "forward-job",
       agentId: "agent-1",
       payload: { kind: "system_event", text: "Isolated result" },
+      schedule: { kind: "every", everyMs: 60_000 },
       sessionTarget: "isolated",
       forwardToMain: true,
       deliveryTarget: { channelType: "telegram", channelId: "chat-1" },

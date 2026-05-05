@@ -36,14 +36,18 @@ WorkingDirectory=@WORKING_DIR@
 # reads from many locations (undici internals, CA bundle, source-map traces).
 # ProtectSystem=strict + ProtectHome=read-only already enforce the real
 # filesystem perimeter at the kernel level. Writes are scoped to:
-#   @DATA_DIR@          — config, logs, memory.db, workspace, sessions
-#   @SVC_HOME@/.npm     — npm cache + logs (MCP servers spawned via npx)
-#   @SVC_HOME@/.pi      — pi-agent-core SettingsManager (agent config dir)
-#   /tmp                — media temp files (PrivateTmp=yes sandboxes this)
+#   @DATA_DIR@               — config, logs, memory.db, workspace, sessions
+#   @SVC_HOME@/.npm          — npm cache + logs (MCP servers spawned via npx)
+#   @SVC_HOME@/.pi           — pi-agent-core SettingsManager (agent config dir)
+#   @SVC_HOME@/.cache        — uv archive cache for python-based MCP servers (uvx)
+#   @SVC_HOME@/.local/share  — XDG_DATA_HOME for uv tool entry points;
+#                              uvx writes installed CLI shims to .local/share/uv/tools
+#                              and fails to start MCP servers without it
+#   /tmp                     — media temp files (PrivateTmp=yes sandboxes this)
 # --allow-addons + --allow-worker: required by native deps (sharp, better-sqlite3).
 # --jitless and MemoryDenyWriteExecute are intentionally NOT set — both break
 # WebAssembly (Node's bundled undici uses WASM for HTTP parsing).
-ExecStart=@NODE_BIN@ --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=@DATA_DIR@ --allow-fs-write=@SVC_HOME@/.npm --allow-fs-write=@SVC_HOME@/.pi --allow-fs-write=/tmp --allow-child-process @DAEMON_JS@
+ExecStart=@NODE_BIN@ --permission --allow-addons --allow-worker --allow-fs-read=* --allow-fs-write=@DATA_DIR@ --allow-fs-write=@SVC_HOME@/.npm --allow-fs-write=@SVC_HOME@/.pi --allow-fs-write=@SVC_HOME@/.cache --allow-fs-write=@SVC_HOME@/.local/share --allow-fs-write=/tmp --allow-child-process @DAEMON_JS@
 
 # Restart policy
 Restart=on-failure
@@ -67,6 +71,13 @@ SyslogIdentifier=comis
 
 # Environment
 Environment=NODE_ENV=production
+# RUSTUP_HOME points at the system rustup install (written by install.sh's
+# install_rust). Without it, the rustup multiplexer can't find the toolchain
+# and `cargo --version` fails with "could not choose a version of cargo to run".
+# bwrap children inherit this via wrapEnv's pass-through of process.env, so
+# the agent's exec sandbox sees the same value.
+Environment=RUSTUP_HOME=/usr/local/rustup
+Environment=CARGO_HOME=/usr/local/cargo
 EnvironmentFile=-@ENV_FILE@
 
 # --- Security Hardening ---
@@ -79,7 +90,7 @@ ProtectHome=read-only
 PrivateTmp=yes
 # Must match the --allow-fs-write set above — Node's permission model and
 # systemd's kernel-level ProtectHome both have to allow the same paths.
-ReadWritePaths=@DATA_DIR@ @SVC_HOME@/.npm @SVC_HOME@/.pi
+ReadWritePaths=@DATA_DIR@ @SVC_HOME@/.npm @SVC_HOME@/.pi @SVC_HOME@/.cache @SVC_HOME@/.local/share
 
 # Memory protection
 # MemoryDenyWriteExecute intentionally omitted — would break V8 JIT + WebAssembly

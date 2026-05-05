@@ -163,20 +163,30 @@ describe("recoverEmptyFinalResponse", () => {
     expect(result).toBe("Visible response");
   });
 
-  it("recovers from silent-token final response (NO_REPLY)", () => {
-    const result = recoverEmptyFinalResponse({
-      extractedResponse: "NO_REPLY",
-      textEmitted: true,
-      messages: [
-        { role: "user", content: "Hello" },
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "Here is the real response." }],
-        },
-      ],
-      logger: mockLogger(),
-    });
-    expect(result).toBe("Here is the real response.");
+  it("silent tokens (NO_REPLY, HEARTBEAT_OK) pass through unchanged — recovery does not override explicit suppression signals", () => {
+    const messages = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Here is the real response." }],
+      },
+    ];
+    expect(
+      recoverEmptyFinalResponse({
+        extractedResponse: "NO_REPLY",
+        textEmitted: true,
+        messages,
+        logger: mockLogger(),
+      }),
+    ).toBe("NO_REPLY");
+    expect(
+      recoverEmptyFinalResponse({
+        extractedResponse: "HEARTBEAT_OK",
+        textEmitted: true,
+        messages,
+        logger: mockLogger(),
+      }),
+    ).toBe("HEARTBEAT_OK");
   });
 
   it("respects userMessageIndex boundary", () => {
@@ -199,159 +209,6 @@ describe("recoverEmptyFinalResponse", () => {
     });
     // Should NOT recover text from index 0 (before userMessageIndex)
     expect(result).toBe("");
-  });
-
-  it("suppresses recovery when message tool was used (NO_REPLY is intentional)", () => {
-    const result = recoverEmptyFinalResponse({
-      extractedResponse: "NO_REPLY",
-      textEmitted: true,
-      messages: [
-        { role: "user", content: "Compare AAPL vs MSFT", timestamp: 1 },
-        {
-          role: "assistant",
-          content: [
-            { type: "text", text: "Now let me generate the chart:" },
-            { type: "toolCall", id: "tc1", name: "exec", arguments: {} },
-          ],
-          stopReason: "toolUse",
-          timestamp: 2,
-        },
-        { role: "toolResult", toolCallId: "tc1", toolName: "exec", content: [{ type: "text", text: "OK" }], isError: false, timestamp: 3 },
-        {
-          role: "assistant",
-          content: [
-            { type: "toolCall", id: "tc2", name: "message", arguments: { action: "send", text: "AAPL vs MSFT report" } },
-          ],
-          stopReason: "toolUse",
-          timestamp: 4,
-        },
-        { role: "toolResult", toolCallId: "tc2", toolName: "message", content: [{ type: "text", text: '{"messageId":"5094"}' }], isError: false, timestamp: 5 },
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "NO_REPLY" }],
-          stopReason: "stop",
-          timestamp: 6,
-        },
-      ],
-      logger: mockLogger(),
-      userMessageIndex: 0,
-    });
-    expect(result).toBe("NO_REPLY");
-  });
-
-  it("suppresses recovery when notify tool was used", () => {
-    const result = recoverEmptyFinalResponse({
-      extractedResponse: "NO_REPLY",
-      textEmitted: true,
-      messages: [
-        { role: "user", content: "Send me the report", timestamp: 1 },
-        {
-          role: "assistant",
-          content: [
-            { type: "text", text: "Sending the report now." },
-            { type: "toolCall", id: "tc1", name: "notify", arguments: {} },
-          ],
-          stopReason: "toolUse",
-          timestamp: 2,
-        },
-        { role: "toolResult", toolCallId: "tc1", toolName: "notify", content: [{ type: "text", text: "OK" }], isError: false, timestamp: 3 },
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "NO_REPLY" }],
-          stopReason: "stop",
-          timestamp: 4,
-        },
-      ],
-      logger: mockLogger(),
-      userMessageIndex: 0,
-    });
-    expect(result).toBe("NO_REPLY");
-  });
-
-  it("synthesizes from prior tool calls when silent-final-token surfaces and no delivery tool was used", () => {
-    const result = recoverEmptyFinalResponse({
-      extractedResponse: "NO_REPLY",
-      textEmitted: true,
-      messages: [
-        { role: "user", content: "Do something", timestamp: 1 },
-        {
-          role: "assistant",
-          content: [
-            { type: "text", text: "Here is your answer." },
-            { type: "toolCall", id: "tc1", name: "exec", arguments: {} },
-          ],
-          stopReason: "toolUse",
-          timestamp: 2,
-        },
-        { role: "toolResult", toolCallId: "tc1", toolName: "exec", content: [{ type: "text", text: "OK" }], isError: false, timestamp: 3 },
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "NO_REPLY" }],
-          stopReason: "stop",
-          timestamp: 4,
-        },
-      ],
-      logger: mockLogger(),
-      userMessageIndex: 0,
-    });
-    // Positive anchors: synthesis fires and renders the exec tool bullet.
-    expect(result).toContain("tool-call summary recovered");
-    expect(result).toContain("Completed 1 tool call");
-    expect(result).toContain("exec");
-    // Negative anchors: the previously-asserted pre-tool-commentary path is gone.
-    expect(result).not.toBe("Here is your answer.");
-    expect(result).not.toBe("NO_REPLY");
-  });
-
-  it("respects userMessageIndex: synthesis only considers tool calls within the current execution window", () => {
-    const result = recoverEmptyFinalResponse({
-      extractedResponse: "NO_REPLY",
-      textEmitted: true,
-      messages: [
-        // Previous execution had a message tool call (BEFORE userMessageIndex=2 — must be ignored).
-        {
-          role: "assistant",
-          content: [
-            { type: "toolCall", id: "tc0", name: "message", arguments: {} },
-          ],
-          stopReason: "toolUse",
-          timestamp: 1,
-        },
-        { role: "toolResult", toolCallId: "tc0", toolName: "message", content: [{ type: "text", text: "OK" }], isError: false, timestamp: 2 },
-        // New execution starts here.
-        { role: "user", content: "New question", timestamp: 3 },
-        {
-          role: "assistant",
-          content: [
-            { type: "text", text: "Working on it." },
-            { type: "toolCall", id: "tc1", name: "exec", arguments: {} },
-          ],
-          stopReason: "toolUse",
-          timestamp: 4,
-        },
-        { role: "toolResult", toolCallId: "tc1", toolName: "exec", content: [{ type: "text", text: "OK" }], isError: false, timestamp: 5 },
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "NO_REPLY" }],
-          stopReason: "stop",
-          timestamp: 6,
-        },
-      ],
-      logger: mockLogger(),
-      userMessageIndex: 2,
-    });
-    // Positive anchors: synthesis fires for the current-execution exec call only.
-    expect(result).toContain("tool-call summary recovered");
-    expect(result).toContain("Completed 1 tool call");
-    expect(result).toContain("exec");
-    // Negative anchors: prior-execution message tool ignored (no delivery-guard suppression);
-    // pre-tool-commentary "Working on it." path is gone.
-    expect(result).not.toBe("Working on it.");
-    expect(result).not.toBe("NO_REPLY");
-    // The prior-execution `message` tool MUST NOT appear as a synthesized bullet.
-    // (Asserted on bullet line shape only — the boilerplate frame contains the
-    // unrelated literal "final message was empty" which is not a leak signal.)
-    expect(result).not.toMatch(/^\s*•\s+message/m);
   });
 
   it("logs recovery info when text is recovered", () => {
@@ -517,36 +374,6 @@ describe("recoverEmptyFinalResponse — tool-call synthesis (L3)", () => {
     );
   });
 
-  it("preserves hasDeliveryToolCall guard: silent token after message tool returns NO_REPLY unchanged", () => {
-    const logger = mockLogger();
-    const result = recoverEmptyFinalResponse({
-      extractedResponse: "NO_REPLY",
-      textEmitted: true,
-      messages: [
-        { role: "user", content: "Send the report", timestamp: 1 },
-        {
-          role: "assistant",
-          content: [
-            { type: "text", text: "Sending now." },
-            { type: "toolCall", id: "tc1", name: "message", arguments: { action: "send", text: "report" } },
-          ],
-          stopReason: "toolUse",
-          timestamp: 2,
-        },
-        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "OK" }], timestamp: 3 },
-        { role: "assistant", content: [{ type: "text", text: "NO_REPLY" }], stopReason: "stop", timestamp: 4 },
-      ],
-      logger,
-      userMessageIndex: 0,
-    });
-    expect(result).toBe("NO_REPLY");
-    // Synthesis must NOT fire when delivery tool used
-    expect(logger.info).not.toHaveBeenCalledWith(
-      expect.objectContaining({ recoveryPass: "tool-call-synthesis" }),
-      expect.any(String),
-    );
-  });
-
   it("emits structured INFO with full canonical field shape on synthesis", () => {
     const logger = mockLogger();
     recoverEmptyFinalResponse({
@@ -693,5 +520,39 @@ describe("recoverEmptyFinalResponse — tool-call synthesis (L3)", () => {
     // generateCompletenessNudge; with the function deleted, the import is
     // also gone (no remaining consumer in this module).
     expect(source).not.toContain("formatChecklistForInjection");
+  });
+});
+
+describe("recoverEmptyFinalResponse — silent-token pass-through (cron heartbeat regression)", () => {
+  it("cron heartbeat case: HEARTBEAT_OK after observation tools (web_search + get_stock_price) passes through unchanged", () => {
+    // Production trace from May 2026: iran-war-monitor Telegram cron agent
+    // emitted HEARTBEAT_OK after observation-only tools. Pre-fix, recovery
+    // synthesized a fake "[comis: tool-call summary recovered ...]" message
+    // and delivered it hourly via Telegram. Post-fix, the silent token
+    // passes through to the channel-layer filter for suppression.
+    const result = recoverEmptyFinalResponse({
+      extractedResponse: "HEARTBEAT_OK",
+      textEmitted: true,
+      messages: [
+        { role: "user", content: "heartbeat: check iran war state", timestamp: 1 },
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", id: "tc1", name: "web_search", arguments: { query: "iran war news" } },
+            { type: "toolCall", id: "tc2", name: "mcp__yfinance-ts--get_stock_price", arguments: { symbol: "USO" } },
+          ],
+          stopReason: "toolUse",
+          timestamp: 2,
+        },
+        { role: "toolResult", toolCallId: "tc1", content: [{ type: "text", text: "no relevant news" }], timestamp: 3 },
+        { role: "toolResult", toolCallId: "tc2", content: [{ type: "text", text: "USO 78.50" }], timestamp: 4 },
+        { role: "assistant", content: [{ type: "text", text: "HEARTBEAT_OK" }], stopReason: "stop", timestamp: 5 },
+      ],
+      logger: mockLogger(),
+      userMessageIndex: 0,
+    });
+    expect(result).toBe("HEARTBEAT_OK");
+    expect(result).not.toContain("tool-call summary recovered");
+    expect(result).not.toContain("Completed");
   });
 });

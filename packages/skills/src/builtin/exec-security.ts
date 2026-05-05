@@ -412,6 +412,29 @@ export const DANGEROUS_COMMAND_PATTERNS: ReadonlyArray<{
     reason:
       "Direct OAuth credential store (auth-profiles.json) modification bypasses atomic-write, per-profile-lock, and schema-version validation in oauth-credential-store-file.ts. Use the gateway tool to manage OAuth profiles.",
   },
+  // Category L -- Network reverse-shell primitives
+  // Direct attack primitives that establish a remote shell without going
+  // through a pipe (so the existing Gate 2 "pipe to bash/sh/curl/wget/nc"
+  // wouldn't catch them). Defense-in-depth: the agent has no legitimate
+  // reason to use any of these — the surrounding skills wrap network access
+  // through the daemon's HTTP client. A network egress allowlist (iptables
+  // --uid-owner) is the actual security boundary; these patterns just
+  // surface intent earlier in the chain.
+  {
+    pattern: /\/dev\/tcp\//,
+    reason:
+      "Bash /dev/tcp/<host>/<port> opens a raw TCP socket — reverse-shell primitive.",
+  },
+  {
+    pattern: /\bnc(?:at)?\b[^|;&]*\s-e\b/,
+    reason:
+      "netcat -e (--exec) attaches a process to the socket — reverse-shell primitive.",
+  },
+  {
+    pattern: /\bsocat\b[^|;&]*\bexec\s*:/,
+    reason:
+      "socat exec: target attaches a process to the socket — reverse-shell primitive.",
+  },
 ];
 
 // --------------------------------------------------------------------------

@@ -355,4 +355,43 @@ describe("cron tool", () => {
       ).rejects.toThrow("Scheduler unavailable");
     });
   });
+
+  describe("session_strategy parameter description", () => {
+    // The tool steers the LLM toward `fresh` for long cadences via the
+    // session_strategy parameter description. Cron uses a 5-min prompt cache TTL
+    // (OPERATION_CACHE_DEFAULTS.cron = "short"); cadences >= 10 min waste cache writes
+    // on rolling/accumulate because the cache is always cold by the next tick.
+    function getSessionStrategyDescription(): string {
+      const mockRpcCall: RpcCall = vi.fn(async () => ({}));
+      const tool = createCronTool(mockRpcCall);
+      // CronToolParams is Type.Object; properties live under tool.parameters.properties.
+      const params = tool.parameters as unknown as {
+        properties: { session_strategy?: { description?: string } };
+      };
+      return params.properties.session_strategy?.description ?? "";
+    }
+
+    it("mentions the >= 10 minute fresh-default threshold", () => {
+      const desc = getSessionStrategyDescription();
+      expect(desc).toContain("≥ 10 minutes");
+    });
+
+    it("mentions the < 5 minute rolling-only threshold", () => {
+      const desc = getSessionStrategyDescription();
+      expect(desc).toContain("< 5 minutes");
+    });
+
+    it("cites the 5-minute prompt cache TTL rationale", () => {
+      const desc = getSessionStrategyDescription();
+      expect(desc).toContain("5-minute prompt cache TTL");
+    });
+
+    it("retains the three valid values and the 'fresh' default", () => {
+      const desc = getSessionStrategyDescription();
+      expect(desc).toContain("fresh");
+      expect(desc).toContain("rolling");
+      expect(desc).toContain("accumulate");
+      expect(desc.toLowerCase()).toContain("default");
+    });
+  });
 });

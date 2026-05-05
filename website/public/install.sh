@@ -695,7 +695,12 @@ install_build_tools_linux() {
         # ffmpeg: media processing (TTS, audio/video)
         # bubblewrap: sandbox for secure command execution
         # libsystemd-dev + pkg-config: sd-notify native addon (watchdog integration)
-        local apt_pkgs="build-essential python3 python3-venv python3-pip make g++ cmake pkg-config ffmpeg bubblewrap libsystemd-dev"
+        # pipx, golang-go: agent exec sandbox toolchain coverage (pipx for Python CLIs
+        #   that don't fit uvx's ephemeral-run model; golang-go for `go install`)
+        # ca-certificates curl wget unzip xz-utils bzip2: required by language installers
+        #   (rustup, pipx, go modules, npm tarballs, deno, bun) inside bwrap; missing any
+        #   one of these causes silent TLS failures or mid-extraction crashes
+        local apt_pkgs="build-essential python3 python3-venv python3-pip pipx make g++ cmake pkg-config ffmpeg bubblewrap libsystemd-dev golang-go ca-certificates curl wget unzip xz-utils bzip2"
         if is_root; then
             run_quiet_step "Updating package index" apt-get update || ui_warn "Package index update had errors (continuing)"
             run_quiet_step "Installing system packages" apt-get install -y -qq $apt_pkgs
@@ -709,27 +714,27 @@ install_build_tools_linux() {
 
     if command -v dnf &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel
+            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
         else
-            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel
+            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
         fi
         return 0
     fi
 
     if command -v yum &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel
+            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
         else
-            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel
+            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
         fi
         return 0
     fi
 
     if command -v apk &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing build tools" apk add --no-cache build-base python3 cmake
+            run_quiet_step "Installing build tools" apk add --no-cache build-base python3 py3-pipx go cmake unzip xz ca-certificates curl wget
         else
-            run_quiet_step "Installing build tools" sudo apk add --no-cache build-base python3 cmake
+            run_quiet_step "Installing build tools" sudo apk add --no-cache build-base python3 py3-pipx go cmake unzip xz ca-certificates curl wget
         fi
         return 0
     fi
@@ -784,6 +789,85 @@ PROFILE
         || ui_warn "apparmor_parser -r failed — exec sandbox may fail until bwrap profile is loaded"
 }
 
+# install_egress_logging
+# ----------------------
+# Phase 1 of the network egress allowlist (audit-checklist Section 9).
+#
+# The agent's exec sandbox runs with bwrap --share-net (full host network
+# access) because the daemon's regex command filter cannot inspect the contents
+# of files the agent writes and then executes. Without an OS-level egress
+# restriction, a malicious skill, MCP server, or prompt injection can write a
+# script that opens an outbound connection and bypass every command-string
+# defense. The actual security boundary has to be a uid-scoped iptables
+# allowlist (or seccomp BPF filter on connect()) — this function lays the
+# groundwork.
+#
+# Phase 1 (this function): create the COMIS_EGRESS chain in LOG-only mode and
+# wire every outbound packet from the comis uid through it. ACCEPT continues
+# unchanged so nothing breaks. The kernel logs every connection to
+# /var/log/kern.log (or `journalctl -k`) tagged "comis-egress: " so the
+# operator can enumerate the legitimate destinations over 24-48 hours of
+# normal use.
+#
+# Phase 2 (operator, not automated): after the observation window, the
+# operator replaces the catch-all ACCEPT with destination-specific ACCEPTs
+# (api.anthropic.com, api.telegram.org, etc.) followed by a final DROP. See
+# audit-checklist Section 9 for the templated commands.
+#
+# Idempotent: skipped if the chain already exists. Skipped silently if
+# iptables is unavailable, the comis user does not yet exist, or
+# COMIS_NO_EGRESS_LOG=1 is set. Non-fatal — failures degrade gracefully so
+# they cannot block the rest of the install.
+install_egress_logging() {
+    [ "${COMIS_NO_EGRESS_LOG:-}" = "1" ] && {
+        ui_info "Egress logging skipped (COMIS_NO_EGRESS_LOG=1)"
+        return 0
+    }
+
+    if ! command -v iptables >/dev/null 2>&1; then
+        ui_warn "iptables not available — skipping egress-logging primer"
+        return 0
+    fi
+
+    if ! id "$COMIS_USER" >/dev/null 2>&1; then
+        ui_warn "Skipping egress-logging primer (user '$COMIS_USER' does not exist yet)"
+        return 0
+    fi
+
+    local sudo_prefix=""
+    if ! is_root; then
+        sudo_prefix="sudo "
+    fi
+
+    # Idempotent: skip if our chain already exists
+    if $sudo_prefix iptables -L COMIS_EGRESS -n >/dev/null 2>&1; then
+        ui_info "Egress logging already configured (chain COMIS_EGRESS exists)"
+        return 0
+    fi
+
+    if ! $sudo_prefix iptables -N COMIS_EGRESS 2>/dev/null; then
+        ui_warn "Could not create COMIS_EGRESS chain — skipping egress-logging primer"
+        return 0
+    fi
+
+    # LOG every packet, then ACCEPT unchanged (Phase 1 — no enforcement yet).
+    # Log level 6 (informational) so it lands in journald without flooding syslog.
+    $sudo_prefix iptables -A COMIS_EGRESS -j LOG --log-prefix "comis-egress: " --log-level 6 2>/dev/null \
+        || ui_warn "Could not add LOG rule to COMIS_EGRESS"
+    $sudo_prefix iptables -A COMIS_EGRESS -j ACCEPT 2>/dev/null \
+        || ui_warn "Could not add ACCEPT rule to COMIS_EGRESS"
+
+    # Hook the chain into OUTPUT, scoped to the comis uid only.
+    $sudo_prefix iptables -A OUTPUT -m owner --uid-owner "$COMIS_USER" -j COMIS_EGRESS 2>/dev/null \
+        || { ui_warn "Could not wire COMIS_EGRESS into OUTPUT — egress-logging primer skipped"; return 0; }
+
+    ui_success "Egress logging enabled (LOG mode) for user '$COMIS_USER'"
+    ui_info "  Review captured destinations:  journalctl -k | grep 'comis-egress:'"
+    ui_info "  After 24-48h, flip to enforced allowlist (audit-checklist Section 9)"
+    ui_info "  Disable next install with:     COMIS_NO_EGRESS_LOG=1"
+    return 0
+}
+
 install_uv() {
     # uv/uvx: Python package runner used by MCP servers that distribute via PyPI
     # (e.g. nanobanana). Installed system-wide via the official Astral script so
@@ -816,6 +900,79 @@ install_uv() {
             || ui_warn "uv install failed — Python-based MCP servers will be unavailable"
     fi
     return 0
+}
+
+install_rust() {
+    # cargo/rustc: Rust toolchain used by agent exec sandbox for `cargo install`
+    # of Rust CLIs. Installed system-wide via the official rustup script so the
+    # service user picks up cargo on PATH without shell-profile modifications.
+    # Non-fatal: Rust-based tools are optional; a failure here shouldn't block
+    # the rest of the install.
+    if command -v cargo &> /dev/null; then
+        ui_success "rust already installed ($(cargo --version 2>/dev/null | head -1 || echo present))"
+        return 0
+    fi
+
+    local tmp
+    tmp="$(mktempfile)"
+    if ! download_file "https://sh.rustup.rs" "$tmp"; then
+        ui_warn "Could not download rustup installer — skipping (Rust-based tools will be unavailable)"
+        return 0
+    fi
+
+    # CARGO_HOME=/usr/local/cargo + RUSTUP_HOME=/usr/local/rustup: system-wide
+    # install so the daemon service user picks up cargo on PATH. --profile minimal
+    # keeps the install lean (no docs, no extra components). --no-modify-path
+    # skips shell-profile mutation (we symlink into /usr/local/bin instead, so
+    # cargo is reachable inside bwrap which binds /usr RO).
+    local rustup_args="--profile minimal --no-modify-path --default-toolchain stable -y"
+    if is_root; then
+        run_quiet_step "Installing rust (for cargo-based tools)" \
+            env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup sh "$tmp" $rustup_args \
+            || { ui_warn "rustup install failed — Rust-based tools will be unavailable"; return 0; }
+        # Symlink toolchain binaries into /usr/local/bin so they're on PATH inside
+        # bwrap (which binds /usr RO via SYSTEM_RO_PATHS). The CARGO_HOME/bin dir
+        # is NOT on the default PATH and NOT inside the bwrap RO bind set.
+        for bin in cargo rustc rustup; do
+            ln -sf "/usr/local/cargo/bin/$bin" "/usr/local/bin/$bin" 2>/dev/null || true
+        done
+        write_rustup_profile_d
+    else
+        run_quiet_step "Installing rust (for cargo-based tools)" \
+            sudo env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup sh "$tmp" $rustup_args \
+            || { ui_warn "rustup install failed — Rust-based tools will be unavailable"; return 0; }
+        for bin in cargo rustc rustup; do
+            sudo ln -sf "/usr/local/cargo/bin/$bin" "/usr/local/bin/$bin" 2>/dev/null || true
+        done
+        write_rustup_profile_d
+    fi
+    return 0
+}
+
+# write_rustup_profile_d
+# ----------------------
+# Without RUSTUP_HOME exported, the rustup multiplexer can't find the system
+# toolchain at /usr/local/rustup and fails with "could not choose a version of
+# cargo to run, because no default is configured" — even when the symlinks at
+# /usr/local/bin/{cargo,rustc} exist. Set it system-wide for login shells via
+# /etc/profile.d. The systemd unit also sets Environment=RUSTUP_HOME for the
+# daemon process (so bwrap children inherit it via wrapEnv's pass-through).
+write_rustup_profile_d() {
+    local profile=/etc/profile.d/rustup.sh
+    local write_cmd="tee"
+    if ! is_root; then
+        write_cmd="sudo tee"
+    fi
+    $write_cmd "$profile" >/dev/null <<'PROFILE'
+# Comis-managed: makes the system rustup install discoverable to all login shells.
+export RUSTUP_HOME=/usr/local/rustup
+export CARGO_HOME=/usr/local/cargo
+PROFILE
+    if is_root; then
+        chmod 644 "$profile" 2>/dev/null || true
+    else
+        sudo chmod 644 "$profile" 2>/dev/null || true
+    fi
 }
 
 install_build_tools_macos() {
@@ -2001,11 +2158,14 @@ install_system_deps_as_root() {
         install_git
     fi
 
-    # uv/uvx for Python-based MCP servers (e.g. nanobanana). Runs even when Node
-    # was already present, since install_uv is not part of install_node. Linux
-    # only — macOS users install uv separately via brew/pipx if needed.
+    # uv/uvx for Python-based MCP servers (e.g. nanobanana) and rust/cargo for
+    # the agent exec sandbox toolchain matrix. Both run even when Node was
+    # already present (install_uv / install_rust are not part of install_node).
+    # Linux only — macOS users install uv/rust separately via brew/rustup-init
+    # if needed (the daemon is Linux-only anyway).
     if [[ "$OS" == "linux" ]]; then
         install_uv
+        install_rust
     fi
 
     ui_success "System dependencies ready"
@@ -3963,6 +4123,10 @@ main() {
     if should_create_dedicated_user; then
         install_system_deps_as_root
         create_comis_user
+        # Egress-logging primer for the comis user — Phase 1 of the network
+        # allowlist (audit-checklist Section 9). LOG-only mode, no enforcement
+        # yet, idempotent. Non-fatal — failures don't block the install.
+        install_egress_logging || true
         reexec_as_comis_user
         local user_rc=$?
         if [[ "$user_rc" -ne 0 ]]; then
