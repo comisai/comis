@@ -695,7 +695,12 @@ install_build_tools_linux() {
         # ffmpeg: media processing (TTS, audio/video)
         # bubblewrap: sandbox for secure command execution
         # libsystemd-dev + pkg-config: sd-notify native addon (watchdog integration)
-        local apt_pkgs="build-essential python3 python3-venv python3-pip make g++ cmake pkg-config ffmpeg bubblewrap libsystemd-dev"
+        # pipx, golang-go: agent exec sandbox toolchain coverage (pipx for Python CLIs
+        #   that don't fit uvx's ephemeral-run model; golang-go for `go install`)
+        # ca-certificates curl wget unzip xz-utils bzip2: required by language installers
+        #   (rustup, pipx, go modules, npm tarballs, deno, bun) inside bwrap; missing any
+        #   one of these causes silent TLS failures or mid-extraction crashes
+        local apt_pkgs="build-essential python3 python3-venv python3-pip pipx make g++ cmake pkg-config ffmpeg bubblewrap libsystemd-dev golang-go ca-certificates curl wget unzip xz-utils bzip2"
         if is_root; then
             run_quiet_step "Updating package index" apt-get update || ui_warn "Package index update had errors (continuing)"
             run_quiet_step "Installing system packages" apt-get install -y -qq $apt_pkgs
@@ -709,27 +714,27 @@ install_build_tools_linux() {
 
     if command -v dnf &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel
+            run_quiet_step "Installing system packages" dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
         else
-            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel
+            run_quiet_step "Installing system packages" sudo dnf install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
         fi
         return 0
     fi
 
     if command -v yum &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel
+            run_quiet_step "Installing system packages" yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
         else
-            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel
+            run_quiet_step "Installing system packages" sudo yum install -y gcc gcc-c++ make cmake pkgconf-pkg-config python3 python3-pip ffmpeg bubblewrap systemd-devel golang pipx unzip xz ca-certificates curl wget
         fi
         return 0
     fi
 
     if command -v apk &> /dev/null; then
         if is_root; then
-            run_quiet_step "Installing build tools" apk add --no-cache build-base python3 cmake
+            run_quiet_step "Installing build tools" apk add --no-cache build-base python3 py3-pipx go cmake unzip xz ca-certificates curl wget
         else
-            run_quiet_step "Installing build tools" sudo apk add --no-cache build-base python3 cmake
+            run_quiet_step "Installing build tools" sudo apk add --no-cache build-base python3 py3-pipx go cmake unzip xz ca-certificates curl wget
         fi
         return 0
     fi
@@ -814,6 +819,51 @@ install_uv() {
         run_quiet_step "Installing uv (for Python-based MCP servers)" \
             sudo env UV_UNMANAGED_INSTALL=/usr/local/bin sh "$tmp" \
             || ui_warn "uv install failed — Python-based MCP servers will be unavailable"
+    fi
+    return 0
+}
+
+install_rust() {
+    # cargo/rustc: Rust toolchain used by agent exec sandbox for `cargo install`
+    # of Rust CLIs. Installed system-wide via the official rustup script so the
+    # service user picks up cargo on PATH without shell-profile modifications.
+    # Non-fatal: Rust-based tools are optional; a failure here shouldn't block
+    # the rest of the install.
+    if command -v cargo &> /dev/null; then
+        ui_success "rust already installed ($(cargo --version 2>/dev/null | head -1 || echo present))"
+        return 0
+    fi
+
+    local tmp
+    tmp="$(mktempfile)"
+    if ! download_file "https://sh.rustup.rs" "$tmp"; then
+        ui_warn "Could not download rustup installer — skipping (Rust-based tools will be unavailable)"
+        return 0
+    fi
+
+    # CARGO_HOME=/usr/local/cargo + RUSTUP_HOME=/usr/local/rustup: system-wide
+    # install so the daemon service user picks up cargo on PATH. --profile minimal
+    # keeps the install lean (no docs, no extra components). --no-modify-path
+    # skips shell-profile mutation (we symlink into /usr/local/bin instead, so
+    # cargo is reachable inside bwrap which binds /usr RO).
+    local rustup_args="--profile minimal --no-modify-path --default-toolchain stable -y"
+    if is_root; then
+        run_quiet_step "Installing rust (for cargo-based tools)" \
+            env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup sh "$tmp" $rustup_args \
+            || { ui_warn "rustup install failed — Rust-based tools will be unavailable"; return 0; }
+        # Symlink toolchain binaries into /usr/local/bin so they're on PATH inside
+        # bwrap (which binds /usr RO via SYSTEM_RO_PATHS). The CARGO_HOME/bin dir
+        # is NOT on the default PATH and NOT inside the bwrap RO bind set.
+        for bin in cargo rustc rustup; do
+            ln -sf "/usr/local/cargo/bin/$bin" "/usr/local/bin/$bin" 2>/dev/null || true
+        done
+    else
+        run_quiet_step "Installing rust (for cargo-based tools)" \
+            sudo env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup sh "$tmp" $rustup_args \
+            || { ui_warn "rustup install failed — Rust-based tools will be unavailable"; return 0; }
+        for bin in cargo rustc rustup; do
+            sudo ln -sf "/usr/local/cargo/bin/$bin" "/usr/local/bin/$bin" 2>/dev/null || true
+        done
     fi
     return 0
 }
@@ -2001,11 +2051,14 @@ install_system_deps_as_root() {
         install_git
     fi
 
-    # uv/uvx for Python-based MCP servers (e.g. nanobanana). Runs even when Node
-    # was already present, since install_uv is not part of install_node. Linux
-    # only — macOS users install uv separately via brew/pipx if needed.
+    # uv/uvx for Python-based MCP servers (e.g. nanobanana) and rust/cargo for
+    # the agent exec sandbox toolchain matrix. Both run even when Node was
+    # already present (install_uv / install_rust are not part of install_node).
+    # Linux only — macOS users install uv/rust separately via brew/rustup-init
+    # if needed (the daemon is Linux-only anyway).
     if [[ "$OS" == "linux" ]]; then
         install_uv
+        install_rust
     fi
 
     ui_success "System dependencies ready"
