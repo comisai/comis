@@ -10,6 +10,13 @@
  * URL** (preserving TLS SNI). This maintains SSRF protection while keeping
  * TLS certificate validation working correctly.
  *
+ * Both `fetch` and `Agent` are imported from undici directly (NOT
+ * `globalThis.fetch`): Node's bundled fetch ships an older undici whose
+ * request-handler lifecycle is incompatible with the v8 `Agent` we use for
+ * DNS pinning. Mixing the two throws `InvalidArgumentError: invalid
+ * onRequestStart method` and breaks every channel's inbound media path. Do
+ * not swap this back to `globalThis.fetch`.
+ *
  * Every outbound media fetch MUST go through this utility.
  *
  * @module
@@ -18,7 +25,7 @@
 import { validateUrl } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise, suppressError } from "@comis/shared";
-import { Agent } from "undici";
+import { Agent, fetch } from "undici";
 
 /**
  * Downloaded media from an SSRF-validated fetch.
@@ -198,11 +205,11 @@ export function createSsrfGuardedFetcher(
           const agent = createPinnedAgent(ip);
 
           try {
-            const response = await globalThis.fetch(url, {
+            const response = await fetch(url, {
               signal: AbortSignal.timeout(30_000),
               redirect: "error", // Do not follow redirects — they could point to internal IPs
               dispatcher: agent,
-            } as RequestInit);
+            });
 
             if (!response.ok) {
               logger.error(
