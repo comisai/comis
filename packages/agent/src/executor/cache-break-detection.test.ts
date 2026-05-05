@@ -231,7 +231,7 @@ describe("extractAnthropicPromptState", () => {
 });
 
 // ---------------------------------------------------------------------------
-// recordPromptState (Phase 1)
+// recordPromptState
 // ---------------------------------------------------------------------------
 
 describe("recordPromptState", () => {
@@ -248,11 +248,11 @@ describe("recordPromptState", () => {
     // Record same state again
     detector.recordPromptState(input);
     // No break should be detected since nothing changed
-    // We verify via checkResponseForCacheBreak returning null even with token drop (no Phase 1 changes -> server_eviction only)
+    // We verify via checkResponseForCacheBreak returning null even with token drop (no prompt-state changes -> server_eviction only)
     detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
     // second check with drop
     const event = detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 40000, cacheWriteTokens: 0, totalInputTokens: 60000 });
-    // No Phase 1 changes, so if break detected it should be server_eviction
+    // No prompt-state changes, so if break detected it should be server_eviction
     if (event) {
       expect(event.reason).toBe("server_eviction");
       expect(event.changes.systemChanged).toBe(false);
@@ -340,7 +340,7 @@ describe("recordPromptState", () => {
 });
 
 // ---------------------------------------------------------------------------
-// checkResponseForCacheBreak (Phase 2)
+// checkResponseForCacheBreak
 // ---------------------------------------------------------------------------
 
 describe("checkResponseForCacheBreak", () => {
@@ -409,7 +409,7 @@ describe("checkResponseForCacheBreak", () => {
     expect(event).toBeNull();
   });
 
-  it("complete cache miss (cacheRead drops to 0) with no Phase 1 changes -> server_eviction", () => {
+  it("complete cache miss (cacheRead drops to 0) with no prompt-state changes -> server_eviction", () => {
     detector.recordPromptState(makeBaseInput());
     detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
     detector.recordPromptState(makeBaseInput());
@@ -608,7 +608,7 @@ describe("attributeReason priority", () => {
     expect(event!.reason).toBe("cache_metadata_changed");
   });
 
-  it("when no Phase 1 changes but token drop detected, reason is server_eviction", () => {
+  it("when no prompt-state changes but token drop detected, reason is server_eviction", () => {
     const event = triggerBreakWithChanges({});
     expect(event).not.toBeNull();
     expect(event!.reason).toBe("server_eviction");

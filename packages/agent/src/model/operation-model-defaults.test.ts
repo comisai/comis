@@ -55,7 +55,7 @@ describe("resolveOperationDefaults", () => {
     expect(result.mid).toBeDefined();
     expect(catalogIds.has(result.fast!)).toBe(true);
     expect(catalogIds.has(result.mid!)).toBe(true);
-    // Critically: must NOT be Anthropic IDs (would prove Phase 2's primary bugfix).
+    // Critically: must NOT be Anthropic IDs.
     expect(result.fast!).not.toMatch(/^claude-/);
     expect(result.mid!).not.toMatch(/^claude-/);
   });
@@ -137,11 +137,11 @@ describe("resolveOperationDefaults", () => {
 });
 
 // ---------------------------------------------------------------------------
-// resolveOperationDefaults — top-of-cohort selection (260504-fbz)
+// resolveOperationDefaults — top-of-cohort selection
 // ---------------------------------------------------------------------------
 
 describe("resolveOperationDefaults — top-of-cohort selection", () => {
-  it("anthropic mid lands in the Sonnet $18 cohort and picks the lex-greatest Sonnet (regression: 260504-fbz)", () => {
+  it("anthropic mid lands in the Sonnet $18 cohort and picks the lex-greatest Sonnet", () => {
     const result = resolveOperationDefaults("anthropic");
     expect(result.mid).toBeDefined();
     expect(result.mid!).toMatch(/^claude-sonnet-/);
@@ -237,7 +237,7 @@ describe("resolveOperationDefaults — top-of-cohort selection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// OPERATION_TIER_MAP — provider-agnostic semantics, unchanged from Phase 1
+// OPERATION_TIER_MAP — provider-agnostic semantics
 // ---------------------------------------------------------------------------
 
 describe("OPERATION_TIER_MAP", () => {

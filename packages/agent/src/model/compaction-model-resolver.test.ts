@@ -32,7 +32,7 @@ describe("resolveCompactionModel", () => {
     expect(getModels("anthropic").find((m) => m.id === modelId)).toBeDefined();
   });
 
-  it("resolves empty configValue to openrouter:<fast-tier> for openrouter primary (Phase 2 bugfix)", () => {
+  it("resolves empty configValue to openrouter:<fast-tier> for openrouter primary (regression guard)", () => {
     // Critical regression guard: when the primary is OpenRouter, compaction
     // must NOT cross-route to Anthropic.
     const result = resolveCompactionModel("", "openrouter");

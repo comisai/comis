@@ -27,7 +27,7 @@ import {
 } from "@mariozechner/pi-ai/oauth";
 
 // Mock @comis/scheduler at module level so withExecutionLock is controlled
-// across BOTH the original 13-test block and the Phase 7 RED-baseline block.
+// across BOTH the original 13-test block and the port-backed manager block.
 vi.mock("@comis/scheduler", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/scheduler")>();
   return {
@@ -44,8 +44,8 @@ const mockGetOAuthProviders = vi.mocked(getOAuthProviders);
 const mockWithExecutionLock = vi.mocked(withExecutionLock);
 
 // ---------------------------------------------------------------------------
-// Shared helpers (used by both the original 13-test block and the Phase 7
-// RED-baseline block)
+// Shared helpers (used by both the original 13-test block and the port-backed
+// manager block)
 // ---------------------------------------------------------------------------
 
 function makeSecretManager(secrets: Record<string, string>): SecretManager {
@@ -98,11 +98,10 @@ function makeMockLogger() {
 
 /**
  * Build the legacy 13-test required-deps stub (credentialStore + logger +
- * dataDir) so the Phase 7 rewire can keep these fields REQUIRED on the
- * factory while the original 13 tests continue to exercise the env-bootstrap
- * path through default-empty mocks. (Plan 07 — original 13 tests were
- * authored against the old 3-deps signature; the rewire requires extra
- * mocks supplied here at the call-site.)
+ * dataDir). The factory keeps these fields REQUIRED while the original 13
+ * tests continue to exercise the env-bootstrap path through default-empty
+ * mocks. The original 13 tests were authored against the old 3-deps
+ * signature; the rewire requires extra mocks supplied here at the call-site.
  */
 function legacyOAuthDeps(): {
   credentialStore: OAuthCredentialStorePort;
@@ -119,11 +118,8 @@ function legacyOAuthDeps(): {
 const FAKE_CREDS = {
   refresh: "refresh-token-abc",
   access: "access-token-xyz",
-  // pi-ai's OAuthCredentials.expires is milliseconds since epoch (RESEARCH Q1
-  // landmine 4 — JWT exp is seconds, but pi-ai multiplies by 1000 before
-  // returning). Phase 7 honors this contract; Phase 6 had a units mismatch
-  // (the original test fixture used seconds and the original impl multiplied
-  // by 1000 again — both wrong but mutually consistent). Aligned to ms here.
+  // pi-ai's OAuthCredentials.expires is milliseconds since epoch (JWT exp is
+  // seconds, but pi-ai multiplies by 1000 before returning). Aligned to ms here.
   expires: Date.now() + 3600_000, // 1 hour from now (ms)
 };
 
@@ -203,9 +199,7 @@ describe("createOAuthTokenManager", () => {
     const secretManager = makeSecretManager({
       OAUTH_GITHUB_COPILOT: JSON.stringify(FAKE_CREDS),
     });
-    // pi-ai's OAuthCredentials.expires is ms-since-epoch (RESEARCH Q1 landmine 4).
-    // Aligned to ms here — the original test fixture used seconds and the
-    // original impl multiplied by 1000 (both wrong but mutually consistent).
+    // pi-ai's OAuthCredentials.expires is ms-since-epoch. Aligned to ms here.
     const newCreds = {
       refresh: "new-refresh-token",
       access: "new-access-token",
@@ -415,14 +409,13 @@ describe("createOAuthTokenManager", () => {
 });
 
 // =============================================================================
-// Phase 7 SPEC R6/R7 + D-13 events — port-backed manager block
+// Port-backed manager block
 //
-// Plan 07-07 (oauth-token-manager rewire) turned the previously-RED 18-test
-// block GREEN. Helpers (makeMockCredentialStore, makeMockLogger,
-// withExecutionLock module-mock) are now defined ONCE at the top of this
-// file so both the original 13-test block and this Phase 7 block can share
-// them. legacyOAuthDeps() supplies the new required fields to the original
-// 13 tests (which were authored against the pre-Phase-7 deps signature).
+// Helpers (makeMockCredentialStore, makeMockLogger, withExecutionLock
+// module-mock) are defined ONCE at the top of this file so both the original
+// 13-test block and this port-backed block can share them. legacyOAuthDeps()
+// supplies the required fields to the original 13 tests (which were authored
+// against the pre-rewire deps signature).
 // =============================================================================
 
 /** Realistic Codex-shape JWT with the supplied payload. */
@@ -438,8 +431,8 @@ const FORBIDDEN_REFRESH = "FORBIDDEN_LOG_REFRESH_TOKEN_p4q3r2";
 
 /**
  * Module-level slot the bypass fetch shim reads when synthesizing a Response.
- * Hoisted ahead of `makeStoredProfile` / Phase 9 R2 `buildProfile` so they
- * can prime it without TDZ. Cleared by the shim's `restore()`.
+ * Hoisted ahead of `makeStoredProfile` / `buildProfile` so they can prime it
+ * without TDZ. Cleared by the shim's `restore()`.
  */
 // eslint-disable-next-line prefer-const -- assigned across many test setups
 let codexBypassActiveProfile: OAuthProfile | undefined;
@@ -464,24 +457,24 @@ function makeStoredProfile(overrides: Partial<OAuthProfile> = {}): OAuthProfile 
     version: 1,
     ...overrides,
   };
-  // Phase 10 SC-10-4: prime the bypass-fetch shim with the seeded profile so
-  // the synthesized auth.openai.com Response uses the right access token.
+  // Prime the bypass-fetch shim with the seeded profile so the synthesized
+  // auth.openai.com Response uses the right access token.
   codexBypassActiveProfile = profile;
   return profile;
 }
 
 /**
- * Phase 10 SC-10-4: when the test mocks `mockGetOAuthApiKey` for the Codex
- * provider, the bypass (`refreshOpenAICodexTokenLocal`) replaces the pi-ai
- * call path with a direct `fetch("https://auth.openai.com/oauth/token", ...)`.
- * To keep the broad pre-existing test corpus (Phase 7+9, ~30 openai-codex
- * tests) working without touching every `mockGetOAuthApiKey.mockResolvedValue`
- * call, we install a `globalThis.fetch` shim that translates the configured
- * `mockGetOAuthApiKey` result into the equivalent `auth.openai.com` Response.
+ * When the test mocks `mockGetOAuthApiKey` for the Codex provider, the bypass
+ * (`refreshOpenAICodexTokenLocal`) replaces the pi-ai call path with a direct
+ * `fetch("https://auth.openai.com/oauth/token", ...)`. To keep the broad
+ * pre-existing test corpus (~30 openai-codex tests) working without touching
+ * every `mockGetOAuthApiKey.mockResolvedValue` call, we install a
+ * `globalThis.fetch` shim that translates the configured `mockGetOAuthApiKey`
+ * result into the equivalent `auth.openai.com` Response.
  *
- * Tests that exercise the bypass directly (Phase 10 SC-10-4 block at the
- * bottom of this file) bypass this shim by spying on `globalThis.fetch`
- * before each `it()` body runs.
+ * Tests that exercise the bypass directly (refresh_token_reused detection
+ * block at the bottom of this file) bypass this shim by spying on
+ * `globalThis.fetch` before each `it()` body runs.
  */
 function installCodexBypassFetchShim(): { restore: () => void } {
   const original = globalThis.fetch;
@@ -557,7 +550,7 @@ function installCodexBypassFetchShim(): { restore: () => void } {
   };
 }
 
-describe("OAuthTokenManager — port-backed (Phase 7)", () => {
+describe("OAuthTokenManager — port-backed", () => {
   let eventBus: TypedEventBus;
   let fetchShim: { restore: () => void };
 
@@ -575,7 +568,7 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Group A — Port-backed credential resolution (SPEC R6)
+  // Group A — Port-backed credential resolution
   // ---------------------------------------------------------------------------
 
   describe("A. port-backed credential resolution", () => {
@@ -635,7 +628,7 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Group B — Persisted-on-refresh + bug fix (SPEC R6 + RESEARCH §Q1)
+  // Group B — Persisted-on-refresh + bug fix
   // ---------------------------------------------------------------------------
 
   describe("B. persisted-on-refresh + always-truthy newCredentials bug fix", () => {
@@ -664,7 +657,7 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
       expect(credentialStore.set).toHaveBeenCalledTimes(1);
     });
 
-    // Test B.2 — RESEARCH §Q1: newCredentials always truthy quirk
+    // Test B.2 — newCredentials always truthy quirk
     it("when refresh token is unchanged, manager does NOT call credentialStore.set and does NOT emit auth:token_rotated", async () => {
       const stored = makeStoredProfile({ refresh: "stored-refresh" });
       const credentialStore = makeMockCredentialStore();
@@ -747,7 +740,7 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Group C — Lock acquisition (SPEC R6 + D-12)
+  // Group C — Lock acquisition
   // ---------------------------------------------------------------------------
 
   describe("C. lock acquisition", () => {
@@ -796,12 +789,12 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
       await manager.getApiKey("openai-codex");
       const lockPathArg = mockWithExecutionLock.mock.calls[0]?.[0] as string;
       expect(lockPathArg).toContain(".locks");
-      // Phase 7 plan 08 (Rule 1 — bug fix): manager's lock-sentinel name is
-      // "auth-refresh__<sanitized>.lock" — distinct from the file adapter's
-      // "auth-profile__<sanitized>.lock" (plan 05). Both protect the same
-      // profile-ID but at different layers; using the SAME sentinel would
-      // self-deadlock when credentialStore.set() is called inside the
-      // manager's refresh lock body (proper-lockfile retries: 0 default).
+      // The manager's lock-sentinel name is "auth-refresh__<sanitized>.lock" —
+      // distinct from the file adapter's "auth-profile__<sanitized>.lock". Both
+      // protect the same profile-ID but at different layers; using the SAME
+      // sentinel would self-deadlock when credentialStore.set() is called
+      // inside the manager's refresh lock body (proper-lockfile retries: 0
+      // default).
       expect(lockPathArg).toContain("auth-refresh__openai-codex__user_a_at_example.com.lock");
     });
 
@@ -964,7 +957,7 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Group E — Env-var conflict WARN (SPEC R7c + D-12)
+  // Group E — Env-var conflict WARN
   // ---------------------------------------------------------------------------
 
   describe("E. env-var conflict WARN", () => {
@@ -1004,7 +997,7 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
     });
 
     // Test E.2 — silent path
-    it("stored profile + env-var refresh MATCHES → NO drift WARN logged (R7b silent path)", async () => {
+    it("stored profile + env-var refresh MATCHES → NO drift WARN logged (silent path)", async () => {
       const stored = makeStoredProfile({ refresh: "matching-refresh" });
       const credentialStore = makeMockCredentialStore();
       vi.mocked(credentialStore.get).mockResolvedValue(_ok(stored));
@@ -1070,7 +1063,7 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Group F — Refresh failure event (D-13)
+  // Group F — Refresh failure event
   // ---------------------------------------------------------------------------
 
   describe("F. refresh failure event", () => {
@@ -1133,7 +1126,7 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Group G — Logging discipline (D-12 + D-14)
+  // Group G — Logging discipline
   // ---------------------------------------------------------------------------
 
   describe("G. logging discipline", () => {
@@ -1217,13 +1210,13 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
 
     // Test G.4 — semi-redacted email values in log payloads
     //
-    // D-14 requires that explicit email/identity FIELDS in log payloads pass
-    // through redactEmailForLog before logging. The profileId field by
-    // contract carries "<provider>:<identity>" — when identity is an email,
-    // profileId structurally embeds the email. D-12 requires the profileId
-    // be present in every log line (and Test G.1 asserts the raw form).
-    // To avoid contradicting G.1, this test scopes its substring check to
-    // the dedicated email + identity fields, not the canonical profileId.
+    // Explicit email/identity FIELDS in log payloads must pass through
+    // redactEmailForLog before logging. The profileId field by contract
+    // carries "<provider>:<identity>" — when identity is an email, profileId
+    // structurally embeds the email. The profileId must be present in every
+    // log line (and Test G.1 asserts the raw form). To avoid contradicting
+    // G.1, this test scopes its substring check to the dedicated email +
+    // identity fields, not the canonical profileId.
     it("email values in log payloads are semi-redacted via redactEmailForLog", async () => {
       const credentialStore = makeMockCredentialStore();
       vi.mocked(credentialStore.get).mockResolvedValue(
@@ -1257,7 +1250,7 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
       }
       // Acceptable forms: either redacted email appears, or no dedicated
       // email/identity field is logged at all (preferred for non-bootstrap
-      // log lines per D-14).
+      // log lines).
       const allCallsJson = JSON.stringify(allCalls);
       const hasRedacted = allCallsJson.indexOf("us…a@example.com") !== -1;
       const noEmailKey = allCallsJson.indexOf('"email"') === -1 && allCallsJson.indexOf('"identity"') === -1;
@@ -1266,20 +1259,19 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Group H — Hot-path cache (Discretion item — may be deferred to plan 07)
+  // Group H — Hot-path cache
   // ---------------------------------------------------------------------------
 
   describe("H. hot-path cache", () => {
-    // Test H.1 — marked todo if plan 07 defers the cache
     it.todo("after persisted-write, in-process cache reflects new profile (no second store-read)");
   });
 });
 
 // ---------------------------------------------------------------------------
-// Phase 8 watcher (R7) — chokidar-based hot-reload of auth-profiles.json
+// Watcher — chokidar-based hot-reload of auth-profiles.json
 // ---------------------------------------------------------------------------
 
-describe("createOAuthTokenManager — Phase 8 watcher (R7)", () => {
+describe("createOAuthTokenManager — watcher", () => {
   let mockEventBus: TypedEventBus;
   let mockStore: OAuthCredentialStorePort;
   let mockLogger: ReturnType<typeof makeMockLogger>;
@@ -1291,7 +1283,7 @@ describe("createOAuthTokenManager — Phase 8 watcher (R7)", () => {
     mockLogger = makeMockLogger();
   });
 
-  it("Phase 8 watcher does NOT register chokidar when watchPath is undefined (encrypted-mode path)", () => {
+  it("watcher does NOT register chokidar when watchPath is undefined (encrypted-mode path)", () => {
     const manager = createOAuthTokenManager({
       secretManager: makeSecretManager({}),
       eventBus: mockEventBus,
@@ -1309,7 +1301,7 @@ describe("createOAuthTokenManager — Phase 8 watcher (R7)", () => {
     expect(watcherDebugLogs).toHaveLength(0);
   });
 
-  it("Phase 8 watcher registers a chokidar watcher when watchPath is provided", async () => {
+  it("watcher registers a chokidar watcher when watchPath is provided", async () => {
     // Use a real temp file so chokidar can actually attach.
     const tmpDir = mkdtempSync(path.join(os.tmpdir(), "comis-watcher-"));
     const watchPath = path.join(tmpDir, "auth-profiles.json");
@@ -1338,7 +1330,7 @@ describe("createOAuthTokenManager — Phase 8 watcher (R7)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("Phase 8 watcher dispose closes the watcher (idempotent — second call is a no-op)", async () => {
+  it("watcher dispose closes the watcher (idempotent — second call is a no-op)", async () => {
     const tmpDir = mkdtempSync(path.join(os.tmpdir(), "comis-watcher-"));
     const watchPath = path.join(tmpDir, "auth-profiles.json");
     fs.writeFileSync(
@@ -1363,7 +1355,7 @@ describe("createOAuthTokenManager — Phase 8 watcher (R7)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("Phase 8 watcher debounced cache invalidation: file change triggers cache-invalidation DEBUG log within reasonable window", async () => {
+  it("watcher debounced cache invalidation: file change triggers cache-invalidation DEBUG log within reasonable window", async () => {
     const tmpDir = mkdtempSync(path.join(os.tmpdir(), "comis-watcher-"));
     const watchPath = path.join(tmpDir, "auth-profiles.json");
     fs.writeFileSync(
@@ -1427,9 +1419,9 @@ describe("createOAuthTokenManager — Phase 8 watcher (R7)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 9 R2 — Resolver chain (agent-config -> lastGood -> first available)
+// Resolver chain (agent-config -> lastGood -> first available)
 //
-// SPEC R2 acceptance cases:
+// Acceptance cases:
 //   (a1) configured-and-present  -> ok(apiKey of configured profile)
 //   (a2) configured-and-missing  -> err({code: "PROFILE_NOT_FOUND"})
 //   (b)  unconfigured + lastGood -> ok(apiKey of lastGood profile); list NOT consulted
@@ -1438,7 +1430,7 @@ describe("createOAuthTokenManager — Phase 8 watcher (R7)", () => {
 // Plus backward-compat (single-arg signature) and deps-getter fallback paths.
 // ---------------------------------------------------------------------------
 
-describe("OAuthTokenManager.getApiKey resolver chain (Phase 9 R2)", () => {
+describe("OAuthTokenManager.getApiKey resolver chain", () => {
   const PROVIDER = "openai-codex";
   const CONFIGURED_PROFILE = "openai-codex:work@example.com";
   const FIRST_PROFILE = "openai-codex:first@example.com";
@@ -1471,8 +1463,8 @@ describe("OAuthTokenManager.getApiKey resolver chain (Phase 9 R2)", () => {
     mockWithExecutionLock.mockImplementation(
       async (_path: string, fn: () => Promise<unknown>) => _ok(await fn()),
     );
-    // Phase 10 SC-10-4 — bypass shim translates mockGetOAuthApiKey calls into
-    // the auth.openai.com Response shape the bypass expects.
+    // The bypass shim translates mockGetOAuthApiKey calls into the
+    // auth.openai.com Response shape the bypass expects.
     fetchShim = installCodexBypassFetchShim();
   });
 
@@ -1481,10 +1473,10 @@ describe("OAuthTokenManager.getApiKey resolver chain (Phase 9 R2)", () => {
   });
 
   function buildProfile(profileId: string, accessToken: string): OAuthProfile {
-    // Phase 10 SC-10-4: prime the bypass-fetch shim so the synthesized
-    // auth.openai.com Response carries the test's seeded access token.
-    // Each test calls `buildProfile` exactly once; the last-built profile
-    // is the one the test exercises, so single-slot tracking is sufficient.
+    // Prime the bypass-fetch shim so the synthesized auth.openai.com Response
+    // carries the test's seeded access token. Each test calls `buildProfile`
+    // exactly once; the last-built profile is the one the test exercises, so
+    // single-slot tracking is sufficient.
     const profile: OAuthProfile = {
       provider: PROVIDER,
       profileId,
@@ -1678,23 +1670,23 @@ describe("OAuthTokenManager.getApiKey resolver chain (Phase 9 R2)", () => {
 });
 
 /**
- * Local alias for OAuthTokenManagerDeps used by makeManager() in the Phase 9
- * R2 describe block. Avoids a re-import while keeping the helper signature
+ * Local alias for OAuthTokenManagerDeps used by makeManager() in the resolver-
+ * chain describe block. Avoids a re-import while keeping the helper signature
  * type-safe (TypeScript infers the deps shape from createOAuthTokenManager).
  */
 type OAuthTokenManagerDepsLike = Parameters<typeof createOAuthTokenManager>[0];
 
 // =============================================================================
-// Phase 10 SC-10-4 — refresh_token_reused detection via openai-codex bypass
+// refresh_token_reused detection via openai-codex bypass
 //
 // The token manager bypasses pi-ai's getOAuthApiKey for openai-codex so the
-// refresh-failure response body is available for clean classification (Plan
-// 10-03). These tests drive the bypass by mocking globalThis.fetch — the
-// existing module-level mock of @mariozechner/pi-ai/oauth (lines 17-21) keeps
-// non-Codex providers on the pi-ai path so we can verify pure fall-through.
+// refresh-failure response body is available for clean classification. These
+// tests drive the bypass by mocking globalThis.fetch — the existing module-
+// level mock of @mariozechner/pi-ai/oauth (lines 17-21) keeps non-Codex
+// providers on the pi-ai path so we can verify pure fall-through.
 // =============================================================================
 
-describe("Phase 10: refresh_token_reused detection (SC-10-4)", () => {
+describe("refresh_token_reused detection", () => {
   let eventBus: TypedEventBus;
   let originalFetch: typeof globalThis.fetch;
   let fetchSpy: ReturnType<typeof vi.fn>;
@@ -2070,7 +2062,7 @@ describe("Phase 10: refresh_token_reused detection (SC-10-4)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 8: malformed JSON 400 body — defense-in-depth (T-10-05)
+  // Test 8: malformed JSON 400 body — defense-in-depth
   // ---------------------------------------------------------------------------
   it("Test 8: malformed JSON in 400 response → falls through to default classification (no thrown error)", async () => {
     const profile = expiredCodexProfile();

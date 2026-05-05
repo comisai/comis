@@ -697,7 +697,7 @@ describe("env var reference preservation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Env var reference validation (Layer 3 of 2026-05-03 outage fix)
+// Env var reference validation
 // ---------------------------------------------------------------------------
 
 describe("config.patch env var reference validation", () => {
@@ -716,10 +716,11 @@ describe("config.patch env var reference validation", () => {
     tempConfig.cleanup();
   });
 
-  // Test A — regression: the 2026-05-03 outage payload (enabled:false + missing
-  // ${FINNHUB_API_KEY}) MUST PASS. Layer 1 made this pattern harmless at
-  // bootstrap; this layer must preserve the placeholder-for-later workflow.
-  it("Test A — accepts enabled:false MCP server with missing ${VAR} (placeholder pattern)", async () => {
+  // Regression: the enabled:false + missing ${FINNHUB_API_KEY} payload MUST
+  // PASS. The env-substitution skip on disabled servers makes this pattern
+  // harmless at bootstrap; this layer must preserve the placeholder-for-later
+  // workflow.
+  it("accepts enabled:false MCP server with missing ${VAR} (placeholder pattern)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1705,13 +1706,13 @@ describe("gateway.status admin trust enforcement (H-1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 260501-2pz: daemon-side credential guard for agents.*.{provider,model}
-// patches. Verifies config.patch rejects fail-loud when the resulting
-// agent provider has no resolvable API key from any source pi-coding-agent
-// would consult at runtime.
+// Daemon-side credential guard for agents.*.{provider,model} patches.
+// Verifies config.patch rejects fail-loud when the resulting agent provider
+// has no resolvable API key from any source pi-coding-agent would consult at
+// runtime.
 // ---------------------------------------------------------------------------
 
-describe("config.patch credential guard (260501-2pz)", () => {
+describe("config.patch credential guard", () => {
   let killSpy: ReturnType<typeof vi.spyOn>;
   let tempConfig: ReturnType<typeof createTempConfig>;
   let originalEnv: NodeJS.ProcessEnv;
@@ -1839,7 +1840,7 @@ describe("config.patch credential guard (260501-2pz)", () => {
     expect(result).toMatchObject({ patched: true });
   });
 
-  it("does NOT fire on model-only patches when provider is unchanged (quick-260504-irq)", async () => {
+  it("does NOT fire on model-only patches when provider is unchanged", async () => {
     const deps = makeDeps(tempConfig.configPath);
     // Seed agent at a provider that has NO resolvable credential — guard
     // would reject if it fired. Patch only `.model` (not `.provider`); the

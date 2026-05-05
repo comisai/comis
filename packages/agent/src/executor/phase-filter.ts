@@ -44,22 +44,21 @@ export function isVisibleTextBlock(block: any): boolean {
  *   - cross-turn boundary (role === "user" encountered before a
  *     qualifying assistant) — return "" because the user message marks
  *     the start of the current execution window; assistants before it
- *     belong to prior turns (260501-gyy).
+ *     belong to prior turns.
  *
  * When the resulting last assistant contains commentary-phase text
  * blocks, drops them and returns only visible text. Otherwise returns
  * the visible (non-commentary) text blocks of the last assistant
  * directly — does NOT delegate to session.getLastAssistantText(),
  * which walks past empty messages and would re-introduce the
- * synthetic-leak (260501-egj).
+ * synthetic-leak.
  */
 export function getVisibleAssistantText(session: any): string {
   const messages: any[] | undefined = session?.messages;
 
   // Find last "real" assistant message in the CURRENT execution window —
   // skip aborted-empty, error-empty, and synthetic-injected; stop at the
-  // first user message (turn boundary) to avoid leaking prior-turn text
-  // (260501-gyy).
+  // first user message (turn boundary) to avoid leaking prior-turn text.
   const lastAssistant = (() => {
     if (!Array.isArray(messages)) return undefined;
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -96,9 +95,8 @@ export function getVisibleAssistantText(session: any): string {
   // No commentary — return lastAssistant's visible text directly.
   // Do NOT delegate to session.getLastAssistantText() because it walks
   // past empty messages (aborted/error/etc.) and re-introduces the
-  // synthetic-leak (production bug 260501-egj: post-restart-resumption
-  // rate-limit returned synthetic placeholder instead of the
-  // 260501-cur "Rate limit exceeded" terminal error).
+  // synthetic-leak (post-restart-resumption rate-limit returned synthetic
+  // placeholder instead of the "Rate limit exceeded" terminal error).
   if (!lastAssistant?.content || !Array.isArray(lastAssistant.content)) return "";
   return lastAssistant.content
     .filter(isVisibleTextBlock)

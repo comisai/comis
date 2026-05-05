@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OAuth login orchestrator for OpenAI Codex (Phase 8 D-01/D-02).
+ * OAuth login orchestrator for OpenAI Codex.
  *
  * Wraps pi-ai's loginOpenAICodex with VPS-aware handlers, manual-paste
  * fallback (15s + 1s grace mirroring OpenClaw), and error rewriting for
  * 2 user-friendly mappings (unsupported_region, callback_validation_failed)
- * + 1 identity-decode error path (RESEARCH §Pitfall 2). Returns
- * Result<LoginRunnerSuccess, LoginError> per AGENTS.md §2.1 — never throws
- * at the public boundary.
+ * + 1 identity-decode error path. Returns Result<LoginRunnerSuccess, LoginError>
+ * per AGENTS.md §2.1 — never throws at the public boundary.
  *
  * Both the CLI (`comis auth login`) and wizard step 04 OpenAI OAuth branch
  * import and call loginOpenAICodexOAuth — this is the single shared runner.
  *
  * Pi-ai (0.71.0) owns the protocol: PKCE generation, the local callback
- * server (hardcoded 127.0.0.1:1455 — RESEARCH §Pitfall 3), the token
- * exchange POST to https://auth.openai.com/oauth/token. This module owns the
- * UX: browser-open vs manual-paste, fallback timing, error mapping, identity
- * derivation via Phase 7's resolveCodexAuthIdentity.
+ * server (hardcoded 127.0.0.1:1455), the token exchange POST to
+ * https://auth.openai.com/oauth/token. This module owns the UX: browser-open
+ * vs manual-paste, fallback timing, error mapping, identity derivation via
+ * resolveCodexAuthIdentity.
  *
  * Logging discipline (CLAUDE.md): submodule: "oauth-login" on every call.
  * NEVER log access tokens, refresh tokens, PKCE state, or callback `code`.
@@ -84,16 +83,16 @@ export interface LoginRunnerParams {
   /** Optional logger — callers without one get a no-op fallback. */
   logger?: ComisLogger;
   /**
-   * Phase 11 SC11-1: login method. "browser" (default) uses pi-ai's
-   * loginOpenAICodex with local-callback-server + manual-paste fallback;
-   * "device-code" uses the OpenAI proprietary 3-step device-code flow
-   * (no clipboard, suitable for SSH sessions). Only "openai-codex"
-   * supports "device-code"; the CLI rejects other providers at parse time.
+   * Login method. "browser" (default) uses pi-ai's loginOpenAICodex with
+   * local-callback-server + manual-paste fallback; "device-code" uses the
+   * OpenAI proprietary 3-step device-code flow (no clipboard, suitable for
+   * SSH sessions). Only "openai-codex" supports "device-code"; the CLI
+   * rejects other providers at parse time.
    */
   method?: "browser" | "device-code";
 }
 
-/** Error codes returned by the runner (4 mappings per D-02 + Pitfall 2). */
+/** Error codes returned by the runner. */
 export interface LoginError {
   code:
     | "unsupported_region"
@@ -121,11 +120,11 @@ export interface LoginRunnerSuccess {
 // ---------------------------------------------------------------------------
 
 const PROVIDER = "openai-codex" as const;
-const ORIGINATOR = "comis" as const; // RESEARCH §Pitfall 4 — NOT "openclaw"
+const ORIGINATOR = "comis" as const; // NOT "openclaw"
 
 /**
  * Manual-paste fallback timing — exact mirror of OpenClaw's
- * provider-openai-codex-oauth.ts:15-16 constants (locked by SPEC R1.c).
+ * provider-openai-codex-oauth.ts:15-16 constants.
  */
 const localManualFallbackDelayMs = 15_000;
 const localManualFallbackGraceMs = 1_000;
@@ -139,9 +138,8 @@ const validateRequiredInput = (value: string): string | undefined =>
   value.trim().length > 0 ? undefined : "Required";
 
 // ---------------------------------------------------------------------------
-// Internal: VPS-aware OAuth handlers (D-01 inline — port from OpenClaw
-// provider-oauth-flow.ts; replace runtime.log with prompter.log.info per
-// RESEARCH §Pitfall 5)
+// Internal: VPS-aware OAuth handlers (port from OpenClaw provider-oauth-flow.ts;
+// replace runtime.log with prompter.log.info)
 // ---------------------------------------------------------------------------
 
 function createVpsAwareOAuthHandlers(params: {
@@ -163,8 +161,8 @@ function createVpsAwareOAuthHandlers(params: {
     onAuth: async ({ url }) => {
       if (params.isRemote) {
         params.spin.stop("OAuth URL ready");
-        // RESEARCH §Pitfall 5 — use prompter.log.info, NOT prompter.note,
-        // mid-spinner (clack note tears apart spinner display).
+        // Use prompter.log.info, NOT prompter.note, mid-spinner (clack note
+        // tears apart spinner display).
         params.prompter.log.info(
           `\nOpen this URL in your LOCAL browser:\n\n${url}\n`,
         );
@@ -190,8 +188,8 @@ function createVpsAwareOAuthHandlers(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Internal: Manual-paste fallback race (D-01 inline — port from OpenClaw
-// provider-openai-codex-oauth.ts:15-131; constants locked by SPEC R1.c)
+// Internal: Manual-paste fallback race (port from OpenClaw
+// provider-openai-codex-oauth.ts:15-131)
 // ---------------------------------------------------------------------------
 
 function waitForDelayOrLoginSettle(params: {
@@ -263,7 +261,7 @@ function createManualCodeInputHandler(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Internal: Error rewriting — moved to ./oauth-errors.ts (Phase 10 SC-10-3).
+// Internal: Error rewriting — moved to ./oauth-errors.ts.
 // The shared module exposes 6 cases (vs the 3 + default this runner originally
 // shipped); the 2 new cases (invalid_grant, refresh_token_reused) only fire
 // from the refresh path, never from interactive login. We narrow back to
@@ -310,7 +308,7 @@ const NO_OP_LOGGER: ComisLogger = {
 /**
  * Shared identity-derivation + LoginRunnerSuccess builder used by both
  * the browser flow and the device-code flow. Extracted on the third
- * caller (Phase 11) per AGENTS.md §2.3 rule-of-three.
+ * caller per AGENTS.md §2.3 rule-of-three.
  *
  * Returns ok(success) on identity success; err(identity_decode_failed)
  * when neither email nor profileName can be derived from the JWT.
@@ -369,8 +367,8 @@ export async function loginOpenAICodexOAuth(
   const logger = params.logger ?? NO_OP_LOGGER;
   const startedAt = Date.now();
 
-  // Phase 11 SC11-1: device-code dispatch. Only "openai-codex" supports
-  // device-code today; the CLI rejects other providers at parse time.
+  // Device-code dispatch. Only "openai-codex" supports device-code today;
+  // the CLI rejects other providers at parse time.
   if (params.method === "device-code") {
     return loginOpenAICodexDeviceCodeRunner(params, logger);
   }
@@ -487,7 +485,7 @@ export async function loginOpenAICodexOAuth(
 }
 
 /**
- * Phase 11 SC11-1: device-code login runner.
+ * Device-code login runner.
  *
  * Wraps loginOpenAICodexDeviceCode in the LoginRunnerSuccess shape so
  * the CLI/wizard can pattern-match on the same result type regardless

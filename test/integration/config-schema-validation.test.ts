@@ -32,7 +32,7 @@ import type { ConfigError } from "@comis/core";
 
 const tmpDir = join(tmpdir(), `comis-test-config-119-schema-${Date.now()}`);
 
-describe("Config Schema Validation (119-01)", () => {
+describe("Config Schema Validation", () => {
   beforeAll(() => {
     mkdirSync(tmpDir, { recursive: true });
   });
@@ -52,7 +52,6 @@ describe("Config Schema Validation (119-01)", () => {
       // Snapshot-style guard: bump this count when a new top-level section is
       // added so the change surfaces in code review. Count reflects all scalars
       // plus all object sections currently in AppConfigSchema.shape.
-      // Phase 7 plan 03 added "oauth" (38 — was 37 pre-Phase-7).
       expect(allKeys).toHaveLength(38);
     });
 

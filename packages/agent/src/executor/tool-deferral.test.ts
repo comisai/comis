@@ -303,7 +303,7 @@ describe("applyToolDeferral - unconditional MCP deferral", () => {
     expect(result.discoverTool).not.toBeNull();
   });
 
-  it("does not defer non-MCP tools in Phase 2", () => {
+  it("does not defer non-MCP tools in MCP-deferral pass", () => {
     const tools = [
       makeTool("read"),
       makeTool("web_search"),
@@ -313,7 +313,7 @@ describe("applyToolDeferral - unconditional MCP deferral", () => {
     const ctx = makeContext();
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
-    // Only MCP tool is deferred by Phase 2
+    // Only MCP tool is deferred by the MCP-deferral pass
     expect(result.deferredNames).toEqual(["mcp__srv--deferred"]);
     expect(result.activeTools.map(t => t.name)).toEqual(expect.arrayContaining(["read", "web_search", "custom_tool"]));
   });
@@ -459,7 +459,7 @@ describe("applyToolDeferral - discover_tools creation", () => {
     expect(resultText).toContain("No matching tools found");
 
     // Verify enriched WARN shape (query + hint + errorKind).
-    // As of 260423-irr, zero-signal queries (rawTopScore === 0) emit the
+    // Zero-signal queries (rawTopScore === 0) emit the
     // "query tokens absent from deferred corpus" variant per design §5.3.
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -509,7 +509,7 @@ describe("applyToolDeferral - discover_tools creation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 6b: discover_tools score-floor filter (260420-gg4)
+// Suite 6b: discover_tools score-floor filter
 // ---------------------------------------------------------------------------
 
 describe("discover_tools score-floor filter", () => {
@@ -578,10 +578,10 @@ describe("discover_tools score-floor filter", () => {
     const sideEffects = (searchResult as Record<string, unknown>).sideEffects as Record<string, unknown>;
     expect(sideEffects.discoveredTools).toEqual([]);
 
-    // 260423-irr update: zero-signal queries now emit the "query tokens
-    // absent from deferred corpus" variant (rawTopScore === 0 branch of
-    // design §5.3). The "generate" token happens to not overlap any doc
-    // after tokenization on this fixture -> rawTopScore === 0.
+    // Zero-signal queries emit the "query tokens absent from deferred corpus"
+    // variant (rawTopScore === 0 branch of design §5.3). The "generate" token
+    // happens to not overlap any doc after tokenization on this fixture
+    // -> rawTopScore === 0.
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "gemini image generate",
@@ -604,13 +604,13 @@ describe("discover_tools score-floor filter", () => {
     expect(resultText).toContain('"name":"agents_manage"');
   });
 
-  it("normalized BM25: top match with any positive signal always surfaces at default threshold (regression pin, post-260423-irr)", async () => {
-    // 260423-irr: BM25 scores are now normalized to [0, 1] before the floor.
+  it("normalized BM25: top match with any positive signal always surfaces at default threshold (regression pin)", async () => {
+    // BM25 scores are normalized to [0, 1] before the floor.
     // Design §6.4 explicitly notes the pre-fix "spurious match filtered"
     // assertion flips: whenever any doc has a positive BM25 signal, the top
     // normalizes to 1.0 and clears the 0.8 default floor. So this regression
-    // pin now asserts the opposite: the top match DOES surface at the
-    // default threshold, and the fraction-of-top contract is honored.
+    // pin asserts: the top match DOES surface at the default threshold, and
+    // the fraction-of-top contract is honored.
     //
     // The zero-threshold override branch remains meaningful: it surfaces
     // even secondary matches that sit below the 0.8 fraction floor.
@@ -705,7 +705,7 @@ describe("discover_tools score-floor filter", () => {
     // or we get results. The key assertion is that when empty, WARN carries hybrid shape.
     const resultText = (searchResult.content[0] as any).text;
     if (resultText.includes("No matching tools found")) {
-      // 260423-irr: WARN message differs by rawTopScore branch.
+      // WARN message differs by rawTopScore branch.
       // The hybrid scenario here has rawTopScore > 0 (one token overlaps),
       // so the "no matches above floor" variant applies.
       expect(logger.warn).toHaveBeenCalledWith(
@@ -1083,8 +1083,8 @@ describe("discover_tools -- searchHint BM25 enrichment", () => {
     expect(resultText).toContain("No matching tools found");
 
     // Verify enriched WARN shape (query + hint + errorKind).
-    // 260423-irr: zero-signal query emits "query tokens absent from deferred
-    // corpus" variant (rawTopScore === 0 branch of design §5.3).
+    // Zero-signal query emits "query tokens absent from deferred corpus"
+    // variant (rawTopScore === 0 branch of design §5.3).
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "zzzznonexistent_xyzzy",
@@ -1277,7 +1277,7 @@ describe("discover_tools -- structured search", () => {
       makeTool("mcp__alpha--tool_x"),
       makeTool("custom_tool"),
     ];
-    // custom_tool is not MCP so not deferred by Phase 2; force it deferred via alwaysDefer
+    // custom_tool is not MCP so not deferred by the MCP-deferral pass; force it deferred via alwaysDefer
     const ctx = makeContext({ alwaysDefer: ["custom_tool"], toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 200_000, ctx, createMockLogger());
 
@@ -1592,10 +1592,10 @@ describe("applyToolDeferral - discovery re-inclusion", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 15: applyToolDeferral - operator overrides (Phase 5)
+// Suite 15: applyToolDeferral - operator overrides
 // ---------------------------------------------------------------------------
 
-describe("applyToolDeferral - operator overrides (Phase 5)", () => {
+describe("applyToolDeferral - operator overrides", () => {
   it("neverDefer removes tool from deferredSet", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
@@ -1799,7 +1799,7 @@ describe("buildDeferredToolsContext", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 260428-oyc Task 1: model-aware preamble (useToolSearch option)
+  // model-aware preamble (useToolSearch option)
   // -------------------------------------------------------------------------
 
   it("A1: 1-arg call preserves discover_tools teaching (useToolSearch defaults false)", () => {
@@ -1853,7 +1853,7 @@ describe("buildDeferredToolsContext", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 17b: supportsToolSearch (260428-oyc Task 1.1)
+// Suite 17b: supportsToolSearch
 // ---------------------------------------------------------------------------
 
 describe("supportsToolSearch", () => {
@@ -1986,10 +1986,10 @@ describe("discover_tools -- mid-turn injection support", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 19: discover_tools -- co-discovery (quick-260414-ppo)
+// Suite 19: discover_tools -- co-discovery
 // ---------------------------------------------------------------------------
 
-describe("discover_tools -- co-discovery (quick-260414-ppo)", () => {
+describe("discover_tools -- co-discovery", () => {
   it("co-discovers agents_manage when models_manage is matched", async () => {
     // Register co-discovery relationships
     registerToolMetadata("models_manage", { coDiscoverWith: ["agents_manage"] });
@@ -2189,7 +2189,7 @@ describe("applyToolDeferral - provider-aware MCP deferral", () => {
     expect(result.deferredNames).toContain("mcp__yfinance--get_price");
   });
 
-  it("non-MCP deferral rules unaffected by providerFamily (Phase 1 privileged tools)", () => {
+  it("non-MCP deferral rules unaffected by providerFamily (privileged tools)", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
@@ -2205,7 +2205,7 @@ describe("applyToolDeferral - provider-aware MCP deferral", () => {
 
     const result = applyToolDeferral(tools, 128_000, ctx, logger);
 
-    // Phase 1 privileged tools still deferred for non-admin trust
+    // Privileged tools still deferred for non-admin trust
     expect(result.deferredNames).toContain("agents_manage");
     expect(result.deferredNames).toContain("obs_query");
     // But MCP tool is NOT deferred for openai
@@ -2237,7 +2237,6 @@ describe("applyToolDeferral - provider-aware MCP deferral", () => {
 
 // ---------------------------------------------------------------------------
 // Suite 8: discover_tools -- BM25 normalization + active-tool awareness
-// (260423-irr regression pins for srv1593437 2026-04-23T08:06 failures)
 // ---------------------------------------------------------------------------
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- minimal type for execute() result shape used in assertions
@@ -2254,7 +2253,7 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
     description: desc,
   });
 
-  it("BM25-only mode returns mcp_manage for 'install MCP' (regression for srv1593437 08:06:39Z)", async () => {
+  it("BM25-only mode returns mcp_manage for 'install MCP'", async () => {
     // Pre-fix: raw BM25 for mcp_manage against "install MCP" was ~0.74, below the
     // 0.8 raw-score floor, filtered out. Post-fix: normalization brings top to 1.0,
     // always clears the floor.
@@ -2276,8 +2275,8 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
   });
 
   it("active-tool match: query for already-active MCP server returns 'already active' guide", async () => {
-    // Regression for production log 2026-04-23T08:06:41Z: query="yfinance" when
-    // all mcp__yfinance--* tools are ACTIVE (not deferred). Pre-fix: "no matches".
+    // Regression: query="yfinance" when all mcp__yfinance--* tools are
+    // ACTIVE (not deferred). Pre-fix: "no matches".
     const deferred = [makeEntry("other_tool", "unrelated")];
     const active = new Set([
       "mcp__yfinance--get_stock_price",

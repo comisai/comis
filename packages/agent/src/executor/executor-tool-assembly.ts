@@ -494,8 +494,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
   // discovered) is the only factually-accurate set -- using mergedCustomTools
   // (pre-deferral) would false-positive on currently-deferred tools and tell
   // the agent "call directly, no discovery needed" for tools that aren't
-  // actually loaded. See design §4.2, §5.5, decision log row 4:
-  // .planning/design/discover-tools-bm25-fallback-fix.md
+  // actually loaded.
   if (deferralResult.discoverTool) {
     const activeAfterDeferral = new Set<string>([
       ...deferralResult.activeTools.map(t => t.name),
@@ -534,7 +533,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
 
   // Build deferred context for dynamic preamble injection.
   //
-  // 260428-oyc: under Anthropic Sonnet/Opus 4.x, request-body-injector.ts
+  // Under Anthropic Sonnet/Opus 4.x, request-body-injector.ts
   // strips client-side `discover_tools` from the API payload and replaces it
   // with the server-side `tool_search_tool_regex` + per-tool `defer_loading`
   // flag. Pass `useToolSearch=true` so the preamble teaches the model that

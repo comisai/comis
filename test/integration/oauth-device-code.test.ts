@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 11 device-code OAuth integration tests (SC11-1 / SC11-3).
+ * Device-code OAuth integration tests.
  *
  * Note: test/vitest.config.ts already enforces maxConcurrency: 1 +
  * pool: "forks" + retry: 1 — sequential annotation is REDUNDANT.
@@ -8,16 +8,10 @@
  * Run with: `pnpm test:integration -- oauth-device-code` (after `pnpm build`).
  *
  * Strategy:
- * - SC11-1: call loginOpenAICodexDeviceCode directly with mock fetch routing
- *   https://auth.openai.com/* to mock-oauth-server device-code endpoints.
- * - SC11-3: assert profileId shape and that the resulting profile lands in
- *   the Phase 7 OAuthCredentialStorePort (file adapter) under canonical ID.
- *
- * Status: RED scaffold (Wave 0). Imports `loginOpenAICodexDeviceCode` and
- * `resolveCodexAuthIdentity` from `@comis/agent`; the device-code module
- * does not exist yet, so the dist/index.js export resolves to undefined and
- * tests fail at the call site. Plans 02-04 wire the export. Plan 05 turns
- * this file GREEN end-to-end.
+ * - Device-code flow: call loginOpenAICodexDeviceCode directly with mock fetch
+ *   routing https://auth.openai.com/* to mock-oauth-server device-code endpoints.
+ * - Profile persistence: assert profileId shape and that the resulting profile
+ *   lands in the OAuthCredentialStorePort (file adapter) under canonical ID.
  */
 
 import * as os from "node:os";
@@ -96,7 +90,7 @@ function cleanupTmpDir(dir: string | undefined): void {
   }
 }
 
-describe("SC11-1 device-code flow end-to-end (mock OAuth server)", () => {
+describe("device-code flow end-to-end (mock OAuth server)", () => {
   it("completes 3-step flow: usercode -> poll (2x 403, 1x 200) -> exchange -> tokens", async () => {
     mockServer.setDeviceCodePollsUntilSuccess(2);
     const onVerification = vi.fn();
@@ -132,7 +126,7 @@ describe("SC11-1 device-code flow end-to-end (mock OAuth server)", () => {
     expect(onProgress).toHaveBeenCalled();
   });
 
-  it("SC11-3: persists profile to Phase 7 store with canonical openai-codex:<email> profileId", async () => {
+  it("persists profile to store with canonical openai-codex:<email> profileId", async () => {
     const tmpDir = freshTmpDataDir();
     try {
       mockServer.setDeviceCodePollsUntilSuccess(0); // succeed on first poll
@@ -142,7 +136,7 @@ describe("SC11-1 device-code flow end-to-end (mock OAuth server)", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
 
-      // Identity derivation matches the Phase 8 runner pattern.
+      // Identity derivation matches the runner pattern.
       const identity = resolveCodexAuthIdentity({ accessToken: result.value.access });
       const identityKey = identity.email ?? identity.profileName ?? "env-bootstrap";
       const profileId = `openai-codex:${identityKey}`;
@@ -171,7 +165,7 @@ describe("SC11-1 device-code flow end-to-end (mock OAuth server)", () => {
     }
   });
 
-  it("SC11-3 robustness: two consecutive device-code logins succeed independently", async () => {
+  it("robustness: two consecutive device-code logins succeed independently", async () => {
     mockServer.setDeviceCodePollsUntilSuccess(0);
 
     const r1 = await loginOpenAICodexDeviceCode({ onVerification: vi.fn() });

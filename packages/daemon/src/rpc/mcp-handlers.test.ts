@@ -464,12 +464,12 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // mcp.connect env var validation (Layer 3 of 2026-05-03 outage fix)
+  // mcp.connect env var validation
   // -------------------------------------------------------------------------
   describe("mcp.connect env var validation", () => {
-    // Test H — pre-spawn rejection: missing env var produces the structured
+    // Pre-spawn rejection: missing env var produces the structured
     // [invalid_value] error and manager.connect is NOT called.
-    it("Test H — rejects pre-spawn when env block references a missing ${VAR}", async () => {
+    it("rejects pre-spawn when env block references a missing ${VAR}", async () => {
       const sm = createSecretManager({}); // FINNHUB_API_KEY absent
       const handlers = createMcpHandlers({
         mcpClientManager: manager,

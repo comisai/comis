@@ -7,11 +7,11 @@
  * turn. The byte-identity property under test:
  *
  *   Given two consecutive turns with identical inputs (same system,
- *   same tools, same retention, same model), Phase 1 must produce the
- *   SAME PromptStateSnapshot. Two RecordPromptStateInput payloads with
- *   identical bytes-before-fence must hash to the same value, otherwise
- *   the detector will flag a spurious cache break and the next turn
- *   pays a cache write.
+ *   same tools, same retention, same model), the first turn must produce
+ *   the SAME PromptStateSnapshot as the second. Two RecordPromptStateInput
+ *   payloads with identical bytes-before-fence must hash to the same value,
+ *   otherwise the detector will flag a spurious cache break and the next
+ *   turn pays a cache write.
  *
  * Asserts:
  *   - extractAnthropicPromptState is deterministic for byte-identical input

@@ -10,7 +10,7 @@ Comis's outbound HTTP traffic -- OAuth refresh calls, optional content fetch, sc
 
 Node 22's built-in `fetch()` -- the global function exposed without an import -- is implemented on top of the `undici` HTTP client. Unlike `axios`, `node-fetch`, or older HTTP libraries, **Node's built-in fetch silently ignores the `HTTPS_PROXY` and `HTTP_PROXY` environment variables**. Setting them has no effect on requests made via `fetch()`.
 
-This caught us during Phase 10 OAuth-error catalogue work: the `unsupported_region` error from `auth.openai.com` is the canonical signal that an operator needs a US-region proxy, but the obvious fix (`export HTTPS_PROXY=http://proxy.example.com:8080`) does nothing for the OAuth refresh path because the daemon uses `fetch()` (per `pi-ai`'s implementation) for token rotation.
+The `unsupported_region` error from `auth.openai.com` is the canonical signal that an operator needs a US-region proxy, but the obvious fix (`export HTTPS_PROXY=http://proxy.example.com:8080`) does nothing for the OAuth refresh path because the daemon uses `fetch()` (per `pi-ai`'s implementation) for token rotation.
 
 <Warning>
 If you are debugging an `unsupported_region` error and "the proxy works for `curl` but not Comis", this is almost always the cause. `curl`, `axios`, and `node-fetch` honor `HTTPS_PROXY` via their own logic. Node's built-in `fetch()` does not -- it requires explicit proxy wiring at the `undici` layer.
@@ -35,7 +35,7 @@ systemctl restart comis
 ```
 
 <Tip>
-You can verify the proxy is in effect by running `comis doctor` -- the `oauth` category sub-checks include an HTTPS_PROXY-set probe (Phase 10 SC-10-2). If you set the variable but Comis is not picking it up, the doctor flag tells you so.
+You can verify the proxy is in effect by running `comis doctor` -- the `oauth` category sub-checks include an HTTPS_PROXY-set probe. If you set the variable but Comis is not picking it up, the doctor flag tells you so.
 </Tip>
 
 ## Troubleshooting

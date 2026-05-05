@@ -11,9 +11,9 @@
  *   still routed to Claude Haiku, defeating the cost-tiering intent and
  *   causing cross-provider auth confusion (no Anthropic API key configured).
  *
- *   Phase 2C-2 changes the schema default to "" and resolves at runtime:
- *   pick the fast-tier model from `resolveOperationDefaults(primaryProvider)`,
- *   with `getModels(primaryProvider)[0]` as the catalog-fallback.
+ *   The schema default is "" and the value is resolved at runtime: pick the
+ *   fast-tier model from `resolveOperationDefaults(primaryProvider)`, with
+ *   `getModels(primaryProvider)[0]` as the catalog-fallback.
  *
  *   Note: explicit `compactionModel` values from existing YAML configs win
  *   unchanged (length > 0 short-circuits the resolver). No backward-compat

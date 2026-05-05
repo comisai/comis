@@ -998,10 +998,10 @@ describe("createObservationMaskerLayer", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Tier-aware masking (Phase 8)
+  // Tier-aware masking
   // -------------------------------------------------------------------------
 
-  describe("tier-aware masking (Phase 8)", () => {
+  describe("tier-aware masking", () => {
     /** Config with distinct ephemeral and standard windows for tier tests. */
     const tierConfig: ObservationMaskerConfig = {
       observationKeepWindow: 25,

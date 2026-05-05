@@ -296,8 +296,7 @@ export function createContextEngine(
   // most recent one. Always-on — no drift-mode gate. The latest
   // assistant message keeps its signatures so Anthropic's
   // extended-thinking continuation can validate the immediate next
-  // call's prefix. (Replaces 260428-kvl detection-based approach;
-  // see .planning/quick/260428-lm6 for rationale.)
+  // call's prefix.
   if (deps.getReplayDriftMode) {
     const getReplayDriftMode = deps.getReplayDriftMode;
     layers.push(createSignatureReplayScrubber({
@@ -307,10 +306,10 @@ export function createContextEngine(
         // summary at lines ~720-727 (preserves legacy aliases dropped /
         // signaturesStripped / reason).
         callbackState.signatureReplayScrubber = stats;
-        // 260504-ieh: also forward stats to the optional per-execute
-        // accumulator wired in by executor-context-engine-setup.ts. The two
-        // callbacks are deliberately separate: the snapshot consumer
-        // overwrites per-call, the accumulator sums across calls.
+        // Also forward stats to the optional per-execute accumulator wired
+        // in by executor-context-engine-setup.ts. The two callbacks are
+        // deliberately separate: the snapshot consumer overwrites per-call,
+        // the accumulator sums across calls.
         deps.onSignatureReplayScrubbed?.(stats);
       },
       logger: deps.logger,
@@ -359,7 +358,7 @@ export function createContextEngine(
   // Observation masker: masks old tool results beyond the keep window.
   // Always active when context engine is enabled. The threshold check inside the
   // masker handles short-session bypass.
-  // Phase 8: Three-tier masking (protected/standard/ephemeral) with per-tier counters.
+  // Three-tier masking (protected/standard/ephemeral) with per-tier counters.
   const observationKeepWindow = config.observationKeepWindow ?? 25;
   const observationTriggerChars = config.observationTriggerChars ?? 120_000;
   const ephemeralKeepWindow = config.ephemeralKeepWindow;

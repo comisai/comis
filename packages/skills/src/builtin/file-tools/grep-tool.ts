@@ -205,11 +205,11 @@ function buildRipgrepArgs(
   // Pattern (use -e to avoid pattern being confused with flags)
   args.push("-e", pattern);
 
-  // Phase 9: filtering
+  // Filtering
   if (options.glob) args.push("--glob", options.glob);
   if (options.type) args.push("--type", options.type);
 
-  // Phase 9: case-insensitive
+  // Case-insensitive
   if (options.caseInsensitive) args.push("-i");
 
   // Literal mode (fixed-strings)
@@ -217,17 +217,17 @@ function buildRipgrepArgs(
     args.push("--fixed-strings");
   }
 
-  // Phase 9: multiline
+  // Multiline
   if (options.multiline) args.push("-U", "--multiline-dotall");
 
-  // Phase 9: context lines (content mode only -- ignored for other modes)
+  // Context lines (content mode only -- ignored for other modes)
   if (outputMode === "content") {
     if (options.afterContext !== undefined) args.push("-A", String(options.afterContext));
     if (options.beforeContext !== undefined) args.push("-B", String(options.beforeContext));
     if (options.context !== undefined) args.push("-C", String(options.context));
   }
 
-  // Phase 9: per-file match limit for pagination efficiency (content mode only)
+  // Per-file match limit for pagination efficiency (content mode only)
   if (outputMode === "content") {
     const headLimit = options.headLimit ?? 250;
     const offset = options.offset ?? 0;
@@ -424,7 +424,7 @@ export function createComisGrepTool(
             ? (outputModeRaw as OutputMode)
             : "content";
 
-        // Phase 9: new parameters
+        // Optional filter / formatting parameters
         const glob = readStringParam(params, "glob", false);
         const type = readStringParam(params, "type", false);
         const caseInsensitive = readBooleanParam(params, "-i", false) ?? false;

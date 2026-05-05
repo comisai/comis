@@ -1860,10 +1860,10 @@ describe("createPiEventBridge", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R-04: responseId extraction
+  // responseId extraction
   // -------------------------------------------------------------------------
 
-  describe("responseId extraction (R-04)", () => {
+  describe("responseId extraction", () => {
     it("extracts responseId from assistant message", () => {
       const { listener } = createPiEventBridge(deps);
       listener({
@@ -2382,10 +2382,10 @@ describe("createPiEventBridge", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R-03: Google provider usage validation
+  // Google provider usage validation
   // -------------------------------------------------------------------------
 
-  describe("Google provider usage validation (R-03)", () => {
+  describe("Google provider usage validation", () => {
     it("Google provider usage excludes cached tokens from prompt count", () => {
       deps = createMockDeps({ provider: "google", model: "gemini-3-pro-preview" });
       const { listener } = createPiEventBridge(deps);
@@ -2774,10 +2774,10 @@ describe("createPiEventBridge", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 49-01: TTL split normalization and cacheCreation event field
+  // TTL split normalization and cacheCreation event field
   // ---------------------------------------------------------------------------
 
-  describe("49-01: TTL split normalization", () => {
+  describe("TTL split normalization", () => {
     const SONNET = "claude-sonnet-4-5-20250929";
 
     function makeTtlTurnEnd(opts: { cacheRead: number; cacheWrite: number }) {
@@ -2885,10 +2885,10 @@ describe("createPiEventBridge", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 49-05: Session-cumulative cost accumulators and thinking token tracking
+  // Session-cumulative cost accumulators and thinking token tracking
   // ---------------------------------------------------------------------------
 
-  describe("49-05: session-cumulative cost accumulators", () => {
+  describe("session-cumulative cost accumulators", () => {
     it("createBridgeMetrics initializes sessionCumulativeCostUsd=0 and sessionCumulativeCacheSavedUsd=0", () => {
       const m = createBridgeMetrics();
       expect(m.sessionCumulativeCostUsd).toBe(0);
@@ -2948,7 +2948,7 @@ describe("createPiEventBridge", () => {
     });
   });
 
-  describe("49-05: thinking token tracking", () => {
+  describe("thinking token tracking", () => {
     it("createBridgeMetrics initializes totalThinkingTokens=0", () => {
       const m = createBridgeMetrics();
       expect(m.totalThinkingTokens).toBe(0);
@@ -3203,7 +3203,7 @@ describe("createPiEventBridge", () => {
     });
   });
 
-  describe("49-05: ExecutionResult.cost session fields", () => {
+  describe("ExecutionResult.cost session fields", () => {
     it("sessionCostUsd and sessionCacheSavedUsd present on ExecutionResult.cost type", () => {
       // Type-level test: ensure the fields exist in the type
       const cost: ExecutionResult["cost"] = {
@@ -3417,10 +3417,10 @@ describe("createPiEventBridge", () => {
   });
 
   // ------------------------------------------------------------------
-  // 260428-hoy: stream-close canonical capture + turn_start pre-call hook
+  // stream-close canonical capture + turn_start pre-call hook
   // + lockstep FIFO eviction across hash and canonical stores.
   // ------------------------------------------------------------------
-  describe("260428-hoy: thinking-block canonical capture and pre-call hook", () => {
+  describe("thinking-block canonical capture and pre-call hook", () => {
     /** Build a turn_end event whose assistant message contains the given content blocks. */
     function makeTurnEndWithContent(
       content: ReadonlyArray<Record<string, unknown>>,
@@ -3533,7 +3533,7 @@ describe("createPiEventBridge", () => {
 
     it("does NOT call assertion-style ERROR logger from inside turn_end (assertion path moved out of bridge)", () => {
       // Source-shape regression: there should be zero `assertThinkingBlocksUnchanged`
-      // call sites in pi-event-bridge.ts after 260428-hoy. The runtime check here
+      // call sites in pi-event-bridge.ts. The runtime check here
       // exercises the path: a turn_end with a stored hash entry must NOT log any
       // hash-invariant ERROR (the old dead branch is gone). The new diagnostic
       // path runs at turn_start via the pre-call closure (executor-level).
@@ -3554,8 +3554,8 @@ describe("createPiEventBridge", () => {
       listener(
         makeTurnEndWithContent([thinkingBlock("orig", "sig-1")], "resp-X") as any,
       );
-      // Fire another turn_end -- the OLD code would assert here. Under 260428-hoy
-      // the bridge no longer asserts at turn_end, so no hash-invariant ERROR
+      // Fire another turn_end -- the OLD code would assert here. The bridge
+      // no longer asserts at turn_end, so no hash-invariant ERROR
       // appears even though a stored hash exists.
       listener(
         makeTurnEndWithContent([thinkingBlock("orig", "sig-1")], "resp-X-second") as any,
@@ -3569,11 +3569,11 @@ describe("createPiEventBridge", () => {
   });
 
   // ------------------------------------------------------------------
-  // 260428-j0v: unconditional entry/exit logs at the three thinking-block
+  // unconditional entry/exit logs at the three thinking-block
   // diagnostic sites (turn_start pre-call, LLM-error dispatch decision,
   // wire-diff dispatch completion).
   // ------------------------------------------------------------------
-  describe("260428-j0v: unconditional entry/exit logs", () => {
+  describe("unconditional entry/exit logs", () => {
     /** Build a turn_end event with controlled content + responseId. */
     function makeTurnEndWithContent(
       content: ReadonlyArray<Record<string, unknown>>,
@@ -3648,7 +3648,7 @@ describe("createPiEventBridge", () => {
       return calls.filter((c) => c[1] === msg);
     }
 
-    /** 260504-ieh: filter debug mock calls by message string. The clean-walk
+    /** filter debug mock calls by message string. The clean-walk
      *  branch of "Pre-call assertion ran" lives at DEBUG now. */
     function debugCallsByMessage(deps: PiEventBridgeDeps, msg: string) {
       const calls = (deps.logger.debug as ReturnType<typeof vi.fn>).mock.calls as Array<
@@ -3657,7 +3657,7 @@ describe("createPiEventBridge", () => {
       return calls.filter((c) => c[1] === msg);
     }
 
-    /** 260504-ieh: filter warn mock calls by message string. The mismatch
+    /** filter warn mock calls by message string. The mismatch
      *  branch of "Pre-call assertion ran" escalates to WARN with `hint` +
      *  `errorKind` populated. */
     function warnCallsByMessage(deps: PiEventBridgeDeps, msg: string) {
@@ -3683,7 +3683,7 @@ describe("createPiEventBridge", () => {
       // Now fire turn_start; the pre-call entry log must fire with counters.
       listener({ type: "turn_start", turnIndex: 1, timestamp: Date.now() } as any);
 
-      // 260504-ieh: clean-walk branch demoted from INFO to DEBUG.
+      // clean-walk branch demoted from INFO to DEBUG.
       expect(infoCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
       const calls = debugCallsByMessage(localDeps, "Pre-call assertion ran");
       expect(calls).toHaveLength(1);
@@ -3713,7 +3713,7 @@ describe("createPiEventBridge", () => {
 
       listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any);
 
-      // 260504-ieh: clean-walk branch demoted from INFO to DEBUG.
+      // clean-walk branch demoted from INFO to DEBUG.
       expect(infoCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
       const calls = debugCallsByMessage(localDeps, "Pre-call assertion ran");
       expect(calls).toHaveLength(1);
@@ -3735,7 +3735,7 @@ describe("createPiEventBridge", () => {
 
       listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any);
 
-      // 260504-ieh: clean-walk branch demoted from INFO to DEBUG.
+      // clean-walk branch demoted from INFO to DEBUG.
       expect(infoCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
       const calls = debugCallsByMessage(localDeps, "Pre-call assertion ran");
       expect(calls).toHaveLength(1);
@@ -3760,7 +3760,7 @@ describe("createPiEventBridge", () => {
 
       listener({ type: "turn_start", turnIndex: 0, timestamp: Date.now() } as any);
 
-      // 260504-ieh: clean-walk branch demoted from INFO to DEBUG; the
+      // clean-walk branch demoted from INFO to DEBUG; the
       // getSessionMessages-throws path still emits the log because the
       // catch falls through to the same dispatch site.
       expect(infoCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
@@ -3785,7 +3785,7 @@ describe("createPiEventBridge", () => {
       listener(makeTurnEndWithContent([origBlock], "resp-mut") as any);
       listener({ type: "turn_start", turnIndex: 1, timestamp: Date.now() } as any);
 
-      // 260504-ieh: mismatch branch escalated from INFO to WARN with required
+      // mismatch branch escalated from INFO to WARN with required
       // `hint` + `errorKind` per the project's logging convention.
       expect(infoCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
       expect(debugCallsByMessage(localDeps, "Pre-call assertion ran")).toHaveLength(0);
@@ -3804,9 +3804,9 @@ describe("createPiEventBridge", () => {
       expect((payload.hint as string).length).toBeGreaterThan(0);
     });
 
-    // ----- 260504-ieh: bridge counter increments -----
+    // ----- bridge counter increments -----
 
-    it("Test 6 (260504-ieh): pre-call assertion increments BridgeMetricsState counters across walks", () => {
+    it("Test 6: pre-call assertion increments BridgeMetricsState counters across walks", () => {
       const origBlock = thinkingBlock("orig", "sig-1");
       const mutatedBlock = thinkingBlock("mutated-text", "sig-1");
 
@@ -3924,7 +3924,7 @@ describe("createPiEventBridge", () => {
       const getSessionMessages = vi.fn().mockReturnValue([liveMsg]);
       // Use a path that definitely doesn't exist — forces fileReadErrors=1.
       const getSessionJsonlPath = vi.fn().mockReturnValue(
-        "/tmp/definitely-does-not-exist-260428-j0v.jsonl",
+        "/tmp/definitely-does-not-exist.jsonl",
       );
       const localDeps = createMockDeps({ getSessionMessages, getSessionJsonlPath });
       const { listener } = createPiEventBridge(localDeps);
@@ -3938,7 +3938,7 @@ describe("createPiEventBridge", () => {
       // Drain the fire-and-forget Promise dispatch by polling for the completion
       // log. The dispatch chain awaits fs.readFile, which takes a variable number
       // of event-loop ticks to propagate (fewer on macOS, more on Linux CI).
-      // vi.waitFor handles both consistently. (260501-jfk: replaced racy
+      // vi.waitFor handles both consistently. (replaced racy
       // setImmediate x3 drain that flaked on Linux CI in v1.0.29 publish run.)
       await vi.waitFor(
         () => {
@@ -3965,7 +3965,7 @@ describe("createPiEventBridge", () => {
       const liveMsg = { role: "assistant", responseId: "resp-H", content: [block] };
       const getSessionMessages = vi.fn().mockReturnValue([liveMsg]);
       const getSessionJsonlPath = vi.fn().mockReturnValue(
-        "/tmp/definitely-does-not-exist-260428-j0v-H.jsonl",
+        "/tmp/definitely-does-not-exist-H.jsonl",
       );
       const localDeps = createMockDeps({ getSessionMessages, getSessionJsonlPath });
       const { listener } = createPiEventBridge(localDeps);
@@ -3977,7 +3977,7 @@ describe("createPiEventBridge", () => {
       );
 
       // Drain the fire-and-forget Promise dispatch by polling for the completion
-      // log. (260501-jfk: replaced racy setImmediate x3 drain — see test G.)
+      // log. (replaced racy setImmediate x3 drain — see test G.)
       await vi.waitFor(
         () => {
           const messages = infoCallsByModule(localDeps, "bridge.wire-diff").map((c) => c[1]);
@@ -3997,7 +3997,7 @@ describe("createPiEventBridge", () => {
       expect(decisionIdx).toBeLessThan(completionIdx);
     });
 
-    it("I. existing 260428-iag wire-diff ERROR is preserved (no behavior change beyond new INFO emissions)", () => {
+    it("I. existing wire-diff ERROR is preserved (no behavior change beyond new INFO emissions)", () => {
       // A non-error turn_end must NOT trigger the wire-diff decision log.
       const localDeps = createMockDeps();
       const { listener } = createPiEventBridge(localDeps);
@@ -4029,7 +4029,7 @@ describe("createPiEventBridge", () => {
   });
 
   // -------------------------------------------------------------------------
-  // auto_retry_start abort hook (260501-dkl)
+  // auto_retry_start abort hook
   //
   // Verifies the bridge classifies SDK auto-retry events and fires
   // `onAbortRetry` only on `rate_limited` errors. Non-rate_limited retryable
@@ -4037,7 +4037,7 @@ describe("createPiEventBridge", () => {
   // retry-with-backoff proceeds.
   // -------------------------------------------------------------------------
 
-  describe("auto_retry_start abort hook (260501-dkl)", () => {
+  describe("auto_retry_start abort hook", () => {
     it("fires onAbortRetry when auto_retry_start event has rate_limited error", () => {
       const onAbortRetry = vi.fn();
       const localDeps = createMockDeps({ onAbortRetry });

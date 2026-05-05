@@ -6,7 +6,7 @@
  * prepared statements. Sessions survive process restarts since they are
  * stored in SQLite.
  *
- * Factory function pattern (createSessionStore) consistent with Phase 1
+ * Factory function pattern (createSessionStore) consistent with
  * createSecretManager for minimal public surface area.
  */
 

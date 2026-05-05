@@ -24,10 +24,9 @@ export interface ExecutionLockOptions {
   /**
    * Optional lock-acquisition retry budget. Forwarded to proper-lockfile's
    * own retry option (uses a built-in incremental backoff). When undefined
-   * (default), retries: 0 — fail fast on contention. Phase 7 plan 08 added
-   * this so the OAuth manager can wait for a sibling refresh to complete
-   * (concurrent-refresh acceptance) without callers having to roll their own
-   * retry loop.
+   * (default), retries: 0 — fail fast on contention. Lets the OAuth manager
+   * wait for a sibling refresh to complete (concurrent-refresh acceptance)
+   * without callers having to roll their own retry loop.
    */
   retries?:
     | number

@@ -1,6 +1,6 @@
 # Comis Test Configuration (Custom Adapter Wiring Tests)
 #
-# Variant for Phase 124 custom adapter integration E2E tests:
+# Variant for custom adapter integration E2E tests:
 # - Port 8504 (unique, no collisions with other test suites)
 # - Separate memory database (test-memory-124-custom-adapter.db)
 # - RAG disabled (no embeddings needed)

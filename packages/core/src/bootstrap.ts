@@ -48,7 +48,7 @@ export interface BootstrapOptions {
 /**
  * The application dependency container.
  *
- * Created by bootstrap(), this wires all Phase 1 services together
+ * Created by bootstrap(), this wires all services together
  * and provides a single shutdown() method for graceful cleanup.
  */
 export interface AppContainer {

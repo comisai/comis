@@ -31,7 +31,7 @@ vi.mock("node:fs", () => ({
   openSync: vi.fn(() => 99),
   closeSync: vi.fn(),
   accessSync: vi.fn(),
-  // 260428-qrn: `findContainerDaemonPid` walks /proc via dynamic
+  // `findContainerDaemonPid` walks /proc via dynamic
   // `await import("node:fs")`. Default to an empty proc so most tests
   // skip the SIGTERM branch; the dedicated Docker-restart test overrides.
   readdirSync: vi.fn(() => [] as unknown as string[]),
@@ -269,9 +269,9 @@ describe("daemonStartStep", () => {
     expect(warnedAboutDockerRestart).toBe(true);
   });
 
-  // 260428-qrn: when the wizard is about to SIGTERM the in-container daemon,
-  // it must first emit a WARN naming `--restart unless-stopped` so the user
-  // gets a breadcrumb before the daemon disappears. Asserted via invocation
+  // When the wizard is about to SIGTERM the in-container daemon, it must
+  // first emit a WARN naming `--restart unless-stopped` so the user gets
+  // a breadcrumb before the daemon disappears. Asserted via invocation
   // call order: warn() must run BEFORE process.kill().
   it("inside Docker -> emits pre-SIGTERM WARN naming `unless-stopped` BEFORE process.kill", async () => {
     // /.dockerenv present + every other path exists (including the

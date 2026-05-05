@@ -20,9 +20,9 @@ export type { AnnouncementDeadLetterQueue, DeadLetterEntry } from "./announcemen
 export { createContextHandlers } from "./rpc/context-handlers.js";
 export type { ContextHandlerDeps } from "./rpc/context-handlers.js";
 
-// Agent management RPC handlers (Phase 9 plan 09-07: re-exported so the
-// multi-account integration test can drive the actual `agents.update` RPC
-// handler against a shared `agents` map, mirroring the daemon-runtime
-// container.config.agents pattern at daemon.ts:594/634).
+// Agent management RPC handlers — re-exported so the multi-account
+// integration test can drive the actual `agents.update` RPC handler against a
+// shared `agents` map, mirroring the daemon-runtime container.config.agents
+// pattern at daemon.ts:594/634.
 export { createAgentHandlers } from "./rpc/agent-handlers.js";
 export type { AgentHandlerDeps } from "./rpc/agent-handlers.js";

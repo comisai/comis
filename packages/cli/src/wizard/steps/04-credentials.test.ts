@@ -28,12 +28,12 @@ vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
   };
 });
 
-// Phase 8 R6 — mock @comis/agent's interactive OAuth flow for the
-// dispatch tests. The mock returns a controllable Result so the dispatch
-// branches can be exercised without a real browser open or callback
-// server. selectOAuthCredentialStore is stubbed to an in-memory port
-// so the test never touches ~/.comis/auth-profiles.json on the test
-// host's filesystem.
+// Mock @comis/agent's interactive OAuth flow for the dispatch tests.
+// The mock returns a controllable Result so the dispatch branches can
+// be exercised without a real browser open or callback server.
+// selectOAuthCredentialStore is stubbed to an in-memory port so the
+// test never touches ~/.comis/auth-profiles.json on the test host's
+// filesystem.
 vi.mock("@comis/agent", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/agent")>();
   return {
@@ -60,9 +60,9 @@ vi.mock("@comis/agent", async (importOriginal) => {
   };
 });
 
-// Phase 8 R6 — mock loadConfigFile to return "no config" so the wizard
-// defaults to file storage (the selectOAuthCredentialStore mock above
-// intercepts the result anyway). validateConfig is pass-through.
+// Mock loadConfigFile to return "no config" so the wizard defaults to
+// file storage (the selectOAuthCredentialStore mock above intercepts
+// the result anyway). validateConfig is pass-through.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
@@ -363,11 +363,11 @@ describe("credentialsStep", () => {
     );
   });
 
-  // 260504-gge: openai is now API-key-only -- the auth-method selector was
-  // removed because OAuth lives exclusively on `openai-codex`. The dispatcher
+  // openai is now API-key-only -- the auth-method selector was removed
+  // because OAuth lives exclusively on `openai-codex`. The dispatcher
   // skips the auth-method select for openai and routes directly to the
   // standard API-key paste flow.
-  it("openai uses standard API-key path (no auth-method selector after 260504-gge refactor)", async () => {
+  it("openai uses standard API-key path (no auth-method selector)", async () => {
     const prompter = createMockPrompter();
     vi.mocked(prompter.password).mockResolvedValueOnce(
       "sk-validkey1234567890abcdefghijklmnopqrstuv",
@@ -452,9 +452,9 @@ describe("credentialsStep", () => {
     expect(result.provider?.apiKey).toBeUndefined();
   });
 
-  // ---------- D1-D4: catalog-driven validation regression tests ----------
+  // ---------- catalog-driven validation regression tests ----------
 
-  it("D1: validation URL is built from pi-ai catalog baseUrl, not a hardcoded map", async () => {
+  it("validation URL is built from pi-ai catalog baseUrl, not a hardcoded map", async () => {
     // Pin the catalog baseUrl to a sentinel and assert fetch was called
     // with a URL beginning with that sentinel.
     vi.mocked(getModels).mockReturnValue([
@@ -484,7 +484,7 @@ describe("credentialsStep", () => {
     expect(fetchUrl).toContain("/v1/models");
   });
 
-  it("D2: provider with no catalog baseUrl skips live validation (returns valid)", async () => {
+  it("provider with no catalog baseUrl skips live validation (returns valid)", async () => {
     // No baseUrl in catalog -> getValidationEndpoint returns undefined
     // -> the line-130 fallback short-circuits and returns valid=true.
     vi.mocked(getModels).mockReturnValue([] as never);
@@ -507,7 +507,7 @@ describe("credentialsStep", () => {
     expect(result.provider?.validated).toBe(true);
   });
 
-  it("D3: anthropic OAuth tokens still skip live validation entirely (regression pin)", async () => {
+  it("anthropic OAuth tokens still skip live validation entirely (regression pin)", async () => {
     // OAuth tokens cannot validate against /models -- existing fast path
     // (lines 124-126) must still trigger BEFORE the catalog lookup.
     vi.mocked(getModels).mockReturnValue([
@@ -532,7 +532,7 @@ describe("credentialsStep", () => {
     expect(result.provider?.authMethod).toBe("oauth");
   });
 
-  it("D4: PROVIDER_VALIDATION map is gone; getValidationEndpoint + PROVIDER_VALIDATION_PATHS are present", () => {
+  it("PROVIDER_VALIDATION map is gone; getValidationEndpoint + PROVIDER_VALIDATION_PATHS are present", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(resolve(here, "04-credentials.ts"), "utf-8");
     // Dropped: const PROVIDER_VALIDATION: Record<string, ...>
@@ -543,7 +543,7 @@ describe("credentialsStep", () => {
     expect(src).toMatch(/getModels.*KnownProvider.*baseUrl/);
   });
 
-  // ---------- D5-D8: composed-URL regression tests (260501-mvw) ----------
+  // ---------- composed-URL regression tests ----------
 
   // Drive the credentialsStep flow with the real pi-ai catalog and capture
   // the URL passed to fetch. The mock `prompter.password` resolves directly
@@ -574,7 +574,7 @@ describe("credentialsStep", () => {
     return typeof callArg === "string" ? callArg : (callArg as URL).toString();
   }
 
-  it("D5: composed URL for each known provider matches the canonical /models endpoint", async () => {
+  it("composed URL for each known provider matches the canonical /models endpoint", async () => {
     const expected: Record<string, string> = {
       anthropic:  "https://api.anthropic.com/v1/models",
       openai:     "https://api.openai.com/v1/models",
@@ -601,7 +601,7 @@ describe("credentialsStep", () => {
     }
   });
 
-  it("D6: composed URL contains no duplicated version segments (regression guard)", async () => {
+  it("composed URL contains no duplicated version segments (regression guard)", async () => {
     const providers = [
       "anthropic", "openai", "google", "groq",
       "mistral", "deepseek", "xai", "cerebras", "openrouter",
@@ -629,7 +629,7 @@ describe("credentialsStep", () => {
     }
   });
 
-  it("D7: PROVIDER_VALIDATION_PATHS contains no doubled-prefix path values (260501-mvw regression pin)", () => {
+  it("PROVIDER_VALIDATION_PATHS contains no doubled-prefix path values (regression pin)", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(resolve(here, "04-credentials.ts"), "utf-8");
 
@@ -664,7 +664,7 @@ describe("credentialsStep", () => {
     }
   });
 
-  it("D8: getValidationEndpoint returns undefined (skips live validation) for catalog-absent providers", async () => {
+  it("getValidationEndpoint returns undefined (skips live validation) for catalog-absent providers", async () => {
     // Catalog returns no models for these providers -> getValidationEndpoint
     // returns undefined -> validateKeyLive's line-130 fallback short-circuits
     // and reports valid=true with no fetch call.
@@ -697,9 +697,9 @@ describe("credentialsStep", () => {
   });
 });
 
-// ---------- Phase 8 R6 — OAuth dispatch tests ----------
+// ---------- OAuth dispatch tests ----------
 
-describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
+describe("credentialsStep — OAuth dispatch", () => {
   beforeEach(() => {
     vi.mocked(loginOpenAICodexOAuth).mockReset();
     vi.mocked(isRemoteEnvironment).mockReturnValue(false);
@@ -715,7 +715,7 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("260504-gge: provider=openai-codex routes to loginOpenAICodexOAuth via method picker (browser-auto)", async () => {
+  it("provider=openai-codex routes to loginOpenAICodexOAuth via method picker (browser-auto)", async () => {
     vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
       ok: true,
       value: {
@@ -752,7 +752,7 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     expect(result.provider?.apiKey).toBe("test_access_token");
   });
 
-  it("260504-gge: openai-codex device-code dispatch (isRemote=true)", async () => {
+  it("openai-codex device-code dispatch (isRemote=true)", async () => {
     vi.mocked(isRemoteEnvironment).mockReturnValueOnce(true);
     vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
       ok: true,
@@ -783,7 +783,7 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     expect(result.provider?.validated).toBe(true);
   });
 
-  it("260504-gge: openai-codex browser-manual dispatch forces isRemote=true", async () => {
+  it("openai-codex browser-manual dispatch forces isRemote=true", async () => {
     // isRemoteEnvironment returns false (local desktop) but the user picks
     // "browser-manual" -- the dispatcher must still pass isRemote: true so
     // the runner uses the remote/manual-paste handlers regardless of detection.
@@ -817,7 +817,7 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     expect(result.provider?.validated).toBe(true);
   });
 
-  it("260504-gge: openai-codex skip emits hint and sets unvalidated state", async () => {
+  it("openai-codex skip emits hint and sets unvalidated state", async () => {
     const prompter = createMockPrompter();
     vi.mocked(prompter.select).mockResolvedValueOnce("skip");
 
@@ -845,7 +845,7 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     expect(result.provider?.authMethod).toBeUndefined();
   });
 
-  it("R6 Anthropic regression: provider=anthropic + authMethod=oauth → handleStandardProvider path (loginOpenAICodexOAuth NOT called)", async () => {
+  it("Anthropic regression: provider=anthropic + authMethod=oauth → handleStandardProvider path (loginOpenAICodexOAuth NOT called)", async () => {
     const prompter = createMockPrompter();
     // Hoisted auth-method select returns "oauth" → because providerId is
     // "anthropic" (not "openai"), the dispatcher does NOT branch to
@@ -864,9 +864,8 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     };
     const result = await credentialsStep.execute(startState, prompter);
 
-    // CRITICAL Pitfall 8 assertion — the OpenAI runner must NOT be called
-    // for any other provider. Anthropic OAuth keeps its claude setup-token
-    // paste flow.
+    // The OpenAI runner must NOT be called for any other provider.
+    // Anthropic OAuth keeps its claude setup-token paste flow.
     expect(loginOpenAICodexOAuth).not.toHaveBeenCalled();
     // Sanity-check the existing Anthropic OAuth path still produces a
     // validated profile in the wizard state.
@@ -877,7 +876,7 @@ describe("credentialsStep — Phase 8 OAuth dispatch (R6)", () => {
     expect(result.provider?.oauthProfileId).toBeUndefined();
   });
 
-  it("260504-gge: openai-codex OAuth failure surfaces hint and offers retry/skip recovery", async () => {
+  it("openai-codex OAuth failure surfaces hint and offers retry/skip recovery", async () => {
     vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
       ok: false,
       error: {

@@ -43,7 +43,7 @@ export interface ManagedSectionRedirect {
    * fields fit in < 20 lines of hint text. Verified against the tool's
    * TypeBox parameter schema as of this commit.
    *
-   * Bug B (260428-gj6): production trace c7b91328 showed the agent burning
+   * Bug B: production trace c7b91328 showed the agent burning
    * ~30s × 4 LLM calls re-loading the agents_manage schema after an
    * immutable-path rejection. Surfacing the fragment inline closes that
    * round-trip tax.
@@ -170,10 +170,10 @@ export const MANAGED_SECTIONS: readonly ManagedSectionRedirect[] = [
         model: "<model-id>",
         provider: "<provider>",
         maxSteps: 100,
-        // Phase 9 R8 (plan 06): advertise the per-agent OAuth profile
-        // preference to the LLM. Maps provider → "<provider>:<identity>"
-        // stored profile ID. Validated end-to-end by Plan 02's Zod refine
-        // and Plan 06's daemon-side has() existence check.
+        // Advertise the per-agent OAuth profile preference to the LLM.
+        // Maps provider → "<provider>:<identity>" stored profile ID.
+        // Validated end-to-end by the Zod refine and daemon-side has()
+        // existence check.
         oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
       },
     },
@@ -233,8 +233,8 @@ export function getManagedSectionRedirect(
  *   stub forwards to the real tool and registers it as discovered).
  *
  * Naming `discover_tools` in the hint actively misleads Anthropic
- * Sonnet/Opus 4.x because that tool is not in their payload (260428-oyc
- * production repro: agent saw "Recovery: (1) call discover_tools(...)" and
+ * Sonnet/Opus 4.x because that tool is not in their payload (production
+ * repro: agent saw "Recovery: (1) call discover_tools(...)" and
  * gave up, reporting "I don't have a discover_tools function"). The
  * single-step framing works on every provider.
  *
@@ -262,7 +262,7 @@ export function formatRedirectHint(
     );
   }
 
-  // Bug B (260428-gj6): inline the dedicated tool's action enum + required
+  // Bug B: inline the dedicated tool's action enum + required
   // fields so the LLM can call it without a separate discover_tools round-
   // trip. Positioned AFTER the Recovery example (so the example is the first
   // thing the model sees) and BEFORE the mutablePaths block (which is the

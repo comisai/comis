@@ -284,14 +284,13 @@ describe("agents_manage tool", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 260428-sw2 Layer 1: post-create next-step contract emitted in tool_result.
+  // Post-create next-step contract emitted in tool_result.
   //
-  // Production trace 1a8b0d91 turn 13 (17:24:26.932 UTC) was completely empty
-  // (0 text, 0 thinking, 0 tools) after the LLM created 9 sub-agents in
-  // parallel: TOOL_GUIDE prescriptive text was crowded out under high
-  // parallel-tool-call load. Fix: emit the next-step contract on the
-  // freshest, uncached surface -- the tool_result text block itself, read
-  // by the LLM on every turn.
+  // After parallel creation of many sub-agents, the LLM occasionally
+  // produced empty turns (0 text, 0 thinking, 0 tools) because TOOL_GUIDE
+  // prescriptive text was crowded out under high parallel-tool-call load.
+  // Fix: emit the next-step contract on the freshest, uncached surface --
+  // the tool_result text block itself, read by the LLM on every turn.
   //
   // Pins:
   //  - Case A (workspaceDir present): full contract with anchor strings
@@ -309,7 +308,7 @@ describe("agents_manage tool", () => {
   //  - Non-create actions (get/update/delete/suspend/resume) MUST NOT emit
   //    the contract NOR the structured INFO log.
   // ---------------------------------------------------------------------------
-  describe("create next-step contract (260428-sw2)", () => {
+  describe("create next-step contract", () => {
     it("Case A: with workspaceDir, emits full contract as first text block", async () => {
       const rpcReturn = {
         agentId: "ta-fundamentals",
@@ -419,8 +418,8 @@ describe("agents_manage tool", () => {
         agentId: "ta-fundamentals",
         workspaceDir: "/home/comis/.comis/workspace-ta-fundamentals",
         contractEmitted: true,
-        // 260428-vyf: additive field distinguishing the 3 inline-write
-        // outcomes. "none" because this test does not supply inlineContent.
+        // Additive field distinguishing the 3 inline-write outcomes.
+        // "none" because this test does not supply inlineContent.
         inlineWritesOutcome: "none",
       });
       expect(msg).toMatch(/agents_manage\.create succeeded.*next-step contract emitted/);
@@ -445,7 +444,7 @@ describe("agents_manage tool", () => {
         agentId: "ta-bear",
         workspaceDir: null,
         contractEmitted: true,
-        // 260428-vyf: additive field, "none" when inlineContent absent.
+        // Additive field, "none" when inlineContent absent.
         inlineWritesOutcome: "none",
       });
     });
@@ -502,11 +501,11 @@ describe("agents_manage tool", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 260428-vyf Layer 2: inline ROLE.md / IDENTITY.md content on agents.create.
+  // Inline ROLE.md / IDENTITY.md content on agents.create.
   //
   // The tool layer accepts workspace.role / workspace.identity at the schema
   // boundary, strips them from the config payload before the RPC, and
-  // forwards them as a separate top-level `inlineContent` parameter (Path A).
+  // forwards them as a separate top-level `inlineContent` parameter.
   // The daemon writes the files atomically as part of agents.create and
   // returns an `inlineWritesResult` field on the RPC payload, which
   // buildCreateContract uses to decide between the SHORT, PARTIAL, and
@@ -516,7 +515,7 @@ describe("agents_manage tool", () => {
   // Test 5: handler strips role/identity from config + forwards inlineContent.
   // Tests 6-9: buildCreateContract 3-state branches + IO failure fallthrough.
   // ---------------------------------------------------------------------------
-  describe("create inline workspace content (260428-vyf)", () => {
+  describe("create inline workspace content", () => {
     // ---------------------------------------------------------------------
     // Test 1-4: schema accept/reject
     // ---------------------------------------------------------------------
@@ -645,7 +644,7 @@ describe("agents_manage tool", () => {
     // ---------------------------------------------------------------------
     // Test 8: buildCreateContract — neither (regression) emits existing 2-step
     // ---------------------------------------------------------------------
-    it("Test 8 — buildCreateContract: neither/undefined falls through to existing 260428-sw2 contract", () => {
+    it("Test 8 — buildCreateContract: neither/undefined falls through to existing 2-step contract", () => {
       const undefinedResult = buildCreateContract("agt-n", "/tmp/workspace-agt-n");
       expect(undefinedResult).toContain("✓ Agent agt-n created at /tmp/workspace-agt-n.");
       expect(undefinedResult).toContain("Workspace files are TEMPLATES");
@@ -1138,16 +1137,16 @@ describe("agents_manage tool", () => {
   // stringified form the Anthropic LLM sometimes emits for nested free-form
   // objects, before coerceConfig() in execute() gets a chance to parse it.
   // ---------------------------------------------------------------------------
-  // Phase 9 R8: AgentsManageToolParams.config carries an optional oauthProfiles
-  // field (Type.Optional(Type.Record(Type.String(), Type.String({description})))).
-  // The downstream Zod schema (R1, plan 02) is the canonical format gate; this
-  // tool-layer field documents the surface for the LLM and lets the structured-
-  // config branch of the Type.Union accept oauthProfiles patches.
+  // AgentsManageToolParams.config carries an optional oauthProfiles field
+  // (Type.Optional(Type.Record(Type.String(), Type.String({description})))).
+  // The downstream Zod schema is the canonical format gate; this tool-layer
+  // field documents the surface for the LLM and lets the structured-config
+  // branch of the Type.Union accept oauthProfiles patches.
   //
   // Additional check: managed-sections.ts agents entry's exampleArgs.config
   // includes an oauthProfiles example and round-trips through TypeBox.
   // ---------------------------------------------------------------------------
-  describe("update with oauthProfiles (Phase 9 R8)", () => {
+  describe("update with oauthProfiles", () => {
     it("AgentsManageToolParams.config declares oauthProfiles as a Record schema (LLM-visible documentation)", () => {
       // Walk into the structured-config branch of the Type.Union
       // (config.anyOf[0]) and assert it has a properties.oauthProfiles entry
@@ -1212,10 +1211,10 @@ describe("agents_manage tool", () => {
     it("downstream Zod (PerAgentConfigSchema) rejects malformed profile-id in oauthProfiles", async () => {
       // The tool's TypeBox structured-config branch documents oauthProfiles
       // as a Record<string, string>. Format validation (the colon shape, the
-      // forbidden-character defense-in-depth) lives in the Zod refine added
-      // in plan 02 (R1) — that's the canonical gate. This test asserts that
-      // a malformed value reaches the Zod layer and is rejected with an
-      // error message that names validateProfileId.
+      // forbidden-character defense-in-depth) lives in the Zod refine —
+      // that's the canonical gate. This test asserts that a malformed value
+      // reaches the Zod layer and is rejected with an error message that
+      // names validateProfileId.
       const { PerAgentConfigSchema } = await import("@comis/core");
       const parsed = PerAgentConfigSchema.safeParse({
         oauthProfiles: { "openai-codex": "no-colon" },
@@ -1272,12 +1271,11 @@ describe("agents_manage tool", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 260428-oyc Task 2: agents_manage.create accepts both flat workspace_profile
-  // and nested workspace.profile + round-trips MANAGED_SECTIONS.exampleArgs.
+  // agents_manage.create accepts both flat workspace_profile and nested
+  // workspace.profile + round-trips MANAGED_SECTIONS.exampleArgs.
   //
-  // Production repro: trading-fleet creation request hit 10 tool failures
-  // with a ZodError on `workspace.profile`. The TypeBox tool schema declared
-  // only the flat workspace_profile field; mapWorkspaceProfile converts it to
+  // The TypeBox tool schema previously declared only the flat
+  // workspace_profile field; mapWorkspaceProfile converts it to
   // nested workspace.profile; the downstream Zod (PerAgentConfigSchema) is
   // strictObject. When the LLM emitted nested workspace={profile:"specialist"}
   // directly, TypeBox's structured-config branch rejected it because no
@@ -1285,7 +1283,7 @@ describe("agents_manage tool", () => {
   // also failed (it's an object, not a string). Result: parameter validation
   // failed before mapWorkspaceProfile ever ran.
   // ---------------------------------------------------------------------------
-  describe("workspace.profile (260428-oyc)", () => {
+  describe("workspace.profile", () => {
     it("E1: round-trips MANAGED_SECTIONS.exampleArgs.agents through TypeBox", async () => {
       const { MANAGED_SECTIONS } = await import("@comis/core");
       const agentsEntry = MANAGED_SECTIONS.find((s) => s.pathPrefix === "agents");
@@ -1522,21 +1520,22 @@ describe("agents_manage tool", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 260428-rrr Bug B: workspace_profile and nested workspace.profile
-  // descriptions must spell out the enum is "full" | "specialist" ONLY.
+  // workspace_profile and nested workspace.profile descriptions must spell
+  // out the enum is "full" | "specialist" ONLY.
   //
-  // Production trace f099bac9 saw the LLM probing values like "minimal" and
-  // "none" for workspace.profile because the description string only listed
-  // valid values without explicitly closing the door on others. The runtime
-  // enum (TypeBox Type.Union(Type.Literal("full"), Type.Literal("specialist")))
-  // already enforces this; we are just making the description match the
-  // enforcement so the LLM stops trying invalid values up front.
+  // The LLM was occasionally probing values like "minimal" and "none" for
+  // workspace.profile because the description string only listed valid
+  // values without explicitly closing the door on others. The runtime
+  // enum (TypeBox Type.Union(Type.Literal("full"),
+  // Type.Literal("specialist"))) already enforces this; we are just making
+  // the description match the enforcement so the LLM stops trying invalid
+  // values up front.
   //
   // Source-level structural assertion (read the file as text, scope to the
   // relevant declaration block) is the simpler and more robust approach --
   // it avoids fighting TypeBox's Symbol-keyed metadata layout.
   // ---------------------------------------------------------------------------
-  describe("AgentsManageToolParams description guardrails (260428-rrr)", () => {
+  describe("AgentsManageToolParams description guardrails", () => {
     /**
      * Find the substring scoped to a `<field>: Type.Optional(...)` declaration
      * in the source file, using paren-balanced extraction so nested

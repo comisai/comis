@@ -1,32 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OAuth health check for `comis doctor` (Phase 10 SC-10-2 + SC-10-1 doctor sub-check).
+ * OAuth health check for `comis doctor`.
  *
  * Per-profile diagnostics: JWT decode → expiry + numeric `secsUntilExpiry`;
  * flag profiles expiring < 7 days as warn, expired as fail; surface
- * schema-version mismatch from the file adapter's hard-fail (Phase 7 D-07
- * verbatim — `port.list()` returns `err()` whose message already contains
- * the version + remediation hint). Environmental sub-checks: ca-certificates
- * bundle existence with distro-aware install hint, HTTPS_PROXY env-var
- * heuristic (Phase 10 RESEARCH §Pitfall 1 — Node's built-in fetch ignores
- * HTTPS_PROXY by default), TLS preflight against `auth.openai.com`
- * (delegates to Plan 10-01's `runOAuthTlsPreflight`).
+ * schema-version mismatch from the file adapter's hard-fail verbatim
+ * (`port.list()` returns `err()` whose message already contains the version
+ * + remediation hint). Environmental sub-checks: ca-certificates bundle
+ * existence with distro-aware install hint, HTTPS_PROXY env-var heuristic
+ * (Node's built-in fetch ignores HTTPS_PROXY by default), TLS preflight
+ * against `auth.openai.com` (delegates to `runOAuthTlsPreflight`).
  *
- * Optional `--refresh-test` flag (default OFF per D-10-04-01): exercises
- * a real OAuth refresh against the provider; rotates the refresh token at
- * OpenAI's end as a side effect (D-10-04-02 warns operator in --help).
- * Doctor does NOT persist the new credentials (D-10-04-03 — Pitfall 3
- * Option A); the success suggestion warns the stored token is now stale.
+ * Optional `--refresh-test` flag (default OFF): exercises a real OAuth
+ * refresh against the provider; rotates the refresh token at OpenAI's end
+ * as a side effect (--help warns the operator). Doctor does NOT persist
+ * the new credentials; the success suggestion warns the stored token is
+ * now stale.
  *
- * Storage mode handling (Phase 8 D-13): the CLI process cannot bootstrap
- * the encrypted secrets store without `SECRETS_MASTER_KEY`, so when
+ * Storage mode handling: the CLI process cannot bootstrap the encrypted
+ * secrets store without `SECRETS_MASTER_KEY`, so when
  * `appConfig.oauth.storage === "encrypted"` the per-profile sub-check
  * returns a single skip finding pointing the operator at the daemon host.
  *
  * NEVER prints `profile.access` or `profile.refresh` in any DoctorFinding
- * field — defense per RESEARCH §Pitfall 2 / T-10-03. Identity labels go
- * through `redactEmailForLog`. Test 4 in oauth-health.test.ts asserts no
- * `TEST_LEAK_SENTINEL` substring leakage.
+ * field. Identity labels go through `redactEmailForLog`. The token-leakage
+ * test in oauth-health.test.ts asserts no `TEST_LEAK_SENTINEL` substring
+ * leakage.
  *
  * @module
  */
@@ -51,7 +50,7 @@ const REFRESH_TEST_TIMEOUT_MS = 10_000;
 const TLS_PREFLIGHT_TIMEOUT_MS = 5_000;
 
 // Public OpenAI Codex client_id — same value pi-ai uses; using our own
-// would fingerprint Comis traffic in OpenAI's logs (RESEARCH §Q6 T-10-01).
+// would fingerprint Comis traffic in OpenAI's logs.
 const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token";
 
@@ -81,10 +80,10 @@ export const oauthHealthCheck: DoctorCheck = {
     // Sub-check 2: ca-certificates bundle on disk
     findings.push(await checkCaBundle());
 
-    // Sub-check 3: HTTPS_PROXY env-var heuristic (RESEARCH §Pitfall 1)
+    // Sub-check 3: HTTPS_PROXY env-var heuristic
     findings.push(checkHttpsProxyHeuristic());
 
-    // Sub-check 4: TLS preflight against auth.openai.com (Plan 10-01 helper)
+    // Sub-check 4: TLS preflight against auth.openai.com
     findings.push(await checkTlsPreflight());
 
     return findings;
@@ -105,9 +104,9 @@ async function checkProfiles(
     | "encrypted";
 
   if (storage === "encrypted") {
-    // Phase 8 D-13: CLI cannot bootstrap encrypted store without
-    // SECRETS_MASTER_KEY. Surface as skip + operator hint (D-10-04-04 —
-    // doctor reads only the active store, does not cross-check inactive).
+    // CLI cannot bootstrap encrypted store without SECRETS_MASTER_KEY.
+    // Surface as skip + operator hint (doctor reads only the active store,
+    // does not cross-check inactive).
     return [
       {
         category: CATEGORY,
@@ -123,7 +122,7 @@ async function checkProfiles(
     ];
   }
 
-  // Open the store using the same selector daemon + auth CLI use (Phase 8 D-13).
+  // Open the store using the same selector daemon + auth CLI use.
   let store: OAuthCredentialStorePort;
   try {
     store = selectOAuthCredentialStore({
@@ -142,8 +141,8 @@ async function checkProfiles(
     ];
   }
 
-  // Per Phase 7 D-07: port.list() returns err() with the version-mismatch
-  // hint baked into the error message — surface verbatim. NO migration logic.
+  // port.list() returns err() with the version-mismatch hint baked into
+  // the error message — surface verbatim. NO migration logic.
   const listResult = await store.list();
   if (!listResult.ok) {
     findings.push({
@@ -186,7 +185,7 @@ async function checkProfiles(
  *   - msUntilExpiry < 7d  → warn (refresh proactively)
  *   - else                → pass
  *
- * Always populates the SC-10-2 literal numeric field `secsUntilExpiry`.
+ * Always populates the literal numeric field `secsUntilExpiry`.
  * Sign is preserved (negative for already-expired) so consumers can
  * distinguish "expired 1h ago" from "expired 30d ago" without parsing
  * the human-readable message.
@@ -195,9 +194,9 @@ function profileExpiryFinding(profile: OAuthProfile): DoctorFinding {
   const msUntilExpiry = profile.expires - Date.now();
   const secsUntilExpiry = Math.floor(msUntilExpiry / 1000);
   const identityLabel = redactEmailForLog(profile.email) ?? profile.profileId;
-  // CRITICAL (RESEARCH §Pitfall 2 / T-10-03): NEVER include profile.access
-  // or profile.refresh in any DoctorFinding field. Use only profileId,
-  // redacted email, and the expiry timestamp.
+  // CRITICAL: NEVER include profile.access or profile.refresh in any
+  // DoctorFinding field. Use only profileId, redacted email, and the
+  // expiry timestamp.
 
   if (msUntilExpiry <= 0) {
     return {
@@ -236,12 +235,12 @@ function profileExpiryFinding(profile: OAuthProfile): DoctorFinding {
 /**
  * Run a real OAuth refresh against `auth.openai.com` per profile.
  *
- * D-10-04-01: opt-in only (gated by `--refresh-test` flag).
- * D-10-04-02: --help text in `commands/doctor.ts` warns operator.
- * D-10-04-03: doctor does NOT persist the new tokens. Subsequent LLM
- * calls will hit refresh_token_reused on the stored (now-stale) token.
+ * Opt-in only (gated by `--refresh-test` flag); --help text in
+ * `commands/doctor.ts` warns operator. Doctor does NOT persist the new
+ * tokens — subsequent LLM calls will hit refresh_token_reused on the
+ * stored (now-stale) token.
  *
- * Duplicates ~30 LoC of refresh-POST machinery from Plan 10-03's
+ * Duplicates ~30 LoC of refresh-POST machinery from
  * `refreshOpenAICodexTokenLocal`. Per AGENTS.md §2.3 rule of three, two
  * call-sites is below the extraction threshold — duplicate over premature
  * abstraction.
@@ -284,8 +283,8 @@ async function refreshTestFinding(
         repairable: false,
       };
     }
-    // Success: token rotated at OpenAI's end. We are NOT persisting
-    // (D-10-04-03) — surface the side effect explicitly.
+    // Success: token rotated at OpenAI's end. We are NOT persisting —
+    // surface the side effect explicitly.
     return {
       category: CATEGORY,
       check: `Profile ${profile.profileId} refresh test`,
@@ -414,13 +413,13 @@ function checkHttpsProxyHeuristic(): DoctorFinding {
     message: `HTTPS_PROXY is set (${httpsProxy}) but Node's built-in fetch ignores it by default`,
     suggestion:
       "Either install undici and call setGlobalDispatcher(new EnvHttpProxyAgent()) at startup, " +
-      "or rely on a system-wide proxy. See docs/operations/proxy.md (Phase 12).",
+      "or rely on a system-wide proxy. See docs/operations/proxy.md.",
     repairable: false,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Sub-check: TLS preflight (delegates to Plan 10-01 helper)
+// Sub-check: TLS preflight
 // ---------------------------------------------------------------------------
 
 async function checkTlsPreflight(): Promise<DoctorFinding> {
@@ -453,7 +452,7 @@ async function checkTlsPreflight(): Promise<DoctorFinding> {
     message: `Network probe to auth.openai.com failed: ${result.message}`,
     suggestion:
       "Verify DNS, firewall, and proxy settings. Doctor cannot distinguish " +
-      "transient outages from persistent network failures.",
+      "transient failures from persistent network failures.",
     repairable: false,
   };
 }

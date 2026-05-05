@@ -118,8 +118,8 @@ agents:
 
   describe("loadConfigFile env substitution + disabled MCP servers", () => {
     // Regression: a disabled MCP server entry must not brick bootstrap when
-    // it references an env var that is not set. This was the trigger for the
-    // 2026-05-03 production outage where an agent committed
+    // it references an env var that is not set. This was the trigger for a
+    // production outage where an agent committed
     // `enabled: false` + `${FINNHUB_API_KEY}` and the daemon crash-looped
     // because env substitution ran before setup-mcp.ts filtered disabled
     // servers out.

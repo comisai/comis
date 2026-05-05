@@ -454,7 +454,7 @@ describe("line width cap", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Helpers for Phase 9 tests
+// Helpers for filter / formatting tests
 // ---------------------------------------------------------------------------
 
 /** Generate N lines of mock content output (file.ts:linenum:line N). */

@@ -40,9 +40,9 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 
 describe("tool-metadata-registry -- registry count", () => {
   it("registers exactly 51 unique tools (registry count assertion)", () => {
-    // 51 = 50 prior tools + providers_manage (added 260504-cac alongside the
-    // tool-entry schema metadata). providers_manage already existed as a tool
-    // file but was not previously surfaced in the metadata registry.
+    // 51 = 50 prior tools + providers_manage (added alongside the
+    // tool-entry schema metadata). providers_manage already existed as a
+    // tool file but was not previously surfaced in the metadata registry.
     const all = getAllToolMetadata();
     expect(all.size).toBe(51);
   });
@@ -386,7 +386,7 @@ describe("tool-metadata-registry -- gateway validator", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Drift-regression guards (quick-260420-iv2)
+  // Drift-regression guards
   //
   // These three tests would have failed before the schema-derived whitelist
   // fix, when the bridge shadowed the handler with a hardcoded 10-item list
@@ -705,10 +705,10 @@ describe("tool-metadata-registry -- completeness", () => {
 });
 
 // ===========================================================================
-// Tool-Entry Schema metadata (260504-cac)
+// Tool-Entry Schema metadata
 // ===========================================================================
 
-describe("tool-metadata-registry -- tool-entry schema metadata (260504-cac)", () => {
+describe("tool-metadata-registry -- tool-entry schema metadata", () => {
   it.each([
     ["mcp_manage",       ["list", "status", "connect", "disconnect", "reconnect"], 7],
     ["agents_manage",    ["create", "get", "update", "delete", "suspend", "resume", "list"], 3],
@@ -795,7 +795,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata (260504-cac)", ()
 });
 
 // ===========================================================================
-// Co-discovery metadata (quick-260414-ppo)
+// Co-discovery metadata
 // ===========================================================================
 
 describe("tool-metadata-registry -- co-discovery metadata", () => {
@@ -813,7 +813,7 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
 });
 
 // ===========================================================================
-// Gateway validateInput -- patchable path hints (quick-260414-ppo)
+// Gateway validateInput -- patchable path hints
 // ===========================================================================
 
 describe("tool-metadata-registry -- gateway validateInput patchable path hints", () => {
@@ -827,11 +827,11 @@ describe("tool-metadata-registry -- gateway validateInput patchable path hints",
       key: "default",
     });
 
-    // Updated for quick-260425-t40: rejection now points to the dedicated
-    // agents_manage tool with a parameter-correct example AND lists the
-    // override paths for in-place updates of an existing agent.
-    // Updated for 260428-oyc: discover_tools clause dropped from Recovery framing
-    // (Anthropic Sonnet/Opus 4.x payloads no longer contain that tool).
+    // Rejection points to the dedicated agents_manage tool with a
+    // parameter-correct example AND lists the override paths for in-place
+    // updates of an existing agent. discover_tools clause dropped from
+    // Recovery framing (Anthropic Sonnet/Opus 4.x payloads no longer
+    // contain that tool).
     expect(error).toBeDefined();
     expect(error).toContain("Cannot patch immutable config path");
     expect(error).toContain('Use the "agents_manage" tool');

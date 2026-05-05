@@ -8,20 +8,20 @@
  * blocks are never modified, anywhere.
  *
  * Rationale: Anthropic's signed-thinking validation operates on the full
- * (system + tools + history) prefix. After 8 quick tasks of progressively
- * narrower drift detection (gj6 → kvl) we proved targeted detection is
- * intractable; trace 679c8927 had stable tools (49138 bytes across 4 turns)
- * but the system prompt grew +1824 bytes and the 400 fired anyway.
+ * (system + tools + history) prefix. After progressive refinement of
+ * narrower drift detection we proved targeted detection is intractable;
+ * traces with stable tools but a system prompt that grew by ~1.8KB still
+ * fired the 400.
  *
- * 260428-lm6 introduced an unconditional drop that preserved the LATEST
- * assistant message's signatures, on the theory that the immediate-next
- * continuation could still validate them. 260428-nzp's repro proved that
- * carve-out doesn't work: cross-turn signature validation covers the whole
- * request body (system + tools + history) and comis's dynamic context
- * guarantees the surrounding context changes turn-to-turn. So the latest's
- * signatures get invalidated too. Drop them all.
+ * An earlier unconditional drop preserved the LATEST assistant message's
+ * signatures, on the theory that the immediate-next continuation could
+ * still validate them. Repro proved that carve-out doesn't work:
+ * cross-turn signature validation covers the whole request body (system +
+ * tools + history) and comis's dynamic context guarantees the surrounding
+ * context changes turn-to-turn. So the latest's signatures get
+ * invalidated too. Drop them all.
  *
- * 260430-anthropic-400-thinking-block: the prior cache-fence skip
+ * The prior cache-fence skip
  * (`if (i <= budget.cacheFenceIndex) preserve`) caused a per-execution
  * regression. In iteration 1 of an execution the fence is -1 so all signed
  * thinking blocks are stripped and the wire body establishes a cached
@@ -127,11 +127,11 @@ export function createSignatureReplayScrubber(
         // eslint-disable-next-line security/detect-object-injection -- numeric index
         const original = messages[i];
 
-        // 260430-anthropic-400-thinking-block: cacheFenceIndex is intentionally
-        // NOT consulted here. Stripping uniformly across the array keeps the
-        // scrubbed prefix identical across iterations of the same execution,
-        // which is what Anthropic's prompt-cache validator requires. See
-        // module docstring for the full rationale.
+        // cacheFenceIndex is intentionally NOT consulted here. Stripping
+        // uniformly across the array keeps the scrubbed prefix identical
+        // across iterations of the same execution, which is what Anthropic's
+        // prompt-cache validator requires. See module docstring for the full
+        // rationale.
 
         const msg = original as { role?: string; content?: unknown };
         if (msg.role !== "assistant" || !Array.isArray(msg.content)) {
@@ -243,7 +243,7 @@ export function createSignatureReplayScrubber(
       // Emit once per execute() when at least one assistant message was
       // actually scrubbed. Pino object-first; no string interp.
       //
-      // 260504-ieh: conditional log level — DEBUG when toolCallsAffected===0
+      // Conditional log level — DEBUG when toolCallsAffected===0
       // (pure-thinking-block scrub, the routine high-frequency case per
       // CLAUDE.md "N times per request -> DEBUG"); INFO when >0
       // (post-incident-visibility case where a tool_call's thoughtSignature

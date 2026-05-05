@@ -3,11 +3,11 @@
  * SYSTEM LIFECYCLE TEST: Pre-flight, health, and authentication tests.
  *
  * Split from comprehensive-system.test.ts for isolated failures and
- * faster debugging. Covers Phases 1-3:
+ * faster debugging. Covers:
  *
- *   1.  Pre-flight & Daemon Lifecycle
- *   2.  Health Endpoints
- *   3.  Authentication & Authorization
+ *   Pre-flight & Daemon Lifecycle
+ *   Health Endpoints
+ *   Authentication & Authorization
  *
  * Uses config.test-system-manual.yaml (port 8600, 3 tokens with different scopes).
  *
@@ -124,10 +124,10 @@ describe("SYSTEM LIFECYCLE TEST: Pre-flight, health, and auth", () => {
   }, 30_000);
 
   // =========================================================================
-  // Phase 1: Pre-flight & Daemon Lifecycle (5 tests)
+  // Pre-flight & Daemon Lifecycle (5 tests)
   // =========================================================================
 
-  describe("Phase 1: Pre-flight & Daemon Lifecycle", () => {
+  describe("Pre-flight & Daemon Lifecycle", () => {
     it("daemon started successfully", () => {
       expect(handle).toBeDefined();
       expect(handle.daemon).toBeDefined();
@@ -155,10 +155,10 @@ describe("SYSTEM LIFECYCLE TEST: Pre-flight, health, and auth", () => {
   });
 
   // =========================================================================
-  // Phase 2: Health Endpoints (3 tests)
+  // Health Endpoints (3 tests)
   // =========================================================================
 
-  describe("Phase 2: Health Endpoints", () => {
+  describe("Health Endpoints", () => {
     it("GET /health returns 200 with status ok", async () => {
       const resp = await fetch(`${handle.gatewayUrl}/health`);
       expect(resp.status).toBe(200);
@@ -179,10 +179,10 @@ describe("SYSTEM LIFECYCLE TEST: Pre-flight, health, and auth", () => {
   });
 
   // =========================================================================
-  // Phase 3: Authentication & Authorization (6 tests)
+  // Authentication & Authorization (6 tests)
   // =========================================================================
 
-  describe("Phase 3: Authentication & Authorization", () => {
+  describe("Authentication & Authorization", () => {
     it("unauthenticated REST request is rejected (401)", async () => {
       const resp = await fetch(`${handle.gatewayUrl}/v1/models`);
       expect(resp.status).toBe(401);

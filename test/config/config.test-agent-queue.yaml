@@ -1,6 +1,6 @@
 # Comis Test Configuration: Agent Queue E2E Tests
 #
-# Port 8510 -- unique to agent queue E2E tests (Phase 132 Plan 01)
+# Port 8510 -- unique to agent queue E2E tests
 # Tests CommandQueue session serialization (AGT-01/02), stale lock recovery
 # (AGT-03), graceful session deletion (AGT-04), agent identity persistence
 # (AGT-05), memory WAL concurrency (AGT-06/07), RAG memory retrieval (AGT-08),

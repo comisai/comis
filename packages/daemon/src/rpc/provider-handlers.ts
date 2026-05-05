@@ -100,7 +100,7 @@ function formatReferenceMessage(refs: { primary: string[]; fallback: string[]; a
 }
 
 // ---------------------------------------------------------------------------
-// Layer 1C (260430-vwt): catalog-aware type promotion
+// Catalog-aware type promotion
 // ---------------------------------------------------------------------------
 
 /** Logger shape accepted by `normalizeProviderEntry`. Subset of Pino. */
@@ -262,21 +262,18 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
 
       const config = (params.config as Partial<ProviderEntry>) ?? {};
 
-      // 260501-gyy: reject redundant catalog-shadowing entries before
-      // promotion / probe / persist. A built-in provider with a catalog
-      // (or absent) baseUrl is structurally redundant -- pi-ai's dynamic
-      // catalog already provides its model list. Production trace
-      // 2026-05-01 08:53 showed an LLM agent creating
-      // providers.entries.openrouter with an invented model id, leading
-      // to a downstream 404.
+      // Reject redundant catalog-shadowing entries before promotion / probe
+      // / persist. A built-in provider with a catalog (or absent) baseUrl is
+      // structurally redundant -- pi-ai's dynamic catalog already provides
+      // its model list.
       const guardResult = checkBuiltInProviderRedundancy(providerId, config);
       if (!guardResult.ok) {
         throw new Error(guardResult.reason);
       }
 
-      // Layer 1C (260430-vwt): auto-promote type to native catalog name
-      // when the providerId matches a pi-ai catalog entry AND the user has
-      // not opted out via a custom baseUrl.
+      // Auto-promote type to native catalog name when the providerId
+      // matches a pi-ai catalog entry AND the user has not opted out via a
+      // custom baseUrl.
       const normalizedConfig = normalizeProviderEntry(
         providerId,
         config,
@@ -345,8 +342,8 @@ export function createProviderHandlers(deps: ProviderHandlerDeps): Record<string
       // so we only persist the user's partial patch (not the fully merged config).
       const userPatch = params.config ? structuredClone(params.config as Record<string, unknown>) : {};
 
-      // Layer 1C (260430-vwt): on update, only auto-promote when the user
-      // is actively changing the `type` field. If `type` is absent from
+      // On update, only auto-promote when the user is actively changing
+      // the `type` field. If `type` is absent from
       // the patch, the user is editing other fields and we must not
       // rewrite their existing type silently.
       let normalizedPatch = config;

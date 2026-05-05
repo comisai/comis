@@ -4,17 +4,17 @@
  * providers through the OAuthTokenManager + AuthStorage.setRuntimeApiKey
  * side-effect, and non-OAuth providers through the existing authStorage path.
  *
- * Phase 9 R3: single attachment surface for the per-LLM-call OAuth dispatch
+ * Single attachment surface for the per-LLM-call OAuth dispatch
  * hook. Used by PiExecutor.execute() pre-hook (primary LLM call) and the two
  * compaction getApiKey callbacks in executor-context-engine-setup.ts.
  *
  * Return shape is `Promise<string>` (NOT `Result<T,E>`) because the helper
  * bridges Comis's Result-typed manager with pi-coding-agent's
  * `AuthStorage.getApiKey` contract; the throw mirrors pi-coding-agent's own
- * throw-on-failure shape (verified RESEARCH F-02). On OAuthError the helper
- * propagates a thrown Error per CONTEXT D-02 — no env-var fallback, no retry,
- * no silent rotation. Outer callers (PiExecutor.execute, gateway routes)
- * surface the throw to the user via their existing error-handling path.
+ * throw-on-failure shape. On OAuthError the helper propagates a thrown Error —
+ * no env-var fallback, no retry, no silent rotation. Outer callers
+ * (PiExecutor.execute, gateway routes) surface the throw to the user via their
+ * existing error-handling path.
  *
  * @module
  */
@@ -60,9 +60,9 @@ export async function resolveProviderApiKey(
       oauthProfiles: deps.agentConfig?.oauthProfiles,
     });
     if (result.ok) {
-      // Phase 9 R3: setRuntimeApiKey carries the token into pi-coding-agent's
-      // outbound LLM request via the runtime-override priority path
-      // (verified RESEARCH F-02 — runtime overrides take HIGHEST priority).
+      // setRuntimeApiKey carries the token into pi-coding-agent's outbound
+      // LLM request via the runtime-override priority path — runtime
+      // overrides take HIGHEST priority.
       deps.authStorage.setRuntimeApiKey(providerId, result.value);
       return result.value;
     }
@@ -70,16 +70,16 @@ export async function resolveProviderApiKey(
     // must hold:
     //   1. The OAuth result is "no credentials anywhere" (NO_CREDENTIALS),
     //      not a real failure (REFRESH_FAILED, STORE_FAILED, …) which we
-    //      propagate fail-loud per Phase 9 D-02.
+    //      propagate fail-loud.
     //   2. The agent did NOT explicitly request an OAuth profile via
     //      `oauthProfiles[providerId]`. An explicit profile request that the
     //      store cannot satisfy is a real failure — never silently fall back
-    //      to a different key (security keystone per SPEC R2 a2).
+    //      to a different key (security keystone).
     const noCredentials = result.error.code === "NO_CREDENTIALS";
     const requestedProfile = deps.agentConfig?.oauthProfiles?.[providerId];
     if (!noCredentials || requestedProfile !== undefined) {
-      // Phase 9 D-02: propagate as throw — outer callers (PiExecutor.execute,
-      // gateway routes) lift the throw into a user-facing error result.
+      // Propagate as throw — outer callers (PiExecutor.execute, gateway
+      // routes) lift the throw into a user-facing error result.
       throw new Error(result.error.message);
     }
     // Fall through to authStorage — providers like anthropic accept both

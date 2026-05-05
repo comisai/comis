@@ -4,7 +4,7 @@ import type { ComisToolMetadata } from "@comis/core";
 import { validateToolEntry } from "./schema-validator.js";
 
 // ---------------------------------------------------------------------------
-// Fixture: mcp_manage entry-shape metadata (the 2026-05-03 outage tool).
+// Fixture: mcp_manage entry-shape metadata.
 // ---------------------------------------------------------------------------
 
 const MCP_META: ComisToolMetadata = {
@@ -157,10 +157,10 @@ describe("validateToolEntry -- required-fields gate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Combined error (the 2026-05-03 outage shape)
+// Combined error (malformed connect-with-server_name shape)
 // ---------------------------------------------------------------------------
 
-describe("validateToolEntry -- 2026-05-03 outage payload", () => {
+describe("validateToolEntry -- malformed connect payload", () => {
   it("emits a single multi-segment message for {action:connect, server_name:yfinance}", () => {
     const result = validateToolEntry(
       { action: "connect", server_name: "yfinance" },

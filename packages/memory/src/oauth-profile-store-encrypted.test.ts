@@ -1,20 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED baseline (Phase 7 SPEC R3) — encrypted SQLite adapter tests for
- * `OAuthCredentialStorePort`.
- *
- * The source modules do not yet exist:
- *   - `./oauth-profile-store-encrypted.js`  (plan 06)
- *   - `./oauth-profile-schema.js`            (plan 06)
- *
- * The file is committed FAILING-TO-COMPILE on purpose. Plan 06 turns
- * these tests green.
+ * Encrypted SQLite adapter tests for `OAuthCredentialStorePort`.
  *
  * Coverage groups:
  *   1. Schema + factory
  *   2. Round-trip encryption (CRUD)
  *   3. Plaintext NOT on disk (T-OAUTH-DISK-EXFIL mitigation)
- *   4. Denormalized expires_at stays in sync (RESEARCH §4 landmine #8)
+ *   4. Denormalized expires_at stays in sync
  *   5. Restart-survives-set
  *   6. Profile-ID validation passthrough
  */
@@ -292,7 +284,7 @@ describe("createOAuthProfileStoreEncrypted", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Group 4 — Denormalized expires_at stays in sync (RESEARCH §4 landmine #8)
+  // Group 4 — Denormalized expires_at stays in sync
   // -------------------------------------------------------------------------
 
   describe("denormalized expires_at stays in sync", () => {
@@ -376,7 +368,7 @@ describe("createOAuthProfileStoreEncrypted", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Group 5 — Restart-survives-set (SPEC R3 acceptance)
+  // Group 5 — Restart-survives-set
   // -------------------------------------------------------------------------
 
   describe("restart-survives-set", () => {

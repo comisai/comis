@@ -1,20 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 11 gateway OAuth callback integration tests (SC11-2 / SC11-4).
+ * Gateway OAuth callback integration tests.
  *
  * Run with: `pnpm test:integration -- oauth-gateway-callback` (after `pnpm build`).
  *
  * Strategy:
- * - SC11-2: seed the pending-flow map directly (no /oauth/start RPC in this
- *   phase per RESEARCH Q1 / Assumption A2), invoke the Hono sub-app via
- *   app.request(), assert store.set + auth:profile_bootstrapped + 200 HTML.
- * - SC11-4: assert pendingFlows.has(state) === false after success, after
- *   exchange failure, and after the 5-minute timeout fires.
- *
- * Status: RED scaffold (Wave 0). Imports `createOAuthCallbackRoute` and
- * `insertPendingFlow` from `@comis/gateway`; both are not yet exported, so
- * tests fail at the call site (the imports resolve to undefined). Plan 03
- * creates the module + adds exports; Plan 05 turns this file GREEN.
+ * - Callback flow: seed the pending-flow map directly (no /oauth/start RPC),
+ *   invoke the Hono sub-app via app.request(), assert store.set +
+ *   auth:profile_bootstrapped + 200 HTML.
+ * - Pending-flow cleanup: assert pendingFlows.has(state) === false after
+ *   success, after exchange failure, and after the 5-minute timeout fires.
  */
 
 import * as os from "node:os";
@@ -109,7 +104,7 @@ function makeMockLogger(): {
   };
 }
 
-describe("SC11-2 gateway callback end-to-end", () => {
+describe("gateway callback end-to-end", () => {
   it("validates state, exchanges code, stores profile, emits auth:profile_bootstrapped, returns 200 HTML", async () => {
     const tmpDir = freshTmpDataDir();
     try {
@@ -156,7 +151,7 @@ describe("SC11-2 gateway callback end-to-end", () => {
       const bootstrapped = emittedEvents.find((e) => e.name === "auth:profile_bootstrapped");
       expect(bootstrapped).toBeDefined();
 
-      // SC11-4 cleanup on success.
+      // Cleanup on success.
       expect(pendingFlows.has(state)).toBe(false);
     } finally {
       cleanupTmpDir(tmpDir);
@@ -164,7 +159,7 @@ describe("SC11-2 gateway callback end-to-end", () => {
   });
 });
 
-describe("SC11-4 pending-flow cleanup", () => {
+describe("pending-flow cleanup", () => {
   it("removes entry on exchange failure (mock server returns 500 on /oauth/token)", async () => {
     const tmpDir = freshTmpDataDir();
     try {
@@ -198,7 +193,7 @@ describe("SC11-4 pending-flow cleanup", () => {
 
       // Server-side exchange failed -> 500-class HTML response.
       expect(res.status).toBeGreaterThanOrEqual(500);
-      // SC11-4: state still removed (cleanup happens BEFORE exchange attempt).
+      // State still removed (cleanup happens BEFORE exchange attempt).
       expect(pendingFlows.has(state)).toBe(false);
     } finally {
       cleanupTmpDir(tmpDir);
@@ -226,7 +221,7 @@ describe("SC11-4 pending-flow cleanup", () => {
   });
 });
 
-describe("SC11-2 state validation 400 paths", () => {
+describe("state validation 400 paths", () => {
   it("returns 400 with no store mutation when state is unknown", async () => {
     const tmpDir = freshTmpDataDir();
     try {

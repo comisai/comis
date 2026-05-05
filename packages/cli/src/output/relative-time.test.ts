@@ -4,7 +4,7 @@ import { formatRelativeExpiry } from "./relative-time.js";
 
 const NOW = 1_700_000_000_000;
 
-describe("formatRelativeExpiry (Phase 8 D-16)", () => {
+describe("formatRelativeExpiry", () => {
   it.each([
     { name: "expired (delta = 0)", expiresAt: NOW, expected: "expired" },
     { name: "expired (negative delta)", expiresAt: NOW - 60_000, expected: "expired" },

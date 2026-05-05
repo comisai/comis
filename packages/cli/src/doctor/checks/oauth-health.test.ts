@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OAuth health check unit tests (Plan 10-04 — SC-10-2 + SC-10-1 doctor sub-check).
+ * OAuth health check unit tests.
  *
  * Covers:
  *   - per-profile JWT-expiry sub-check (pass / warn @ <7d / fail when expired)
- *   - SC-10-2 literal `secsUntilExpiry` numeric field on every profile finding
- *   - schema-mismatch surfacing from `port.list()` (Phase 7 D-07 verbatim)
- *   - encrypted-mode skip (Phase 8 D-13 store-direct, no SecretManager bootstrap)
+ *   - literal `secsUntilExpiry` numeric field on every profile finding
+ *   - schema-mismatch surfacing from `port.list()` verbatim
+ *   - encrypted-mode skip (store-direct, no SecretManager bootstrap)
  *   - ca-certificates probe + distro-aware install hints (5-distro switch)
  *   - HTTPS_PROXY env-var heuristic (warn when set, pass when unset)
  *   - TLS preflight delegation to @comis/agent (pass / tls-cert fail / network warn)
- *   - --refresh-test default OFF (D-10-04-01) + opt-in success/failure paths
- *   - NO TOKEN LEAKAGE invariant (T-10-03 / RESEARCH §Pitfall 2)
+ *   - --refresh-test default OFF + opt-in success/failure paths
+ *   - NO TOKEN LEAKAGE invariant
  *
  * @module
  */
@@ -33,9 +33,9 @@ vi.mock("node:fs/promises", async () => {
   return { ...actual, stat: vi.fn(), readFile: vi.fn() };
 });
 
-// @comis/agent — selectOAuthCredentialStore (store IO) + runOAuthTlsPreflight
-// (Plan 10-01 helper). decodeCodexJwtPayload, redactEmailForLog, and
-// rewriteOAuthError pass through untouched.
+// @comis/agent — selectOAuthCredentialStore (store IO) + runOAuthTlsPreflight.
+// decodeCodexJwtPayload, redactEmailForLog, and rewriteOAuthError pass through
+// untouched.
 vi.mock("@comis/agent", async () => {
   const actual =
     await vi.importActual<typeof import("@comis/agent")>("@comis/agent");
@@ -156,7 +156,7 @@ function findByCheckPrefix(
 // ---------------------------------------------------------------------------
 
 describe("oauthHealthCheck — profile expiry", () => {
-  it("Test 1 — pass when profile expires in 30 days, secsUntilExpiry numeric", async () => {
+  it("pass when profile expires in 30 days, secsUntilExpiry numeric", async () => {
     const profile = buildProfile({
       expires: Date.now() + 30 * 24 * 60 * 60 * 1000,
     });
@@ -175,7 +175,7 @@ describe("oauthHealthCheck — profile expiry", () => {
     expect(profileFindings[0]!.secsUntilExpiry!).toBeLessThan(expected + 5);
   });
 
-  it("Test 2 — warn when profile expires in 3 days, secsUntilExpiry positive", async () => {
+  it("warn when profile expires in 3 days, secsUntilExpiry positive", async () => {
     const profile = buildProfile({
       expires: Date.now() + 3 * 24 * 60 * 60 * 1000,
     });
@@ -192,7 +192,7 @@ describe("oauthHealthCheck — profile expiry", () => {
     );
   });
 
-  it("Test 3 — fail when profile expired 1 hour ago, secsUntilExpiry negative", async () => {
+  it("fail when profile expired 1 hour ago, secsUntilExpiry negative", async () => {
     const profile = buildProfile({
       expires: Date.now() - 60 * 60 * 1000,
     });
@@ -207,7 +207,7 @@ describe("oauthHealthCheck — profile expiry", () => {
     expect(profileFindings[0]!.secsUntilExpiry!).toBeGreaterThan(-3600 - 60);
   });
 
-  it("Test 4 — NO TOKEN LEAKAGE: TEST_LEAK_SENTINEL never appears in any finding", async () => {
+  it("NO TOKEN LEAKAGE: TEST_LEAK_SENTINEL never appears in any finding", async () => {
     const profile = buildProfile({
       access: "TEST_LEAK_SENTINEL_ACCESS_xxxxxxxx",
       refresh: "TEST_LEAK_SENTINEL_REFRESH_yyyyyyyy",
@@ -223,7 +223,7 @@ describe("oauthHealthCheck — profile expiry", () => {
     }
   });
 
-  it("Test 18 — empty store yields a single skip", async () => {
+  it("empty store yields a single skip", async () => {
     vi.mocked(agent.selectOAuthCredentialStore).mockReturnValue(
       buildStoreMock({ list: async () => ok([]) }),
     );
@@ -242,7 +242,7 @@ describe("oauthHealthCheck — profile expiry", () => {
 // ---------------------------------------------------------------------------
 
 describe("oauthHealthCheck — schema mismatch", () => {
-  it("Test 5 — surfaces adapter hard-fail message verbatim", async () => {
+  it("surfaces adapter hard-fail message verbatim", async () => {
     const adapterError = new Error(
       "OAuth profile store version mismatch: expected 1, got 99. " +
         "Hint: delete ~/.comis/auth-profiles.json and re-run comis auth login",
@@ -268,7 +268,7 @@ describe("oauthHealthCheck — schema mismatch", () => {
 // ---------------------------------------------------------------------------
 
 describe("oauthHealthCheck — encrypted-mode skip", () => {
-  it("Test 6 — encrypted storage yields one skip explaining CLI cannot read", async () => {
+  it("encrypted storage yields one skip explaining CLI cannot read", async () => {
     const ctx: DoctorContext = {
       ...baseContext,
       // Minimal config shape that exposes oauth.storage; cast to avoid
@@ -289,7 +289,7 @@ describe("oauthHealthCheck — encrypted-mode skip", () => {
 // ---------------------------------------------------------------------------
 
 describe("oauthHealthCheck — ca-certificates", () => {
-  it("Test 7 — pass when standard CA bundle path stat succeeds", async () => {
+  it("pass when standard CA bundle path stat succeeds", async () => {
     caBundlePresent();
     const findings = await oauthHealthCheck.run(baseContext);
     const caFinding = findings.find((f) => f.check === "ca-certificates");
@@ -298,7 +298,7 @@ describe("oauthHealthCheck — ca-certificates", () => {
     expect(caFinding!.message).toMatch(/\/etc\/ssl/);
   });
 
-  it("Test 8 — fail with alpine hint when no bundle and ID=alpine", async () => {
+  it("fail with alpine hint when no bundle and ID=alpine", async () => {
     caBundleMissing();
     osReleaseDistro("ID=alpine\nID_LIKE=\n");
     const findings = await oauthHealthCheck.run(baseContext);
@@ -307,7 +307,7 @@ describe("oauthHealthCheck — ca-certificates", () => {
     expect(caFinding!.suggestion).toContain("apk add ca-certificates");
   });
 
-  it("Test 9 — fail with debian/ubuntu hint when ID_LIKE=debian", async () => {
+  it("fail with debian/ubuntu hint when ID_LIKE=debian", async () => {
     caBundleMissing();
     osReleaseDistro('ID=ubuntu\nID_LIKE="debian"\n');
     const findings = await oauthHealthCheck.run(baseContext);
@@ -322,14 +322,14 @@ describe("oauthHealthCheck — ca-certificates", () => {
 // ---------------------------------------------------------------------------
 
 describe("oauthHealthCheck — HTTPS_PROXY heuristic", () => {
-  it("Test 10 — pass when env vars unset", async () => {
+  it("pass when env vars unset", async () => {
     const findings = await oauthHealthCheck.run(baseContext);
     const proxyFinding = findings.find((f) => f.check === "HTTPS_PROXY");
     expect(proxyFinding).toBeDefined();
     expect(proxyFinding!.status).toBe("pass");
   });
 
-  it("Test 11 — warn when HTTPS_PROXY is set", async () => {
+  it("warn when HTTPS_PROXY is set", async () => {
     process.env["HTTPS_PROXY"] = "http://proxy.example.com:3128";
     const findings = await oauthHealthCheck.run(baseContext);
     const proxyFinding = findings.find((f) => f.check === "HTTPS_PROXY");
@@ -343,7 +343,7 @@ describe("oauthHealthCheck — HTTPS_PROXY heuristic", () => {
 // ---------------------------------------------------------------------------
 
 describe("oauthHealthCheck — TLS preflight", () => {
-  it("Test 12 — pass when preflight ok", async () => {
+  it("pass when preflight ok", async () => {
     vi.mocked(agent.runOAuthTlsPreflight).mockResolvedValue({ ok: true });
     const findings = await oauthHealthCheck.run(baseContext);
     const tlsFinding = findings.find((f) => f.check === "TLS preflight");
@@ -351,7 +351,7 @@ describe("oauthHealthCheck — TLS preflight", () => {
     expect(tlsFinding!.message).toContain("auth.openai.com");
   });
 
-  it("Test 13 — fail with distro hint on tls-cert failure (ubuntu)", async () => {
+  it("fail with distro hint on tls-cert failure (ubuntu)", async () => {
     vi.mocked(agent.runOAuthTlsPreflight).mockResolvedValue({
       ok: false,
       kind: "tls-cert",
@@ -365,7 +365,7 @@ describe("oauthHealthCheck — TLS preflight", () => {
     expect(tlsFinding!.suggestion).toContain("apt-get install");
   });
 
-  it("Test 14 — warn on network failure with firewall/DNS hint", async () => {
+  it("warn on network failure with firewall/DNS hint", async () => {
     vi.mocked(agent.runOAuthTlsPreflight).mockResolvedValue({
       ok: false,
       kind: "network",
@@ -382,11 +382,11 @@ describe("oauthHealthCheck — TLS preflight", () => {
 });
 
 // ---------------------------------------------------------------------------
-// --refresh-test branch (D-10-04-01: default OFF)
+// --refresh-test branch (default OFF)
 // ---------------------------------------------------------------------------
 
-describe("oauthHealthCheck — --refresh-test (D-10-04-01 default OFF)", () => {
-  it("Test 15 — default OFF: NO refresh-test findings", async () => {
+describe("oauthHealthCheck — --refresh-test default OFF", () => {
+  it("default OFF: NO refresh-test findings", async () => {
     const profile = buildProfile();
     vi.mocked(agent.selectOAuthCredentialStore).mockReturnValue(
       buildStoreMock({ list: async () => ok([profile]) }),
@@ -396,7 +396,7 @@ describe("oauthHealthCheck — --refresh-test (D-10-04-01 default OFF)", () => {
     expect(refreshFindings).toHaveLength(0);
   });
 
-  it("Test 16 — opt-in success: WARNING about token rotation in suggestion", async () => {
+  it("opt-in success: WARNING about token rotation in suggestion", async () => {
     const profile = buildProfile();
     vi.mocked(agent.selectOAuthCredentialStore).mockReturnValue(
       buildStoreMock({ list: async () => ok([profile]) }),
@@ -430,7 +430,7 @@ describe("oauthHealthCheck — --refresh-test (D-10-04-01 default OFF)", () => {
     }
   });
 
-  it("Test 17 — opt-in failure (refresh_token_reused) → fail with re-login command", async () => {
+  it("opt-in failure (refresh_token_reused) → fail with re-login command", async () => {
     const profile = buildProfile();
     vi.mocked(agent.selectOAuthCredentialStore).mockReturnValue(
       buildStoreMock({ list: async () => ok([profile]) }),

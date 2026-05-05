@@ -106,17 +106,17 @@ export function sanitizeToolOutput(
     options?.onTagBlockDetected?.();
   }
 
-  // Phase 1: Normalize for pattern matching (NFKC + strip zero-width + tag block)
+  // Normalize for pattern matching (NFKC + strip zero-width + tag block)
   let sanitized = normalizeForMatching(text);
 
-  // Phase 2: Redact injection patterns (on normalized text)
+  // Redact injection patterns (on normalized text)
   for (const pattern of INSTRUCTION_PATTERNS) {
     // Reset lastIndex for sticky/global regexes across multiple calls
     pattern.lastIndex = 0;
     sanitized = sanitized.replace(pattern, "[REDACTED]");
   }
 
-  // Phase 3: Truncate oversized output
+  // Truncate oversized output
   if (sanitized.length > maxChars) {
     const cutPoint = Math.floor(maxChars * 0.95);
     const lastNewline = sanitized.lastIndexOf("\n", cutPoint);

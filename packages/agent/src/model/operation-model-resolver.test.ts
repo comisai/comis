@@ -225,7 +225,7 @@ describe("Level 4: family default (catalog-derived)", () => {
     expect(result.source).toBe("family_default");
   });
 
-  it("routes openrouter cron to an OpenRouter model (not Anthropic) — Phase 2 bugfix guard", () => {
+  it("routes openrouter cron to an OpenRouter model (not Anthropic)", () => {
     // The motivating bug: switching primary to OpenRouter should NOT route
     // background tiers to Claude. This test pins the closure of that bug.
     const result = resolveOperationModel(

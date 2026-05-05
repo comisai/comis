@@ -62,12 +62,12 @@ export const AgentsManageToolParams = Type.Object({
                 "Alternative shape: nested workspace.profile (see `workspace` field).",
             }),
           ),
-          // 260428-oyc: declare nested workspace shape explicitly. The LLM
-          // sometimes emits `workspace: {profile: "specialist"}` directly
-          // (mirroring the downstream Zod schema-agent.ts:733-738 shape).
-          // Without this declaration, the unknown nested object slipped past
-          // TypeBox structurally but the enum was never validated -- invalid
-          // values would only be caught later at the Zod layer with a less
+          // Declare nested workspace shape explicitly. The LLM sometimes
+          // emits `workspace: {profile: "specialist"}` directly (mirroring
+          // the downstream Zod schema-agent.ts:733-738 shape). Without this
+          // declaration, the unknown nested object slipped past TypeBox
+          // structurally but the enum was never validated -- invalid values
+          // would only be caught later at the Zod layer with a less
           // actionable error path. Declaring it here makes both shapes
           // first-class and gates the enum at the tool-validation boundary.
           workspace: Type.Optional(
@@ -80,7 +80,7 @@ export const AgentsManageToolParams = Type.Object({
                       "Workspace profile (alternative to flat workspace_profile). Valid: full | specialist ONLY. NO other values accepted.",
                   },
                 ),
-                // 260428-vyf L2: inline ROLE.md / IDENTITY.md content. The tool
+                // Inline ROLE.md / IDENTITY.md content. The tool
                 // handler strips these from the config payload BEFORE the RPC
                 // and forwards them as a separate top-level `inlineContent`
                 // param. The daemon writes them as files (write-once side-
@@ -135,12 +135,12 @@ export const AgentsManageToolParams = Type.Object({
               { description: "Skills and tool configuration" },
             ),
           ),
-          // Phase 9 R8: per-agent OAuth profile preference. Map of provider
-          // → profile-id (e.g. { "openai-codex": "openai-codex:user@example.com" }).
-          // The downstream Zod schema (PerAgentConfigSchema, plan 02 R1) is the
+          // Per-agent OAuth profile preference. Map of provider → profile-id
+          // (e.g. { "openai-codex": "openai-codex:user@example.com" }).
+          // The downstream Zod schema (PerAgentConfigSchema) is the
           // canonical format gate via `validateProfileId`; the daemon-side
           // `agents.update` handler additionally rejects unknown profile IDs
-          // via `OAuthCredentialStore.has()` (plan 06 Task 2 / D-11).
+          // via `OAuthCredentialStore.has()`.
           oauthProfiles: Type.Optional(
             Type.Record(
               Type.String(),
@@ -176,9 +176,9 @@ const VALID_ACTIONS = ["create", "get", "update", "delete", "suspend", "resume",
  * Map flat workspace_profile param to nested workspace.profile config.
  * Mutates config in place.
  *
- * 260428-oyc: precedence is "flat wins" -- when both flat workspace_profile
- * and nested workspace.profile are present, the flat field overwrites the
- * nested one. This matches the existing spread semantics
+ * Precedence is "flat wins" -- when both flat workspace_profile and nested
+ * workspace.profile are present, the flat field overwrites the nested one.
+ * This matches the existing spread semantics
  * (`{...existing, profile}`) and keeps a single deterministic rule. When only
  * nested is present (no `workspace_profile` key), this is a no-op and the
  * nested shape flows through unchanged to the downstream Zod validator.
@@ -200,8 +200,8 @@ function mapWorkspaceProfile(config: Record<string, unknown> | undefined): void 
   }
 }
 
-// 260428-vyf L2: shape of the inline-write outcome the daemon attaches to
-// the agents.create RPC return when the caller supplied inlineContent. The
+// Shape of the inline-write outcome the daemon attaches to the
+// agents.create RPC return when the caller supplied inlineContent. The
 // daemon either writes the success-shape (`AgentInlineWritesValue`) or the
 // failure-shape (`AgentInlineWritesError`). When inlineContent was absent,
 // the field is omitted entirely from the RPC payload.
@@ -230,13 +230,13 @@ export interface AgentInlineWritesError {
  * Pure string composition. No I/O, no Result<T,E> needed (per AGENTS.md
  * §2.1: Result is for fallible paths only; this is infallible).
  *
- * Three branches keyed on `inlineWritesResult` (260428-vyf):
+ * Three branches keyed on `inlineWritesResult`:
  *  - BOTH written → SHORT contract: "No further setup needed — agent is
  *    operationally ready". Skips the post-create write() roundtrip.
  *  - PARTIAL (only one of role/identity written) → mixed contract pointing
  *    only at the still-template file with a single "Next required action".
- *  - NEITHER (or write failure / undefined) → existing 260428-sw2 2-step
- *    contract verbatim, telling the LLM to call write() for ROLE.md.
+ *  - NEITHER (or write failure / undefined) → existing 2-step contract
+ *    verbatim, telling the LLM to call write() for ROLE.md.
  *
  * Case B (workspaceDir absent — defensive fallback): shorter form pinning
  * "Customize {agentId}'s workspace ROLE.md and IDENTITY.md before using."
@@ -274,7 +274,7 @@ export function buildCreateContract(
   }
 
   // NEITHER (no inlineContent supplied, write failure, or undefined): fall
-  // through to the existing 260428-sw2 2-step contract verbatim.
+  // through to the existing 2-step contract verbatim.
   if (workspaceDir !== undefined) {
     return [
       `✓ Agent ${agentId} created at ${workspaceDir}.`,
@@ -319,7 +319,7 @@ function coerceConfig(p: Record<string, unknown>): Record<string, unknown> | und
  *
  * @param rpcCall - RPC call function for delegating to the daemon backend
  * @param logger - Required structured logger. Used to emit a per-create
- *   INFO log pinning the next-step contract emission (260428-sw2 Layer 1).
+ *   INFO log pinning the next-step contract emission.
  *   Mirrors the gateway-tool required-logger position; no overload-with-
  *   default-logger compat shim (per `feedback_no_backward_compat.md`).
  * @param approvalGate - Optional approval gate for create/delete actions
@@ -375,16 +375,16 @@ export function createAgentsManageTool(
             }
           }
 
-          // 260428-vyf L2 (Path A): strip workspace.role / workspace.identity
-          // from the config payload BEFORE the RPC and forward them as a
-          // separate top-level `inlineContent` parameter. Rationale: the
-          // downstream Zod schema (PerAgentConfigSchema.workspace at
+          // Strip workspace.role / workspace.identity from the config
+          // payload BEFORE the RPC and forward them as a separate top-level
+          // `inlineContent` parameter. Rationale: the downstream Zod schema
+          // (PerAgentConfigSchema.workspace at
           // packages/core/src/config/schema-agent.ts) is z.strictObject —
           // unknown keys would trigger Zod `unrecognized_keys` rejection.
           // role/identity are write-once side-effects (ROLE.md / IDENTITY.md
           // file writes), NOT durable state — they MUST NOT leak into
-          // config.yaml. Path B (extending Zod schema-agent.ts) was
-          // rejected because it would persist them.
+          // config.yaml. Extending the Zod schema instead would persist
+          // them and was rejected.
           let inlineContent: { role?: string; identity?: string } | undefined;
           if (config && typeof config === "object") {
             const ws = (config as Record<string, unknown>).workspace as Record<string, unknown> | undefined;
@@ -413,11 +413,11 @@ export function createAgentsManageTool(
               | { inlineWritesResult?: AgentInlineWritesValue | AgentInlineWritesError }
               | undefined)?.inlineWritesResult;
 
-            // 260428-sw2 Layer 1 + 260428-vyf Layer 2: emit the next-step
-            // contract on the freshest, uncached surface the LLM reads each
-            // turn (the tool_result text). The contract has 3 branches keyed
-            // on inlineWritesResult (see buildCreateContract). One structured
-            // INFO log pins this happened.
+            // Emit the next-step contract on the freshest, uncached surface
+            // the LLM reads each turn (the tool_result text). The contract
+            // has 3 branches keyed on inlineWritesResult (see
+            // buildCreateContract). One structured INFO log pins this
+            // happened.
             const contractText = buildCreateContract(aid, workspaceDir, inlineWritesResult);
             // Distinguish the 3 inline-write outcomes for observability.
             // "none"    — caller did not supply inlineContent

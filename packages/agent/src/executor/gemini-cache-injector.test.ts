@@ -4,7 +4,7 @@
  *
  * Tests: provider guard, enabled guard, AI Studio guard, cache injection
  * with field stripping, fallback on error, stale cache eviction, and
- * Phase 1 detection callback.
+ * detection callback.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -293,7 +293,7 @@ describe("createGeminiCacheInjector", () => {
     expect(configObj.systemInstruction).toBe("You are a helpful assistant.");
   });
 
-  it("evicts stale cache when expected fields missing from config (D-03)", async () => {
+  it("evicts stale cache when expected fields missing from config", async () => {
     vi.mocked(isGoogleFamily).mockReturnValue(true);
     vi.mocked(isGoogleAIStudio).mockReturnValue(true);
 
@@ -331,7 +331,7 @@ describe("createGeminiCacheInjector", () => {
     for await (const _chunk of result) { /* consume */ }
 
     expect(next).toHaveBeenCalled();
-    // D-03: Should log WARN and evict stale cache
+    // Should log WARN and evict stale cache
     expect(logger.warn).toHaveBeenCalled();
     expect(cacheManager.dispose).toHaveBeenCalledWith("test-session");
 

@@ -29,7 +29,7 @@ import { openSqliteDatabase, chmodDbFiles } from "./sqlite-adapter-base.js";
  *
  * Implements SecretStorePort and additionally exposes the underlying
  * better-sqlite3 handle for adapters that need to share the same
- * connection (e.g., the encrypted OAuth profile store in Phase 7).
+ * connection (e.g., the encrypted OAuth profile store).
  *
  * The `db` field is intentionally additive — `SecretStorePort` itself is
  * unchanged and remains the canonical port boundary. Consumers that only
@@ -261,12 +261,12 @@ export function createSqliteSecretStore(
     },
   };
 
-  // W6 fix (Phase 7 plan 08): expose the underlying db handle on the factory
-  // return so the encrypted OAuth profile adapter (oauth-profile-store-encrypted)
-  // can share this same connection rather than opening a second handle to the
-  // same secrets.db file. The SecretStorePort surface itself is unchanged —
-  // consumers that only need port-level operations should accept
-  // SecretStorePort, not SqliteSecretStoreHandle.
+  // Expose the underlying db handle on the factory return so the encrypted
+  // OAuth profile adapter (oauth-profile-store-encrypted) can share this same
+  // connection rather than opening a second handle to the same secrets.db
+  // file. The SecretStorePort surface itself is unchanged — consumers that
+  // only need port-level operations should accept SecretStorePort, not
+  // SqliteSecretStoreHandle.
   const handle: SqliteSecretStoreHandle = { ...store, db };
   return Object.freeze(handle);
 }

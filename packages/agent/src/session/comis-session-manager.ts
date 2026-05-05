@@ -122,7 +122,7 @@ export interface ComisSessionManager {
   writeSessionMetadata(sessionKey: SessionKey, metadata: SessionMetadata): void;
 
   /**
-   * 260428-iag: Resolve the absolute JSONL session file path for a session key.
+   * Resolve the absolute JSONL session file path for a session key.
    *
    * Thin synchronous wrapper around `sessionKeyToPath(sessionKey, deps.sessionBaseDir)`
    * that exposes the path resolver to the wire-edge diagnostic in pi-event-bridge.
@@ -189,7 +189,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
     },
 
     getSessionPath(sessionKey: SessionKey): string {
-      // 260428-iag wire-edge diagnostic: pure delegation to sessionKeyToPath
+      // wire-edge diagnostic: pure delegation to sessionKeyToPath
       // (which uses safePath internally). No I/O, no logging.
       return sessionKeyToPath(sessionKey, deps.sessionBaseDir);
     },

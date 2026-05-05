@@ -355,14 +355,14 @@ describe("wrapWithMetadataEnforcement", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Generic tool-entry schema validation (260504-cac)
+  // Generic tool-entry schema validation
   //
   // The new schema-validator runs BEFORE the per-tool validateInput hook in
-  // wrapWithMetadataEnforcement. These tests pin the wiring + the 2026-05-03
-  // outage payload regression.
+  // wrapWithMetadataEnforcement. These tests pin the wiring + the malformed
+  // connect-with-server_name regression.
   // -------------------------------------------------------------------------
-  describe("generic tool-entry schema validation (260504-cac)", () => {
-    it("rejects {action:'connect', server_name:'yfinance'} (2026-05-03 outage payload)", async () => {
+  describe("generic tool-entry schema validation", () => {
+    it("rejects {action:'connect', server_name:'yfinance'} (malformed connect payload)", async () => {
       registerToolMetadata("enf_mcp_outage", {
         validActions: ["list", "connect", "disconnect"],
         validKeys: ["action", "name", "transport", "command", "args", "url", "headers"],

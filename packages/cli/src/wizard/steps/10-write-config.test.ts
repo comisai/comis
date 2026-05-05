@@ -360,7 +360,7 @@ describe("writeConfigStep", () => {
     expect(envContent).toContain("COMIS_GATEWAY_PASSWORD=my-secret-password");
   });
 
-  // ---------- 260504-gge: oauthProfiles emission + openai-codex defaults ----------
+  // ---------- oauthProfiles emission + openai-codex defaults ----------
 
   it("emits oauthProfiles on agent config when state.provider.oauthProfileId is set", async () => {
     const state: WizardState = {

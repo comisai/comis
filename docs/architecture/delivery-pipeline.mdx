@@ -11,7 +11,7 @@ queue pattern, crash recovery, error classification, and backoff schedule.
 ## Pipeline overview
 
 Every outbound message flows through `deliverToChannel`, the unified delivery
-function introduced in Phase 492. This function handles chunking, format
+function. This function handles chunking, format
 conversion, retry logic, and delivery queue persistence in a single pipeline.
 
 ```mermaid
@@ -48,7 +48,7 @@ the platform send attempt, and the queue entry status is updated **after** the
 platform responds. This guarantees that in-flight messages survive daemon
 crashes.
 
-## Write-ahead queue (Phase 499)
+## Write-ahead queue
 
 The delivery queue implements the enqueue-before-send, ack-after-delivery
 pattern:
@@ -165,7 +165,7 @@ These delays are encoded in `QUEUE_BACKOFF_SCHEDULE_MS` and govern the
 `scheduledAt` timestamp set during nack. The drain cycle only processes entries
 whose `scheduledAt` has passed, so entries are naturally spaced across restarts.
 
-Note that the in-process retry engine (Phase 492) handles immediate retries
+Note that the in-process retry engine handles immediate retries
 within a single delivery attempt. The queue backoff schedule governs
 **cross-restart** spacing -- the delay between successive drain attempts for
 the same entry.

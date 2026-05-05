@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Mock-driven tests for `comis auth` Phase 9 R4/R5/R6 changes.
+ * Mock-driven tests for `comis auth` profile-override and provider-filter
+ * behavior.
  *
  * Lives in a separate file from `auth.test.ts` because the success-path
  * coverage requires module-level `vi.mock(...)` of `@comis/agent` and
  * `@comis/core` so the login flow does not touch the real OAuth runner.
  *
  * Coverage:
- *   R4 — `auth login --profile <id>` valid override:
+ *   - `auth login --profile <id>` valid override:
  *        * the resulting `OAuthProfile` is written to the store at
  *          `profileId === <user-supplied-id>` (NOT the JWT-derived id);
  *        * email/accountId/displayName remain JWT-derived;
  *        * the success line includes both the email AND the user-supplied
  *          profile ID.
- *   R5 — `auth list --provider <id>` filter (table contents + empty state).
- *   R6 — `auth status --provider <id>` filter (per-group output + empty state).
+ *   - `auth list --provider <id>` filter (table contents + empty state).
+ *   - `auth status --provider <id>` filter (per-group output + empty state).
  *
  * @module
  */
@@ -49,7 +50,7 @@ vi.mock("@comis/agent", () => ({
 }));
 
 // Mock @comis/core — keep the real `validateProfileId` (we want its real
-// validation behavior driving R4 mismatch / malformed assertions) but stub
+// validation behavior driving mismatch / malformed assertions) but stub
 // the config-loading helpers so `openOAuthStoreFromConfig` short-circuits to
 // the file adapter without touching `~/.comis/config.yaml`.
 vi.mock("@comis/core", async () => {
@@ -167,7 +168,7 @@ function joinCalls(spy: ReturnType<typeof vi.spyOn>): string {
 // Tests
 // -----------------------------------------------------------------------------
 
-describe("auth login --profile override (R4)", () => {
+describe("auth login --profile override", () => {
   let store: FakeStore;
 
   beforeEach(() => {
@@ -225,7 +226,7 @@ describe("auth login --profile override (R4)", () => {
     console_.error.mockRestore();
   });
 
-  it("uses the JWT-derived profile ID when --profile is absent (Phase 8 path unchanged)", async () => {
+  it("uses the JWT-derived profile ID when --profile is absent", async () => {
     const program = buildProgram();
     const exitSpy = spyExit();
     const console_ = spyConsole();
@@ -254,7 +255,7 @@ describe("auth login --profile override (R4)", () => {
   });
 });
 
-describe("auth list --provider filter (R5)", () => {
+describe("auth list --provider filter", () => {
   let store: FakeStore;
 
   beforeEach(() => {
@@ -349,7 +350,7 @@ describe("auth list --provider filter (R5)", () => {
     console_.error.mockRestore();
   });
 
-  it("shows all profiles when --provider is absent (Phase 8 behavior)", async () => {
+  it("shows all profiles when --provider is absent", async () => {
     const program = buildProgram();
     const console_ = spyConsole();
 
@@ -365,7 +366,7 @@ describe("auth list --provider filter (R5)", () => {
   });
 });
 
-describe("auth status --provider filter (R6)", () => {
+describe("auth status --provider filter", () => {
   let store: FakeStore;
 
   beforeEach(() => {
@@ -448,7 +449,7 @@ describe("auth status --provider filter (R6)", () => {
     console_.error.mockRestore();
   });
 
-  it("prints all groups when --provider is absent (Phase 8 behavior)", async () => {
+  it("prints all groups when --provider is absent", async () => {
     const program = buildProgram();
     const console_ = spyConsole();
 

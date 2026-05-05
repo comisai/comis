@@ -80,7 +80,7 @@ describe("Config-driven queue tests (no LLM key required)", () => {
         )) as Record<string, unknown>;
 
         // Budget pre-check should reject: either via result.finishReason or error
-        // Dual-check pattern per decision 117-01
+        // Dual-check pattern
         const hasResultBudget =
           response.result &&
           typeof (response.result as Record<string, unknown>).finishReason ===
@@ -152,7 +152,7 @@ describe("Config-driven queue tests (no LLM key required)", () => {
     "AGT-04-deletion: session deletion during active execution is covered by unit tests",
     async () => {
       // AGT-04 session deletion during execution: validated by unit tests in
-      // session-concurrency.test.ts (Phase 105-01). The daemon session management
+      // session-concurrency.test.ts. The daemon session management
       // layer delegates to the same withSessionLock() infrastructure.
       let ws: WebSocket | undefined;
       try {

@@ -124,7 +124,7 @@ function buildSkillsContent(deps: RehydrationLayerDeps): string {
   const closingTag = "</skill>";
   const skillOpenRegex = /<skill[\s>]/g;
 
-  // Phase 1: Extract individual skill blocks and apply per-skill truncation (POST-COMPACT-BUDGET)
+  // Extract individual skill blocks and apply per-skill truncation
   const skillBlocks: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = skillOpenRegex.exec(xml)) !== null) {
@@ -134,7 +134,7 @@ function buildSkillsContent(deps: RehydrationLayerDeps): string {
 
     let skillBlock = xml.slice(startIdx, closeIdx + closingTag.length);
 
-    // POST-COMPACT-BUDGET: Per-skill truncation with closing tag repair
+    // Per-skill truncation with closing tag repair
     if (skillBlock.length > MAX_REHYDRATION_CHARS_PER_SKILL) {
       // Reserve space for repair suffix: "\n...</skill>" = 12 chars
       const repairSuffix = "\n..." + closingTag;
@@ -151,16 +151,16 @@ function buildSkillsContent(deps: RehydrationLayerDeps): string {
 
   if (skillBlocks.length === 0) return "";
 
-  // Phase 2: Enforce MAX_REHYDRATION_SKILLS count limit
+  // Enforce MAX_REHYDRATION_SKILLS count limit
   const limitedBlocks = skillBlocks.slice(0, MAX_REHYDRATION_SKILLS);
 
-  // Phase 3: Reassemble XML with wrapper
+  // Reassemble XML with wrapper
   // Preserve opening tag from original XML
   const wrapperOpenEnd = xml.indexOf(">") + 1;
   const wrapperOpen = xml.slice(0, wrapperOpenEnd);
   let truncatedXml = wrapperOpen + "\n" + limitedBlocks.join("\n") + "\n</available_skills>";
 
-  // Phase 4: Enforce char budget (15K)
+  // Enforce char budget (15K)
   if (truncatedXml.length > MAX_REHYDRATION_SKILL_CHARS) {
     // Re-truncate at skill boundaries within char budget
     const withinBudget = truncatedXml.slice(0, MAX_REHYDRATION_SKILL_CHARS);
@@ -296,7 +296,7 @@ export function createRehydrationLayer(
       const position1Parts = [agentsMdSection, fileSection, skillsSection].filter(Boolean);
       let position1Text = position1Parts.join("\n\n");
 
-      // POST-COMPACT-BUDGET: Enforce total rehydration token budget
+      // Enforce total rehydration token budget
       if (position1Text.length > MAX_REHYDRATION_TOKEN_BUDGET_CHARS) {
         deps.logger.warn(
           {

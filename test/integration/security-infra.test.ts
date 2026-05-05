@@ -9,7 +9,7 @@
  * - SEC-INF-04: Plugin registry security model
  *
  * Note: SEC-INF-02 (V8 sandbox resource limits) was removed -- code skills
- * and the V8 sandbox were deleted in Phase 213.
+ * and the V8 sandbox were deleted.
  */
 
 import { describe, it, expect, afterAll } from "vitest";

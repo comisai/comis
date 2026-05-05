@@ -63,11 +63,11 @@ export interface GatewayServerDeps {
     headerName?: string;
   };
   /**
-   * Phase 11 SC11-2: optional OAuth callback deps. When provided, the
-   * gateway mounts GET /oauth/callback/:provider for browser-redirect
-   * OAuth flows (web-UI-initiated logins). Pending-flow map is owned by
-   * the caller (e.g., setup-gateway.ts in a future phase) so daemon
-   * restart cleanly drops all in-flight states.
+   * Optional OAuth callback deps. When provided, the gateway mounts
+   * GET /oauth/callback/:provider for browser-redirect OAuth flows
+   * (web-UI-initiated logins). Pending-flow map is owned by the caller
+   * (e.g., setup-gateway.ts) so daemon restart cleanly drops all in-flight
+   * states.
    */
   readonly oauthCallbackDeps?: {
     credentialStore: OAuthCredentialStorePort;
@@ -239,7 +239,7 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
     app.route("/hooks", webhookApp);
   }
 
-  // Phase 11 SC11-2: mount OAuth callback at GET /oauth/callback/:provider
+  // Mount OAuth callback at GET /oauth/callback/:provider
   if (deps.oauthCallbackDeps) {
     const oauthApp = createOAuthCallbackRoute({
       ...deps.oauthCallbackDeps,

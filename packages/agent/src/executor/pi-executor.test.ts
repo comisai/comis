@@ -134,7 +134,7 @@ const {
   const mockResourceLoaderArgs = { captured: null as any };
   const mockGetSkills = vi.fn().mockReturnValue({ skills: [], diagnostics: [] });
 
-  // 260501-egj: getVisibleAssistantText now reads from mockSession.messages
+  // getVisibleAssistantText now reads from mockSession.messages
   // directly (no SDK delegation on the no-commentary path). This helper keeps
   // the SDK mock in sync with messages so tests can stay terse — sets BOTH
   // mockGetLastAssistantText.mockReturnValue(text) AND ensures the trailing
@@ -371,7 +371,7 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
       fatal: vi.fn(),
       trace: vi.fn(),
     } as any,
-    // Phase 9 R3: minimal stub now needs getApiKey + setRuntimeApiKey to
+    // Minimal stub now needs getApiKey + setRuntimeApiKey to
     // satisfy the resolveProviderApiKey pre-execute hook in pi-executor.
     // No oauthManager wired into the test deps, so the hook falls through
     // to authStorage.getApiKey for both OAuth-eligible (anthropic) and
@@ -461,7 +461,7 @@ describe("PiExecutor", () => {
     mockFollowUp.mockResolvedValue(undefined);
     mockSession.isStreaming = false;
     mockSession.isCompacting = false;
-    // 260501-egj: getVisibleAssistantText now reads from mockSession.messages
+    // getVisibleAssistantText now reads from mockSession.messages
     // directly on the no-commentary path (no SDK delegation). The default
     // mockGetLastAssistantText return is "test response" — mirror that into a
     // default assistant message so tests that don't override either get the
@@ -990,7 +990,7 @@ describe("PiExecutor", () => {
       expect(fields.llmCalls).toBeTypeOf("number");
       expect(fields.tokensTotal).toBeTypeOf("number");
       expect(fields.sessionKey).toBeTypeOf("string");
-      // 260504-ieh: rolled-up diagnostic counters replace per-event INFO emissions.
+      // Rolled-up diagnostic counters replace per-event INFO emissions.
       expect(fields.hashAssertionsRan).toBeTypeOf("number");
       expect(fields.hashAssertionsRan).toBeGreaterThanOrEqual(0);
       expect(fields.hashAssertionMismatches).toBeTypeOf("number");
@@ -999,7 +999,7 @@ describe("PiExecutor", () => {
       expect(fields.signatureScrubs).toBeGreaterThanOrEqual(0);
       expect(fields.signatureScrubsToolCallsAffected).toBeTypeOf("number");
       expect(fields.signatureScrubsToolCallsAffected).toBeGreaterThanOrEqual(0);
-      // 260505-gqe: provider attribution tag — unblocks operator queries
+      // Provider attribution tag — unblocks operator queries
       // segmenting cache-hit-rate / cost by provider. Default mock returns
       // resolvedModel.provider === "anthropic", which maps to providerFamily
       // "anthropic" via PROVIDER_OVERRIDES in capabilities.ts.
@@ -1009,7 +1009,7 @@ describe("PiExecutor", () => {
       expect(fields.providerFamily).toBeTypeOf("string");
     });
 
-    // 260505-gqe: silent-fallback path — operator INTENT semantics.
+    // Silent-fallback path — operator INTENT semantics.
     // When modelRegistry.find returns undefined (e.g., misconfig:
     // provider:anthropic + model:gpt-5.5 doesn't resolve), pi-coding-agent
     // silently falls back to whatever built-in provider has env-var
@@ -1041,7 +1041,7 @@ describe("PiExecutor", () => {
       expect(fields.providerFamily).toBe("anthropic");
     });
 
-    // 260505-gqe: post-resolution provider — codex example. When the
+    // Post-resolution provider — codex example. When the
     // registry resolves to openai-codex, both fields reflect the
     // POST-resolution / POST-override provider, and providerFamily is
     // mapped via PROVIDER_OVERRIDES (openai-codex → "openai").
@@ -1067,10 +1067,10 @@ describe("PiExecutor", () => {
       expect(fields.providerFamily).toBe("openai");
     });
 
-    // 260504-ieh: zero-default test — ensures the four counter fields are
+    // Zero-default test — ensures the four counter fields are
     // ALWAYS present in the payload (default 0) so downstream log consumers
     // can rely on them without `?? 0` shims.
-    it("emits the four 260504-ieh counters with zero defaults when nothing fired", async () => {
+    it("emits the four counters with zero defaults when nothing fired", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
@@ -1121,7 +1121,7 @@ describe("PiExecutor", () => {
     });
 
     // -----------------------------------------------------------------------
-    // 260428-ur1 — L4 post-batch continuation integration
+    // L4 post-batch continuation integration
     // -----------------------------------------------------------------------
 
     it("Test 10 — emits postBatchContinuation log fields when handler fires after empty-final-after-tool-batch", async () => {
@@ -1406,7 +1406,7 @@ describe("PiExecutor", () => {
     });
 
     it("empty assistant content produces empty response", async () => {
-      // 260501-egj: getVisibleAssistantText reads mockSession.messages directly
+      // getVisibleAssistantText reads mockSession.messages directly
       // (no SDK delegation). An empty-content assistant — e.g. provider
       // returned no text blocks — must yield "".
       setMockAssistantText("");
@@ -4227,8 +4227,8 @@ describe("PiExecutor", () => {
     it("retries with followUp when finishReason is stop and tool calls were made", async () => {
       // initial check returns "" triggering the block. After followUp, the
       // assistant message in mockSession.messages contains "recovered response"
-      // for the continuation re-check and all subsequent reads (260501-egj:
-      // getVisibleAssistantText reads messages directly, so we wire the
+      // for the continuation re-check and all subsequent reads
+      // (getVisibleAssistantText reads messages directly, so we wire the
       // recovery via followUp's mockImplementation pushing a new assistant).
       setMockAssistantText("");
       mockGetResult.mockReturnValue({
@@ -4340,7 +4340,7 @@ describe("PiExecutor", () => {
       // First prompt: finishReason "stop" but empty text (thinking-only response).
       // followUp also fails. New behavior: strip empty assistant turn, re-enter model retry.
       // Second prompt: returns "recovered text".
-      // 260501-egj: getVisibleAssistantText reads mockSession.messages directly,
+      // getVisibleAssistantText reads mockSession.messages directly,
       // so we drive the recovery via mockPrompt's mockImplementation: the second
       // prompt call replaces messages with the recovered text.
       let promptCallCount = 0;
@@ -4634,7 +4634,7 @@ describe("PiExecutor", () => {
     });
 
     it("passes NO_REPLY silent token through unchanged (channel-layer filter handles suppression)", async () => {
-      // Contract change (260505-dl3): silent tokens are explicit suppression
+      // Contract change: silent tokens are explicit suppression
       // signals; the agent layer passes them through unchanged so the
       // channel-layer filter (packages/channels/src/shared/response-filter.ts)
       // can suppress delivery downstream.
@@ -4848,7 +4848,7 @@ describe("PiExecutor", () => {
       // mixed with tool calls. Under L3 synthesis, recovery returns a structured
       // tool-call summary — neither the framing prose nor the step annotation
       // leaks through as the user-visible reply.
-      // 260501-egj: getVisibleAssistantText reads messages directly; the
+      // getVisibleAssistantText reads messages directly; the
       // "empty final turn" is modeled as a trailing assistant with no visible
       // content (was previously implied via SDK mock returning "").
       mockSession.messages = [
@@ -5682,7 +5682,7 @@ describe("ExcludeDeferralResult wiring", () => {
         };
       });
 
-      // 260501-egj: getVisibleAssistantText reads mockSession.messages directly.
+      // getVisibleAssistantText reads mockSession.messages directly.
       // The original test relied on getLastAssistantText's mock-counter returning
       // "truncated" on the first call and "full escalated" on subsequent calls,
       // which under the OLD contract drove the final result.response from the

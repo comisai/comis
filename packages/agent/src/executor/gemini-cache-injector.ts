@@ -4,7 +4,7 @@
  *
  * Injects CachedContent name into Gemini API payloads and atomically strips
  * the three inherited fields (systemInstruction, tools, toolConfig) to avoid
- * double-billing. Operates inside the onPayload hook (post-buildParams) per D-04.
+ * double-billing. Operates inside the onPayload hook (post-buildParams).
  *
  * Handles cache injection, inherited field stripping, and staleness recovery.
  *
@@ -37,7 +37,7 @@ export interface GeminiCacheInjectorConfig {
   /** Callback when a Gemini CachedContent entry is successfully injected.
    *  Called with the CacheEntry so the caller can capture cache hit stats for logging. */
   onCacheHit?: (entry: CacheEntry) => void;
-  /** Callback for cache break detection Phase 1.
+  /** Callback for cache break detection.
    *  Called with the API-ready payload AFTER any cache injection. */
   onPayloadForCacheDetection?: (
     params: Record<string, unknown>,
@@ -165,7 +165,7 @@ export function createGeminiCacheInjector(
             return resolvedParams;
           }
 
-          // D-03: Assertion -- all three fields must be present for stripping
+          // Assertion -- all three fields must be present for stripping
           if (
             configObj.systemInstruction === undefined ||
             configObj.tools === undefined ||
@@ -178,7 +178,7 @@ export function createGeminiCacheInjector(
                 hint: "Expected fields missing from config -- cache entry stale, evicting",
                 errorKind: "validation" as ErrorKind,
               },
-              "Gemini cache injector: stale cache detected (D-03)",
+              "Gemini cache injector: stale cache detected",
             );
             suppressError(
               config.cacheManager.dispose(config.sessionKey),
@@ -206,7 +206,7 @@ export function createGeminiCacheInjector(
           // Notify caller of successful cache injection for observability
           config.onCacheHit?.(entry);
 
-          // D-07: Phase 1 cache break detection callback
+          // Cache break detection callback
           config.onPayloadForCacheDetection?.(resolvedParams, modelInfo);
           return resolvedParams;
         },

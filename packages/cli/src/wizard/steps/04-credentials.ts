@@ -32,11 +32,11 @@ import {
 } from "../index.js";
 import { getModels, type KnownProvider } from "@mariozechner/pi-ai";
 
-// ---- Phase 8 (D-03) OAuth interactive-flow imports ----
+// ---- OAuth interactive-flow imports ----
 // CLI cannot import from packages/daemon (dep-direction); the OAuth
-// runner + selector + remote-env detector live in @comis/agent (Phase 8
-// plan 01 moved selectOAuthCredentialStore there). The browser opener is
-// the `open` package (exact-pinned in @comis/cli per CLAUDE.md
+// runner + selector + remote-env detector live in @comis/agent
+// (selectOAuthCredentialStore lives there). The browser opener is the
+// `open` package (exact-pinned in @comis/cli per CLAUDE.md
 // supply-chain invariants).
 import { homedir } from "node:os";
 import open from "open";
@@ -75,9 +75,9 @@ const PROVIDER_HELP_URLS: Record<string, string> = {
 /**
  * Providers that offer an OAuth token alternative to API keys.
  *
- * 260504-gge: openai is now API-key-only -- OAuth lives exclusively on the
- * separate `openai-codex` provider id (which has its own dedicated branch
- * with a method picker). Only anthropic remains here.
+ * openai is API-key-only -- OAuth lives exclusively on the separate
+ * `openai-codex` provider id (which has its own dedicated branch with
+ * a method picker). Only anthropic remains here.
  */
 const AUTH_METHOD_PROVIDERS: Record<
   string,
@@ -121,14 +121,6 @@ const AUTH_METHOD_PROVIDERS: Record<
  * https://generativelanguage.googleapis.com/v1beta/models,
  * https://api.groq.com/openai/v1/models).
  *
- * Follow-up to 260501-kqq Sub-Fix C: that migration replaced the static
- * PROVIDER_VALIDATION map (which had host-only baseUrls + correct /v1/models
- * suffixes) with the catalog-driven `getValidationEndpoint` helper, but the
- * path-table values were copied verbatim -- producing double-prefixed URLs
- * (e.g., https://api.openai.com/v1/v1/models -> 404) for the 6 providers
- * whose catalog baseUrl includes the version segment. 260501-mvw corrects
- * the table; the helper itself is unchanged.
- *
  * Drift risk: if pi-ai upgrades a provider's baseUrl AND its path convention
  * changes, this table must be updated. Acceptable trade-off -- explicit
  * beats clever (auto-detection of duplicated path segments could mask
@@ -137,10 +129,9 @@ const AUTH_METHOD_PROVIDERS: Record<
  * Excluded: `together` and `ollama` are NOT in pi-ai 0.71.0's catalog
  * (`getModels(p)[0]?.baseUrl` returns undefined for both). The line-130
  * fallback (`if (!entry) return { valid: true };`) handles them by
- * skipping live validation entirely. For `together` this is a deliberate
- * behavior change vs the pre-260501-kqq state -- live validation against
- * api.together.xyz is now skipped. Users can still target Together via
- * the synthetic `custom` endpoint route.
+ * skipping live validation entirely. Live validation against
+ * api.together.xyz is skipped; users can still target Together via the
+ * synthetic `custom` endpoint route.
  */
 const PROVIDER_VALIDATION_PATHS: Record<string, string> = {
   // Catalog baseUrl is HOST-ONLY for these providers -> path needs the /v1 prefix.
@@ -160,8 +151,8 @@ const PROVIDER_VALIDATION_PATHS: Record<string, string> = {
 
 /**
  * Resolve the validation endpoint for a provider by reading the catalog
- * baseUrl from pi-ai (260501-gyy precedent: builtin-provider-guard.ts:45)
- * and combining it with a known path from PROVIDER_VALIDATION_PATHS.
+ * baseUrl from pi-ai (precedent: builtin-provider-guard.ts:45) and
+ * combining it with a known path from PROVIDER_VALIDATION_PATHS.
  *
  * Returns `undefined` for providers not in the catalog (or providers
  * with no models, e.g., ollama with no remote endpoint) -- callers
@@ -322,12 +313,11 @@ async function handleCustomEndpoint(
 /**
  * Branch C: Standard provider -- help URL, format pre-check, live validation, retry loop.
  *
- * Phase 8 D-03: accepts an optional `preResolvedAuthMethod` parameter so the
+ * Accepts an optional `preResolvedAuthMethod` parameter so the
  * dispatcher (credentialsStep.execute) can hoist the auth-method select
  * BEFORE deciding which branch handler to run. When set, the internal
  * select is skipped — preventing a double-prompt for AUTH_METHOD_PROVIDERS
- * entries (anthropic + openai). When undefined, behavior matches the
- * pre-Phase-8 path (the internal select runs as before).
+ * entries. When undefined, the internal select runs.
  */
 async function handleStandardProvider(
   state: WizardState,
@@ -447,15 +437,15 @@ async function handleStandardProvider(
   return state;
 }
 
-// ---------- Branch D: openai-codex OAuth (260504-gge) ----------
+// ---------- Branch D: openai-codex OAuth ----------
 
 const wizardLogger = createLogger({ name: "wizard-oauth" });
 
 /**
  * Open the OAuth credential store from the current config (mirrors the
- * helper plan 03 will install in `auth.ts`). Defaults to file storage when
- * config is absent or doesn't set `oauth.storage`. Encrypted-mode CLI
- * wiring requires SECRETS_MASTER_KEY + secretsDb — if `storage='encrypted'`,
+ * helper installed in `auth.ts`). Defaults to file storage when config
+ * is absent or doesn't set `oauth.storage`. Encrypted-mode CLI wiring
+ * requires SECRETS_MASTER_KEY + secretsDb — if `storage='encrypted'`,
  * the wizard surfaces a fail-fast error (operator can switch to file mode
  * for the wizard, then back to encrypted after).
  */
@@ -487,11 +477,10 @@ async function openWizardOAuthStore(): Promise<OAuthCredentialStorePort> {
 /**
  * Branch D: openai-codex OAuth — interactive method picker + runner dispatch.
  *
- * 260504-gge: surfaces the runner's three login methods (browser auto-open,
- * browser manual paste, device-code) plus a "skip for now" escape hatch.
- * Pre-260504, this lived under provider=openai+authMethod=oauth and only
- * exposed the runner's default browser path; the new shape moves OAuth to
- * its own provider id so the openai (API-key) flow is straight-through.
+ * Surfaces the runner's three login methods (browser auto-open, browser
+ * manual paste, device-code) plus a "skip for now" escape hatch. OAuth
+ * lives on its own provider id so the openai (API-key) flow is
+ * straight-through.
  *
  * On runner success: writes the profile to the OAuth store AND updates
  * wizard state with apiKey + oauthProfileId + validated=true. The matching
@@ -673,7 +662,7 @@ export const credentialsStep: WizardStep = {
       return handleCustomEndpoint(state, prompter);
     }
 
-    // Branch D: openai-codex OAuth (260504-gge) -- dedicated method picker
+    // Branch D: openai-codex OAuth -- dedicated method picker
     // dispatching to loginOpenAICodexOAuth. Kept ABOVE the auth-method
     // hoist so openai-codex never sees the apikey/oauth select prompt.
     if (providerId === "openai-codex") {
@@ -682,8 +671,8 @@ export const credentialsStep: WizardStep = {
 
     // Hoisted auth-method select runs UP FRONT for providers in
     // AUTH_METHOD_PROVIDERS so the dispatcher can branch on the chosen
-    // method before handleStandardProvider runs. After 260504-gge only
-    // anthropic remains in the map -- openai is now API-key-only.
+    // method before handleStandardProvider runs. Only anthropic remains
+    // in the map -- openai is API-key-only.
     let authMethod: AuthMethod | undefined;
     // eslint-disable-next-line security/detect-object-injection -- read of static const map indexed by validated provider string
     const authConfig = AUTH_METHOD_PROVIDERS[providerId];

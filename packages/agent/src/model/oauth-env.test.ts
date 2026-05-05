@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { isRemoteEnvironment } from "./oauth-env.js";
 
-describe("isRemoteEnvironment (Phase 8 D-04 — SPEC R2)", () => {
+describe("isRemoteEnvironment", () => {
   it("returns true when SSH_CLIENT is set, no force", () => {
     expect(isRemoteEnvironment({ env: { SSH_CLIENT: "1.2.3.4 22 22" } })).toBe(true);
   });

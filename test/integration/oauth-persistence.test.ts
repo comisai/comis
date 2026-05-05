@@ -1,37 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OAuth persistence integration tests (Phase 7 plan 08 — turns plan 02
- * task 02.3's 6 it.todo placeholders GREEN end-to-end).
+ * OAuth persistence integration tests.
  *
  * Exercises the rewired OAuthTokenManager against real adapters (file +
- * encrypted) with the in-process mock OAuth fixture from plan 07-02.
+ * encrypted) with the in-process mock OAuth fixture.
  *
  * Coverage:
- * - R6 restart-survives-refresh: refresh once → recreate manager → second
+ * - restart-survives-refresh: refresh once → recreate manager → second
  *   call uses the persisted refreshed token (mock count = 1 across BOTH
  *   manager instances).
- * - R6 concurrent-refresh: two parallel manager instances against the same
+ * - concurrent-refresh: two parallel manager instances against the same
  *   store → exactly one refresh request to the mock → both return the same
  *   access token (per-profile lock + persist-before-release).
- * - R7a env-bootstrap: empty store + valid env → profile bootstrapped, store
+ * - env-bootstrap: empty store + valid env → profile bootstrapped, store
  *   now contains openai-codex:<identity>, auth:profile_bootstrapped event
  *   fired exactly once.
- * - R7b silent-path: stored profile + matching env → ZERO env-override-ignored
+ * - silent-path: stored profile + matching env → ZERO env-override-ignored
  *   WARNs (the env value matches what's stored).
- * - R7c env-conflict: stored profile + DIFFERENT env → EXACTLY ONE
+ * - env-conflict: stored profile + DIFFERENT env → EXACTLY ONE
  *   env-override-ignored WARN across two getApiKey calls (once-per-process
  *   semantics), stored profile used (env ignored).
- * - R3 encrypted survive-restart: same as R6.1 but against the encrypted
- *   SQLite backend, plus a canary check that the plaintext access token is
- *   NOT present in the raw DB bytes on disk.
+ * - encrypted survive-restart: same as restart-survives-refresh but against
+ *   the encrypted SQLite backend, plus a canary check that the plaintext
+ *   access token is NOT present in the raw DB bytes on disk.
  *
  * Fetch interception: vi.spyOn(global, "fetch") redirects pi-ai's
  * https://auth.openai.com/oauth/token to ${mockBaseUrl}/oauth/token. Other
  * fetches pass through unchanged.
  *
- * W5 fix: log capture uses makeMockLogger from test/support/mock-logger.ts
+ * Log capture uses makeMockLogger from test/support/mock-logger.ts
  * (mirrors the helper inside oauth-token-manager.test.ts).
- * W6 fix: the encrypted Test 6 uses `secretStore.db` (the SAME handle from
+ * The encrypted test uses `secretStore.db` (the SAME handle from
  * createSqliteSecretStore) to construct createOAuthProfileStoreEncrypted
  * — proves the shared-handle path end-to-end.
  *
@@ -199,7 +198,7 @@ function buildManager(opts: {
 // ---------------------------------------------------------------------------
 
 describe("OAuth persistence (integration)", () => {
-  describe("SPEC R6 — restart survives refresh", () => {
+  describe("restart survives refresh", () => {
     it("restart-survives-refresh: refresh once → recreate manager → reuses persisted refreshed token (mock count = 1)", async () => {
       const tmpDir = freshTmpDataDir();
       try {
@@ -224,7 +223,7 @@ describe("OAuth persistence (integration)", () => {
         const r2 = await m2.manager.getApiKey(PROVIDER_ID);
         expect(r2.ok).toBe(true);
 
-        // CRITICAL R6 assertion — total refresh request count is still 1.
+        // CRITICAL assertion — total refresh request count is still 1.
         expect(mockServer.getRequestCount("refresh_token")).toBe(1);
       } finally {
         cleanupTmpDir(tmpDir);
@@ -257,7 +256,7 @@ describe("OAuth persistence (integration)", () => {
           // gave them the SAME rotated profile.
           expect(r1.value).toBe(r2.value);
         }
-        // CRITICAL R6 concurrent assertion — exactly one refresh request.
+        // CRITICAL concurrent assertion — exactly one refresh request.
         expect(mockServer.getRequestCount("refresh_token")).toBe(1);
       } finally {
         cleanupTmpDir(tmpDir);
@@ -265,8 +264,8 @@ describe("OAuth persistence (integration)", () => {
     });
   });
 
-  describe("SPEC R7 — env-var bootstrap semantics", () => {
-    it("R7a: empty store + valid OAUTH_OPENAI_CODEX env → profile bootstrapped, store now has openai-codex:<identity>, auth:profile_bootstrapped fires once", async () => {
+  describe("env-var bootstrap semantics", () => {
+    it("empty store + valid OAUTH_OPENAI_CODEX env → profile bootstrapped, store now has openai-codex:<identity>, auth:profile_bootstrapped fires once", async () => {
       const tmpDir = freshTmpDataDir();
       try {
         const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
@@ -309,7 +308,7 @@ describe("OAuth persistence (integration)", () => {
       }
     });
 
-    it("R7b: stored profile + UNCHANGED env-var refresh-token → ZERO env-override-ignored WARNs (env matches stored)", async () => {
+    it("stored profile + UNCHANGED env-var refresh-token → ZERO env-override-ignored WARNs (env matches stored)", async () => {
       const tmpDir = freshTmpDataDir();
       try {
         const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
@@ -334,7 +333,7 @@ describe("OAuth persistence (integration)", () => {
         const r = await manager.getApiKey(PROVIDER_ID);
         expect(r.ok).toBe(true);
 
-        // CRITICAL R7b assertion — ZERO env-override-ignored WARNs.
+        // CRITICAL assertion — ZERO env-override-ignored WARNs.
         const warnsWithDriftHint = logger
           ._calls("warn")
           .filter((c) => c.payload?.hint === "env-override-ignored");
@@ -344,7 +343,7 @@ describe("OAuth persistence (integration)", () => {
       }
     });
 
-    it("R7c: stored profile + DIFFERENT env-var refresh-token → EXACTLY ONE env-override-ignored WARN across TWO getApiKey calls (once-per-process)", async () => {
+    it("stored profile + DIFFERENT env-var refresh-token → EXACTLY ONE env-override-ignored WARN across TWO getApiKey calls (once-per-process)", async () => {
       const tmpDir = freshTmpDataDir();
       try {
         const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
@@ -373,12 +372,12 @@ describe("OAuth persistence (integration)", () => {
         expect(r1.ok).toBe(true);
         expect(r2.ok).toBe(true);
 
-        // CRITICAL R7c assertion — exactly ONE env-override-ignored WARN.
+        // CRITICAL assertion — exactly ONE env-override-ignored WARN.
         const warnsWithDriftHint = logger
           ._calls("warn")
           .filter((c) => c.payload?.hint === "env-override-ignored");
         expect(warnsWithDriftHint).toHaveLength(1);
-        // errorKind = config_drift per D-12.
+        // errorKind = config_drift.
         expect(warnsWithDriftHint[0]!.payload.errorKind).toBe("config_drift");
 
         // Stored profile is canonical — refresh was NOT updated to the
@@ -396,8 +395,8 @@ describe("OAuth persistence (integration)", () => {
     });
   });
 
-  describe("SPEC R3 — encrypted storage (opt-in)", () => {
-    it("R3 encrypted: oauth.storage='encrypted' restart-survives-refresh against shared-handle SqliteSecretStoreHandle.db (W6) + plaintext-canary absent from raw DB bytes", async () => {
+  describe("encrypted storage (opt-in)", () => {
+    it("encrypted: oauth.storage='encrypted' restart-survives-refresh against shared-handle SqliteSecretStoreHandle.db + plaintext-canary absent from raw DB bytes", async () => {
       const tmpDir = freshTmpDataDir();
       const dbPath = `${tmpDir}/secrets.db`;
       try {
@@ -406,7 +405,7 @@ describe("OAuth persistence (integration)", () => {
         const crypto = createSecretsCrypto(masterKey);
         const secretStore = createSqliteSecretStore(dbPath, crypto);
 
-        // W6 — pass the SAME db handle to the encrypted OAuth adapter.
+        // Pass the SAME db handle to the encrypted OAuth adapter.
         const oauthStore = createOAuthProfileStoreEncrypted(secretStore.db, crypto);
 
         // Pre-seed an EXPIRED profile with a plaintext canary in the access
@@ -442,7 +441,7 @@ describe("OAuth persistence (integration)", () => {
         const r2 = await m2.manager.getApiKey(PROVIDER_ID);
         expect(r2.ok).toBe(true);
 
-        // R6/R3 cross-cut — refresh count still 1 across both managers.
+        // Refresh count still 1 across both managers.
         expect(mockServer.getRequestCount("refresh_token")).toBe(1);
 
         // Plaintext canary check — encrypted-on-disk property.

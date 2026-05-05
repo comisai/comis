@@ -1,6 +1,6 @@
 # Comis Link Understanding Test Configuration
 #
-# Phase 113: Tool Provider Integration Tests
+# Tool Provider Integration Tests
 # Port 8485 (unique -- avoids conflicts with ports 4766-8484)
 # Link understanding enabled for link.process RPC testing
 # No LLM API key required -- link understanding pipeline does not call LLM

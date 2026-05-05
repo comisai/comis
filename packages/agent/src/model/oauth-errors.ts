@@ -4,16 +4,15 @@
  *
  * Pure classification: maps an unknown error (typically thrown by pi-ai's
  * loginOpenAICodex / refreshOpenAICodexToken or our own wrappers) into a
- * discriminated record used by both the login runner (Phase 8 D-02) and
- * the doctor's refresh-test (Phase 10 SC-10-2 / SC-10-3).
+ * discriminated record used by both the login runner and the doctor's
+ * refresh-test.
  *
- * Phase 10 expansion: adds `invalid_grant` and `refresh_token_reused` to
- * the 3 cases (+ default) Phase 8 shipped inline. The substring matchers
- * for `refresh_token_reused` are lifted from OpenClaw's auth-profiles/
- * oauth.ts:117-123 (battle-tested in production for ~6 months).
+ * The substring matchers for `refresh_token_reused` are lifted from
+ * OpenClaw's auth-profiles/oauth.ts:117-123 (battle-tested in production
+ * for ~6 months).
  *
- * CRITICAL ORDERING (RESEARCH §Q3): refresh_token_reused MUST be tested
- * BEFORE invalid_grant — refresh_token_reused is a SPECIFIC kind of
+ * CRITICAL ORDERING: refresh_token_reused MUST be tested BEFORE
+ * invalid_grant — refresh_token_reused is a SPECIFIC kind of
  * invalid_grant; the more-specific matcher must win.
  *
  * Field convention (CLAUDE.md): `errorKind` mirrors `code` 1:1 so Pino
@@ -89,7 +88,7 @@ export function rewriteOAuthError(err: unknown): RewrittenOAuthError {
         "OpenAI rejected the request for this country, region, or network route. " +
         "If you normally use a proxy, verify HTTPS_PROXY, HTTP_PROXY, or ALL_PROXY is set " +
         "for the Comis process. NOTE: Node's built-in fetch does NOT honor HTTPS_PROXY " +
-        "by default (see docs/operations/proxy.mdx, shipped Phase 12).",
+        "by default (see docs/operations/proxy.mdx).",
       hint: "Set HTTPS_PROXY to a US-region proxy and retry",
     };
   }

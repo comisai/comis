@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OAuth callback route for the Comis gateway (Phase 11 SC11-2/SC11-3/SC11-4).
+ * OAuth callback route for the Comis gateway.
  *
  * Mounted at `GET /callback/:provider` via `app.route("/oauth", subApp)`. The
  * handler validates code+state, looks up the state in the in-memory pending-
  * flow map, verifies path-vs-flow provider match, deletes the entry BEFORE
  * the token exchange (one-time-use invariant), exchanges the code at
- * auth.openai.com/oauth/token, resolves identity via Phase 7's
+ * auth.openai.com/oauth/token, resolves identity via
  * resolveCodexAuthIdentity, persists via OAuthCredentialStorePort.set, emits
  * auth:profile_bootstrapped, and returns a static "Login Successful" HTML
  * page (200) on success or a "Login Failed" HTML page (400/500) on failure.

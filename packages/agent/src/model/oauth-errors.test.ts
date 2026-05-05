@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for `rewriteOAuthError` (Phase 10 SC-10-3).
+ * Unit tests for `rewriteOAuthError`.
  *
  * 13 tests covering all 6 discriminated cases + ordering invariant +
  * defensive non-Error inputs + the `errorKind === code` mirror invariant
@@ -19,7 +19,6 @@ describe("rewriteOAuthError", () => {
   // openclaw/src/agents/auth-profiles/oauth.ts:117-123)
   // -------------------------------------------------------------------------
   describe("refresh_token_reused (3 OpenClaw substring matchers)", () => {
-    // Test 1
     it("matches the literal 'refresh_token_reused' substring", () => {
       const result = rewriteOAuthError(new Error("refresh_token_reused"));
       expect(result.code).toBe("refresh_token_reused");
@@ -30,7 +29,6 @@ describe("rewriteOAuthError", () => {
       expect(result.hint).toContain("re-login required");
     });
 
-    // Test 2
     it("matches 'refresh token has already been used' phrasing", () => {
       const result = rewriteOAuthError(
         new Error("refresh token has already been used"),
@@ -38,7 +36,6 @@ describe("rewriteOAuthError", () => {
       expect(result.code).toBe("refresh_token_reused");
     });
 
-    // Test 3
     it("matches 'already been used to generate a new access token' phrasing", () => {
       const result = rewriteOAuthError(
         new Error(
@@ -53,7 +50,6 @@ describe("rewriteOAuthError", () => {
   // invalid_grant
   // -------------------------------------------------------------------------
   describe("invalid_grant", () => {
-    // Test 4
     it("classifies a generic invalid_grant error", () => {
       const result = rewriteOAuthError(new Error("invalid_grant"));
       expect(result.code).toBe("invalid_grant");
@@ -66,10 +62,9 @@ describe("rewriteOAuthError", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Priority ordering — RESEARCH §Q3 critical invariant
+  // Priority ordering — critical invariant
   // -------------------------------------------------------------------------
-  describe("priority ordering (RESEARCH §Q3 critical invariant)", () => {
-    // Test 5
+  describe("priority ordering (critical invariant)", () => {
     it("classifies refresh_token_reused even when message also contains invalid_grant", () => {
       const err = new Error(
         '{"error":"invalid_grant","error_description":"refresh_token_reused"}',
@@ -82,7 +77,6 @@ describe("rewriteOAuthError", () => {
   // unsupported_region
   // -------------------------------------------------------------------------
   describe("unsupported_region", () => {
-    // Test 6
     it("classifies unsupported_country_region_territory and surfaces HTTPS_PROXY hint", () => {
       const result = rewriteOAuthError(
         new Error("unsupported_country_region_territory"),
@@ -97,13 +91,11 @@ describe("rewriteOAuthError", () => {
   // callback_validation_failed — 2 substring forms
   // -------------------------------------------------------------------------
   describe("callback_validation_failed", () => {
-    // Test 7
     it("classifies 'state mismatch' as callback_validation_failed", () => {
       const result = rewriteOAuthError(new Error("state mismatch"));
       expect(result.code).toBe("callback_validation_failed");
     });
 
-    // Test 8
     it("classifies 'missing authorization code' as callback_validation_failed", () => {
       const result = rewriteOAuthError(new Error("missing authorization code"));
       expect(result.code).toBe("callback_validation_failed");
@@ -114,7 +106,6 @@ describe("rewriteOAuthError", () => {
   // identity_decode_failed
   // -------------------------------------------------------------------------
   describe("identity_decode_failed", () => {
-    // Test 9
     it("classifies pi-ai's accountId-extraction failure", () => {
       const result = rewriteOAuthError(
         new Error("Failed to extract accountId from token"),
@@ -127,21 +118,18 @@ describe("rewriteOAuthError", () => {
   // Default fallback (callback_timeout)
   // -------------------------------------------------------------------------
   describe("default fallback (callback_timeout)", () => {
-    // Test 10
     it("falls back to callback_timeout for unknown error and echoes the original message", () => {
       const result = rewriteOAuthError(new Error("some other error"));
       expect(result.code).toBe("callback_timeout");
       expect(result.userMessage).toBe("some other error");
     });
 
-    // Test 11
     it("coerces a non-Error string input via String()", () => {
       const result = rewriteOAuthError("oops");
       expect(result.code).toBe("callback_timeout");
       expect(result.userMessage).toBe("oops");
     });
 
-    // Test 12
     it("coerces null input via String() (defensive)", () => {
       const result = rewriteOAuthError(null);
       expect(result.code).toBe("callback_timeout");
@@ -153,7 +141,6 @@ describe("rewriteOAuthError", () => {
   // Invariants
   // -------------------------------------------------------------------------
   describe("invariants", () => {
-    // Test 13
     it("errorKind mirrors code for every classified case (CLAUDE.md Pino log field convention)", () => {
       const cases: Array<{ input: unknown; expectedCode: OAuthErrorCode }> = [
         {

@@ -63,8 +63,8 @@ export interface AgentHandlerDeps {
   /** Provider entries map for probe lookups when agents switch providers. */
   providerEntries?: Record<string, ProviderEntry>;
   /**
-   * Phase 9 R7/D-11: optional OAuth credential store for validating that
-   * `oauthProfiles` patches reference existing stored profile IDs. The
+   * Optional OAuth credential store for validating that `oauthProfiles`
+   * patches reference existing stored profile IDs. The
    * agents.update handler iterates over each (provider, profileId) entry
    * in the patched config and calls `has(profileId)`; on miss it throws
    * with the documented "not found in store" wording BEFORE the
@@ -106,12 +106,12 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
         throw new Error(`Agent already exists: ${agentId}`);
       }
 
-      // 260428-vyf L2: extract inlineContent BEFORE config processing.
-      // role/identity are write-once side-effects (ROLE.md / IDENTITY.md
-      // file writes), NOT durable state — they NEVER enter the persisted
-      // config patch. The L1 tool boundary is responsible for stripping
-      // them from `config.workspace` before this RPC is called; this
-      // handler only consumes the dedicated top-level `inlineContent`
+      // Extract inlineContent BEFORE config processing. role/identity
+      // are write-once side-effects (ROLE.md / IDENTITY.md file writes),
+      // NOT durable state — they NEVER enter the persisted config patch.
+      // The tool boundary is responsible for stripping them from
+      // `config.workspace` before this RPC is called; this handler only
+      // consumes the dedicated top-level `inlineContent`
       // field. If a (mis)caller leaves them inside config.workspace, the
       // downstream Zod strict-object will reject them — that's an
       // explicit failure mode, not a silent drop.
@@ -140,16 +140,16 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
 
       const parsedConfig = PerAgentConfigSchema.parse(config);
 
-      // Credential guard (260501-2pz): fail-loud if the new agent's
-      // provider has no resolvable API key. Mirrors agents.update guard
+      // Credential guard: fail-loud if the new agent's provider has no
+      // resolvable API key. Mirrors agents.update guard
       // ordering — runs BEFORE the in-memory commit so rejection prevents
       // assignment, file persist, and hot-add. Same helper as the patch /
       // update call sites for cross-handler consistency.
       //
-      // quick-260504-irq: also plumb agents.<id>.oauthProfiles + the
-      // daemon-level OAuth credential store so OAuth-only providers (e.g.
-      // openai-codex) can resolve via Source C. Pre-resolve has() so the
-      // resolver itself stays synchronous (port-side validator does no I/O).
+      // Also plumb agents.<id>.oauthProfiles + the daemon-level OAuth
+      // credential store so OAuth-only providers (e.g. openai-codex) can
+      // resolve via Source C. Pre-resolve has() so the resolver itself stays
+      // synchronous (port-side validator does no I/O).
       {
         const targetProvider = parsedConfig.provider;
         // eslint-disable-next-line security/detect-object-injection -- typed Record<string, string> read; targetProvider validated by schema parse
@@ -210,7 +210,7 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
 
       const workspaceDir = resolveWorkspaceDir(parsedConfig, agentId);
 
-      // 260428-vyf L2: best-effort inline ROLE.md / IDENTITY.md write.
+      // Best-effort inline ROLE.md / IDENTITY.md write.
       // Only invoke when inlineContent has at least one populated field
       // AND the persistDeps logger is available (the helper requires a
       // structured logger; the in-memory-only test path skips it).
@@ -344,16 +344,15 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       const merged = { ...existing, ...config };
       const parsedConfig = PerAgentConfigSchema.parse(merged);
 
-      // Phase 9 D-11: validate oauthProfiles patch — each profileId must
-      // exist in the OAuth credential store. Skipped when no
-      // oauthCredentialStore is wired (test contexts; non-OAuth-aware
-      // setups). Critical: this throws BEFORE the
-      // `deps.agents[agentId] = parsedConfig` reference-replacement at
-      // the end of the handler, so on failure the daemon's in-memory map
-      // AND the YAML are both unchanged (D-11 contract). The Zod-layer
-      // format check (R1, plan 02) has already run during
-      // PerAgentConfigSchema.parse(merged) above — this block ONLY
-      // checks existence in the store.
+      // Validate oauthProfiles patch — each profileId must exist in the
+      // OAuth credential store. Skipped when no oauthCredentialStore is
+      // wired (test contexts; non-OAuth-aware setups). Critical: this
+      // throws BEFORE the `deps.agents[agentId] = parsedConfig`
+      // reference-replacement at the end of the handler, so on failure the
+      // daemon's in-memory map AND the YAML are both unchanged. The
+      // Zod-layer format check has already run during
+      // PerAgentConfigSchema.parse(merged) above — this block ONLY checks
+      // existence in the store.
       if (parsedConfig.oauthProfiles !== undefined && deps.oauthCredentialStore) {
         for (const [provider, profileId] of Object.entries(parsedConfig.oauthProfiles)) {
           const has = await deps.oauthCredentialStore.has(profileId);
@@ -364,23 +363,23 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
           }
           // The provider variable is iterated for completeness; the
           // existence check is keyed on profileId alone (validateProfileId
-          // — invoked by R1's Zod refine — already enforced that the
+          // — invoked by the Zod refine — already enforced that the
           // profile-id's provider portion equals the map key).
           void provider;
         }
       }
 
-      // Credential guard + probe (260501-2pz): when provider changes,
+      // Credential guard + probe: when provider changes,
       // (a) GUARD — fail-loud if the resulting provider's API key is not
       // resolvable from any source (no silent skip), then (b) PROBE —
       // preexisting wire validation when an explicit providers.entries
       // record with apiKeyName exists. Order matters: guard runs first
       // (cheap, all paths), probe runs second (only when applicable).
       //
-      // quick-260504-irq: model-only changes with unchanged provider DO
-      // NOT fire the guard or probe — they introduce no new credential
-      // surface. Stale-broken-config detection moves to the next chat
-      // turn (fail-loud at the request boundary), where the message is
+      // Model-only changes with unchanged provider DO NOT fire the guard
+      // or probe — they introduce no new credential surface.
+      // Stale-broken-config detection moves to the next chat turn
+      // (fail-loud at the request boundary), where the message is
       // correctly shaped for the actual failure mode (not a pre-emptive
       // API-key prompt that is wrong for OAuth providers like
       // openai-codex). Also plumbs agents.<id>.oauthProfiles + the

@@ -5,23 +5,23 @@
  * Verifies the always-on, latest-included scrub policy: every assistant
  * message (latest included) has its thinkingSignature cleared and its
  * toolCall thoughtSignature stripped; redacted_thinking blocks are never
- * modified; cache fence is IGNORED (260430-anthropic-400-thinking-block);
- * immutability guarantees hold; INFO log is emitted exactly once per
- * apply() when at least one assistant message was scrubbed.
+ * modified; cache fence is IGNORED; immutability guarantees hold; INFO
+ * log is emitted exactly once per apply() when at least one assistant
+ * message was scrubbed.
  *
- * 260428-nzp: the previous "preserve latest" carve-out was removed —
+ * The previous "preserve latest" carve-out was removed —
  * cross-turn signature validation invalidates the latest's signatures too
  * because the surrounding context (system + tools + history) drifts
  * turn-to-turn under comis's dynamic context engine.
  *
- * 260430-anthropic-400-thinking-block: the previous "preserve fenced"
- * carve-out was also removed. The scrubber is pure/deterministic, so
- * stripping uniformly across the array keeps the scrubbed prefix identical
- * across iterations of the same execution. This is what Anthropic's
- * prompt-cache validator requires; the prior fence-skip caused per-
- * execution divergence (iter 1 stripped, iter 2 preserved fence-protected
- * messages with their on-disk signatures intact, cache validator rejected
- * with `400 ... blocks cannot be modified`).
+ * The previous "preserve fenced" carve-out was also removed. The scrubber
+ * is pure/deterministic, so stripping uniformly across the array keeps
+ * the scrubbed prefix identical across iterations of the same execution.
+ * This is what Anthropic's prompt-cache validator requires; the prior
+ * fence-skip caused per-execution divergence (iter 1 stripped, iter 2
+ * preserved fence-protected messages with their on-disk signatures
+ * intact, cache validator rejected with `400 ... blocks cannot be
+ * modified`).
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -122,7 +122,7 @@ describe("createSignatureReplayScrubber", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Single assistant: latest IS scrubbed (260428-nzp)
+  // Single assistant: latest IS scrubbed
   // -------------------------------------------------------------------------
 
   it("single assistant message: signed thinking block stripped from the latest (no carve-out)", async () => {
@@ -140,7 +140,7 @@ describe("createSignatureReplayScrubber", () => {
     expect(m0.content).toHaveLength(1);
     expect(m0.content[0]).toEqual(makeTextBlock("a"));
 
-    // 260504-ieh: toolCallsAffected===0 path demoted to DEBUG.
+    // toolCallsAffected===0 path demoted to DEBUG.
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.debug).toHaveBeenCalledTimes(1);
     expect(logger.debug).toHaveBeenCalledWith(
@@ -201,7 +201,7 @@ describe("createSignatureReplayScrubber", () => {
     expect(result[0]).toBe(messages[0]);
     expect(result[2]).toBe(messages[2]);
 
-    // 260504-ieh: toolCallsAffected===0 path demoted to DEBUG.
+    // toolCallsAffected===0 path demoted to DEBUG.
     expect(logger.info).not.toHaveBeenCalled();
     expect(logger.debug).toHaveBeenCalledTimes(1);
     expect(logger.debug).toHaveBeenCalledWith(
@@ -390,7 +390,7 @@ describe("createSignatureReplayScrubber", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Cache fence is IGNORED (260430-anthropic-400-thinking-block)
+  // Cache fence is IGNORED
   //
   // The scrubber must strip uniformly across the array, regardless of
   // budget.cacheFenceIndex. Stripping is pure/deterministic so the same
@@ -398,7 +398,7 @@ describe("createSignatureReplayScrubber", () => {
   // Anthropic's prompt-cache validator requires.
   // -------------------------------------------------------------------------
 
-  it("260430-anthropic-400-thinking-block: cacheFenceIndex is ignored — fence-protected messages are still scrubbed", async () => {
+  it("cacheFenceIndex is ignored — fence-protected messages are still scrubbed", async () => {
     const logger = makeLoggerMock();
     const onScrubbed = vi.fn();
     const layer = createSignatureReplayScrubber({ logger, onScrubbed });
@@ -434,7 +434,7 @@ describe("createSignatureReplayScrubber", () => {
     });
   });
 
-  it("260430-anthropic-400-thinking-block: deterministic across cacheFenceIndex variations — same input → same scrubbed output", async () => {
+  it("deterministic across cacheFenceIndex variations — same input → same scrubbed output", async () => {
     // Pin the prefix-stability invariant: the bug was that fence=-1 produced
     // one prefix and fence>0 produced a different prefix for the SAME on-disk
     // messages. The fix makes the output independent of cacheFenceIndex.

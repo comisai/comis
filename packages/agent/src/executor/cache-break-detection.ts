@@ -2,10 +2,10 @@
 /**
  * Cache break detection module: two-phase detection with Anthropic adapter.
  *
- * Phase 1 (pre-call): Records prompt state via provider-specific adapter
+ * Pre-call: Records prompt state via provider-specific adapter
  * (system hash, per-tool schema hashes, cache_control metadata hash).
  *
- * Phase 2 (post-call): Compares cacheRead tokens against baseline using
+ * Post-call: Compares cacheRead tokens against baseline using
  * AND-based dual threshold (both >5% relative AND >2000 absolute must exceed).
  * Provider-agnostic.
  *
@@ -753,11 +753,11 @@ const STANDARD_ANTHROPIC_FIELDS = new Set([
 ]);
 
 /**
- * Extract prompt state from Anthropic API payload for Phase 1 recording.
+ * Extract prompt state from Anthropic API payload for pre-call recording.
  *
  * CRITICAL: Does NOT mutate the original params object. Creates shallow copies
- * for hashing with cache_control stripped (D-08). Per-tool hashing uses
- * input_schema (D-09).
+ * for hashing with cache_control stripped. Per-tool hashing uses
+ * input_schema.
  */
 export function extractAnthropicPromptState(
   params: Record<string, unknown>,
@@ -772,7 +772,7 @@ export function extractAnthropicPromptState(
     ? (params.tools as Array<Record<string, unknown>>)
     : [];
 
-  // Per-tool hashing using input_schema (D-09)
+  // Per-tool hashing using input_schema.
   // Skip server-side tools (tool_search_tool_regex etc.) which lack input_schema.
   const perToolHashes: Record<string, number> = {};
   const toolNames: string[] = [];
@@ -807,7 +807,7 @@ export function extractAnthropicPromptState(
   });
   const systemHash = computeHash(systemForHash);
 
-  // Hash cache_control metadata separately (D-08)
+  // Hash cache_control metadata separately
   const cacheMetadata = [
     ...tools.map((t) => t.cache_control).filter(Boolean),
     ...system.map((b) => b.cache_control).filter(Boolean),
@@ -901,7 +901,7 @@ export function extractAnthropicPromptState(
 // ---------------------------------------------------------------------------
 
 /**
- * Extract Gemini-native prompt state for Phase 1 cache break detection.
+ * Extract Gemini-native prompt state for pre-call cache break detection.
  *
  * Gemini payload structure differs from Anthropic:
  * - System prompt: config.systemInstruction (string, not array of blocks)

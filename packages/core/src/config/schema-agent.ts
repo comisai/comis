@@ -431,7 +431,7 @@ export const ContextEngineConfigSchema = z.strictObject({
   /** Optional provider override for DAG summary generation. */
   summaryProvider: z.string().optional(),
 
-  // --- Post-batch continuation (L4 — replaces SEP nudge enforcement) ---
+  // --- Post-batch continuation (replaces SEP nudge enforcement) ---
 
   /** Post-batch continuation handler: when the LLM emits an empty final
    *  turn after a successful tool batch, fire a directive followUp with
@@ -913,8 +913,6 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
    * When set, the OAuthTokenManager resolves the named profile for that
    * provider's LLM calls. Each value must match the `<provider>:<identity>`
    * format enforced by `validateProfileId` from `@comis/core`.
-   *
-   * Phase 9 R1: see `.planning/phases/09-codex-oauth-multi-account-profile-selection/09-SPEC.md`.
    */
   oauthProfiles: z
     .record(

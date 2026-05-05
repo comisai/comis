@@ -3,17 +3,17 @@
  * PERSIST-RESTART-E2E: Management Actions Survive Daemon Restart
  *
  * Validates that management RPC actions persisted to config.yaml survive a
- * full daemon restart cycle (TEST-03):
- *   Phase 1: Start daemon, create agent, create token, shut down
- *   Phase 2: Start fresh daemon with same (modified) config, verify state
+ * full daemon restart cycle:
+ *   Stage 1: Start daemon, create agent, create token, shut down
+ *   Stage 2: Start fresh daemon with same (modified) config, verify state
  *
  * The restart cycle exercises the full persistence pipeline end-to-end:
  *   RPC call -> persistToConfig -> YAML write -> daemon shutdown ->
  *   daemon restart -> config reload -> state restored
  *
  * Uses a temp config copy, real daemon, and internal rpcCall.
- * Spies on process.kill to no-op SIGUSR1 signals during Phase 1 (prevents
- * daemon restart mid-test while mutations are in flight).
+ * Spies on process.kill to no-op SIGUSR1 signals during the setup stage
+ * (prevents daemon restart mid-test while mutations are in flight).
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
@@ -73,7 +73,7 @@ describe("PERSIST-RESTART-E2E: Management actions survive daemon restart", () =>
   let tmpConfigPath: string;
   let killSpy: ReturnType<typeof vi.spyOn>;
 
-  // Track state from Phase 1 for verification in Phase 2
+  // Track state from setup stage for verification after restart
   let createdTokenId: string;
 
   beforeAll(() => {
@@ -103,10 +103,10 @@ describe("PERSIST-RESTART-E2E: Management actions survive daemon restart", () =>
   }, 30_000);
 
   // -----------------------------------------------------------------------
-  // Phase 1: Start daemon, make management changes, shut down
+  // Start daemon, make management changes, shut down
   // -----------------------------------------------------------------------
 
-  describe("Phase 1: Make management changes", () => {
+  describe("Make management changes", () => {
     let handle: TestDaemonHandle;
     let rpcCall: RpcCall;
 
@@ -164,7 +164,7 @@ describe("PERSIST-RESTART-E2E: Management actions survive daemon restart", () =>
       async () => {
         // The daemon may not have a real Telegram adapter without valid credentials.
         // We try the call; if it fails, we log and move on. The agent and token
-        // restart tests are the primary TEST-03 validation targets.
+        // restart tests are the primary validation targets.
         try {
           const result = await rpcCall("channels.disable", {
             channel_type: "telegram",
@@ -173,14 +173,14 @@ describe("PERSIST-RESTART-E2E: Management actions survive daemon restart", () =>
           expect((result as any).status).toBe("stopped");
         } catch {
           // Expected: adapter not available in test environment.
-          // Channel disable persistence was validated in 259-02.
+          // Channel disable persistence is validated separately.
         }
         await new Promise((r) => setTimeout(r, 500));
       },
       30_000,
     );
 
-    it("config.yaml on disk reflects all changes after Phase 1", () => {
+    it("config.yaml on disk reflects all changes after setup", () => {
       const yaml = readConfigYaml(tmpConfigPath);
 
       // Agent was created
@@ -207,10 +207,10 @@ describe("PERSIST-RESTART-E2E: Management actions survive daemon restart", () =>
   });
 
   // -----------------------------------------------------------------------
-  // Phase 2: Start fresh daemon with same config, verify state survived
+  // Start fresh daemon with same config, verify state survived
   // -----------------------------------------------------------------------
 
-  describe("Phase 2: Verify state after restart", () => {
+  describe("Verify state after restart", () => {
     let handle2: TestDaemonHandle;
     let rpcCall2: RpcCall;
 

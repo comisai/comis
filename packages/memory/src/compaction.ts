@@ -6,9 +6,8 @@
  * into semantic memories, keeping working memory bounded while preserving
  * important information.
  *
- * The summarizer is pluggable -- the actual LLM call will be wired in
- * Phase 3 (Agent). This module defines the interface and orchestrates
- * the compaction workflow.
+ * The summarizer is pluggable -- this module defines the interface and
+ * orchestrates the compaction workflow.
  *
  * Workflow:
  * 1. Find sessions idle for longer than minIdleMs
@@ -30,8 +29,7 @@ import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 
 /**
  * Pluggable summarizer function. Takes conversation messages and returns
- * a summary string plus extracted facts. The actual LLM call is wired
- * in Phase 3 (Agent).
+ * a summary string plus extracted facts.
  */
 export type Summarizer = (messages: unknown[]) => Promise<{ summary: string; facts: string[] }>;
 

@@ -56,7 +56,7 @@ export interface RequestBodyInjectorConfig {
    *  but system prompt + tools are still worth caching. */
   getMinTokensOverride?: () => number | undefined;
   /** Callback invoked with the API-ready payload after cache breakpoint
-   *  placement. Used by cache break detector Phase 1 to extract prompt state for
+   *  placement. Used by the cache break detector to extract prompt state for
    *  change detection. Receives the mutated params, the model, and (for Anthropic) the HTTP headers. */
   onPayloadForCacheDetection?: (
     params: Record<string, unknown>,
@@ -1842,7 +1842,7 @@ export function createRequestBodyInjector(
             }
           }
 
-          // Feed payload to cache break detector Phase 1 (after breakpoint placement)
+          // Feed payload to cache break detector (after breakpoint placement)
           if (config.onPayloadForCacheDetection) {
             config.onPayloadForCacheDetection(result, model, mergedHeaders);
           }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Boot-time OAuth TLS preflight wiring (Phase 10 SC-10-1).
+ * Boot-time OAuth TLS preflight wiring.
  *
  * Two helpers exposed for the daemon entry point:
  *
@@ -12,7 +12,7 @@
  *
  *   2. `emitOAuthTlsPreflightWarn(logger)` — fire-and-forget. Calls
  *      `runOAuthTlsPreflight({ timeoutMs: 4000 })` from `@comis/agent`
- *      (Phase 10 R10-01) and surfaces the result via Pino:
+ *      and surfaces the result via Pino:
  *        - `kind: "tls-cert"` → exactly one WARN with module + errorKind +
  *          distro-aware install hint + OpenSSL `code` + raw `message`.
  *        - `kind: "network"` → a single DEBUG (no WARN — transient failures

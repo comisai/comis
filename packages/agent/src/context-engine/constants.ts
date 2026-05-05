@@ -37,14 +37,14 @@ export const CONTEXT_ROT_BUFFER_PERCENT = 25;
 export const LAYER_CIRCUIT_BREAKER_THRESHOLD = 3;
 
 // ---------------------------------------------------------------------------
-// Thinking Block Cleaner (Layer 4: )
+// Thinking Block Cleaner (Layer 4)
 // ---------------------------------------------------------------------------
 
 /** Default number of recent assistant turns that retain thinking blocks. Used by: thinking block cleaner (Layer 4). */
 export const DEFAULT_KEEP_WINDOW_TURNS = 10;
 
 // ---------------------------------------------------------------------------
-// Microcompaction Guard (Layer 2: )
+// Microcompaction Guard (Layer 2)
 // ---------------------------------------------------------------------------
 
 /** Default inline threshold for tool result microcompaction (chars). Used by: microcompaction guard. */
@@ -80,7 +80,7 @@ export const MAX_REHYDRATION_SKILL_CHARS = 15_000;
 export const MAX_REHYDRATION_SKILLS = 10;
 
 // ---------------------------------------------------------------------------
-// Observation Masker (Layer 3: )
+// Observation Masker (Layer 3)
 // ---------------------------------------------------------------------------
 
 /** Default observation masking keep window (most recent N tool uses retained). Used by: observation masker. */
@@ -157,7 +157,7 @@ export const CHARS_PER_TOKEN_RATIO = 3.5;
 export const CHARS_PER_TOKEN_RATIO_STRUCTURED = 3;
 
 // ---------------------------------------------------------------------------
-// Cache Optimization (Layer: )
+// Cache Optimization
 // ---------------------------------------------------------------------------
 
 /** Length of truncated SHA-256 digest for system prompt hash comparison. Used by: prompt-assembly hash validation. */
@@ -170,7 +170,7 @@ export const BOOTSTRAP_BUDGET_WARN_PERCENT = 85;
  * Minimum cacheable token thresholds by model family prefix.
  * Used by: cache breakpoint placement.
  *
- * Values are Anthropic's official API minimums verified 2026-03-30.
+ * Values are Anthropic's official API minimums.
  * Setting lower causes silent no-ops (breakpoints ignored, tokens not cached).
  */
 export const MIN_CACHEABLE_TOKENS: Record<string, number> = {
@@ -211,7 +211,7 @@ export const CACHE_LOOKBACK_WINDOW = 20;
 export const CACHE_AWARE_COMPACTION_BLOCK_THRESHOLD = 60;
 
 // ---------------------------------------------------------------------------
-// LLM Compaction (Layer 5: )
+// LLM Compaction (Layer 5)
 // ---------------------------------------------------------------------------
 
 /** Context utilization percentage that triggers LLM compaction. Used by: llm-compaction layer. */
@@ -244,7 +244,7 @@ export const DEFAULT_COMPACTION_PREFIX_ANCHOR_TURNS = 2;
 export const MIN_MIDDLE_MESSAGES_FOR_COMPACTION = 3;
 
 // ---------------------------------------------------------------------------
-// Post-Compaction Rehydration (Layer 6: )
+// Post-Compaction Rehydration (Layer 6)
 // ---------------------------------------------------------------------------
 
 /** Maximum number of recently-accessed files to re-inject after compaction. Used by: rehydration layer. */
@@ -256,18 +256,18 @@ export const MAX_REHYDRATION_FILE_CHARS = 8_000;
 /** Maximum total chars for all rehydration content (safety cap). Used by: rehydration overflow check. */
 export const MAX_REHYDRATION_TOTAL_CHARS = 30_000;
 
-/** Maximum chars per individual skill in rehydration restoration (POST-COMPACT-BUDGET).
+/** Maximum chars per individual skill in rehydration restoration.
  *  Skills exceeding this limit are truncated at the boundary with closing tag repair.
  *  Used by: rehydration layer buildSkillsContent(). */
 export const MAX_REHYDRATION_CHARS_PER_SKILL = 5_000;
 
-/** Maximum total chars for all rehydration content combined (POST-COMPACT-BUDGET).
+/** Maximum total chars for all rehydration content combined.
  *  This is the token-budgeted restoration cap (50K chars ~ 12,500 tokens at 4:1 ratio).
  *  Used by: rehydration layer overflow check. */
 export const MAX_REHYDRATION_TOKEN_BUDGET_CHARS = 50_000;
 
 // ---------------------------------------------------------------------------
-// Dead Content Evictor (Layer: )
+// Dead Content Evictor
 // ---------------------------------------------------------------------------
 
 /**
@@ -363,11 +363,11 @@ export const RECALL_GUIDANCE = `You have access to a context DAG containing your
 
 /** Relative threshold for cache break detection. Break detected when cacheRead
  *  drops by more than this fraction of the previous baseline.
- *  Used by: cache break detector Phase 2 check. */
+ *  Used by: cache break detector. */
 export const CACHE_BREAK_RELATIVE_THRESHOLD = 0.05;
 
 /** Absolute threshold for cache break detection (tokens). Break detected when
  *  cacheRead drops by more than this many tokens from the previous baseline.
  *  Both relative AND absolute thresholds must be exceeded to trigger detection.
- *  Used by: cache break detector Phase 2 check. */
+ *  Used by: cache break detector. */
 export const CACHE_BREAK_ABSOLUTE_THRESHOLD = 2_000;

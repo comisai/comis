@@ -49,7 +49,7 @@ describe("ContextEngineConfigSchema", () => {
       largeFileTokenThreshold: 25_000,
       annotationKeepWindow: 15,
       annotationTriggerChars: 200_000,
-      // Post-batch continuation (L4 — replaces SEP nudge enforcement)
+      // Post-batch continuation (replaces SEP nudge enforcement)
       postBatchContinuation: { enabled: true, maxRetries: 2 },
     });
   });
@@ -139,7 +139,7 @@ describe("ContextEngineConfigSchema", () => {
   });
 
   // -------------------------------------------------------------------------
-  // replayDriftIdleMs (Fix #2)
+  // replayDriftIdleMs
   // -------------------------------------------------------------------------
 
   describe("replayDriftIdleMs", () => {
@@ -252,7 +252,7 @@ describe("ContextEngineConfigSchema", () => {
 
   describe("compactionModel", () => {
     it("defaults to empty string (runtime resolution via pi-ai catalog)", () => {
-      // Phase 2C-2: schema default changed from a hardcoded Anthropic literal
+      // Schema default changed from a hardcoded Anthropic literal
       // ("anthropic:claude-haiku-4-5-20250929") to "". Empty string triggers
       // resolveCompactionModel() at runtime to pick the fast-tier model from
       // the agent's primary provider — closes the cross-provider routing bug

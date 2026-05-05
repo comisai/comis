@@ -4,13 +4,12 @@ import type Database from "better-sqlite3";
 /**
  * Create the oauth_profiles table and supporting index.
  *
- * Schema per CONTEXT.md D-03. Single ciphertext+iv+auth_tag+salt per row
- * (D-04: entire OAuthProfile JSON encrypted as one blob — no half-rotated
- * state).
+ * Single ciphertext+iv+auth_tag+salt per row — entire OAuthProfile JSON
+ * encrypted as one blob, no half-rotated state.
  *
- * Denormalized expires_at column lets Phase 10 doctor query expiring
- * profiles via SELECT profile_id FROM oauth_profiles WHERE provider = ?
- * AND expires_at < ? without decrypting any blob (D-03 rationale).
+ * Denormalized expires_at column lets the doctor query expiring profiles
+ * via SELECT profile_id FROM oauth_profiles WHERE provider = ?
+ * AND expires_at < ? without decrypting any blob.
  *
  * No FK to secrets table — OAuth profiles are independent from named
  * secrets. Index on provider supports list({ provider }) filtering.
