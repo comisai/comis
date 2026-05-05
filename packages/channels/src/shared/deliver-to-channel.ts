@@ -441,10 +441,17 @@ export async function deliverToChannel(
         if (Object.keys(rest).length > 0) sendOpts.extra = rest;
       }
 
-      // --- Queue: enqueue before send ---
+      // --- Queue: enqueue (in_flight lease) before send ---
+      // We insert with status='in_flight' so the recurring drainer's
+      // `WHERE status='pending'` filter does NOT race-pick this row mid-send
+      // (SPEC-R2 race safety, Phase 13). On successful send, ack flips
+      // 'in_flight' -> 'delivered'; on permanent failure, fail flips
+      // 'in_flight' -> 'failed'; on transient failure, nack flips
+      // 'in_flight' -> 'pending' for the drainer to retry. All ack/nack/fail
+      // statements are status-agnostic UPDATE-by-id, so no SQL change is needed.
       let entryId: string | null = null;
       if (deps?.deliveryQueue) {
-        const enqueueResult = await deps.deliveryQueue.enqueue({
+        const enqueueResult = await deps.deliveryQueue.enqueueInFlight({
           text: chunk,
           channelType: adapter.channelType,
           channelId,
@@ -462,14 +469,9 @@ export async function deliverToChannel(
 
         if (enqueueResult.ok) {
           entryId = enqueueResult.value;
-          // Emit delivery:enqueued event
-          deps.eventBus?.emit("delivery:enqueued", {
-            entryId,
-            channelId,
-            channelType: adapter.channelType,
-            origin: options?.origin ?? "unknown",
-            timestamp: Date.now(),
-          });
+          // delivery:enqueued is now emitted by the adapter (SqliteDeliveryQueueAdapter
+          // emits inside enqueueInFlight after the INSERT succeeds -- single source of
+          // truth per SPEC-R5 / Phase 13). No-op here.
         }
         // If enqueue fails, log and continue -- queue failure should not block delivery
       }

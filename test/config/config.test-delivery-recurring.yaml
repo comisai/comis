@@ -1,0 +1,91 @@
+# Comis Test Configuration (Phase 13: Continuous Delivery-Queue Drainer Tests)
+#
+# Variant of config.test-channel-crash.yaml for Phase 13 integration tests:
+# - Separate port (8478) to avoid conflicts with other test suites
+# - Separate memory database (test-memory-delivery-recurring.db) for isolation
+# - RAG disabled (no embeddings needed)
+# - Cron disabled (not testing scheduler)
+# - All monitoring disabled
+# - deliveryQueue.drainIntervalMs: 250 -- fast tick for short test wall-clock
+
+tenantId: "test"
+logLevel: "warn"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "DeliveryRecurringTestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8478
+  tokens:
+    - id: "test-delivery-recurring-token"
+      secret: "test-delivery-recurring-secret-key-for-integration-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-delivery-recurring.db"
+
+deliveryQueue:
+  enabled: true
+  drainOnStartup: true
+  drainBudgetMs: 60000
+  drainIntervalMs: 250
+  pruneIntervalMs: 300000
+  defaultMaxAttempts: 3
+  defaultExpireMs: 3600000
+  maxQueueDepth: 10000
+
+security:
+  agentToAgent:
+    enabled: false
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic

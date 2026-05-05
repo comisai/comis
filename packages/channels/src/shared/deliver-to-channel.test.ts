@@ -633,25 +633,33 @@ describe("deliverToChannel", () => {
   describe("queue integration", () => {
     function createMockDeliveryQueue(): DeliveryQueuePort & {
       enqueue: ReturnType<typeof vi.fn>;
+      enqueueInFlight: ReturnType<typeof vi.fn>;
       ack: ReturnType<typeof vi.fn>;
       nack: ReturnType<typeof vi.fn>;
       fail: ReturnType<typeof vi.fn>;
       pendingEntries: ReturnType<typeof vi.fn>;
       pruneExpired: ReturnType<typeof vi.fn>;
       depth: ReturnType<typeof vi.fn>;
+      statusCounts: ReturnType<typeof vi.fn>;
+      recoverInFlight: ReturnType<typeof vi.fn>;
     } {
       return {
         enqueue: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
+        enqueueInFlight: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
         ack: vi.fn().mockResolvedValue(ok(undefined)),
         nack: vi.fn().mockResolvedValue(ok(undefined)),
         fail: vi.fn().mockResolvedValue(ok(undefined)),
         pendingEntries: vi.fn().mockResolvedValue(ok([])),
         pruneExpired: vi.fn().mockResolvedValue(ok(0)),
         depth: vi.fn().mockResolvedValue(ok(0)),
+        statusCounts: vi.fn().mockResolvedValue(
+          ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
+        ),
+        recoverInFlight: vi.fn().mockResolvedValue(ok(0)),
       };
     }
 
-    it("calls enqueue before send and ack after successful send", async () => {
+    it("calls enqueueInFlight before send and ack after successful send", async () => {
       const adapter = createMockAdapter("telegram");
       const queue = createMockDeliveryQueue();
       const eventBus = createMockEventBus();
@@ -661,9 +669,10 @@ describe("deliverToChannel", () => {
         eventBus,
       });
 
-      // enqueue called once (1 chunk)
-      expect(queue.enqueue).toHaveBeenCalledTimes(1);
-      const enqueueArg = queue.enqueue.mock.calls[0][0];
+      // enqueueInFlight called once (1 chunk); enqueue (pending insert) NOT called
+      expect(queue.enqueueInFlight).toHaveBeenCalledTimes(1);
+      expect(queue.enqueue).not.toHaveBeenCalled();
+      const enqueueArg = queue.enqueueInFlight.mock.calls[0][0];
       expect(enqueueArg.channelType).toBe("telegram");
       expect(enqueueArg.channelId).toBe("chat-1");
       expect(enqueueArg.origin).toBe("test");
@@ -763,16 +772,16 @@ describe("deliverToChannel", () => {
       expect(queue.fail).not.toHaveBeenCalled();
     });
 
-    it("continues delivery when enqueue fails (graceful degradation)", async () => {
+    it("continues delivery when enqueueInFlight fails (graceful degradation)", async () => {
       const adapter = createMockAdapter("telegram");
       const queue = createMockDeliveryQueue();
-      queue.enqueue.mockResolvedValue(err(new Error("SQLite busy")));
+      queue.enqueueInFlight.mockResolvedValue(err(new Error("SQLite busy")));
 
       const result = await deliverToChannel(adapter, "chat-1", "Hello", undefined, {
         deliveryQueue: queue,
       });
 
-      // Delivery still succeeds even though enqueue failed
+      // Delivery still succeeds even though enqueueInFlight failed
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value.ok).toBe(true);
@@ -780,7 +789,7 @@ describe("deliverToChannel", () => {
       }
       expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
 
-      // ack/nack/fail not called because entryId is null (enqueue failed)
+      // ack/nack/fail not called because entryId is null (enqueueInFlight failed)
       expect(queue.ack).not.toHaveBeenCalled();
       expect(queue.nack).not.toHaveBeenCalled();
       expect(queue.fail).not.toHaveBeenCalled();
@@ -807,7 +816,7 @@ describe("deliverToChannel", () => {
       expect(queueEvents.length).toBe(0);
     });
 
-    it("emits delivery:enqueued and delivery:acked events when queue is active", async () => {
+    it("does not emit delivery:enqueued from this file (adapter is sole source) but still emits delivery:acked", async () => {
       const adapter = createMockAdapter("telegram");
       const queue = createMockDeliveryQueue();
       const eventBus = createMockEventBus();
@@ -817,17 +826,16 @@ describe("deliverToChannel", () => {
         eventBus,
       });
 
-      // Check delivery:enqueued event
+      // delivery:enqueued is no longer emitted by deliver-to-channel.ts; the
+      // SqliteDeliveryQueueAdapter emits it inside enqueueInFlight (single
+      // source of truth, SPEC-R5 / Phase 13). Our mock queue does not emit,
+      // so eventBus sees zero delivery:enqueued events.
       const enqueuedEvents = eventBus.emit.mock.calls.filter(
         (call: unknown[]) => call[0] === "delivery:enqueued",
       );
-      expect(enqueuedEvents.length).toBe(1);
-      expect(enqueuedEvents[0][1].entryId).toBe("entry-uuid-1");
-      expect(enqueuedEvents[0][1].channelId).toBe("chat-1");
-      expect(enqueuedEvents[0][1].channelType).toBe("telegram");
-      expect(enqueuedEvents[0][1].origin).toBe("pipeline");
+      expect(enqueuedEvents.length).toBe(0);
 
-      // Check delivery:acked event
+      // Check delivery:acked event -- still emitted by deliver-to-channel.ts
       const ackedEvents = eventBus.emit.mock.calls.filter(
         (call: unknown[]) => call[0] === "delivery:acked",
       );
@@ -838,6 +846,76 @@ describe("deliverToChannel", () => {
       expect(ackedEvents[0][1].messageId).toBe("msg-id-123");
       expect(typeof ackedEvents[0][1].durationMs).toBe("number");
     });
+
+    // -----------------------------------------------------------------------
+    // delivery-queue integration (Phase 13) -- enqueueInFlight + no delivery:enqueued
+    // -----------------------------------------------------------------------
+
+    describe("delivery-queue integration (Phase 13)", () => {
+      it("calls enqueueInFlight (not enqueue) for channel-side sends", async () => {
+        const queue = createMockDeliveryQueue();
+        const adapter = createMockAdapter("telegram");
+        adapter.sendMessage.mockResolvedValue(ok("msg-1"));
+        const eventBus = createMockEventBus();
+
+        await deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" }, {
+          deliveryQueue: queue,
+          eventBus,
+        });
+
+        expect(queue.enqueueInFlight).toHaveBeenCalledTimes(1);
+        expect(queue.enqueue).not.toHaveBeenCalled();
+      });
+
+      it("does NOT emit delivery:enqueued from the channel-side path (adapter is sole source)", async () => {
+        const queue = createMockDeliveryQueue();
+        const adapter = createMockAdapter("telegram");
+        adapter.sendMessage.mockResolvedValue(ok("msg-1"));
+        const eventBus = createMockEventBus();
+
+        await deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" }, {
+          deliveryQueue: queue,
+          eventBus,
+        });
+
+        const emitCalls = eventBus.emit.mock.calls.filter(
+          (c: unknown[]) => c[0] === "delivery:enqueued",
+        );
+        expect(emitCalls).toHaveLength(0);
+      });
+
+      it("captures entryId from enqueueInFlight for downstream ack", async () => {
+        const queue = createMockDeliveryQueue();
+        queue.enqueueInFlight.mockResolvedValue(ok("entry-42"));
+        const adapter = createMockAdapter("telegram");
+        adapter.sendMessage.mockResolvedValue(ok("platform-msg-1"));
+        const eventBus = createMockEventBus();
+
+        await deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" }, {
+          deliveryQueue: queue,
+          eventBus,
+        });
+
+        expect(queue.ack).toHaveBeenCalledWith("entry-42", "platform-msg-1");
+      });
+
+      it("send proceeds even when enqueueInFlight fails (queue failure must not block delivery)", async () => {
+        const queue = createMockDeliveryQueue();
+        queue.enqueueInFlight.mockResolvedValue(err(new Error("DB locked")));
+        const adapter = createMockAdapter("telegram");
+        adapter.sendMessage.mockResolvedValue(ok("msg-1"));
+        const eventBus = createMockEventBus();
+
+        await deliverToChannel(adapter, "chat-1", "Hello", { origin: "test" }, {
+          deliveryQueue: queue,
+          eventBus,
+        });
+
+        expect(adapter.sendMessage).toHaveBeenCalled();
+        // ack must NOT be called because enqueueInFlight failed -- entryId is null.
+        expect(queue.ack).not.toHaveBeenCalled();
+      });
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -847,21 +925,29 @@ describe("deliverToChannel", () => {
   describe("abort signal", () => {
     function createMockDeliveryQueue(): DeliveryQueuePort & {
       enqueue: ReturnType<typeof vi.fn>;
+      enqueueInFlight: ReturnType<typeof vi.fn>;
       ack: ReturnType<typeof vi.fn>;
       nack: ReturnType<typeof vi.fn>;
       fail: ReturnType<typeof vi.fn>;
       pendingEntries: ReturnType<typeof vi.fn>;
       pruneExpired: ReturnType<typeof vi.fn>;
       depth: ReturnType<typeof vi.fn>;
+      statusCounts: ReturnType<typeof vi.fn>;
+      recoverInFlight: ReturnType<typeof vi.fn>;
     } {
       return {
         enqueue: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
+        enqueueInFlight: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
         ack: vi.fn().mockResolvedValue(ok(undefined)),
         nack: vi.fn().mockResolvedValue(ok(undefined)),
         fail: vi.fn().mockResolvedValue(ok(undefined)),
         pendingEntries: vi.fn().mockResolvedValue(ok([])),
         pruneExpired: vi.fn().mockResolvedValue(ok(0)),
         depth: vi.fn().mockResolvedValue(ok(0)),
+        statusCounts: vi.fn().mockResolvedValue(
+          ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
+        ),
+        recoverInFlight: vi.fn().mockResolvedValue(ok(0)),
       };
     }
 
@@ -997,22 +1083,30 @@ describe("computeQueueBackoff", () => {
 describe("delivery strategy", () => {
   function createMockQueue(): DeliveryQueuePort & {
     enqueue: ReturnType<typeof vi.fn>;
+    enqueueInFlight: ReturnType<typeof vi.fn>;
     ack: ReturnType<typeof vi.fn>;
     nack: ReturnType<typeof vi.fn>;
     fail: ReturnType<typeof vi.fn>;
     pendingEntries: ReturnType<typeof vi.fn>;
     pruneExpired: ReturnType<typeof vi.fn>;
     depth: ReturnType<typeof vi.fn>;
+    statusCounts: ReturnType<typeof vi.fn>;
+    recoverInFlight: ReturnType<typeof vi.fn>;
   } {
     let entryCounter = 0;
     return {
       enqueue: vi.fn().mockImplementation(async () => ok(`entry-${++entryCounter}`)),
+      enqueueInFlight: vi.fn().mockImplementation(async () => ok(`entry-${++entryCounter}`)),
       ack: vi.fn().mockResolvedValue(ok(undefined)),
       nack: vi.fn().mockResolvedValue(ok(undefined)),
       fail: vi.fn().mockResolvedValue(ok(undefined)),
       pendingEntries: vi.fn().mockResolvedValue(ok([])),
       pruneExpired: vi.fn().mockResolvedValue(ok(0)),
       depth: vi.fn().mockResolvedValue(ok(0)),
+      statusCounts: vi.fn().mockResolvedValue(
+        ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
+      ),
+      recoverInFlight: vi.fn().mockResolvedValue(ok(0)),
     };
   }
 
@@ -1155,18 +1249,24 @@ describe("delivery strategy", () => {
 describe("inFlightSends tracking", () => {
   function createMockQueueForInFlight(): DeliveryQueuePort & {
     enqueue: ReturnType<typeof vi.fn>;
+    enqueueInFlight: ReturnType<typeof vi.fn>;
     ack: ReturnType<typeof vi.fn>;
     nack: ReturnType<typeof vi.fn>;
     fail: ReturnType<typeof vi.fn>;
   } {
     return {
       enqueue: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
+      enqueueInFlight: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
       ack: vi.fn().mockResolvedValue(ok(undefined)),
       nack: vi.fn().mockResolvedValue(ok(undefined)),
       fail: vi.fn().mockResolvedValue(ok(undefined)),
       pendingEntries: vi.fn().mockResolvedValue(ok([])),
       pruneExpired: vi.fn().mockResolvedValue(ok(0)),
       depth: vi.fn().mockResolvedValue(ok(0)),
+      statusCounts: vi.fn().mockResolvedValue(
+        ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
+      ),
+      recoverInFlight: vi.fn().mockResolvedValue(ok(0)),
     };
   }
 

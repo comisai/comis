@@ -16,6 +16,7 @@ import type { ChannelResolverDeps } from "./channel-resolver.js";
 function createMockDeliveryQueue(): DeliveryQueuePort {
   return {
     enqueue: vi.fn(async (_entry: DeliveryQueueEnqueueInput) => ok("entry-123")),
+    enqueueInFlight: vi.fn(async (_entry: DeliveryQueueEnqueueInput) => ok("entry-123")),
     ack: vi.fn(async () => ok(undefined)),
     nack: vi.fn(async () => ok(undefined)),
     fail: vi.fn(async () => ok(undefined)),
@@ -25,6 +26,7 @@ function createMockDeliveryQueue(): DeliveryQueuePort {
     statusCounts: vi.fn(async () =>
       ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),
     ),
+    recoverInFlight: vi.fn(async () => ok(0)),
   };
 }
 

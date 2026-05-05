@@ -58,12 +58,15 @@ function createMockQueue(): DeliveryQueuePort & {
     failCalls,
     nackCalls,
     enqueue: vi.fn(async () => ok("new-id")),
+    enqueueInFlight: vi.fn(async () => ok("new-id")),
     ack: vi.fn(async (id: string, messageId: string) => { ackCalls.push({ id, messageId }); return ok(undefined); }),
     nack: vi.fn(async (id: string, error: string, nextRetryAt: number) => { nackCalls.push({ id, error, nextRetryAt }); return ok(undefined); }),
     fail: vi.fn(async (id: string, error: string) => { failCalls.push({ id, error }); return ok(undefined); }),
     pendingEntries: vi.fn(async () => ok([] as DeliveryQueueEntry[])),
     pruneExpired: vi.fn(async () => ok(0)),
     depth: vi.fn(async () => ok(0)),
+    statusCounts: vi.fn(async () => ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 })),
+    recoverInFlight: vi.fn(async () => ok(0)),
   };
 }
 
@@ -138,6 +141,7 @@ function createMockConfig(overrides: Record<string, unknown> = {}): any {
       defaultExpireMs: 3_600_000,
       drainOnStartup: true,
       drainBudgetMs: 60_000,
+      drainIntervalMs: 1_000,
       pruneIntervalMs: 300_000,
       ...overrides,
     },
@@ -205,8 +209,10 @@ describe("setupDeliveryQueue", () => {
     });
 
     expect(result.deliveryQueue).toBe(mockNoOpQueue);
-    await result.drainAndStartPrune(); // should be no-op
+    await result.drainAndStart(); // should be no-op
     result.shutdown(); // should be no-op
+    // Sanity: recoverInFlight not called when queue disabled (no-op queue)
+    expect(mockNoOpQueue.recoverInFlight).not.toHaveBeenCalled();
   });
 
   it("creates SQLite queue when enabled", async () => {
@@ -247,7 +253,7 @@ describe("setupDeliveryQueue", () => {
         channelAdapters: adapters,
       });
 
-      await result.drainAndStartPrune();
+      await result.drainAndStart();
 
       // 2 acks
       expect(mockSqliteQueue.ackCalls).toHaveLength(2);
@@ -300,7 +306,7 @@ describe("setupDeliveryQueue", () => {
         channelAdapters: adapters,
       });
 
-      await result.drainAndStartPrune();
+      await result.drainAndStart();
 
       // Drain should have stopped before processing all 3 entries
       const drainEvent = eventBus.emit.mock.calls.find(
@@ -331,7 +337,7 @@ describe("setupDeliveryQueue", () => {
         channelAdapters: adapters,
       });
 
-      await result.drainAndStartPrune();
+      await result.drainAndStart();
 
       expect(mockSqliteQueue.failCalls).toHaveLength(1);
       expect(mockSqliteQueue.failCalls[0]?.error).toContain("No adapter for channel type");
@@ -359,7 +365,7 @@ describe("setupDeliveryQueue", () => {
         channelAdapters: adapters,
       });
 
-      await result.drainAndStartPrune();
+      await result.drainAndStart();
 
       expect(mockSqliteQueue.nackCalls).toHaveLength(1);
       expect(mockSqliteQueue.nackCalls[0]?.id).toBe("e1");
@@ -379,7 +385,7 @@ describe("setupDeliveryQueue", () => {
         channelAdapters: new Map(),
       });
 
-      await result.drainAndStartPrune();
+      await result.drainAndStart();
 
       // pendingEntries should not be called
       expect(mockSqliteQueue.pendingEntries).not.toHaveBeenCalled();
@@ -404,7 +410,7 @@ describe("setupDeliveryQueue", () => {
         channelAdapters: new Map(),
       });
 
-      await result.drainAndStartPrune();
+      await result.drainAndStart();
 
       // Advance timer past prune interval
       await vi.advanceTimersByTimeAsync(1100);
@@ -413,6 +419,443 @@ describe("setupDeliveryQueue", () => {
 
       result.shutdown();
       vi.useRealTimers();
+    });
+  });
+
+  // ========================================================================
+  // Recurring drain timer (SPEC-R1, SPEC-R3 sweep half, SPEC-R4) + invariants
+  // ========================================================================
+
+  describe("recurring drain timer", () => {
+    it("starts recurring drain timer after startup drain (SPEC-R1)", async () => {
+      vi.useFakeTimers();
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValue(ok([]));
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ drainIntervalMs: 50 }),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map(),
+      });
+
+      await result.drainAndStart();
+
+      // Startup drain calls pendingEntries once; recurring tick adds at least one more.
+      const startupCalls = vi.mocked(mockSqliteQueue.pendingEntries).mock.calls.length;
+      await vi.advanceTimersByTimeAsync(120);
+      const totalCalls = vi.mocked(mockSqliteQueue.pendingEntries).mock.calls.length;
+
+      expect(totalCalls).toBeGreaterThan(startupCalls);
+
+      result.shutdown();
+      vi.useRealTimers();
+    });
+
+    it("recoverInFlight runs BEFORE startup drain (SPEC-R3)", async () => {
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValue(ok([]));
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(2));
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig(),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map(),
+      });
+
+      await result.drainAndStart();
+
+      const recoverOrder = vi.mocked(mockSqliteQueue.recoverInFlight).mock.invocationCallOrder[0];
+      const pendingOrder = vi.mocked(mockSqliteQueue.pendingEntries).mock.invocationCallOrder[0];
+      expect(recoverOrder).toBeDefined();
+      expect(pendingOrder).toBeDefined();
+      expect(recoverOrder!).toBeLessThan(pendingOrder!);
+
+      result.shutdown();
+    });
+
+    it("recoverInFlight still runs when drainOnStartup is false", async () => {
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ drainOnStartup: false }),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map(),
+      });
+
+      await result.drainAndStart();
+      expect(mockSqliteQueue.recoverInFlight).toHaveBeenCalled();
+      result.shutdown();
+    });
+
+    it("deferred row not delivered before scheduled_at (SPEC-R4)", async () => {
+      vi.useFakeTimers();
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
+      // Simulate: pendingEntries returns [] for the first 4 ticks (row's scheduled_at > now),
+      // then returns the entry on tick 5 (scheduled_at <= now), then [] for all subsequent
+      // ticks (ack on the real SQLite path would have flipped status to 'delivered').
+      const entry = makeEntry({ id: "deferred-1", channelType: "telegram" });
+      vi.mocked(mockSqliteQueue.pendingEntries)
+        .mockResolvedValueOnce(ok([]))      // startup
+        .mockResolvedValueOnce(ok([]))      // tick 1 (1000ms)
+        .mockResolvedValueOnce(ok([]))      // tick 2 (2000ms)
+        .mockResolvedValueOnce(ok([]))      // tick 3 (3000ms)
+        .mockResolvedValueOnce(ok([]))      // tick 4 (4000ms)
+        .mockResolvedValueOnce(ok([entry])) // tick 5 (5000ms) -- finally due
+        .mockResolvedValue(ok([]));         // tick 6+ -- already delivered
+
+      const adapter = createMockAdapter("telegram", [{ ok: true, value: "m1" }]);
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ drainIntervalMs: 1000 }),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: adapters,
+      });
+
+      await result.drainAndStart();
+
+      // 4 ticks elapsed (4000ms), still pre-due.
+      await vi.advanceTimersByTimeAsync(4500);
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+
+      // 5th tick -- row is now due; advance one more interval.
+      await vi.advanceTimersByTimeAsync(1000);
+      // Flush microtasks so the in-flight tick's pendingEntries -> sendMessage resolves.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+
+      result.shutdown();
+      vi.useRealTimers();
+    });
+
+    it("shutdown clears both drain and prune timers (SPEC AC-7)", async () => {
+      vi.useFakeTimers();
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValue(ok([]));
+      vi.mocked(mockSqliteQueue.pruneExpired).mockResolvedValue(ok(0));
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ drainIntervalMs: 50, pruneIntervalMs: 50 }),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map(),
+      });
+
+      await result.drainAndStart();
+      // Capture call counts post-startup
+      const pendingBefore = vi.mocked(mockSqliteQueue.pendingEntries).mock.calls.length;
+      const pruneBefore = vi.mocked(mockSqliteQueue.pruneExpired).mock.calls.length;
+
+      result.shutdown();
+
+      await vi.advanceTimersByTimeAsync(500); // 10x both intervals
+
+      expect(vi.mocked(mockSqliteQueue.pendingEntries).mock.calls.length).toBe(pendingBefore);
+      expect(vi.mocked(mockSqliteQueue.pruneExpired).mock.calls.length).toBe(pruneBefore);
+
+      vi.useRealTimers();
+    });
+
+    it("single-tick gate prevents concurrent drains (CONTEXT D-01)", async () => {
+      vi.useFakeTimers();
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
+      const entry = makeEntry({ id: "slow-1", channelType: "telegram" });
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValue(ok([entry]));
+
+      // Adapter sendMessage stalls indefinitely so the in-flight gate stays
+      // held. With drainOnStartup=false, startup drain is skipped and only
+      // the recurring timer can fire sendMessage -- that's the path we want
+      // to exercise (the recurring tick's `if (draining) return` gate).
+      const sendPromise = new Promise<{ ok: true; value: string }>(() => { /* never resolves */ });
+      let sendCallCount = 0;
+      const adapter: DeliveryAdapter = {
+        channelType: "telegram",
+        sendMessage: vi.fn(async () => {
+          sendCallCount++;
+          const r = await sendPromise;
+          return ok(r.value);
+        }),
+      };
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ drainIntervalMs: 50, drainOnStartup: false }),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: adapters,
+      });
+
+      await result.drainAndStart();
+      // No tick has fired yet (drainOnStartup=false skips the eager pass).
+      expect(sendCallCount).toBe(0);
+
+      // Advance >= 4 intervals. The first tick's sendMessage stalls on
+      // sendPromise, holding `draining` non-null. Subsequent ticks see
+      // `if (draining) return` and skip without invoking pendingEntries
+      // or sendMessage again.
+      await vi.advanceTimersByTimeAsync(250);
+      // Flush microtasks the timer may have queued.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Exactly ONE sendMessage call across 5 elapsed intervals -- the gate held.
+      expect(sendCallCount).toBe(1);
+
+      result.shutdown();
+      vi.useRealTimers();
+    });
+
+    it("empty-queue ticks do not emit delivery:queue_drained (CONTEXT specifics -- silent ticks)", async () => {
+      vi.useFakeTimers();
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValue(ok([]));
+      const eventBus = createMockEventBus();
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ drainIntervalMs: 50, drainOnStartup: true }),
+        eventBus,
+        logger: createMockLogger(),
+        channelAdapters: new Map(),
+      });
+
+      await result.drainAndStart();
+      await vi.advanceTimersByTimeAsync(300); // 6 recurring ticks
+
+      const drainEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => c[0] === "delivery:queue_drained",
+      );
+      // Existing drainDeliveryQueue early-returns when entries.length === 0 BEFORE
+      // the emit. So zero drain events should fire over 1 startup + 6 ticks.
+      expect(drainEvents.length).toBe(0);
+
+      result.shutdown();
+      vi.useRealTimers();
+    });
+
+    it("does not start recurring timer when queue is disabled", async () => {
+      vi.useFakeTimers();
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ enabled: false }),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map(),
+      });
+
+      await result.drainAndStart();
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(mockSqliteQueue.pendingEntries).not.toHaveBeenCalled();
+      expect(mockSqliteQueue.recoverInFlight).not.toHaveBeenCalled();
+
+      result.shutdown();
+      vi.useRealTimers();
+    });
+
+    it("recurring tick delivers a post-startup entry within drainIntervalMs + 500ms (SPEC AC-1)", async () => {
+      vi.useFakeTimers();
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
+      const entry = makeEntry({ id: "post-startup-1", channelType: "telegram" });
+      vi.mocked(mockSqliteQueue.pendingEntries)
+        .mockResolvedValueOnce(ok([]))             // startup drain -- empty
+        .mockResolvedValueOnce(ok([entry]))        // first recurring tick -- has post-startup row
+        .mockResolvedValue(ok([]));                // subsequent ticks empty
+
+      const adapter = createMockAdapter("telegram", [{ ok: true, value: "msg-1" }]);
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+      const eventBus = createMockEventBus();
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ drainIntervalMs: 250 }),
+        eventBus,
+        logger: createMockLogger(),
+        channelAdapters: adapters,
+      });
+
+      await result.drainAndStart();
+      await vi.advanceTimersByTimeAsync(750); // drainIntervalMs + 500ms = 750ms
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(mockSqliteQueue.ackCalls).toHaveLength(1);
+      expect(mockSqliteQueue.ackCalls[0]).toEqual({ id: "post-startup-1", messageId: "msg-1" });
+
+      result.shutdown();
+      vi.useRealTimers();
+    });
+
+    it("budget exhaustion still yields after the recurring-timer addition (CONTEXT D-02)", async () => {
+      // Mirror the existing budget-exhaustion test shape but on a single tick of
+      // the recurring drainer to confirm the budget yield still works post-refactor.
+      const entries = [
+        makeEntry({ id: "be1", channelType: "telegram" }),
+        makeEntry({ id: "be2", channelType: "telegram" }),
+        makeEntry({ id: "be3", channelType: "telegram" }),
+      ];
+      vi.mocked(mockSqliteQueue.recoverInFlight).mockResolvedValue(ok(0));
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(ok(entries));
+
+      // Mock Date.now to jump past the budget after the first entry.
+      const realDateNow = Date.now;
+      let callCount = 0;
+      const baseTime = realDateNow();
+      vi.spyOn(Date, "now").mockImplementation(() => {
+        callCount++;
+        if (callCount >= 4) return baseTime + 100_000;
+        return baseTime;
+      });
+
+      const adapter = createMockAdapter("telegram");
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+      const eventBus = createMockEventBus();
+
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig({ drainBudgetMs: 1000 }),
+        eventBus,
+        logger: createMockLogger(),
+        channelAdapters: adapters,
+      });
+
+      await result.drainAndStart();
+
+      // Drain (startup) should have stopped before processing all 3 entries.
+      const drainEvent = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => c[0] === "delivery:queue_drained",
+      );
+      expect(drainEvent).toBeDefined();
+      const payload = drainEvent![1] as Record<string, number>;
+      expect(payload.entriesAttempted).toBeLessThan(3);
+
+      vi.spyOn(Date, "now").mockRestore();
+      result.shutdown();
+    });
+  });
+
+  // ========================================================================
+  // SPEC-R2 row-selection invariant -- uses REAL SQLite adapter, NOT the mock.
+  //
+  // Per CONTEXT D-08: "the goal is to catch the row-selection race, which is
+  // fully observable in-process." This test seeds 100 'in_flight' rows + 100
+  // 'pending' rows simultaneously and proves the recurring drainer's WHERE
+  // filter NEVER picks 'in_flight'. Plan 13-04's integration test exercises
+  // the recurring-drainer notification-path throughput (SPEC-R1); this test
+  // exercises the row-selection race-safety invariant (SPEC-R2). Together
+  // they cover the SPEC AC-3 100-concurrent intent: throughput at integration
+  // tier, race-safety at unit tier -- cleaner than retrofitting an integration
+  // RPC that doesn't exist.
+  // ========================================================================
+
+  describe("SPEC-R2 row-selection invariant (real SQLite adapter)", () => {
+    it("drainer never picks 'in_flight' rows even when 100 in_flight + 100 pending coexist", async () => {
+      // Bypass the file-level vi.mock("@comis/memory") so we exercise the REAL
+      // adapter's WHERE status='pending' filter. This is the invariant under test.
+      const memoryActual = await vi.importActual<typeof import("@comis/memory")>("@comis/memory");
+      const Database = (await import("better-sqlite3")).default;
+      // Drive the drain via the now-exported drainDeliveryQueue helper, so we
+      // can call exactly N drain passes deterministically against the real queue.
+      const { drainDeliveryQueue } = await import("./setup-delivery.js");
+
+      const db = new Database(":memory:");
+      memoryActual.initSchema(db, 768);
+
+      const eventBus = createMockEventBus();
+      const queue = memoryActual.createSqliteDeliveryQueue(db, eventBus);
+
+      const now = Date.now();
+      const seedRow = (id: string, status: "pending" | "in_flight"): void => {
+        db.prepare(
+          `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
+                                         format_applied, chunking_applied, status, attempt_count, max_attempts,
+                                         created_at, scheduled_at, expire_at)
+           VALUES (?, ?, 'telegram', 'ch-1', 'def', '{}', 'channel', 0, 0, ?, 0, 5, ?, ?, ?)`,
+        ).run(id, `msg-${id}`, status, now, now, now + 60_000);
+      };
+
+      // 100 in_flight rows that the drainer MUST NOT pick.
+      const inFlightIds = new Set<string>();
+      for (let i = 0; i < 100; i++) {
+        const id = `inflight-${i}`;
+        seedRow(id, "in_flight");
+        inFlightIds.add(id);
+      }
+      // 100 pending rows that the drainer MUST deliver exactly once each.
+      const pendingIds = new Set<string>();
+      for (let i = 0; i < 100; i++) {
+        const id = `pending-${i}`;
+        seedRow(id, "pending");
+        pendingIds.add(id);
+      }
+
+      // Sanity: queue depth = 200 (pending + in_flight)
+      const depth = await queue.depth();
+      expect(depth.ok).toBe(true);
+      if (depth.ok) expect(depth.value).toBe(200);
+
+      // Spy adapter that records every entryId it was asked to send.
+      const sentIds: string[] = [];
+      const adapter: DeliveryAdapter = {
+        channelType: "telegram",
+        sendMessage: vi.fn(async (_channelId: string, text: string) => {
+          // Recover the seeded id from the text body.
+          const id = text.replace(/^msg-/, "");
+          sentIds.push(id);
+          return ok(`platform-msg-for-${id}`);
+        }),
+      };
+      const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
+
+      // Run drain passes until pending is exhausted. Each pass drains up to
+      // drainBudgetMs worth of rows; with 100 fast spy sends, one or two passes
+      // should suffice. Cap at 10 to prevent an infinite loop on regression.
+      for (let pass = 0; pass < 10; pass++) {
+        await drainDeliveryQueue({
+          deliveryQueue: queue,
+          channelAdapters: adapters,
+          eventBus,
+          logger: createMockLogger(),
+          drainBudgetMs: 60_000,
+          defaultMaxAttempts: 5,
+        });
+        const pendingResult = await queue.pendingEntries();
+        if (pendingResult.ok && pendingResult.value.length === 0) break;
+      }
+
+      // INVARIANT 1: every adapter send was for a 'pending' seed, never for 'in_flight'.
+      for (const id of sentIds) {
+        expect(inFlightIds.has(id)).toBe(false); // hard assertion -- SPEC-R2
+        expect(pendingIds.has(id)).toBe(true);
+      }
+
+      // INVARIANT 2: exactly 100 distinct sends, one per pending seed.
+      const uniqueSentIds = new Set(sentIds);
+      expect(uniqueSentIds.size).toBe(100);
+      for (const id of pendingIds) {
+        expect(uniqueSentIds.has(id)).toBe(true);
+      }
+
+      // INVARIANT 3: the 100 in_flight rows still have status='in_flight' (they only
+      // transition via channel-side ack/nack/fail or via recoverInFlight; neither fires here).
+      const inFlightRows = db
+        .prepare(`SELECT id, status FROM delivery_queue WHERE status = 'in_flight'`)
+        .all() as Array<{ id: string; status: string }>;
+      expect(inFlightRows.length).toBe(100);
+      for (const row of inFlightRows) {
+        expect(inFlightIds.has(row.id)).toBe(true);
+      }
+
+      db.close();
     });
   });
 });

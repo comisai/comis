@@ -1,13 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema } from "./schema.js";
 import { createSqliteDeliveryQueue } from "./delivery-queue-adapter.js";
 import type { DeliveryQueuePort } from "@comis/core";
 
+// Inline mock event bus -- adapter only needs Pick<TypedEventBus, "emit">,
+// so an 8-line spy is sufficient. Mirrors the local-mock pattern used in
+// delivery-queue-logger.test.ts in the daemon package (in-package tests do
+// NOT reach into repo-root test/support/ -- that path is reserved for
+// integration tests per AGENTS section 2.5).
+function createMockEventBus(): { emit: ReturnType<typeof vi.fn> } {
+  return { emit: vi.fn() };
+}
+
 describe("SqliteDeliveryQueueAdapter", () => {
   let db: Database.Database;
   let queue: DeliveryQueuePort;
+  let eventBus: ReturnType<typeof createMockEventBus>;
 
   const now = Date.now();
 
@@ -34,7 +44,8 @@ describe("SqliteDeliveryQueueAdapter", () => {
   beforeEach(() => {
     db = new Database(":memory:");
     initSchema(db, 768);
-    queue = createSqliteDeliveryQueue(db);
+    eventBus = createMockEventBus();
+    queue = createSqliteDeliveryQueue(db, eventBus);
   });
 
   // -----------------------------------------------------------------------
@@ -308,6 +319,120 @@ describe("SqliteDeliveryQueueAdapter", () => {
       if (depth.ok) {
         expect(depth.value).toBe(0);
       }
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // enqueue eventBus emission (SPEC-R5)
+  // -----------------------------------------------------------------------
+
+  describe("enqueue eventBus emission", () => {
+    it("emits exactly one delivery:enqueued event per enqueue", async () => {
+      const result = await queue.enqueue(makeEntry({ origin: "agent" }));
+      expect(result.ok).toBe(true);
+      expect(eventBus.emit).toHaveBeenCalledTimes(1);
+      const [eventName, payload] = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(eventName).toBe("delivery:enqueued");
+      expect(payload).toMatchObject({
+        entryId: result.ok ? result.value : "",
+        channelId: "ch-123",
+        channelType: "telegram",
+        origin: "agent",
+      });
+      expect(typeof (payload as { timestamp: number }).timestamp).toBe("number");
+    });
+
+    it("does not emit when enqueue fails (SQL error -> no event)", async () => {
+      db.close();
+      const result = await queue.enqueue(makeEntry());
+      expect(result.ok).toBe(false);
+      expect(eventBus.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // enqueueInFlight (SPEC-R2 race safety)
+  // -----------------------------------------------------------------------
+
+  describe("enqueueInFlight", () => {
+    it("inserts row with status='in_flight'", async () => {
+      const result = await queue.enqueueInFlight(makeEntry());
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const row = db
+        .prepare("SELECT status FROM delivery_queue WHERE id = ?")
+        .get(result.value) as { status: string };
+      expect(row.status).toBe("in_flight");
+    });
+
+    it("emits the same delivery:enqueued event as enqueue", async () => {
+      const result = await queue.enqueueInFlight(makeEntry({ origin: "channel" }));
+      expect(result.ok).toBe(true);
+      expect(eventBus.emit).toHaveBeenCalledTimes(1);
+      const [eventName, payload] = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(eventName).toBe("delivery:enqueued");
+      expect(payload).toMatchObject({
+        entryId: result.ok ? result.value : "",
+        channelId: "ch-123",
+        channelType: "telegram",
+        origin: "channel",
+      });
+    });
+
+    it("in_flight rows are NOT visible to pendingEntries (SPEC-R2 race safety)", async () => {
+      await queue.enqueueInFlight(makeEntry());
+      const pending = await queue.pendingEntries();
+      expect(pending.ok).toBe(true);
+      if (pending.ok) expect(pending.value).toHaveLength(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // recoverInFlight (SPEC-R3 startup sweep)
+  // -----------------------------------------------------------------------
+
+  describe("recoverInFlight", () => {
+    it("resets all in_flight rows to pending AND clears last_error", async () => {
+      // Two crashed rows directly via raw SQL
+      db.prepare(
+        `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
+                                       format_applied, chunking_applied, status, attempt_count, max_attempts,
+                                       created_at, scheduled_at, expire_at, last_error)
+         VALUES ('crashed-1', 't', 'tg', 'c1', 'def', '{}', 'channel', 0, 0, 'in_flight', 0, 5, ?, ?, ?, 'crashed mid-send')`,
+      ).run(now, now, now + 60_000);
+      db.prepare(
+        `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
+                                       format_applied, chunking_applied, status, attempt_count, max_attempts,
+                                       created_at, scheduled_at, expire_at, last_error)
+         VALUES ('crashed-2', 't', 'tg', 'c1', 'def', '{}', 'channel', 0, 0, 'in_flight', 0, 5, ?, ?, ?, NULL)`,
+      ).run(now, now, now + 60_000);
+      // One pending row via the public API (still works after constructor change)
+      await queue.enqueue(makeEntry({ text: "fresh" }));
+
+      const recovered = await queue.recoverInFlight();
+      expect(recovered.ok).toBe(true);
+      if (recovered.ok) expect(recovered.value).toBe(2);
+
+      // Both crashed rows now pending with NULL last_error
+      const rows = db
+        .prepare(`SELECT id, status, last_error FROM delivery_queue WHERE id IN ('crashed-1', 'crashed-2')`)
+        .all() as Array<{ id: string; status: string; last_error: string | null }>;
+      for (const row of rows) {
+        expect(row.status).toBe("pending");
+        expect(row.last_error).toBeNull();
+      }
+
+      // pendingEntries now sees all 3
+      const pending = await queue.pendingEntries();
+      expect(pending.ok).toBe(true);
+      if (pending.ok) expect(pending.value).toHaveLength(3);
+    });
+
+    it("returns 0 when no in_flight rows exist", async () => {
+      await queue.enqueue(makeEntry());
+      const recovered = await queue.recoverInFlight();
+      expect(recovered.ok).toBe(true);
+      if (recovered.ok) expect(recovered.value).toBe(0);
     });
   });
 });

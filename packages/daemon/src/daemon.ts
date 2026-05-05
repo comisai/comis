@@ -789,9 +789,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
 
   // 6.6.7.8. Delivery queue: create adapter BEFORE setupChannels.
   // channelAdapters map is passed by reference -- populated after setupChannels.
-  // drainAndStartPrune() is called AFTER setupChannels (two-phase lifecycle).
+  // drainAndStart() is called AFTER setupChannels (two-phase lifecycle).
   const channelAdaptersRef = new Map<string, import("@comis/channels").DeliveryAdapter>();
-  const { deliveryQueue, drainAndStartPrune: drainAndStartDeliveryPrune, shutdown: shutdownDeliveryQueue } = await setupDeliveryQueue({
+  const { deliveryQueue, drainAndStart: drainAndStartDeliveryPrune, shutdown: shutdownDeliveryQueue } = await setupDeliveryQueue({
     db, config: container.config, eventBus: container.eventBus, logger: daemonLogger, channelAdapters: channelAdaptersRef,
   });
 
@@ -1640,6 +1640,11 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     container, logger, logLevelManager, tokenTracker, latencyRecorder,
     processMonitor, shutdownHandle, watchdogHandle, cronSchedulers, resetSchedulers,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
+    // Phase 13: expose the delivery-queue-side adapter map and the queue port
+    // itself so integration tests can register adapters that the recurring
+    // drainer sees and assert on queue depth (SPEC AC-2).
+    deliveryAdapters: channelAdaptersRef,
+    deliveryQueue,
     rpcCall, deviceIdentity, diagnosticCollector, billingEstimator,
     channelActivityTracker, deliveryTracer, approvalGate, channelHealthMonitor, sessionStoreBridge,
   };

@@ -36,7 +36,9 @@ Primary validation: `pnpm build && pnpm test && pnpm lint:security`.
 
 Data dir: `~/.comis`. The `comis` CLI is **not on PATH** — use `node packages/cli/dist/cli.js`.
 
-### pm2 (recommended)
+### pm2 (development only)
+
+For local dev convenience — auto-restart on crash, log tailing via `pm2 logs`, easy `pm2 flush`. **Not the production path.** Production VPS / install-script deployments invoke the daemon directly (see below); pm2 is not part of that pipeline.
 
 Requires `npm install -g pm2`. Ecosystem config auto-sets `COMIS_CONFIG_PATHS`.
 
@@ -60,7 +62,9 @@ Full reset (clears restart counter — `pm2 flush` only clears logs):
 pm2 delete comis && pm2 flush && node packages/cli/dist/cli.js pm2 start
 ```
 
-### Direct (alternative)
+### Direct (production)
+
+How VPS deployments and the published `comisai` package run the daemon — Node directly with `--permission` flags. Do not assume pm2 is present when debugging a production install; expect a bare `node …/daemon.js` process.
 
 `COMIS_CONFIG_PATHS` must be set on the same command line — `export` does not propagate to backgrounded processes from tool environments:
 ```bash
