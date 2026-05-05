@@ -117,17 +117,13 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // Missing session -> fallback to literal-text user notification.
+    // Missing session -- session expired while the task ran. No channel to deliver
+    // to, so skip fallback (which would only produce a WARN from notification-service).
     const sessionExists = deps.sessionStore.loadByFormattedKey(origin.sessionKey) !== undefined;
     if (!sessionExists) {
       log.info(
-        { taskId, sessionKey: origin.sessionKey, hint: "Session no longer exists; routing to fallbackNotifyFn", errorKind: "internal" as const },
-        "Background completion: session missing, falling back",
-      );
-      await fallbackForTask(
-        task.toolName,
-        origin.agentId,
-        `Background task "${task.toolName}" ${kind === "failed" ? "failed" : "completed"}.`,
+        { taskId, sessionKey: origin.sessionKey },
+        "Background completion: session expired, skipping re-entry",
       );
       return;
     }
