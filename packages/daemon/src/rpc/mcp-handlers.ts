@@ -9,6 +9,8 @@
 import type { McpClientManager, McpServerConfig } from "@comis/skills";
 import { createMcpClientManager } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
+import { findUnresolvedEnvRefs, formatMissingEnvRefError } from "@comis/core";
+import type { SecretManager } from "@comis/core";
 import type { RpcHandler } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -25,6 +27,14 @@ export interface McpHandlerDeps {
   mcpClientManager: McpClientManager;
   /** Logger for MCP test connection (used by temporary manager). */
   logger: ComisLogger;
+  /**
+   * Optional SecretManager for env-ref validation on mcp.connect (Layer 3 of
+   * 2026-05-03 outage fix, quick task 260504-dlz). When undefined (legacy/
+   * test wiring), the env-ref check is skipped — the existing connect
+   * behavior is preserved. In production it is always wired via
+   * `deps.container.secretManager` from rpc-dispatch.
+   */
+  secretManager?: SecretManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -53,8 +63,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     "mcp.status": async (params) => {
-      const name = params.name as string;
-      if (!name) throw new Error("Missing required parameter: name");
+      const name = params.server_name as string;
+      if (!name) throw new Error("Missing required parameter: server_name");
 
       const manager = deps.mcpClientManager;
       const conn = manager.getConnection(name);
@@ -84,9 +94,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     "mcp.connect": async (params) => {
-      const name = params.name as string;
+      const name = params.server_name as string;
       const transport = params.transport as string;
-      if (!name) throw new Error("Missing required parameter: name");
+      if (!name) throw new Error("Missing required parameter: server_name");
       if (!transport) throw new Error("Missing required parameter: transport");
 
       const manager = deps.mcpClientManager;
@@ -102,6 +112,21 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         enabled: true,
       };
 
+      // Reject connects that reference env vars not in the secrets store.
+      // Layer 3 of 2026-05-03 outage fix (quick task 260504-dlz). mcp.connect
+      // is unconditionally enabled (config.enabled = true above), so the
+      // check always applies when both env and secretManager are present.
+      // Skipped only when secretManager is unwired (test setups) — production
+      // always wires it via rpc-dispatch.
+      if (config.env && deps.secretManager) {
+        const sm = deps.secretManager;
+        const unresolved = findUnresolvedEnvRefs(config.env, (key) => sm.get(key));
+        if (unresolved.length > 0) {
+          const missingNames = unresolved.map((u) => u.varName);
+          throw new Error(formatMissingEnvRefError(name, missingNames));
+        }
+      }
+
       const result = await manager.connect(config);
       if (!result.ok) {
         throw new Error(`Failed to connect MCP server "${name}": ${result.error.message}`);
@@ -116,8 +141,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     "mcp.disconnect": async (params) => {
-      const name = params.name as string;
-      if (!name) throw new Error("Missing required parameter: name");
+      const name = params.server_name as string;
+      if (!name) throw new Error("Missing required parameter: server_name");
 
       const manager = deps.mcpClientManager;
       const conn = manager.getConnection(name);
@@ -179,8 +204,8 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
     },
 
     "mcp.reconnect": async (params) => {
-      const name = params.name as string;
-      if (!name) throw new Error("Missing required parameter: name");
+      const name = params.server_name as string;
+      if (!name) throw new Error("Missing required parameter: server_name");
 
       const manager = deps.mcpClientManager;
 

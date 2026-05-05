@@ -244,6 +244,168 @@ function collectRefsFromString(input: string, out: Set<string>): void {
   });
 }
 
+/**
+ * A single unresolved env-var reference discovered while walking an object tree.
+ *
+ * `path` is the dot-notation location of the *string value* containing the
+ * reference (e.g. `"servers[0].env.FINNHUB_API_KEY"`), matching the path
+ * format used by `warnSuspiciousEnvValues`. `varName` is the name being
+ * referenced (e.g. `"FINNHUB_API_KEY"`).
+ *
+ * Two missing vars in the *same* string produce two entries with the *same*
+ * `path` but different `varName`s — accepted, deterministic, useful for
+ * downstream message formatting.
+ */
+export interface UnresolvedEnvRef {
+  /** Dot-notation path to the string value that contains the reference. */
+  readonly path: string;
+  /** The referenced env var name (without `${}` braces). */
+  readonly varName: string;
+}
+
+/**
+ * Walk an object tree and return every `${VAR_NAME}` (or whole-string bare
+ * `$VAR_NAME`) reference whose name `getSecret` cannot resolve.
+ *
+ * Complement of `extractReferencedSecretNames`: that function returns *all*
+ * referenced names (used by exec's `secretRefs` policy); this function returns
+ * only the *unresolved* subset (used by daemon-side config-write validation
+ * gates — `config.patch` and `mcp.connect`).
+ *
+ * Resolution semantics mirror `substituteEnvVars`:
+ * - `getSecret` returning `undefined` → ref is missing (included in result).
+ * - `getSecret` returning `""` → ref is a valid empty value (NOT included).
+ * - `$${VAR}` escapes are literals, never refs (NOT included).
+ *
+ * Path format mirrors `warnSuspiciousEnvValues`: `parent.child[N].leaf`,
+ * with the dot prefix omitted at the root.
+ *
+ * Layer 3 of the 2026-05-03 outage fix (quick task `260504-dlz`). Layer 1
+ * (`260504-cac` — env-substitution skip on disabled MCP servers) made the
+ * `enabled:false + ${VAR}` placeholder pattern harmless at bootstrap; this
+ * helper lets the daemon's config-write paths reject `enabled:true + missing
+ * ${VAR}` *at write time* so it never reaches disk.
+ *
+ * @param obj - Object tree to scan.
+ * @param getSecret - Callback that returns the value for a given var name,
+ *                    or `undefined` if not in the secrets store.
+ * @returns Array of `{ path, varName }` entries for each unresolved ref.
+ *          Empty when every ref resolves.
+ */
+export function findUnresolvedEnvRefs(
+  obj: unknown,
+  getSecret: (key: string) => string | undefined,
+): UnresolvedEnvRef[] {
+  const out: UnresolvedEnvRef[] = [];
+  scanForUnresolved(obj, "", getSecret, out);
+  return out;
+}
+
+function scanForUnresolved(
+  value: unknown,
+  path: string,
+  getSecret: (key: string) => string | undefined,
+  out: UnresolvedEnvRef[],
+): void {
+  if (value === null || value === undefined) return;
+
+  if (typeof value === "string") {
+    collectUnresolvedFromString(value, path, getSecret, out);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      scanForUnresolved(value[i], `${path}[${i}]`, getSecret, out);
+    }
+    return;
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of Object.keys(record)) {
+      const childPath = path ? `${path}.${key}` : key;
+      scanForUnresolved(record[key], childPath, getSecret, out);
+    }
+  }
+}
+
+/**
+ * Extract `${VAR}` and whole-string bare `$VAR` references from a single
+ * string and append `{ path, varName }` for each one whose value `getSecret`
+ * cannot resolve. Mirrors `collectRefsFromString` exactly so this helper and
+ * `extractReferencedSecretNames` agree on what counts as a reference.
+ */
+function collectUnresolvedFromString(
+  input: string,
+  path: string,
+  getSecret: (key: string) => string | undefined,
+  out: UnresolvedEnvRef[],
+): void {
+  // Whole-string bare reference first (mirrors substituteString step 0).
+  const bareMatch = input.match(BARE_VAR_PATTERN);
+  if (bareMatch) {
+    const varName = bareMatch[1]!;
+    if (getSecret(varName) === undefined) {
+      out.push({ path, varName });
+    }
+    return;
+  }
+
+  // Mask escapes so they don't match ENV_VAR_PATTERN. Same SENTINEL pattern
+  // as substituteString / collectRefsFromString for parity.
+  const SENTINEL = "\x00ESC_VAR\x00";
+  const working = input.replace(ESCAPED_VAR_PATTERN, () => `${SENTINEL}${SENTINEL}`);
+
+  working.replace(ENV_VAR_PATTERN, (_match, varName: string) => {
+    if (getSecret(varName) === undefined) {
+      out.push({ path, varName });
+    }
+    return "";
+  });
+}
+
+/**
+ * Build the structured `[invalid_value]` error string for an enabled MCP
+ * server whose `env` block references env vars not in the secrets store.
+ *
+ * Used identically by `config.patch` and `mcp.connect` to keep the agent-
+ * facing message in lockstep across the two RPC surfaces (Layer 3 of the
+ * 2026-05-03 outage fix, quick task `260504-dlz`).
+ *
+ * Behavior:
+ * - `missingVarNames` is sorted lexicographically for deterministic output.
+ * - First 3 names are listed; if more, ` (+N more)` is appended.
+ * - Single-var case uses singular "env var"; multi-var uses plural "env vars".
+ * - Recovery option (1) `secrets_manage({action:"set", ...})` always names the
+ *   FIRST missing var (alphabetical). Agents fix one at a time, then re-try.
+ *
+ * @param serverName - The MCP server name (`"<unnamed>"` if absent).
+ * @param missingVarNames - Names that `findUnresolvedEnvRefs` reported missing.
+ * @returns The exact `[invalid_value] ...` message.
+ */
+export function formatMissingEnvRefError(
+  serverName: string,
+  missingVarNames: readonly string[],
+): string {
+  // Defensive copy + sort for determinism.
+  const sorted = [...missingVarNames].sort();
+  const visible = sorted.slice(0, 3);
+  const overflow = sorted.length - visible.length;
+  const overflowSuffix = overflow > 0 ? ` (+${overflow} more)` : "";
+  const isPlural = sorted.length > 1;
+  const subject = isPlural ? "env vars" : "env var";
+  const list = visible.join(", ") + overflowSuffix;
+  // Recovery option (1) references the first (alphabetical) missing var only.
+  const firstName = sorted[0] ?? "VAR_NAME";
+  return (
+    `[invalid_value] enabled MCP server "${serverName}" references ${subject} ${list} which is not in the secrets store. Either:\n` +
+    `  1) secrets_manage({action:"set", name:"${firstName}", value:"..."})\n` +
+    `  2) Drop the env block from this server (omit the env field)\n` +
+    `  3) Set enabled:false to defer until the secret is available`
+  );
+}
+
 /** A warning about a suspicious env value found during config validation. */
 export interface EnvValueWarning {
   /** Dot-notation path to the suspicious value (e.g., "integrations.mcp.servers[1].env.TAVILY_API_KEY"). */

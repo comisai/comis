@@ -17,6 +17,8 @@ import {
   AppConfigSchema,
   redactConfigSecrets,
   warnSuspiciousEnvValues,
+  findUnresolvedEnvRefs,
+  formatMissingEnvRefError,
   getManagedSectionRedirect,
   formatRedirectHint,
   type AppContainer,
@@ -623,6 +625,46 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
             `Suspicious env value(s) in config patch: ${hints}. ` +
             `Use \${VAR_NAME} syntax to reference secrets stored via env_set.`,
           );
+        }
+
+        // Reject patches that reference env vars not in the secrets store, on
+        // enabled MCP servers only. Layer 3 of 2026-05-03 outage fix (quick
+        // task 260504-dlz). Layer 1 (env-substitution skip on disabled
+        // servers, 260504-cac) made `enabled:false + ${VAR}` harmless at
+        // bootstrap; this gate forbids the partially-valid `enabled:true +
+        // missing ${VAR}` that triggered the outage.
+        //
+        // We walk `patch` (not the deep-merged config) because we only
+        // validate what's being WRITTEN this RPC. `restoreMcpServerEnv` above
+        // already restored env from existing YAML for partial-update-without-
+        // env patches, so `patch.integrations.mcp.servers[].env` is the
+        // post-restore truth. Full-config validation would re-flag pre-
+        // existing valid-at-write-time refs whose secrets were later removed
+        // (out of scope, separate problem).
+        const patchInteg = (patch as Record<string, unknown>).integrations as
+          | Record<string, unknown>
+          | undefined;
+        const patchMcp = patchInteg?.mcp as Record<string, unknown> | undefined;
+        const patchServers = patchMcp?.servers;
+        if (Array.isArray(patchServers)) {
+          for (const s of patchServers) {
+            if (!s || typeof s !== "object") continue;
+            const server = s as Record<string, unknown>;
+            // McpServerEntrySchema.enabled defaults to true → absent = enabled.
+            // Only explicit `enabled: false` skips the check (preserves the
+            // placeholder-for-later pattern).
+            if (server.enabled === false) continue;
+            if (!server.env) continue;
+            const serverName = typeof server.name === "string" ? server.name : "<unnamed>";
+            const unresolved = findUnresolvedEnvRefs(
+              server.env,
+              (key) => deps.container.secretManager.get(key),
+            );
+            if (unresolved.length > 0) {
+              const missingNames = unresolved.map((u) => u.varName);
+              throw new Error(formatMissingEnvRefError(serverName, missingNames));
+            }
+          }
         }
 
         const updatedLocal = deepMerge(existingLocal, patch);

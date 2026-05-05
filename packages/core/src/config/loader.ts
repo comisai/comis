@@ -100,11 +100,19 @@ export function loadConfigFile(
 
     // Step 3: Substitute ${VAR} references (if getSecret provided)
     if (options?.getSecret) {
+      // Stash disabled MCP server entries before substitution. A disabled
+      // server may legitimately reference env vars the user has not set yet
+      // (e.g., a placeholder finnhub entry awaiting an API key). Substitution
+      // must not fail bootstrap on those — they are filtered out at
+      // connect-time in setup-mcp.ts. Originals are restored verbatim after.
+      const stash = stashDisabledMcpServers(processed);
+
       const subResult = substituteEnvVars(processed, options.getSecret, resolved);
       if (!subResult.ok) {
         return subResult as Result<Record<string, unknown>, ConfigError>;
       }
       processed = subResult.value as Record<string, unknown>;
+      restoreDisabledMcpServers(processed, stash);
     }
 
     return ok(processed);
@@ -136,4 +144,61 @@ export function validateConfig(raw: Record<string, unknown>): Result<AppConfig, 
     message: `Config validation failed: ${result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
     details: result.error.issues,
   });
+}
+
+interface DisabledMcpStash {
+  readonly idx: number;
+  readonly original: unknown;
+}
+
+/**
+ * Replace `enabled: false` MCP server entries in
+ * `integrations.mcp.servers[]` with neutral stubs and return the originals
+ * so `restoreDisabledMcpServers` can put them back after env substitution.
+ *
+ * Mutates `processed` in place. The stub keeps no env-substitutable fields,
+ * so substitution sees no `${VAR}` refs from disabled servers.
+ */
+function stashDisabledMcpServers(processed: Record<string, unknown>): DisabledMcpStash[] {
+  const integrations = processed.integrations;
+  if (integrations === null || typeof integrations !== "object" || Array.isArray(integrations)) {
+    return [];
+  }
+  const mcp = (integrations as Record<string, unknown>).mcp;
+  if (mcp === null || typeof mcp !== "object" || Array.isArray(mcp)) return [];
+  const servers = (mcp as Record<string, unknown>).servers;
+  if (!Array.isArray(servers)) return [];
+
+  const stash: DisabledMcpStash[] = [];
+  for (let idx = 0; idx < servers.length; idx++) {
+    const srv = servers[idx];
+    if (srv === null || typeof srv !== "object" || Array.isArray(srv)) continue;
+    if ((srv as { enabled?: unknown }).enabled !== false) continue;
+    stash.push({ idx, original: srv });
+    servers[idx] = { enabled: false };
+  }
+  return stash;
+}
+
+/**
+ * Restore originals previously saved by `stashDisabledMcpServers`. Operates
+ * on the substituted tree (a fresh object returned by `substituteEnvVars`),
+ * walking back to the same array index. No-op when stash is empty.
+ */
+function restoreDisabledMcpServers(
+  processed: Record<string, unknown>,
+  stash: readonly DisabledMcpStash[],
+): void {
+  if (stash.length === 0) return;
+  const integrations = processed.integrations;
+  if (integrations === null || typeof integrations !== "object" || Array.isArray(integrations)) {
+    return;
+  }
+  const mcp = (integrations as Record<string, unknown>).mcp;
+  if (mcp === null || typeof mcp !== "object" || Array.isArray(mcp)) return;
+  const servers = (mcp as Record<string, unknown>).servers;
+  if (!Array.isArray(servers)) return;
+  for (const { idx, original } of stash) {
+    if (idx < servers.length) servers[idx] = original;
+  }
 }

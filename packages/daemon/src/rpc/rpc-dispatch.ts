@@ -361,7 +361,14 @@ export function createRpcDispatch(deps: RpcDispatchDeps): RpcCall {
         logger: deps.logger,
       },
     }),
-    ...createMcpHandlers({ mcpClientManager: deps.mcpClientManager, logger: deps.logger }),
+    ...createMcpHandlers({
+      mcpClientManager: deps.mcpClientManager,
+      logger: deps.logger,
+      // Threaded for env-ref validation on mcp.connect (Layer 3 of 2026-05-03
+      // outage fix, quick task 260504-dlz). Same pattern as agent/provider
+      // handlers above. When undefined the validator becomes a no-op.
+      secretManager: deps.container?.secretManager,
+    }),
     ...createDaemonHandlers({ logLevelManager: deps.logLevelManager }),
     // Workspace file management handlers
     ...createWorkspaceHandlers({

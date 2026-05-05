@@ -28,6 +28,26 @@ export interface ComisToolMetadata {
   outputSchema?: Record<string, unknown>;
   /** Tool names that should be co-discovered whenever this tool is discovered (bidirectional). */
   coDiscoverWith?: string[];
+  /** Valid `action` enum values for action-discriminated tools. Used by the
+   *  generic schema-validator in @comis/skills/bridge to gate unknown actions
+   *  before the per-tool validateInput runs. Field shape mirrors
+   *  `ManagedSectionRedirect.schemaFragment.actions` in
+   *  @comis/core/src/config/managed-sections.ts so cross-consistency tests
+   *  can compare them. */
+  validActions?: readonly string[];
+  /** Full set of accepted top-level parameter keys. Unknown keys trigger a
+   *  Levenshtein "did you mean" hint via the schema-validator. Action-
+   *  discriminated tools list the union across all actions; non-discriminated
+   *  tools list every accepted key. Omit when the tool's params are open-
+   *  ended (e.g. exec). */
+  validKeys?: readonly string[];
+  /** Required keys per action value (action-discriminated tools only). Maps
+   *  each `action` literal to the list of params that MUST be present beyond
+   *  `action` itself. Field name + shape mirror
+   *  `ManagedSectionRedirect.schemaFragment.requiredByAction` in
+   *  @comis/core/src/config/managed-sections.ts. Omit actions with no
+   *  required fields beyond `action`. */
+  requiredByAction?: Readonly<Record<string, readonly string[]>>;
   /** Pre-flight input validator. Returns error string on failure, undefined on success. */
   validateInput?: (
     params: Record<string, unknown>,

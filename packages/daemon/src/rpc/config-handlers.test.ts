@@ -41,6 +41,28 @@ function makeDeps(configPath: string): ConfigHandlerDeps & { logger: ComisLogger
   };
 }
 
+/**
+ * Variant of makeDeps that injects an explicit env map into the bootstrap
+ * SecretManager. Used by env-ref validation tests so the secrets store can
+ * be controlled per-test (FINNHUB_API_KEY present vs absent, etc.).
+ */
+function makeDepsWithEnv(
+  configPath: string,
+  env: Record<string, string>,
+): ConfigHandlerDeps & { logger: ComisLogger } {
+  const result = bootstrap({ configPaths: [configPath], env });
+  if (!result.ok) {
+    throw new Error(`Bootstrap failed in test: ${result.error.message}`);
+  }
+  const logger = createMockLogger();
+  return {
+    container: result.value,
+    configPaths: [configPath],
+    defaultConfigPaths: [configPath],
+    logger,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -671,6 +693,216 @@ describe("env var reference preservation", () => {
     });
 
     expect(result).toMatchObject({ patched: true, section: "tenantId", value: "${MY_TENANT}" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Env var reference validation (Layer 3 of 2026-05-03 outage fix)
+// ---------------------------------------------------------------------------
+
+describe("config.patch env var reference validation", () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+  let tempConfig: ReturnType<typeof createTempConfig>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    tempConfig = createTempConfig();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    tempConfig.cleanup();
+  });
+
+  // Test A — regression: the 2026-05-03 outage payload (enabled:false + missing
+  // ${FINNHUB_API_KEY}) MUST PASS. Layer 1 made this pattern harmless at
+  // bootstrap; this layer must preserve the placeholder-for-later workflow.
+  it("Test A — accepts enabled:false MCP server with missing ${VAR} (placeholder pattern)", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    const result = await handlers["config.patch"]!({
+      section: "integrations",
+      key: "mcp.servers",
+      value: [
+        {
+          name: "finnhub",
+          transport: "stdio",
+          command: "uvx",
+          args: ["mcp-finnhub"],
+          env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+          enabled: false,
+        },
+      ],
+      _trustLevel: "admin",
+    });
+
+    expect(result).toMatchObject({ patched: true });
+  });
+
+  // Test B — the fix: enabled:true with the SAME missing ref is rejected with
+  // the structured [invalid_value] error containing all 3 recovery options.
+  it("Test B — rejects enabled:true MCP server with missing ${VAR}", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [
+          {
+            name: "finnhub",
+            transport: "stdio",
+            command: "uvx",
+            args: ["mcp-finnhub"],
+            env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+            enabled: true,
+          },
+        ],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/\[invalid_value\] enabled MCP server "finnhub" references env var FINNHUB_API_KEY/);
+
+    // Spot-check the 3 recovery options are all present in the error message
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [
+          {
+            name: "finnhub",
+            transport: "stdio",
+            command: "uvx",
+            env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+            enabled: true,
+          },
+        ],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/secrets_manage.*Drop the env block.*Set enabled:false/s);
+  });
+
+  // Test C — strict tightening: same payload, secret PRESENT → passes.
+  it("Test C — accepts enabled:true MCP server when ${VAR} resolves", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, { FINNHUB_API_KEY: "abc123" });
+    const handlers = createConfigHandlers(deps);
+
+    const result = await handlers["config.patch"]!({
+      section: "integrations",
+      key: "mcp.servers",
+      value: [
+        {
+          name: "finnhub",
+          transport: "stdio",
+          command: "uvx",
+          args: ["mcp-finnhub"],
+          env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+          enabled: true,
+        },
+      ],
+      _trustLevel: "admin",
+    });
+
+    expect(result).toMatchObject({ patched: true });
+  });
+
+  // Test D — multi-server: 2nd enabled server has the unresolved ref. Error
+  // names the FAILING server (finnhub), not just the first server in the list.
+  it("Test D — first-fail semantics name the actually-failing server", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [
+          {
+            name: "context7",
+            transport: "stdio",
+            command: "npx",
+            args: ["-y", "@upstash/context7-mcp"],
+            enabled: true,
+          },
+          {
+            name: "finnhub",
+            transport: "stdio",
+            command: "uvx",
+            args: ["mcp-finnhub"],
+            env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+            enabled: true,
+          },
+        ],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/enabled MCP server "finnhub"/);
+  });
+
+  // Test E — 3+ missing vars on a single server: error lists 3 alphabetically
+  // sorted names plus (+1 more) when there's a 4th.
+  it("Test E — caps display at 3 names with (+N more) overflow", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({
+        section: "integrations",
+        key: "mcp.servers",
+        value: [
+          {
+            name: "multi",
+            transport: "stdio",
+            command: "noop",
+            env: {
+              VAR_A: "${A}",
+              VAR_B: "${B}",
+              VAR_C: "${C}",
+              VAR_D: "${D}",
+            },
+            enabled: true,
+          },
+        ],
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/references env vars A, B, C \(\+1 more\)/);
+  });
+
+  // Test F — non-MCP patch: validator skipped entirely.
+  it("Test F — skips validator entirely for non-MCP patches", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    // logLevel patch — has no integrations.mcp.servers — must succeed even
+    // when the secrets store is empty.
+    const result = await handlers["config.patch"]!({
+      section: "logLevel",
+      value: "debug",
+      _trustLevel: "admin",
+    });
+
+    expect(result).toMatchObject({ patched: true });
+  });
+
+  // Test G — empty servers array passes the validator (no entries to scan).
+  // The only mutable subpath under integrations.mcp is `servers` (per
+  // MUTABLE_CONFIG_OVERRIDES); other keys are immutable and rejected before
+  // reaching the env-ref validator. So the realistic "no-op" shape for the
+  // gate is an empty servers list — the loop body never runs.
+  it("Test G — no-ops when servers array is empty", async () => {
+    const deps = makeDepsWithEnv(tempConfig.configPath, {});
+    const handlers = createConfigHandlers(deps);
+
+    const result = await handlers["config.patch"]!({
+      section: "integrations",
+      key: "mcp.servers",
+      value: [],
+      _trustLevel: "admin",
+    });
+
+    expect(result).toMatchObject({ patched: true });
   });
 });
 

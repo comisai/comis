@@ -429,7 +429,7 @@ export interface RpcMethodMap {
     response: { servers: McpServerListEntry[]; total: number };
   };
   "mcp.status": {
-    params: { name: string };
+    params: { server_name: string };
     response: McpServerDetail;
   };
   "mcp.connect": {
@@ -437,11 +437,11 @@ export interface RpcMethodMap {
     response: McpConnectResponse;
   };
   "mcp.disconnect": {
-    params: { name: string };
+    params: { server_name: string };
     response: { name: string; status: "disconnected" };
   };
   "mcp.reconnect": {
-    params: { name: string };
+    params: { server_name: string };
     response: McpConnectResponse;
   };
   "mcp.test": {

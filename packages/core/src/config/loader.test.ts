@@ -116,6 +116,109 @@ agents:
     });
   });
 
+  describe("loadConfigFile env substitution + disabled MCP servers", () => {
+    // Regression: a disabled MCP server entry must not brick bootstrap when
+    // it references an env var that is not set. This was the trigger for the
+    // 2026-05-03 production outage where an agent committed
+    // `enabled: false` + `${FINNHUB_API_KEY}` and the daemon crash-looped
+    // because env substitution ran before setup-mcp.ts filtered disabled
+    // servers out.
+    it("does not fail on disabled MCP server with missing env var", () => {
+      const dir = makeTmpDir();
+      const filePath = writeFile(
+        dir,
+        "config.yaml",
+        `
+integrations:
+  mcp:
+    servers:
+      - name: finnhub
+        transport: stdio
+        command: /tmp/finnhub
+        env:
+          FINNHUB_API_KEY: \${FINNHUB_API_KEY}
+        enabled: false
+      - name: yfinance
+        transport: stdio
+        command: /tmp/yfinance
+        enabled: true
+`,
+      );
+
+      const result = loadConfigFile(filePath, { getSecret: () => undefined });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const servers = (
+          (result.value.integrations as Record<string, unknown>).mcp as Record<string, unknown>
+        ).servers as Array<Record<string, unknown>>;
+        expect(servers).toHaveLength(2);
+        // Disabled entry restored verbatim — ${VAR} stays literal because no
+        // consumer will actually read it (setup-mcp.ts filters by enabled).
+        expect(servers[0].name).toBe("finnhub");
+        expect(servers[0].enabled).toBe(false);
+        expect((servers[0].env as Record<string, string>).FINNHUB_API_KEY).toBe(
+          "${FINNHUB_API_KEY}",
+        );
+      }
+    });
+
+    it("still fails on enabled MCP server with missing env var", () => {
+      const dir = makeTmpDir();
+      const filePath = writeFile(
+        dir,
+        "config.yaml",
+        `
+integrations:
+  mcp:
+    servers:
+      - name: finnhub
+        transport: stdio
+        command: /tmp/finnhub
+        env:
+          FINNHUB_API_KEY: \${FINNHUB_API_KEY}
+        enabled: true
+`,
+      );
+
+      const result = loadConfigFile(filePath, { getSecret: () => undefined });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("ENV_VAR_ERROR");
+        expect(result.error.message).toContain("FINNHUB_API_KEY");
+      }
+    });
+
+    it("substitutes env var on enabled MCP server when value is present", () => {
+      const dir = makeTmpDir();
+      const filePath = writeFile(
+        dir,
+        "config.yaml",
+        `
+integrations:
+  mcp:
+    servers:
+      - name: finnhub
+        transport: stdio
+        command: /tmp/finnhub
+        env:
+          FINNHUB_API_KEY: \${FINNHUB_API_KEY}
+        enabled: true
+`,
+      );
+
+      const result = loadConfigFile(filePath, {
+        getSecret: (k) => (k === "FINNHUB_API_KEY" ? "test-key" : undefined),
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        const servers = (
+          (result.value.integrations as Record<string, unknown>).mcp as Record<string, unknown>
+        ).servers as Array<Record<string, unknown>>;
+        expect((servers[0].env as Record<string, string>).FINNHUB_API_KEY).toBe("test-key");
+      }
+    });
+  });
+
   describe("validateConfig", () => {
     it("validates minimal config with all defaults applied", () => {
       const result = validateConfig({});

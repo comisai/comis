@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMcpHandlers } from "./mcp-handlers.js";
 import type { McpClientManager, McpConnection, McpToolDefinition } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
+import { createSecretManager } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -147,13 +148,13 @@ describe("MCP RPC Handlers", () => {
   describe("mcp.status", () => {
     it("throws on missing name param", async () => {
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      await expect(handlers["mcp.status"]({})).rejects.toThrow("Missing required parameter: name");
+      await expect(handlers["mcp.status"]({})).rejects.toThrow("Missing required parameter: server_name");
     });
 
     it("throws when server not found", async () => {
       (manager.getConnection as any).mockReturnValue(undefined);
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      await expect(handlers["mcp.status"]({ name: "unknown" })).rejects.toThrow('not found: "unknown"');
+      await expect(handlers["mcp.status"]({ server_name: "unknown" })).rejects.toThrow('not found: "unknown"');
     });
 
     it("returns detailed status with tools", async () => {
@@ -161,7 +162,7 @@ describe("MCP RPC Handlers", () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("ctx7", [tool]));
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      const result = await handlers["mcp.status"]({ name: "ctx7" }) as any;
+      const result = await handlers["mcp.status"]({ server_name: "ctx7" }) as any;
 
       expect(result.name).toBe("ctx7");
       expect(result.status).toBe("connected");
@@ -179,7 +180,7 @@ describe("MCP RPC Handlers", () => {
       (manager.getConnection as any).mockReturnValue(conn);
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      const result = await handlers["mcp.status"]({ name: "ctx7" }) as any;
+      const result = await handlers["mcp.status"]({ server_name: "ctx7" }) as any;
 
       expect(result.instructions).toBe("Use search for queries");
       expect(result.capabilities).toEqual({ tools: {}, resources: {}, prompts: {} });
@@ -190,7 +191,7 @@ describe("MCP RPC Handlers", () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("basic", [makeTool("ping")]));
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      const result = await handlers["mcp.status"]({ name: "basic" }) as any;
+      const result = await handlers["mcp.status"]({ server_name: "basic" }) as any;
 
       expect(result.instructions).toBeUndefined();
       expect(result.capabilities).toBeUndefined();
@@ -205,7 +206,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       const result = await handlers["mcp.connect"]({
-        name: "new-srv",
+        server_name: "new-srv",
         transport: "stdio",
         command: "npx",
         args: ["-y", "some-mcp"],
@@ -226,7 +227,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await handlers["mcp.connect"]({
-        name: "remote",
+        server_name: "remote",
         transport: "sse",
         url: "https://example.com/mcp",
       });
@@ -242,7 +243,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await handlers["mcp.connect"]({
-        name: "authed",
+        server_name: "authed",
         transport: "http",
         url: "https://example.com/mcp",
         headers: { "Authorization": "Bearer token123" },
@@ -259,7 +260,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await expect(
-        handlers["mcp.connect"]({ name: "bad", transport: "stdio", command: "nope" }),
+        handlers["mcp.connect"]({ server_name: "bad", transport: "stdio", command: "nope" }),
       ).rejects.toThrow("Failed to connect");
     });
   });
@@ -269,7 +270,7 @@ describe("MCP RPC Handlers", () => {
       (manager.getConnection as any).mockReturnValue(makeConnection("ctx7"));
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      const result = await handlers["mcp.disconnect"]({ name: "ctx7" }) as any;
+      const result = await handlers["mcp.disconnect"]({ server_name: "ctx7" }) as any;
 
       expect(manager.disconnect).toHaveBeenCalledWith("ctx7");
       expect(result.status).toBe("disconnected");
@@ -279,7 +280,7 @@ describe("MCP RPC Handlers", () => {
       (manager.getConnection as any).mockReturnValue(undefined);
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
-      await expect(handlers["mcp.disconnect"]({ name: "nope" })).rejects.toThrow("not found");
+      await expect(handlers["mcp.disconnect"]({ server_name: "nope" })).rejects.toThrow("not found");
     });
   });
 
@@ -290,7 +291,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       const result = await handlers["mcp.reconnect"]({
-        name: "ctx7",
+        server_name: "ctx7",
       }) as any;
 
       expect(manager.reconnect).toHaveBeenCalledWith("ctx7");
@@ -304,7 +305,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       const result = await handlers["mcp.reconnect"]({
-        name: "ctx7",
+        server_name: "ctx7",
         transport: "stdio",
         command: "npx",
         args: ["-y", "@upstash/context7-mcp"],
@@ -319,7 +320,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await expect(
-        handlers["mcp.reconnect"]({ name: "unknown" }),
+        handlers["mcp.reconnect"]({ server_name: "unknown" }),
       ).rejects.toThrow("not found and no transport specified");
     });
   });
@@ -449,7 +450,7 @@ describe("MCP RPC Handlers", () => {
 
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await handlers["mcp.reconnect"]({
-        name: "recon-srv",
+        server_name: "recon-srv",
         transport: "http",
         url: "https://example.com/mcp",
         headers: { "Authorization": "Bearer recon-token" },
@@ -459,6 +460,136 @@ describe("MCP RPC Handlers", () => {
         name: "recon-srv",
         headers: { "Authorization": "Bearer recon-token" },
       }));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // mcp.connect env var validation (Layer 3 of 2026-05-03 outage fix)
+  // -------------------------------------------------------------------------
+  describe("mcp.connect env var validation", () => {
+    // Test H — pre-spawn rejection: missing env var produces the structured
+    // [invalid_value] error and manager.connect is NOT called.
+    it("Test H — rejects pre-spawn when env block references a missing ${VAR}", async () => {
+      const sm = createSecretManager({}); // FINNHUB_API_KEY absent
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+      });
+
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "finnhub",
+          transport: "stdio",
+          command: "uvx",
+          args: ["mcp-finnhub"],
+          env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+        }),
+      ).rejects.toThrow(
+        /\[invalid_value\] enabled MCP server "finnhub" references env var FINNHUB_API_KEY/,
+      );
+
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    // Test I — strict tightening: same env block, secret present → passes
+    // through and calls manager.connect as before.
+    it("Test I — accepts and connects when ${VAR} resolves", async () => {
+      const sm = createSecretManager({ FINNHUB_API_KEY: "abc123" });
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("finnhub", [makeTool("quote")])));
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+      });
+
+      const result = await handlers["mcp.connect"]({
+        server_name: "finnhub",
+        transport: "stdio",
+        command: "uvx",
+        args: ["mcp-finnhub"],
+        env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+      }) as any;
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "finnhub",
+          env: { FINNHUB_API_KEY: "${FINNHUB_API_KEY}" },
+        }),
+      );
+      expect(result.status).toBe("connected");
+    });
+
+    // Test J — params with no env block: validator is a no-op, existing
+    // connect behavior preserved (e.g., stdio servers without secrets).
+    it("Test J — passes through when params have no env block", async () => {
+      const sm = createSecretManager({});
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+      });
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "@upstash/context7-mcp"],
+      });
+
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    // Test K — defensive: secretManager unwired (legacy/test setup) → check
+    // is skipped, existing behavior preserved. Production always wires it.
+    it("Test K — skips validator entirely when secretManager is undefined", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("legacy", [])));
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        // secretManager intentionally omitted — simulates legacy/test wiring.
+      });
+
+      await handlers["mcp.connect"]({
+        server_name: "legacy",
+        transport: "stdio",
+        command: "noop",
+        env: { SOME_VAR: "${SOME_VAR}" },
+      });
+
+      // No throw, manager.connect was called (legacy behavior preserved).
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
+    // Test L — 3+ unresolved vars: error lists 3 alphabetically + (+N more).
+    // Identical wording to config.patch via shared formatMissingEnvRefError.
+    it("Test L — caps 4 missing vars to first 3 alphabetically with (+1 more)", async () => {
+      const sm = createSecretManager({});
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretManager: sm,
+      });
+
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "many",
+          transport: "stdio",
+          command: "noop",
+          env: {
+            VAR_A: "${A}",
+            VAR_B: "${B}",
+            VAR_C: "${C}",
+            VAR_D: "${D}",
+          },
+        }),
+      ).rejects.toThrow(/references env vars A, B, C \(\+1 more\)/);
+
+      expect(manager.connect).not.toHaveBeenCalled();
     });
   });
 });

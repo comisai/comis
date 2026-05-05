@@ -13,6 +13,7 @@
 
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 import { getToolMetadata, truncateContentBlocks } from "@comis/core";
+import { validateToolEntry } from "./schema-validator.js";
 
 /** Content block from AgentToolResult -- text or image. */
 type ContentBlock = NonNullable<AgentToolResult<unknown>["content"]>[number];
@@ -73,6 +74,18 @@ export function wrapWithMetadataEnforcement(tool: AgentTool<any>): AgentTool<any
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentToolResult generic per pi-agent-core API
     ): Promise<AgentToolResult<any>> {
       const meta = getToolMetadata(tool.name);
+
+      // Generic tool-entry schema validation (260504-cac).
+      // Runs BEFORE per-tool validateInput so action-shape errors short-circuit
+      // before tool-specific business rules. Skips silently when the tool has
+      // not registered validActions / validKeys / requiredByAction.
+      const schemaError = validateToolEntry(params, meta);
+      if (schemaError !== undefined) {
+        const err = new Error(`[invalid_value] ${schemaError}`);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- match existing errorKind propagation pattern
+        (err as any).errorKind = "validation";
+        throw err;
+      }
 
       // Pre-flight validation
       if (meta?.validateInput) {

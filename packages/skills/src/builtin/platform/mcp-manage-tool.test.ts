@@ -145,10 +145,10 @@ describe("mcp_manage tool", () => {
       const tool = createMcpManageTool(mockRpcCall);
 
       const result = await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-s1", { action: "status", name: "ctx7" } as never),
+        tool.execute("call-s1", { action: "status", server_name: "ctx7" } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("mcp.status", { name: "ctx7", _trustLevel: "admin" });
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.status", { server_name: "ctx7", _trustLevel: "admin" });
       expect(result.details).toEqual(expect.objectContaining({ name: "ctx7" }));
     });
   });
@@ -165,7 +165,7 @@ describe("mcp_manage tool", () => {
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-c1", {
           action: "connect",
-          name: "test-mcp",
+          server_name: "test-mcp",
           transport: "stdio",
           command: "npx",
           args: ["-y", "@test/mcp"],
@@ -173,7 +173,7 @@ describe("mcp_manage tool", () => {
       );
 
       expect(mockRpcCall).toHaveBeenCalledWith("mcp.connect", {
-        name: "test-mcp",
+        server_name: "test-mcp",
         transport: "stdio",
         command: "npx",
         args: ["-y", "@test/mcp"],
@@ -194,10 +194,10 @@ describe("mcp_manage tool", () => {
       const tool = createMcpManageTool(mockRpcCall);
 
       await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-d1", { action: "disconnect", name: "test-mcp" } as never),
+        tool.execute("call-d1", { action: "disconnect", server_name: "test-mcp" } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("mcp.disconnect", { name: "test-mcp", _trustLevel: "admin" });
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.disconnect", { server_name: "test-mcp", _trustLevel: "admin" });
     });
   });
 
@@ -211,10 +211,10 @@ describe("mcp_manage tool", () => {
       const tool = createMcpManageTool(mockRpcCall);
 
       await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-r1", { action: "reconnect", name: "test-mcp" } as never),
+        tool.execute("call-r1", { action: "reconnect", server_name: "test-mcp" } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("mcp.reconnect", expect.objectContaining({ name: "test-mcp", _trustLevel: "admin" }));
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.reconnect", expect.objectContaining({ server_name: "test-mcp", _trustLevel: "admin" }));
     });
   });
 
@@ -236,7 +236,7 @@ describe("mcp_manage tool", () => {
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-ag1", {
           action: "connect",
-          name: "test-mcp",
+          server_name: "test-mcp",
           transport: "stdio",
           command: "npx",
         } as never),
@@ -265,7 +265,7 @@ describe("mcp_manage tool", () => {
         runWithContext(makeContext("admin"), () =>
           tool.execute("call-ag2", {
             action: "connect",
-            name: "test-mcp",
+            server_name: "test-mcp",
             transport: "stdio",
             command: "npx",
           } as never),
