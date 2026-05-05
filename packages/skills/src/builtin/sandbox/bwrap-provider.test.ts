@@ -498,15 +498,92 @@ describe("BwrapProvider", () => {
       expect(env.BUNDLE_PATH).toBe("/home/agent/workspace/.cache/bundle");
     });
 
-    it("preserves existing env vars", () => {
+    it("preserves existing non-PATH env vars (CUSTOM_VAR untouched)", () => {
       const provider = new BwrapProvider();
       const env = provider.wrapEnv(
         { PATH: "/usr/bin", CUSTOM_VAR: "hello" },
         "/home/agent/workspace",
       );
 
-      expect(env.PATH).toBe("/usr/bin");
+      // PATH gets augmented (asserted in dedicated tests below).
+      // Non-PATH vars must be carried through verbatim.
       expect(env.CUSTOM_VAR).toBe("hello");
+    });
+
+    // -- New toolchain env vars (Task 3) --
+
+    it("sets RUSTUP_HOME, UV_TOOL_DIR, PIPX_HOME, PIPX_BIN_DIR, PNPM_HOME, BUN_INSTALL, DENO_DIR, YARN_CACHE_FOLDER", () => {
+      const provider = new BwrapProvider();
+      const env = provider.wrapEnv({ PATH: "/usr/bin" }, "/tmp/ws");
+
+      expect(env.RUSTUP_HOME).toBe("/tmp/ws/.cache/rustup");
+      expect(env.UV_TOOL_DIR).toBe("/tmp/ws/.cache/uv/tools");
+      expect(env.PIPX_HOME).toBe("/tmp/ws/.cache/pipx");
+      // PIPX_BIN_DIR aligns with PYTHONUSERBASE/bin so user-installed and
+      // pipx-installed CLIs share a single PATH entry.
+      expect(env.PIPX_BIN_DIR).toBe("/tmp/ws/.local/bin");
+      expect(env.PNPM_HOME).toBe("/tmp/ws/.cache/pnpm");
+      expect(env.BUN_INSTALL).toBe("/tmp/ws/.cache/bun");
+      expect(env.DENO_DIR).toBe("/tmp/ws/.cache/deno");
+      expect(env.YARN_CACHE_FOLDER).toBe("/tmp/ws/.cache/yarn");
+    });
+
+    it("preserves all pre-existing env redirects (regression guard)", () => {
+      const provider = new BwrapProvider();
+      const env = provider.wrapEnv({ PATH: "/usr/bin" }, "/tmp/ws");
+
+      // Same set as the comprehensive test above, asserted alongside the new keys
+      // to catch any accidental removal during the wrapEnv refactor.
+      expect(env.TMPDIR).toBe("/tmp/ws/.comis-tmp");
+      expect(env.NPM_CONFIG_CACHE).toBe("/tmp/ws/.cache/npm");
+      expect(env.PIP_CACHE_DIR).toBe("/tmp/ws/.cache/pip");
+      expect(env.XDG_CACHE_HOME).toBe("/tmp/ws/.cache");
+      expect(env.PYTHONUSERBASE).toBe("/tmp/ws/.local");
+      expect(env.MPLCONFIGDIR).toBe("/tmp/ws/.cache/matplotlib");
+      expect(env.MPLBACKEND).toBe("Agg");
+      expect(env.UV_PYTHON_INSTALL_DIR).toBe("/tmp/ws/.cache/uv/python");
+      expect(env.CARGO_HOME).toBe("/tmp/ws/.cache/cargo");
+      expect(env.GOPATH).toBe("/tmp/ws/.cache/go");
+      expect(env.GOMODCACHE).toBe("/tmp/ws/.cache/go/pkg/mod");
+      expect(env.GEM_HOME).toBe("/tmp/ws/.cache/gems");
+      expect(env.BUNDLE_PATH).toBe("/tmp/ws/.cache/bundle");
+    });
+
+    it("prepends six tool-bin paths to PATH in documented order, then env.PATH", () => {
+      const provider = new BwrapProvider();
+      const env = provider.wrapEnv({ PATH: "/usr/bin:/bin" }, "/tmp/ws");
+
+      // Order is load-bearing: pip --user / pipx CLIs first (most common in
+      // agent flows), then cargo, go, bun, pnpm, deno. env.PATH is appended
+      // last so installed CLIs shadow system tools when same name conflicts.
+      expect(env.PATH.split(":")).toEqual([
+        "/tmp/ws/.local/bin",
+        "/tmp/ws/.cache/cargo/bin",
+        "/tmp/ws/.cache/go/bin",
+        "/tmp/ws/.cache/bun/bin",
+        "/tmp/ws/.cache/pnpm",
+        "/tmp/ws/.cache/deno/bin",
+        "/usr/bin",
+        "/bin",
+      ]);
+    });
+
+    it("produces a valid PATH (no trailing/duplicate colons) when env.PATH is missing", () => {
+      const provider = new BwrapProvider();
+      const env = provider.wrapEnv({}, "/tmp/ws");
+
+      // PATH must NOT end with ':' and must NOT contain '::' (an empty entry)
+      expect(env.PATH).not.toMatch(/:$/);
+      expect(env.PATH).not.toMatch(/::/);
+      // Exactly the six tool-bin paths, in order
+      expect(env.PATH.split(":")).toEqual([
+        "/tmp/ws/.local/bin",
+        "/tmp/ws/.cache/cargo/bin",
+        "/tmp/ws/.cache/go/bin",
+        "/tmp/ws/.cache/bun/bin",
+        "/tmp/ws/.cache/pnpm",
+        "/tmp/ws/.cache/deno/bin",
+      ]);
     });
   });
 });

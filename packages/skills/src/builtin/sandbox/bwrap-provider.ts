@@ -215,6 +215,26 @@ export class BwrapProvider implements SandboxProvider {
   wrapEnv(env: Record<string, string>, workspacePath: string): Record<string, string> {
     // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
     const cacheDir = path.join(workspacePath, ".cache");
+
+    // Workspace-rooted bin dirs that hold CLIs installed by sandboxed package
+    // managers. Prepended to PATH so a binary installed by `cargo install <crate>`
+    // (or pipx, go install, bun add -g, deno install, pnpm add -g) on one exec
+    // call is invocable on the NEXT exec call. Ordering: highest-frequency first.
+    const toolBinPaths = [
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      path.join(workspacePath, ".local", "bin"),  // PYTHONUSERBASE/bin + PIPX_BIN_DIR
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      path.join(cacheDir, "cargo", "bin"),         // cargo install
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      path.join(cacheDir, "go", "bin"),            // go install
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      path.join(cacheDir, "bun", "bin"),           // bun add -g
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      path.join(cacheDir, "pnpm"),                 // pnpm global (PNPM_HOME itself is the bin dir)
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      path.join(cacheDir, "deno", "bin"),          // deno install
+    ];
+
     return {
       ...env,
       // Temp files: heredocs, wheel builds, etc.
@@ -225,7 +245,7 @@ export class BwrapProvider implements SandboxProvider {
       NPM_CONFIG_CACHE: path.join(cacheDir, "npm"),
       // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
       PIP_CACHE_DIR: path.join(cacheDir, "pip"),
-       
+
       XDG_CACHE_HOME: cacheDir,
       // Python: redirect user packages into workspace.
       // PYTHONNOUSERSITE is NOT set — sandbox read paths cover dirs that
@@ -253,6 +273,36 @@ export class BwrapProvider implements SandboxProvider {
       GEM_HOME: path.join(cacheDir, "gems"),
       // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
       BUNDLE_PATH: path.join(cacheDir, "bundle"),
+      // Rust: rustup toolchain installs (paired with CARGO_HOME above).
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      RUSTUP_HOME: path.join(cacheDir, "rustup"),
+      // uv: tool install dir for `uvx` / `uv tool install` (paired with UV_PYTHON_INSTALL_DIR above).
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      UV_TOOL_DIR: path.join(cacheDir, "uv", "tools"),
+      // pipx: venvs root + bin dir. PIPX_BIN_DIR aligns with PYTHONUSERBASE/bin
+      // (PYTHONUSERBASE = workspace/.local) so user-installed and pipx-installed
+      // CLIs share a single PATH entry: workspace/.local/bin.
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      PIPX_HOME: path.join(cacheDir, "pipx"),
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      PIPX_BIN_DIR: path.join(workspacePath, ".local", "bin"),
+      // pnpm global store + bin dir (PNPM_HOME is on PATH below).
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      PNPM_HOME: path.join(cacheDir, "pnpm"),
+      // bun: install root; binaries land in $BUN_INSTALL/bin.
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      BUN_INSTALL: path.join(cacheDir, "bun"),
+      // deno: cache + installed CLI dir ($DENO_DIR/bin via `deno install`).
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      DENO_DIR: path.join(cacheDir, "deno"),
+      // yarn cache; mirrors the others for completeness even though yarn is rare in agent flows.
+      // eslint-disable-next-line no-restricted-syntax -- Trusted: workspace path is daemon-controlled, constant subpaths
+      YARN_CACHE_FOLDER: path.join(cacheDir, "yarn"),
+
+      // PATH augmentation MUST come after the spread above so it overrides
+      // any PATH carried in `env`. Empty entries are filtered to avoid
+      // trailing/duplicate colons when env.PATH is undefined.
+      PATH: [...toolBinPaths, env.PATH ?? ""].filter(Boolean).join(":"),
     };
   }
 }
