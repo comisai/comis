@@ -130,16 +130,15 @@ export function scanWithOutputGuard(params: {
 /** Silent tokens that indicate the final message has no visible content. */
 const SILENT_FINAL_TOKENS = ["NO_REPLY", "HEARTBEAT_OK"];
 
-/** Tool names whose successful invocation means the agent already delivered
- *  content to the user through a side-channel. When one of these tools was
- *  called during the execution, a silent final token (NO_REPLY) is intentional
- *  and recovery must be suppressed to avoid leaking internal narration. */
-const DELIVERY_TOOL_NAMES = ["message", "notify"];
-
 /**
- * When the final assistant message is thinking-only or a
- * silent token (NO_REPLY, HEARTBEAT_OK) but text was emitted in earlier
+ * When the final assistant message is empty but text was emitted in earlier
  * turns, recover a meaningful user-visible response.
+ *
+ * Recovery fires only when `extractedResponse === ""`. Silent tokens
+ * (`NO_REPLY`, `HEARTBEAT_OK`) are explicit suppression signals and pass
+ * through unchanged — the channel-layer filter
+ * (`packages/channels/src/shared/response-filter.ts`) detects and suppresses
+ * them downstream.
  *
  * Two-pass strategy (gated):
  * 1. **Tool-call synthesis** (primary) — if ≥1 prior assistant turn within the
@@ -157,10 +156,6 @@ const DELIVERY_TOOL_NAMES = ["message", "notify"];
  * comment below) ensures the standalone walk only fires when no tool calls
  * were observed; this keeps the pass selection mutually exclusive.
  *
- * Suppressed when a delivery tool (`message`, `notify`) was used — the agent
- * already delivered content via side-channel and the silent final token is
- * intentional.
- *
  * Returns the recovered text, or the original response if no recovery needed.
  */
 export function recoverEmptyFinalResponse(params: {
@@ -177,23 +172,8 @@ export function recoverEmptyFinalResponse(params: {
   const { extractedResponse, textEmitted, messages, logger, userMessageIndex } = params;
   const lowerBound = userMessageIndex ?? 0;
 
-  const isSilentFinalToken = SILENT_FINAL_TOKENS.includes(extractedResponse.trim());
-  if ((extractedResponse === "" || isSilentFinalToken) && textEmitted) {
+  if (extractedResponse === "" && textEmitted) {
     if (Array.isArray(messages)) {
-      // Guard: if the agent already delivered content via a delivery tool
-      // (message, notify), the silent final token is intentional — skip
-      // recovery to avoid leaking internal narration (e.g. "Now let me
-      // generate the chart:" surfaced as a user-visible message).
-      if (isSilentFinalToken && hasDeliveryToolCall(messages, lowerBound)) {
-        logger.debug(
-          {
-            hint: "Silent final token after delivery tool call — recovery suppressed",
-            extractedResponse,
-          },
-          "Skipping empty-response recovery (delivery tool used)",
-        );
-        return extractedResponse;
-      }
       /* eslint-disable @typescript-eslint/no-explicit-any */
 
       // Collect tool-call summaries from prior assistant turns within the
@@ -302,26 +282,6 @@ function extractVisibleText(content: any[]): string | undefined {
     return visible || undefined;
   }
   return undefined;
-}
-/* eslint-enable @typescript-eslint/no-explicit-any */
-
-/** Check whether any assistant turn (from lowerBound onward) contains a tool
- *  call to a delivery tool (message, notify). These tools send content to the
- *  user through a side-channel, so a subsequent NO_REPLY is intentional. */
-/* eslint-disable @typescript-eslint/no-explicit-any */
-function hasDeliveryToolCall(messages: any[], lowerBound: number): boolean {
-  for (let i = lowerBound; i < messages.length; i++) {
-    const msg = messages[i]; // eslint-disable-line security/detect-object-injection
-    if (msg?.role === "assistant" && Array.isArray(msg.content)) {
-      const hasDelivery = msg.content.some(
-        (b: any) =>
-          (b?.type === "toolCall" || b?.type === "tool_use") &&
-          DELIVERY_TOOL_NAMES.includes(b?.name),
-      );
-      if (hasDelivery) return true;
-    }
-  }
-  return false;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
