@@ -4,7 +4,7 @@
  * @module
  */
 
-import { bootstrap, loadEnvFile, createApprovalGate, parseFormattedSessionKey, createConfigGitManager, envSubset, generateStrongToken, createAuditAggregator, createInjectionRateLimiter, validateMemoryWrite, checkApprovalsConfig, safePath, resolveConfigSecretRefs, formatSessionKey } from "@comis/core";
+import { bootstrap, loadEnvFile, createApprovalGate, parseFormattedSessionKey, createConfigGitManager, envSubset, generateStrongToken, createAuditAggregator, createInjectionRateLimiter, validateMemoryWrite, checkApprovalsConfig, safePath, resolveConfigSecretRefs, formatSessionKey, BackgroundTasksConfigSchema } from "@comis/core";
 import type { SecretStorePort, WrapExternalContentOptions, PerAgentConfig } from "@comis/core";
 import { setupSecrets as _setupSecretsImpl, createSqliteSecretStore, createNamedGraphStore, createContextStore, createObservabilityStore } from "@comis/memory";
 import type { ObservabilityStore } from "@comis/memory";
@@ -32,6 +32,7 @@ import {
   setupDeliveryMirror,
   setupNotifications,
   setupBackgroundTasks,
+  setupBackgroundCompletionRunner,
 } from "./wiring/index.js";
 import { setupSingleAgent } from "./wiring/setup-agents.js";
 import { createActiveRunRegistry, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides } from "@comis/agent";
@@ -942,6 +943,38 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
 
   // Wire deferred notification ref for background task completion callbacks
   bgNotifyRef.ref = notificationContext.notificationService;
+
+  // 6.6.8.0.2. Background-task completion runner -- re-enters the originating
+  // agent session when a backgrounded tool finishes (Phase 14 SPEC R3).
+  // Runs AFTER setupNotifications so bgNotifyFn is live as fallbackNotifyFn (D-08).
+  //
+  // maxBackgroundHops is read from config.backgroundTasks.maxBackgroundHops
+  // (NOT config.workflow.* -- CONTEXT D-03 supersedes the SPEC's stale phrasing).
+  // backgroundTasks is a per-agent field; parse via BackgroundTasksConfigSchema to
+  // get the correct default (3) when not explicitly configured.
+  const bgConfigForRunner = BackgroundTasksConfigSchema.parse(
+    agents[defaultAgentId]?.backgroundTasks ?? {},
+  );
+  const bgCompletionRunnerContext = setupBackgroundCompletionRunner({
+    eventBus: container.eventBus,
+    // setup-agents.ts:178 declares getExecutor as synchronous
+    // ((agentId: string) => AgentExecutor) -- direct call, no await.
+    executor: getExecutor(defaultAgentId),
+    sessionStore,
+    taskManager: backgroundTaskManager,
+    fallbackNotifyFn: bgNotifyFn,
+    maxBackgroundHops: bgConfigForRunner.maxBackgroundHops,
+    logger: daemonLogger,
+  });
+  container.eventBus.on("system:shutdown", () => {
+    void bgCompletionRunnerContext.runner.shutdown();
+  });
+
+  // 6.6.8.0.3. Recover background tasks NOW (after the runner is subscribed).
+  // setup-background-tasks.ts INTENTIONALLY does not call this -- if it did,
+  // recovered failed events would fire before the runner subscribes and the
+  // user would never see the SPEC AC-11 recovery announcement.
+  backgroundTaskManager.recoverOnStartup();
 
   // Channel health monitor -- polls adapter getStatus() at configurable interval.
   // Created after adapters are initialized, started immediately with the adapter map.

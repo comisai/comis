@@ -25,9 +25,16 @@ export interface SetupBackgroundTasksDeps {
 
 /**
  * Wire the background task subsystem from daemon-level dependencies.
- * Creates BackgroundTaskManager with file-based persistence, recovers
- * incomplete tasks from the previous daemon run (marking them failed),
- * and starts an hourly cleanup timer for stale completed/failed tasks.
+ * Creates BackgroundTaskManager with file-based persistence and starts
+ * an hourly cleanup timer for stale completed/failed tasks.
+ *
+ * Note: startup recovery (marking interrupted tasks as failed) is
+ * INTENTIONALLY deferred to daemon.ts. The daemon calls it AFTER
+ * `setupBackgroundCompletionRunner` has subscribed to
+ * background_task:{completed,failed}. If recovery fires before the runner
+ * subscribes, the synthesized failure events for restart-interrupted tasks
+ * land in an empty handler set and the user never sees the recovery
+ * announcement (SPEC AC-11).
  * @param deps - Daemon-level dependencies
  * @returns BackgroundTasksContext with manager instance
  */
@@ -38,9 +45,7 @@ export function setupBackgroundTasks(deps: SetupBackgroundTasksDeps): Background
     logger: deps.logger,
   });
 
-  // Mark incomplete tasks from previous daemon run as failed
-  manager.recoverOnStartup();
-
+  // Startup recovery is deferred to daemon.ts (after the completion runner subscribes).
   // Periodic cleanup of stale completed/failed tasks (24h TTL)
   const cleanupInterval = setInterval(() => manager.cleanup(), 3_600_000); // every hour
   cleanupInterval.unref(); // don't keep daemon alive for cleanup
