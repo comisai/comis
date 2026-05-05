@@ -186,6 +186,10 @@ export async function setupSchedulers(deps: {
             payloadKind: job.payload.kind,
             sessionStrategy: job.sessionStrategy,
             maxHistoryTurns: job.maxHistoryTurns,
+            // Cadence is a literal number only for kind === "every"; cron-expression
+            // schedules would require parsing the expression to estimate a cadence,
+            // which is out of scope. Consumers must treat undefined as "unknown".
+            cadenceMs: job.schedule.kind === "every" ? job.schedule.everyMs : undefined,
             cronJobModel: job.payload.kind === "agent_turn" ? job.payload.model : undefined,
             cacheRetention: job.cacheRetention,
             toolPolicy: job.toolPolicy,

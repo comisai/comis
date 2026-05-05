@@ -271,6 +271,12 @@ export interface InfraEvents {
     sessionStrategy?: "fresh" | "rolling" | "accumulate";
     /** Number of recent turns to keep for rolling strategy. */
     maxHistoryTurns?: number;
+    /** Schedule cadence in ms when known. Populated only for schedule.kind === "every"
+     *  (where everyMs is a literal). Undefined for cron-expression and one-shot ("at")
+     *  schedules — deriving cadence from a cron expression would require parsing and is
+     *  intentionally out of scope for this field. Used by the cron handler to warn when
+     *  long-cadence jobs run with a cache-wasting sessionStrategy. */
+    cadenceMs?: number;
     /** Per-cron-job model override from CronPayload.agent_turn.model. */
     cronJobModel?: string;
     /** Per-cron-job cache retention override from CronJob config. */
