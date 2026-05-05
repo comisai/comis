@@ -33,7 +33,7 @@
   "dependencies": {
     "@comis/shared": "workspace:*",
     "ipaddr.js": "2.3.0",
-    "yaml": "2.8.3",
+    "yaml": "2.8.4",
     "zod": "4.3.6"
   },
   "devDependencies": {
