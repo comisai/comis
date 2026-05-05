@@ -1678,6 +1678,10 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     // drainer sees and assert on queue depth (SPEC AC-2).
     deliveryAdapters: channelAdaptersRef,
     deliveryQueue,
+    // Phase 14: expose the background task manager so integration tests can
+    // promote synthetic tasks and call complete()/fail() to drive the
+    // completion runner pipeline without requiring a live LLM call.
+    backgroundTaskManager,
     rpcCall, deviceIdentity, diagnosticCollector, billingEstimator,
     channelActivityTracker, deliveryTracer, approvalGate, channelHealthMonitor, sessionStoreBridge,
   };

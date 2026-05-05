@@ -1,0 +1,101 @@
+# Comis Test Configuration (Phase 14: Background-task completion re-triggers agent session)
+#
+# Variant of config.test-delivery-recurring.yaml for Phase 14 integration tests:
+# - Separate port (8479) to avoid conflicts with other test suites
+# - Separate memory database (test-memory-bg-completion.db) for isolation
+# - RAG disabled (no embeddings needed)
+# - Cron disabled (not testing scheduler)
+# - All monitoring disabled
+# - deliveryQueue.drainIntervalMs: 250 -- fast tick (inherits Phase 13 pattern)
+# - backgroundTasks.autoBackgroundMs: 100 -- so test_sleep(500ms) auto-backgrounds quickly
+# - backgroundTasks.maxBackgroundHops: 3 -- default cap for SPEC R4 boundary tests
+
+tenantId: "test"
+logLevel: "warn"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "BackgroundCompletionTestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+    backgroundTasks:
+      enabled: true
+      autoBackgroundMs: 100
+      maxPerAgent: 5
+      maxTotal: 20
+      maxBackgroundDurationMs: 30000
+      maxBackgroundHops: 3
+      excludeTools: []
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8479
+  tokens:
+    - id: "test-bg-completion-token"
+      secret: "test-bg-completion-secret-key-for-integration-tests"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-bg-completion.db"
+
+deliveryQueue:
+  enabled: true
+  drainOnStartup: true
+  drainBudgetMs: 60000
+  drainIntervalMs: 250
+  pruneIntervalMs: 300000
+  defaultMaxAttempts: 3
+  defaultExpireMs: 3600000
+  maxQueueDepth: 10000
+
+security:
+  agentToAgent:
+    enabled: false
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic

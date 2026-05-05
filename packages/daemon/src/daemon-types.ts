@@ -11,7 +11,7 @@ import type { AppContainer, ChannelPort, DeliveryQueuePort } from "@comis/core";
 import type { ApprovalGate } from "@comis/core";
 import type { ChannelHealthMonitor, DeliveryAdapter } from "@comis/channels";
 import type { ComisLogger } from "@comis/infra";
-import type { SessionResetScheduler } from "@comis/agent";
+import type { SessionResetScheduler, BackgroundTaskManager } from "@comis/agent";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type {
   HeartbeatRunner,
@@ -77,6 +77,12 @@ export interface DaemonInstance {
    * to assert on queue depth (SPEC AC-2: depth returns to 0 after drain).
    */
   readonly deliveryQueue: DeliveryQueuePort;
+  /**
+   * Background task manager (Phase 14). Exposed for integration tests that
+   * need to promote synthetic tasks and call complete()/fail() to drive the
+   * completion runner pipeline without a live LLM.
+   */
+  readonly backgroundTaskManager: BackgroundTaskManager;
   readonly rpcCall: RpcCall;
   readonly deviceIdentity?: DeviceIdentity;
   readonly diagnosticCollector: DiagnosticCollector;
