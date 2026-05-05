@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis ships **50+ leaf commands grouped into 19 command groups** (verified against `packages/cli/src/cli.ts` at version 1.0.35). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
+Comis ships **50+ leaf commands grouped into 20 command groups** (verified against `packages/cli/src/cli.ts` at version 1.0.35). The CLI talks to the running daemon over JSON-RPC; offline-only commands such as `secrets` operate directly on local files. Run any command with `--help` to see its full flag list — every flag below is also documented inline in the binary.
 
 <Snippet file="invocation-modes.mdx" />
 
@@ -136,6 +136,95 @@ comis agent create my-agent --provider anthropic --model claude-sonnet-4-5-20250
 # Delete an agent without confirmation
 comis agent delete old-agent --yes
 ```
+
+---
+
+### `comis auth`
+
+OAuth authentication management for subscription-based providers (currently OpenAI Codex). Profiles are written to the [OAuthCredentialStorePort](/security/oauth#storage-backends) — separate from `SecretStorePort`, with refresh + per-profile-ID locking semantics.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `auth login` | Log in to an OAuth-enabled provider (browser or device-code flow) |
+| `auth list` | List stored OAuth profiles |
+| `auth logout` | Remove a stored OAuth profile |
+| `auth status` | Show per-provider OAuth state (expiry, last refresh) |
+
+#### `auth login`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--provider <id>` | `string` | _required_ | OAuth provider id. Must be `openai-codex` (other providers ship in later phases). |
+| `--remote` | `boolean` | _auto_ | Force remote/headless mode (no browser open). Auto-detected via `SSH_CLIENT`, `SSH_TTY`, missing `DISPLAY`. |
+| `--local` | `boolean` | _auto_ | Force local/desktop mode (attempt browser open). Inverse of `--remote`. |
+| `--profile <id>` | `string` | _derived_ | Override the auto-derived profile id (`<provider>:<email-from-jwt>`). Provider portion of the override must match `--provider`. |
+| `--method <method>` | `browser` \| `device-code` | `browser` | Login method. Use `device-code` for SSH/no-clipboard environments. |
+
+```bash
+# Local desktop (browser auto-open)
+comis auth login --provider openai-codex
+
+# Headless / SSH host (device-code flow — short code displayed; type it on a phone)
+comis auth login --provider openai-codex --method device-code
+
+# Multi-account: tag the new profile with a custom alias
+comis auth login --provider openai-codex --profile openai-codex:work@company.com
+```
+
+**Exit codes (`auth login`):**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Login completed; profile persisted |
+| `1` | Login flow failed (network, OAuth server error, store-write failure) |
+| `2` | Invalid arguments (`--provider` not `openai-codex`; malformed `--profile`; provider mismatch in `--profile`; `--method device-code` on a non-codex provider) |
+
+#### `auth list`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--provider <id>` | `string` | - | Filter to one provider. |
+
+```bash
+# All profiles
+comis auth list
+
+# Only Codex profiles
+comis auth list --provider openai-codex
+```
+
+**Exit codes:** `0` success (including empty store with informative message); `1` config load / store open failure.
+
+#### `auth logout`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--profile <id>` | `string` | _required_ | Profile id to remove (e.g., `openai-codex:user@example.com`). |
+
+```bash
+comis auth logout --profile openai-codex:user@example.com
+```
+
+**Exit codes:** `0` profile removed; `1` profile not found in store.
+
+#### `auth status`
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--provider <id>` | `string` | - | Filter to one provider. |
+
+Reports per-provider state: profile id, identity (email or accountId), expiry timestamp, status (`active` / `expired`), and last refresh time.
+
+```bash
+comis auth status
+comis auth status --provider openai-codex
+```
+
+<Tip>
+Errors from any `auth` subcommand are classified into 6 categories — see [OAuth concepts → Error classification](/security/oauth#error-classification). The CLI prints both `userMessage` and an actionable `hint` (e.g., `Re-authenticate with: comis auth login --provider openai-codex`).
+</Tip>
 
 ---
 
@@ -298,13 +387,14 @@ comis daemon logs -n 100
 
 ### `comis doctor`
 
-Run diagnostic health checks across five categories: configuration, daemon, gateway, channels, and workspace. Supports auto-repair mode for fixable issues.
+Run diagnostic health checks across six categories: configuration, daemon, gateway, channels, workspace, and oauth. Supports auto-repair mode for fixable issues. The `oauth` category covers JWT expiry, schema mismatch, ca-certificates, HTTPS_PROXY drift, and TLS preflight — see [OAuth concepts → Error classification](/security/oauth#error-classification).
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--repair` | `boolean` | `false` | Auto-fix repairable issues |
 | `-c, --config <paths...>` | `string[]` | - | Config file paths to check |
 | `--format <format>` | `table` \| `json` | `table` | Output format |
+| `--refresh-test` | `boolean` | `false` | OAuth: actively test refresh against the provider. **Warning:** this rotates the refresh token at OpenAI. |
 
 ```bash
 # Run full diagnostics
@@ -405,6 +495,27 @@ comis init
 comis init --non-interactive --accept-risk \
   --provider anthropic --api-key "$ANTHROPIC_API_KEY" \
   --start-daemon --json
+```
+
+#### Non-interactive rejection: `--provider openai-codex`
+
+`comis init --non-interactive --provider openai-codex` is **deliberately rejected** because the Codex OAuth flow requires interactive UI (browser callback, device-code prompt, or manual paste). The CLI exits non-zero with the literal error:
+
+> openai-codex requires interactive login; run `comis init` interactively or run `comis auth login --provider openai-codex --method device-code` separately.
+
+For headless / CI environments, you have three options:
+
+1. Run `comis init` interactively (in a TTY).
+2. Run `comis init --non-interactive` with a different provider, then run [`comis auth login --method device-code`](#comis-auth) afterwards to add the Codex profile.
+3. Pre-seed the OAuth credential via the [`OAUTH_OPENAI_CODEX`](/reference/environment-variables#oauth_openai_codex) environment variable on the daemon's first start. The daemon's env-var bootstrap path is read once when the credential store is empty for that provider; subsequent drift triggers a one-shot WARN.
+
+```bash
+# Wrong — exits non-zero with the error above
+comis init --non-interactive --provider openai-codex
+
+# Right — drop --provider and add the profile interactively afterward
+comis init --non-interactive
+comis auth login --provider openai-codex --method device-code
 ```
 
 ---

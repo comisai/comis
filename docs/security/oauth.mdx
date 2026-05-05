@@ -1,0 +1,295 @@
+---
+title: "OAuth"
+description: "Subscription-based authentication via OpenAI Codex (PKCE OAuth) -- login flows, storage, profiles, and refresh"
+icon: "shield-check"
+---
+
+Comis supports OAuth-based authentication for providers that bill via
+subscription rather than per-request API keys -- currently OpenAI Codex
+(ChatGPT subscription). OAuth profiles live in a dedicated
+[`OAuthCredentialStorePort`](/reference/secret-manager) -- separate from the
+read-only `SecretManager` -- because access tokens expire on a 30-minute
+cadence and refresh tokens rotate on every refresh. This page covers the full
+lifecycle: how login flows work, where tokens are stored, how multi-account
+routing resolves, how env-var bootstrap interacts with on-disk profiles, and
+the threat model.
+
+## Token Sink
+
+OAuth refresh tokens **rotate on every refresh** -- each refresh exchanges the
+current refresh token for a fresh access token AND a fresh refresh token. The
+previous refresh token becomes invalid immediately. This means **exactly one
+component per ChatGPT account** can hold the live refresh token at any time.
+Two components racing produces `refresh_token_reused`, which OpenAI treats as
+a security event and auto-locks the account for 24 hours.
+
+Practical consequence: pick one source of truth per ChatGPT account.
+
+<Warning>
+If you also run OpenAI's Codex CLI (or any other ChatGPT OAuth tool) on the
+same machine for the same account, the two tools will fight over the refresh
+token. Each tool's refresh invalidates the other's, and you will see
+seemingly-random `Re-authenticate with: comis auth login` prompts. This is the
+**ChatGPT-CLI coexistence** pitfall: the standalone Codex CLI stores tokens
+under `~/.codex/` and Comis stores them under `~/.comis/`, but they both target
+the same `auth.openai.com` rotation domain. Pick **either** Comis **or** the
+standalone Codex CLI for any given account; do not run both.
+</Warning>
+
+For a multi-machine, multi-account setup, give each Comis daemon its own
+ChatGPT account, or use [multi-account profiles](#multi-account-profiles)
+below to route different agents to different identities within a single
+daemon.
+
+## Storage Backends
+
+OAuth profiles are stored on disk in one of two backends, selected via the
+[`oauth.storage`](/reference/config-yaml#oauth) config key:
+
+| Backend | Path | Algorithm | Hot-reload |
+|---------|------|-----------|------------|
+| `file` (default) | `~/.comis/auth-profiles.json` | Plaintext JSON, mode `0o600` | Yes -- chokidar 100ms debounce |
+| `encrypted` | `oauth_profiles` table inside `secrets.db` (same SQLite database as the encrypted secrets store) | AES-256-GCM with HKDF-SHA256 key derivation; per-row 12-byte IV and 16-byte auth tag | No -- SQLite WAL writes do not surface as `change` events |
+
+**File mode** writes atomically via `tmp -> fsync -> rename`. Cross-process
+refreshes coordinate through `proper-lockfile` -- a Comis daemon and a
+`comis auth login` CLI invocation against the same profile-id will serialize,
+not race. The chokidar watcher means a fresh login from a different shell is
+picked up by the running daemon within ~100ms; no daemon restart needed. The
+`auth-profiles.json` file is rejected at boot if its mode is anything other
+than `0o600` (group/world read is a configuration error, not a warning).
+
+**Encrypted mode** requires `SECRETS_MASTER_KEY`. The daemon fails fast on
+boot otherwise -- no silent fallback to plaintext. The denormalized
+`expires_at` column lets `comis doctor` scan profile expiries without
+decrypting every row. Hot-reload is a known limitation: CLI-written profiles
+need a daemon restart to take effect (the SQLite WAL journal masks the
+file-change event chokidar relies on).
+
+<Snippet file="oauth-token-warning.mdx" />
+
+## OAuth Exchange (How Login Works)
+
+### Codex PKCE flow
+
+OpenAI Codex uses OAuth 2.0 with [PKCE](https://datatracker.ietf.org/doc/html/rfc7636)
+(Proof Key for Code Exchange):
+
+1. The CLI / wizard generates a random 32-byte **verifier** (hex-encoded) and
+   computes its SHA-256 **challenge**.
+2. The CLI / wizard generates a random **state** (CSRF token) and constructs
+   an authorization URL pointing at `auth.openai.com` with the challenge +
+   state + the originator id `comis`.
+3. The user signs into ChatGPT and approves; the OAuth server redirects to a
+   **callback** URL -- `http://127.0.0.1:1455/callback` for local mode, the
+   device-code verification URL for headless mode, or
+   `https://<your-host>/oauth/callback/openai-codex` for the gateway flow.
+4. The CLI / wizard validates the returned state matches the one it sent
+   (rejecting `callback_validation_failed` otherwise), exchanges the
+   authorization code + verifier for an access + refresh token pair, and
+   decodes the JWT to extract the email + accountId.
+
+The login result is written to the OAuth credential store as
+`openai-codex:<email>` (or a custom alias if `--profile` was supplied -- see
+[multi-account profiles](#multi-account-profiles)).
+
+### Anthropic setup-token flow
+
+Anthropic Claude uses a different "OAuth" UX -- the user runs
+`claude setup-token` from Anthropic's standalone CLI, copies a long-lived
+token, and pastes it into the Comis wizard. This is **not** the PKCE flow
+described above; it is a paste-token bootstrap from a tool Anthropic
+maintains. Comis treats the resulting token as opaque and stores it via the
+same `OAuthCredentialStorePort`, but no refresh happens -- the token is valid
+until Anthropic invalidates it.
+
+## Refresh and Expiry
+
+Access tokens expire 30 minutes after issuance. The daemon checks the
+persisted `expires` epoch-millisecond on every model call and refreshes
+proactively when the access token is within a small buffer of expiry (the
+current implementation uses a 60-second buffer, kept tight to maximize the
+token's useful life while still avoiding round-trip races). On the next LLM
+call past that threshold, the refresh path runs.
+
+Refresh runs under a **per-profile-id file-lock**:
+
+1. Acquire the cross-process lock via `proper-lockfile` (5-retry exponential
+   backoff: 50ms -> 100ms -> 200ms -> 500ms -> 1000ms).
+2. Re-read the profile under the lock (a different process may have already
+   refreshed -- if the cached `expires` is now past the buffer, return the
+   newly-persisted access token without hitting the network).
+3. If still expired-or-near, call `auth.openai.com`'s token endpoint with the
+   current refresh token under a 30-second `withTimeout`.
+4. Persist the new access + new refresh + new expiry to disk (file or
+   encrypted) atomically.
+5. **Then** release the lock.
+
+The persist-before-release order means concurrent callers waiting for the
+file lock will see the rotated refresh token, not the stale one. This
+eliminates the `refresh_token_reused` race that plagued earlier designs in
+which the refresh round-trip ran outside any lock. Implementations
+specifically MUST NOT release the lock before the new credentials are
+fsynced to disk.
+
+## Multi-Account Profiles
+
+Each profile is keyed by `<provider>:<identity>`. For OpenAI Codex, identity
+is the email from the OAuth response JWT -- so
+`openai-codex:user@example.com` and `openai-codex:work@company.com` coexist
+inside one credential store. The CLI's `--profile` flag overrides the
+auto-derived id (the provider portion must still match `--provider`); this
+lets you assign meaningful aliases like `openai-codex:prod-bot` regardless of
+the underlying email.
+
+Per-agent OAuth routing happens through `agents.<id>.oauthProfiles` in YAML:
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    provider: openai-codex
+    oauthProfiles:
+      openai-codex: "openai-codex:user@example.com"
+  work-agent:
+    provider: openai-codex
+    oauthProfiles:
+      openai-codex: "openai-codex:work@company.com"
+```
+
+At LLM-call time, the resolver walks three tiers in order: (a) the agent's
+`oauthProfiles` map (explicit pin), (b) the per-provider `lastGood` cache
+(the last profile-id that successfully refreshed for this provider in this
+process), and (c) the first available profile in the store for this
+provider. Missing all three returns `PROFILE_NOT_FOUND` and the call fails
+fast with an actionable hint -- this is the routing equivalent of the
+"explicit > sticky > arbitrary" precedence used for skill scoping.
+
+## Env-Var Bootstrap Precedence
+
+For CI / Docker deployments, Comis supports pre-seeding an OAuth profile via
+the `OAUTH_<PROVIDER>` environment variable (e.g.,
+[`OAUTH_OPENAI_CODEX`](/reference/environment-variables#oauth_openai_codex)).
+The precedence rules are deliberately strict so an operator can never be
+confused about which credential is in flight:
+
+- **R7a -- Empty store seeds from env.** When the credential store has no
+  profile for `<provider>` and `OAUTH_<PROVIDER>` is set, the daemon parses
+  the env var as JSON (`access`, `refresh`, `expires`, `accountId`, `email`),
+  decodes the JWT identity, and writes the profile on first start. Subsequent
+  refreshes update the on-disk profile, not the env var.
+- **R7b -- Stored profile wins.** When the store already has a profile, the
+  daemon ignores the env var entirely. The stored profile is the source of
+  truth (it may have been refreshed since boot, in which case the env-var
+  refresh token is now stale and would trigger `refresh_token_reused`).
+- **R7c -- WARN once on drift.** When the env-var refresh token differs from
+  the stored profile's refresh token, the daemon emits one WARN per
+  (provider, process) with `errorKind: "config_drift"` and
+  `hint: "env-override-ignored"`. Operators clear drift by either
+  `comis auth logout --profile <id>` (then restart re-bootstraps from env)
+  or by deleting the env var. This is the env-var bootstrap path; the WARN
+  is intentionally one-shot per process so noisy startup logs do not
+  crowd out genuine errors.
+
+## Wizard vs CLI Parity Matrix
+
+Where each login flow is reachable:
+
+| Login flow | `comis init` wizard | `comis auth login` CLI | Web dashboard |
+|---|---|---|---|
+| Browser auto-open (callback on `127.0.0.1:1455`) | check -- "Browser (auto-open)" | check -- default on local mode | -- |
+| Browser manual paste | check -- "Browser (manual paste)" | check -- `--remote`, or 15s+1s timeout fallback | -- |
+| Device code (short code on phone) | check -- "Device code (phone)" | check -- `--method device-code` | -- |
+| Gateway callback (web "Connect ChatGPT" button) | -- | -- | check -- `GET /oauth/callback/:provider` Hono route |
+| Skip-for-now (defer login to a later command) | check -- "Skip for now" | N/A | -- |
+| Env-var bootstrap (`OAUTH_OPENAI_CODEX`) | N/A -- wizard is interactive | N/A -- same | -- |
+| Pre-generated token paste (legacy) | -- REMOVED in 260504-gge | -- | -- |
+
+The wizard auto-defaults the picker to `Device code (phone)` on
+remote/headless hosts (`SSH_CLIENT`/`SSH_TTY` set or `DISPLAY` unset) and to
+`Browser (auto-open)` on local desktops. The labels in the table are the
+exact strings rendered by `packages/cli/src/wizard/steps/04-credentials.ts`
+so that a user comparing this doc against their terminal sees the same
+words.
+
+## Error Classification
+
+Every OAuth failure is mapped to one of six structured error codes
+(`errorKind`) so the CLI can emit actionable hints and the daemon can
+classify failures in structured logs:
+
+| `errorKind` | When | User-facing message + hint |
+|---|---|---|
+| `refresh_token_reused` | Server says token already used (account auto-locked) | Re-authenticate with `comis auth login --provider openai-codex` |
+| `invalid_grant` | Refresh token rejected for another reason | Re-authenticate with `comis auth login --provider openai-codex` |
+| `unsupported_region` | OpenAI rejects the request based on country / network route | Set `HTTPS_PROXY` to a US-region proxy and retry; see [HTTPS Proxy](/operations/proxy) |
+| `callback_validation_failed` | State mismatch or missing code (stale browser tab) | Retry the login flow |
+| `identity_decode_failed` | OAuth response had no parseable identity claim | Retry; if persistent, open an issue |
+| `callback_timeout` | Browser callback never arrived (or upstream timed out) | Restart the login flow |
+
+The classification ordering is deliberate: `refresh_token_reused` is matched
+**before** `invalid_grant` because the former is a more specific subtype of
+the latter, and a generic `invalid_grant` message would mask the
+auto-lock-recovery hint.
+
+## Threat Model
+
+- **T-OAUTH-DISK-EXFIL** -- *Disk-read attacker.* An attacker with read
+  access to `~/.comis/` could exfiltrate stored access and refresh tokens.
+  **Mitigation:** Plaintext mode enforces `0o600` perms (user-only read);
+  files with weaker modes are rejected at boot. Encrypted mode stores tokens
+  as AES-256-GCM ciphertext with per-row IV / auth-tag, defeating raw-byte
+  scans (verified by canary tests in the test suite).
+- **T-OAUTH-REFRESH-RACE** -- *Concurrent refresh race.* Two daemon
+  instances or daemon+CLI refreshing the same token simultaneously could
+  produce `refresh_token_reused` (which auto-locks the account at OpenAI).
+  **Mitigation:** Per-profile cross-process file lock via `proper-lockfile`
+  with 5-retry exponential backoff; refresh persistence happens *before*
+  lock release, so concurrent callers see the rotated token via the
+  lock-protected critical section.
+- **T-OAUTH-ENV-DRIFT** -- *Env-var drift.* An operator updates
+  `OAUTH_OPENAI_CODEX` in `.env` after a profile is already in the store;
+  the daemon silently uses the stored profile. **Mitigation:**
+  WARN-once-per-(provider, process) on drift with
+  `errorKind: "config_drift"` and `hint: "env-override-ignored"`. Resolution
+  is documented in the env-var bootstrap section above.
+- **T-OAUTH-LOG-LEAK** -- *Token in logs.* OAuth tokens never appear in any
+  log line at any level (DEBUG included). Pino's auto-redaction list is the
+  safety net (the canonical fields convention in `CLAUDE.md` excludes
+  `token`, `access`, `refresh`, `apiKey`, etc. by name). Email identities
+  are **semi-redacted** at the call site -- `user@example.com` becomes
+  `u***@e***.com` -- before being logged, so a multi-account routing bug is
+  still debuggable without revealing full email addresses to a log reader.
+- **T-OAUTH-HUNG-REFRESH** -- *DoS via slow OAuth server.* An OAuth refresh
+  that hangs forever could starve concurrent LLM calls waiting on the file
+  lock. **Mitigation:** every refresh runs under a 30-second `withTimeout`;
+  on timeout the lock is released and the original error surfaces with
+  `errorKind: "timeout"` and `hint: "auth_endpoint_unreachable"`.
+
+All examples in this page use `EXAMPLE-` prefixes for token values; no
+real-shape JWT bodies are paste-able from this doc, which addresses
+**T-DOC-EXAMPLE-LEAK**. The wizard-vs-CLI parity matrix is verbatim from the
+RESEARCH source so that a doc edit cannot silently drift from the wizard
+labels in `04-credentials.ts` (**T-DOC-MISDIRECTION**).
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Secrets" icon="key" href="/security/secrets">
+    SecretStorePort and the AES-256-GCM secrets store
+  </Card>
+  <Card title="Secret Manager Reference" icon="file-code" href="/reference/secret-manager">
+    Technical interface details
+  </Card>
+  <Card title="CLI: comis auth" icon="terminal" href="/reference/cli#comis-auth">
+    Login, list, logout, status
+  </Card>
+  <Card title="Config: oauth.storage" icon="gear" href="/reference/config-yaml#oauth">
+    YAML configuration reference
+  </Card>
+  <Card title="Env Var: OAUTH_OPENAI_CODEX" icon="key" href="/reference/environment-variables#oauth_openai_codex">
+    CI / Docker bootstrap
+  </Card>
+  <Card title="HTTPS Proxy" icon="network-wired" href="/operations/proxy">
+    Proxy quirks for unsupported_region
+  </Card>
+</CardGroup>

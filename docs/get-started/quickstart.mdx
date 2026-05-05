@@ -86,6 +86,46 @@ Before you begin, make sure you have:
         - `~/.comis/config.yaml` -- Your agent's configuration (name, provider, settings)
         - `~/.comis/.env` -- Your API key, stored separately for security
 
+        #### Picking an OpenAI provider: `openai` vs `openai-codex`
+
+        On the first wizard question, two OpenAI options appear:
+
+        | Provider id | Label | Cost model | When to pick |
+        |-------------|-------|------------|--------------|
+        | `openai` | **OpenAI (GPT)** -- "GPT-4o, o1, o3 -- API key (pay per token)" | Pay per request | You have an OpenAI API key from `platform.openai.com` and want GPT-4o / o1 / o3. |
+        | `openai-codex` | **OpenAI Codex** -- "ChatGPT/Codex subscription -- OAuth login" | Flat ChatGPT subscription | You already pay for ChatGPT Plus / Team / Enterprise and want Codex (gpt-5.1 family). No API key needed; the wizard runs an OAuth login. |
+
+        **If you pick `openai`,** the wizard prompts for an API key as usual.
+
+        **If you pick `openai-codex`,** the wizard prints:
+
+        > OpenAI Codex uses your ChatGPT/Codex subscription -- no API key needed. Choose how you want to sign in.
+
+        ...followed by a four-option login picker:
+
+        | Option | Picker label | Use when |
+        |--------|--------------|----------|
+        | Browser (auto-open) | `Browser (auto-open)` -- "Local desktop, opens default browser" | You're on a desktop or laptop with a graphical browser; the wizard opens a tab and waits for the OAuth callback on `127.0.0.1:1455`. |
+        | Browser (manual paste) | `Browser (manual paste)` -- "VPS, you paste callback URL after sign-in" | The host has a browser elsewhere (e.g., your laptop), but the daemon runs on a VPS without a default browser. The wizard prints the auth URL; you paste the callback URL back after sign-in. |
+        | Device code (phone) | `Device code (phone)` -- "SSH/headless, type a short code on a phone" | SSH session, no clipboard, no scrollback. The wizard prints a short code and a verification URL; you open the URL on your phone and type the code. |
+        | Skip for now | `Skip for now` -- "finish wizard, run `comis auth login` later" | You want to finish the rest of the wizard now and add the OAuth profile in a later step (see below). |
+
+        <Tip>
+        The wizard auto-defaults to `Device code (phone)` on remote/headless hosts (when `SSH_CLIENT`, `SSH_TTY` is set or `DISPLAY` is unset) and to `Browser (auto-open)` on local desktops. You can always pick a different option from the menu.
+        </Tip>
+
+        **What `Skip for now` does:** the wizard finishes without writing an OAuth profile. The agent config marks `openai-codex` as not-yet-validated. Before starting the daemon, run:
+
+        ```bash
+        comis auth login --provider openai-codex
+        ```
+
+        The CLI runs the same login flow (browser auto, browser manual, or device-code via `--method device-code`) and writes the resulting profile into the OAuth credential store. See [`comis auth login` reference](/reference/cli#comis-auth) for all flags.
+
+        **VPS / SSH hint:** For headless deployments (Hostinger, DigitalOcean, Hetzner, Render, etc.), pick `Device code (phone)`. The browser-based options assume a graphical environment that VPS hosts typically lack. Full VPS walkthrough: [Install on a VPS](/installation/install-vps).
+
+        For the full picture -- PKCE flow shape, multi-account profiles, the wizard-vs-CLI parity matrix, and the threat model -- see [OAuth concepts](/security/oauth).
+
         <Accordion title="Non-interactive alternative">
           If you prefer to skip the wizard (for example, in a CI pipeline or Docker
           container), you can pass everything on the command line:

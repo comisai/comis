@@ -130,6 +130,29 @@ When the wizard asks to restart the daemon, choose **Restart (recommended)**.
 This ensures the daemon picks up your API key and gateway token immediately.
 </Tip>
 
+### Codex OAuth on headless hosts
+
+If you pick `openai-codex` as your provider on a VPS, the wizard's auto-default for the login method is `Device code (phone)` -- the recommended path on headless hosts. This is because VPS images typically lack a default browser, and SSH sessions usually have no clipboard or scrollback that the browser-paste flow relies on.
+
+The wizard detects headless hosts via standard environment variables:
+
+- `SSH_CLIENT` or `SSH_TTY` set, **or**
+- `DISPLAY` unset
+
+When detected, the picker pre-selects `Device code (phone)`. You confirm by pressing Enter; the wizard prints a short code and a verification URL like `https://chat.openai.com/oauth/device`. Open that URL on your phone or laptop browser, sign into ChatGPT, and type the code. The wizard polls every 5 seconds and continues once the code is accepted.
+
+<Tip>
+You can re-run the OAuth login at any time, with or without finishing the wizard. From a TTY:
+
+```bash
+comis auth login --provider openai-codex --method device-code
+```
+
+This is the same flow the wizard runs and writes to the same OAuth credential store. Use it if you picked `Skip for now` in the wizard or want to add a second ChatGPT account (multi-account is supported -- see [OAuth concepts -> Multi-account profiles](/security/oauth#multi-account-profiles)).
+</Tip>
+
+For the wizard's full 4-option picker walkthrough -- including the local-desktop and browser-manual-paste options -- see the [Quickstart](/get-started/quickstart#picking-an-openai-provider-openai-vs-openai-codex). For the OAuth threat model and storage backends, see [OAuth concepts](/security/oauth).
+
 ## Step 5: Verify everything works
 
 ```bash

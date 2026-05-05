@@ -165,6 +165,35 @@ comis secrets init --write
 export SECRETS_MASTER_KEY="a1b2c3d4e5f6..."
 ```
 
+## OAuth Variables
+
+### `OAUTH_OPENAI_CODEX`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon (one-time bootstrap when the OAuth credential store has no profile for `openai-codex`) |
+| **Format** | JSON: `{"access":"...","refresh":"...","expires":<epochMs>,"accountId":"...","email":"..."}` |
+| **Default** | (none) |
+
+Pre-seeds the OAuth credential store with a profile for `openai-codex` on the **first** daemon start when the store is empty. After bootstrap, the stored profile is the source of truth — subsequent daemon starts ignore this env var even if its value changes.
+
+```bash
+# Example: pre-seed via env var (CI / Docker)
+export OAUTH_OPENAI_CODEX='{"access":"EXAMPLE-access","refresh":"EXAMPLE-refresh","expires":1735689600000,"accountId":"EXAMPLE-acct","email":"user@example.com"}'
+```
+
+**Bootstrap precedence (Phase 7 R7):**
+
+1. **Stored profile wins.** If the OAuth credential store already has a profile for `openai-codex`, the daemon uses it and ignores `OAUTH_OPENAI_CODEX` entirely.
+2. **Env var is a one-time seed.** When the store is empty for the provider, the daemon parses the env var and writes the profile. Subsequent token refreshes update the stored profile, not the env var.
+3. **WARN once on drift.** If the env-var refresh token differs from the stored profile's refresh token, the daemon emits one WARN per (provider, process) with `errorKind: "config_drift"` and `hint: "env-override-ignored"`. Operators clear the drift by either:
+   - Running `comis auth logout --profile <id>` then restarting the daemon to re-bootstrap from env, **or**
+   - Deleting the env var if the stored profile is the intended source of truth.
+
+<Warning>This env var contains an OAuth refresh token. Treat it like a password. Use your CI / orchestrator's secret-store integration; never paste it into config files or commit it to version control.</Warning>
+
+For the full bootstrap-precedence walkthrough including drift-handling examples, see [OAuth concepts → Env-var bootstrap precedence](/security/oauth#env-var-bootstrap-precedence).
+
 ## Standard Variables
 
 ### `NODE_ENV`

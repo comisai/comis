@@ -1,0 +1,67 @@
+---
+title: "HTTPS Proxy"
+description: "Routing Comis's outbound traffic (including OAuth) through HTTPS_PROXY"
+icon: "network-wired"
+---
+
+Comis's outbound HTTP traffic -- OAuth refresh calls, optional content fetch, scheduled webhook calls -- can be routed through an HTTPS proxy via standard environment variables (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`). However, **Node 22's built-in fetch does not honor these variables by default**. This page documents the behavior and the workaround Comis ships.
+
+## The Node 22 fetch caveat
+
+Node 22's built-in `fetch()` -- the global function exposed without an import -- is implemented on top of the `undici` HTTP client. Unlike `axios`, `node-fetch`, or older HTTP libraries, **Node's built-in fetch silently ignores the `HTTPS_PROXY` and `HTTP_PROXY` environment variables**. Setting them has no effect on requests made via `fetch()`.
+
+This caught us during Phase 10 OAuth-error catalogue work: the `unsupported_region` error from `auth.openai.com` is the canonical signal that an operator needs a US-region proxy, but the obvious fix (`export HTTPS_PROXY=http://proxy.example.com:8080`) does nothing for the OAuth refresh path because the daemon uses `fetch()` (per `pi-ai`'s implementation) for token rotation.
+
+<Warning>
+If you are debugging an `unsupported_region` error and "the proxy works for `curl` but not Comis", this is almost always the cause. `curl`, `axios`, and `node-fetch` honor `HTTPS_PROXY` via their own logic. Node's built-in `fetch()` does not -- it requires explicit proxy wiring at the `undici` layer.
+</Warning>
+
+## How Comis honors HTTPS_PROXY
+
+When `HTTPS_PROXY` (or `HTTP_PROXY`, or `ALL_PROXY`) is set in the daemon's environment, Comis configures `undici`'s global dispatcher to route outbound requests through that proxy at boot time. This is done once during daemon startup and applies to every subsequent `fetch()` call -- including OAuth token refreshes, the gateway callback's exchange step, and any `fetch_url` skill invocations.
+
+```bash title="~/.comis/.env"
+HTTPS_PROXY=http://proxy.example.com:8080
+# Or for an authenticated proxy:
+HTTPS_PROXY=http://user:password@proxy.example.com:8080
+```
+
+After setting the env var, restart the daemon for the change to take effect (the proxy wiring runs once at boot, not on hot-reload).
+
+```bash
+pm2 restart comis
+# OR
+systemctl restart comis
+```
+
+<Tip>
+You can verify the proxy is in effect by running `comis doctor` -- the `oauth` category sub-checks include an HTTPS_PROXY-set probe (Phase 10 SC-10-2). If you set the variable but Comis is not picking it up, the doctor flag tells you so.
+</Tip>
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `unsupported_region` error from OAuth refresh | OpenAI sees your network's egress IP; need to route via a US-region proxy | Set `HTTPS_PROXY=http://us-proxy.example.com:8080`, restart daemon |
+| Proxy set in shell, daemon ignores it | Env var not visible to the daemon process (e.g., set in `.bashrc` after pm2 spawned the process) | Set the var in `~/.comis/.env` (read by all Comis processes), or in the systemd unit `Environment=` directive, then restart |
+| Proxy works for `curl` but not Comis | The other tool was using `node-fetch` / `axios` (which honor `HTTPS_PROXY` via their own logic); Comis uses Node's built-in `fetch` and configures the proxy at boot | Confirm the env var is in the daemon's environment when it boots (check `cat /proc/$(pgrep -f comis-daemon)/environ \| tr '\0' '\n' \| grep -i proxy`) |
+| Authenticated proxy 407 error | Username / password not URL-escaped | URL-encode special characters: `@` -> `%40`, `:` -> `%3A`, etc. |
+
+For the `unsupported_region` error code's full classification and other OAuth error codes, see [OAuth concepts -> Error classification](/security/oauth#error-classification).
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="OAuth" icon="shield-check" href="/security/oauth">
+    Subscription-based authentication and the full OAuth error catalogue
+  </Card>
+  <Card title="Environment Variables" icon="key" href="/reference/environment-variables">
+    All env vars Comis reads, including proxy-related variables
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Common issues across daemon, channels, and runtime
+  </Card>
+  <Card title="Daemon" icon="server" href="/operations/daemon">
+    Startup, shutdown, and the boot-time proxy wiring
+  </Card>
+</CardGroup>

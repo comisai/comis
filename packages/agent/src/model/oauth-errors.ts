@@ -89,7 +89,7 @@ export function rewriteOAuthError(err: unknown): RewrittenOAuthError {
         "OpenAI rejected the request for this country, region, or network route. " +
         "If you normally use a proxy, verify HTTPS_PROXY, HTTP_PROXY, or ALL_PROXY is set " +
         "for the Comis process. NOTE: Node's built-in fetch does NOT honor HTTPS_PROXY " +
-        "by default (see docs/operations/proxy.md, shipped Phase 12).",
+        "by default (see docs/operations/proxy.mdx, shipped Phase 12).",
       hint: "Set HTTPS_PROXY to a US-region proxy and retry",
     };
   }
