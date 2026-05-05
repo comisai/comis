@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { BackgroundTaskOrigin } from "../domain/background-task-origin.js";
+
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
  * media, scheduler, system, and metrics events.
@@ -467,22 +469,41 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  /** Background task completed successfully */
+  /** Background task completed successfully. `origin` carries originating
+   *  session attribution so subscribers (the completion runner) can
+   *  re-enter the right session without a synchronous round-trip through
+   *  the manager. */
   "background_task:completed": {
     agentId: string;
     taskId: string;
     toolName: string;
     durationMs: number;
+    origin: BackgroundTaskOrigin;
     timestamp: number;
   };
 
-  /** Background task failed (timeout, error, or daemon restart) */
+  /** Background task failed (timeout, error, or daemon restart).
+   *  `origin` is populated for in-process failures and for restart-recovery
+   *  failures (recoverOnStartup re-emits with origin from the persisted JSON). */
   "background_task:failed": {
     agentId: string;
     taskId: string;
     toolName: string;
     error: string;
     durationMs: number;
+    origin: BackgroundTaskOrigin;
+    timestamp: number;
+  };
+
+  /** Background completion runner is about to invoke executor.execute() on
+   *  the originating session (latency-instrumentation hook). Subscribers
+   *  may compute the delta from background_task:completed.timestamp to
+   *  this event for SLO tracking (target: p95 ≤ 1000ms over 50 trials). */
+  "background_task:reentered": {
+    taskId: string;
+    agentId: string;
+    sessionKey: string;
+    hopCount: number;
     timestamp: number;
   };
 

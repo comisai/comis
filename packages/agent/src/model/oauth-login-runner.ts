@@ -77,7 +77,7 @@ export interface LoginRunnerParams {
    * Browser opener — typically `import open from "open"` from the consumer.
    * Stubbed in tests with a vi.fn that captures the URL. Returns
    * Promise<unknown> because the `open` package returns Promise<ChildProcess>
-   * which the runner does not consume (RESEARCH §Anti-Patterns line 451).
+   * which the runner does not consume.
    */
   openUrl: (url: string) => Promise<unknown>;
   /** Optional logger — callers without one get a no-op fallback. */
@@ -403,7 +403,7 @@ export async function loginOpenAICodexOAuth(
     logger.debug(
       {
         submodule: "oauth-login",
-        // RESEARCH constraint — log URL but redact the state param.
+        // Log URL but redact the state param.
         url: event.url.replace(/state=[^&]+/, "state=***"),
       },
       "OAuth authorize URL ready",

@@ -13,6 +13,7 @@ describe("BackgroundTasksConfigSchema", () => {
       maxTotal: 20,
       maxBackgroundDurationMs: 300_000,
       excludeTools: [],
+      maxBackgroundHops: 3,
     });
   });
 
@@ -44,6 +45,23 @@ describe("BackgroundTasksConfigSchema", () => {
     expect(result.maxBackgroundDurationMs).toBe(600_000);
     expect(result.excludeTools).toEqual(["exec_command"]);
   });
+
+  it("accepts maxBackgroundHops: 5", () => {
+    const result = BackgroundTasksConfigSchema.parse({ maxBackgroundHops: 5 });
+    expect(result.maxBackgroundHops).toBe(5);
+  });
+
+  it("rejects maxBackgroundHops: 0", () => {
+    expect(() => BackgroundTasksConfigSchema.parse({ maxBackgroundHops: 0 })).toThrow();
+  });
+
+  it("rejects maxBackgroundHops: -1", () => {
+    expect(() => BackgroundTasksConfigSchema.parse({ maxBackgroundHops: -1 })).toThrow();
+  });
+
+  it("rejects maxBackgroundHops: 1.5 (integer required)", () => {
+    expect(() => BackgroundTasksConfigSchema.parse({ maxBackgroundHops: 1.5 })).toThrow();
+  });
 });
 
 describe("PerAgentConfigSchema backgroundTasks integration", () => {
@@ -61,6 +79,7 @@ describe("PerAgentConfigSchema backgroundTasks integration", () => {
       maxTotal: 20,
       maxBackgroundDurationMs: 300_000,
       excludeTools: [],
+      maxBackgroundHops: 3,
     });
   });
 });

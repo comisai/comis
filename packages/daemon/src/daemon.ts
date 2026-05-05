@@ -4,7 +4,7 @@
  * @module
  */
 
-import { bootstrap, loadEnvFile, createApprovalGate, parseFormattedSessionKey, createConfigGitManager, envSubset, generateStrongToken, createAuditAggregator, createInjectionRateLimiter, validateMemoryWrite, checkApprovalsConfig, safePath, resolveConfigSecretRefs, formatSessionKey } from "@comis/core";
+import { bootstrap, loadEnvFile, createApprovalGate, parseFormattedSessionKey, createConfigGitManager, envSubset, generateStrongToken, createAuditAggregator, createInjectionRateLimiter, validateMemoryWrite, checkApprovalsConfig, safePath, resolveConfigSecretRefs, formatSessionKey, BackgroundTasksConfigSchema } from "@comis/core";
 import type { SecretStorePort, WrapExternalContentOptions, PerAgentConfig } from "@comis/core";
 import { setupSecrets as _setupSecretsImpl, createSqliteSecretStore, createNamedGraphStore, createContextStore, createObservabilityStore } from "@comis/memory";
 import type { ObservabilityStore } from "@comis/memory";
@@ -32,6 +32,7 @@ import {
   setupDeliveryMirror,
   setupNotifications,
   setupBackgroundTasks,
+  setupBackgroundCompletionRunner,
 } from "./wiring/index.js";
 import { setupSingleAgent } from "./wiring/setup-agents.js";
 import { createActiveRunRegistry, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides } from "@comis/agent";
@@ -533,7 +534,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // Populated after setupChannels; the callback is invoked at message time (always set by then).
   const channelPluginsRef: { ref?: Map<string, import("@comis/core").ChannelPluginPort> } = {};
 
-  // 6.5.1. Background task system (Proactive v1 -- BGND)
+  // 6.5.1. Background task system
   // Created before setupAgents so BackgroundTaskManager is available for executor deps.
   const { backgroundTaskManager } = setupBackgroundTasks({
     dataDir,
@@ -738,7 +739,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // ensures rpcCall is safe to pass now; actual dispatch wires later via wireDispatch().
   const { rpcCall, wireDispatch } = setupRpcBridge({ gatewayLogger });
 
-  // 6.6.8.6. Approval gate (moved before channels for APPR-CHAT command interception)
+  // 6.6.8.6. Approval gate (moved before channels for chat command interception)
   const approvalGate = createApprovalGate({
     eventBus: container.eventBus,
     getTimeoutMs: () => container.config.approvals?.defaultTimeoutMs ?? 30_000,
@@ -747,7 +748,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     logger: daemonLogger, // Approval cache hit/miss debug logging
   });
 
-  // 6.6.8.6.1. Restore pending approvals from previous restart (quick-174)
+  // 6.6.8.6.1. Restore pending approvals from previous restart
   const approvalRestorePath = pathJoin(container.config.dataDir || dataDir, "restart-approvals.json");
   if (existsSync(approvalRestorePath)) {
     try {
@@ -884,7 +885,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     },
     // /approve and /deny chat command interception
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
-    // CMD-WIRE: Per-agent session adapters and cost trackers for slash commands
+    // Per-agent session adapters and cost trackers for slash commands
     piSessionAdapters,
     costTrackers,
     // Delivery queue for crash-safe persistence
@@ -924,7 +925,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // Structured logging for delivery queue lifecycle events
   setupDeliveryQueueLogging({ eventBus: container.eventBus, logger: daemonLogger });
 
-  // 6.6.8.0.1. Notification system (Proactive v1)
+  // 6.6.8.0.1. Notification system
   // setupNotifications creates the NotificationService and SessionTracker.
   // The factory is already complete -- this call wires it into the daemon.
   const notificationContext = setupNotifications({
@@ -942,6 +943,38 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
 
   // Wire deferred notification ref for background task completion callbacks
   bgNotifyRef.ref = notificationContext.notificationService;
+
+  // 6.6.8.0.2. Background-task completion runner -- re-enters the originating
+  // agent session when a backgrounded tool finishes.
+  // Runs AFTER setupNotifications so bgNotifyFn is live as fallbackNotifyFn.
+  //
+  // maxBackgroundHops is read from config.backgroundTasks.maxBackgroundHops
+  // (NOT config.workflow.*).
+  // backgroundTasks is a per-agent field; parse via BackgroundTasksConfigSchema to
+  // get the correct default (3) when not explicitly configured.
+  const bgConfigForRunner = BackgroundTasksConfigSchema.parse(
+    agents[defaultAgentId]?.backgroundTasks ?? {},
+  );
+  const bgCompletionRunnerContext = setupBackgroundCompletionRunner({
+    eventBus: container.eventBus,
+    // setup-agents.ts:178 declares getExecutor as synchronous
+    // ((agentId: string) => AgentExecutor) -- resolved lazily per event.
+    getExecutor,
+    sessionStore,
+    taskManager: backgroundTaskManager,
+    fallbackNotifyFn: bgNotifyFn,
+    maxBackgroundHops: bgConfigForRunner.maxBackgroundHops,
+    logger: daemonLogger,
+  });
+  container.eventBus.on("system:shutdown", () => {
+    void bgCompletionRunnerContext.runner.shutdown();
+  });
+
+  // 6.6.8.0.3. Recover background tasks NOW (after the runner is subscribed).
+  // setup-background-tasks.ts INTENTIONALLY does not call this -- if it did,
+  // recovered failed events would fire before the runner subscribes and the
+  // user would never see the recovery announcement.
+  backgroundTaskManager.recoverOnStartup();
 
   // Channel health monitor -- polls adapter getStatus() at configurable interval.
   // Created after adapters are initialized, started immediately with the adapter map.
@@ -993,7 +1026,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
   }
 
-  // 6.6.8.4.1. Image generation provider (Proactive v1 -- IMGN)
+  // 6.6.8.4.1. Image generation provider
   const imageGenConfig = container.config.integrations.media.imageGeneration;
   const imageGenResult = createImageGenProvider(imageGenConfig, container.secretManager);
   const imageGenProvider = imageGenResult.ok ? imageGenResult.value : undefined;
@@ -1276,7 +1309,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   };
 
   // 6.7.1. Wire RPC dispatch now that heartbeatRunner is available
-  // Keep a reference so we can add wsConnections/mediaDir after gateway setup (quick-91).
+  // Keep a reference so we can add wsConnections/mediaDir after gateway setup.
   const rpcDispatchDeps: import("./rpc/rpc-dispatch.js").RpcDispatchDeps = {
     defaultAgentId, getAgentCronScheduler, cronSchedulers, executionTrackers,
     wakeCoalescer, defaultWorkspaceDir, workspaceDirs, memoryApi, memoryAdapter,
@@ -1314,7 +1347,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     },
     memoryWriteValidator: validateMemoryWrite,  // memory content validation
     eventBus: container.eventBus as { emit(event: string, payload: unknown): void },  // security event emission for memory writes
-    mcpClientManager,  // Phase quick-81: MCP server management
+    mcpClientManager,  // MCP server management
     contextStore,  // DAG recall RPC handlers
     contextEngineConfig: {
       maxRecallsPerDay: agents[defaultAgentId]?.contextEngine?.maxRecallsPerDay ?? 10,
@@ -1332,7 +1365,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     embeddingCacheStats,  // embedding cache stats for memory.embeddingCache RPC
     embeddingCircuitBreakerState,  // Embedding circuit breaker state for memory operations
     skillRegistries,  // skill management handlers in rpc-dispatch
-    notificationService: notificationContext.notificationService,  // Proactive v1: notification.send RPC handler
+    notificationService: notificationContext.notificationService,  // notification.send RPC handler
     // Image generation RPC handler deps
     imageHandlerDeps: imageGenProvider && imageGenRateLimiter ? {
       provider: imageGenProvider,
@@ -1364,7 +1397,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     instanceId, startupStartMs,
   });
 
-  // 7.0.1. Wire deferred gateway attachment deps (quick-91)
+  // 7.0.1. Wire deferred gateway attachment deps
   // wsConnections and mediaDir are now available after gateway setup; message.attach
   // handler closures read from the mutable rpcDispatchDeps reference at call time.
   rpcDispatchDeps.wsConnections = wsConnections;
@@ -1488,7 +1521,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     secretStore,  // close secrets.db on shutdown
     auditAggregator,  // clear pending dedup timers
     injectionRateLimiter,  // clear rate limiter timers on shutdown
-    lockCleanupTimer,  // quick-112: clear periodic lock cleanup timer
+    lockCleanupTimer,  // clear periodic lock cleanup timer
     dataDir: container.config.dataDir || dataDir,
     continuationTracker,
     lifecycleReactors,  // destroy lifecycle reactors on shutdown
@@ -1640,11 +1673,15 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     container, logger, logLevelManager, tokenTracker, latencyRecorder,
     processMonitor, shutdownHandle, watchdogHandle, cronSchedulers, resetSchedulers,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
-    // Phase 13: expose the delivery-queue-side adapter map and the queue port
+    // Expose the delivery-queue-side adapter map and the queue port
     // itself so integration tests can register adapters that the recurring
-    // drainer sees and assert on queue depth (SPEC AC-2).
+    // drainer sees and assert on queue depth.
     deliveryAdapters: channelAdaptersRef,
     deliveryQueue,
+    // Expose the background task manager so integration tests can
+    // promote synthetic tasks and call complete()/fail() to drive the
+    // completion runner pipeline without requiring a live LLM call.
+    backgroundTaskManager,
     rpcCall, deviceIdentity, diagnosticCollector, billingEstimator,
     channelActivityTracker, deliveryTracer, approvalGate, channelHealthMonitor, sessionStoreBridge,
   };

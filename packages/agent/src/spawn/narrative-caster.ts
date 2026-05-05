@@ -54,8 +54,12 @@ const MAX_LABEL_LENGTH = 100;
  * Trailing instruction appended to every announcement.
  * MUST start with "Inform the user about this completed background task."
  * for AnnouncementBatcher.stripSystemPrefix() compatibility.
+ *
+ * Exported so packages/agent/src/background/completion-formatter.ts can
+ * reuse the byte-identical string. Do NOT change the string
+ * without updating both consumers AND announcement-batcher.ts:81.
  */
-const TRAILING_INSTRUCTION =
+export const TRAILING_INSTRUCTION =
   "Inform the user about this completed background task. Summarize the result in your own voice. If no user notification is needed, respond with NO_REPLY.";
 
 /** Human-readable names for condensation levels. */

@@ -11,8 +11,8 @@
  * auth:profile_bootstrapped, and returns a static "Login Successful" HTML
  * page (200) on success or a "Login Failed" HTML page (400/500) on failure.
  *
- * HTTP method is GET, NOT POST (RESEARCH §Pitfall 5 — OAuth servers always
- * redirect with GET). Logging discipline (CLAUDE.md): submodule: "oauth-callback"
+ * HTTP method is GET, NOT POST (OAuth servers always redirect with GET).
+ * Logging discipline (CLAUDE.md): submodule: "oauth-callback"
  * on every line; NEVER log code/state/verifier/access/refresh values.
  *
  * @module
@@ -35,7 +35,7 @@ import type { GatewayLogger } from "../server/hono-server.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** 5-minute pending-flow expiry (SC11-4). Exported for test parity. */
+/** 5-minute pending-flow expiry. Exported for test parity. */
 export const PENDING_FLOW_TIMEOUT_MS = 5 * 60_000;
 
 /** OpenAI Codex token endpoint — same as oauth-token-manager.ts:301. */
@@ -44,7 +44,7 @@ const OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token";
 /** Public OpenAI Codex client_id (NOT a comis secret — per pi-ai source). */
 const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
-/** Redirect URI matches pi-ai device-callback convention (RESEARCH §Pattern 3). */
+/** Redirect URI matches pi-ai device-callback convention. */
 const OPENAI_CODEX_DEVICE_CALLBACK_URL =
   "https://auth.openai.com/deviceauth/callback";
 
@@ -175,10 +175,10 @@ async function exchangeAuthorizationCode(params: {
 
 /**
  * Seed the pending-flow map with a new state -> PendingFlow entry, scheduling
- * a 5-minute auto-delete cleanup timer (SC11-4).
+ * a 5-minute auto-delete cleanup timer.
  *
  * The caller is responsible for generating `state` via crypto.randomBytes(16)
- * (see RESEARCH §Pitfall 4 — never hand-roll a PRNG).
+ * — never hand-roll a PRNG.
  */
 export function insertPendingFlow(
   map: Map<string, PendingFlow>,
@@ -225,7 +225,7 @@ export function createOAuthCallbackRoute(deps: OAuthCallbackDeps): Hono {
 
     if (flow.provider !== provider) {
       // Preserve the entry — the legitimate provider's callback may still
-      // arrive. RESEARCH §Pattern 3.
+      // arrive.
       return c.html(oauthErrorHtml("Provider mismatch"), 400);
     }
 

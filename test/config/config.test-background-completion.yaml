@@ -1,12 +1,14 @@
-# Comis Test Configuration — Continuous Delivery-Queue Drainer Tests
+# Comis Test Configuration — Background-task completion re-triggers agent session
 #
-# Variant of config.test-channel-crash.yaml for delivery-queue drainer integration tests:
-# - Separate port (8478) to avoid conflicts with other test suites
-# - Separate memory database (test-memory-delivery-recurring.db) for isolation
+# Variant of config.test-delivery-recurring.yaml for background-completion integration tests:
+# - Separate port (8479) to avoid conflicts with other test suites
+# - Separate memory database (test-memory-bg-completion.db) for isolation
 # - RAG disabled (no embeddings needed)
 # - Cron disabled (not testing scheduler)
 # - All monitoring disabled
-# - deliveryQueue.drainIntervalMs: 250 -- fast tick for short test wall-clock
+# - deliveryQueue.drainIntervalMs: 250 -- fast tick (inherits delivery-recurring pattern)
+# - backgroundTasks.autoBackgroundMs: 100 -- so test_sleep(500ms) auto-backgrounds quickly
+# - backgroundTasks.maxBackgroundHops: 3 -- default cap for boundary tests
 
 tenantId: "test"
 logLevel: "warn"
@@ -14,7 +16,7 @@ dataDir: "" # Resolves to ~/.comis at runtime
 
 agents:
   default:
-    name: "DeliveryRecurringTestAgent"
+    name: "BackgroundCompletionTestAgent"
     model: default
     thinkingLevel: "off"
     provider: default
@@ -32,14 +34,22 @@ agents:
     scheduler:
       cron:
         enabled: false
+    backgroundTasks:
+      enabled: true
+      autoBackgroundMs: 100
+      maxPerAgent: 5
+      maxTotal: 20
+      maxBackgroundDurationMs: 30000
+      maxBackgroundHops: 3
+      excludeTools: []
 
 gateway:
   enabled: true
   host: "127.0.0.1"
-  port: 8478
+  port: 8479
   tokens:
-    - id: "test-delivery-recurring-token"
-      secret: "test-delivery-recurring-secret-key-for-integration-tests"
+    - id: "test-bg-completion-token"
+      secret: "test-bg-completion-secret-key-for-integration-tests"
       scopes: ["rpc", "ws", "admin"]
   rateLimit:
     windowMs: 60000
@@ -59,7 +69,7 @@ scheduler:
     criticalBypass: true
 
 memory:
-  dbPath: "test-memory-delivery-recurring.db"
+  dbPath: "test-memory-bg-completion.db"
 
 deliveryQueue:
   enabled: true

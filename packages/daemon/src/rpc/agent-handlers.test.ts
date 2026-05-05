@@ -1580,7 +1580,7 @@ describe("createAgentHandlers", () => {
       expect(deps.agents["default"]).toBe(originalRef);
     });
 
-    it("REPLACES the agent reference at deps.agents[agentId] on success (does NOT mutate in place) — pin Plan 04 closure-stability contract", async () => {
+    it("REPLACES the agent reference at deps.agents[agentId] on success (does NOT mutate in place) — pin closure-stability contract", async () => {
       const store = makeStoreMock(() => ok(true));
       const deps = makeDeps({ oauthCredentialStore: store });
       const originalRef = deps.agents["default"]!;
@@ -1594,10 +1594,10 @@ describe("createAgentHandlers", () => {
         _trustLevel: "admin",
       });
 
-      // Reference replacement (NOT in-place mutation). Plan 04's Option B
+      // Reference replacement (NOT in-place mutation). The Option B
       // closure dereferences container.config.agents[agentId] on every
       // getApiKey call; this contract is what makes hot-update of
-      // oauthProfiles observable without daemon restart (SC#4).
+      // oauthProfiles observable without daemon restart.
       expect(deps.agents["default"]).not.toBe(originalRef);
       expect(deps.agents["default"]!.oauthProfiles).toEqual({
         "openai-codex": "openai-codex:user@example.com",

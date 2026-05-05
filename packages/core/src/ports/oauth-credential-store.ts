@@ -7,8 +7,8 @@ import { ok, err } from "@comis/shared";
  *
  * Maps to pi-ai's OAuthCredentials plus comis-managed metadata
  * (provider, profileId, identity claims). The expires field is
- * milliseconds since epoch (matches pi-ai per RESEARCH Q1 landmine 4 —
- * the JWT exp claim is seconds, but pi-ai stores ms).
+ * milliseconds since epoch (matches pi-ai — the JWT exp claim is
+ * seconds, but pi-ai stores ms).
  */
 export interface OAuthProfile {
   /** OAuth provider id (e.g. "openai-codex", "anthropic"). */
@@ -27,7 +27,7 @@ export interface OAuthProfile {
   email?: string;
   /** Human-friendly display name (when available). */
   displayName?: string;
-  /** Schema version. Currently always 1. Hard-fail on mismatch (D-07). */
+  /** Schema version. Currently always 1. Hard-fail on mismatch. */
   version: 1;
 }
 

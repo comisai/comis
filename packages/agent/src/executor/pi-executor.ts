@@ -121,6 +121,7 @@ import type { GeminiCacheManager } from "./gemini-cache-manager.js";
 import type { BackgroundTaskManager, NotifyFn } from "../background/index.js";
 import { wrapToolForAutoBackground } from "../background/index.js";
 import { BackgroundTasksConfigSchema } from "@comis/core";
+import type { BackgroundTaskOrigin } from "@comis/core";
 import { OPERATION_TIMEOUT_DEFAULTS } from "../model/operation-model-defaults.js";
 import type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "./types.js";
 import { randomUUID } from "node:crypto";
@@ -1415,17 +1416,47 @@ export function createPiExecutor(
           // Applied AFTER sideEffects so the background placeholder is returned instead of
           // waiting for sideEffects processing. When the tool completes in background,
           // the sideEffects are still processed by the original wrapped execute.
+          // Capture origin at wrap-time via explicit threading.
+          // The closure reads runPrompt-scope variables synchronously each invocation
+          // so the captured origin reflects the originating session, not the
+          // background-continuation context (which lacks these locals).
           if (deps.backgroundTaskManager && config.backgroundTasks?.enabled !== false) {
             const bgConfig = BackgroundTasksConfigSchema.parse(config.backgroundTasks ?? {});
+            const resolvedAgentId = agentId ?? "default";
+            const originResolver = (): BackgroundTaskOrigin | undefined => {
+              // Defensive: if any required field is unexpectedly missing, fall through
+              // to foreground execution (no background promotion). Promotion requires
+              // a complete origin.
+              if (!formattedKey || formattedKey.length === 0) return undefined;
+              if (!msg.channelType || msg.channelType.length === 0) return undefined;
+              if (!msg.channelId || msg.channelId.length === 0) return undefined;
+              // Read incoming hop count off msg.metadata so the runner can enforce
+              // the recursion bound. Top-level user messages have no
+              // metadata.backgroundHopCount -> default to 0.
+              // Cast metadata defensively because NormalizedMessageSchema.metadata
+              // is z.record(z.string(), z.unknown()).
+              const meta = msg.metadata as Record<string, unknown> | undefined;
+              const rawHopCount = meta?.backgroundHopCount;
+              const incomingHopCount = typeof rawHopCount === "number" && Number.isFinite(rawHopCount) && rawHopCount >= 0
+                ? Math.floor(rawHopCount)
+                : 0;
+              return {
+                agentId: resolvedAgentId,
+                sessionKey: formattedKey,
+                channelType: msg.channelType,
+                channelId: msg.channelId,
+                traceId: executionId ?? null,
+                backgroundHopCount: incomingHopCount,
+              };
+            };
             for (const tool of mergedCustomTools) {
-               
               const wrapped = wrapToolForAutoBackground(
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK interop boundary
                 tool as any,
                 deps.backgroundTaskManager!,
                 bgConfig,
                 deps.backgroundNotifyFn ?? (async () => {}),
-                agentId ?? "default",
+                originResolver,
               );
               tool.execute = (wrapped as unknown as typeof tool).execute;
             }

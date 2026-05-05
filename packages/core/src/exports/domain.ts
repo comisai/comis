@@ -71,6 +71,9 @@ export {
   ProviderCapabilitiesSchema,
 } from "../domain/index.js";
 
+export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
+export type { BackgroundTaskOrigin } from "../domain/background-task-origin.js";
+
 export type {
   Attachment,
   NormalizedMessage,

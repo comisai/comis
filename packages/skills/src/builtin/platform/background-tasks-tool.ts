@@ -25,13 +25,14 @@ type TaskStatus = "running" | "completed" | "failed" | "cancelled";
 /** Minimal task shape used by this tool. */
 interface TaskInfo {
   id: string;
-  agentId: string;
   toolName: string;
   status: TaskStatus;
   startedAt: number;
   completedAt?: number;
   result?: string;
   error?: string;
+  /** agentId is nested under origin.agentId */
+  origin: { agentId: string };
 }
 
 /** Subset of BackgroundTaskManager consumed by this tool. */
@@ -126,7 +127,7 @@ export function createBackgroundTasksTool(deps: {
         case "get": {
           const taskId = readStringParam(p, "taskId");
           const task = deps.manager.getTask(taskId!);
-          if (!task || task.agentId !== deps.agentId) {
+          if (!task || task.origin.agentId !== deps.agentId) {
             return {
               content: [{ type: "text", text: `Error: Task not found: ${taskId}` }],
               details: null,
@@ -151,7 +152,7 @@ export function createBackgroundTasksTool(deps: {
         case "cancel": {
           const taskId = readStringParam(p, "taskId");
           const task = deps.manager.getTask(taskId!);
-          if (!task || task.agentId !== deps.agentId) {
+          if (!task || task.origin.agentId !== deps.agentId) {
             return {
               content: [{ type: "text", text: `Error: Task not found: ${taskId}` }],
               details: null,
@@ -173,7 +174,7 @@ export function createBackgroundTasksTool(deps: {
         case "read_output": {
           const taskId = readStringParam(p, "taskId");
           const task = deps.manager.getTask(taskId!);
-          if (!task || task.agentId !== deps.agentId) {
+          if (!task || task.origin.agentId !== deps.agentId) {
             return {
               content: [{ type: "text", text: `Error: Task not found: ${taskId}` }],
               details: null,

@@ -309,7 +309,7 @@ describe("CHAN-02: Coalesced message delimiter ordering", () => {
 
 describe("CHAN-03: Interleaved multi-channel ordering", () => {
   it("messages from two channels maintain per-channel ordering under interleaving", async () => {
-    // Use DISTINCT channelTypes to prevent session key collisions (Pitfall 4)
+    // Use DISTINCT channelTypes to prevent session key collisions
     const adapterA = new EchoChannelAdapter({ channelId: "ch-a", channelType: "echo-a" });
     const adapterB = new EchoChannelAdapter({ channelId: "ch-b", channelType: "echo-b" });
 

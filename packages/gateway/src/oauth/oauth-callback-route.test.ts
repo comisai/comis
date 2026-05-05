@@ -152,12 +152,12 @@ describe("createOAuthCallbackRoute", () => {
     const html = await res.text();
     expect(html).toContain("Login Failed");
     // Provider-mismatch preserves the entry (legitimate provider may still
-    // consume) per RESEARCH §Pattern 3.
+    // consume).
     expect(pendingFlows.has(state)).toBe(true);
     expect(deps.credentialStore.set).not.toHaveBeenCalled();
   });
 
-  it("SC11-4: pendingFlows entry deleted before token exchange (verified on exchange-failure)", async () => {
+  it("pendingFlows entry deleted before token exchange (verified on exchange-failure)", async () => {
     // Stub fetch so the token exchange fails — but the state must still be
     // removed from pendingFlows because the delete fires BEFORE the try
     // block per the one-time-use invariant.
@@ -197,7 +197,7 @@ describe("createOAuthCallbackRoute", () => {
     }
   });
 
-  it("SC11-4: insertPendingFlow auto-deletes entry after PENDING_FLOW_TIMEOUT_MS", () => {
+  it("insertPendingFlow auto-deletes entry after PENDING_FLOW_TIMEOUT_MS", () => {
     vi.useFakeTimers();
     try {
       const map = new Map<string, PendingFlow>();

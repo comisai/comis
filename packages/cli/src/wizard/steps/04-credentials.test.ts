@@ -77,8 +77,9 @@ import { credentialsStep } from "./04-credentials.js";
 import { getModels } from "@mariozechner/pi-ai";
 import { loginOpenAICodexOAuth, isRemoteEnvironment } from "@comis/agent";
 
-// Capture the un-mocked `getModels` so D5/D6 can compose URLs against the
-// real pi-ai catalog (the module-level `vi.mock` returns a sentinel baseUrl).
+// Capture the un-mocked `getModels` so the composed-URL regression tests
+// can compose URLs against the real pi-ai catalog (the module-level
+// `vi.mock` returns a sentinel baseUrl).
 let actualGetModels: typeof import("@mariozechner/pi-ai").getModels;
 
 beforeAll(async () => {

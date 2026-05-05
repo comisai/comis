@@ -6,8 +6,8 @@
  * token exchange validated the source) and resolves the canonical identity
  * for use in profile IDs.
  *
- * Verbatim port of OpenClaw's openai-codex-auth-identity.ts (RESEARCH Q5)
- * plus the D-14 email-redaction helper.
+ * Verbatim port of OpenClaw's openai-codex-auth-identity.ts
+ * plus the email-redaction helper.
  *
  * @module
  */
@@ -100,7 +100,7 @@ export function resolveCodexAuthIdentity(opts: {
 /**
  * Extract the access-token expiry as milliseconds since epoch.
  * The JWT exp claim is in seconds (RFC 7519); we multiply by 1000 to match
- * pi-ai's OAuthCredentials.expires unit (ms — RESEARCH Q1 landmine 4).
+ * pi-ai's OAuthCredentials.expires unit (ms).
  * Accepts numeric `exp` and digit-only string `exp`.
  */
 export function resolveCodexAccessTokenExpiry(accessToken: string): number | undefined {
@@ -118,7 +118,7 @@ export function resolveCodexAccessTokenExpiry(accessToken: string): number | und
 }
 
 /**
- * Semi-redact an email for safe inclusion in logs (D-14).
+ * Semi-redact an email for safe inclusion in logs.
  * Format: first 2 chars + ellipsis + last char of local-part, then "@" + full domain.
  * Edge cases:
  *  - undefined input → undefined

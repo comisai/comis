@@ -443,8 +443,8 @@ export async function deliverToChannel(
 
       // --- Queue: enqueue (in_flight lease) before send ---
       // We insert with status='in_flight' so the recurring drainer's
-      // `WHERE status='pending'` filter does NOT race-pick this row mid-send
-      // (SPEC-R2 race safety, Phase 13). On successful send, ack flips
+      // `WHERE status='pending'` filter does NOT race-pick this row mid-send.
+      // On successful send, ack flips
       // 'in_flight' -> 'delivered'; on permanent failure, fail flips
       // 'in_flight' -> 'failed'; on transient failure, nack flips
       // 'in_flight' -> 'pending' for the drainer to retry. All ack/nack/fail
@@ -471,7 +471,7 @@ export async function deliverToChannel(
           entryId = enqueueResult.value;
           // delivery:enqueued is now emitted by the adapter (SqliteDeliveryQueueAdapter
           // emits inside enqueueInFlight after the INSERT succeeds -- single source of
-          // truth per SPEC-R5 / Phase 13). No-op here.
+          // truth). No-op here.
         }
         // If enqueue fails, log and continue -- queue failure should not block delivery
       }

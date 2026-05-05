@@ -26,3 +26,8 @@ export { setupGateway, type GatewayDeps, type GatewayResult, setupRpcBridge, typ
 export { setupDeliveryQueue, type DeliveryQueueResult, setupDeliveryMirror, type DeliveryMirrorResult } from "./setup-delivery.js";
 export { setupNotifications, type NotificationContext } from "./setup-notifications.js";
 export { setupBackgroundTasks, type BackgroundTasksContext } from "./setup-background-tasks.js";
+export { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
+export type {
+  BackgroundCompletionRunnerContext,
+  SetupBackgroundCompletionRunnerDeps,
+} from "./setup-background-completion-runner.js";

@@ -844,7 +844,7 @@ describe("OAuthTokenManager — port-backed", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Group D — Env-var bootstrap (SPEC R7a)
+  // Group D — Env-var bootstrap
   // ---------------------------------------------------------------------------
 
   describe("D. env-var bootstrap", () => {

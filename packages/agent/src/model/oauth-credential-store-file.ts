@@ -2,11 +2,11 @@
 /**
  * Plaintext file-backed OAuthCredentialStorePort adapter.
  *
- * Default storage backend for OAuth credentials (CONTEXT.md D-06: derives
- * from existing dataDir, no separate config key). Stores all profiles in
- * a single JSON file at ${dataDir}/auth-profiles.json with mode 0o600.
+ * Default storage backend for OAuth credentials (derives from existing
+ * dataDir, no separate config key). Stores all profiles in a single JSON
+ * file at ${dataDir}/auth-profiles.json with mode 0o600.
  *
- * Atomic write sequence (RESEARCH Q6 — full POSIX crash safety on ext4):
+ * Atomic write sequence (full POSIX crash safety on ext4):
  *   write tmp 0o600 → fsync(tmpFd) → close(tmpFd) → rename(tmp, canonical)
  *   → fsync(parentDirFd) → close(parentDirFd)
  *
@@ -14,12 +14,11 @@
  * because OAuth credentials are security-critical (a lost rename due to
  * power-loss-after-data-write would silently log the user out).
  *
- * Per-profile-ID locking via withExecutionLock (CONTEXT.md D-02):
- * different providers and different identities for the same provider can
- * refresh in parallel.
+ * Per-profile-ID locking via withExecutionLock: different providers and
+ * different identities for the same provider can refresh in parallel.
  *
- * Schema versioning (CONTEXT.md D-07/D-08): single integer version at top
- * level. Hard-fail on mismatch — pre-1.0 software, no migration plumbing.
+ * Schema versioning: single integer version at top level. Hard-fail on
+ * mismatch — pre-1.0 software, no migration plumbing.
  *
  * @module
  */
@@ -57,8 +56,8 @@ export interface OAuthCredentialStoreFileConfig {
  * within the SAME Node process would race the cross-process file lock and the
  * second caller would get `err("locked")`. The in-process mutex serializes
  * same-profile writes BEFORE they reach the file lock — different profiles
- * still proceed in parallel (each gets its own queue), preserving D-02
- * per-profile lock granularity. Mirrors cron-store.ts:181.
+ * still proceed in parallel (each gets its own queue), preserving per-profile
+ * lock granularity. Mirrors cron-store.ts:181.
  */
 function createPerProfileMutex(): {
   serialize<T>(profileId: string, fn: () => Promise<T>): Promise<T>;
@@ -105,7 +104,7 @@ function authProfilesFilePath(dataDir: string): string {
 }
 
 /**
- * Atomic write with parent-dir fsync (RESEARCH Q6).
+ * Atomic write with parent-dir fsync.
  * Sequence: write tmp 0o600 → fsync(tmp) → close(tmp) → rename(tmp, canonical)
  *           → fsync(parentDir) → close(parentDir).
  *
@@ -140,7 +139,7 @@ async function atomicWriteJson(
 }
 
 /**
- * Load the auth-profiles file. Hard-fails on schema-version mismatch (D-07).
+ * Load the auth-profiles file. Hard-fails on schema-version mismatch.
  * ENOENT → returns ok({ version: 1, profiles: {} }) (empty store).
  */
 async function loadAuthProfiles(
@@ -204,7 +203,7 @@ async function loadAuthProfiles(
 }
 
 /**
- * Cleanup orphaned *.tmp files from previous crashed writes (RESEARCH Q6 hygiene).
+ * Cleanup orphaned *.tmp files from previous crashed writes (hygiene).
  * Best-effort — failures are silent; this is housekeeping, not correctness.
  */
 async function cleanupStaleTmpFiles(parentDir: string): Promise<void> {

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { safePath } from "@comis/core";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
 import { persistTaskSync } from "./background-task-persistence.js";
-import type { PersistedTaskState } from "./background-task-types.js";
+import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task-types.js";
 
 function createMockEventBus() {
   return { emit: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
@@ -20,6 +20,18 @@ function createMockLogger() {
   };
 }
 
+function buildOrigin(overrides: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
+  return {
+    agentId: "default",
+    sessionKey: "default:echo:test:user1",
+    channelType: "echo",
+    channelId: "test",
+    traceId: null,
+    backgroundHopCount: 0,
+    ...overrides,
+  };
+}
+
 describe("BackgroundTaskManager", () => {
   let dataDir: string;
   let manager: BackgroundTaskManager;
@@ -27,7 +39,7 @@ describe("BackgroundTaskManager", () => {
   let logger: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
-    dataDir = join(tmpdir(), `comis-bg-mgr-test-${randomUUID()}`);
+    dataDir = safePath(tmpdir(), `comis-bg-mgr-test-${randomUUID()}`);
     mkdirSync(dataDir, { recursive: true });
     eventBus = createMockEventBus();
     logger = createMockLogger();
@@ -53,7 +65,7 @@ describe("BackgroundTaskManager", () => {
     it("creates a task with status running and increments counters", () => {
       const promise = new Promise(() => {});
       const ac = new AbortController();
-      const result = manager.promote("agent-1", "exec_command", promise, ac);
+      const result = manager.promote("exec_command", promise, ac, buildOrigin({ agentId: "agent-1" }));
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
@@ -61,12 +73,12 @@ describe("BackgroundTaskManager", () => {
       const task = manager.getTask(result.value);
       expect(task).toBeDefined();
       expect(task!.status).toBe("running");
-      expect(task!.agentId).toBe("agent-1");
+      expect(task!.origin.agentId).toBe("agent-1");
       expect(task!.toolName).toBe("exec_command");
     });
 
     it("emits background_task:promoted event", () => {
-      const result = manager.promote("agent-1", "tool", new Promise(() => {}), new AbortController());
+      const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
       expect(result.ok).toBe(true);
       expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
         "background_task:promoted",
@@ -75,9 +87,10 @@ describe("BackgroundTaskManager", () => {
     });
 
     it("rejects when per-agent limit reached", () => {
-      manager.promote("agent-1", "t1", new Promise(() => {}), new AbortController());
-      manager.promote("agent-1", "t2", new Promise(() => {}), new AbortController());
-      const result = manager.promote("agent-1", "t3", new Promise(() => {}), new AbortController());
+      const origin = buildOrigin({ agentId: "agent-1" });
+      manager.promote("t1", new Promise(() => {}), new AbortController(), origin);
+      manager.promote("t2", new Promise(() => {}), new AbortController(), origin);
+      const result = manager.promote("t3", new Promise(() => {}), new AbortController(), origin);
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
@@ -86,10 +99,10 @@ describe("BackgroundTaskManager", () => {
     });
 
     it("rejects when total limit reached", () => {
-      manager.promote("a1", "t1", new Promise(() => {}), new AbortController());
-      manager.promote("a2", "t2", new Promise(() => {}), new AbortController());
-      manager.promote("a3", "t3", new Promise(() => {}), new AbortController());
-      const result = manager.promote("a4", "t4", new Promise(() => {}), new AbortController());
+      manager.promote("t1", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "a1" }));
+      manager.promote("t2", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "a2" }));
+      manager.promote("t3", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "a3" }));
+      const result = manager.promote("t4", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "a4" }));
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
@@ -99,7 +112,7 @@ describe("BackgroundTaskManager", () => {
 
   describe("complete", () => {
     it("sets status completed with truncated result and decrements counters", () => {
-      const result = manager.promote("agent-1", "tool", new Promise(() => {}), new AbortController());
+      const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       const taskId = result.value;
@@ -112,12 +125,12 @@ describe("BackgroundTaskManager", () => {
       expect(task!.completedAt).toBeGreaterThan(0);
 
       // Counter decremented: can promote again
-      const newResult = manager.promote("agent-1", "t2", new Promise(() => {}), new AbortController());
+      const newResult = manager.promote("t2", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
       expect(newResult.ok).toBe(true);
     });
 
     it("emits background_task:completed event", () => {
-      const result = manager.promote("agent-1", "tool", new Promise(() => {}), new AbortController());
+      const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
       if (!result.ok) return;
       manager.complete(result.value, "done");
 
@@ -130,7 +143,7 @@ describe("BackgroundTaskManager", () => {
 
   describe("fail", () => {
     it("sets status failed with error message and decrements counters", () => {
-      const result = manager.promote("agent-1", "tool", new Promise(() => {}), new AbortController());
+      const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
       if (!result.ok) return;
       const taskId = result.value;
 
@@ -141,12 +154,12 @@ describe("BackgroundTaskManager", () => {
       expect(task!.error).toBe("oops");
 
       // Counter decremented
-      const r2 = manager.promote("agent-1", "t2", new Promise(() => {}), new AbortController());
+      const r2 = manager.promote("t2", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
       expect(r2.ok).toBe(true);
     });
 
     it("emits background_task:failed event", () => {
-      const result = manager.promote("agent-1", "tool", new Promise(() => {}), new AbortController());
+      const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
       if (!result.ok) return;
       manager.fail(result.value, "error");
 
@@ -160,7 +173,7 @@ describe("BackgroundTaskManager", () => {
   describe("cancel", () => {
     it("aborts the AbortController and sets status cancelled", () => {
       const ac = new AbortController();
-      const result = manager.promote("agent-1", "tool", new Promise(() => {}), ac);
+      const result = manager.promote("tool", new Promise(() => {}), ac, buildOrigin({ agentId: "agent-1" }));
       if (!result.ok) return;
 
       const cancelResult = manager.cancel(result.value);
@@ -177,7 +190,7 @@ describe("BackgroundTaskManager", () => {
     });
 
     it("returns error for non-running task", () => {
-      const result = manager.promote("agent-1", "tool", new Promise(() => {}), new AbortController());
+      const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
       if (!result.ok) return;
       manager.complete(result.value, "done");
 
@@ -186,7 +199,7 @@ describe("BackgroundTaskManager", () => {
     });
 
     it("emits background_task:cancelled event", () => {
-      const result = manager.promote("agent-1", "tool", new Promise(() => {}), new AbortController());
+      const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));
       if (!result.ok) return;
       manager.cancel(result.value);
 
@@ -199,8 +212,8 @@ describe("BackgroundTaskManager", () => {
 
   describe("getTasks / getTask", () => {
     it("getTasks returns only tasks for the specified agent", () => {
-      manager.promote("a1", "t1", new Promise(() => {}), new AbortController());
-      manager.promote("a2", "t2", new Promise(() => {}), new AbortController());
+      manager.promote("t1", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "a1" }));
+      manager.promote("t2", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "a2" }));
 
       expect(manager.getTasks("a1")).toHaveLength(1);
       expect(manager.getTasks("a2")).toHaveLength(1);
@@ -217,7 +230,7 @@ describe("BackgroundTaskManager", () => {
       vi.useFakeTimers();
       try {
         const ac = new AbortController();
-        const result = manager.promote("agent-1", "slow_tool", new Promise(() => {}), ac);
+        const result = manager.promote("slow_tool", new Promise(() => {}), ac, buildOrigin({ agentId: "agent-1" }));
         if (!result.ok) return;
 
         vi.advanceTimersByTime(101);
@@ -234,13 +247,13 @@ describe("BackgroundTaskManager", () => {
 
   describe("recoverOnStartup", () => {
     it("recovers running tasks and emits failed events", () => {
-      // Pre-persist a "running" task to disk
+      // Pre-persist a "running" task to disk (with origin, as required)
       const task: PersistedTaskState = {
         id: "recovered-1",
-        agentId: "a1",
         toolName: "tool1",
         status: "running",
         startedAt: 1000,
+        origin: buildOrigin({ agentId: "a1" }),
       };
       persistTaskSync(dataDir, task);
 
@@ -271,6 +284,187 @@ describe("BackgroundTaskManager", () => {
         { count: 1 },
         "Recovered background tasks marked as failed",
       );
+    });
+  });
+
+  describe("origin capture", () => {
+    it("promote(validOrigin) returns ok(taskId) and task.origin matches", () => {
+      const origin = buildOrigin({ agentId: "agent-test", sessionKey: "agent-test:echo:ch1:u1" });
+      const result = manager.promote("my_tool", new Promise(() => {}), new AbortController(), origin);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const task = manager.getTask(result.value);
+      expect(task).toBeDefined();
+      expect(task!.origin).toEqual(origin);
+    });
+
+    it("promote(undefined origin) returns Result.err with 'origin' in message", () => {
+      const result = manager.promote("my_tool", new Promise(() => {}), new AbortController(), undefined as unknown as BackgroundTaskOrigin);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toMatch(/origin/i);
+    });
+
+    it("promote with empty agentId returns Result.err", () => {
+      const result = manager.promote("my_tool", new Promise(() => {}), new AbortController(), {
+        agentId: "",
+        sessionKey: "k",
+        channelType: "c",
+        channelId: "i",
+        traceId: null,
+        backgroundHopCount: 0,
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain("agentId");
+    });
+
+    it("promote with empty sessionKey returns Result.err", () => {
+      const result = manager.promote("my_tool", new Promise(() => {}), new AbortController(), {
+        agentId: "a",
+        sessionKey: "",
+        channelType: "c",
+        channelId: "i",
+        traceId: null,
+        backgroundHopCount: 0,
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain("sessionKey");
+    });
+
+    it("complete(taskId) emits background_task:completed with origin in payload", () => {
+      const origin = buildOrigin({ agentId: "agent-5" });
+      const result = manager.promote("tool5", new Promise(() => {}), new AbortController(), origin);
+      if (!result.ok) return;
+
+      manager.complete(result.value, "result-data");
+
+      expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+        "background_task:completed",
+        expect.objectContaining({ origin }),
+      );
+    });
+
+    it("fail(taskId) emits background_task:failed with origin in payload", () => {
+      const origin = buildOrigin({ agentId: "agent-6" });
+      const result = manager.promote("tool6", new Promise(() => {}), new AbortController(), origin);
+      if (!result.ok) return;
+
+      manager.fail(result.value, new Error("boom"));
+
+      expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+        "background_task:failed",
+        expect.objectContaining({ origin }),
+      );
+    });
+
+    it("getTasks(agentId) filters by origin.agentId", () => {
+      manager.promote("t1", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "filter-agent" }));
+      manager.promote("t2", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "other-agent" }));
+      manager.promote("t3", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "filter-agent" }));
+
+      const tasks = manager.getTasks("filter-agent");
+      expect(tasks).toHaveLength(2);
+      expect(tasks.every((t) => t.origin.agentId === "filter-agent")).toBe(true);
+    });
+
+    it("recoverOnStartup emits failed event with origin populated (restart-recovery path)", () => {
+      const testDir = safePath(tmpdir(), `comis-bg-mgr-rec-${randomUUID()}`);
+      mkdirSync(testDir, { recursive: true });
+
+      try {
+        const origin = buildOrigin({ agentId: "recover-agent", sessionKey: "recover-agent:echo:chan:usr" });
+        const persisted: PersistedTaskState = {
+          id: "restart-task-1",
+          toolName: "recover_tool",
+          status: "failed",
+          startedAt: Date.now() - 5000,
+          completedAt: Date.now() - 4000,
+          error: "Daemon restarted while task was running",
+          origin,
+        };
+
+        // Write directly to the agent subdir using safePath
+        const agentDir = safePath(testDir, origin.agentId);
+        mkdirSync(agentDir, { recursive: true });
+        const filePath = safePath(agentDir, `${persisted.id}.json`);
+        writeFileSync(filePath, JSON.stringify(persisted, null, 2), "utf-8");
+
+        const recoverEventBus = createMockEventBus();
+        const recoverLogger = createMockLogger();
+        const recoverMgr = createBackgroundTaskManager({
+          dataDir: testDir,
+          eventBus: recoverEventBus,
+          logger: recoverLogger,
+          maxPerAgent: 5,
+          maxTotal: 20,
+        });
+        recoverMgr.recoverOnStartup();
+
+        expect((recoverEventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+          "background_task:failed",
+          expect.objectContaining({
+            taskId: "restart-task-1",
+            origin,
+          }),
+        );
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+
+    it("recoverOnStartup skips persisted tasks missing origin field with logger.warn", () => {
+      const testDir = safePath(tmpdir(), `comis-bg-mgr-skip-${randomUUID()}`);
+      mkdirSync(testDir, { recursive: true });
+
+      try {
+        // Write a legacy file without origin
+        const agentDir = safePath(testDir, "legacy-agent");
+        mkdirSync(agentDir, { recursive: true });
+        const filePath = safePath(agentDir, "legacy-task-1.json");
+        const legacyState = {
+          id: "legacy-task-1",
+          agentId: "legacy-agent",
+          toolName: "old_tool",
+          status: "failed",
+          startedAt: Date.now() - 10000,
+          completedAt: Date.now() - 9000,
+          error: "Daemon restarted while task was running",
+          // No origin field — legacy format
+        };
+        writeFileSync(filePath, JSON.stringify(legacyState, null, 2), "utf-8");
+
+        const skipEventBus = createMockEventBus();
+        const skipLogger = createMockLogger();
+        const skipMgr = createBackgroundTaskManager({
+          dataDir: testDir,
+          eventBus: skipEventBus,
+          logger: skipLogger,
+          maxPerAgent: 5,
+          maxTotal: 20,
+        });
+        skipMgr.recoverOnStartup();
+
+        // Should NOT emit any background_task:failed event for the skipped task
+        expect((skipEventBus.emit as ReturnType<typeof vi.fn>)).not.toHaveBeenCalledWith(
+          "background_task:failed",
+          expect.objectContaining({ taskId: "legacy-task-1" }),
+        );
+
+        // Should warn about the skip
+        expect(skipLogger.warn).toHaveBeenCalled();
+
+        // Task should not be in manager
+        expect(skipMgr.getTask("legacy-task-1")).toBeUndefined();
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+      }
     });
   });
 });

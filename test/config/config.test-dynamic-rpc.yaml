@@ -1,8 +1,8 @@
 # Comis Test Configuration — Dynamic RPC Method Tests
 #
 # Shared by:
-#   - Plan 01: obs.* namespace E2E endpoint validation
-#   - Plan 02: scope enforcement, batch RPC, error handling edge cases
+#   - obs.* namespace E2E endpoint validation
+#   - scope enforcement, batch RPC, error handling edge cases
 #
 # Port 8492 — next available after 8491 (ws-discovery)
 #

@@ -7,8 +7,6 @@ import { z } from "zod";
  * Controls Gemini CachedContent lifecycle: whether explicit caching is
  * enabled and the maximum number of active cached contents per agent.
  *
- * Design reference: D-05 (Gemini cache config section).
- *
  * @module
  */
 

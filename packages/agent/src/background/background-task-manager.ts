@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { ok, err, suppressError, type Result } from "@comis/shared";
 import type { TypedEventBus } from "@comis/core";
 import { persistTaskSync, recoverTasks, removeTaskFile } from "./background-task-persistence.js";
-import type { BackgroundTask } from "./background-task-types.js";
+import type { BackgroundTask, BackgroundTaskOrigin } from "./background-task-types.js";
 
 /** Notification callback fired when background task completes or fails. */
 export type NotifyFn = (opts: {
@@ -35,7 +35,12 @@ export interface BackgroundTaskManagerOpts {
 }
 
 export interface BackgroundTaskManager {
-  promote(agentId: string, toolName: string, promise: Promise<unknown>, ac: AbortController): Result<string, Error>;
+  promote(
+    toolName: string,
+    promise: Promise<unknown>,
+    ac: AbortController,
+    origin: BackgroundTaskOrigin,
+  ): Result<string, Error>;
   complete(taskId: string, result: unknown, notifyFn?: NotifyFn): void;
   fail(taskId: string, error: unknown, notifyFn?: NotifyFn): void;
   cancel(taskId: string): Result<void, Error>;
@@ -83,7 +88,27 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
   }
 
   const manager: BackgroundTaskManager = {
-    promote(agentId, toolName, promise, ac) {
+    promote(toolName, promise, ac, origin) {
+      // Reject calls with missing/invalid origin (no silent fallback).
+      if (!origin || typeof origin !== "object") {
+        return err(new Error("BackgroundTaskOrigin is required (received undefined or non-object)"));
+      }
+      if (!origin.agentId || origin.agentId.length === 0) {
+        return err(new Error("BackgroundTaskOrigin.agentId must be a non-empty string"));
+      }
+      if (!origin.sessionKey || origin.sessionKey.length === 0) {
+        return err(new Error("BackgroundTaskOrigin.sessionKey must be a non-empty string"));
+      }
+      if (!origin.channelType || origin.channelType.length === 0) {
+        return err(new Error("BackgroundTaskOrigin.channelType must be a non-empty string"));
+      }
+      if (!origin.channelId || origin.channelId.length === 0) {
+        return err(new Error("BackgroundTaskOrigin.channelId must be a non-empty string"));
+      }
+      // traceId may be null (per BackgroundTaskOriginSchema), so no length check.
+      // backgroundHopCount has a schema-level default of 0; no inline guard needed.
+
+      const agentId = origin.agentId;
       const agentCurrent = perAgentCount.get(agentId) ?? 0;
       if (agentCurrent >= maxPerAgent) {
         return err(new Error(`Concurrency limit exceeded: agent ${agentId} has ${agentCurrent}/${maxPerAgent} tasks`));
@@ -95,27 +120,27 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       const taskId = randomUUID();
       const task: BackgroundTask = {
         id: taskId,
-        agentId,
         toolName,
         status: "running",
         startedAt: Date.now(),
+        origin,
         _promise: promise,
         _abortController: ac,
       };
 
-      tasks.set(taskId, task);
-      incrementCounters(agentId);
-
-      // sync write BEFORE returning placeholder
-      persistTaskSync(dataDir, task);
-
-      // Hard timeout
-      task._hardTimeoutTimer = setTimeout(() => {
+      // Hard-timeout abort
+      const timer = setTimeout(() => {
         if (task.status === "running") {
           ac.abort();
           manager.fail(taskId, new Error("Hard timeout exceeded"));
         }
       }, maxBackgroundDurationMs);
+      timer.unref();
+      task._hardTimeoutTimer = timer;
+
+      tasks.set(taskId, task);
+      incrementCounters(agentId);
+      persistTaskSync(dataDir, task);
 
       eventBus.emit("background_task:promoted", {
         agentId,
@@ -136,22 +161,23 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       task.result = truncateResult(result);
 
       if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
-      decrementCounters(task.agentId);
+      decrementCounters(task.origin.agentId);
       persistTaskSync(dataDir, task);
 
       const durationMs = task.completedAt - task.startedAt;
       eventBus.emit("background_task:completed", {
-        agentId: task.agentId,
+        agentId: task.origin.agentId,
         taskId,
         toolName: task.toolName,
         durationMs,
+        origin: task.origin,
         timestamp: Date.now(),
       });
 
       if (notifyFn) {
         suppressError(
           notifyFn({
-            agentId: task.agentId,
+            agentId: task.origin.agentId,
             message: `Background task "${task.toolName}" completed (${Math.round(durationMs / 1000)}s). Task ID: ${taskId}`,
             priority: "normal",
             origin: "background_task",
@@ -170,23 +196,24 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       task.error = error instanceof Error ? error.message : String(error);
 
       if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
-      decrementCounters(task.agentId);
+      decrementCounters(task.origin.agentId);
       persistTaskSync(dataDir, task);
 
       const durationMs = task.completedAt - task.startedAt;
       eventBus.emit("background_task:failed", {
-        agentId: task.agentId,
+        agentId: task.origin.agentId,
         taskId,
         toolName: task.toolName,
         error: task.error,
         durationMs,
+        origin: task.origin,
         timestamp: Date.now(),
       });
 
       if (notifyFn) {
         suppressError(
           notifyFn({
-            agentId: task.agentId,
+            agentId: task.origin.agentId,
             message: `Background task "${task.toolName}" failed: ${task.error}. Task ID: ${taskId}`,
             priority: "normal",
             origin: "background_task",
@@ -206,11 +233,11 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
       if (task._abortController) task._abortController.abort();
       if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
-      decrementCounters(task.agentId);
+      decrementCounters(task.origin.agentId);
       persistTaskSync(dataDir, task);
 
       eventBus.emit("background_task:cancelled", {
-        agentId: task.agentId,
+        agentId: task.origin.agentId,
         taskId,
         toolName: task.toolName,
         timestamp: Date.now(),
@@ -224,7 +251,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     },
 
     getTasks(agentId) {
-      return [...tasks.values()].filter((t) => t.agentId === agentId);
+      return [...tasks.values()].filter((t) => t.origin.agentId === agentId);
     },
 
     getAllTasks() {
@@ -234,8 +261,22 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     recoverOnStartup() {
       const recovered = recoverTasks(dataDir);
       let count = 0;
+      let skipped = 0;
       for (const persisted of recovered) {
-        // Only import tasks that were recovered (previously running -> now failed)
+        if (!persisted.origin || typeof persisted.origin !== "object" || !persisted.origin.agentId || !persisted.origin.sessionKey) {
+          // Legacy file without origin. Skip with a warning -- the file
+          // remains on disk for audit, but the manager doesn't import it.
+          skipped++;
+          logger.warn(
+            {
+              taskId: persisted.id,
+              hint: "Legacy task file lacks origin; skipping recovery -- delete the file or wait for cleanup",
+              errorKind: "internal" as const,
+            },
+            "Skipping recovered task without origin",
+          );
+          continue;
+        }
         const task: BackgroundTask = {
           ...persisted,
         };
@@ -244,17 +285,28 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         if (persisted.status === "failed" && persisted.error === "Daemon restarted while task was running") {
           count++;
           eventBus.emit("background_task:failed", {
-            agentId: task.agentId,
+            agentId: task.origin.agentId,
             taskId: task.id,
             toolName: task.toolName,
             error: persisted.error,
             durationMs: (persisted.completedAt ?? Date.now()) - persisted.startedAt,
+            origin: task.origin,
             timestamp: Date.now(),
           });
         }
       }
       if (count > 0) {
         logger.info({ count }, "Recovered background tasks marked as failed");
+      }
+      if (skipped > 0) {
+        logger.warn(
+          {
+            skipped,
+            hint: "Legacy task files cannot be recovered without origin -- they remain on disk for audit",
+            errorKind: "internal" as const,
+          },
+          "Skipped legacy task files during recovery",
+        );
       }
     },
 
@@ -263,7 +315,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       for (const [taskId, task] of tasks) {
         if (task.status !== "running" && (task.completedAt ?? task.startedAt) < cutoff) {
           tasks.delete(taskId);
-          removeTaskFile(dataDir, task.agentId, taskId);
+          removeTaskFile(dataDir, task.origin.agentId, taskId);
         }
       }
     },
