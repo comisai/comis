@@ -958,8 +958,8 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   const bgCompletionRunnerContext = setupBackgroundCompletionRunner({
     eventBus: container.eventBus,
     // setup-agents.ts:178 declares getExecutor as synchronous
-    // ((agentId: string) => AgentExecutor) -- direct call, no await.
-    executor: getExecutor(defaultAgentId),
+    // ((agentId: string) => AgentExecutor) -- resolved lazily per event.
+    getExecutor,
     sessionStore,
     taskManager: backgroundTaskManager,
     fallbackNotifyFn: bgNotifyFn,

@@ -32,7 +32,7 @@ describe("setupBackgroundCompletionRunner", () => {
   it("Test 1: returns a context object with a runner.shutdown function", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
-      executor: { execute: vi.fn() } as unknown as import("@comis/agent").AgentExecutor,
+      getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       sessionStore: { loadByFormattedKey: vi.fn() },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
@@ -47,7 +47,7 @@ describe("setupBackgroundCompletionRunner", () => {
   it("Test 2: shutdown() resolves cleanly", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
-      executor: { execute: vi.fn() } as unknown as import("@comis/agent").AgentExecutor,
+      getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       sessionStore: { loadByFormattedKey: vi.fn() },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
@@ -60,7 +60,7 @@ describe("setupBackgroundCompletionRunner", () => {
   it("Test 3: shutdown() is idempotent", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
-      executor: { execute: vi.fn() } as unknown as import("@comis/agent").AgentExecutor,
+      getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       sessionStore: { loadByFormattedKey: vi.fn() },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),

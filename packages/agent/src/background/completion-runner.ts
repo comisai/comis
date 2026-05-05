@@ -48,7 +48,7 @@ export interface RunnerSessionStore {
 
 export interface BackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
-  executor: AgentExecutor;
+  getExecutor: (agentId: string) => AgentExecutor;
   sessionStore: RunnerSessionStore;
   taskManager: Pick<BackgroundTaskManager, "getTask">;
   fallbackNotifyFn: NotifyFn;
@@ -178,7 +178,7 @@ export function createBackgroundCompletionRunner(
 
     // One turn per event. Existing session lock orders concurrent calls.
     try {
-      await deps.executor.execute(
+      await deps.getExecutor(origin.agentId).execute(
         syntheticMsg,
         parsedKey,
         undefined,

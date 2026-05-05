@@ -32,7 +32,7 @@ export interface BackgroundCompletionRunnerContext {
 
 export interface SetupBackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
-  executor: AgentExecutor;
+  getExecutor: (agentId: string) => AgentExecutor;
   sessionStore: RunnerSessionStore;
   taskManager: Pick<BackgroundTaskManager, "getTask">;
   /** bgNotifyFn closure used when the originating session is gone. */
@@ -51,7 +51,7 @@ export function setupBackgroundCompletionRunner(
 ): BackgroundCompletionRunnerContext {
   const runner = createBackgroundCompletionRunner({
     eventBus: deps.eventBus,
-    executor: deps.executor,
+    getExecutor: deps.getExecutor,
     sessionStore: deps.sessionStore,
     taskManager: deps.taskManager,
     fallbackNotifyFn: deps.fallbackNotifyFn,

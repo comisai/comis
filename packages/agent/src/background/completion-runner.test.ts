@@ -77,7 +77,7 @@ describe("createBackgroundCompletionRunner", () => {
   function build(maxBackgroundHops = 3) {
     return createBackgroundCompletionRunner({
       eventBus,
-      executor: executor as unknown as import("../executor/types.js").AgentExecutor,
+      getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
       fallbackNotifyFn,
@@ -134,7 +134,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("Test 3: missing session triggers fallbackNotifyFn instead of executor", async () => {
+  it("Test 3: missing session skips re-entry and fallback (session expired)", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
 
@@ -151,10 +151,8 @@ describe("createBackgroundCompletionRunner", () => {
     expect(executor.execute).not.toHaveBeenCalled();
     // Reentered event should NOT have fired -- the runner short-circuits before emit.
     expect(reenteredEvents).toHaveLength(0);
-    expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
-    const opts = fallbackNotifyFn.mock.calls[0]![0]!;
-    expect(opts.agentId).toBe("default");
-    expect(opts.origin).toBe("background_task");
+    // No fallback either -- expired session has no channel to deliver to.
+    expect(fallbackNotifyFn).not.toHaveBeenCalled();
     await runner.shutdown();
   });
 
