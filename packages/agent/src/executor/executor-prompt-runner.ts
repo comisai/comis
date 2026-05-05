@@ -912,7 +912,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
     // NOTE: Only evaluate bridge.getResult().textEmitted when needed to avoid
     // incrementing mock call counters (budget tests use callCount on getResult).
     const rawResponse = getVisibleAssistantText(session);
-    const needsRecovery = rawResponse === "" || ["NO_REPLY", "HEARTBEAT_OK"].includes(rawResponse.trim());
+    const needsRecovery = rawResponse === "";
     // Find the last user message index to bound empty-response recovery
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sessionMessages: any[] = (session as any).messages ?? [];

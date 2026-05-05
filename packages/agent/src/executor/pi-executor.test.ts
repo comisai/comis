@@ -4567,10 +4567,12 @@ describe("PiExecutor", () => {
       expect(result.response).toBe("");
     });
 
-    it("recovers text when final turn is NO_REPLY silent token", async () => {
-      // Final turn: NO_REPLY → getLastAssistantText returns "NO_REPLY"
+    it("passes NO_REPLY silent token through unchanged (channel-layer filter handles suppression)", async () => {
+      // Contract change (260505-dl3): silent tokens are explicit suppression
+      // signals; the agent layer passes them through unchanged so the
+      // channel-layer filter (packages/channels/src/shared/response-filter.ts)
+      // can suppress delivery downstream.
       mockGetLastAssistantText.mockReturnValue("NO_REPLY");
-      // Bridge says text WAS emitted in earlier turns
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
         cost: { total: 0.05 },
@@ -4579,7 +4581,6 @@ describe("PiExecutor", () => {
         finishReason: "stop",
         textEmitted: true,
       });
-      // Session messages: earlier turn has text, final turn is NO_REPLY
       mockSession.messages = [
         { role: "user", content: "How are you?", timestamp: 1 },
         {
@@ -4605,15 +4606,13 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Should recover text from the earlier assistant turn, not "NO_REPLY"
-      expect(result.response).toContain("Not bad! Let me check something.");
+      expect(result.response).toBe("NO_REPLY");
+      expect(result.response).not.toContain("Not bad!");
       expect(result.finishReason).not.toBe("error");
     });
 
-    it("recovers text when final turn is HEARTBEAT_OK silent token", async () => {
-      // Final turn: HEARTBEAT_OK → getLastAssistantText returns "HEARTBEAT_OK"
+    it("passes HEARTBEAT_OK silent token through unchanged (channel-layer filter handles suppression)", async () => {
       mockGetLastAssistantText.mockReturnValue("HEARTBEAT_OK");
-      // Bridge says text WAS emitted in earlier turns
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
         cost: { total: 0.05 },
@@ -4622,7 +4621,6 @@ describe("PiExecutor", () => {
         finishReason: "stop",
         textEmitted: true,
       });
-      // Session messages: earlier turn has text, final turn is HEARTBEAT_OK
       mockSession.messages = [
         { role: "user", content: "Check status", timestamp: 1 },
         {
@@ -4648,13 +4646,12 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Should recover text from the earlier assistant turn, not "HEARTBEAT_OK"
-      expect(result.response).toContain("All systems are running normally.");
+      expect(result.response).toBe("HEARTBEAT_OK");
+      expect(result.response).not.toContain("All systems are running normally.");
       expect(result.finishReason).not.toBe("error");
     });
 
-    it("skips NO_REPLY-only assistant messages in backward walk", async () => {
-      // Final turn: HEARTBEAT_OK → triggers recovery
+    it("passes HEARTBEAT_OK through unchanged even when prior turns include NO_REPLY (no recovery override)", async () => {
       mockGetLastAssistantText.mockReturnValue("HEARTBEAT_OK");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4664,7 +4661,6 @@ describe("PiExecutor", () => {
         finishReason: "stop",
         textEmitted: true,
       });
-      // Session messages: Turn 1 has real text, Turn 2 is NO_REPLY-only, Turn 3 is HEARTBEAT_OK
       mockSession.messages = [
         { role: "user", content: "Analyze data", timestamp: 1 },
         {
@@ -4699,10 +4695,8 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Should skip both NO_REPLY and HEARTBEAT_OK turns, recover Turn 1's real text
-      expect(result.response).toContain("Here is the analysis result.");
-      expect(result.response).not.toContain("NO_REPLY");
-      expect(result.response).not.toContain("HEARTBEAT_OK");
+      expect(result.response).toBe("HEARTBEAT_OK");
+      expect(result.response).not.toContain("Here is the analysis result.");
       expect(result.finishReason).not.toBe("error");
     });
 
