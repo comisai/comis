@@ -17,16 +17,16 @@ export const TASK_DIR_NAME = "background-tasks";
 /**
  * Extract the serializable subset from a BackgroundTask.
  */
-function toPersistedState(task: BackgroundTask): PersistedTaskState {
+function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedTaskState {
   return {
     id: task.id,
-    agentId: task.agentId,
     toolName: task.toolName,
     status: task.status,
     startedAt: task.startedAt,
     completedAt: task.completedAt,
     result: task.result,
     error: task.error,
+    origin: task.origin,
   };
 }
 
@@ -36,7 +36,7 @@ function toPersistedState(task: BackgroundTask): PersistedTaskState {
  * Writes to `dataDir/{agentId}/{taskId}.json`.
  */
 export function persistTaskSync(dataDir: string, task: BackgroundTask | PersistedTaskState): void {
-  const agentDir = safePath(dataDir, task.agentId);
+  const agentDir = safePath(dataDir, task.origin.agentId);
   mkdirSync(agentDir, { recursive: true });
   const filePath = safePath(agentDir, `${task.id}.json`);
   const state: PersistedTaskState = "_promise" in task ? toPersistedState(task as BackgroundTask) : task;
