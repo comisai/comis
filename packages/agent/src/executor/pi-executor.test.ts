@@ -990,6 +990,39 @@ describe("PiExecutor", () => {
       expect(fields.llmCalls).toBeTypeOf("number");
       expect(fields.tokensTotal).toBeTypeOf("number");
       expect(fields.sessionKey).toBeTypeOf("string");
+      // 260504-ieh: rolled-up diagnostic counters replace per-event INFO emissions.
+      expect(fields.hashAssertionsRan).toBeTypeOf("number");
+      expect(fields.hashAssertionsRan).toBeGreaterThanOrEqual(0);
+      expect(fields.hashAssertionMismatches).toBeTypeOf("number");
+      expect(fields.hashAssertionMismatches).toBeGreaterThanOrEqual(0);
+      expect(fields.signatureScrubs).toBeTypeOf("number");
+      expect(fields.signatureScrubs).toBeGreaterThanOrEqual(0);
+      expect(fields.signatureScrubsToolCallsAffected).toBeTypeOf("number");
+      expect(fields.signatureScrubsToolCallsAffected).toBeGreaterThanOrEqual(0);
+    });
+
+    // 260504-ieh: zero-default test — ensures the four counter fields are
+    // ALWAYS present in the payload (default 0) so downstream log consumers
+    // can rely on them without `?? 0` shims.
+    it("emits the four 260504-ieh counters with zero defaults when nothing fired", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-zero");
+
+      const infoCalls = (deps.logger.info as Mock).mock.calls;
+      const bookendCall = infoCalls.find(
+        ([_fields, msg]: [any, string]) => msg === "Execution complete",
+      );
+      expect(bookendCall).toBeDefined();
+      const [fields] = bookendCall!;
+      // No turn_start fired through the bridge in the default mock setup
+      // (mockGetResult returns a hand-built result without counter fields), and
+      // no scrubber emission triggered ceSetup. All four counters default to 0.
+      expect(fields.hashAssertionsRan).toBe(0);
+      expect(fields.hashAssertionMismatches).toBe(0);
+      expect(fields.signatureScrubs).toBe(0);
+      expect(fields.signatureScrubsToolCallsAffected).toBe(0);
     });
 
     it("emits bookend log even when prompt fails", async () => {

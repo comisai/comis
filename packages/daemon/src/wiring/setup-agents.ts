@@ -344,7 +344,7 @@ export async function setupSingleAgent(
     oauth: {
       eventBus: container.eventBus,
       credentialStore: oauthCredentialStore,
-      logger: agentLogger.child({ module: "oauth-token-manager" }),
+      logger: agentLogger.child({ submodule: "oauth-token-manager" }),
       dataDir: dataDirAbs,
       keyPrefix: "OAUTH_",
       // Phase 8 D-05: pass auth-profiles.json path when file adapter active
@@ -386,7 +386,7 @@ export async function setupSingleAgent(
       agentId,
       oauthStorage: oauthStorageMode,
       dataDir: dataDirAbs,
-      module: "setup-agents",
+      submodule: "setup-agents",
     },
     "OAuth credential store + auth provider + per-LLM-call dispatch wired",
   );
@@ -710,10 +710,10 @@ export async function setupAgents(deps: {
   const { container, memoryAdapter, sessionStore, agentLogger } = deps;
 
   // Inject module-level logger for response sanitization pipeline
-  setSanitizeLogger(agentLogger.child({ module: "response-sanitize" }));
+  setSanitizeLogger(agentLogger.child({ submodule: "response-sanitize" }));
 
   // Inject module-level logger for tool schema normalization pipeline
-  setToolNormalizationLogger(agentLogger.child({ module: "tool-normalize" }));
+  setToolNormalizationLogger(agentLogger.child({ submodule: "tool-normalize" }));
 
   // Phase 8 D-08: once-per-daemon WARN for the encrypted-store hot-reload
   // limitation. Placed in setupAgents() body (NOT setupSingleAgent) so the
@@ -728,7 +728,7 @@ export async function setupAgents(deps: {
       {
         hint: "CLI auth login changes require daemon restart in encrypted mode (file-watch unsupported on encrypted SQLite WAL)",
         errorKind: "limitation_known",
-        module: "setup-agents",
+        submodule: "setup-agents",
       },
       "OAuth hot-reload disabled in encrypted-store mode",
     );

@@ -249,7 +249,7 @@ export async function runPreflightDoctor(
       level: 60,
       time: new Date().toISOString(),
       name: "comis-daemon",
-      module: "preflight",
+      submodule: "preflight",
       errorKind: "dependency",
       err: message,
       hint: "Native module 'better-sqlite3' failed to load. Try: npm rebuild better-sqlite3 (or re-run install.sh). If this persists, reinstall comisai from a fresh tarball.",

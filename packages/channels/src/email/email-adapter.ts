@@ -132,7 +132,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
       // Skip automated senders
       if (isAutomatedSender(headers, fromAddress)) {
         deps.logger.debug(
-          { channelType, module: "email", fromAddress },
+          { channelType, submodule: "email", fromAddress },
           "Skipping automated sender",
         );
         return;
@@ -141,7 +141,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
       // Sender allowlist
       if (!isAllowedSender(fromAddress, deps.allowFrom, deps.allowMode)) {
         deps.logger.debug(
-          { channelType, module: "email", fromAddress },
+          { channelType, submodule: "email", fromAddress },
           "Sender not in allowlist, skipping",
         );
         return;
@@ -172,7 +172,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
       }
     } catch (e) {
       deps.logger.warn(
-        { err: e, channelType, module: "email", hint: "Failed to process inbound email", errorKind: "parse" },
+        { err: e, channelType, submodule: "email", hint: "Failed to process inbound email", errorKind: "parse" },
         "Inbound email processing failed",
       );
     }
@@ -196,7 +196,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
     if (result.ok) {
       connected = true;
       deps.logger.info(
-        { channelType, module: "email", channelId },
+        { channelType, submodule: "email", channelId },
         "Email adapter started",
       );
     }
@@ -216,7 +216,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
     }
 
     deps.logger.info(
-      { channelType, module: "email", channelId },
+      { channelType, submodule: "email", channelId },
       "Email adapter stopped",
     );
 
@@ -264,7 +264,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
         ? mailResult.error
         : new Error(String(mailResult.error));
       deps.logger.error(
-        { err: error, channelType, module: "email", hint: "Check SMTP credentials and host", errorKind: "network" },
+        { err: error, channelType, submodule: "email", hint: "Check SMTP credentials and host", errorKind: "network" },
         "Failed to send email",
       );
       return err(error);

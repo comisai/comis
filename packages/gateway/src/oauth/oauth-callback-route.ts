@@ -12,7 +12,7 @@
  * page (200) on success or a "Login Failed" HTML page (400/500) on failure.
  *
  * HTTP method is GET, NOT POST (RESEARCH §Pitfall 5 — OAuth servers always
- * redirect with GET). Logging discipline (CLAUDE.md): module: "oauth-callback"
+ * redirect with GET). Logging discipline (CLAUDE.md): submodule: "oauth-callback"
  * on every line; NEVER log code/state/verifier/access/refresh values.
  *
  * @module
@@ -189,7 +189,7 @@ export function insertPendingFlow(
   const timer = setTimeout(() => {
     map.delete(state);
     logger.debug(
-      { provider: flow.provider, module: "oauth-callback" },
+      { provider: flow.provider, submodule: "oauth-callback" },
       "Pending OAuth flow expired",
     );
   }, PENDING_FLOW_TIMEOUT_MS);
@@ -288,7 +288,7 @@ export function createOAuthCallbackRoute(deps: OAuthCallbackDeps): Hono {
           provider,
           profileId,
           identity: identityForEvent,
-          module: "oauth-callback",
+          submodule: "oauth-callback",
         },
         "Gateway OAuth callback success",
       );
@@ -305,7 +305,7 @@ export function createOAuthCallbackRoute(deps: OAuthCallbackDeps): Hono {
           provider,
           errorKind: rewritten.errorKind,
           hint: rewritten.hint,
-          module: "oauth-callback",
+          submodule: "oauth-callback",
         },
         "OAuth callback exchange failed",
       );

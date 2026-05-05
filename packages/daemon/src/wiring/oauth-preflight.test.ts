@@ -150,7 +150,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     expect(debugs).toHaveLength(0);
 
     expect(warns[0]!.payload).toMatchObject({
-      module: "oauth-tls-preflight",
+      submodule: "oauth-tls-preflight",
       errorKind: "oauth_tls_cert",
       hint: "apk add ca-certificates && update-ca-certificates",
       code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
@@ -231,7 +231,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     expect(warns).toHaveLength(0);
     expect(debugs).toHaveLength(1);
     expect(debugs[0]!.payload).toMatchObject({
-      module: "oauth-tls-preflight",
+      submodule: "oauth-tls-preflight",
       errorKind: "oauth_tls_network",
       message: "ECONNREFUSED",
     });

@@ -104,6 +104,22 @@ export interface BridgeMetricsState {
    *  hash store. Used by the pre-LLM-call restoration pass to heal cross-turn
    *  mutation of signed thinking blocks before pi-ai serializes the next request. */
   thinkingBlockCanonical: Map<string, ReadonlyArray<unknown>>;
+
+  // 260504-ieh: Per-execute diagnostic counters rolled up into the
+  // "Execution complete" bookend INFO log. Demote per-event INFO emissions
+  // (which fire N times per request) to DEBUG and surface aggregate counts
+  // in the once-per-request bookend instead.
+  /** Number of pre-LLM-call hash-assertion walks performed (one per turn_start). */
+  hashAssertionsRan: number;
+  /** Total cross-turn thinking-block hash mismatches surfaced across all walks. */
+  hashAssertionMismatches: number;
+  /** Number of signature-replay scrubber invocations that scrubbed at least one
+   *  assistant message in this execute(). Populated via ceSetup.getSignatureScrubCounters
+   *  in executor-post-execution; surfaced here for symmetry / future bridge-side use. */
+  signatureScrubs: number;
+  /** Total tool calls across all signature-replay scrubs whose thoughtSignature
+   *  was stripped (post-incident-visibility metric). */
+  signatureScrubsToolCallsAffected: number;
 }
 
 /**
@@ -150,6 +166,11 @@ export function createBridgeMetrics(): BridgeMetricsState {
     budgetWarningEmitted: false,
     thinkingBlockHashes: new Map(),
     thinkingBlockCanonical: new Map(),
+    // 260504-ieh: per-execute diagnostic counters
+    hashAssertionsRan: 0,
+    hashAssertionMismatches: 0,
+    signatureScrubs: 0,
+    signatureScrubsToolCallsAffected: 0,
   };
 }
 
@@ -182,6 +203,11 @@ export function buildBridgeResult(
   sessionCacheSavedUsd?: number;
   thinkingTokens?: number;
   budgetWarningEmitted?: boolean;
+  // 260504-ieh: diagnostic counters surfaced for the "Execution complete" bookend.
+  hashAssertionsRan?: number;
+  hashAssertionMismatches?: number;
+  signatureScrubs?: number;
+  signatureScrubsToolCallsAffected?: number;
 } {
   return {
     tokensUsed: {
@@ -223,5 +249,12 @@ export function buildBridgeResult(
     thinkingTokens: metrics.totalThinkingTokens > 0 ? metrics.totalThinkingTokens : undefined,
     // Budget trajectory warning flag
     budgetWarningEmitted: metrics.budgetWarningEmitted || undefined,
+    // 260504-ieh: per-execute diagnostic counters. Always populated (no `> 0`
+    // gate) — a `0` in the bookend log is itself meaningful ("no scrubs/
+    // assertions this execute") and gating would lose that signal.
+    hashAssertionsRan: metrics.hashAssertionsRan,
+    hashAssertionMismatches: metrics.hashAssertionMismatches,
+    signatureScrubs: metrics.signatureScrubs,
+    signatureScrubsToolCallsAffected: metrics.signatureScrubsToolCallsAffected,
   };
 }

@@ -420,7 +420,7 @@ describe("validateProviderOverrides", () => {
       provider: expect.any(String),
       hint: expect.stringContaining("PROVIDER_OVERRIDES"),
       errorKind: "config",
-      module: "agent.capabilities",
+      submodule: "capabilities",
     }));
     expect(msg).toBe("Capability override has no matching pi-ai provider");
   });

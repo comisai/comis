@@ -13,7 +13,7 @@
  * - Real-refresh detection via newCredentials.refresh !== profile.refresh (RESEARCH
  *   Q1 fix — the original !!newCredentials check was a no-op since pi-ai always
  *   returns truthy newCredentials).
- * - 9 log events per D-12 with module: "oauth-token-manager".
+ * - 9 log events per D-12 with submodule: "oauth-token-manager".
  * - 3 event-bus events per D-13: auth:token_rotated (extended with profileId),
  *   auth:profile_bootstrapped (NEW), auth:refresh_failed (NEW).
  * - Env-var bootstrap: empty store + valid OAUTH_<PROVIDER> env writes profile
@@ -550,7 +550,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         {
           filePath: watchPath,
           debouncedMs: 100,
-          module: "oauth-store-watcher",
+          submodule: "oauth-store-watcher",
         },
         "OAuth store change detected; cache invalidated",
       );
@@ -560,7 +560,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       void emitProfileAddedEventsAfterReload().catch((emitErr: unknown) => {
         logger.warn(
           {
-            module: "oauth-store-watcher",
+            submodule: "oauth-store-watcher",
             hint: "profile_added_emit_failed",
             errorKind: "event_emit",
             err: emitErr,
@@ -587,7 +587,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     watcher.on("error", (watchErr: unknown) => {
       logger.warn(
         {
-          module: "oauth-store-watcher",
+          submodule: "oauth-store-watcher",
           hint: "watcher_failed",
           errorKind: "fs_watch",
           err: watchErr,
@@ -596,7 +596,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       );
     });
     logger.debug(
-      { module: "oauth-store-watcher", filePath: watchPath },
+      { submodule: "oauth-store-watcher", filePath: watchPath },
       "OAuth profile watcher registered",
     );
   }
@@ -657,7 +657,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       {
         provider: providerId,
         profileId: storedProfile.profileId,
-        module: "oauth-token-manager",
+        submodule: "oauth-token-manager",
         hint: "env-override-ignored",
         errorKind: "config_drift",
       },
@@ -685,7 +685,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         {
           provider: providerId,
           profileId,
-          module: "oauth-token-manager",
+          submodule: "oauth-token-manager",
           hint: "store_write_failed",
           errorKind: "store_failed",
           err: writeResult.error,
@@ -708,7 +708,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         {
           provider: providerId,
           profileId,
-          module: "oauth-token-manager",
+          submodule: "oauth-token-manager",
           identity,
         },
         "Profile bootstrapped from env",
@@ -746,7 +746,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           {
             provider: providerId,
             profileId: initialProfile.profileId,
-            module: "oauth-token-manager",
+            submodule: "oauth-token-manager",
             durationMs: acquireMs,
           },
           "Lock acquired",
@@ -807,7 +807,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 {
                   provider: providerId,
                   profileId: profile.profileId,
-                  module: "oauth-token-manager",
+                  submodule: "oauth-token-manager",
                   remainingMs: profile.expires - Date.now(),
                 },
                 "OAuth token still valid — skipping refresh",
@@ -828,7 +828,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 {
                   provider: providerId,
                   profileId: profile.profileId,
-                  module: "oauth-token-manager",
+                  submodule: "oauth-token-manager",
                   hint: "auth_endpoint_unreachable",
                   errorKind: "timeout",
                 },
@@ -867,7 +867,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 {
                   provider: providerId,
                   profileId: profile.profileId,
-                  module: "oauth-token-manager",
+                  submodule: "oauth-token-manager",
                   hint: rewritten.hint,
                   errorKind: rewritten.errorKind,
                   err: classifyInput,
@@ -919,7 +919,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 {
                   provider: providerId,
                   profileId: profile.profileId,
-                  module: "oauth-token-manager",
+                  submodule: "oauth-token-manager",
                   hint: "auth_endpoint_unreachable",
                   errorKind: "timeout",
                 },
@@ -952,7 +952,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 {
                   provider: providerId,
                   profileId: profile.profileId,
-                  module: "oauth-token-manager",
+                  submodule: "oauth-token-manager",
                   hint: rewritten.hint,
                   errorKind: rewritten.errorKind,
                   err: apiKeyResult.error,
@@ -1000,7 +1000,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 {
                   provider: providerId,
                   profileId: profile.profileId,
-                  module: "oauth-token-manager",
+                  submodule: "oauth-token-manager",
                   hint: "store_write_failed",
                   errorKind: "store_failed",
                   err: writeResult.error,
@@ -1033,7 +1033,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             {
               provider: providerId,
               profileId: profile.profileId,
-              module: "oauth-token-manager",
+              submodule: "oauth-token-manager",
               durationMs: completeStart - heldStart,
               refreshed,
             },
@@ -1052,7 +1052,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 provider: providerId,
                 profileId: profile.profileId,
                 previous: previousLastGood ?? null,
-                module: "oauth-resolver",
+                submodule: "oauth-resolver",
               },
               "lastGood updated",
             );
@@ -1064,7 +1064,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             {
               provider: providerId,
               profileId: initialProfile.profileId,
-              module: "oauth-token-manager",
+              submodule: "oauth-token-manager",
               heldMs: Date.now() - heldStart,
             },
             "Lock released",
@@ -1082,7 +1082,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         {
           provider: providerId,
           profileId: initialProfile.profileId,
-          module: "oauth-token-manager",
+          submodule: "oauth-token-manager",
           retries: 0,
           hint,
           errorKind,
@@ -1150,7 +1150,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               configuredProfileId: configured,
               hint: "configured-profile-missing",
               errorKind: "profile_not_found",
-              module: "oauth-resolver",
+              submodule: "oauth-resolver",
             },
             "Configured OAuth profile not found in store",
           );
@@ -1170,7 +1170,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             {
               provider: providerId,
               profileId: configured,
-              module: "oauth-resolver",
+              submodule: "oauth-resolver",
             },
             "OAuth profile resolved via agent config",
           );
@@ -1180,7 +1180,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             provider: providerId,
             source: "agent-config",
             profileId: configured,
-            module: "oauth-resolver",
+            submodule: "oauth-resolver",
           },
           "Resolved OAuth profile via chain",
         );
@@ -1220,7 +1220,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 provider: providerId,
                 source: "lastGood",
                 profileId: lg,
-                module: "oauth-resolver",
+                submodule: "oauth-resolver",
               },
               "Resolved OAuth profile via chain",
             );
@@ -1254,7 +1254,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               provider: providerId,
               source: "first",
               profileId: firstProfile.profileId,
-              module: "oauth-resolver",
+              submodule: "oauth-resolver",
             },
             "Resolved OAuth profile via chain",
           );
@@ -1272,7 +1272,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           provider: providerId,
           profileId: candidateProfileId,
           source: "env-bootstrap",
-          module: "oauth-resolver",
+          submodule: "oauth-resolver",
         },
         "Resolved OAuth profile via env-bootstrap fallback",
       );
@@ -1300,7 +1300,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           {
             provider: providerId,
             profileId: profile.profileId,
-            module: "oauth-token-manager",
+            submodule: "oauth-token-manager",
             expiresAt,
             secsUntilExpiry,
           },

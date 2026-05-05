@@ -1138,7 +1138,7 @@ describe("OAuthTokenManager — port-backed (Phase 7)", () => {
 
   describe("G. logging discipline", () => {
     // Test G.1
-    it("logs refresh-starting at DEBUG with module: 'oauth-token-manager'", async () => {
+    it("logs refresh-starting at DEBUG with submodule: 'oauth-token-manager'", async () => {
       const credentialStore = makeMockCredentialStore();
       vi.mocked(credentialStore.get).mockResolvedValue(_ok(makeStoredProfile()));
       mockGetOAuthProvider.mockReturnValue(makeFakeProvider("openai-codex"));
@@ -1554,7 +1554,7 @@ describe("OAuthTokenManager.getApiKey resolver chain (Phase 9 R2)", () => {
         p.configuredProfileId === configured &&
         p.hint === "configured-profile-missing" &&
         p.errorKind === "profile_not_found" &&
-        p.module === "oauth-resolver"
+        p.submodule === "oauth-resolver"
       );
     });
     expect(profileMissingWarn).toBeDefined();
@@ -1785,7 +1785,7 @@ describe("Phase 10: refresh_token_reused detection (SC-10-4)", () => {
       .filter((c) => {
         const p = c.payload as Record<string, unknown>;
         return (
-          p.module === "oauth-token-manager" &&
+          p.submodule === "oauth-token-manager" &&
           p.errorKind === "refresh_token_reused"
         );
       });

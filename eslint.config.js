@@ -102,7 +102,34 @@ export default tseslint.config(
           selector: "NewExpression[callee.name='Function']",
           message: "Function() constructor is banned. It is equivalent to eval().",
         },
+
+        // Ban `module:` inside Pino log-method payloads.
+        //
+        // Pino concatenates parent-bound fields (pre-serialized JSON
+        // fragment) with the call-site object without dedup, so call
+        // sites passing `{ module: "..." }` against a parent already
+        // bound with `module: "<subsystem>"` (e.g. via getLogger())
+        // emit BOTH keys on the same JSON line. Use `submodule:`
+        // instead — see LogFields in @comis/infra.
+        {
+          selector:
+            "CallExpression[callee.property.name=/^(info|warn|error|debug|audit|trace|fatal)$/] > ObjectExpression > Property[key.name='module']",
+          message:
+            "`module:` in a log payload duplicates the parent-bound `module` field on the emitted JSON line. Use `submodule:` instead (see LogFields in @comis/infra).",
+        },
       ],
+    },
+  },
+
+  // The canonical logging schema declares `module` as a property of
+  // LogFields; that legitimate property declaration would otherwise
+  // trip the `module:`-in-log-payload guard above when ESLint walks the
+  // ObjectExpression-style type literal. Disable the rule for the
+  // logging schema files only — every other source file remains guarded.
+  {
+    files: ["packages/infra/src/logging/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": "off",
     },
   },
 );

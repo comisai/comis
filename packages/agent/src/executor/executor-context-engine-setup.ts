@@ -90,6 +90,15 @@ export interface ContextEngineSetupResult {
   contextEngine: ContextEngine;
   /** Getter for accumulated transformContext duration in ms */
   getContextEngineDurationMs: () => number;
+  /** 260504-ieh: per-execute signature-replay scrub counters. `signatureScrubs`
+   *  bumps once per non-empty scrubber emission; `signatureScrubsToolCallsAffected`
+   *  accumulates the toolCallsAffected field across emissions. Surfaced to
+   *  executor-post-execution.ts so the bookend "Execution complete" INFO log
+   *  carries the per-execute total instead of the per-event INFO emissions. */
+  getSignatureScrubCounters: () => {
+    signatureScrubs: number;
+    signatureScrubsToolCallsAffected: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +180,13 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     }
   };
 
+  // 260504-ieh: per-execute counters for the signature-replay scrubber. Live
+  // for the lifetime of this setupContextEngine() call (one per execute()),
+  // so no reset is needed — the closure goes out of scope at execute end and
+  // a fresh setup creates fresh zeroed counters for the next execute.
+  let signatureScrubs = 0;
+  let signatureScrubsToolCallsAffected = 0;
+
   const contextEngine = createContextEngine(contextEngineConfig, {
     logger: deps.logger,
     eventBus: deps.eventBus,
@@ -196,6 +212,17 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
     getSystemTokensEstimate: getCachedSystemTokensEstimate,
     // G-09: Notify cache break detector when observation masking modifies content
     onContentModified: () => cacheBreakDetector.notifyContentModification(formattedKey),
+    // 260504-ieh: accumulate signature-replay scrub counts per-execute. Only
+    // counts emissions that actually scrubbed something (zero-touch turns
+    // are filtered out — they're not a "scrub" in the post-incident-visibility
+    // sense). Sums toolCallsAffected so the bookend "Execution complete" log
+    // carries the post-incident-visibility metric.
+    onSignatureReplayScrubbed: (stats) => {
+      if (stats.scrubbedAssistantMessages > 0) {
+        signatureScrubs++;
+        signatureScrubsToolCallsAffected += stats.toolCallsAffected;
+      }
+    },
     // Provide API-grounded token anchor to context engine pipeline
     getTokenAnchor,
     // Reset anchor when compaction replaces the message array
@@ -422,5 +449,11 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
   return {
     contextEngine,
     getContextEngineDurationMs: () => contextEngineDurationMs,
+    // 260504-ieh: expose per-execute signature-replay scrub counters so the
+    // bookend "Execution complete" INFO log can roll them up.
+    getSignatureScrubCounters: () => ({
+      signatureScrubs,
+      signatureScrubsToolCallsAffected,
+    }),
   };
 }

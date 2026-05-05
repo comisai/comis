@@ -271,7 +271,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
 
       const workspacePath = deps.workspaceDirs?.get(agentId) ?? "";
 
-      const reviewLogger = logger.child({ agentId, module: "memory-review" });
+      const reviewLogger = logger.child({ agentId, submodule: "memory-review" });
       const reviewResult = await runMemoryReview({
         agentId,
         tenantId: deps.tenantId ?? container.config.tenantId ?? "default",

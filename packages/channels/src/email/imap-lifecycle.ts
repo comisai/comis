@@ -120,7 +120,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       }
     } catch (e) {
       opts.logger.warn(
-        { err: e, channelType: "email", module: "imap", hint: "Fetch failed, will retry on next event", errorKind: "network" },
+        { err: e, channelType: "email", submodule: "imap", hint: "Fetch failed, will retry on next event", errorKind: "network" },
         "Failed to fetch new messages",
       );
     }
@@ -134,7 +134,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
     const delay = reconnectDelay + jitter;
 
     opts.logger.info(
-      { channelType: "email", module: "imap", delayMs: delay },
+      { channelType: "email", submodule: "imap", delayMs: delay },
       "Scheduling IMAP reconnect",
     );
 
@@ -161,7 +161,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
     client.on("close", () => {
       if (!stopped) {
         opts.logger.info(
-          { channelType: "email", module: "imap" },
+          { channelType: "email", submodule: "imap" },
           "IMAP connection closed, scheduling reconnect",
         );
         scheduleReconnect();
@@ -172,7 +172,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       // Check if this is an IDLE-related error for polling fallback
       if (e.message && /idle/i.test(e.message)) {
         opts.logger.warn(
-          { channelType: "email", module: "imap", hint: "Falling back to polling", errorKind: "capability" },
+          { channelType: "email", submodule: "imap", hint: "Falling back to polling", errorKind: "capability" },
           "IDLE not supported, switching to polling fallback",
         );
         startPolling();
@@ -182,7 +182,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
     const connectResult = await fromPromise(client.connect());
     if (!connectResult.ok) {
       opts.logger.error(
-        { err: connectResult.error, channelType: "email", module: "imap", hint: "Check IMAP credentials and host", errorKind: "network" },
+        { err: connectResult.error, channelType: "email", submodule: "imap", hint: "Check IMAP credentials and host", errorKind: "network" },
         "IMAP connection failed",
       );
       scheduleReconnect();
@@ -201,7 +201,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
     const lockResult = await fromPromise(client.getMailboxLock("INBOX"));
     if (!lockResult.ok) {
       opts.logger.error(
-        { err: lockResult.error, channelType: "email", module: "imap", hint: "Could not lock INBOX", errorKind: "network" },
+        { err: lockResult.error, channelType: "email", submodule: "imap", hint: "Could not lock INBOX", errorKind: "network" },
         "Failed to get INBOX lock",
       );
       return err(lockResult.error instanceof Error ? lockResult.error : new Error(String(lockResult.error)));
@@ -209,7 +209,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
 
     lock = lockResult.value as { release: () => void };
     opts.logger.info(
-      { channelType: "email", module: "imap", host: opts.host },
+      { channelType: "email", submodule: "imap", host: opts.host },
       "IMAP connected and listening",
     );
 

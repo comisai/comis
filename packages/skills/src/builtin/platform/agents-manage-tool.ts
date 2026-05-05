@@ -431,7 +431,7 @@ export function createAgentsManageTool(
                   : "failed";
             logger.info(
               {
-                module: "skill.agents-manage",
+                submodule: "skill.agents-manage",
                 action: "create",
                 agentId: aid,
                 workspaceDir: workspaceDir ?? null,

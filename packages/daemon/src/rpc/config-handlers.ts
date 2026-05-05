@@ -24,6 +24,7 @@ import {
   type AppContainer,
   type ConfigGitManager,
   type GitCommitMetadata,
+  type OAuthCredentialStorePort,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { suppressError } from "@comis/shared";
@@ -178,6 +179,15 @@ export interface ConfigHandlerDeps {
   logger: ComisLogger;
   /** Config change webhook config (from container.config.daemon.configWebhook) */
   configWebhook?: { url?: string; timeoutMs?: number; secret?: string };
+  /**
+   * quick-260504-irq: optional OAuth credential store, used by the
+   * credential guard to confirm that an agent's `oauthProfiles[provider]`
+   * entry refers to a profile that actually exists in
+   * ~/.comis/auth-profiles.json (or the encrypted-SQLite equivalent).
+   * When absent, the OAuth branch of the resolver is a no-op — existing
+   * API-key behavior is preserved.
+   */
+  oauthCredentialStore?: OAuthCredentialStorePort;
 }
 
 /**
@@ -530,6 +540,15 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         // at runtime. Fail-loud here rather than letting an unauthorized
         // provider config persist and explode at the next chat turn.
         // See `.planning/design/daemon-credential-guard/PLAN.md`.
+        //
+        // quick-260504-irq: model-only patches with unchanged provider
+        // introduce no new credential surface — short-circuit the guard
+        // entirely. The runtime auth chain that just authenticated the
+        // LLM call making this patch will keep working. Stale-broken-
+        // config detection moves back to the next chat turn (fail-loud
+        // at the request boundary), where the message is correctly
+        // shaped for the actual failure mode (not a pre-emptive API-key
+        // prompt that is wrong for OAuth providers like openai-codex).
         if (section === "agents" && isAgentProviderOrModelKey(key)) {
           const targetProvider = extractTargetProvider(
             key!,
@@ -537,23 +556,61 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
             deps.container.config as { agents?: Record<string, { provider?: string }> },
           );
           if (targetProvider !== undefined) {
-            const resolution = resolveProviderCredential(targetProvider, {
-              providerEntries: deps.container.config.providers?.entries ?? {},
-              secretManager: deps.container.secretManager,
-            });
-            if (!resolution.ok) {
-              deps.logger.warn(
-                {
-                  method: "config.patch",
-                  section,
-                  key,
-                  targetProvider,
-                  hint: "Provider credential not resolvable",
-                  errorKind: "validation" as const,
-                },
-                "Config patch rejected: missing provider credential",
-              );
-              throw new Error(resolution.reason!);
+            // For `.model` keys, extractTargetProvider returns the agent's
+            // CURRENT provider (config-handlers.ts:65-69) — so the resolved
+            // targetProvider always equals the current provider. The
+            // model-only short-circuit therefore always fires for `.model`
+            // keys; we still compute the equality explicitly so the
+            // intent is readable and the check survives any future change
+            // to extractTargetProvider's contract.
+            const isModelOnlyPatch = key!.endsWith(".model");
+            const agentId = key!.split(".")[0];
+            // eslint-disable-next-line security/detect-object-injection -- agentId from validated key; agents map is typed Record
+            const currentProvider = agentId
+              ? deps.container.config.agents?.[agentId]?.provider
+              : undefined;
+            const providerUnchanged = currentProvider === targetProvider;
+
+            if (!(isModelOnlyPatch && providerUnchanged)) {
+              // Provider is changing (or this is a `.provider` patch where
+              // targetProvider is the new value) — run the credential guard.
+              // eslint-disable-next-line security/detect-object-injection -- agentId from validated key; agents map is typed Record
+              const agentOauthProfiles = (agentId
+                ? deps.container.config.agents?.[agentId]?.oauthProfiles
+                : undefined) as Record<string, string> | undefined;
+              // Pre-resolve the loader has() for the configured profile so the
+              // resolver can stay synchronous. This keeps Hexagonal port-side
+              // validators I/O-free.
+              // eslint-disable-next-line security/detect-object-injection -- typed Record<string, string> read; targetProvider validated above
+              const configuredProfileId = agentOauthProfiles?.[targetProvider];
+              let loaderHasProfile = false;
+              if (configuredProfileId && deps.oauthCredentialStore) {
+                const hasResult = await deps.oauthCredentialStore.has(configuredProfileId);
+                loaderHasProfile = hasResult.ok && hasResult.value === true;
+              }
+              const resolution = resolveProviderCredential(targetProvider, {
+                providerEntries: deps.container.config.providers?.entries ?? {},
+                secretManager: deps.container.secretManager,
+                modelsConfig: deps.container.config.models,
+                oauthProfiles: agentOauthProfiles,
+                oauthProfileLoader: configuredProfileId
+                  ? { has: (id) => id === configuredProfileId && loaderHasProfile }
+                  : undefined,
+              });
+              if (!resolution.ok) {
+                deps.logger.warn(
+                  {
+                    method: "config.patch",
+                    section,
+                    key,
+                    targetProvider,
+                    hint: "Provider credential not resolvable",
+                    errorKind: "validation" as const,
+                  },
+                  "Config patch rejected: missing provider credential",
+                );
+                throw new Error(resolution.reason!);
+              }
             }
           }
         }

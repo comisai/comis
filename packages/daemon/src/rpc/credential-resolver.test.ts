@@ -223,3 +223,94 @@ describe("resolveProviderCredential", () => {
     expect(r.reason).toContain('Cannot set agent provider to "custom-proxy"');
   });
 });
+
+// ---------------------------------------------------------------------
+// Source C: comis OAuth profiles (per-agent oauthProfiles + loader)
+// ---------------------------------------------------------------------
+
+describe("resolveProviderCredential — Source C (oauth_profile)", () => {
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it("passes via Source C when oauthProfiles entry exists and loader.has returns true", () => {
+    const r = resolveProviderCredential("openai-codex", {
+      oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+      oauthProfileLoader: { has: (id) => id === "openai-codex:user_a@example.com" },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("oauth_profile");
+    expect(r.resolvedProvider).toBe("openai-codex");
+  });
+
+  it("rejects with OAuth-aware copy when oauthProfiles entry exists but loader.has returns false", () => {
+    const r = resolveProviderCredential("openai-codex", {
+      oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+      oauthProfileLoader: { has: () => false },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('OAuth profile "openai-codex:user_a@example.com" is configured but not found');
+    expect(r.reason).toContain("comis auth login --provider openai-codex");
+    expect(r.reason).toContain("comis auth list");
+    // Crucially: no API-key recovery copy when this is an OAuth-shaped failure
+    expect(r.reason).not.toContain("env_set");
+    expect(r.reason).not.toContain("apiKeyName");
+    expect(r.reason).not.toContain("providers_manage");
+  });
+
+  it("falls through to env_canonical when oauthProfiles map has no entry for this provider", () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-v1-xxx";
+    const r = resolveProviderCredential("openrouter", {
+      oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+      oauthProfileLoader: { has: () => true },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("env_canonical");
+  });
+
+  it("Source A (providers_entry) still wins over Source C when both would resolve", () => {
+    const r = resolveProviderCredential("openai-codex", {
+      providerEntries: { "openai-codex": makeEntry({ type: "openai", apiKeyName: "OPENAI_CODEX_KEY" }) },
+      secretManager: { has: (k) => k === "OPENAI_CODEX_KEY" },
+      oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+      oauthProfileLoader: { has: () => true },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("providers_entry");
+  });
+
+  it("Source C wins over env_canonical when both would resolve", () => {
+    // Establish env_canonical would pass (anthropic supports OAUTH_TOKEN env)
+    process.env.ANTHROPIC_OAUTH_TOKEN = "oauth-xxx";
+    const r = resolveProviderCredential("anthropic", {
+      oauthProfiles: { anthropic: "anthropic:user_a@example.com" },
+      oauthProfileLoader: { has: () => true },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("oauth_profile");
+  });
+
+  it("ignores oauthProfiles when oauthProfileLoader is absent (cannot prove existence)", () => {
+    const r = resolveProviderCredential("openai-codex", {
+      oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+      // No oauthProfileLoader — resolver cannot confirm; still emits OAuth-aware
+      // rejection copy because the agent has an oauthProfiles entry for this
+      // provider (the failure mode is "OAuth profile not loadable", not
+      // "missing API key").
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('Cannot set agent provider to "openai-codex"');
+    expect(r.reason).toContain('OAuth profile "openai-codex:user_a@example.com" is configured but not found');
+    expect(r.reason).toContain("comis auth login --provider openai-codex");
+  });
+});

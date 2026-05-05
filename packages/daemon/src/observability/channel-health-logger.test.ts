@@ -75,7 +75,7 @@ describe("setupChannelHealthLogging", () => {
         connectionMode: "polling",
         hint: "Check adapter credentials and network connectivity",
         errorKind: "connection",
-        module: "channel-health",
+        submodule: "channel-health",
       });
     });
 
@@ -98,7 +98,7 @@ describe("setupChannelHealthLogging", () => {
         err: { message: "WebSocket closed unexpectedly" },
         hint: "Adapter reports error. Check adapter logs for root cause: WebSocket closed unexpectedly",
         errorKind: "adapter",
-        module: "channel-health",
+        submodule: "channel-health",
       });
     });
 
@@ -120,7 +120,7 @@ describe("setupChannelHealthLogging", () => {
         currentState: "stale",
         hint: "No activity detected beyond stale threshold. Adapter may be silently disconnected",
         errorKind: "timeout",
-        module: "channel-health",
+        submodule: "channel-health",
       });
     });
 
@@ -142,7 +142,7 @@ describe("setupChannelHealthLogging", () => {
         currentState: "stuck",
         hint: "Active run exceeded stuck threshold. Check for hung agent execution",
         errorKind: "timeout",
-        module: "channel-health",
+        submodule: "channel-health",
       });
     });
 
@@ -164,7 +164,7 @@ describe("setupChannelHealthLogging", () => {
         currentState: "unknown",
         hint: "getStatus() unavailable or failing. Adapter may not implement health reporting",
         errorKind: "internal",
-        module: "channel-health",
+        submodule: "channel-health",
       });
     });
 
@@ -224,7 +224,7 @@ describe("setupChannelHealthLogging", () => {
         previousState: "disconnected",
         currentState: "healthy",
         connectionMode: "polling",
-        module: "channel-health",
+        submodule: "channel-health",
       });
     });
 
@@ -244,7 +244,7 @@ describe("setupChannelHealthLogging", () => {
       expect(fields).toMatchObject({
         previousState: "startup-grace",
         currentState: "healthy",
-        module: "channel-health",
+        submodule: "channel-health",
       });
     });
 
@@ -304,7 +304,7 @@ describe("setupChannelHealthLogging", () => {
         channelType: "telegram",
         state: "healthy",
         responseTimeMs: 12,
-        module: "channel-health",
+        submodule: "channel-health",
       });
     });
   });
@@ -335,7 +335,7 @@ describe("setupChannelHealthLogging", () => {
       }
     });
 
-    it("all log events include module: channel-health", () => {
+    it("all log events include submodule: channel-health", () => {
       // WARN event
       eventBus.emit("channel:health_changed", {
         channelType: "t", previousState: "healthy", currentState: "disconnected",
@@ -351,9 +351,9 @@ describe("setupChannelHealthLogging", () => {
         channelType: "t", state: "healthy", responseTimeMs: 5, timestamp: 0,
       });
 
-      expect(logger.warn.mock.calls[0][0].module).toBe("channel-health");
-      expect(logger.info.mock.calls[0][0].module).toBe("channel-health");
-      expect(logger.debug.mock.calls[0][0].module).toBe("channel-health");
+      expect(logger.warn.mock.calls[0][0].submodule).toBe("channel-health");
+      expect(logger.info.mock.calls[0][0].submodule).toBe("channel-health");
+      expect(logger.debug.mock.calls[0][0].submodule).toBe("channel-health");
     });
   });
 });

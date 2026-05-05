@@ -247,7 +247,7 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
     });
     app.route("/oauth", oauthApp);
     logger.debug(
-      { module: "oauth-callback" },
+      { submodule: "oauth-callback" },
       "OAuth callback route mounted at /oauth/callback/:provider",
     );
   }
