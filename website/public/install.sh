@@ -857,6 +857,7 @@ install_rust() {
         for bin in cargo rustc rustup; do
             ln -sf "/usr/local/cargo/bin/$bin" "/usr/local/bin/$bin" 2>/dev/null || true
         done
+        write_rustup_profile_d
     else
         run_quiet_step "Installing rust (for cargo-based tools)" \
             sudo env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup sh "$tmp" $rustup_args \
@@ -864,8 +865,35 @@ install_rust() {
         for bin in cargo rustc rustup; do
             sudo ln -sf "/usr/local/cargo/bin/$bin" "/usr/local/bin/$bin" 2>/dev/null || true
         done
+        write_rustup_profile_d
     fi
     return 0
+}
+
+# write_rustup_profile_d
+# ----------------------
+# Without RUSTUP_HOME exported, the rustup multiplexer can't find the system
+# toolchain at /usr/local/rustup and fails with "could not choose a version of
+# cargo to run, because no default is configured" — even when the symlinks at
+# /usr/local/bin/{cargo,rustc} exist. Set it system-wide for login shells via
+# /etc/profile.d. The systemd unit also sets Environment=RUSTUP_HOME for the
+# daemon process (so bwrap children inherit it via wrapEnv's pass-through).
+write_rustup_profile_d() {
+    local profile=/etc/profile.d/rustup.sh
+    local write_cmd="tee"
+    if ! is_root; then
+        write_cmd="sudo tee"
+    fi
+    $write_cmd "$profile" >/dev/null <<'PROFILE'
+# Comis-managed: makes the system rustup install discoverable to all login shells.
+export RUSTUP_HOME=/usr/local/rustup
+export CARGO_HOME=/usr/local/cargo
+PROFILE
+    if is_root; then
+        chmod 644 "$profile" 2>/dev/null || true
+    else
+        sudo chmod 644 "$profile" 2>/dev/null || true
+    fi
 }
 
 install_build_tools_macos() {

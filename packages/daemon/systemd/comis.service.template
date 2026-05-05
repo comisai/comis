@@ -71,6 +71,13 @@ SyslogIdentifier=comis
 
 # Environment
 Environment=NODE_ENV=production
+# RUSTUP_HOME points at the system rustup install (written by install.sh's
+# install_rust). Without it, the rustup multiplexer can't find the toolchain
+# and `cargo --version` fails with "could not choose a version of cargo to run".
+# bwrap children inherit this via wrapEnv's pass-through of process.env, so
+# the agent's exec sandbox sees the same value.
+Environment=RUSTUP_HOME=/usr/local/rustup
+Environment=CARGO_HOME=/usr/local/cargo
 EnvironmentFile=-@ENV_FILE@
 
 # --- Security Hardening ---
