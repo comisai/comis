@@ -234,7 +234,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
       //     errorKind / hint.
       const warnCalls = logger._calls("warn");
       const refreshWarn = warnCalls.find(
-        (c) => c.payload?.module === "oauth-token-manager",
+        (c) => c.payload?.submodule === "oauth-token-manager",
       );
       expect(refreshWarn).toBeDefined();
       expect(refreshWarn!.payload.errorKind).toBe("refresh_token_reused");
@@ -277,7 +277,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
       // WARN log fields agree with the event.
       const refreshWarn = logger
         ._calls("warn")
-        .find((c) => c.payload?.module === "oauth-token-manager");
+        .find((c) => c.payload?.submodule === "oauth-token-manager");
       expect(refreshWarn).toBeDefined();
       expect(refreshWarn!.payload.errorKind).toBe("unsupported_region");
       expect(refreshWarn!.payload.hint).toContain("HTTPS_PROXY");
@@ -333,7 +333,7 @@ describe("SC-10-3 + SC-10-4 — refresh-failure error classification", () => {
       // WARN log agrees.
       const refreshWarn = logger
         ._calls("warn")
-        .find((c) => c.payload?.module === "oauth-token-manager");
+        .find((c) => c.payload?.submodule === "oauth-token-manager");
       expect(refreshWarn).toBeDefined();
       expect(refreshWarn!.payload.errorKind).toBe("invalid_grant");
 
