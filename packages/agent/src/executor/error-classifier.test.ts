@@ -199,6 +199,16 @@ describe("classifyError", () => {
     expect(result.category).toBe("credit_exhausted");
   });
 
+  it("classifies Anthropic spend-cap exhaustion as credit_exhausted", () => {
+    // Anthropic's self-imposed monthly spend-cap response is shaped as a
+    // 400 invalid_request_error.
+    const error = new Error(
+      '400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-06-01 at 00:00 UTC."},"request_id":"req_123"}'
+    );
+    const result = classifyError(error);
+    expect(result.category).toBe("credit_exhausted");
+  });
+
   it("returns unknown for unrecognized errors", () => {
     const error = new Error("Something completely unexpected happened");
     const result = classifyError(error);

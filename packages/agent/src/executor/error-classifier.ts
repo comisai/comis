@@ -70,10 +70,10 @@ interface ErrorPattern {
 const ERROR_PATTERNS: ErrorPattern[] = [
   // Billing / credits
   {
-    test: /credit balance is too low|billing|purchase credits|insufficient.?funds|payment.?required/i,
+    test: /credit balance is too low|billing|purchase credits|insufficient.?funds|payment.?required|usage.?limits?|regain.?access|spend.?(cap|limit)/i,
     category: "credit_exhausted",
     userMessage:
-      "The AI service is currently unavailable due to a billing issue. Please notify the system administrator.",
+      "The AI service is currently unavailable due to a billing or usage-cap issue. Please notify the system administrator.",
     retryable: false,
   },
   // Rate limiting (429)
