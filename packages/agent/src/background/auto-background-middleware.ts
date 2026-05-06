@@ -60,6 +60,16 @@ export function wrapToolForAutoBackground(
   notifyFn: NotifyFn,
   originResolver: () => BackgroundTaskOrigin | undefined,
 ): ToolDefinition {
+  // Phase 1 (Plan 15-02 / RC-3): `exec` opts out of the generic auto-background
+  // wrapper to enforce single-owner backgrounding. The exec-tool's own
+  // internal escalation path (packages/skills/src/builtin/exec-tool.ts:613-668)
+  // is the SOLE backgrounding owner for `exec`; the generic timeout-based
+  // wrapper would double-promote (see trace c742b5eb at 17:47:38 vs 17:47:43).
+  // Hardcoded literal — does NOT modify config.excludeTools so operator-set
+  // exclusions remain unchanged.
+  if (tool.name === "exec") {
+    return tool;
+  }
   if (config.excludeTools.includes(tool.name)) {
     return tool;
   }
