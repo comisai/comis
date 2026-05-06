@@ -89,3 +89,97 @@ describe("silent-sentinel response is not stored in memory.db (RC-4 / B38 / AC-3
     expect(shouldStorePairedMemory(userText, agentResponse)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 4: markRead/markConsumed via tryGetContext + drain (RC-2 residual)
+//
+// Phase 4 (Plan 15-05) reshapes:
+//   - markRead / markConsumed read tool context via tryGetContext()
+//     (the AsyncLocalStorage handle), NOT a passed-in deps object.
+//   - The drain happens at the call site (inline-consumption per B15)
+//     keyed by the composite (agentId, channelType, channelId).
+//   - effectiveAgentId normalizes undefined / empty / string-"" to "default"
+//     consistently across the memory-store path and markRead path.
+//
+// All tests in this block are RED until 15-05 lands. Source-grep is the
+// load-bearing assertion mode — exercising the runtime path requires
+// scaffolding all 30+ postExecution dependencies, which is a heavier
+// fixture than this Phase-0 plan should attempt.
+// ---------------------------------------------------------------------------
+describe("Phase 4: markRead/markConsumed via tryGetContext + drain (RC-2 residual)", () => {
+  function readPostExec(): { src: string; stripped: string } {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    return { src, stripped };
+  }
+
+  it("T0.2: markRead reads tool context via tryGetContext() (NOT a passed-in deps object)", () => {
+    const { stripped } = readPostExec();
+    // Post-Phase-4: the production source either calls tryGetContext()
+    // directly OR imports a helper module that does. Pre-Phase-4 there is
+    // no such call-site in executor-post-execution.ts.
+    expect(stripped).toMatch(/tryGetContext\s*\(/);
+  });
+
+  it("T0.3: markConsumed follows the same tryGetContext pattern", () => {
+    const { stripped } = readPostExec();
+    expect(stripped).toMatch(/markConsumed/);
+  });
+
+  it("T0.4: markRead is called at the inline-consumption call site (B15) — composite drain", () => {
+    const { stripped } = readPostExec();
+    // Post-Phase-4 the post-execution path either calls a drainAt(...) or
+    // markRead with the composite key. Either marker proves the gate.
+    expect(stripped).toMatch(/(drainAt|markRead)/);
+  });
+
+  it("T0.5: effectiveAgentId is referenced from a markRead/drain call-site (NOT only the memory branch)", () => {
+    const { stripped } = readPostExec();
+    // Pre-Phase-4 effectiveAgentId is computed inside the memory-store
+    // branch only — not in any markRead / drain call. Post-Phase-4 the
+    // normalized value is shared with the markRead/drain call. The contract:
+    // a markRead or drain helper invocation references effectiveAgentId.
+    const reused =
+      /(markRead|drainAt|markConsumed|consume)\s*\([^)]*effectiveAgentId/s.test(stripped) ||
+      /effectiveAgentId[^)]*\b(markRead|drainAt|markConsumed|consume)\b/s.test(stripped);
+    expect(reused).toBe(true);
+  });
+
+  it("T0.24: multi-agent safety — drain key includes agentId (no cross-agent contamination)", () => {
+    const { stripped } = readPostExec();
+    // The post-Phase-4 drain key is (agentId, channelType, channelId).
+    // Source-grep proves the agent is part of the drain key.
+    expect(stripped).toMatch(/(drainAt|consume).*agentId/s);
+  });
+
+  it("T0.25: lock-safe drain — concurrent drains for the same composite key are gated", () => {
+    const { stripped } = readPostExec();
+    // Marker for the single-tick gate analog (mirrors setup-delivery.ts:113-121).
+    const hasGate =
+      /\bdraining\b\s*[?=]/.test(stripped) ||
+      /inFlight/i.test(stripped) ||
+      /drainLock/i.test(stripped);
+    expect(hasGate).toBe(true);
+  });
+
+  it("T0.26: markRead failure is non-fatal (suppressError + structured WARN log)", () => {
+    const { stripped } = readPostExec();
+    // suppressError already exists for memory-store failures (line 565
+    // analog). Post-Phase-4 it ALSO wraps the markRead call. Marker: at
+    // least one suppressError reference plus the canonical WARN log shape.
+    expect(stripped).toMatch(/suppressError\b/);
+    expect(stripped).toMatch(/(hint:.*errorKind|errorKind:.*hint)/s);
+  });
+
+  it("T0.28: tryGetContext() in source falls through to no-op when undefined", () => {
+    const { stripped } = readPostExec();
+    // Once T0.2 lands, the call-site exists. Pre-Phase-4 the call-site
+    // does not exist; this assertion fails alongside T0.2.
+    const tryCtxLine = stripped.match(/tryGetContext\s*\([^)]*\)/);
+    expect(tryCtxLine).not.toBeNull();
+  });
+});

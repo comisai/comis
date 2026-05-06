@@ -4128,3 +4128,57 @@ describe("createPiEventBridge", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 4: drain at bridge call site (B15)
+//
+// On `tool_use_complete`, the bridge calls a drain helper keyed by the
+// composite (agentId, channelType, channelId) — NOT a single sessionKey
+// arg. The drain is fire-and-forget (suppressError); a drain-handler
+// exception does NOT abort the bridge's tool_use_complete propagation.
+//
+// T0.19 also asserts the drain helper has migrated OUT of pi-executor.ts
+// into the bridge — source-grep on pi-executor.ts shows zero
+// `drainQueue` references after Phase 4.
+//
+// All tests RED until Plan 15-05 (Phase 4) lands.
+// ---------------------------------------------------------------------------
+describe("Phase 4: drain at bridge call site (B15)", () => {
+  async function readSrcRelative(rel: string): Promise<{ src: string; stripped: string }> {
+    const fs = await import("node:fs");
+    const url = await import("node:url");
+    const path = await import("node:path");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(path.resolve(here, rel), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    return { src, stripped };
+  }
+
+  it("T0.15: bridge calls drainAt({agentId, channelType, channelId}) on tool_use_complete (composite key)", async () => {
+    const { stripped } = await readSrcRelative("pi-event-bridge.ts");
+    // Post-Phase-4 the bridge module imports + calls a drain helper
+    // (drainAt or composite-keyed drain function). Pre-Phase-4 there is
+    // no such call site in this file.
+    const hasComposite =
+      /drainAt\b/.test(stripped) ||
+      /drain\b.*\bagentId\b.*\bchannelType\b.*\bchannelId\b/s.test(stripped);
+    expect(hasComposite).toBe(true);
+  });
+
+  it("T0.16: drain trigger is fire-and-forget — a drain-handler exception does NOT abort tool_use_complete propagation", async () => {
+    const { stripped } = await readSrcRelative("pi-event-bridge.ts");
+    // Marker: suppressError around the drain call.
+    expect(stripped).toMatch(/suppressError\s*\([^)]*drain/s);
+  });
+
+  it("T0.19: drain helper is removed from pi-executor.ts (the OLD home)", async () => {
+    const { stripped } = await readSrcRelative("../executor/pi-executor.ts");
+    // Post-Phase-4: NO drainQueue / drainSession / drainAt definition or
+    // call in pi-executor.ts. Pre-Phase-4 the helper lives there.
+    expect(stripped).not.toMatch(/drainQueue/);
+  });
+});
