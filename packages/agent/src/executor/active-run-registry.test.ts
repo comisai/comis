@@ -261,4 +261,52 @@ describe("ActiveRunRegistry", () => {
       expect(retrieved.isCompacting()).toBe(true);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // T0.33: no remaining single-arg .has() / .get() on activeRunRegistry
+  // outside *.test.ts (AC-4)
+  //
+  // Phase 3 (Plan 15-03) introduces BackgroundSessionResolver and rewires
+  // the 5 known production call-sites:
+  //   - packages/channels/src/shared/inbound-route.ts:202  (B30)
+  //   - packages/scheduler/src/heartbeat/agent-heartbeat-source.ts:152 (B36)
+  //   - packages/daemon/src/sub-agent-runner.ts:499 / :1401 / :1555 (B37)
+  // After Phase 3, no production source file calls
+  // `activeRunRegistry.has(...)` or `activeRunRegistry.get(...)` directly.
+  // The grep is scoped to the monorepo's package source trees and excludes
+  // *.test.ts files (which legitimately exercise the registry directly).
+  // RED until 15-03 lands.
+  // ---------------------------------------------------------------------------
+  describe("T0.33 source-grep: production code uses BackgroundSessionResolver, not direct registry access (AC-4)", () => {
+    it("no remaining activeRunRegistry.has|get(...) in non-test production source", async () => {
+      const { execSync } = await import("node:child_process");
+      const { fileURLToPath } = await import("node:url");
+      const { resolve, dirname } = await import("node:path");
+      // Resolve repo root by walking up from this test file's directory.
+      const here = dirname(fileURLToPath(import.meta.url));
+      // here = .../packages/agent/src/executor; repo root = .../
+      const repoRoot = resolve(here, "../../../..");
+      // Use git grep to enumerate matches; the trailing filter strips lines
+      // that begin with `//` after trim (line comments) to avoid the
+      // self-invalidating grep gate antipattern. Trailing `|| true` keeps
+      // execSync from throwing when there are zero matches (the desired
+      // post-Phase-3 state).
+      const cmd =
+        "git grep -nE 'activeRunRegistry\\.(has|get)\\(' -- 'packages/**/*.ts' ':!*.test.ts' || true";
+      const out = execSync(cmd, { cwd: repoRoot, encoding: "utf-8" });
+      const matches = out
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => {
+          if (!l) return false;
+          // Strip the `path:lineno:` prefix to inspect just the source line.
+          const colonIdx2 = l.indexOf(":", l.indexOf(":") + 1);
+          const sourceLine = colonIdx2 >= 0 ? l.slice(colonIdx2 + 1).trim() : l;
+          // Filter out lines that begin with `//` (line comments) or `*` (block comments).
+          return !sourceLine.startsWith("//") && !sourceLine.startsWith("*");
+        });
+      // Pre-Phase-3: 5 matches. Post-Phase-3: 0 matches.
+      expect(matches).toEqual([]);
+    });
+  });
 });

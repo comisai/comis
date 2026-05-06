@@ -1010,3 +1010,33 @@ describe("setupDeliveryMirror", () => {
     vi.useRealTimers();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 9c (15-07): drain log includes per-class metric (operator-facing).
+//
+// Phase 9c adds an operator-facing debug log line emitted by the housekeeper
+// drain pass that includes `pruned`, `class`, and `durationMs` fields.
+// RED until 15-07 lands. The assertion is a source-grep over setup-delivery.ts
+// for the new log shape (canonical Pino object-first).
+// ---------------------------------------------------------------------------
+describe("Phase 9c: drain log includes per-class metric (operator-facing)", () => {
+  it("source-grep: setup-delivery.ts emits a drain log with pruned + class + durationMs", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(path.resolve(here, "setup-delivery.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // Look for a log line that emits an object containing all three fields.
+    // Acceptable shapes: `{ pruned, class, durationMs }` or `{ pruned: ..., class: ..., durationMs: ... }`.
+    const hasPerClassLog =
+      /pruned[^}]*class[^}]*durationMs/s.test(stripped) ||
+      /class[^}]*pruned[^}]*durationMs/s.test(stripped) ||
+      /durationMs[^}]*pruned[^}]*class/s.test(stripped);
+    expect(hasPerClassLog).toBe(true);
+  });
+});

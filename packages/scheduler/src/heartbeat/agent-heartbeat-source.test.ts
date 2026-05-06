@@ -638,3 +638,28 @@ describe("createAgentHeartbeatSource", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// T0.27 cross-check (B36): agent-heartbeat-source uses
+// BackgroundSessionResolver.hasActiveSession instead of a single-arg
+// activeRunRegistry.has(sessionKey).
+//
+// RED until Plan 15-03 (Phase 3) rewires
+// packages/scheduler/src/heartbeat/agent-heartbeat-source.ts:152.
+// ---------------------------------------------------------------------------
+describe("T0.27 cross-check (B36): heartbeat source uses BackgroundSessionResolver.hasActiveSession", () => {
+  it("source-grep: no remaining activeRunRegistry.has( in non-test heartbeat source", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(path.resolve(here, "agent-heartbeat-source.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // Post-Phase-3: NO literal activeRunRegistry.has( in the source.
+    expect(stripped).not.toMatch(/activeRunRegistry\.has\(/);
+  });
+});

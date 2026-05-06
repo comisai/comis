@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// T0.17 + T0.18 — workspace-internal venv (Phase 8, RC-7).
+//
+// Phase 8 (Plan 15-06) creates `packages/agent/src/workspace/data-env.ts`.
+// The contract:
+//   - resolveDataEnv({ workspaceDir }) returns an object with MPLCONFIGDIR,
+//     XDG_CACHE_HOME, and PATH (with `${workspaceDir}/venv/bin` prepended).
+//   - All values are derived from `workspaceDir` — NOT from `process.env`.
+//   - T0.17 source-grep enforces the no-process.env invariant.
+//   - The file mirrors workspace-resolver.ts:18-30's safePath + os.homedir
+//     precedent (no path.join).
+//
+// All tests are RED until 15-06 lands the file.
+import { describe, it, expect } from "vitest";
+
+async function loadDataEnv(): Promise<
+  | {
+      resolveDataEnv: (opts: { workspaceDir: string }) => Record<string, string>;
+    }
+  | undefined
+> {
+  try {
+    const mod = (await import("./data-env.js")) as Record<string, unknown>;
+    if (typeof mod.resolveDataEnv !== "function") return undefined;
+    return mod as unknown as {
+      resolveDataEnv: (opts: { workspaceDir: string }) => Record<string, string>;
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+describe("data-env (Phase 8, RC-7)", () => {
+  it("T0.17 source-grep: data-env.ts has NO process.env literal in non-comment lines (D-W1)", async () => {
+    // Phase 8 hasn't landed yet — the file does not exist. The source-grep
+    // assertion is over the literal source text; missing file is RED.
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const target = path.resolve(here, "data-env.ts");
+    if (!fs.existsSync(target)) {
+      // Pre-Phase-8: file does not exist yet. The contract is conditional —
+      // the assertion only kicks in once the file lands.
+      expect(fs.existsSync(target)).toBe(true);
+      return;
+    }
+    const src = fs.readFileSync(target, "utf-8");
+    // Strip block + line comments so the gate cannot be self-invalidated.
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // The file MUST NOT contain `process.env` outside of comments (D-W1).
+    // The fault-injector exception precedent (eslint-disable-next-line) is
+    // explicitly forbidden for this file (15-PATTERNS.md line 27-28).
+    expect(stripped).not.toMatch(/process\.env/);
+  });
+
+  it("T0.18: resolveDataEnv({workspaceDir}) returns MPLCONFIGDIR / XDG_CACHE_HOME / PATH derived from workspaceDir", async () => {
+    const mod = await loadDataEnv();
+    expect(mod).toBeDefined();
+    if (!mod) return;
+    const env = mod.resolveDataEnv({ workspaceDir: "/tmp/fake-workspace" });
+    // Required keys.
+    expect(env).toHaveProperty("MPLCONFIGDIR");
+    expect(env).toHaveProperty("XDG_CACHE_HOME");
+    expect(env).toHaveProperty("PATH");
+    // Values are derived from workspaceDir.
+    expect(env.MPLCONFIGDIR).toContain("/tmp/fake-workspace");
+    expect(env.XDG_CACHE_HOME).toContain("/tmp/fake-workspace");
+    expect(env.PATH).toContain("/tmp/fake-workspace/venv/bin");
+  });
+});

@@ -181,4 +181,41 @@ describe("background-task-persistence", () => {
       expect(() => removeTaskFile(dataDir, "a1", "nonexistent")).not.toThrow();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Phase 2 (15-04): persistTaskSync persists dispatchState (D-S2)
+  //
+  // Pre-Phase-2 toPersistedState (line 20-31) strips unknown fields. Once
+  // 15-04 extends PersistedTaskState with `dispatchState`, the field round-
+  // trips through the JSON file. RED until 15-04 lands.
+  // ---------------------------------------------------------------------------
+  describe("persistTaskSync persists dispatchState (D-S2)", () => {
+    it("round-trips dispatchState='dispatched' through the BackgroundTask path (with _promise)", () => {
+      // Use the BackgroundTask path (object has _promise) to exercise
+      // toPersistedState — the helper at line 20-31 that strips unknown fields
+      // pre-Phase-2. Once 15-04 adds dispatchState to PersistedTaskState +
+      // toPersistedState, the field survives the round-trip.
+      const taskRecord: Record<string, unknown> = {
+        id: "task-disp-1",
+        toolName: "exec",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        origin: buildOrigin({ agentId: "agent-disp" }),
+        dispatchState: "dispatched",
+        _promise: Promise.resolve(),
+      };
+      // Cast through unknown so the test file stays buildable pre-15-04.
+      persistTaskSync(
+        dataDir,
+        taskRecord as unknown as import("./background-task-types.js").BackgroundTask,
+      );
+
+      const filePath = safePath(safePath(dataDir, "agent-disp"), "task-disp-1.json");
+      const onDisk = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
+      // Pre-Phase-2: toPersistedState strips dispatchState, the round-trip loses it.
+      // Post-Phase-2: PersistedTaskState carries dispatchState, the round-trip preserves it.
+      expect(onDisk.dispatchState).toBe("dispatched");
+    });
+  });
 });

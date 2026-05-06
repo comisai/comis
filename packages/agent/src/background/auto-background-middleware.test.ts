@@ -316,4 +316,72 @@ describe("wrapToolForAutoBackground", () => {
       expect(text).not.toContain("user will be notified");
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Phase 1: exec single-owner contract (RC-3)
+  // T0.20–T0.23 — exec opts out of the generic auto-background wrapper so
+  // exec-tool.ts:613-668's internal escalation is the SOLE backgrounding owner.
+  // RED until 15-02 (cherry-pick, Phase 1) lands. Either (a) the wrapper
+  // skips when tool.name === "exec" regardless of excludeTools config, OR
+  // (b) the call-site injects "exec" into excludeTools by default. Either
+  // way the post-Phase-1 result is: exec is never wrapped.
+  // ---------------------------------------------------------------------------
+  describe("Phase 1: exec single-owner contract (RC-3)", () => {
+    it("T0.20: when tool.name === 'exec', wrapToolForAutoBackground returns the original tool unchanged", () => {
+      // Use the default config (excludeTools: []) — pre-Phase-1 this wraps
+      // exec; post-Phase-1 it skips wrapping regardless. Keep config.excludeTools
+      // empty to make the gate explicit.
+      config.excludeTools = [];
+      const tool = createMockTool({ name: "exec" });
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+
+      // Post-Phase-1: should be the exact same object (no-op wrap).
+      expect(wrapped).toBe(tool);
+    });
+
+    it("T0.21: with excludeTools=[] AND tool.name === 'exec', wrapper still skips wrapping (Phase 1 hardcodes 'exec' exclusion)", () => {
+      // Make the contract independent of config — exec is excluded regardless.
+      config.excludeTools = [];
+      const tool = createMockTool({ name: "exec" });
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+
+      expect(wrapped).toBe(tool);
+    });
+
+    it("T0.22: a non-exec tool (e.g., 'sleep') is STILL wrapped when excludeTools does not list it (regression: Phase 1 narrows ONLY exec)", () => {
+      config.excludeTools = [];
+      const tool = createMockTool({ name: "sleep" });
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+
+      // Non-exec tools must still receive the wrapper (the wrapper is a NEW object,
+      // not the original tool).
+      expect(wrapped).not.toBe(tool);
+    });
+
+    it("T0.23: a synthetic exec tool exceeding autoBackgroundMs does NOT call manager.promote (the wrapper is a no-op for exec)", async () => {
+      config.excludeTools = [];
+      const promoteSpy = vi.spyOn(manager, "promote");
+      // Use a short resolveAfterMs that exceeds autoBackgroundMs (50ms by default
+      // in beforeEach). The tool resolves at 150ms, but the wrapper's race fires
+      // at 50ms — pre-Phase-1 it would call manager.promote at the 50ms mark.
+      // Post-Phase-1 the wrapper is a no-op for exec; the tool runs to
+      // completion in the foreground without any promote call.
+      const tool = createMockTool({
+        name: "exec",
+        resolveAfterMs: config.autoBackgroundMs + 100,
+        result: toolOk("foreground-exec-result"),
+      });
+      const wrapped = wrapToolForAutoBackground(tool, manager, config, notifyFn, () => buildOrigin({ agentId: "agent-1" }));
+
+      // Race the tool: it should run to completion in the foreground (no
+      // promote). Pre-Phase-1, the wrapper's timeout race fires manager.promote
+      // and the assertion fails.
+      const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
+      // Foreground result reaches the caller intact (post-Phase-1).
+      expect((result.content[0] as { text: string }).text).toBe("foreground-exec-result");
+      // Critical: manager.promote MUST NOT be invoked — the exec-tool's own
+      // internal escalation is the sole backgrounding owner.
+      expect(promoteSpy).not.toHaveBeenCalled();
+    });
+  });
 });

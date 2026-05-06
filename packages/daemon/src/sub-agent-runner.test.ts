@@ -3265,3 +3265,27 @@ describe("persistent session reuse", () => {
     expect(run!.sessionKey).toContain("default:sub-agent-");
   });
 });
+
+// ---------------------------------------------------------------------------
+// T0.27 cross-check (B37): sub-agent-runner uses BackgroundSessionResolver
+// for parent-session lookup at lines 499 / 1401 / 1555.
+//
+// RED until Plan 15-03 (Phase 3) rewires the three call-sites in
+// packages/daemon/src/sub-agent-runner.ts.
+// ---------------------------------------------------------------------------
+describe("T0.27 cross-check (B37): sub-agent-runner uses BackgroundSessionResolver for parent-session lookup", () => {
+  it("source-grep: no remaining activeRunRegistry.get( in non-test sub-agent-runner source", async () => {
+    const fs2 = await import("node:fs");
+    const path2 = await import("node:path");
+    const url2 = await import("node:url");
+    const here = path2.dirname(url2.fileURLToPath(import.meta.url));
+    const src = fs2.readFileSync(path2.resolve(here, "sub-agent-runner.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // Post-Phase-3: NO literal activeRunRegistry.get( in the source.
+    expect(stripped).not.toMatch(/activeRunRegistry\.get\(/);
+  });
+});
