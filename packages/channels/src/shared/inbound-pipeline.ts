@@ -20,7 +20,7 @@ import type { DebounceBuffer } from "@comis/agent";
 import type { FollowupTrigger } from "@comis/agent";
 import type { PriorityScheduler } from "@comis/agent";
 import type { SessionLabelStore } from "@comis/agent";
-import type { ActiveRunRegistry } from "@comis/agent";
+import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig, AckReactionConfig } from "@comis/core";
@@ -94,6 +94,13 @@ export interface InboundPipelineDeps {
   inFlightSends?: Set<Promise<unknown>>;
   /** Optional active run registry for SDK-native steer+followup. */
   activeRunRegistry?: ActiveRunRegistry;
+  /**
+   * Optional composite-key resolver for active-session lookup. When
+   * present, supersedes `activeRunRegistry.has/.get` for production
+   * lookups (R3, B30/B34). Wired by the daemon as
+   * `createBackgroundSessionResolver({ activeRunRegistry })`.
+   */
+  sessionResolver?: BackgroundSessionResolver;
   /** Handle /config command. Returns response text or undefined if not a config command. */
   handleConfigCommand?: (args: string[], channelType: string) => Promise<string | undefined>;
   /** Optional callback for task extraction after successful agent execution. */

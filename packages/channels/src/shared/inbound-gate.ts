@@ -42,6 +42,7 @@ export type GateDeps = Pick<
   | "handleConfigCommand"
   | "handleSlashCommand"
   | "activeRunRegistry"
+  | "sessionResolver"
 >;
 
 // ---------------------------------------------------------------------------
@@ -239,8 +240,15 @@ export async function evaluateInboundGate(
   if (msg.text) {
     const stopParsed = parseSlashCommand(msg.text);
     if (stopParsed.found && stopParsed.command === "stop") {
+      // Active-session lookup goes through the composite-key resolver (R3,
+      // B34). `formattedKey` is retained as a diagnostic log field so
+      // operators can correlate /stop-aborts with session traces.
       const formattedKey = formatSessionKey(sessionKey);
-      const runHandle = deps.activeRunRegistry?.get(formattedKey);
+      const runHandle = deps.sessionResolver?.resolveActiveSession({
+        agentId,
+        channelType: adapter.channelType,
+        channelId: msg.channelId,
+      });
       if (runHandle) {
         try {
           await runHandle.abort();

@@ -55,9 +55,15 @@ interface HeartbeatExecutor {
   ): Promise<{ response: string }>;
 }
 
-/** Minimal ActiveRunRegistry -- only needs has() for queue-busy check. */
-interface HeartbeatActiveRunRegistry {
-  has(sessionKey: string): boolean;
+/**
+ * Minimal BackgroundSessionResolver shape -- only needs hasActiveSession()
+ * for the queue-busy check. The scheduler package cannot import @comis/agent
+ * (would create a cycle), so we re-declare the structural minimum here. The
+ * daemon wires `createBackgroundSessionResolver({activeRunRegistry})` and
+ * the resulting object is structurally assignable to this shape (R3, B36).
+ */
+interface HeartbeatSessionResolver {
+  hasActiveSession(key: { agentId: string; channelType: string; channelId: string }): boolean;
 }
 
 /** Tool policy filter function signature -- matches applyToolPolicy from @comis/skills.
@@ -104,8 +110,12 @@ export interface AgentHeartbeatSourceDeps {
   systemEventQueue: SystemEventQueue;
   /** Delivery bridge dependencies for routing notifications. */
   deliveryBridge: DeliveryBridgeDeps;
-  /** Optional ActiveRunRegistry for queue-busy detection. */
-  activeRunRegistry?: HeartbeatActiveRunRegistry;
+  /**
+   * Optional composite-key resolver for queue-busy detection (R3, B36).
+   * Wired by the daemon as
+   * `createBackgroundSessionResolver({activeRunRegistry})`.
+   */
+  sessionResolver?: HeartbeatSessionResolver;
   /** Optional session operations for response processing side-effects. */
   sessionOps?: HeartbeatSessionOps;
   /** Optional: fetch memory stats for an agent (for heartbeat prompt injection). */
@@ -139,17 +149,20 @@ export function resolveHeartbeatModel(
 }
 
 /**
- * Check if a session is actively running an agent turn.
+ * Check if a session is actively running an agent turn (R3, B36).
  *
- * Returns false when no ActiveRunRegistry is provided (heartbeat
+ * Uses the composite-key resolver: `(agentId, channelType, channelId)`
+ * uniquely identifies a session across multi-agent / multi-channel
+ * deployments (the previous single-arg `formattedKey` collapsed those
+ * dimensions). Returns false when no resolver is provided (heartbeat
  * operates in isolation without collision detection).
  */
 export function isQueueBusy(
-  activeRunRegistry: HeartbeatActiveRunRegistry | undefined,
-  sessionKey: string,
+  sessionResolver: HeartbeatSessionResolver | undefined,
+  composite: { agentId: string; channelType: string; channelId: string },
 ): boolean {
-  if (!activeRunRegistry) return false;
-  return activeRunRegistry.has(sessionKey);
+  if (!sessionResolver) return false;
+  return sessionResolver.hasActiveSession(composite);
 }
 
 /**
@@ -216,8 +229,19 @@ export function createAgentHeartbeatSource(
         }
       }
 
-      // 5. Queue-busy check
-      if (isQueueBusy(deps.activeRunRegistry, formattedKey)) {
+      // 5. Queue-busy check (R3, B36): composite-key lookup distinguishes
+      // multi-agent / multi-channel collisions. The msg.channelType is the
+      // configured target's channelType (defaulting to "heartbeat" when no
+      // delivery target is wired). channelId is sessionKey.channelId
+      // (matches resolveHeartbeatSessionKey above).
+      const heartbeatChannelType = config.target?.channelType ?? "heartbeat";
+      if (
+        isQueueBusy(deps.sessionResolver, {
+          agentId,
+          channelType: heartbeatChannelType,
+          channelId: sessionKey.channelId,
+        })
+      ) {
         logger.debug(
           { agentId, formattedKey },
           "Heartbeat skipped: session queue busy",

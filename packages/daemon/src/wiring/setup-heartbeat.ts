@@ -31,9 +31,15 @@ import { applyToolPolicy } from "@comis/skills";
 // Local type aliases (avoid importing from agent to prevent circular deps)
 // ---------------------------------------------------------------------------
 
-/** Minimal ActiveRunRegistry -- only needs has() for queue-busy check. */
-interface HeartbeatActiveRunRegistry {
-  has(sessionKey: string): boolean;
+/**
+ * Minimal BackgroundSessionResolver shape -- only needs hasActiveSession()
+ * for the queue-busy check (R3, B36). Locally re-declared to avoid the
+ * cycle from importing @comis/agent here; the daemon constructs the
+ * resolver as `createBackgroundSessionResolver({activeRunRegistry})` and
+ * the resulting object is structurally assignable to this shape.
+ */
+interface HeartbeatSessionResolver {
+  hasActiveSession(key: { agentId: string; channelType: string; channelId: string }): boolean;
 }
 
 /** 8-param executor interface matching AgentExecutor.execute (used in deps map). */
@@ -64,8 +70,13 @@ export interface HeartbeatSetupDeps {
   assembleToolsForAgent: (agentId: string) => Promise<unknown[]>;
   /** Per-agent workspace directories. */
   workspaceDirs: Map<string, string>;
-  /** Active run registry for queue-busy detection (optional). */
-  activeRunRegistry?: HeartbeatActiveRunRegistry;
+  /**
+   * Composite-key resolver for queue-busy detection (R3, B36, optional).
+   * The daemon wires this via `createBackgroundSessionResolver`; it
+   * supersedes the previous `.has(sessionKey)` lookup so multi-agent /
+   * multi-channel collisions are distinguishable.
+   */
+  sessionResolver?: HeartbeatSessionResolver;
   /** Duplicate detector shared between global and per-agent heartbeat delivery. */
   duplicateDetector?: DuplicateDetector;
   /** Channel adapters for heartbeat delivery (optional). */
@@ -101,7 +112,7 @@ export function setupHeartbeat(deps: HeartbeatSetupDeps): HeartbeatSetupResult {
     executors,
     assembleToolsForAgent,
     workspaceDirs,
-    activeRunRegistry,
+    sessionResolver,
     duplicateDetector,
     adaptersByType,
     systemEventQueue,
@@ -196,7 +207,7 @@ export function setupHeartbeat(deps: HeartbeatSetupDeps): HeartbeatSetupResult {
       eventBus: container.eventBus,
       logger: schedulerLogger,
     },
-    activeRunRegistry,
+    sessionResolver,
     getMemoryStats,
     // Inject applyToolPolicy so scheduler can filter without taking a direct
     // dependency on @comis/skills. Type-erased `unknown[]` at the boundary is

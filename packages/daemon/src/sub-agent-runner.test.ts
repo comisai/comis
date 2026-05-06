@@ -904,14 +904,14 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 25b: killRun calls activeRunRegistry.abort when registry provided
+  // Test 25b: killRun calls sessionResolver.resolveActiveSession (R3, B37)
   // -----------------------------------------------------------------------
-  it("killRun calls activeRunRegistry.abort when registry provided", () => {
+  it("killRun calls sessionResolver.resolveActiveSession when resolver provided", () => {
     const abortMock = vi.fn().mockResolvedValue(undefined);
-    const registryMock = {
-      get: vi.fn().mockReturnValue({ abort: abortMock }),
+    const resolverMock = {
+      resolveActiveSession: vi.fn().mockReturnValue({ abort: abortMock }),
     };
-    deps.activeRunRegistry = registryMock;
+    deps.sessionResolver = resolverMock;
 
     // Use a never-resolving promise so the run stays "running"
     vi.mocked(deps.executeAgent).mockReturnValue(
@@ -924,20 +924,23 @@ describe("createSubAgentRunner", () => {
       agentId: "default",
     });
 
-    const run = runner.getRunStatus(runId)!;
-    const sessionKey = run.sessionKey;
-
     const result = runner.killRun(runId);
     expect(result.killed).toBe(true);
-    expect(registryMock.get).toHaveBeenCalledWith(sessionKey);
+    // B42: post-Phase-3 contract is composite-key {agentId, channelType,
+    // channelId} -- the exact triple is derived in deriveCompositeForRun.
+    // We assert the agentId is forwarded; channelType/channelId come from
+    // run.announceChannelType / parseFormattedSessionKey (best-effort).
+    expect(resolverMock.resolveActiveSession).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "default" }),
+    );
     expect(abortMock).toHaveBeenCalledTimes(1);
   });
 
   // -----------------------------------------------------------------------
-  // Test 25c: killRun works normally when activeRunRegistry is not provided
+  // Test 25c: killRun works normally when sessionResolver is not provided
   // -----------------------------------------------------------------------
-  it("killRun works normally when activeRunRegistry is not provided", () => {
-    // activeRunRegistry is not set (default from createMockDeps)
+  it("killRun works normally when sessionResolver is not provided", () => {
+    // sessionResolver is not set (default from createMockDeps).
     // Use a never-resolving promise so the run stays "running"
     vi.mocked(deps.executeAgent).mockReturnValue(
       new Promise(() => {}),
@@ -945,7 +948,7 @@ describe("createSubAgentRunner", () => {
 
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
-      task: "task without registry",
+      task: "task without resolver",
       agentId: "default",
     });
 
@@ -959,10 +962,10 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   it("killRun handles abort rejection gracefully", () => {
     const abortMock = vi.fn().mockRejectedValue(new Error("Already terminated"));
-    const registryMock = {
-      get: vi.fn().mockReturnValue({ abort: abortMock }),
+    const resolverMock = {
+      resolveActiveSession: vi.fn().mockReturnValue({ abort: abortMock }),
     };
-    deps.activeRunRegistry = registryMock;
+    deps.sessionResolver = resolverMock;
     deps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 
     vi.mocked(deps.executeAgent).mockReturnValue(
@@ -982,13 +985,13 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 25e: killRun skips abort when registry has no handle for session
+  // Test 25e: killRun skips abort when resolver has no handle for session
   // -----------------------------------------------------------------------
-  it("killRun skips abort when registry has no handle for session", () => {
-    const registryMock = {
-      get: vi.fn().mockReturnValue(undefined),
+  it("killRun skips abort when resolver has no handle for session", () => {
+    const resolverMock = {
+      resolveActiveSession: vi.fn().mockReturnValue(undefined),
     };
-    deps.activeRunRegistry = registryMock;
+    deps.sessionResolver = resolverMock;
 
     vi.mocked(deps.executeAgent).mockReturnValue(
       new Promise(() => {}),
@@ -1002,7 +1005,7 @@ describe("createSubAgentRunner", () => {
 
     const result = runner.killRun(runId);
     expect(result.killed).toBe(true);
-    expect(registryMock.get).toHaveBeenCalled();
+    expect(resolverMock.resolveActiveSession).toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------------
@@ -1943,11 +1946,14 @@ describe("createSubAgentRunner", () => {
       expect(runner.getRunStatus(runId)!.status).toBe("failed");
     });
 
-    it("watchdog aborts SDK session via activeRunRegistry", async () => {
+    it("watchdog aborts SDK session via sessionResolver (R3, B37)", async () => {
       deps.config.subagentContext = { maxRunTimeoutMs: 2_000, perStepTimeoutMs: 1_000 } as typeof deps.config.subagentContext;
       vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
       const mockAbort = vi.fn().mockResolvedValue(undefined);
-      deps.activeRunRegistry = { get: vi.fn().mockReturnValue({ abort: mockAbort }) };
+      // B42 test-mock update: post-Phase-3, abort flows through the
+      // composite-key resolver (`{agentId, channelType, channelId}`)
+      // rather than the single-arg activeRunRegistry.
+      deps.sessionResolver = { resolveActiveSession: vi.fn().mockReturnValue({ abort: mockAbort }) };
       deps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 
       const runner = createSubAgentRunner(deps);
@@ -1956,12 +1962,15 @@ describe("createSubAgentRunner", () => {
         agentId: "default",
       });
 
-      const run = runner.getRunStatus(runId)!;
+      // run is registered for sessionKey before the watchdog fires;
+      // we rely on the resolver mock returning the abort handle.
 
       await vi.advanceTimersByTimeAsync(2_000);
 
-      // Registry was queried with the run's sessionKey (not runId)
-      expect(deps.activeRunRegistry.get).toHaveBeenCalledWith(run.sessionKey);
+      // Resolver was queried with a composite key forwarding agentId.
+      expect(deps.sessionResolver.resolveActiveSession).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: "default" }),
+      );
       expect(mockAbort).toHaveBeenCalledOnce();
     });
 
