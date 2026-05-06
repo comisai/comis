@@ -84,6 +84,42 @@
       "pinDigests": true,
       "groupName": "Docker images",
       "groupSlug": "docker"
+    },
+
+    // --- Cross-workspace package grouping (prevents split-PR drift) ---
+    // Without these, a package that lives in both the root package.json
+    // and workspace packages can land in different PRs (e.g. the root
+    // devDep falls under "Minor dev updates" while the workspace
+    // dependency falls under "Minor production updates"). Result:
+    // pnpm-lock.yaml resolves two versions of the same package
+    // simultaneously, and cross-package instanceof checks fail at runtime.
+    //
+    // Caught for zod in #89 (after #79 only patched the root copy).
+    // These rules come AFTER the type-based rules so the per-package
+    // groupName/groupSlug override wins.
+    {
+      "description": "Group zod across the entire workspace (prevents dual-instance)",
+      "matchPackageNames": ["zod"],
+      "groupName": "zod",
+      "groupSlug": "zod"
+    },
+    {
+      "description": "Group @agentclientprotocol/sdk across the workspace",
+      "matchPackageNames": ["@agentclientprotocol/sdk"],
+      "groupName": "@agentclientprotocol/sdk",
+      "groupSlug": "acp-sdk"
+    },
+    {
+      "description": "Group typescript across the workspace (coordinated TS upgrade)",
+      "matchPackageNames": ["typescript"],
+      "groupName": "typescript",
+      "groupSlug": "typescript"
+    },
+    {
+      "description": "Group @types/node across the workspace (must align with runtime)",
+      "matchPackageNames": ["@types/node"],
+      "groupName": "@types/node",
+      "groupSlug": "types-node"
     }
   ]
 }
