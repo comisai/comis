@@ -126,6 +126,23 @@ export interface BridgeMetricsState {
   /** Total tool calls across all signature-replay scrubs whose thoughtSignature
    *  was stripped (post-incident-visibility metric). */
   signatureScrubsToolCallsAffected: number;
+  /**
+   * Phase 4 (Plan 15-05 / R4 / T0.15+T0.24+T0.25): per-composite-key drain
+   * inflight gate. Owned by the bridge; passed into `drainAt(...)` at the
+   * `tool_execution_end` call site (B15 inline-consumption + composite
+   * drain).
+   *
+   * Map keyed by `${agentId}:${channelType}:${channelId}` (composite key).
+   * Concurrent calls for the SAME composite key return immediately
+   * (single-tick gate, T0.25). Concurrent calls for DIFFERENT composite
+   * keys drain independently (T0.24 multi-agent isolation).
+   *
+   * Entry cleanup: `.delete(formatted)` runs in `.finally(...)` of the
+   * drain promise so the Map size remains bounded across long-running
+   * sessions (entry removed within one event-loop tick of drain
+   * resolution).
+   */
+  drainInflightByKey: Map<string, Promise<void>>;
 }
 
 /**
@@ -178,6 +195,8 @@ export function createBridgeMetrics(): BridgeMetricsState {
     hashAssertionMismatches: 0,
     signatureScrubs: 0,
     signatureScrubsToolCallsAffected: 0,
+    // Phase 4 / Plan 15-05: per-composite-key drain inflight gate (T0.24+T0.25).
+    drainInflightByKey: new Map<string, Promise<void>>(),
   };
 }
 
