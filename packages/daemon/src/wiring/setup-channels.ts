@@ -18,7 +18,7 @@ import { formatSessionKey, runWithContext, createDeliveryOrigin, safePath } from
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, CommandHandlerDeps } from "@comis/agent";
 import type { createSessionStore } from "@comis/memory";
-import { createMessageRouter, createCommandQueue, createCommandHandler, parseSlashCommand, sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, type CommandQueue } from "@comis/agent";
+import { createMessageRouter, createCommandQueue, createCommandHandler, parseSlashCommand, sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError, type CommandQueue } from "@comis/agent";
 import {
   createChannelManager,
   createRetryEngine,
@@ -624,9 +624,10 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       return;
     }
 
+    const classified = classifyError(lastError);
     const message = [
       `Scheduled task "${jobName}" was suspended after ${consecutiveErrors} consecutive failures.`,
-      `Last error: ${lastError.slice(0, 200)}`,
+      `Reason: ${classified.userMessage}`,
       `Re-enable with /cron enable ${jobId}`,
     ].join("\n");
 
