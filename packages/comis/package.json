@@ -132,7 +132,7 @@
     "@comis/cli": "workspace:*",
     "@comis/daemon": "workspace:*",
     "@comis/web": "workspace:*",
-    "@agentclientprotocol/sdk": "0.19.2",
+    "@agentclientprotocol/sdk": "0.21.0",
     "@clack/core": "1.2.0",
     "@clack/prompts": "1.2.0",
     "@elevenlabs/elevenlabs-js": "2.45.0",
@@ -199,7 +199,7 @@
     "undici": "8.1.0",
     "ws": "8.20.0",
     "yaml": "2.8.4",
-    "zod": "4.3.6"
+    "zod": "4.4.2"
   },
   "optionalDependencies": {
     "sd-notify": "2.8.0"
