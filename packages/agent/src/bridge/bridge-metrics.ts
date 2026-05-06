@@ -41,6 +41,12 @@ export interface BridgeMetricsState {
   textEmitted: boolean;
   lastLlmErrorMessage: string | undefined;
 
+  /** Per-turn capture of outbound delivery events. Populated by pi-event-bridge
+   *  on tool_execution_end for `message(action='send'|'reply'|'attach')`.
+   *  Read by executor-post-execution.ts to make sentinel-aware decisions
+   *  (Phase 5 / B26 + B29, R5). Reset at turn start. */
+  outboundLog: Array<{ action: string; channelType: string; channelId: string; timestamp: number }>;
+
   // Tool tracking
   toolStartTimes: Map<string, number>;
   toolCallHistory: string[];
@@ -142,6 +148,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     lastContextUsage: undefined,
     textEmitted: false,
     lastLlmErrorMessage: undefined,
+    outboundLog: [],
     toolStartTimes: new Map(),
     toolCallHistory: [],
     lastActiveToolName: undefined,

@@ -378,6 +378,24 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(errorText && { errorText }),
           });
 
+          // Phase 5 (Plan 15-02 / B26 + B29 / RC-4): capture outbound deliveries.
+          // The post-execution silent-sentinel gate reads this per-turn log to
+          // make sentinel-aware decisions about paired memory persistence (R5).
+          // Reset at turn_start; bounded by per-turn outbound message count.
+          if (endEvent.toolName === "message" && toolSuccess && sanitizedArgs) {
+            const action = typeof sanitizedArgs.action === "string" ? sanitizedArgs.action : "";
+            if (action === "send" || action === "reply" || action === "attach") {
+              const channelType = typeof sanitizedArgs.channel_type === "string" ? sanitizedArgs.channel_type : "";
+              const channelId = typeof sanitizedArgs.channel_id === "string" ? sanitizedArgs.channel_id : "";
+              m.outboundLog.push({
+                action,
+                channelType,
+                channelId,
+                timestamp: Date.now(),
+              });
+            }
+          }
+
           // Look up truncation metadata from stream wrapper registry
           const truncMeta = deps.getTruncationMeta?.(endEvent.toolCallId);
 
@@ -438,6 +456,11 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // LLM turn about to start (pre-serialize hook for assert+restore)
         // -----------------------------------------------------------------
         case "turn_start": {
+          // Phase 5 (Plan 15-02 / B26 + B29): reset per-turn outbound capture.
+          // The log accumulates message(send/reply/attach) calls across the
+          // turn so the post-execution gate can make sentinel-aware decisions.
+          m.outboundLog.length = 0;
+
           // Run the executor-supplied pre-call closure once per turn, before
           // pi-ai reads `session.agent.state.messages` to serialize the next
           // API request. The closure performs the assert-then-restore pass
