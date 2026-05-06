@@ -30,6 +30,8 @@ pnpm test:orchestrate           # full E2E + log validation + JSON report
 pnpm test:cleanup               # clean test artifacts
 ```
 
+Vitest aliases `@comis/*` → `packages/*/dist/index.js` for integration tests — use bare-package imports, never `../packages/*/src/*`. **Stale `dist/` silently masks `src/` changes**: if a test passes after editing only `src/`, you forgot `pnpm build`.
+
 Primary validation: `pnpm build && pnpm test && pnpm lint:security`.
 
 ## Daemon
@@ -73,18 +75,9 @@ pkill -f 'node.*daemon\.js' 2>/dev/null && sleep 1 && COMIS_CONFIG_PATHS="$HOME/
 
 ## Logging (Pino via `@comis/infra`)
 
-| Level | Use For |
-|-------|---------|
-| ERROR | Broken functionality. Required: `hint`, `errorKind`. |
-| WARN  | Degraded but functional. Required: `hint`, `errorKind`. |
-| INFO  | Boundary events only (request arrived, execution complete). 2–5 lines/request. |
-| DEBUG | Internal steps, individual tool/LLM calls, intermediate state. |
+Levels, syntax, event-bus rules: see AGENTS.md §2.1 (errorKind), §2.2 (redaction), §2.7 (levels & observability).
 
-Once per request → INFO. N times per request → DEBUG (aggregate count in INFO summary).
-
-Object-first syntax only: `logger.info({ agentId, durationMs, toolCalls: 3 }, "Execution complete")`.
-
-Canonical fields: `agentId`, `traceId` (auto-injected via AsyncLocalStorage mixin), `channelType`, `durationMs`, `toolName`, `method`, `err` (**not** `error` — matches Pino serializer), `hint`, `errorKind`, `module` (set via `logLevelManager.getLogger("module")`).
+Canonical fields: `agentId`, `traceId` (auto-injected via AsyncLocalStorage mixin), `channelType`, `durationMs`, `toolName`, `method`, `err` (**not** `error` — matches Pino serializer), `hint`, `errorKind`, `module` (bound once via `getLogger("…")`), `submodule` (call-site scope; reuse via `deps.logger.child({ submodule: "completion-runner" })`), `step` (pipeline-stage tag).
 
 Pino auto-redacts credentials (`apiKey`, `token`, `password`, `secret`, `authorization`, `botToken`, `privateKey`, `cookie`, `webhookSecret`) up to 3 levels deep. Redaction is a safety net — never log secrets, message bodies, or env values at any level.
 

@@ -41,20 +41,24 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 ## 2) Engineering Principles (Normative)
 
 ### 2.1 Result<T, E> everywhere
-- All functions return `Result` from `@comis/shared`. Use `ok()`, `err()`, `tryCatch()`, `fromPromise()`.
-- Never `throw`. Never use bare `try/catch` for control flow.
-- Return `err()` for unsupported/unsafe states — never silently succeed, never silently broaden permissions.
-- Every ERROR/WARN log requires `hint` (what to do) and `errorKind` (classification).
+- All functions return `Result` from `@comis/shared` (`ok`, `err`, `tryCatch`, `fromPromise`). Never `throw`; never `try/catch` for control flow.
+- Chain by early-return: `if (!result.ok) return result;`. No `Result.map`/`flatMap` helpers exist. Use `tryCatch`/`fromPromise` only at boundaries with throwing APIs (Node fs, `new URL()`, third-party SDKs).
+- `err()` for unsupported/unsafe states — never silently succeed, never silently broaden permissions.
+- ERROR/WARN logs require `hint` (operator-actionable next step) and `errorKind`.
+- `errorKind` is the closed union from `LogFields.ErrorKind` in `@comis/infra`: `config | network | auth | validation | timeout | resource | dependency | internal | platform`. Write literals as `"validation" as const`. Heuristic: bad input → `validation`; external API → `dependency`; chat platform → `platform`; bad config → `config`; assertion → `internal`.
 
-### 2.2 Security (ESLint-enforced — violations fail CI)
-- No `path.join()` — use `safePath()` from `@comis/core/security` (directory traversal prevention).
-- No `process.env` — use `SecretManager` from `@comis/core/security`.
+### 2.2 Security (ESLint-enforced — violations fail CI; rules apply to `packages/*/src/**` only)
+- No `path.join()` — use `safePath(base, ...segments)` from `@comis/core/security`. `base` must be absolute; every dynamic segment (including filenames) goes through `safePath`. Compose: `safePath(safePath(dataDir, agentId), file)`.
+- No `process.env` — use `SecretManager`. To seed config from env, extend `buildGatewayEnvLayer()` plus the schema; never read env at the consumer.
 - No `eval()` or `Function()` constructor.
-- No empty `.catch(() => {})` — use `suppressError()` from `@comis/shared`.
-- Never log credentials, tokens, API keys, message bodies, or env values — at any level including DEBUG. Pino redaction is a safety net, not a substitute.
-- Use `sanitizeLogString()` for external error messages.
-- Use `wrapExternalContent()` for external data flowing into prompts.
-- Stack traces at DEBUG only; error message at INFO/WARN.
+- No empty `.catch(() => {})` — use `suppressError(promise, reason, logger?)` from `@comis/shared`. `reason` is logged verbatim; include the handler name.
+- No `module:` in log payloads — bind via `getLogger("…")`, scope further with `submodule:` at call sites.
+- Never log credentials, tokens, message bodies, or env values — at any level. Pino redaction is a safety net, not a substitute. Stack traces at DEBUG only; message at INFO/WARN.
+- `sanitizeLogString()` is for unstructured free-text only (error messages, captured stdout) — Pino structured fields are already redacted.
+- `wrapExternalContent()` (or `wrapWebContent()` for web tools) on every external text flowing into a prompt: email, webhooks, web-fetch, transcriptions, untrusted user content.
+- `validateUrl()` is a pure check — call it, then fetch with `result.value.url`. Never fetch without it.
+- `validateMemoryWrite(content)` before every agent-visible memory store: `clean` → store; `warn` → store with `trustLevel: "external"`; `critical` → block (return `err`).
+- Platform secrets (`container.platformSecretNames`) must never resolve through user-facing secret-ref tools.
 - Test fixtures use neutral placeholders: `"test-key"`, `"example.com"`, `"user_a"`.
 
 ### 2.3 KISS / YAGNI / DRY
@@ -68,9 +72,29 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 - Inject logger via `Deps` interface — never import `@comis/infra` directly. No `console.log` outside `packages/cli`.
 
 ### 2.5 Determinism
-- Unit tests co-located: `src/component.ts` + `src/component.test.ts`.
-- No real network calls in unit tests.
-- Integration tests in `test/integration/` import from `dist/` — `pnpm build` first. They run sequentially (`maxConcurrency: 1`, `pool: "forks"`, `retry: 1`) because daemon-based tests bind real ports.
+- Unit tests co-located: `src/component.ts` + `src/component.test.ts`. No real network calls.
+- Mock external modules at file top with `vi.mock(...)`. For partial internal types, use hand-built objects with `as unknown as T` — only the methods the SUT calls.
+- Local `make<X>(overrides: Partial<X> = {}): X` factories at file top for `Deps`, config, domain objects. Cross-package test helpers live in `test/support/`.
+- Integration tests in `test/integration/` import from `dist/` — `pnpm build` first. They run sequentially (`pool: "forks"`, `maxConcurrency: 1`) because daemon-based tests bind real ports.
+
+### 2.6 Request context propagation
+- `RequestContext` propagates via AsyncLocalStorage. `runWithContext(ctx, fn)` once per inbound request at channel/gateway/scheduler entry — never inside business logic.
+- `getContext()` (throws outside scope) inside request paths; `tryGetContext()` (returns `undefined`) for code that may run outside (startup, timers).
+- `traceId` and `contentDelimiter` ride on the context — `traceId` auto-injects onto log lines via the Pino mixin; `wrapExternalContent()` reads `contentDelimiter`. Don't thread either through args.
+
+### 2.7 Logging & Observability
+
+| Level | Use For |
+|-------|---------|
+| ERROR | Broken functionality. Required: `hint`, `errorKind`. |
+| WARN  | Degraded but functional. Required: `hint`, `errorKind`. |
+| INFO  | Boundary events (request arrived, execution complete) — 2–5/req. Include `durationMs` on operation completion. |
+| DEBUG | Internal steps, individual tool/LLM calls, intermediate state. |
+
+- Object-first: `logger.info({ agentId, durationMs }, "Execution complete")`. Never string-interpolate in the message; never pass JSON-stringified objects.
+- Once-per-request → INFO. N-per-request → DEBUG (aggregate count in the INFO summary).
+- Pipeline stages tag log lines with `step: "<stage-name>"` (canonical examples in `packages/channels/src/shared/`) — per-step analogue of `submodule:`.
+- Events vs logs: emit on `eventBus` for state transitions, lifecycle outcomes, observability snapshots, and safety/health signals (e.g., `tool:executed`, `execution:aborted`, `provider:degraded`). Logs describe; events announce. Logging supplements events — it does not replace them.
 
 ## 3) Naming Contract
 
@@ -97,9 +121,10 @@ When uncertain, classify higher.
 
 1. **Read before write** — inspect existing port interfaces, adapter patterns, and adjacent tests before editing.
 2. **Define scope** — one concern per change; no mixed feature+refactor+infra patches.
-3. **Implement minimal patch** — apply KISS/YAGNI/rule-of-three explicitly.
-4. **Validate** — `pnpm build && pnpm test && pnpm lint:security` must all pass.
-5. **Document impact** — update comments/docs for behavior changes, risk, side effects.
+3. **Test-first** — write the failing test before the code (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. Red → green → refactor.
+4. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
+5. **Validate** — `pnpm build && pnpm test && pnpm lint:security` must all pass.
+6. **Document impact** — update comments/docs for behavior changes, risk, side effects.
 
 ## 6) Change Playbooks
 
@@ -115,11 +140,13 @@ Register in package exports. Test credential validation, message mapping, and ad
 ### 6.2 Add a Port
 Define interface in `core/src/ports/` → export from core index → add to `AppContainer` in `bootstrap.ts` → implement adapter in relevant package → wire in composition root → test contract + adapter.
 
+`bootstrap()` returns `Result<AppContainer, ConfigError>` (never throws); register cleanup in the existing `shutdown:` closure — single shutdown path. SQLite-owning adapters use `openSqliteDatabase()` from `@comis/memory` (handles `0o700` dir, WAL pragmas, `0o600` chmod); adapters receiving a pre-opened `db` skip it.
+
 ### 6.3 Add a Domain Type
-Define Zod schema in `core/src/domain/` → infer type with `z.infer<typeof Schema>` → export both schema and type → test valid + invalid inputs.
+`z.strictObject({...})` schema in `core/src/domain/` (domain layer is strict — loosening is a compat break) → infer type with `z.infer<typeof Schema>` → export schema, type, and a paired `parseX(raw): Result<T, z.ZodError>` helper wrapping `safeParse()`. Call sites use `parseX()` — never `.parse()` (throws) or raw `.safeParse()`.
 
 ### 6.4 Add a Config Schema
-Create `schema-*.ts` in `core/src/config/` with `.default()` values → wire into parent (typically `AppConfigSchema`) → export from config index → test defaults + valid + invalid inputs.
+`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`.
 
 ### 6.5 Add a Skill
 Skills are Markdown files with manifest frontmatter. Add to `packages/skills/`, validate frontmatter against manifest Zod schema, test loading + manifest validation.
@@ -163,7 +190,8 @@ If full validation is impractical, document what was run and what was skipped.
 - **Branches**: `feature/<desc>`, `fix/<desc>`, `docs/<desc>` from `main`.
 - **Modules**: ES modules only (`"type": "module"`).
 - **TypeScript**: Strict mode, ES2023 target, NodeNext resolution, `composite: true` with project references, `isolatedModules: true`.
-- **Imports**: `.js` extension required (Node ESM). Named imports preferred. Type imports use `import type`.
+- **Project references**: list every cross-package import in the importing package's `tsconfig.json` `references` array — missing entries break `tsc --build` ordering silently.
+- **Imports**: `.js` suffix on relative imports in `.ts` source (NodeNext requires it). Bare-package imports need no suffix; never `@comis/core/dist/...` subpaths. Named imports preferred; `import type` for types.
 - **Build output**: `packages/*/dist/` and `*.tsbuildinfo` (gitignored).
 - **Package exports**: `"main": "./dist/index.js"`, `"types": "./dist/index.d.ts"`.
 
@@ -172,3 +200,4 @@ If full validation is impractical, document what was run and what was skipped.
 - `AGENTS.md` is the authoritative protocol for all coding agents in this repository.
 - `CLAUDE.md` may contain Claude-specific operational shortcuts, daemon notes, or release notes, but it must not weaken or override this file.
 - If `CLAUDE.md` and `AGENTS.md` conflict, follow `AGENTS.md` and update the stale companion file.
+- **Self-correction loop**: when the user corrects an approach in a way that would apply to future sessions, propose the `AGENTS.md` or `CLAUDE.md` edit before moving on.
