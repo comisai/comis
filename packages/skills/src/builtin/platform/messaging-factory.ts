@@ -111,6 +111,21 @@ export interface MultiActionDispatchConfig<T extends TSchema> {
     params: Record<string, unknown>,
     rpcCall: RpcCall,
   ) => Promise<unknown>;
+  /**
+   * Optional per-action callback to AUGMENT the `details` field of the returned
+   * AgentToolResult. Called AFTER the actionHandler resolves; receives the raw
+   * params, the actionHandler's result, and returns an object whose entries are
+   * merged into `jsonResult(result).details`.
+   *
+   * Used by `message(action='attach')` to capture `visibleDelivery` for JSONL
+   * persistence (Phase 5, B33, R5 invariant 37). Caller-driven — the factory
+   * itself does not assume any specific augmentation shape.
+   *
+   * The augmenter MUST NOT touch `wrapped.content` — the OpenAI Responses
+   * converter strips `msg.content` only (R5 invariant 37), so anything in
+   * `details` is JSONL-only and never re-enters the prompt context.
+   */
+  augmentDetails?: Partial<Record<string, (params: Record<string, unknown>, result: unknown) => Record<string, unknown>>>;
 }
 
 /**
@@ -118,7 +133,9 @@ export interface MultiActionDispatchConfig<T extends TSchema> {
  * delegates to an action handler.
  *
  * Handles the common pattern: action validation via readEnumParam +
- * action handler dispatch + jsonResult + error handling.
+ * action handler dispatch + jsonResult + error handling. Optionally
+ * augments the returned `details` field via `config.augmentDetails[action]`
+ * (Phase 5 / B33 — see `MultiActionDispatchConfig.augmentDetails`).
  *
  * @param config - Tool configuration
  * @param rpcCall - RPC call function
@@ -146,7 +163,21 @@ export function createMultiActionDispatchTool<T extends TSchema>(
           config.validActions as unknown as readonly string[],
         );
         const result = await config.actionHandler(action, p, rpcCall);
-        return jsonResult(result);
+        const wrapped = jsonResult(result);
+        // B33: opt-in details augmentation per design §"Phase 5". Caller registers
+        // a per-action augmenter; the factory merges its output into details.
+        // The augmenter MUST NOT touch `wrapped.content` — the OpenAI Responses
+        // converter strips msg.content only (R5 invariant 37), so anything in
+        // details is JSONL-only and never re-enters the prompt context.
+        const augmenter = config.augmentDetails?.[action];
+        if (augmenter) {
+          const augmented = augmenter(p, result);
+          return {
+            ...wrapped,
+            details: { ...(wrapped.details ?? {}), ...augmented },
+          };
+        }
+        return wrapped;
       } catch (err) {
         if (err instanceof Error && err.message.startsWith("[")) throw err;
         throw err instanceof Error ? err : new Error(String(err));
