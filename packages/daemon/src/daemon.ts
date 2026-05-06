@@ -1081,6 +1081,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     memoryAdapter,
     gatewaySend: gatewaySendRef,
     activeRunRegistry,
+    // Composite-key resolver supersedes activeRunRegistry.get(sessionKey)
+    // for sub-agent-runner abort paths (R3, B37).
+    sessionResolver,
     deliveryQueue,
   });
 

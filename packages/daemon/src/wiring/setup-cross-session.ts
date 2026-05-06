@@ -135,6 +135,15 @@ export function setupCrossSession(deps: {
   activeRunRegistry?: {
     get(sessionKey: string): { abort(): Promise<void> } | undefined;
   };
+  /**
+   * Optional composite-key resolver (R3, B37). Threaded into
+   * sub-agent-runner so abort paths use `(agentId, channelType,
+   * channelId)` instead of a single-arg formatted-key lookup. Daemon
+   * builds it via `createBackgroundSessionResolver({activeRunRegistry})`.
+   */
+  sessionResolver?: {
+    resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): { abort(): Promise<void> } | undefined;
+  };
   /** Delivery queue for crash-safe persistence */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
 }): CrossSessionResult {
@@ -794,6 +803,7 @@ export function setupCrossSession(deps: {
     memoryAdapter: deps.memoryAdapter,
     batcher: announcementBatcher,
     activeRunRegistry: deps.activeRunRegistry,
+    sessionResolver: deps.sessionResolver,
     resultCondenser,
     condenserModel: condenserApiKey ? { id: condensationResolution.modelId, provider: condensationResolution.provider } as unknown : undefined,
     condenserApiKey: condenserApiKey || undefined,

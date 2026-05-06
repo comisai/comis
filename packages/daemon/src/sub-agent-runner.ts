@@ -46,6 +46,39 @@ import {
  *  in response to announcements. 30s caused premature fallback + duplicate delivery. */
 export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 
+/**
+ * Build the composite-key triple from a SubAgentRun for resolver lookups
+ * (R3, B37). Sub-agent runs only carry a formatted `sessionKey` string +
+ * `agentId` + optional announce-channel context, so:
+ *   - agentId    -> run.agentId
+ *   - channelType-> run.announceChannelType ?? "sub-agent"
+ *   - channelId  -> run.announceChannelId
+ *                   ?? parseFormattedSessionKey(run.sessionKey)?.channelId
+ *                   ?? run.sessionKey  (last-resort: the formatted key
+ *                                       itself; never empty so the
+ *                                       resolver's empty-field guard
+ *                                       does not trip)
+ *
+ * The "sub-agent" channelType fallback acknowledges that production
+ * SubAgentRun does not carry the original inbound channelType -- the
+ * abort path is best-effort regardless (the SDK session may already be
+ * in cleanup), so a no-op when the resolver does not find a handle is
+ * acceptable. The runtime semantic gap is documented in 15-03-SUMMARY.md
+ * (deviation: composite-key triple vs registered formatted-key shape).
+ */
+function deriveCompositeForRun(run: SubAgentRun): {
+  agentId: string;
+  channelType: string;
+  channelId: string;
+} {
+  const parsed = parseFormattedSessionKey(run.sessionKey);
+  return {
+    agentId: run.agentId,
+    channelType: run.announceChannelType ?? "sub-agent",
+    channelId: run.announceChannelId ?? parsed?.channelId ?? run.sessionKey,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Public interfaces
 // ---------------------------------------------------------------------------
@@ -158,6 +191,18 @@ export interface SubAgentRunnerDeps {
   /** Optional active run registry for aborting in-flight SDK sessions on kill. */
   activeRunRegistry?: {
     get(sessionKey: string): { abort(): Promise<void> } | undefined;
+  };
+  /**
+   * Optional composite-key resolver (R3, B37). When provided, supersedes
+   * `activeRunRegistry.get(sessionKey)` for production aborts: the resolver
+   * accepts `{ agentId, channelType, channelId }` so multi-agent /
+   * multi-channel sessions are distinguishable. Locally re-declared to a
+   * structural minimum (avoids a daemon -> agent type-only import cycle in
+   * this leaf module). The daemon wires it via
+   * `createBackgroundSessionResolver({activeRunRegistry})`.
+   */
+  sessionResolver?: {
+    resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): { abort(): Promise<void> } | undefined;
   };
   /** Optional result condenser for compressing subagent output */
   resultCondenser?: {
@@ -494,9 +539,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         );
       }
 
-      // Abort SDK session (best-effort)
-      if (deps.activeRunRegistry) {
-        const handle = deps.activeRunRegistry.get(run.sessionKey);
+      // Abort SDK session (best-effort, R3 / B37 -- composite-key resolver)
+      if (deps.sessionResolver) {
+        const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
         if (handle) {
           // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
           handle.abort().catch(() => { /* best-effort */ });
@@ -1396,9 +1441,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         );
       }
 
-      // Abort SDK session (keyed by sessionKey, NOT runId)
-      if (deps.activeRunRegistry) {
-        const handle = deps.activeRunRegistry.get(run.sessionKey);
+      // Abort SDK session via composite-key resolver (R3 / B37). The
+      // previous lookup keyed on the formatted sessionKey only; the
+      // resolver makes the `(agentId, channelType, channelId)` triple
+      // explicit so multi-agent collisions are distinguishable.
+      if (deps.sessionResolver) {
+        const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
         if (handle) {
           handle.abort().catch((abortErr: unknown) => {
             deps.logger?.debug({ runId, err: abortErr }, "Watchdog SDK abort best-effort failed");
@@ -1550,9 +1598,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       );
     }
 
-    // Abort the in-flight SDK session to stop LLM API calls (best-effort)
-    if (deps.activeRunRegistry) {
-      const handle = deps.activeRunRegistry.get(run.sessionKey);
+    // Abort the in-flight SDK session via composite-key resolver
+    // (R3 / B37, best-effort).
+    if (deps.sessionResolver) {
+      const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
       if (handle) {
         handle.abort().catch((abortErr: unknown) => {
           deps.logger?.debug(
