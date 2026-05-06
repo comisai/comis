@@ -35,3 +35,9 @@ export type {
   BackgroundCompletionRunnerDeps,
   RunnerSessionStore,
 } from "./completion-runner.js";
+export { createBackgroundSessionResolver } from "./session-resolver.js";
+export type {
+  ActiveSessionKey,
+  BackgroundSessionResolver,
+  BackgroundSessionResolverDeps,
+} from "./session-resolver.js";
