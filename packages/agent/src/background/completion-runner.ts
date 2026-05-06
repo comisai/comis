@@ -117,13 +117,17 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // Missing session -- session expired while the task ran. No channel to deliver
-    // to, so skip fallback (which would only produce a WARN from notification-service).
+    // No active session for this sessionKey in the in-memory store. The
+    // originating session may have ended (user closed the channel) OR may live
+    // in JSONL but not be currently registered. Either way, there is no
+    // streaming channel to inject into, so skip fallback (which would only
+    // produce a WARN from notification-service). Phase 9a corrects misleading
+    // "session expired" copy in place — observability hygiene only (D-X1).
     const sessionExists = deps.sessionStore.loadByFormattedKey(origin.sessionKey) !== undefined;
     if (!sessionExists) {
       log.info(
-        { taskId, sessionKey: origin.sessionKey },
-        "Background completion: session expired, skipping re-entry",
+        { taskId, sessionKey: origin.sessionKey, hint: "No active in-memory session for this sessionKey; runner will skip re-entry. Task result remains in JSONL for offline review." },
+        "Background completion: no active session for re-entry",
       );
       return;
     }
