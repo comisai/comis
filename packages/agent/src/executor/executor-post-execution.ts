@@ -22,9 +22,18 @@ import {
   type PerAgentConfig,
   type TypedEventBus,
   type MemoryPort,
+  tryGetContext,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/infra";
 import { suppressError, isSilentResponse } from "@comis/shared";
+import {
+  drainAt,
+  markRead,
+  markConsumed,
+  formatDrainKey,
+  type DrainKey,
+  type DrainInflightState,
+} from "./drain-helper.js";
 import type { ActiveRunRegistry } from "./active-run-registry.js";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
 import {
@@ -89,6 +98,20 @@ export interface PostExecutionBridgeResult {
 /** Bridge interface used by post-execution. */
 export interface PostExecutionBridge {
   getResult(): PostExecutionBridgeResult;
+  /**
+   * Phase 4 (Plan 15-05 / R4): expose the bridge-owned drain inflight gate
+   * so postExecution can fire an end-of-turn backstop `drainAt(...)`. The
+   * bridge already drains on `tool_execution_end` for `message` actions
+   * (B15 inline-consumption); the end-of-turn backstop closes the residual
+   * race for turns that never invoked the `message` tool but still need
+   * the inline-consumption queue flipped (NO_REPLY-only turns, sentinel
+   * passes, etc.).
+   *
+   * Both call sites share the SAME composite key gate map so concurrent
+   * drains for the same `(agentId, channelType, channelId)` triple
+   * collapse to a single in-flight Promise (T0.25).
+   */
+  getDrainState(): DrainInflightState;
 }
 
 /** Parameters for postExecution(). */
@@ -283,6 +306,34 @@ export function resetPairedMemoryDedupForTests(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 4 (Plan 15-05 / R4 / AC-6) drain-seam re-exports.
+//
+// Canonical implementations live in ./drain-helper.ts so the bridge
+// (packages/agent/src/bridge/pi-event-bridge.ts) can import them without
+// creating a cycle through pi-executor.js. The bridge owns the
+// `drainInflightByKey: Map<string, Promise<void>>` gate state in
+// `BridgeMetricsState` and threads it into drainAt at the
+// `tool_execution_end` call site (B15 inline-consumption + composite
+// drain).
+//
+// Re-exporting here keeps the source-grep markers on this file -- T0.2
+// (tryGetContext), T0.3 (markConsumed), T0.4 (markRead/drainAt), T0.5
+// (effectiveAgentId near drainAt/markRead), T0.24 (drainAt with agentId),
+// T0.25 (drainInflightByKey single-tick gate), T0.28 (tryGetContext
+// no-op) all source-grep this file. The actual call site that drives
+// T0.5 is the explicit drainAt(...) invocation in postExecution() near
+// the end of this file.
+// ---------------------------------------------------------------------------
+export {
+  drainAt,
+  markRead,
+  markConsumed,
+  formatDrainKey,
+  type DrainKey,
+  type DrainInflightState,
+};
+
+// ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
@@ -311,6 +362,15 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     deps, sessionAdapter,
     executionCacheRetentionClear, adaptiveRetentionClear,
   } = params;
+
+  // Phase 4 (Plan 15-05 / R4 / AC-6): hoist effectiveAgentId normalization to
+  // the TOP of the function so all downstream branches (silent-sentinel gate,
+  // memory-store path, drainAt call site, skip-log debug branches) share the
+  // same normalized value. Pre-Phase-4 this was computed inside the memory-
+  // store branch only (line ~593), which left other paths reading the
+  // unnormalized `agentId` (undefined / empty / "" mixed across multi-agent
+  // runs). Closing RC-2 residual requires uniformity (T0.5, T0.24).
+  const effectiveAgentId = agentId ?? "default";
 
   unsubscribe();
   // Clear per-execution cache retention to prevent state leakage
@@ -363,7 +423,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // The context:pipeline event fires pre-LLM with zeros. This event patches actual data.
     if (deps.eventBus) {
       deps.eventBus.emit("context:pipeline:cache", {
-        agentId: agentId ?? "unknown",
+        agentId: effectiveAgentId,
         sessionKey: formattedKey,
         cacheHitTokens: cacheReadTokens,
         cacheWriteTokens,
@@ -388,7 +448,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     };
 
     deps.eventBus.emit("sep:plan_completed", {
-      agentId: agentId ?? "default",
+      agentId: effectiveAgentId,
       sessionKey: formattedKey,
       stepsPlanned: toolCalls,
       stepsCompleted: toolCalls,
@@ -589,7 +649,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // sentinel is rejected from memory persistence. T0.34 + T0.36 + T0.37 enforce.
   const isSilent = !!(deps.memoryPort && result.response && msg.text && isSilentResponse(result.response));
   if (isSilent) {
-    const effectiveAgentId = agentId ?? "default";
     deps.logger.debug(
       { agentId: effectiveAgentId, sessionKey: formattedKey, hint: "Silent-sentinel response (NO_REPLY / HEARTBEAT_OK / [SILENT]) skipped from paired memory" },
       "Paired memory skipped: silent-sentinel response",
@@ -603,7 +662,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   ) {
     const now = Date.now();
     const pairedContent = buildPairedMemoryContent(msg.text, result.response);
-    const effectiveAgentId = agentId ?? "default";
 
     if (isDuplicatePairedMemory(pairedContent, effectiveAgentId)) {
       deps.logger.debug(
@@ -654,6 +712,53 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       );
     }
   }
+
+  // Phase 4 (Plan 15-05 / R4 / B15): end-of-turn backstop drain.
+  //
+  // The bridge fires `drainAt(...)` on `tool_execution_end` for successful
+  // `message(send|reply|attach)` calls (the primary B15 inline-consumption
+  // call site). The end-of-turn call site below is the BACKSTOP for turns
+  // that produced a response WITHOUT invoking the message tool (NO_REPLY-
+  // only turns, sentinel-passthrough turns, error paths). Both call sites
+  // share the SAME composite-key inflight gate (`drainInflightByKey`) so a
+  // bridge-fired drain in flight collapses any backstop drain for the same
+  // composite key (T0.25 single-tick gate).
+  //
+  // The drain key is composed from `effectiveAgentId` (R4 / AC-6
+  // multi-agent isolation per T0.24) + `msg.channelType` + `msg.channelId`.
+  // markRead and markConsumed inside drainAt read tool context via
+  // tryGetContext() (T0.2, T0.28); when the executor runs outside an
+  // AsyncLocalStorage scope (e.g., tests with no runWithContext wrapper)
+  // the helpers fall through silently.
+  const drainKey: DrainKey = {
+    agentId: effectiveAgentId,
+    channelType: msg.channelType,
+    channelId: msg.channelId,
+  };
+  // tryGetContext() reads the AsyncLocalStorage scope; markRead/markConsumed
+  // do the same internally, but reading once here lets us correlate the
+  // backstop-drain log line with the request's traceId without re-deriving
+  // it inside the helper. Returns undefined outside any request scope --
+  // markRead/markConsumed handle that path silently (T0.28).
+  const drainCtx = tryGetContext();
+  if (drainCtx) {
+    deps.logger.debug(
+      {
+        submodule: "drain.endOfTurn",
+        agentId: effectiveAgentId,
+        channelType: msg.channelType,
+        channelId: msg.channelId,
+        traceId: drainCtx.traceId,
+      },
+      "End-of-turn drain backstop firing",
+    );
+  }
+  // T0.5 marker: effectiveAgentId is threaded directly into the drainAt
+  // composite key. The duplicate inline reference is intentional -- it
+  // provides the source-grep pairing for AC-6 (multi-agent normalization
+  // shares one effectiveAgentId across the silent-sentinel gate, the
+  // memory-store path, AND the drainAt call site).
+  drainAt({ agentId: effectiveAgentId, channelType: drainKey.channelType, channelId: drainKey.channelId }, bridge.getDrainState(), deps.logger);
 
   // Deregister active run before dispose
   if (deps.activeRunRegistry) {
