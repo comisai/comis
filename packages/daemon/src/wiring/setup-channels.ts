@@ -16,7 +16,7 @@ import { join } from "node:path";
 import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, CommandHandlerDeps } from "@comis/agent";
+import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver, CommandHandlerDeps } from "@comis/agent";
 import type { createSessionStore } from "@comis/memory";
 import { createMessageRouter, createCommandQueue, createCommandHandler, parseSlashCommand, sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, type CommandQueue } from "@comis/agent";
 import {
@@ -139,6 +139,13 @@ export interface ChannelsDeps {
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
   /** Optional active run registry for SDK-native steer+followup inbound routing */
   activeRunRegistry?: ActiveRunRegistry;
+  /**
+   * Optional composite-key resolver (R3, B30/B34). Wired by the daemon as
+   * `createBackgroundSessionResolver({ activeRunRegistry })`; supersedes
+   * `activeRunRegistry.has/.get` for production lookups in the inbound
+   * pipeline. T0.33 source-grep enforces.
+   */
+  sessionResolver?: BackgroundSessionResolver;
   /** RPC call dispatcher for /config chat commands (deferred dispatch -- safe to pass before wireDispatch). */
   rpcCall?: RpcCall;
   /** Optional callback for task extraction after successful agent execution (gated by config.scheduler.tasks.enabled). */
@@ -729,6 +736,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       voiceResponsePipeline,
       parseOutboundMedia,
       activeRunRegistry: deps.activeRunRegistry,
+      sessionResolver: deps.sessionResolver,
       queueConfig: deps.queueConfig,
       getElevatedReplyConfig: (agentId: string) => {
         const agentConfig = agents[agentId];

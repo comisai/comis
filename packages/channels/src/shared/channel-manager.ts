@@ -24,7 +24,7 @@ import type { DebounceBuffer } from "@comis/agent";
 import type { FollowupTrigger } from "@comis/agent";
 import type { PriorityScheduler } from "@comis/agent";
 import type { SessionLabelStore } from "@comis/agent";
-import type { ActiveRunRegistry } from "@comis/agent";
+import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig, AckReactionConfig } from "@comis/core";
@@ -118,6 +118,12 @@ export interface ChannelManagerDeps {
   outboundMediaFetch?: (url: string) => Promise<Result<{ buffer: Buffer; mimeType?: string }, Error>>;
   /** Optional active run registry for SDK-native steer+followup message routing. When absent, all messages route through CommandQueue. */
   activeRunRegistry?: ActiveRunRegistry;
+  /**
+   * Optional composite-key resolver (R3, B30/B34). When present, supersedes
+   * `activeRunRegistry.has/.get` for production lookups in the inbound
+   * pipeline. T0.33 source-grep enforces.
+   */
+  sessionResolver?: BackgroundSessionResolver;
   /** Handle /config command. Returns response text or undefined if not a config command. */
   handleConfigCommand?: (args: string[], channelType: string) => Promise<string | undefined>;
   /** Optional callback for task extraction after successful agent execution. */

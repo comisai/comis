@@ -35,7 +35,7 @@ import {
   setupBackgroundCompletionRunner,
 } from "./wiring/index.js";
 import { setupSingleAgent } from "./wiring/setup-agents.js";
-import { createActiveRunRegistry, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides } from "@comis/agent";
+import { createActiveRunRegistry, createBackgroundSessionResolver, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides } from "@comis/agent";
 import type { GeminiCacheManager } from "@comis/agent";
 import { detectSandboxProvider, createImageGenProvider, createImageGenRateLimiter, createFileStateTracker } from "@comis/skills";
 import type { SandboxProvider, ImageGenRateLimiter } from "@comis/skills";
@@ -501,6 +501,12 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // Created once and injected into both setupAgents (PiExecutor registration)
   // and setupChannels (inbound pipeline routing).
   const activeRunRegistry = createActiveRunRegistry();
+  // Composite-key resolver wraps the registry for production lookups
+  // (R3, B30/B34/B36/B37). The raw registry is still threaded for
+  // register/deregister calls in pi-executor and executor-post-execution;
+  // the resolver supersedes single-arg `.has()`/`.get()` everywhere.
+  // T0.33 source-grep is the binding gate.
+  const sessionResolver = createBackgroundSessionResolver({ activeRunRegistry });
 
   // Derive canary fallback secret from tenantId.
   // Used when CANARY_SECRET env var is not configured. The per-agent derivation
@@ -842,6 +848,8 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     queueConfig: container.config.queue,
     // steer+followup inbound routing
     activeRunRegistry,
+    // Composite-key resolver for active-session lookup (R3, B30/B34)
+    sessionResolver,
     // /config chat command handling via deferred RPC dispatch
     rpcCall,
     // Task extraction callback (gated by config.scheduler.tasks.enabled)

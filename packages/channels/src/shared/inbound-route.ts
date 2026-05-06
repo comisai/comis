@@ -37,6 +37,7 @@ export type RouteDeps = Pick<
   | "priorityScheduler"
   | "queueConfig"
   | "activeRunRegistry"
+  | "sessionResolver"
   | "streamingConfig"
   | "sendPolicyConfig"
   | "getElevatedReplyConfig"
@@ -193,13 +194,24 @@ export async function routeInboundMessage(
   // -------------------------------------------------------------------
   // STEER+FOLLOWUP ROUTING
   // -------------------------------------------------------------------
-  if (deps.activeRunRegistry && deps.queueConfig) {
+  // Active-session lookup goes through BackgroundSessionResolver (R3, B30):
+  // composite (agentId, channelType, channelId) supersedes the single-arg
+  // formatted-key lookup so multi-agent / multi-channel sessions are
+  // distinguishable. T0.33 source-grep enforces. The original
+  // `formattedKey = formatSessionKey(sessionKey)` is retained ONLY for
+  // diagnostic log fields (the SessionKey may itself be richer than the
+  // resolver's composite triple).
+  if (deps.sessionResolver && deps.queueConfig) {
     const channelQueueConfig = deps.queueConfig.perChannel[adapter.channelType];
     const effectiveMode = channelQueueConfig?.mode ?? deps.queueConfig.defaultMode;
 
     if (effectiveMode === "steer+followup") {
       const formattedKey = formatSessionKey(sessionKey);
-      const runHandle = deps.activeRunRegistry.get(formattedKey);
+      const runHandle = deps.sessionResolver.resolveActiveSession({
+        agentId,
+        channelType: adapter.channelType,
+        channelId: msg.channelId,
+      });
 
       if (runHandle) {
         const messageText = msg.text ?? "";
