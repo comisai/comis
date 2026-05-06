@@ -94,6 +94,8 @@ export {
 } from "./schema-secrets.js";
 export { BackgroundTasksConfigSchema } from "./schema-background-tasks.js";
 export type { BackgroundTasksConfig } from "./schema-background-tasks.js";
+export { OutputRetentionConfigSchema } from "./schema-output-retention.js";
+export type { OutputRetentionConfig, RetentionClass } from "./schema-output-retention.js";
 export { SkillsConfigSchema, PromptSkillsConfigSchema } from "./schema-skills.js";
 export { DaemonConfigSchema, LoggingConfigSchema, TracingDefaultsSchema, ConfigWebhookSchema } from "./schema-daemon.js";
 export { HeartbeatConfigSchema, SchedulerConfigSchema } from "./schema-scheduler.js";
