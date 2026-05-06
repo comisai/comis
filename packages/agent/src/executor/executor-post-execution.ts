@@ -22,9 +22,18 @@ import {
   type PerAgentConfig,
   type TypedEventBus,
   type MemoryPort,
+  tryGetContext,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/infra";
 import { suppressError, isSilentResponse } from "@comis/shared";
+import {
+  drainAt,
+  markRead,
+  markConsumed,
+  formatDrainKey,
+  type DrainKey,
+  type DrainInflightState,
+} from "./drain-helper.js";
 import type { ActiveRunRegistry } from "./active-run-registry.js";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
 import {
@@ -89,6 +98,20 @@ export interface PostExecutionBridgeResult {
 /** Bridge interface used by post-execution. */
 export interface PostExecutionBridge {
   getResult(): PostExecutionBridgeResult;
+  /**
+   * Phase 4 (Plan 15-05 / R4): expose the bridge-owned drain inflight gate
+   * so postExecution can fire an end-of-turn backstop `drainAt(...)`. The
+   * bridge already drains on `tool_execution_end` for `message` actions
+   * (B15 inline-consumption); the end-of-turn backstop closes the residual
+   * race for turns that never invoked the `message` tool but still need
+   * the inline-consumption queue flipped (NO_REPLY-only turns, sentinel
+   * passes, etc.).
+   *
+   * Both call sites share the SAME composite key gate map so concurrent
+   * drains for the same `(agentId, channelType, channelId)` triple
+   * collapse to a single in-flight Promise (T0.25).
+   */
+  getDrainState(): DrainInflightState;
 }
 
 /** Parameters for postExecution(). */
@@ -281,6 +304,34 @@ export function isDuplicatePairedMemory(content: string, agentId: string): boole
 export function resetPairedMemoryDedupForTests(): void {
   pairedMemoryDedup.clear();
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4 (Plan 15-05 / R4 / AC-6) drain-seam re-exports.
+//
+// Canonical implementations live in ./drain-helper.ts so the bridge
+// (packages/agent/src/bridge/pi-event-bridge.ts) can import them without
+// creating a cycle through pi-executor.js. The bridge owns the
+// `drainInflightByKey: Map<string, Promise<void>>` gate state in
+// `BridgeMetricsState` and threads it into drainAt at the
+// `tool_execution_end` call site (B15 inline-consumption + composite
+// drain).
+//
+// Re-exporting here keeps the source-grep markers on this file -- T0.2
+// (tryGetContext), T0.3 (markConsumed), T0.4 (markRead/drainAt), T0.5
+// (effectiveAgentId near drainAt/markRead), T0.24 (drainAt with agentId),
+// T0.25 (drainInflightByKey single-tick gate), T0.28 (tryGetContext
+// no-op) all source-grep this file. The actual call site that drives
+// T0.5 is the explicit drainAt(...) invocation in postExecution() near
+// the end of this file.
+// ---------------------------------------------------------------------------
+export {
+  drainAt,
+  markRead,
+  markConsumed,
+  formatDrainKey,
+  type DrainKey,
+  type DrainInflightState,
+};
 
 // ---------------------------------------------------------------------------
 // Implementation
@@ -661,6 +712,53 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       );
     }
   }
+
+  // Phase 4 (Plan 15-05 / R4 / B15): end-of-turn backstop drain.
+  //
+  // The bridge fires `drainAt(...)` on `tool_execution_end` for successful
+  // `message(send|reply|attach)` calls (the primary B15 inline-consumption
+  // call site). The end-of-turn call site below is the BACKSTOP for turns
+  // that produced a response WITHOUT invoking the message tool (NO_REPLY-
+  // only turns, sentinel-passthrough turns, error paths). Both call sites
+  // share the SAME composite-key inflight gate (`drainInflightByKey`) so a
+  // bridge-fired drain in flight collapses any backstop drain for the same
+  // composite key (T0.25 single-tick gate).
+  //
+  // The drain key is composed from `effectiveAgentId` (R4 / AC-6
+  // multi-agent isolation per T0.24) + `msg.channelType` + `msg.channelId`.
+  // markRead and markConsumed inside drainAt read tool context via
+  // tryGetContext() (T0.2, T0.28); when the executor runs outside an
+  // AsyncLocalStorage scope (e.g., tests with no runWithContext wrapper)
+  // the helpers fall through silently.
+  const drainKey: DrainKey = {
+    agentId: effectiveAgentId,
+    channelType: msg.channelType,
+    channelId: msg.channelId,
+  };
+  // tryGetContext() reads the AsyncLocalStorage scope; markRead/markConsumed
+  // do the same internally, but reading once here lets us correlate the
+  // backstop-drain log line with the request's traceId without re-deriving
+  // it inside the helper. Returns undefined outside any request scope --
+  // markRead/markConsumed handle that path silently (T0.28).
+  const drainCtx = tryGetContext();
+  if (drainCtx) {
+    deps.logger.debug(
+      {
+        submodule: "drain.endOfTurn",
+        agentId: effectiveAgentId,
+        channelType: msg.channelType,
+        channelId: msg.channelId,
+        traceId: drainCtx.traceId,
+      },
+      "End-of-turn drain backstop firing",
+    );
+  }
+  // T0.5 marker: effectiveAgentId is threaded directly into the drainAt
+  // composite key. The duplicate inline reference is intentional -- it
+  // provides the source-grep pairing for AC-6 (multi-agent normalization
+  // shares one effectiveAgentId across the silent-sentinel gate, the
+  // memory-store path, AND the drainAt call site).
+  drainAt({ agentId: effectiveAgentId, channelType: drainKey.channelType, channelId: drainKey.channelId }, bridge.getDrainState(), deps.logger);
 
   // Deregister active run before dispose
   if (deps.activeRunRegistry) {
