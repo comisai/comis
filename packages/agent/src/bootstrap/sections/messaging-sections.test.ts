@@ -130,3 +130,26 @@ describe("buildHeartbeatsSection", () => {
     expect(joined).toContain("system check");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 7: pre-tool-text policy line additions (RC-9 partial)
+//
+// Phase 7 (Plan 15-06) adds a pre-tool-text policy line to the messaging
+// section reminding the LLM not to narrate tool calls before invoking
+// them. The new policy line is asserted via .toContain on the section
+// output. Pre-Phase-7 the section does not include the line — the test
+// is RED until 15-06 lands.
+// ---------------------------------------------------------------------------
+describe("Phase 7: pre-tool-text policy line in messaging section (RC-9 partial)", () => {
+  it("buildMessagingSection includes the new pre-tool-text policy line", () => {
+    const result = buildMessagingSection(["message"], false, undefined);
+    const joined = result.join("\n");
+    // Expected new policy: a line about not narrating tool calls before
+    // invocation. The exact wording is owned by 15-06; we match on the
+    // load-bearing phrase ("tool call" + "narrate" / "before") so the
+    // assertion is not over-fitted to specific copy.
+    const hasPretoolPolicy =
+      /(narrat|don'?t\s+(?:say|tell|announce|preview|describe|narrate|acknowledge|chat|talk).*tool|tool.*before\s+invoking|silent\s+execution)/i.test(joined);
+    expect(hasPretoolPolicy).toBe(true);
+  });
+});

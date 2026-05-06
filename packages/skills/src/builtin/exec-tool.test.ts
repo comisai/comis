@@ -2108,3 +2108,35 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
     expect((invokeResult.details as { exitCode: number }).exitCode).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T0.20-T0.23 cross-check: exec-tool's internal escalation is the SOLE
+// backgrounding owner — no double-promotion (Phase 1 narrowing).
+//
+// The middleware test (auto-background-middleware.test.ts) already asserts
+// the wrapper is a no-op for exec; this cross-check asserts the exec-tool
+// source itself contains the internal escalation path that becomes the
+// single owner. Source-grep on exec-tool.ts for `escalateToBackground` (or
+// equivalent) ensures the contract still compiles after Phase 1 lands.
+// ---------------------------------------------------------------------------
+describe("exec-tool: internal escalation is the SOLE backgrounding owner (T0.20-T0.23 cross-check)", () => {
+  it("source-grep: exec-tool.ts contains the internal escalation path (escalateToBackground or equivalent)", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(path.resolve(here, "exec-tool.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // The internal escalation path is the LOAD-BEARING contract — Phase 1
+    // depends on it being present and untouched. If it's removed or renamed
+    // by accident, this test fails to surface the regression.
+    const hasInternalEscalation =
+      /escalateToBackground/.test(stripped) ||
+      /backgrounded.*sessionId/.test(stripped);
+    expect(hasInternalEscalation).toBe(true);
+  });
+});

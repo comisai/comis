@@ -244,3 +244,133 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 9b: trace continuity sub-tests (RC-8)
+//
+// T0.29a — traceId from task.origin propagates into the synthetic
+//          NormalizedMessage.metadata.traceId. Already true in current code;
+//          regression guard.
+// T0.29b — background_task:reentered event payload includes traceId. NEW —
+//          Phase 9b extends the event schema. RED until 15-07.
+// T0.29c — Operator-facing log lines on completion-runner WARN/INFO paths
+//          include traceId from origin. NEW — currently log.info({...}) calls
+//          don't all include traceId. RED until 15-07.
+// ---------------------------------------------------------------------------
+describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
+  let eventBus: ReturnType<typeof createFakeEventBus>;
+  let executor: { execute: ReturnType<typeof vi.fn> };
+  let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
+  let taskManager: { getTask: ReturnType<typeof vi.fn> };
+  let fallbackNotifyFn: ReturnType<typeof vi.fn>;
+  let logger: ReturnType<typeof makeLogger>;
+
+  beforeEach(() => {
+    eventBus = createFakeEventBus();
+    executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
+    sessionStore = { loadByFormattedKey: vi.fn().mockReturnValue({ messages: [] }) };
+    taskManager = { getTask: vi.fn() };
+    fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
+    logger = makeLogger();
+  });
+
+  function buildRunner(maxBackgroundHops = 3) {
+    return createBackgroundCompletionRunner({
+      eventBus,
+      getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
+      sessionStore,
+      taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
+      fallbackNotifyFn,
+      maxBackgroundHops,
+      logger,
+    });
+  }
+
+  it("T0.29a: traceId from task.origin propagates into the synthetic NormalizedMessage.metadata.traceId", async () => {
+    const traceId = "trace-29a";
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ traceId }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    const runner = buildRunner();
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    expect(executor.execute).toHaveBeenCalled();
+    const [msg] = executor.execute.mock.calls[0]!;
+    expect((msg as { metadata?: { traceId?: string } }).metadata?.traceId).toBe(traceId);
+    await runner.shutdown();
+  });
+
+  it("T0.29b: background_task:reentered event payload includes traceId from origin", async () => {
+    const traceId = "trace-29b";
+    const reenteredEvents: Array<Record<string, unknown>> = [];
+    eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data as Record<string, unknown>));
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ traceId }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    const runner = buildRunner();
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    // Pre-Phase-9b: event payload does NOT include traceId.
+    // Post-Phase-9b: event payload includes traceId.
+    expect(reenteredEvents.length).toBeGreaterThanOrEqual(1);
+    expect(reenteredEvents[0]!.traceId).toBe(traceId);
+    await runner.shutdown();
+  });
+
+  it("T0.29c: operator-facing log lines on completion-runner WARN/INFO paths include traceId from origin", async () => {
+    const traceId = "trace-29c";
+    // Force a path that emits an INFO log: session expired (sessionStore returns undefined).
+    sessionStore.loadByFormattedKey.mockReturnValue(undefined);
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ traceId }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    const runner = buildRunner();
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    // Pre-Phase-9b: the log line does NOT include traceId.
+    // Post-Phase-9b: at least one logger call includes traceId from origin.
+    const childLogger = (logger as unknown as { child: ReturnType<typeof vi.fn> }).child.mock?.results?.[0]?.value
+      ?? logger;
+    const allCalls: unknown[][] = [];
+    for (const fn of [childLogger.info, childLogger.warn, childLogger.debug]) {
+      const mockFn = fn as ReturnType<typeof vi.fn> | undefined;
+      if (mockFn?.mock?.calls) allCalls.push(...mockFn.mock.calls);
+    }
+    const sawTraceId = allCalls.some((args) => {
+      const obj = args[0];
+      return obj && typeof obj === "object" && (obj as Record<string, unknown>).traceId === traceId;
+    });
+    expect(sawTraceId).toBe(true);
+    await runner.shutdown();
+  });
+});
