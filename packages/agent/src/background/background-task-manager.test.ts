@@ -467,4 +467,56 @@ describe("BackgroundTaskManager", () => {
       }
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Phase 2 (15-04): recoverOnStartup preserves dispatchState (T0.14, AC-5)
+  //
+  // Pre-Phase-2 the BackgroundTask shape does not include `dispatchState`,
+  // so attempts to read `task.dispatchState` are undefined; this test fails
+  // and turns green when 15-04 extends BackgroundTask + PersistedTaskState
+  // and recoverOnStartup propagates the field across the boundary.
+  // ---------------------------------------------------------------------------
+  describe("recoverOnStartup preserves dispatchState (T0.14, AC-5)", () => {
+    it("propagates dispatchState='notified' from disk into the recovered task", () => {
+      const testDir = safePath(tmpdir(), `comis-bg-mgr-disp-${randomUUID()}`);
+      mkdirSync(testDir, { recursive: true });
+
+      try {
+        const origin = buildOrigin({ agentId: "disp-agent" });
+        const persistedRecord: Record<string, unknown> = {
+          id: "disp-task-1",
+          toolName: "exec",
+          status: "completed",
+          startedAt: Date.now() - 5000,
+          completedAt: Date.now() - 4000,
+          origin,
+          dispatchState: "notified",
+        };
+
+        const agentDir = safePath(testDir, origin.agentId);
+        mkdirSync(agentDir, { recursive: true });
+        const filePath = safePath(agentDir, `${persistedRecord.id as string}.json`);
+        writeFileSync(filePath, JSON.stringify(persistedRecord, null, 2), "utf-8");
+
+        const dispMgr = createBackgroundTaskManager({
+          dataDir: testDir,
+          eventBus: createMockEventBus(),
+          logger: createMockLogger(),
+          maxPerAgent: 5,
+          maxTotal: 20,
+        });
+        dispMgr.recoverOnStartup();
+
+        const recovered = dispMgr.getTask("disp-task-1") as
+          | (import("./background-task-types.js").BackgroundTask & {
+              dispatchState?: string;
+            })
+          | undefined;
+        expect(recovered).toBeDefined();
+        expect(recovered?.dispatchState).toBe("notified");
+      } finally {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+  });
 });
