@@ -312,6 +312,15 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     executionCacheRetentionClear, adaptiveRetentionClear,
   } = params;
 
+  // Phase 4 (Plan 15-05 / R4 / AC-6): hoist effectiveAgentId normalization to
+  // the TOP of the function so all downstream branches (silent-sentinel gate,
+  // memory-store path, drainAt call site, skip-log debug branches) share the
+  // same normalized value. Pre-Phase-4 this was computed inside the memory-
+  // store branch only (line ~593), which left other paths reading the
+  // unnormalized `agentId` (undefined / empty / "" mixed across multi-agent
+  // runs). Closing RC-2 residual requires uniformity (T0.5, T0.24).
+  const effectiveAgentId = agentId ?? "default";
+
   unsubscribe();
   // Clear per-execution cache retention to prevent state leakage
   executionCacheRetentionClear();
@@ -363,7 +372,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // The context:pipeline event fires pre-LLM with zeros. This event patches actual data.
     if (deps.eventBus) {
       deps.eventBus.emit("context:pipeline:cache", {
-        agentId: agentId ?? "unknown",
+        agentId: effectiveAgentId,
         sessionKey: formattedKey,
         cacheHitTokens: cacheReadTokens,
         cacheWriteTokens,
@@ -388,7 +397,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     };
 
     deps.eventBus.emit("sep:plan_completed", {
-      agentId: agentId ?? "default",
+      agentId: effectiveAgentId,
       sessionKey: formattedKey,
       stepsPlanned: toolCalls,
       stepsCompleted: toolCalls,
@@ -589,7 +598,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // sentinel is rejected from memory persistence. T0.34 + T0.36 + T0.37 enforce.
   const isSilent = !!(deps.memoryPort && result.response && msg.text && isSilentResponse(result.response));
   if (isSilent) {
-    const effectiveAgentId = agentId ?? "default";
     deps.logger.debug(
       { agentId: effectiveAgentId, sessionKey: formattedKey, hint: "Silent-sentinel response (NO_REPLY / HEARTBEAT_OK / [SILENT]) skipped from paired memory" },
       "Paired memory skipped: silent-sentinel response",
@@ -603,7 +611,6 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   ) {
     const now = Date.now();
     const pairedContent = buildPairedMemoryContent(msg.text, result.response);
-    const effectiveAgentId = agentId ?? "default";
 
     if (isDuplicatePairedMemory(pairedContent, effectiveAgentId)) {
       deps.logger.debug(
