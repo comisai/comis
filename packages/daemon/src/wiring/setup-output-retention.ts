@@ -1,0 +1,287 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Output retention housekeeper: scans the agent's output/ directory,
+ * deletes files whose age exceeds the per-class retentionMs.
+ *
+ * Mirrors setup-delivery.ts drain+prune timer pattern (single-tick gate +
+ * unref() + structured DEBUG log per pass) — see 15-PATTERNS.md lines
+ * 462-498.
+ *
+ * Closes RC-9 + R8 + AC-11. Per CONTEXT D-O1, consumes JSONL
+ * details.visibleDelivery for offline analysis (the housekeeper does NOT
+ * delete JSONL itself; it only manages output/ files referenced by it).
+ *
+ * Per AGENTS §2.2: NO `path.join`, NO `process.env`. All paths via
+ *   `safePath(workspaceDir, ...)`. Per AGENTS §2.4: factory + Deps with
+ *   ComisLogger injected. Per AGENTS §2.1: error paths log WARN/DEBUG with
+ *   hint+errorKind; never throws. Per AGENTS §2.3 KISS: in-place file
+ *   deletion. No "trash dir", no "soft delete". Per AGENTS §6.6
+ *   (security/daemon): file deletion is destructive — operator can
+ *   disable via `enabled: false` config.
+ *
+ * Test contract preserved: `validateOutputRetentionConfig({ classes:
+ * [{classId, retentionMs}] })` returns `{ ok, value | error }` — the
+ * 15-01 RED housekeeper test asserts this validator shape directly.
+ *
+ * @module setup-output-retention
+ */
+
+import { readdirSync, statSync, unlinkSync } from "node:fs";
+import type { OutputRetentionConfig, RetentionClass } from "@comis/core";
+import { safePath } from "@comis/core";
+import type { ComisLogger } from "@comis/infra";
+import { ok, err, suppressError, type Result } from "@comis/shared";
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+export interface SetupOutputRetentionDeps {
+  /** Validated config (from AppConfig.outputRetention). */
+  config: OutputRetentionConfig;
+  /** Absolute path to the workspace dir. The housekeeper scans `<workspaceDir>/output/`. */
+  workspaceDir: string;
+  /** Injected logger (per AGENTS §2.4 — never import @comis/infra at runtime). */
+  logger: ComisLogger;
+}
+
+export interface SetupOutputRetentionHandle {
+  /** Stop the recurring housekeeper interval. Idempotent. */
+  shutdown(): void;
+  /** Manual trigger for tests; runs one full pass synchronously. */
+  runOnePass(): Promise<{ deleted: number; bytesFreed: number }>;
+}
+
+/**
+ * 15-01 test contract: legacy array-of-objects shape preserved as the
+ * input to `validateOutputRetentionConfig`. The housekeeper itself uses
+ * the schema-derived `OutputRetentionConfig` (Record-of-classes shape);
+ * this validator acts as the test's binding gate that retentionMs <= 0
+ * is rejected.
+ */
+export interface RetentionClassConfigInput {
+  classId: string;
+  retentionMs: number;
+}
+
+export interface ValidatedRetentionConfig {
+  classes: RetentionClassConfigInput[];
+}
+
+// ---------------------------------------------------------------------------
+// Validator (15-01 test contract gate)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate an output-retention config supplied as the legacy
+ * `{ classes: [{classId, retentionMs}] }` shape. Returns a Result-shaped
+ * `{ ok: true, value }` on success, `{ ok: false, error }` on failure.
+ *
+ * The 15-01 RED housekeeper test asserts this validator's contract:
+ *   - retentionMs = -1   → rejected
+ *   - retentionMs = 0    → rejected
+ *   - retentionMs = 1    → accepted
+ *
+ * Production wiring uses the Zod schema in
+ * @comis/core/config/schema-output-retention.ts directly; this
+ * validator is a thin compatibility surface for the test contract.
+ */
+export function validateOutputRetentionConfig(
+  config: unknown,
+): Result<ValidatedRetentionConfig, Error> {
+  if (typeof config !== "object" || config === null) {
+    return err(new Error("output retention config must be an object"));
+  }
+  const obj = config as { classes?: unknown };
+  if (!Array.isArray(obj.classes)) {
+    return err(new Error("output retention config: 'classes' must be an array"));
+  }
+  const out: RetentionClassConfigInput[] = [];
+  for (let i = 0; i < obj.classes.length; i++) {
+    const entry = obj.classes[i];
+    if (typeof entry !== "object" || entry === null) {
+      return err(
+        new Error(`output retention config: classes[${i}] must be an object`),
+      );
+    }
+    const e = entry as { classId?: unknown; retentionMs?: unknown };
+    if (typeof e.classId !== "string" || e.classId.length === 0) {
+      return err(
+        new Error(
+          `output retention config: classes[${i}].classId must be a non-empty string`,
+        ),
+      );
+    }
+    if (
+      typeof e.retentionMs !== "number" ||
+      !Number.isInteger(e.retentionMs) ||
+      e.retentionMs <= 0
+    ) {
+      return err(
+        new Error(
+          `output retention config: classes[${i}].retentionMs must be a positive integer (got ${String(
+            e.retentionMs,
+          )})`,
+        ),
+      );
+    }
+    out.push({ classId: e.classId, retentionMs: e.retentionMs });
+  }
+  return ok({ classes: out });
+}
+
+// ---------------------------------------------------------------------------
+// Housekeeper factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Wire the per-class output-retention housekeeper.
+ *
+ * Mirrors setup-delivery.ts (drain + prune timer): single-tick gate, .unref(),
+ * structured per-pass log. The factory starts the recurring interval
+ * immediately on construction; call shutdown() on system:shutdown.
+ *
+ * Returns a handle exposing `shutdown()` (idempotent) and `runOnePass()`
+ * (manual trigger for tests).
+ */
+export function setupOutputRetention(
+  deps: SetupOutputRetentionDeps,
+): SetupOutputRetentionHandle {
+  const log = deps.logger.child({ submodule: "output-retention-housekeeper" });
+  let interval: ReturnType<typeof setInterval> | undefined;
+  let running: Promise<void> | null = null;
+
+  async function runOnePass(): Promise<{ deleted: number; bytesFreed: number }> {
+    const outputDir = safePath(deps.workspaceDir, "output");
+    const now = Date.now();
+    let deleted = 0;
+    let bytesFreed = 0;
+
+    // Read class subdirectories under output/. Missing dir = nothing to do.
+    let classDirs: string[];
+    try {
+      classDirs = readdirSync(outputDir);
+    } catch {
+      log.debug(
+        { outputDir, hint: "Output dir missing — nothing to retain yet" },
+        "Output retention: output dir not present",
+      );
+      return { deleted, bytesFreed };
+    }
+
+    for (const className of classDirs) {
+      // Resolve class config: explicit class, else fall back to "default".
+      const classConfig: RetentionClass | undefined =
+        deps.config.classes[className] ?? deps.config.classes.default;
+      if (!classConfig) continue;
+
+      const classDir = safePath(outputDir, className);
+      let entries: string[];
+      try {
+        entries = readdirSync(classDir);
+      } catch (entryErr) {
+        log.debug(
+          {
+            err: entryErr,
+            classDir,
+            hint: "Could not read class dir; will retry next pass",
+            errorKind: "internal" as const,
+          },
+          "Output retention: class dir read failed",
+        );
+        continue;
+      }
+
+      for (const entry of entries) {
+        const filePath = safePath(classDir, entry);
+        try {
+          const stats = statSync(filePath);
+          // Skip subdirectories — only retain leaf files. Per KISS, no
+          // recursion: each retention class is a single flat directory.
+          if (!stats.isFile()) continue;
+          const ageMs = now - stats.mtimeMs;
+          if (ageMs > classConfig.retentionMs) {
+            bytesFreed += stats.size;
+            unlinkSync(filePath);
+            deleted++;
+          }
+        } catch (fileErr) {
+          log.debug(
+            {
+              err: fileErr,
+              filePath,
+              hint:
+                "Failed to inspect/delete file in housekeeper pass; will retry next pass",
+              errorKind: "internal" as const,
+            },
+            "Output retention: file inspect/delete failed",
+          );
+        }
+      }
+    }
+
+    if (deleted > 0) {
+      log.info(
+        {
+          deleted,
+          bytesFreed,
+          class: "output_retention",
+          hint:
+            "Per-class output retention completed; files older than configured retentionMs removed",
+        },
+        "Output retention: housekeeper pass completed",
+      );
+    } else {
+      log.debug(
+        { class: "output_retention", hint: "No files exceeded retentionMs this pass" },
+        "Output retention: nothing to delete",
+      );
+    }
+
+    return { deleted, bytesFreed };
+  }
+
+  function startInterval(): void {
+    if (!deps.config.enabled) {
+      log.info(
+        { hint: "Output retention disabled by config; not starting housekeeper" },
+        "Output retention: disabled",
+      );
+      return;
+    }
+    interval = setInterval(() => {
+      // Single-tick gate: in-flight Promise prevents overlapping ticks.
+      if (running) return;
+      running = runOnePass()
+        .then(() => undefined)
+        .finally(() => {
+          running = null;
+        });
+      // Fire-and-forget: failures inside runOnePass are already logged
+      // and do not propagate (it never throws). suppressError satisfies
+      // the no-floating-promise lint without altering semantics.
+      suppressError(running, "output retention recurring tick");
+    }, deps.config.intervalMs);
+    interval.unref();
+    log.info(
+      {
+        intervalMs: deps.config.intervalMs,
+        classes: Object.keys(deps.config.classes),
+        hint: "Output retention housekeeper started",
+      },
+      "Output retention: started",
+    );
+  }
+
+  function shutdown(): void {
+    if (interval) {
+      clearInterval(interval);
+      interval = undefined;
+    }
+  }
+
+  // Start immediately on construction (mirrors setup-delivery's startup pattern).
+  startInterval();
+
+  return { shutdown, runOnePass };
+}
