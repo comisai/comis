@@ -37,8 +37,13 @@ import { ok, err, suppressError, type Result } from "@comis/shared";
 // ---------------------------------------------------------------------------
 
 export interface SetupOutputRetentionDeps {
-  /** Validated config (from AppConfig.outputRetention). */
-  config: OutputRetentionConfig;
+  /**
+   * Validated config (from AppConfig.outputRetention). May be undefined
+   * in legacy test mocks where AppConfig is hand-constructed via
+   * `as unknown as`; the factory degrades to no-op in that case (mirrors
+   * `setupDeliveryMirror`'s `if (!mirrorConfig?.enabled)` pattern).
+   */
+  config: OutputRetentionConfig | undefined;
   /** Absolute path to the workspace dir. The housekeeper scans `<workspaceDir>/output/`. */
   workspaceDir: string;
   /** Injected logger (per AGENTS §2.4 — never import @comis/infra at runtime). */
@@ -148,6 +153,28 @@ export function setupOutputRetention(
   deps: SetupOutputRetentionDeps,
 ): SetupOutputRetentionHandle {
   const log = deps.logger.child({ submodule: "output-retention-housekeeper" });
+
+  // Defensive degradation: when config is undefined (legacy test mocks
+  // bypassing the AppConfig schema via `as unknown as`), behave as if
+  // disabled. Mirrors setupDeliveryMirror's optional-chain pattern.
+  // Production paths get a fully-defaulted config from
+  // AppConfigSchema.outputRetention, so this branch only triggers in
+  // tests with hand-constructed config objects.
+  if (!deps.config) {
+    log.debug(
+      {
+        hint:
+          "Output retention config not present; housekeeper inactive (likely a hand-constructed test mock)",
+      },
+      "Output retention: no config",
+    );
+    return {
+      shutdown: () => {},
+      runOnePass: async () => ({ deleted: 0, bytesFreed: 0 }),
+    };
+  }
+  const config = deps.config;
+
   let interval: ReturnType<typeof setInterval> | undefined;
   let running: Promise<void> | null = null;
 
@@ -172,7 +199,7 @@ export function setupOutputRetention(
     for (const className of classDirs) {
       // Resolve class config: explicit class, else fall back to "default".
       const classConfig: RetentionClass | undefined =
-        deps.config.classes[className] ?? deps.config.classes.default;
+        config.classes[className] ?? config.classes.default;
       if (!classConfig) continue;
 
       const classDir = safePath(outputDir, className);
@@ -242,7 +269,7 @@ export function setupOutputRetention(
   }
 
   function startInterval(): void {
-    if (!deps.config.enabled) {
+    if (!config.enabled) {
       log.info(
         { hint: "Output retention disabled by config; not starting housekeeper" },
         "Output retention: disabled",
@@ -261,12 +288,12 @@ export function setupOutputRetention(
       // and do not propagate (it never throws). suppressError satisfies
       // the no-floating-promise lint without altering semantics.
       suppressError(running, "output retention recurring tick");
-    }, deps.config.intervalMs);
+    }, config.intervalMs);
     interval.unref();
     log.info(
       {
-        intervalMs: deps.config.intervalMs,
-        classes: Object.keys(deps.config.classes),
+        intervalMs: config.intervalMs,
+        classes: Object.keys(config.classes),
         hint: "Output retention housekeeper started",
       },
       "Output retention: started",

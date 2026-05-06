@@ -33,6 +33,7 @@ import {
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
+  setupOutputRetention,
 } from "./wiring/index.js";
 import { setupSingleAgent } from "./wiring/setup-agents.js";
 import { createActiveRunRegistry, createBackgroundSessionResolver, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides } from "@comis/agent";
@@ -932,6 +933,27 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   container.eventBus.on("system:shutdown", () => { shutdownMirror(); });
   // Structured logging for delivery queue lifecycle events
   setupDeliveryQueueLogging({ eventBus: container.eventBus, logger: daemonLogger });
+
+  // Phase 15 v12 (R8, RC-9): output retention housekeeper.
+  // Mirrors the delivery-queue/mirror prune pattern — single-tick gate +
+  // .unref() interval. Scans <defaultWorkspaceDir>/output/<className>/,
+  // deletes leaf files older than the class's retentionMs. Operators can
+  // disable via outputRetention.enabled: false. Per AGENTS §6.6
+  // (security/daemon): file deletion is destructive; the destructive
+  // path is gated on enabled + per-class retentionMs.
+  if (defaultWorkspaceDir) {
+    const outputRetentionHandle = setupOutputRetention({
+      config: container.config.outputRetention,
+      workspaceDir: defaultWorkspaceDir,
+      logger: daemonLogger,
+    });
+    container.eventBus.on("system:shutdown", () => { outputRetentionHandle.shutdown(); });
+  } else {
+    daemonLogger.debug(
+      { hint: "No defaultWorkspaceDir; output retention housekeeper skipped" },
+      "Output retention: skipped (no default workspace)",
+    );
+  }
 
   // 6.6.8.0.1. Notification system
   // setupNotifications creates the NotificationService and SessionTracker.

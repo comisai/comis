@@ -31,3 +31,11 @@ export type {
   BackgroundCompletionRunnerContext,
   SetupBackgroundCompletionRunnerDeps,
 } from "./setup-background-completion-runner.js";
+export {
+  setupOutputRetention,
+  validateOutputRetentionConfig,
+} from "./setup-output-retention.js";
+export type {
+  SetupOutputRetentionDeps,
+  SetupOutputRetentionHandle,
+} from "./setup-output-retention.js";
