@@ -1,0 +1,353 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Completion dispatcher: routes background_task:completed/failed events
+ * through the BackgroundSessionState machine. Closes RC-1 + RC-2.
+ *
+ * Subscribes to background_task:completed and background_task:failed BEFORE
+ * the existing BackgroundCompletionRunner (Phase 14 wiring). On each event:
+ *  1. Reads `task.dispatchState`.
+ *  2. If "pending": transitions to "notified" only when the runner cannot
+ *     re-enter the originating session (no active session for the formatted
+ *     key, or recursion limit reached). Otherwise transitions to "dispatched"
+ *     and lets the completion-runner perform re-entry.
+ *  3. If already "notified" or "dispatched": no-op (D-S3 at-most-once).
+ *
+ * The runner is wired AFTER the dispatcher in setup-background-completion-
+ * runner.ts so its handler reads the updated `task.dispatchState` and skips
+ * its own work when state is "notified" (the dispatcher already fired
+ * fallback). This single-owner contract closes RC-1 (completion runner
+ * reads SQLite while chat sessions live in JSONL — the dispatcher routes
+ * via persistent state instead of an in-memory event handler) and RC-2
+ * (`complete()` unconditionally fires user-visible notification — the
+ * dispatcher gates on state).
+ *
+ * **State persistence:** every transition calls `manager.transitionDispatch
+ * State(taskId, next)` (when the manager exposes it) which mutates the
+ * in-memory task AND calls persistTaskSync. Recovery-after-SIGKILL reads
+ * the persisted state and the manager skips re-emitting completion events
+ * for already-dispatched / already-notified tasks (AC-5).
+ *
+ * **Failure isolation:** each handler is wrapped in suppressError so a
+ * single dispatch's failure does not tear down the subscription
+ * (AGENTS §2.1).
+ *
+ * @module
+ */
+
+import { suppressError } from "@comis/shared";
+import type { TypedEventBus, BackgroundTaskOrigin } from "@comis/core";
+import type { ComisLogger } from "@comis/infra";
+import type {
+  BackgroundTask,
+  BackgroundSessionState,
+  BackgroundTaskNotificationPolicy as NotificationPolicyType,
+} from "./background-task-types.js";
+import type { NotifyFn } from "./background-task-manager.js";
+
+// ---------------------------------------------------------------------------
+// Runtime constants exported for downstream consumers (test surface + ops).
+// T0.11 + T0.12 enforce shape.
+// ---------------------------------------------------------------------------
+
+/**
+ * The 3-state typed enum as a runtime array. Order matches transition order:
+ *   pending → (notified | dispatched).
+ *
+ * Exported as a `readonly string[]` so tests can assert
+ * `STATES === ["pending", "notified", "dispatched"]` (T0.11).
+ */
+export const STATES: readonly BackgroundSessionState[] = [
+  "pending",
+  "notified",
+  "dispatched",
+] as const;
+
+/**
+ * Notification policy as a runtime object so it round-trips through
+ * JSON.parse(JSON.stringify(...)) preserving identity. T0.12 enforces:
+ * a boolean would collapse to true/false on rehydrate and lose the
+ * distinction between "deferred" / "immediate" / "silent".
+ *
+ * Per CONTEXT D-S1: the typed enum is the single source of truth. This
+ * runtime object is a discoverability surface (tests, debugging, logs);
+ * production code uses the type-only `BackgroundTaskNotificationPolicy`
+ * from `background-task-types.ts`.
+ */
+export const BackgroundTaskNotificationPolicy: Record<string, NotificationPolicyType> = {
+  DEFERRED: "deferred",
+  IMMEDIATE: "immediate",
+  SILENT: "silent",
+};
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/** Public-facing handle on the dispatcher. */
+export interface CompletionDispatcher {
+  /** Unsubscribe from the event bus. Idempotent. Awaitable so callers can
+   *  ensure no in-flight handler outlives daemon shutdown. */
+  shutdown(): Promise<void>;
+}
+
+/** Minimal session-store contract the dispatcher needs (active-session check). */
+export interface DispatcherSessionStore {
+  loadByFormattedKey(sessionKey: string): unknown | undefined;
+}
+
+/**
+ * Minimal taskManager contract: read + (optionally) persist transitions.
+ *
+ * `transitionDispatchState` is optional so the dispatcher composes cleanly
+ * with the test fixture in completion-dispatcher.test.ts (which constructs
+ * `taskManager: { getTask: vi.fn() }` and asserts the at-most-once gate
+ * without exercising state persistence). Production wiring (Task 4) adds
+ * `transitionDispatchState` on the real BackgroundTaskManager so the
+ * recovery-after-SIGKILL contract is binding.
+ */
+export interface DispatcherTaskManager {
+  getTask(taskId: string): BackgroundTask | undefined;
+  /**
+   * Atomically transition the in-memory task's dispatchState AND persist.
+   * Returns true on success; false if task does not exist. Optional —
+   * when absent, the dispatcher routes purely via in-memory state.
+   */
+  transitionDispatchState?(taskId: string, next: BackgroundSessionState): boolean;
+}
+
+/**
+ * Dispatcher dependencies.
+ *
+ * Public minimum: `eventBus`, `taskManager`, `logger`. Tests use
+ * `notifyFn`; production wires both `notifyFn` and `fallbackNotifyFn`
+ * (they are aliases — the dispatcher prefers `fallbackNotifyFn` when
+ * both are provided so production callers reading the daemon wiring
+ * see the canonical name).
+ *
+ * `sessionStore` + `maxBackgroundHops` are optional. When absent, the
+ * dispatcher falls back to the safe behavior: pending → dispatched
+ * (let the runner attempt re-entry), no fallback notification fired
+ * from the dispatcher itself.
+ */
+export interface CompletionDispatcherDeps {
+  eventBus: TypedEventBus;
+  taskManager: DispatcherTaskManager;
+  /**
+   * User-visible notification fired when the dispatcher cannot route to
+   * the originating session. Either name accepted; `fallbackNotifyFn`
+   * preferred when both are provided.
+   */
+  fallbackNotifyFn?: NotifyFn;
+  /** Alias for `fallbackNotifyFn` (test fixture compatibility). */
+  notifyFn?: NotifyFn;
+  /** Active-session check (production wiring). When absent, the dispatcher
+   *  defers to the runner without firing fallback. */
+  sessionStore?: DispatcherSessionStore;
+  /** Recursion limit for background-task hop counting. When absent, the
+   *  dispatcher does not enforce the cap (defers to the runner). */
+  maxBackgroundHops?: number;
+  logger: ComisLogger;
+}
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Wire the completion dispatcher against an event bus + task manager.
+ * Subscriptions are installed synchronously; call shutdown() to remove them.
+ *
+ * Per CONTEXT D-S3 (at-most-once fallback): the state-machine transitions
+ * on `task.dispatchState` are the single source of truth. The dispatcher's
+ * synchronous transitionDispatchState runs BEFORE the completion-runner's
+ * handler reads the updated state, by virtue of the event-bus subscribing
+ * the dispatcher first (see setup-background-completion-runner.ts).
+ */
+export function createCompletionDispatcher(
+  deps: CompletionDispatcherDeps,
+): CompletionDispatcher {
+  const log = deps.logger.child({ submodule: "completion-dispatcher" });
+  const fallback = deps.fallbackNotifyFn ?? deps.notifyFn;
+  let stopped = false;
+  let inflight: Promise<void> = Promise.resolve();
+
+  const onCompleted = (
+    data: {
+      agentId: string;
+      taskId: string;
+      toolName: string;
+      durationMs: number;
+      origin: BackgroundTaskOrigin;
+      timestamp: number;
+    },
+  ) => {
+    if (stopped) return;
+    const promise = handleEvent(data.taskId, "completed");
+    inflight = inflight.then(() => promise).catch(() => undefined);
+    suppressError(promise, "completion dispatcher (completed)");
+  };
+
+  const onFailed = (
+    data: {
+      agentId: string;
+      taskId: string;
+      toolName: string;
+      error: string;
+      durationMs: number;
+      origin: BackgroundTaskOrigin;
+      timestamp: number;
+    },
+  ) => {
+    if (stopped) return;
+    const promise = handleEvent(data.taskId, "failed");
+    inflight = inflight.then(() => promise).catch(() => undefined);
+    suppressError(promise, "completion dispatcher (failed)");
+  };
+
+  deps.eventBus.on("background_task:completed", onCompleted);
+  deps.eventBus.on("background_task:failed", onFailed);
+
+  async function handleEvent(
+    taskId: string,
+    kind: "completed" | "failed",
+  ): Promise<void> {
+    const task = deps.taskManager.getTask(taskId);
+    if (!task) {
+      log.debug(
+        { taskId, kind, hint: "Task disappeared from manager before dispatcher could resolve it" },
+        "Completion dispatcher: task not in manager",
+      );
+      return;
+    }
+
+    const current: BackgroundSessionState = task.dispatchState ?? "pending";
+
+    // D-S3 at-most-once: state machine is the single source of truth.
+    if (current === "notified" || current === "dispatched") {
+      log.debug(
+        {
+          taskId,
+          dispatchState: current,
+          hint: "Task already dispatched/notified; no-op (D-S3 at-most-once)",
+        },
+        "Completion dispatcher: at-most-once gate",
+      );
+      return;
+    }
+
+    // task.dispatchState === "pending". Decide which transition to make.
+    const origin = task.origin;
+    if (!origin || !origin.sessionKey || !origin.agentId) {
+      // Legacy task without origin: transition to "notified" + fire fallback.
+      transitionTo(taskId, "notified");
+      await fireFallback(
+        task,
+        `Background task "${task.toolName}" completed.`,
+      );
+      return;
+    }
+
+    // Hop cap (when configured). Recursion limit reached → fallback.
+    if (typeof deps.maxBackgroundHops === "number") {
+      const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
+      if (nextHopCount >= deps.maxBackgroundHops) {
+        transitionTo(taskId, "notified");
+        await fireFallback(
+          task,
+          `Background task "${task.toolName}" completed but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
+        );
+        return;
+      }
+    }
+
+    // Active-session check (when configured). No active session → fallback.
+    if (deps.sessionStore) {
+      const sessionExists =
+        deps.sessionStore.loadByFormattedKey(origin.sessionKey) !== undefined;
+      if (!sessionExists) {
+        // The originating session is not currently registered. The
+        // completion-runner would skip re-entry (no streaming channel) —
+        // fire fallback so the user still sees a notification. The
+        // dispatcher transitions to "notified" so the runner does NOT
+        // also fire (single-owner contract).
+        transitionTo(taskId, "notified");
+        await fireFallback(
+          task,
+          `Background task "${task.toolName}" completed.`,
+        );
+        return;
+      }
+    }
+
+    // Active session exists (or sessionStore not wired): the runner will
+    // dispatch via re-entry. Transition to "dispatched" so the runner's
+    // handler — which reads task.dispatchState — sees the updated state.
+    // We do NOT fire fallback here (D-S3, AC-1: zero spurious outbound).
+    transitionTo(taskId, "dispatched");
+    log.debug(
+      {
+        taskId,
+        sessionKey: origin.sessionKey,
+        agentId: origin.agentId,
+        toolName: task.toolName,
+        hint: "Runner will re-enter the originating session",
+      },
+      "Completion dispatcher: marked dispatched",
+    );
+  }
+
+  function transitionTo(taskId: string, next: BackgroundSessionState): void {
+    if (typeof deps.taskManager.transitionDispatchState === "function") {
+      deps.taskManager.transitionDispatchState(taskId, next);
+      return;
+    }
+    // No persistent transition wired — mutate the in-memory task directly so
+    // the runner (which receives the same event in the same tick) reads the
+    // updated state. Test fixtures take this branch.
+    const task = deps.taskManager.getTask(taskId);
+    if (task) task.dispatchState = next;
+  }
+
+  async function fireFallback(task: BackgroundTask, message: string): Promise<void> {
+    if (!fallback) {
+      log.debug(
+        {
+          taskId: task.id,
+          hint: "No fallbackNotifyFn wired; dispatcher cannot fire user-visible notification",
+        },
+        "Completion dispatcher: fallback skipped (no notifyFn)",
+      );
+      return;
+    }
+    try {
+      await fallback({
+        agentId: task.origin.agentId,
+        message,
+        priority: "normal",
+        origin: "background_task",
+      });
+    } catch (err) {
+      log.warn(
+        {
+          taskId: task.id,
+          agentId: task.origin.agentId,
+          err,
+          hint: "fallbackNotifyFn rejected; user will not see the completion notification for this task",
+          errorKind: "internal" as const,
+        },
+        "Completion dispatcher: fallbackNotifyFn rejected",
+      );
+    }
+  }
+
+  return {
+    async shutdown(): Promise<void> {
+      if (stopped) return;
+      stopped = true;
+      deps.eventBus.off("background_task:completed", onCompleted);
+      deps.eventBus.off("background_task:failed", onFailed);
+      // Wait for any in-flight handler to settle before returning.
+      await inflight;
+    },
+  };
+}

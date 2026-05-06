@@ -94,6 +94,24 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
+    // Phase 15 v12 (D-S3 at-most-once): the dispatcher subscribed BEFORE this
+    // runner (see setup-background-completion-runner.ts) and already
+    // transitioned task.dispatchState. When state is "notified", the
+    // dispatcher fired the user-visible fallback; the runner stays out of
+    // the way to enforce single-owner notification routing (AC-1: zero
+    // spurious outbound).
+    if (task.dispatchState === "notified") {
+      log.debug(
+        {
+          taskId,
+          dispatchState: task.dispatchState,
+          hint: "Dispatcher already fired fallback notification (D-S3 at-most-once)",
+        },
+        "Background completion runner: skipped (dispatcher fired fallback)",
+      );
+      return;
+    }
+
     // Legacy task without origin -- emit fallback, keep file for audit.
     const origin = task.origin;
     if (!origin || !origin.sessionKey || !origin.agentId) {
