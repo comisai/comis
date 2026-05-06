@@ -16,6 +16,12 @@ export const TASK_DIR_NAME = "background-tasks";
 
 /**
  * Extract the serializable subset from a BackgroundTask.
+ *
+ * Phase 15 v12 (D-S1, D-S2): notificationPolicy + dispatchState are copied
+ * across when present so the state machine survives daemon restart-recovery
+ * (AC-5). Both fields are optional in PersistedTaskState; we use spread-when-
+ * defined to avoid emitting `"notificationPolicy": undefined` to disk for
+ * legacy callers that do not set them.
  */
 function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedTaskState {
   return {
@@ -27,6 +33,8 @@ function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedT
     result: task.result,
     error: task.error,
     origin: task.origin,
+    ...(task.notificationPolicy !== undefined && { notificationPolicy: task.notificationPolicy }),
+    ...(task.dispatchState !== undefined && { dispatchState: task.dispatchState }),
   };
 }
 
