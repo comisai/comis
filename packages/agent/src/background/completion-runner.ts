@@ -105,6 +105,9 @@ export function createBackgroundCompletionRunner(
         {
           taskId,
           dispatchState: task.dispatchState,
+          // Phase 9b: include originating traceId so operator log streams stay
+          // continuous across the dispatcher / runner boundary.
+          traceId: task.origin?.traceId ?? undefined,
           hint: "Dispatcher already fired fallback notification (D-S3 at-most-once)",
         },
         "Background completion runner: skipped (dispatcher fired fallback)",
@@ -124,7 +127,15 @@ export function createBackgroundCompletionRunner(
     const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
     if (nextHopCount >= deps.maxBackgroundHops) {
       log.info(
-        { taskId, toolName: task.toolName, agentId: origin.agentId, hopCount: nextHopCount, max: deps.maxBackgroundHops },
+        {
+          taskId,
+          toolName: task.toolName,
+          agentId: origin.agentId,
+          hopCount: nextHopCount,
+          max: deps.maxBackgroundHops,
+          // Phase 9b: traceId from origin keeps operator logs threaded.
+          traceId: origin.traceId ?? undefined,
+        },
         "Background completion: hop cap reached, falling back to user notification",
       );
       await fallbackForTask(
@@ -144,7 +155,16 @@ export function createBackgroundCompletionRunner(
     const sessionExists = deps.sessionStore.loadByFormattedKey(origin.sessionKey) !== undefined;
     if (!sessionExists) {
       log.info(
-        { taskId, sessionKey: origin.sessionKey, hint: "No active in-memory session for this sessionKey; runner will skip re-entry. Task result remains in JSONL for offline review." },
+        {
+          taskId,
+          sessionKey: origin.sessionKey,
+          // Phase 9b (T0.29c): traceId from origin so this INFO log line stays
+          // threaded with the originating request's trace stream even though
+          // the runner runs in a background context (the ALS traceId at this
+          // point may differ from origin.traceId).
+          traceId: origin.traceId ?? undefined,
+          hint: "No active in-memory session for this sessionKey; runner will skip re-entry. Task result remains in JSONL for offline review.",
+        },
         "Background completion: no active session for re-entry",
       );
       return;
@@ -154,7 +174,14 @@ export function createBackgroundCompletionRunner(
     const parsedKey = parseFormattedSessionKey(origin.sessionKey);
     if (!parsedKey) {
       log.warn(
-        { taskId, sessionKey: origin.sessionKey, hint: "Persisted sessionKey is malformed; cannot route announcement", errorKind: "internal" as const },
+        {
+          taskId,
+          sessionKey: origin.sessionKey,
+          // Phase 9b: traceId from origin keeps operator logs threaded.
+          traceId: origin.traceId ?? undefined,
+          hint: "Persisted sessionKey is malformed; cannot route announcement",
+          errorKind: "internal" as const,
+        },
         "Background completion: invalid sessionKey",
       );
       await fallbackForTask(task.toolName, origin.agentId, `Background task "${task.toolName}" completed (routing failed).`);
@@ -183,18 +210,30 @@ export function createBackgroundCompletionRunner(
     };
 
     log.debug(
-      { taskId, sessionKey: origin.sessionKey, agentId: origin.agentId, toolName: task.toolName, hopCount: nextHopCount },
+      {
+        taskId,
+        sessionKey: origin.sessionKey,
+        agentId: origin.agentId,
+        toolName: task.toolName,
+        hopCount: nextHopCount,
+        // Phase 9b: traceId from origin keeps debug logs threaded.
+        traceId: origin.traceId ?? undefined,
+      },
       "Background completion runner: invoking executor",
     );
 
     // Emit background_task:reentered immediately before executor.execute().
     // Integration tests compute p95 latency from
     // background_task:completed.timestamp to this event's timestamp.
+    // Phase 9b (T0.29b): include traceId from origin so subscribers (and
+    // operator log streams) preserve the originating request's trace across
+    // the background_task:completed → :reentered boundary.
     deps.eventBus.emit("background_task:reentered", {
       taskId: task.id,
       agentId: origin.agentId,
       sessionKey: origin.sessionKey,
       hopCount: nextHopCount,
+      traceId: origin.traceId ?? null,
       timestamp: Date.now(),
     });
 
@@ -209,7 +248,14 @@ export function createBackgroundCompletionRunner(
       );
     } catch (err) {
       log.warn(
-        { taskId, err, hint: "Executor failed mid-completion turn; subscription remains active", errorKind: "internal" as const },
+        {
+          taskId,
+          err,
+          // Phase 9b: traceId from origin keeps the WARN line threaded.
+          traceId: origin.traceId ?? undefined,
+          hint: "Executor failed mid-completion turn; subscription remains active",
+          errorKind: "internal" as const,
+        },
         "Background completion: executor.execute() rejected",
       );
     }
