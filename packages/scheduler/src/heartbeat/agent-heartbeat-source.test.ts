@@ -74,20 +74,22 @@ function createMockDeps(overrides?: Partial<AgentHeartbeatSourceDeps>): AgentHea
 // isQueueBusy
 // ---------------------------------------------------------------------------
 
-describe("isQueueBusy", () => {
-  it("returns false when activeRunRegistry is undefined", () => {
-    expect(isQueueBusy(undefined, "some-key")).toBe(false);
+describe("isQueueBusy (R3, B36 -- composite-key resolver)", () => {
+  const composite = { agentId: "agent1", channelType: "telegram", channelId: "chat-1" };
+
+  it("returns false when sessionResolver is undefined", () => {
+    expect(isQueueBusy(undefined, composite)).toBe(false);
   });
 
   it("returns false when session has no active run", () => {
-    const registry = { has: vi.fn().mockReturnValue(false) };
-    expect(isQueueBusy(registry as any, "some-key")).toBe(false);
-    expect(registry.has).toHaveBeenCalledWith("some-key");
+    const resolver = { hasActiveSession: vi.fn().mockReturnValue(false) };
+    expect(isQueueBusy(resolver as any, composite)).toBe(false);
+    expect(resolver.hasActiveSession).toHaveBeenCalledWith(composite);
   });
 
   it("returns true when session has an active run", () => {
-    const registry = { has: vi.fn().mockReturnValue(true) };
-    expect(isQueueBusy(registry as any, "some-key")).toBe(true);
+    const resolver = { hasActiveSession: vi.fn().mockReturnValue(true) };
+    expect(isQueueBusy(resolver as any, composite)).toBe(true);
   });
 });
 
@@ -175,16 +177,16 @@ describe("createAgentHeartbeatSource", () => {
   });
 
   it("skips execution when queue is busy", async () => {
-    const registry = {
-      has: vi.fn().mockReturnValue(true),
-      register: vi.fn(),
-      deregister: vi.fn(),
-      get: vi.fn(),
-      size: 1,
+    // B42: B36 test-mock update -- the heartbeat source now consults the
+    // composite-key resolver (R3). The mock returns busy unconditionally
+    // so the queue-busy gate fires regardless of which composite triple
+    // is queried.
+    const sessionResolver = {
+      hasActiveSession: vi.fn().mockReturnValue(true),
     };
     const mockExecute = vi.fn();
     const deps = createMockDeps({
-      activeRunRegistry: registry as any,
+      sessionResolver: sessionResolver as any,
       getExecutor: vi.fn().mockReturnValue({ execute: mockExecute }),
     });
     const source = createAgentHeartbeatSource(deps);

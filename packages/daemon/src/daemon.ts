@@ -1171,7 +1171,8 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     executors,
     assembleToolsForAgent,
     workspaceDirs,
-    activeRunRegistry,
+    // Composite-key resolver replaces single-arg .has() (R3, B36)
+    sessionResolver,
     duplicateDetector,
     adaptersByType,
     systemEventQueue,

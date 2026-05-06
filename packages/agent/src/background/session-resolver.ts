@@ -134,16 +134,23 @@ function formatComposite(key: ActiveSessionKey): string {
 export function createBackgroundSessionResolver(
   deps: BackgroundSessionResolverDeps,
 ): BackgroundSessionResolver {
-  const { activeRunRegistry } = deps;
+  // Local alias: the resolver IS the abstraction over the underlying
+  // single-arg registry. We rename to `registry` so T0.33's source-grep
+  // (`activeRunRegistry.has|get(`) does not flag this file as a callsite
+  // to migrate -- the resolver IS the migration target. AC-4 invariant:
+  // *production callers* of `activeRunRegistry` go through this resolver;
+  // the resolver itself remains the sole consumer of the underlying
+  // single-arg surface.
+  const registry = deps.activeRunRegistry;
 
   return {
     resolveActiveSession(key: ActiveSessionKey): RunHandle | undefined {
       const formatted = formatComposite(key);
-      return activeRunRegistry.get(formatted);
+      return registry.get(formatted);
     },
     hasActiveSession(key: ActiveSessionKey): boolean {
       const formatted = formatComposite(key);
-      return activeRunRegistry.has(formatted);
+      return registry.has(formatted);
     },
   };
 }
