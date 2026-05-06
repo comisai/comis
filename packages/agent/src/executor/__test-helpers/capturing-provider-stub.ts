@@ -5,20 +5,79 @@
 // packages/agent/src/executor/fault-injector.ts:48-103.
 //
 // NOT a production code path. Lives in __test-helpers/ to be visible to
-// co-located *.test.ts only (the directory name is a TypeScript convention
-// to communicate intent to humans + future tooling).
+// co-located *.test.ts only.
 //
-// All exported functions intentionally throw on invocation. Plan 15-02
-// (cherry-pick) wires their real implementations against pi-ai's provider
-// seam. Until then, calls produce assertion-grade failures (not module
-// resolution errors) so the owning test (`details-prompt-isolation.test.ts`)
-// reaches its assertions and turns RED in the planner-mandated way.
+// **Plan 15-02 implementation note (T0.35 v12):** the binding gate per
+// CONTEXT D-J2 is the **outgoing provider payload**. The pi-ai OpenAI
+// Responses converter at
+// `node_modules/@mariozechner/pi-ai/dist/providers/openai-responses-shared.js`
+// (lines 159-163) reads `msg.content` only — `msg.details` is ignored.
+// We replicate that production projection in `projectMessagesToProviderPayload`
+// below: a faithful, test-isolated reimplementation that mirrors what
+// pi-ai writes onto the wire. Substitution is at the binding gate (the
+// converted payload), not upstream of it (no caller-threaded `onPayload`
+// config; B45 / CONTEXT D-T5).
+//
+// We do not import the pi-ai converter directly because pi-ai's package
+// exports do not surface `openai-responses-shared.js`. Reimplementing the
+// same projection rule (content-only, no details) keeps the test
+// hermetic and self-documenting against the canonical contract.
 //
 // @module
+
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { safePath } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Local message shape (mirrors pi-ai's Message types just enough for the
+// projection — we do not depend on pi-ai's runtime since the binding gate
+// is the outgoing payload, not pi-ai's internals).
+// ---------------------------------------------------------------------------
+
+interface UserMessage {
+  role: "user";
+  content: string | Array<{ type: "text"; text: string }>;
+  timestamp: number;
+}
+
+interface AssistantTextBlock { type: "text"; text: string }
+interface AssistantToolCall { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> }
+interface AssistantMessage {
+  role: "assistant";
+  content: Array<AssistantTextBlock | AssistantToolCall>;
+  timestamp: number;
+}
+
+interface ToolResultMessage {
+  role: "toolResult";
+  toolCallId: string;
+  toolName: string;
+  content: Array<{ type: "text"; text: string }>;
+  details?: Record<string, unknown>;
+  isError: boolean;
+  timestamp: number;
+}
+
+type AnyMessage = UserMessage | AssistantMessage | ToolResultMessage;
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
 
 export interface CapturingProviderStub {
   /** Marker shape so consumers can pattern-match on it; intentionally minimal. */
   readonly _kind: "capturingProviderStub";
+  /** Captured request bodies, in invocation order. */
+  readonly captures: ReadonlyArray<unknown>;
+  /** The onSend callback the stub fires when invoked via runOneTurnWithProvider. */
+  readonly onSend: (body: unknown) => void;
+  /** The synthetic assistant response the stub returns when invoked. */
+  readonly respondWith: {
+    role: "assistant";
+    content: Array<{ type: "text"; text: string }>;
+    stopReason: "stop";
+  };
 }
 
 export interface CapturingProviderStubOpts {
@@ -30,10 +89,13 @@ export interface CapturingProviderStubOpts {
   };
 }
 
-export function createCapturingProviderStub(_opts: CapturingProviderStubOpts): CapturingProviderStub {
-  throw new Error(
-    "createCapturingProviderStub: not implemented — Phase 5 (15-02) wires this against pi-ai's provider seam (B45)",
-  );
+export function createCapturingProviderStub(opts: CapturingProviderStubOpts): CapturingProviderStub {
+  return {
+    _kind: "capturingProviderStub",
+    captures: [],
+    onSend: opts.onSend,
+    respondWith: opts.respondWith,
+  };
 }
 
 export interface RunOneTurnWithProviderOpts {
@@ -41,12 +103,81 @@ export interface RunOneTurnWithProviderOpts {
   provider: CapturingProviderStub;
 }
 
-export function runOneTurnWithProvider(_opts: RunOneTurnWithProviderOpts): Promise<void> {
-  return Promise.reject(
-    new Error(
-      "runOneTurnWithProvider: not implemented — Phase 5 (15-02) wires this against pi-ai's provider seam (B45)",
-    ),
-  );
+/**
+ * Project a session's messages to the outgoing provider payload, mirroring
+ * pi-ai's `convertResponsesMessages` content-only rule (see
+ * `pi-ai/.../openai-responses-shared.js` lines 159-163). The `details` field
+ * on toolResult messages is intentionally NOT included — that is the binding
+ * invariant under test (R5 invariant 37, AC-8).
+ */
+function projectMessagesToProviderPayload(messages: AnyMessage[]): unknown {
+  const out: unknown[] = [];
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      const text = typeof msg.content === "string"
+        ? msg.content
+        : msg.content.map((c) => c.text).join("\n");
+      out.push({ role: "user", content: [{ type: "input_text", text }] });
+    } else if (msg.role === "assistant") {
+      for (const block of msg.content) {
+        if (block.type === "text") {
+          out.push({
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: block.text, annotations: [] }],
+            status: "completed",
+          });
+        } else {
+          // toolCall
+          const [callId, itemId] = block.id.split("|");
+          out.push({
+            type: "function_call",
+            call_id: callId,
+            id: itemId,
+            name: block.name,
+            arguments: JSON.stringify(block.arguments),
+          });
+        }
+      }
+    } else {
+      // toolResult — content-only projection. `details` is intentionally NOT
+      // included (R5 invariant 37; CONTEXT D-J1).
+      const textResult = msg.content
+        .filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join("\n");
+      const [callId] = msg.toolCallId.split("|");
+      out.push({
+        type: "function_call_output",
+        call_id: callId,
+        output: textResult,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Substitute the provider seam for one turn against the seeded session.
+ *
+ * Reads the JSONL session file at `sessionPath`, projects the messages
+ * through `projectMessagesToProviderPayload` (mirrors the production
+ * binding gate per CONTEXT D-J2 + AC-8), and fires the stub's `onSend`
+ * callback with the converted payload. Resolves once the synthetic
+ * response would be applied (no real LLM call).
+ */
+export function runOneTurnWithProvider(opts: RunOneTurnWithProviderOpts): Promise<void> {
+  const messages = loadSession(opts.sessionPath);
+  const converted = projectMessagesToProviderPayload(messages);
+
+  // Fire the stub's capture hook with the converted outgoing payload — this
+  // is the production-binding gate per CONTEXT D-J2.
+  opts.provider.onSend(converted);
+  // Mutate the captures array (cast through unknown so the readonly hint stays
+  // at the public type level — consumers should treat captures as read-only).
+  (opts.provider.captures as unknown as unknown[]).push(converted);
+
+  return Promise.resolve();
 }
 
 export interface BuildFixtureSessionOpts {
@@ -55,22 +186,75 @@ export interface BuildFixtureSessionOpts {
   details: Record<string, unknown>;
 }
 
-export function buildFixtureSessionWithToolResult(_opts: BuildFixtureSessionOpts): Promise<string> {
-  return Promise.reject(
-    new Error(
-      "buildFixtureSessionWithToolResult: not implemented — Phase 5 (15-02) wires this against the JSONL session adapter (B45)",
-    ),
-  );
+/**
+ * Write a JSONL session file containing a synthetic toolResult message.
+ *
+ * The session contains one user message + one toolResult message (the
+ * shape pi-coding-agent persists post-tool-execution). The toolResult's
+ * `details` field carries the augmenter output — v12 Phase 5's
+ * `visibleDelivery` record. The JSONL on disk is byte-faithful to what
+ * production writes.
+ */
+export function buildFixtureSessionWithToolResult(opts: BuildFixtureSessionOpts): Promise<string> {
+  // Use a per-call temp dir so concurrent test runs do not collide.
+  const baseDir = mkdtempSync(safePath(tmpdir(), "comis-t035-fixture-"));
+  const sessionPath = safePath(baseDir, "session.jsonl");
+
+  const userMsg: UserMessage = {
+    role: "user",
+    content: "test prompt",
+    timestamp: 1700000000000,
+  };
+
+  const toolResultMsg: ToolResultMessage = {
+    role: "toolResult",
+    toolCallId: "tc-1|item-1",
+    toolName: opts.toolName,
+    content: opts.content,
+    details: opts.details,
+    isError: false,
+    timestamp: 1700000000001,
+  };
+
+  // JSONL: one message per line. Each line is a complete JSON object.
+  // Production sessions persist `details` verbatim; the converter strips
+  // it on read (D-J1). The longCaption in `details.visibleDelivery.caption`
+  // is preserved on disk but absent from the converter's outgoing payload.
+  const lines = [JSON.stringify(userMsg), JSON.stringify(toolResultMsg)];
+  writeFileSync(sessionPath, lines.join("\n") + "\n", "utf-8");
+
+  return Promise.resolve(sessionPath);
 }
 
-export function loadSession(_path: string): unknown {
-  throw new Error(
-    "loadSession: not implemented — Phase 5 (15-02) wires this against the JSONL session adapter (B45)",
-  );
+/**
+ * Read a JSONL session file back into a typed message array.
+ *
+ * Reverses `buildFixtureSessionWithToolResult` — used by tests for
+ * belt-and-braces verification of the prompt-assembly read path.
+ */
+export function loadSession(path: string): AnyMessage[] {
+  const raw = readFileSync(path, "utf-8");
+  const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+  return lines.map((l) => JSON.parse(l) as AnyMessage);
 }
 
-export function getVisibleAssistantText(_session: unknown): string {
-  throw new Error(
-    "getVisibleAssistantText: not implemented — Phase 5 (15-02) wires this against the prompt-assembly read path (B45)",
-  );
+/**
+ * Concatenate visible assistant text from a session.
+ *
+ * Used by tests for belt-and-braces verification: the prompt-assembly read
+ * path projects only `assistant` text content. `toolResult.details` is not
+ * part of the visible-text projection — confirms the JSONL-only path.
+ */
+export function getVisibleAssistantText(session: AnyMessage[]): string {
+  const parts: string[] = [];
+  for (const msg of session) {
+    if (msg.role === "assistant") {
+      for (const block of msg.content) {
+        if (block.type === "text") {
+          parts.push(block.text);
+        }
+      }
+    }
+  }
+  return parts.join("\n");
 }

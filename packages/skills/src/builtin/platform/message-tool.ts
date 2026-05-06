@@ -263,6 +263,25 @@ export function createMessageTool(rpcCall: RpcCall): AgentTool<typeof MessageToo
           }
         }
       },
+      // Phase 5 (Plan 15-02 / B33 / RC-4): capture visibleDelivery on attach.
+      // The augmenter writes to JSONL `details` only — never to `content` —
+      // so the OpenAI Responses converter strips it before re-injection
+      // (R5 invariant 37, AC-8). T0.35 v12 enforces.
+      augmentDetails: {
+        attach: (params: Record<string, unknown>, _result: unknown) => {
+          const channelType = typeof params.channel_type === "string" ? params.channel_type : "";
+          const channelId = typeof params.channel_id === "string" ? params.channel_id : "";
+          const caption = typeof params.caption === "string" ? params.caption : undefined;
+          const record = {
+            kind: "attachment" as const,
+            channelType,
+            channelId,
+            ...(caption !== undefined && { caption }),
+            deliveredAt: Date.now(),
+          };
+          return { visibleDelivery: record };
+        },
+      },
     },
     rpcCall,
   );
