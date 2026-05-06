@@ -13,6 +13,7 @@ export type {
   RegisterWorkspaceResult,
 } from "./workspace-manager.js";
 export { resolveWorkspaceDir } from "./workspace-resolver.js";
+export { resolveDataEnv } from "./data-env.js";
 export { WORKSPACE_FILE_NAMES, DEFAULT_TEMPLATES } from "./templates.js";
 export type { WorkspaceFileName } from "./templates.js";
 export { isHeartbeatContentEffectivelyEmpty } from "./heartbeat-file.js";
