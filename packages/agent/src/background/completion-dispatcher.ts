@@ -228,6 +228,10 @@ export function createCompletionDispatcher(
         {
           taskId,
           dispatchState: current,
+          // Phase 9b (RC-8): traceId from task.origin so dispatcher logs
+          // stay threaded with the originating request even when the
+          // dispatcher runs from a background ALS context.
+          traceId: task.origin?.traceId ?? undefined,
           hint: "Task already dispatched/notified; no-op (D-S3 at-most-once)",
         },
         "Completion dispatcher: at-most-once gate",
@@ -290,6 +294,8 @@ export function createCompletionDispatcher(
         sessionKey: origin.sessionKey,
         agentId: origin.agentId,
         toolName: task.toolName,
+        // Phase 9b (RC-8): traceId from origin for log continuity.
+        traceId: origin.traceId ?? undefined,
         hint: "Runner will re-enter the originating session",
       },
       "Completion dispatcher: marked dispatched",
@@ -313,6 +319,8 @@ export function createCompletionDispatcher(
       log.debug(
         {
           taskId: task.id,
+          // Phase 9b (RC-8): traceId from origin keeps log lines threaded.
+          traceId: task.origin?.traceId ?? undefined,
           hint: "No fallbackNotifyFn wired; dispatcher cannot fire user-visible notification",
         },
         "Completion dispatcher: fallback skipped (no notifyFn)",
@@ -332,6 +340,8 @@ export function createCompletionDispatcher(
           taskId: task.id,
           agentId: task.origin.agentId,
           err,
+          // Phase 9b: traceId from origin keeps the WARN line threaded.
+          traceId: task.origin?.traceId ?? undefined,
           hint: "fallbackNotifyFn rejected; user will not see the completion notification for this task",
           errorKind: "internal" as const,
         },

@@ -50,9 +50,19 @@ const PRIVILEGED_SECTION_KEY = "section:privileged";
  *
  * - If no guide exists for the tool, returns result unchanged.
  * - If guide was already delivered in this session, returns result unchanged.
- * - Always marks the tool as delivered (even on error).
- * - Skips injection when result has isError: true (but still marks delivered).
+ * - Skips injection when result has isError: true and does NOT mark delivered
+ *   (so a retry can fire — see regression coverage in `jit-guide-injector.test.ts`).
  * - Logs at INFO level when guide is injected.
+ *
+ * **Phase 9d (RC-9) re-injection de-dup contract.** The `deliveredGuides`
+ * Set is the single source of truth for which guide ids have been injected
+ * within the current scope (per-session by default; cleared on session reset
+ * by pi-executor). Within a single turn — even when the same tool fires
+ * multiple times via mid-turn discovery / retries — the same guide id is
+ * not re-injected because the early-return on `deliveredGuides.has(...)`
+ * fires on the second-and-later check. This is the "injectedGuideIds"
+ * de-dup intent from design §"Phase 9d": the existing Set IS the per-turn
+ * (and per-session) tracker; no second data structure is needed.
  *
  * Note: AgentToolResult does not formally include isError (it is set by
  * the agent-loop on the message level), but some tools (MCP, discovery)
@@ -85,6 +95,12 @@ export function wrapToolResultWithGuide(
     !deliveredGuides.has(PRIVILEGED_SECTION_KEY) &&
     !!SYSTEM_PROMPT_GUIDES["__privileged_tools__"];
 
+  // Phase 9d (RC-9) re-injection de-dup: when every candidate guide id is
+  // already in `deliveredGuides`, none of `wantsTool`/`wantsSection`/
+  // `wantsPrivileged` is true and we early-return without appending. This
+  // single check is the per-turn (and per-session) de-dup gate — the same
+  // `deliveredGuides` Set passed across calls within a turn IS the
+  // injectedGuideIds tracker.
   if (!wantsTool && !wantsSection && !wantsPrivileged) return result;
 
   // Skip on error — but DO NOT consume delivery slots so a retry can fire.
