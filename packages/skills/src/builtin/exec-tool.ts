@@ -25,7 +25,7 @@
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync, writeFileSync, copyFileSync, statSync } from "node:fs";
+import { createWriteStream, mkdirSync, writeFileSync, copyFileSync, statSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { safePath, PathTraversalError } from "@comis/core";
@@ -272,6 +272,41 @@ export function buildSpawnCommand(
 
 /** Valid secret env var name (same rule as env.set). */
 const SECRET_REF_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+
+/**
+ * Workspace-internal data env resolver.
+ *
+ * Returns env vars (PATH, MPLCONFIGDIR, XDG_CACHE_HOME, MPLBACKEND,
+ * PIP_DISABLE_PIP_VERSION_CHECK) derived from `workspaceDir` so python /
+ * matplotlib subprocesses do NOT inherit the daemon's host PATH or
+ * cache-dir defaults. Closes RC-7 (15s pip-install hot path; matplotlib
+ * Fontconfig error from a non-writable default cache dir).
+ *
+ * Defined inline to avoid a cross-package import from `@comis/agent`
+ * (`@comis/skills` does not depend on `@comis/agent` -- they are siblings
+ * wired together at the daemon composition root, mirroring the
+ * `bridge-event-handlers.ts` "Defined inline to avoid cross-package
+ * import" precedent). The shape mirrors
+ * `packages/agent/src/workspace/data-env.ts` verbatim; if the contract
+ * diverges, lift this into `@comis/shared`. The agent-side `data-env.ts`
+ * remains the canonical owner -- T0.17 source-grep enforces the
+ * no-host-env contract there.
+ *
+ * Per CONTEXT D-W1: this helper does NOT read host env. The values are
+ * pure derivations from workspaceDir + safePath (no path.join).
+ */
+function resolveDataEnv(opts: { workspaceDir: string }): Record<string, string> {
+  const venvBin = safePath(opts.workspaceDir, "venv", "bin");
+  const cacheDir = safePath(opts.workspaceDir, ".cache");
+  const mplDir = safePath(cacheDir, "matplotlib");
+  return {
+    PATH: venvBin,
+    MPLCONFIGDIR: mplDir,
+    XDG_CACHE_HOME: cacheDir,
+    MPLBACKEND: "Agg",
+    PIP_DISABLE_PIP_VERSION_CHECK: "1",
+  };
+}
 
 /**
  * Detect raw-interpreter command shapes. When `secretRefs` is present,
@@ -536,10 +571,38 @@ export function createExecTool(
           }
         }
 
-        // Build environment (use filtered subprocess env instead of raw process.env)
+        // Build environment (use filtered subprocess env instead of raw process.env).
         const baseEnv = subprocessEnv ?? (process.env as Record<string, string>);
+
+        // RC-7 (Phase 8): if the workspace has a pre-warmed venv, override
+        // PATH / MPLCONFIGDIR / XDG_CACHE_HOME / MPLBACKEND /
+        // PIP_DISABLE_PIP_VERSION_CHECK with workspace-internal values via
+        // resolveDataEnv. This:
+        //   - Closes the 15s pip-install hot path (the venv is already
+        //     populated by Dockerfile pre-warm at image build time).
+        //   - Eliminates the matplotlib `Fontconfig error` (host
+        //     `/root/.cache/matplotlib` may be read-only under
+        //     `ProtectSystem=strict`; the workspace cache dir is always
+        //     writable).
+        //   - Prevents host PATH leaking into the agent's subprocess.
+        // Conservative gate: only apply when `${workspacePath}/venv/bin`
+        // exists. Workspaces without a venv keep the legacy host-env
+        // behavior unchanged.
+        // Order: spread baseEnv -> override with dataEnv -> userEnv (so
+        // the agent can still pin a specific value via `env: {...}`) ->
+        // server-resolved secrets (always last; agent cannot override).
+        const venvBin = safePath(workspacePath, "venv", "bin");
+        const venvDetected = existsSync(venvBin);
+        const dataEnv = venvDetected ? resolveDataEnv({ workspaceDir: workspacePath }) : {};
+        if (venvDetected) {
+          logger?.debug(
+            { toolName: "exec", workspaceDir: workspacePath, hint: "Using workspace-internal venv for subprocess env" },
+            "Exec workspace venv detected",
+          );
+        }
         const env: Record<string, string> = {
           ...baseEnv,
+          ...dataEnv,
           ...(userEnv ?? {}),
           ...(resolvedSecretEnv ?? {}),
         };
