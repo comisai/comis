@@ -24,7 +24,7 @@ import {
   type MemoryPort,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/infra";
-import { suppressError } from "@comis/shared";
+import { suppressError, isSilentResponse } from "@comis/shared";
 import type { ActiveRunRegistry } from "./active-run-registry.js";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
 import {
@@ -581,7 +581,20 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const skipMemoryForOperation =
     operationType != null && MEMORY_SKIP_OPERATIONS.has(operationType);
 
-  if (
+  // Layer 0 (Phase 15 v12 / B38): silent sentinels never enter memory.
+  // Closes RC-4. Idempotent under stripReplyTags + trim per @comis/shared
+  // silent-tokens.ts JSDoc contract (B46). The check happens BEFORE the
+  // operationType + content-hash dedup gates so that even when the response
+  // would otherwise pass those gates, a `NO_REPLY` / `HEARTBEAT_OK` / `[SILENT]`
+  // sentinel is rejected from memory persistence. T0.34 + T0.36 + T0.37 enforce.
+  const isSilent = !!(deps.memoryPort && result.response && msg.text && isSilentResponse(result.response));
+  if (isSilent) {
+    const effectiveAgentId = agentId ?? "default";
+    deps.logger.debug(
+      { agentId: effectiveAgentId, sessionKey: formattedKey, hint: "Silent-sentinel response (NO_REPLY / HEARTBEAT_OK / [SILENT]) skipped from paired memory" },
+      "Paired memory skipped: silent-sentinel response",
+    );
+  } else if (
     deps.memoryPort &&
     result.response &&
     msg.text &&
