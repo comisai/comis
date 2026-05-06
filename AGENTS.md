@@ -41,7 +41,7 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 ## 2) Engineering Principles (Normative)
 
 ### 2.1 Result<T, E> everywhere
-- All functions return `Result` from `@comis/shared` (`ok`, `err`, `tryCatch`, `fromPromise`). Never `throw`; never `try/catch` for control flow.
+- All functions return `Result` from `@comis/shared` (`ok`, `err`, `tryCatch`, `fromPromise`). Internal/domain code returns `Result` — never `try/catch` for control flow. `throw` is allowed only at narrow boundary wrappers that immediately translate to `Result` (wrapping SDKs that throw), in CLI/web user-facing flows where the throw is caught at the entry handler, and in tests — always with a local rationale.
 - Chain by early-return: `if (!result.ok) return result;`. No `Result.map`/`flatMap` helpers exist. Use `tryCatch`/`fromPromise` only at boundaries with throwing APIs (Node fs, `new URL()`, third-party SDKs).
 - `err()` for unsupported/unsafe states — never silently succeed, never silently broaden permissions.
 - ERROR/WARN logs require `hint` (operator-actionable next step) and `errorKind`.
@@ -49,7 +49,7 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 
 ### 2.2 Security (ESLint-enforced — violations fail CI; rules apply to `packages/*/src/**` only)
 - No `path.join()` — use `safePath(base, ...segments)` from `@comis/core/security`. `base` must be absolute; every dynamic segment (including filenames) goes through `safePath`. Compose: `safePath(safePath(dataDir, agentId), file)`.
-- No `process.env` — use `SecretManager`. To seed config from env, extend `buildGatewayEnvLayer()` plus the schema; never read env at the consumer.
+- No `process.env` — use `SecretManager`. To seed config from env, extend `buildGatewayEnvLayer()` plus the schema; never read env at the consumer. Exception: top-level entry points (CLI commands, daemon entrypoint, env-layer projection, test fault injectors) may read `process.env` with `eslint-disable-next-line` and a one-line rationale.
 - No `eval()` or `Function()` constructor.
 - No empty `.catch(() => {})` — use `suppressError(promise, reason, logger?)` from `@comis/shared`. `reason` is logged verbatim; include the handler name.
 - No `module:` in log payloads — bind via `getLogger("…")`, scope further with `submodule:` at call sites.
@@ -146,13 +146,16 @@ Define interface in `core/src/ports/` → export from core index → add to `App
 `z.strictObject({...})` schema in `core/src/domain/` (domain layer is strict — loosening is a compat break) → infer type with `z.infer<typeof Schema>` → export schema, type, and a paired `parseX(raw): Result<T, z.ZodError>` helper wrapping `safeParse()`. Call sites use `parseX()` — never `.parse()` (throws) or raw `.safeParse()`.
 
 ### 6.4 Add a Config Schema
-`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`.
+`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`. New top-level sections also need entries in the `SECTION_SCHEMAS` maps in `schema-serializer.ts` and `field-metadata.ts` (mirrored — used for agent introspection and CLI/UI editors), plus `managed-sections.ts` if a tool manages the section.
 
 ### 6.5 Add a Skill
 Skills are Markdown files with manifest frontmatter. Add to `packages/skills/`, validate frontmatter against manifest Zod schema, test loading + manifest validation.
 
 ### 6.6 Security / Gateway / Daemon
 Include threat/risk notes in commit message. Add boundary + failure-mode tests. Changes in `core/src/security/` require reviewing all downstream consumers. `injection-patterns.ts` changes require both detection accuracy and false-positive tests.
+
+### 6.7 Add or Change an Agent Tool
+Register metadata via `registerToolMetadata(name, meta)` in `packages/skills/src/bridge/tool-metadata-registry.ts`. The `ComisToolMetadata` shape (`packages/core/src/tool-metadata.ts`) covers: `maxResultSizeChars` (result cap), `isReadOnly` / `isConcurrencySafe` (parallel-execution safety), `searchHint` (BM25 deferred-discovery), `validActions` / `validKeys` / `requiredByAction` (action-discriminated tool gating — shape mirrors `ManagedSectionRedirect.schemaFragment` in `config/managed-sections.ts`), `validateInput` (pre-flight validator), `outputSchema` (structured output), `coDiscoverWith` (paired discovery). When the tool manages a config section, add the redirect to `config/managed-sections.ts` so immutable-path rejections include a parameter-correct example.
 
 ## 7) Validation
 
