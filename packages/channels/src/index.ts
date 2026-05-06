@@ -160,7 +160,7 @@ export { audioPreflight } from "./shared/audio-preflight.js";
 export type { PreflightResult, PreflightDeps } from "./shared/audio-preflight.js";
 
 // Response filter (NO_REPLY + HEARTBEAT_OK token suppression)
-export { filterResponse, NO_REPLY_TOKEN } from "./shared/response-filter.js";
+export { filterResponse, NO_REPLY_TOKEN, HEARTBEAT_OK_TOKEN } from "./shared/response-filter.js";
 export type { FilterResult } from "./shared/response-filter.js";
 
 // Media utilities (shared attachment type resolution)
