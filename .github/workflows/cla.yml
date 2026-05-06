@@ -26,5 +26,5 @@ jobs:
         with:
           path-to-signatures: 'signatures/version1/cla.json'
           path-to-document: 'https://github.com/comisai/comis/blob/main/CLA.md'
-          branch: 'main'
-          allowlist: dependabot[bot],github-actions[bot],renovate[bot]
+          branch: 'cla-signatures'
+          allowlist: dependabot[bot],github-actions[bot],renovate[bot],anconina
