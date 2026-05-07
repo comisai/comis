@@ -143,6 +143,28 @@ describe("BwrapProvider", () => {
       expect(args.filter((a) => a === "/sbin")).toHaveLength(0);
     });
 
+    it("ro-binds /etc/fonts when present so libfontconfig finds its config", () => {
+      // Regression: without /etc/fonts in the bind list, every text-rendering
+      // call (matplotlib, Pango, Pillow TTF, ImageMagick, headless Chromium,
+      // weasyprint, ffmpeg drawtext) prints "Cannot load default config file"
+      // to stderr and falls back to a minimal compiled-in config, breaking
+      // the font substitution chain for non-Latin scripts.
+      vi.mocked(existsSync).mockImplementation((p) => String(p) === "/etc/fonts");
+
+      const provider = createAvailableProvider();
+      const args = provider.buildArgs(makeOpts());
+
+      const hasRoBind = (target: string) => {
+        for (let i = 0; i < args.length - 2; i++) {
+          if (args[i] === "--ro-bind" && args[i + 1] === target && args[i + 2] === target) {
+            return true;
+          }
+        }
+        return false;
+      };
+      expect(hasRoBind("/etc/fonts")).toBe(true);
+    });
+
     it("caches system paths after first call", () => {
       vi.mocked(existsSync).mockReturnValue(true);
 
@@ -157,7 +179,7 @@ describe("BwrapProvider", () => {
 
       // Second call should not call existsSync for system paths again
       // It may still call for readOnlyPaths and getUserRoPaths, but system paths are cached.
-      // The diff should be much less than SYSTEM_RO_PATHS.length (20 paths)
+      // The diff should be much less than SYSTEM_RO_PATHS.length (21 paths)
       expect(secondCallCount - firstCallCount).toBeLessThan(firstCallCount);
     });
 

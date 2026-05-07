@@ -46,6 +46,15 @@ export const SYSTEM_RO_PATHS = [
   "/etc/passwd",
   "/etc/group",
   "/etc/nsswitch.conf",
+  // fontconfig config (font.conf, conf.d/). Without this, libfontconfig prints
+  // "Cannot load default config file" to stderr on every text-rendering call
+  // (matplotlib, Pango, Pillow TTF, ImageMagick, headless Chromium, weasyprint,
+  // ffmpeg drawtext, LibreOffice headless) and falls back to a minimal compiled-in
+  // config — which silently breaks the substitution chain for non-Latin scripts
+  // (CJK/Arabic/devanagari render as Tofu boxes even when the fonts are present
+  // under /usr/share/fonts). Per-user cache lives in XDG_CACHE_HOME/fontconfig,
+  // which is already RW via the workspace .cache bind in wrapEnv().
+  "/etc/fonts",
 ] as const;
 
 /**
