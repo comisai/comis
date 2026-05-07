@@ -44,11 +44,25 @@ export interface ComisSessionManagerDeps {
  * Session metadata written as a companion file alongside the JSONL.
  * The SDK controls the JSONL format, so enrichment data (traceId, runId, session_end)
  * is stored in `_session-metadata.json` next to the `.jsonl` file.
+ *
+ * `traceId` and `runId` are deliberately distinct identifiers:
+ * - `traceId` is the request-scope AsyncLocalStorage value set by
+ *   `runWithContext` at the channel boundary (channels/.../execution-execute.ts).
+ *   The Pino tracing mixin (infra/.../log-fields.ts) injects it into every
+ *   daemon log line, so an operator can grep daemon.log for this exact value
+ *   to find every log entry produced while handling this turn.
+ * - `runId` is the executor-scope UUID minted per `executor.execute()` call
+ *   in pi-executor.ts. It keys cost-tracker / token_usage rows in the
+ *   observability store.
+ *
+ * They are 1:1 in the steady-state interactive path (one inbound message →
+ * one execution), but heartbeat and sub-agent paths can fan out a single
+ * trace into multiple executions.
  */
 export interface SessionMetadata {
-  /** Trace ID for cross-correlating with daemon logs */
+  /** Request-scope trace ID from runWithContext; matches traceId in daemon.log. */
   traceId?: string;
-  /** Execution run ID */
+  /** Executor-scope run ID; keys cost-tracker / token_usage rows. */
   runId?: string;
   /** Session end marker with completion details */
   sessionEnd?: {

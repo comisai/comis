@@ -35,7 +35,7 @@ import {
   type DrainInflightState,
 } from "./drain-helper.js";
 import type { ActiveRunRegistry } from "./active-run-registry.js";
-import type { ComisSessionManager } from "../session/comis-session-manager.js";
+import type { ComisSessionManager, SessionMetadata } from "../session/comis-session-manager.js";
 import {
   setBreakpointIndex,
   deleteBreakpointIndex,
@@ -305,6 +305,60 @@ export function isDuplicatePairedMemory(content: string, agentId: string): boole
 /** Reset the paired-memory dedup cache. Exported for unit tests. */
 export function resetPairedMemoryDedupForTests(): void {
   pairedMemoryDedup.clear();
+}
+
+/**
+ * Map an SDK finishReason to the SessionMetadata.sessionEnd.endReason enum.
+ * Unknown reasons fall through to "error" — that's a defensive bucket for
+ * provider strings we haven't classified yet (rather than dropping the
+ * session_end entry entirely). Module-level so the post-execution path
+ * doesn't reallocate it on every turn.
+ */
+const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["sessionEnd"]>["endReason"]> = {
+  stop: "success", end_turn: "success", error: "error",
+  budget_exceeded: "budget_exceeded", budget_exhausted: "budget_exhausted",
+  circuit_open: "circuit_open",
+  provider_degraded: "provider_degraded", max_steps: "error",
+  context_loop: "error", context_exhausted: "error",
+};
+
+/**
+ * Build the SessionMetadata payload written to `_session-metadata.json` at the
+ * end of an execution.
+ *
+ * `traceId` and `runId` are deliberately distinct:
+ * - `traceId` is the request-scope AsyncLocalStorage value set by
+ *   `runWithContext` at the channel boundary (execution-execute.ts) and injected
+ *   into every daemon log line by the Pino tracing mixin. Operators grep
+ *   daemon.log for this exact value. Pass `tryGetContext()?.traceId` here.
+ * - `runId` is the executor-scope UUID minted in pi-executor.ts per
+ *   `executor.execute()` call. It keys cost-tracker / token_usage rows.
+ *
+ * They happen to be 1:1 in the steady-state interactive path (one inbound
+ * message → one execution), but the schema treats them as distinct because
+ * heartbeat / sub-agent paths can fan out one trace into multiple executions.
+ *
+ * Pure: no I/O, no side effects. The fire-and-forget try/catch around
+ * `writeSessionMetadata` lives at the call site.
+ */
+export function buildSessionEndMetadata(args: {
+  finishReason: string;
+  durationMs: number;
+  totalTokens: number;
+  executionId: string;
+  traceId: string | undefined;
+}): SessionMetadata {
+  return {
+    ...(args.traceId && { traceId: args.traceId }),
+    runId: args.executionId,
+    sessionEnd: {
+      type: "session_end",
+      timestamp: new Date().toISOString(),
+      endReason: END_REASON_MAP[args.finishReason] ?? "error",
+      durationMs: args.durationMs,
+      totalTokens: args.totalTokens,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -584,27 +638,19 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     );
   }
 
-  // Write session metadata companion file with trace correlation
-  // Fire-and-forget: metadata write failure must not affect execution
-  const endReasonMap: Record<string, "success" | "error" | "timeout" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded"> = {
-    stop: "success", end_turn: "success", error: "error",
-    budget_exceeded: "budget_exceeded", budget_exhausted: "budget_exhausted",
-    circuit_open: "circuit_open",
-    provider_degraded: "provider_degraded", max_steps: "error",
-    context_loop: "error", context_exhausted: "error",
-  };
+  // Write session metadata companion file with trace correlation.
+  // traceId comes from the AsyncLocalStorage request scope so `_session-metadata.json`
+  // can be cross-correlated against daemon.log via grep; runId stays as the
+  // executor-scope UUID. See buildSessionEndMetadata for the contract.
+  // Fire-and-forget: metadata write failure must not affect execution.
   try {
-    sessionAdapter.writeSessionMetadata(sessionKey, {
-      traceId: executionId,
-      runId: executionId,
-      sessionEnd: {
-        type: "session_end",
-        timestamp: new Date().toISOString(),
-        endReason: endReasonMap[result.finishReason] ?? "error",
-        durationMs,
-        totalTokens: result.tokensUsed.total,
-      },
-    });
+    sessionAdapter.writeSessionMetadata(sessionKey, buildSessionEndMetadata({
+      finishReason: result.finishReason,
+      durationMs,
+      totalTokens: result.tokensUsed.total,
+      executionId,
+      traceId: tryGetContext()?.traceId,
+    }));
   } catch { /* fire-and-forget */ }
 
   // Check onboarding completion after execution

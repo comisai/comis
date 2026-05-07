@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
-import { shouldStorePairedMemory } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory } from "./executor-post-execution.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -159,5 +159,75 @@ describe("markRead/markConsumed via tryGetContext + drain", () => {
     // The call-site must exist for the gate to engage.
     const tryCtxLine = stripped.match(/tryGetContext\s*\([^)]*\)/);
     expect(tryCtxLine).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildSessionEndMetadata: traceId vs runId contract
+//
+// Regression: the call site previously wrote `traceId: executionId` AND
+// `runId: executionId` -- collapsing both fields onto the executor-scope
+// UUID. The schema's "Trace ID for cross-correlating with daemon logs" field
+// then could not be greppable against daemon.log, which is keyed by the
+// AsyncLocalStorage traceId set in runWithContext. The fix routes the
+// request-scope traceId into traceId and keeps executionId in runId.
+// ---------------------------------------------------------------------------
+describe("buildSessionEndMetadata", () => {
+  const baseArgs = {
+    finishReason: "stop",
+    durationMs: 1234,
+    totalTokens: 567,
+    executionId: "exec-Y",
+    traceId: "trace-X",
+  };
+
+  it("routes request-scope traceId into traceId, executionId into runId (distinct values)", () => {
+    const result = buildSessionEndMetadata(baseArgs);
+    expect(result.traceId).toBe("trace-X");
+    expect(result.runId).toBe("exec-Y");
+    // The two fields are not aliased onto the same UUID.
+    expect(result.traceId).not.toBe(result.runId);
+  });
+
+  it("omits traceId when context is missing (undefined input)", () => {
+    // tryGetContext() returns undefined outside any request scope. The schema's
+    // conditional spread in writeSessionMetadata drops undefined, so the
+    // previous merge value is preserved rather than nulling out the field.
+    const result = buildSessionEndMetadata({ ...baseArgs, traceId: undefined });
+    expect(result.traceId).toBeUndefined();
+    expect(result.runId).toBe("exec-Y");
+  });
+
+  it("maps known finishReasons via END_REASON_MAP", () => {
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "stop" }).sessionEnd?.endReason).toBe("success");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "end_turn" }).sessionEnd?.endReason).toBe("success");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "budget_exceeded" }).sessionEnd?.endReason).toBe("budget_exceeded");
+    expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "circuit_open" }).sessionEnd?.endReason).toBe("circuit_open");
+  });
+
+  it("falls back to 'error' for unmapped finishReasons", () => {
+    const result = buildSessionEndMetadata({ ...baseArgs, finishReason: "some_unknown_reason" });
+    expect(result.sessionEnd?.endReason).toBe("error");
+  });
+
+  it("propagates durationMs and totalTokens verbatim into sessionEnd", () => {
+    const result = buildSessionEndMetadata(baseArgs);
+    expect(result.sessionEnd?.durationMs).toBe(1234);
+    expect(result.sessionEnd?.totalTokens).toBe(567);
+    expect(result.sessionEnd?.type).toBe("session_end");
+    expect(typeof result.sessionEnd?.timestamp).toBe("string");
+  });
+
+  it("call site reads traceId from tryGetContext() (NOT from executionId)", () => {
+    // Source-grep: the production path must invoke tryGetContext() inside the
+    // buildSessionEndMetadata call to populate traceId. A regression that
+    // re-aliased traceId onto executionId would not match this pattern.
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    expect(stripped).toMatch(/buildSessionEndMetadata\([\s\S]*?traceId:\s*tryGetContext\(\)\?\.traceId/);
   });
 });
