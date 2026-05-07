@@ -279,31 +279,14 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     recoverOnStartup() {
       const recovered = recoverTasks(dataDir);
       let count = 0;
-      let skipped = 0;
       let dispatchPreserved = 0;
       for (const persisted of recovered) {
-        if (!persisted.origin || typeof persisted.origin !== "object" || !persisted.origin.agentId || !persisted.origin.sessionKey) {
-          // Legacy file without origin. Skip with a warning -- the file
-          // remains on disk for audit, but the manager doesn't import it.
-          skipped++;
-          logger.warn(
-            {
-              taskId: persisted.id,
-              hint: "Legacy task file lacks origin; skipping recovery -- delete the file or wait for cleanup",
-              errorKind: "internal" as const,
-            },
-            "Skipping recovered task without origin",
-          );
-          continue;
-        }
-        // Phase 15 v12 (D-S2): preserve notificationPolicy + dispatchState
-        // from disk. Default policy "deferred"; default state "pending" for
-        // legacy files that predate Phase 2.
-        const task: BackgroundTask = {
-          ...persisted,
-          notificationPolicy: persisted.notificationPolicy ?? "deferred",
-          dispatchState: persisted.dispatchState ?? "pending",
-        };
+        // Phase 15.2: persistence-write contract (Phase 14 + Phase 15 v12)
+        // guarantees populated origin / notificationPolicy / dispatchState on
+        // every Phase-14+ task file. background-task-persistence.ts rejects
+        // shape-malformed files (missing id / toolName) before they reach
+        // here; we propagate the persisted record as-is.
+        const task: BackgroundTask = persisted as BackgroundTask;
         tasks.set(task.id, task);
 
         if (persisted.status === "failed" && persisted.error === "Daemon restarted while task was running") {
@@ -342,16 +325,6 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         logger.info(
           { count: dispatchPreserved },
           "Recovered tasks with preserved dispatch state (no re-emit)",
-        );
-      }
-      if (skipped > 0) {
-        logger.warn(
-          {
-            skipped,
-            hint: "Legacy task files cannot be recovered without origin -- they remain on disk for audit",
-            errorKind: "internal" as const,
-          },
-          "Skipped legacy task files during recovery",
         );
       }
     },
