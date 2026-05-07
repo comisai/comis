@@ -1,0 +1,51 @@
+[
+  {
+    "role": "user",
+    "content": "Plot the last 30 days of AAPL closing prices.",
+    "timestamp": 1714752000000
+  },
+  {
+    "role": "assistant",
+    "api": "anthropic-messages",
+    "provider": "anthropic",
+    "model": "claude-opus-4-6",
+    "content": [
+      {
+        "type": "text",
+        "text": "I'll install a market data library to fetch the prices."
+      },
+      {
+        "type": "toolCall",
+        "id": "toolu_01AAA",
+        "name": "exec",
+        "arguments": {
+          "command": "pip install market-data-lib",
+          "background": false
+        }
+      }
+    ],
+    "usage": {
+      "input": 1500,
+      "output": 80,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "totalTokens": 1580,
+      "cost": { "input": 0, "output": 0 }
+    },
+    "stopReason": "toolUse",
+    "timestamp": 1714752001000
+  },
+  {
+    "role": "toolResult",
+    "toolCallId": "toolu_01AAA",
+    "toolName": "exec",
+    "content": [
+      {
+        "type": "text",
+        "text": "Successfully installed market-data-lib-2.1.0"
+      }
+    ],
+    "isError": false,
+    "timestamp": 1714752015000
+  }
+]
