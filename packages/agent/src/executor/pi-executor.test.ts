@@ -2766,7 +2766,10 @@ describe("PiExecutor", () => {
 
       expect(mockRegistry.register).toHaveBeenCalledTimes(1);
       const [registeredKey, registeredHandle] = mockRegistry.register.mock.calls[0];
-      expect(registeredKey).toBe("t1:u1:c1");
+      // Phase 15.1-01 (RC-1 close): register key mirrors BackgroundSessionResolver.formatComposite:
+      //   formatSessionKey({tenantId: "default", channelId: "test:c1", userId: "c1"}) = "default:c1:test:c1"
+      // testSessionKey {tenantId: "t1", userId: "u1", channelId: "c1"} → no longer the register key.
+      expect(registeredKey).toBe("default:c1:test:c1");
       // Verify handle has all required methods
       expect(typeof registeredHandle.steer).toBe("function");
       expect(typeof registeredHandle.followUp).toBe("function");
@@ -2782,7 +2785,7 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockRegistry.deregister).toHaveBeenCalledWith("t1:u1:c1");
+      expect(mockRegistry.deregister).toHaveBeenCalledWith("default:c1:test:c1");
       // Deregister must be called before dispose
       const deregisterOrder = mockRegistry.deregister.mock.invocationCallOrder[0];
       const disposeOrder = mockDispose.mock.invocationCallOrder[0];
@@ -2797,7 +2800,7 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockRegistry.deregister).toHaveBeenCalledWith("t1:u1:c1");
+      expect(mockRegistry.deregister).toHaveBeenCalledWith("default:c1:test:c1");
     });
 
     it("RunHandle.steer delegates to session.steer", async () => {
@@ -2874,7 +2877,7 @@ describe("PiExecutor", () => {
 
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
-          sessionKey: "t1:u1:c1",
+          sessionKey: "default:c1:test:c1",
           hint: expect.stringContaining("already has an active run"),
           errorKind: "resource",
         }),
@@ -2889,6 +2892,25 @@ describe("PiExecutor", () => {
 
       // Should not throw
       await executor.execute(testMessage, testSessionKey);
+    });
+
+    it("Phase 15.1-01: skips register and WARNs when msg.channelType is missing (RC-1 defensive guard)", async () => {
+      const mockRegistry = createMockRegistry();
+      const deps = createMockDeps({ activeRunRegistry: mockRegistry });
+      const executor = createPiExecutor(testConfig, deps);
+      const msgWithoutChannelType = { ...testMessage, channelType: "" } as NormalizedMessage;
+
+      await executor.execute(msgWithoutChannelType, testSessionKey);
+
+      expect(mockRegistry.register).not.toHaveBeenCalled();
+      expect(mockRegistry.deregister).not.toHaveBeenCalled();
+      expect(deps.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hint: expect.stringContaining("Cannot register active run: missing channelType or channelId"),
+          errorKind: "internal",
+        }),
+        "Active run registration skipped (missing channel fields)",
+      );
     });
   });
 

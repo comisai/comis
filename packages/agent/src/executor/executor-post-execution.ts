@@ -123,6 +123,15 @@ export interface PostExecutionParams {
   msg: NormalizedMessage;
   sessionKey: SessionKey;
   formattedKey: string;
+  /**
+   * Resolver-aligned key for activeRunRegistry.deregister. Mirrors the
+   * BackgroundSessionResolver.formatComposite shape used by the register
+   * call at pi-executor.ts:~1015 so resolver lookups find the handle.
+   * Optional because pi-executor skips register when msg.channelType /
+   * msg.channelId are missing — deregister is a no-op in that case.
+   * Phase 15.1-01 (RC-1 close).
+   */
+  resolverRegisterKey?: string;
   agentId: string | undefined;
   executionStartMs: number;
   executionId: string;
@@ -350,7 +359,7 @@ export {
  */
 export async function postExecution(params: PostExecutionParams): Promise<void> {
   const {
-    result, session, sm, config, msg, sessionKey, formattedKey, agentId,
+    result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey, agentId,
     executionStartMs, executionId,
     bridge, unsubscribe,
     contextEngineRef, ceSetup, streamSetup,
@@ -760,9 +769,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // memory-store path, AND the drainAt call site).
   drainAt({ agentId: effectiveAgentId, channelType: drainKey.channelType, channelId: drainKey.channelId }, bridge.getDrainState(), deps.logger);
 
-  // Deregister active run before dispose
-  if (deps.activeRunRegistry) {
-    deps.activeRunRegistry.deregister(formattedKey);
+  // Deregister active run before dispose. Use resolverRegisterKey
+  // (Phase 15.1-01 RC-1 close) so the slot pi-executor.ts:1015 registered
+  // is the slot we release. Falls through to a no-op when the executor
+  // skipped register (missing channelType/channelId).
+  if (deps.activeRunRegistry && resolverRegisterKey) {
+    deps.activeRunRegistry.deregister(resolverRegisterKey);
   }
 
   // Strip verbose <functions> blocks from discover_tools results
