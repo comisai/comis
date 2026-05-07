@@ -330,6 +330,91 @@ describe("/approve and /deny command interception", () => {
     );
   });
 
+  // -----------------------------------------------------------------------
+  // Phase 15.1-03 (WR-03 close): ambiguous prefix -> warn, do not resolve.
+  //
+  // Pre-fix: inbound-gate.ts used `pending.find((r) => r.requestId.startsWith(arg))`
+  // which silently picked the first match if multiple pending requests
+  // shared a common prefix — operator could approve a request they did
+  // not intend.
+  // Post-fix: filter+length check -> on >1 match, deliver an
+  // "Ambiguous prefix" warning and bail without resolving.
+  // -----------------------------------------------------------------------
+  it("WR-03: /approve <prefix> matching multiple pending requests warns and does NOT resolve any", async () => {
+    const reqA = {
+      requestId: "ambig0001-aaaa-bbbb-cccc-111111111111",
+      sessionKey: TEST_SESSION_KEY,
+      action: "agents.delete",
+      toolName: "agents_manage",
+    };
+    const reqB = {
+      requestId: "ambig0002-aaaa-bbbb-cccc-222222222222",
+      sessionKey: TEST_SESSION_KEY,
+      action: "files.write",
+      toolName: "file_ops",
+    };
+    const gate = makeMockApprovalGate([reqA, reqB]);
+    const adapter = makeAdapterForTest();
+    const executorFn = vi.fn();
+    const deps = makeMinimalDeps({
+      approvalGate: gate,
+      createExecutor: vi.fn(() => ({ execute: executorFn })),
+    });
+
+    // Both reqA.requestId and reqB.requestId start with "ambig000".
+    await processInboundMessage(
+      deps, adapter, makeMsg({ text: "/approve ambig000" }), new Set(), new Map() as any,
+    );
+
+    // No approval is resolved.
+    expect(gate.resolveApproval).not.toHaveBeenCalled();
+    // The user receives an Ambiguous prefix warning that names the count.
+    expect(adapter.sendMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.stringContaining("Ambiguous prefix"),
+    );
+    expect(adapter.sendMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.stringContaining("matches 2 pending approvals"),
+    );
+    // The agent executor MUST NOT be invoked — the slash-command was
+    // recognized; just its argument was ambiguous.
+    expect(executorFn).not.toHaveBeenCalled();
+  });
+
+  it("WR-03: /deny <prefix> matching multiple pending requests warns and does NOT resolve any", async () => {
+    // Use a unique prefix family ("denyamb") so the count matches exactly 2.
+    const reqA = {
+      requestId: "denyamb01-aaaa-bbbb-cccc-333333333333",
+      sessionKey: TEST_SESSION_KEY,
+      action: "agents.delete",
+      toolName: "agents_manage",
+    };
+    const reqB = {
+      requestId: "denyamb02-aaaa-bbbb-cccc-444444444444",
+      sessionKey: TEST_SESSION_KEY,
+      action: "files.write",
+      toolName: "file_ops",
+    };
+    const gate = makeMockApprovalGate([reqA, reqB]);
+    const adapter = makeAdapterForTest();
+    const deps = makeMinimalDeps({ approvalGate: gate });
+
+    await processInboundMessage(
+      deps, adapter, makeMsg({ text: "/deny denyamb" }), new Set(), new Map() as any,
+    );
+
+    expect(gate.resolveApproval).not.toHaveBeenCalled();
+    expect(adapter.sendMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.stringContaining("Ambiguous prefix"),
+    );
+    expect(adapter.sendMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.stringContaining("matches 2 pending approvals"),
+    );
+  });
+
   it("/approve without approvalGate dep passes through to agent", async () => {
     const executorFn = vi.fn(async () => ({
       response: "ok",

@@ -457,17 +457,29 @@ async function handleApprovalCommand(
         );
       }
     } else {
-      // Single: resolve by request ID prefix match
+      // Single: resolve by request ID prefix match.
+      // Phase 15.1-03 (WR-03 close): use filter+length check instead of
+      // first-match lookup — when the prefix is short and two pending
+      // requests share it, the operator must NOT silently get the first
+      // match. Warn and bail; the operator can re-issue with a longer
+      // prefix. See 15-REVIEW.md WR-03.
       const pending = gate.pending();
-      const match = pending.find((r) => r.requestId.startsWith(arg));
+      const matches = pending.filter((r) => r.requestId.startsWith(arg));
 
-      if (!match) {
+      if (matches.length === 0) {
         await deliverToChannel(
           adapter, msg.channelId,
           `No pending approval found for ID: ${arg} (may have already been resolved or timed out).`,
           { skipChunking: true },
         );
+      } else if (matches.length > 1) {
+        await deliverToChannel(
+          adapter, msg.channelId,
+          `Ambiguous prefix "${arg}" matches ${matches.length} pending approvals. Use a longer prefix.`,
+          { skipChunking: true },
+        );
       } else {
+        const match = matches[0]!;
         gate.resolveApproval(match.requestId, isApprove, approvedBy);
         const verb = isApprove ? "Approved" : "Denied";
         await deliverToChannel(
