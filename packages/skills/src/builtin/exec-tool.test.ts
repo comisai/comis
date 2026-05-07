@@ -609,6 +609,33 @@ describe("createExecTool", () => {
       expect(registry.size()).toBe(1);
     });
 
+    it("auto-backgrounded startedAt is wall-clock so runtimeMs reports elapsed time", { timeout: 15_000 }, async () => {
+      // Regression: escalateToBackground previously stored performance.now()
+      // (monotonic clock relative to process start, ~10^5 ms) into
+      // ProcessSession.startedAt. process-registry.status() computes
+      // runtimeMs: Date.now() - startedAt, which produced runtimeMs ≈ Date.now()
+      // (~56 years) instead of seconds-since-spawn -- and surfaced both fields
+      // verbatim to the agent via the process tool.
+      const tool = setup();
+      const t0 = Date.now();
+      const result = await tool.execute("tc1", {
+        command: "sleep 5",
+        autoBackgroundMs: 500,
+      });
+      const details = result.details as { status: string; sessionId: string };
+      expect(details.status).toBe("backgrounded");
+
+      const status = registry.status(details.sessionId);
+      expect(status).toBeDefined();
+      // startedAt MUST be near t0 (Unix epoch ms), not a small monotonic value.
+      expect(status!.startedAt).toBeGreaterThanOrEqual(t0);
+      expect(status!.startedAt).toBeLessThan(t0 + 2_000);
+      // runtimeMs is elapsed time, not Date.now()-sized. Upper bound is loose
+      // to absorb scheduler jitter on busy CI; the regressed value was ~10^12.
+      expect(status!.runtimeMs).toBeGreaterThanOrEqual(0);
+      expect(status!.runtimeMs).toBeLessThan(10_000);
+    });
+
     it("fast command completes normally without auto-backgrounding", { timeout: 10_000 }, async () => {
       const tool = setup();
       const result = await tool.execute("tc1", {

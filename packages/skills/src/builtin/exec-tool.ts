@@ -662,7 +662,13 @@ export function createExecTool(
 interface EscalationContext {
   command: string;
   child: ReturnType<typeof spawn>;
+  /** performance.now() at spawn -- monotonic, used for elapsed durationMs. */
   startTime: number;
+  /** Date.now() at spawn -- Unix epoch ms, used for ProcessSession.startedAt
+   *  (which downstream code subtracts from Date.now() to compute runtimeMs).
+   *  Captured separately because performance.now() is a monotonic clock relative
+   *  to process start, not a wall clock. */
+  startTimeMs: number;
   stdoutBuf: string;
   stderrBuf: string;
   registry: ProcessRegistry;
@@ -691,7 +697,7 @@ function escalateToBackground(ctx: EscalationContext): void {
     id: generateSessionId(),
     command: ctx.command,
     pid: ctx.child.pid,
-    startedAt: Math.round(ctx.startTime),
+    startedAt: ctx.startTimeMs,
     status: "running",
     exitCode: undefined,
     stdout: ctx.stdoutBuf,
@@ -764,6 +770,7 @@ function executeForeground(
   getToolResultsDir?: () => string | undefined,
 ): Promise<AgentToolResult<unknown>> {
   const startTime = performance.now();
+  const startTimeMs = Date.now();
 
   return new Promise((resolve) => {
     const { bin, args, cwd: spawnCwd } = buildSpawnCommand(
@@ -906,7 +913,7 @@ function executeForeground(
       ? setTimeout(() => {
           if (resolved) return;
           escalateToBackground({
-            command, child, startTime, stdoutBuf, stderrBuf,
+            command, child, startTime, startTimeMs, stdoutBuf, stderrBuf,
             registry, sandboxConfig, logger, spillStream,
             signal, onAbort, timeoutTimer, resolve,
             setResolved: () => { resolved = true; },
