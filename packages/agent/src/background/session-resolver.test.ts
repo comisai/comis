@@ -217,4 +217,28 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     }
     expect(observedError).toBe(true);
   });
+
+  it("T0.27h: register-via-pi-executor-shape → resolve-via-resolver returns the same handle (RC-1)", async () => {
+    const mod = await loadResolver();
+    expect(mod).toBeDefined();
+    if (!mod) return;
+    const handle = makeRunHandle("h-rc1");
+    const triple = { agentId: "default", channelType: "telegram", channelId: "678" };
+    // Mirror the EXACT key formula pi-executor.ts will use post-15.1-01 to
+    // register handles. If this drifts away from formatComposite, RC-1
+    // re-opens; the equality assertion below catches drift on either side.
+    const executorRegisterKey = formatSessionKey({
+      tenantId: triple.agentId,
+      channelId: `${triple.channelType}:${triple.channelId}`,
+      userId: triple.channelId,
+    });
+    registry.register(executorRegisterKey, handle);
+    const resolver = mod.createBackgroundSessionResolver({ activeRunRegistry: registry });
+    expect(resolver.resolveActiveSession(triple)).toBe(handle);
+    expect(resolver.hasActiveSession(triple)).toBe(true);
+    // Multi-agent isolation: a different agentId for the same (channelType, channelId)
+    // must NOT find this handle (parity with T0.27c).
+    expect(resolver.hasActiveSession({ ...triple, agentId: "other" })).toBe(false);
+    expect(resolver.resolveActiveSession({ ...triple, agentId: "other" })).toBeUndefined();
+  });
 });
