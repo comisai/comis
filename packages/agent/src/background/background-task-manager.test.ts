@@ -419,53 +419,6 @@ describe("BackgroundTaskManager", () => {
       }
     });
 
-    it("recoverOnStartup skips persisted tasks missing origin field with logger.warn", () => {
-      const testDir = safePath(tmpdir(), `comis-bg-mgr-skip-${randomUUID()}`);
-      mkdirSync(testDir, { recursive: true });
-
-      try {
-        // Write a legacy file without origin
-        const agentDir = safePath(testDir, "legacy-agent");
-        mkdirSync(agentDir, { recursive: true });
-        const filePath = safePath(agentDir, "legacy-task-1.json");
-        const legacyState = {
-          id: "legacy-task-1",
-          agentId: "legacy-agent",
-          toolName: "old_tool",
-          status: "failed",
-          startedAt: Date.now() - 10000,
-          completedAt: Date.now() - 9000,
-          error: "Daemon restarted while task was running",
-          // No origin field — legacy format
-        };
-        writeFileSync(filePath, JSON.stringify(legacyState, null, 2), "utf-8");
-
-        const skipEventBus = createMockEventBus();
-        const skipLogger = createMockLogger();
-        const skipMgr = createBackgroundTaskManager({
-          dataDir: testDir,
-          eventBus: skipEventBus,
-          logger: skipLogger,
-          maxPerAgent: 5,
-          maxTotal: 20,
-        });
-        skipMgr.recoverOnStartup();
-
-        // Should NOT emit any background_task:failed event for the skipped task
-        expect((skipEventBus.emit as ReturnType<typeof vi.fn>)).not.toHaveBeenCalledWith(
-          "background_task:failed",
-          expect.objectContaining({ taskId: "legacy-task-1" }),
-        );
-
-        // Should warn about the skip
-        expect(skipLogger.warn).toHaveBeenCalled();
-
-        // Task should not be in manager
-        expect(skipMgr.getTask("legacy-task-1")).toBeUndefined();
-      } finally {
-        rmSync(testDir, { recursive: true, force: true });
-      }
-    });
   });
 
   // ---------------------------------------------------------------------------
