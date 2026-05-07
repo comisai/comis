@@ -1012,12 +1012,12 @@ describe("setupDeliveryMirror", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 9c (15-07): drain log includes per-class metric (operator-facing).
+// Drain log includes per-class metric (operator-facing).
 //
-// Phase 9c adds an operator-facing debug log line emitted by the housekeeper
-// drain pass that includes `pruned`, `class`, and `durationMs` fields.
-// RED until 15-07 lands. The assertion is a source-grep over setup-delivery.ts
-// for the new log shape (canonical Pino object-first).
+// An operator-facing debug log line emitted by the housekeeper drain pass
+// includes `pruned`, `class`, and `durationMs` fields. The assertion is a
+// source-grep over setup-delivery.ts for the new log shape (canonical Pino
+// object-first).
 // ---------------------------------------------------------------------------
 describe("Phase 9c: drain log includes per-class metric (operator-facing)", () => {
   it("source-grep: setup-delivery.ts emits a drain log with pruned + class + durationMs", async () => {

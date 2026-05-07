@@ -904,7 +904,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 25b: killRun calls sessionResolver.resolveActiveSession (R3, B37)
+  // Test 25b: killRun calls sessionResolver.resolveActiveSession
   // -----------------------------------------------------------------------
   it("killRun calls sessionResolver.resolveActiveSession when resolver provided", () => {
     const abortMock = vi.fn().mockResolvedValue(undefined);
@@ -926,9 +926,9 @@ describe("createSubAgentRunner", () => {
 
     const result = runner.killRun(runId);
     expect(result.killed).toBe(true);
-    // B42: post-Phase-3 contract is composite-key {agentId, channelType,
-    // channelId} -- the exact triple is derived in deriveCompositeForRun.
-    // We assert the agentId is forwarded; channelType/channelId come from
+    // Contract is composite-key {agentId, channelType, channelId} -- the
+    // exact triple is derived in deriveCompositeForRun. We assert the
+    // agentId is forwarded; channelType/channelId come from
     // run.announceChannelType / parseFormattedSessionKey (best-effort).
     expect(resolverMock.resolveActiveSession).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "default" }),
@@ -1950,9 +1950,9 @@ describe("createSubAgentRunner", () => {
       deps.config.subagentContext = { maxRunTimeoutMs: 2_000, perStepTimeoutMs: 1_000 } as typeof deps.config.subagentContext;
       vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
       const mockAbort = vi.fn().mockResolvedValue(undefined);
-      // B42 test-mock update: post-Phase-3, abort flows through the
-      // composite-key resolver (`{agentId, channelType, channelId}`)
-      // rather than the single-arg activeRunRegistry.
+      // Abort flows through the composite-key resolver (`{agentId,
+      // channelType, channelId}`) rather than the single-arg
+      // activeRunRegistry.
       deps.sessionResolver = { resolveActiveSession: vi.fn().mockReturnValue({ abort: mockAbort }) };
       deps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 
@@ -3276,11 +3276,8 @@ describe("persistent session reuse", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T0.27 cross-check (B37): sub-agent-runner uses BackgroundSessionResolver
-// for parent-session lookup at lines 499 / 1401 / 1555.
-//
-// RED until Plan 15-03 (Phase 3) rewires the three call-sites in
-// packages/daemon/src/sub-agent-runner.ts.
+// Cross-check: sub-agent-runner uses BackgroundSessionResolver for
+// parent-session lookup.
 // ---------------------------------------------------------------------------
 describe("T0.27 cross-check (B37): sub-agent-runner uses BackgroundSessionResolver for parent-session lookup", () => {
   it("source-grep: no remaining activeRunRegistry.get( in non-test sub-agent-runner source", async () => {
@@ -3294,7 +3291,7 @@ describe("T0.27 cross-check (B37): sub-agent-runner uses BackgroundSessionResolv
       .split("\n")
       .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
       .join("\n");
-    // Post-Phase-3: NO literal activeRunRegistry.get( in the source.
+    // No literal activeRunRegistry.get( in the source.
     expect(stripped).not.toMatch(/activeRunRegistry\.get\(/);
   });
 });

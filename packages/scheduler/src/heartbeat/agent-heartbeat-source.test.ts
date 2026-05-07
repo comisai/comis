@@ -177,10 +177,9 @@ describe("createAgentHeartbeatSource", () => {
   });
 
   it("skips execution when queue is busy", async () => {
-    // B42: B36 test-mock update -- the heartbeat source now consults the
-    // composite-key resolver (R3). The mock returns busy unconditionally
-    // so the queue-busy gate fires regardless of which composite triple
-    // is queried.
+    // The heartbeat source consults the composite-key resolver. The mock
+    // returns busy unconditionally so the queue-busy gate fires regardless
+    // of which composite triple is queried.
     const sessionResolver = {
       hasActiveSession: vi.fn().mockReturnValue(true),
     };
@@ -642,12 +641,8 @@ describe("createAgentHeartbeatSource", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T0.27 cross-check (B36): agent-heartbeat-source uses
-// BackgroundSessionResolver.hasActiveSession instead of a single-arg
-// activeRunRegistry.has(sessionKey).
-//
-// RED until Plan 15-03 (Phase 3) rewires
-// packages/scheduler/src/heartbeat/agent-heartbeat-source.ts:152.
+// agent-heartbeat-source uses BackgroundSessionResolver.hasActiveSession
+// instead of a single-arg activeRunRegistry.has(sessionKey).
 // ---------------------------------------------------------------------------
 describe("T0.27 cross-check (B36): heartbeat source uses BackgroundSessionResolver.hasActiveSession", () => {
   it("source-grep: no remaining activeRunRegistry.has( in non-test heartbeat source", async () => {
@@ -661,7 +656,7 @@ describe("T0.27 cross-check (B36): heartbeat source uses BackgroundSessionResolv
       .split("\n")
       .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
       .join("\n");
-    // Post-Phase-3: NO literal activeRunRegistry.has( in the source.
+    // No literal activeRunRegistry.has( in the source.
     expect(stripped).not.toMatch(/activeRunRegistry\.has\(/);
   });
 });

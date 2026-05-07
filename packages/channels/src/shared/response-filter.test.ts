@@ -162,13 +162,6 @@ describe("filterResponse", () => {
     expect(NO_REPLY_TOKEN).toBe("NO_REPLY");
   });
 
-  // -------------------------------------------------------------------------
-  // Phase 15 v12: T0.6 / T0.7 / T0.36 — locks in post-Phase-5 helper-delegation
-  // contract. T0.6 + T0.7 already pass on current code (locking those values
-  // into the cherry-pick's owned-tests list keeps 15-02's reshape from
-  // regressing them). T0.36 fails until 15-02 lands the @comis/shared exports.
-  // -------------------------------------------------------------------------
-
   describe("Phase 15 v12: helper-delegation + public-surface preservation", () => {
     it("T0.6: filterResponse(NO_REPLY) suppresses with suppressedBy=NO_REPLY", () => {
       const result = filterResponse("NO_REPLY");
@@ -195,9 +188,6 @@ describe("filterResponse", () => {
       const fromShared = (await import("@comis/shared")) as unknown as {
         NO_REPLY_TOKEN?: string;
       };
-      // Both modules expose NO_REPLY_TOKEN. Pre-Phase-5, fromShared.NO_REPLY_TOKEN
-      // is undefined (the export does not yet exist) and the strict-equality
-      // assertion fails. Post-Phase-5, both resolve to the literal "NO_REPLY".
       expect(fromShared.NO_REPLY_TOKEN).toBe("NO_REPLY");
       expect(fromChannels.NO_REPLY_TOKEN).toBe(fromShared.NO_REPLY_TOKEN);
       expect(fromChannels.NO_REPLY_TOKEN).toBe("NO_REPLY");

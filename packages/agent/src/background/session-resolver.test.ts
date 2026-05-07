@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// T0.27 (7 sub-tests) — composite-key BackgroundSessionResolver.
+// Composite-key BackgroundSessionResolver tests.
 //
-// Phase 3 (Plan 15-03) introduces a `BackgroundSessionResolver` factory at
-// `packages/agent/src/background/session-resolver.ts` that wraps
+// The `BackgroundSessionResolver` factory at
+// `packages/agent/src/background/session-resolver.ts` wraps
 // `ActiveRunRegistry` and exposes composite-key (agentId, channelType,
 // channelId) lookups. The resolver replaces single-arg `.has(sessionKey)`
-// / `.get(sessionKey)` calls across 5 production source files (B30 +
-// B34 + B36 + B37); T0.33 source-grep enforces the migration.
+// / `.get(sessionKey)` calls across production source files.
 //
-// All 7 sub-tests are RED until 15-03 lands the resolver module. We use
-// dynamic-import-with-undefined so the suite reaches assertions and
-// fails meaningfully (not via module-not-found).
+// We use dynamic-import-with-undefined so the suite reaches assertions
+// and fails meaningfully (not via module-not-found).
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createActiveRunRegistry, type RunHandle } from "../executor/active-run-registry.js";
 import { formatSessionKey } from "@comis/core";
@@ -224,8 +222,8 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     if (!mod) return;
     const handle = makeRunHandle("h-rc1");
     const triple = { agentId: "default", channelType: "telegram", channelId: "678" };
-    // Mirror the EXACT key formula pi-executor.ts will use post-15.1-01 to
-    // register handles. If this drifts away from formatComposite, RC-1
+    // Mirror the EXACT key formula pi-executor.ts uses to register handles.
+    // If this drifts away from formatComposite, multi-agent isolation
     // re-opens; the equality assertion below catches drift on either side.
     const executorRegisterKey = formatSessionKey({
       tenantId: triple.agentId,
@@ -237,7 +235,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     expect(resolver.resolveActiveSession(triple)).toBe(handle);
     expect(resolver.hasActiveSession(triple)).toBe(true);
     // Multi-agent isolation: a different agentId for the same (channelType, channelId)
-    // must NOT find this handle (parity with T0.27c).
+    // must NOT find this handle.
     expect(resolver.hasActiveSession({ ...triple, agentId: "other" })).toBe(false);
     expect(resolver.resolveActiveSession({ ...triple, agentId: "other" })).toBeUndefined();
   });

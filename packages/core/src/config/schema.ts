@@ -107,7 +107,7 @@ export const AppConfigSchema = z.strictObject({
     deliveryQueue: DeliveryQueueConfigSchema.default(() => DeliveryQueueConfigSchema.parse({})),
     /** Session mirroring persistence configuration */
     deliveryMirror: DeliveryMirrorConfigSchema.default(() => DeliveryMirrorConfigSchema.parse({})),
-    /** Output retention housekeeper configuration (per-class retentionMs). Phase 15 v12 (RC-9, R8). */
+    /** Output retention housekeeper configuration (per-class retentionMs). */
     outputRetention: OutputRetentionConfigSchema.default(() => OutputRetentionConfigSchema.parse({})),
     /** Inter-block delivery timing and pacing configuration */
     deliveryTiming: DeliveryTimingConfigSchema.default(() => DeliveryTimingConfigSchema.parse({})),

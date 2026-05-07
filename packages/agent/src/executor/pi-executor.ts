@@ -1003,14 +1003,13 @@ export function createPiExecutor(
             (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;
           }
 
-          // Phase 15.1-01 (RC-1 close): align register/deregister key shape with
+          // Align register/deregister key shape with
           // BackgroundSessionResolver.formatComposite so production lookups via
           // resolveActiveSession({agentId, channelType, channelId}) find the
-          // handle this execute() call registers. T0.27h in
-          // session-resolver.test.ts locks the formula — drift on either side
-          // breaks that test. NormalizedMessageSchema enforces channelType /
-          // channelId are non-empty (z.string().min(1)), so this composition
-          // is unconditional.
+          // handle this execute() call registers. session-resolver.test.ts
+          // locks the formula — drift on either side breaks that test.
+          // NormalizedMessageSchema enforces channelType / channelId are
+          // non-empty (z.string().min(1)), so this composition is unconditional.
           const resolverRegisterKey = formatSessionKey({
             tenantId: agentId ?? "default",
             channelId: `${msg.channelType}:${msg.channelId}`,

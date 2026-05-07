@@ -43,8 +43,8 @@ export interface BridgeMetricsState {
 
   /** Per-turn capture of outbound delivery events. Populated by pi-event-bridge
    *  on tool_execution_end for `message(action='send'|'reply'|'attach')`.
-   *  Read by executor-post-execution.ts to make sentinel-aware decisions
-   *  (Phase 5 / B26 + B29, R5). Reset at turn start. */
+   *  Read by executor-post-execution.ts to make sentinel-aware decisions.
+   *  Reset at turn start. */
   outboundLog: Array<{ action: string; channelType: string; channelId: string; timestamp: number }>;
 
   // Tool tracking
@@ -127,15 +127,14 @@ export interface BridgeMetricsState {
    *  was stripped (post-incident-visibility metric). */
   signatureScrubsToolCallsAffected: number;
   /**
-   * Phase 4 (Plan 15-05 / R4 / T0.15+T0.24+T0.25): per-composite-key drain
-   * inflight gate. Owned by the bridge; passed into `drainAt(...)` at the
-   * `tool_execution_end` call site (B15 inline-consumption + composite
-   * drain).
+   * Per-composite-key drain inflight gate. Owned by the bridge; passed into
+   * `drainAt(...)` at the `tool_execution_end` call site (inline-consumption +
+   * composite drain).
    *
    * Map keyed by `${agentId}:${channelType}:${channelId}` (composite key).
    * Concurrent calls for the SAME composite key return immediately
-   * (single-tick gate, T0.25). Concurrent calls for DIFFERENT composite
-   * keys drain independently (T0.24 multi-agent isolation).
+   * (single-tick gate). Concurrent calls for DIFFERENT composite keys drain
+   * independently (multi-agent isolation).
    *
    * Entry cleanup: `.delete(formatted)` runs in `.finally(...)` of the
    * drain promise so the Map size remains bounded across long-running
@@ -195,7 +194,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     hashAssertionMismatches: 0,
     signatureScrubs: 0,
     signatureScrubsToolCallsAffected: 0,
-    // Phase 4 / Plan 15-05: per-composite-key drain inflight gate (T0.24+T0.25).
+    // per-composite-key drain inflight gate.
     drainInflightByKey: new Map<string, Promise<void>>(),
   };
 }

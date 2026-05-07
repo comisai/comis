@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// T0.35 v12 — JSONL persistence vs. prompt isolation via provider-stream
-// substitution. Verbatim from design §3 (lines 159-202) / 15-PATTERNS.md
-// lines 315-356.
-//
-// RED until 15-02 wires the helpers in
-// `__test-helpers/capturing-provider-stub.ts` against pi-ai's provider
-// seam (B45 + CONTEXT D-T5). The helpers throw `Error("not implemented")`
-// today — that surfaces as the assertion failure this test relies on.
+// JSONL persistence vs. prompt isolation via provider-stream substitution.
 //
 // The binding gate is the OUTGOING provider payload, captured by
 // substituting the provider's stream/fetch function at the lowest
 // available test seam. NOT a caller-threaded `onPayload` config (which
-// would be a production-config-for-test surface and is forbidden by B45).
+// would be a production-config-for-test surface and is forbidden).
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import {
@@ -52,7 +45,7 @@ describe("details.visibleDelivery JSONL persistence vs prompt isolation", () => 
 
     // (b) Capture via provider-side stream/fetch substitution — same pattern
     // existing executor tests use (e.g. fault-injector.ts:48-). NO caller-threaded
-    // onPayload, NO production-config-for-test surface (B45).
+    // onPayload, NO production-config-for-test surface.
     let capturedRequestBody: unknown;
     const providerStub = createCapturingProviderStub({
       onSend: (body) => {

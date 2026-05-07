@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * VisibleDeliveryRecord: structured metadata for outbound channel deliveries
- * captured in JSONL `details` for offline analysis (Phase 10 housekeeper consumes this).
+ * captured in JSONL `details` for offline analysis (output retention housekeeper consumes this).
  *
  * Persisted in `details.visibleDelivery` on `message(action='attach')` toolResult
  * entries; visible to operators inspecting JSONL but NOT injected back into the
- * model's context window across turns (R5 invariant 37, AC-8).
+ * model's context window across turns.
  *
  * Plain TypeScript interface (no Zod) per AGENTS §2.3 KISS — `@comis/shared`
  * has zero runtime deps, and this type is JSONL-persisted only (no port-bus

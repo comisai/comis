@@ -331,14 +331,10 @@ describe("/approve and /deny command interception", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Phase 15.1-03 (WR-03 close): ambiguous prefix -> warn, do not resolve.
-  //
-  // Pre-fix: inbound-gate.ts used `pending.find((r) => r.requestId.startsWith(arg))`
-  // which silently picked the first match if multiple pending requests
-  // shared a common prefix — operator could approve a request they did
-  // not intend.
-  // Post-fix: filter+length check -> on >1 match, deliver an
-  // "Ambiguous prefix" warning and bail without resolving.
+  // Ambiguous prefix -> warn, do not resolve. The gate uses a filter+length
+  // check (not first-match lookup): on >1 match, deliver an "Ambiguous
+  // prefix" warning and bail without resolving so the operator cannot
+  // silently approve the wrong request when prefixes collide.
   // -----------------------------------------------------------------------
   it("WR-03: /approve <prefix> matching multiple pending requests warns and does NOT resolve any", async () => {
     const reqA = {

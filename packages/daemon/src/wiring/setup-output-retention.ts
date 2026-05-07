@@ -4,12 +4,11 @@
  * deletes files whose age exceeds the per-class retentionMs.
  *
  * Mirrors setup-delivery.ts drain+prune timer pattern (single-tick gate +
- * unref() + structured DEBUG log per pass) — see 15-PATTERNS.md lines
- * 462-498.
+ * unref() + structured DEBUG log per pass).
  *
- * Closes RC-9 + R8 + AC-11. Per CONTEXT D-O1, consumes JSONL
- * details.visibleDelivery for offline analysis (the housekeeper does NOT
- * delete JSONL itself; it only manages output/ files referenced by it).
+ * Consumes JSONL details.visibleDelivery for offline analysis (the
+ * housekeeper does NOT delete JSONL itself; it only manages output/
+ * files referenced by it).
  *
  * Per AGENTS §2.2: NO `path.join`, NO `process.env`. All paths via
  *   `safePath(workspaceDir, ...)`. Per AGENTS §2.4: factory + Deps with
@@ -19,9 +18,8 @@
  *   (security/daemon): file deletion is destructive — operator can
  *   disable via `enabled: false` config.
  *
- * Test contract preserved: `validateOutputRetentionConfig({ classes:
- * [{classId, retentionMs}] })` returns `{ ok, value | error }` — the
- * 15-01 RED housekeeper test asserts this validator shape directly.
+ * Test contract: `validateOutputRetentionConfig({ classes:
+ * [{classId, retentionMs}] })` returns `{ ok, value | error }`.
  *
  * @module setup-output-retention
  */
@@ -58,11 +56,11 @@ export interface SetupOutputRetentionHandle {
 }
 
 /**
- * 15-01 test contract: legacy array-of-objects shape preserved as the
- * input to `validateOutputRetentionConfig`. The housekeeper itself uses
- * the schema-derived `OutputRetentionConfig` (Record-of-classes shape);
- * this validator acts as the test's binding gate that retentionMs <= 0
- * is rejected.
+ * Legacy array-of-objects shape preserved as the input to
+ * `validateOutputRetentionConfig`. The housekeeper itself uses the
+ * schema-derived `OutputRetentionConfig` (Record-of-classes shape); this
+ * validator acts as the test's binding gate that retentionMs <= 0 is
+ * rejected.
  */
 export interface RetentionClassConfigInput {
   classId: string;
@@ -74,7 +72,7 @@ export interface ValidatedRetentionConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Validator (15-01 test contract gate)
+// Validator (test contract gate)
 // ---------------------------------------------------------------------------
 
 /**
@@ -82,7 +80,7 @@ export interface ValidatedRetentionConfig {
  * `{ classes: [{classId, retentionMs}] }` shape. Returns a Result-shaped
  * `{ ok: true, value }` on success, `{ ok: false, error }` on failure.
  *
- * The 15-01 RED housekeeper test asserts this validator's contract:
+ * Validator contract:
  *   - retentionMs = -1   → rejected
  *   - retentionMs = 0    → rejected
  *   - retentionMs = 1    → accepted

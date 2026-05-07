@@ -279,15 +279,12 @@ describe("message tool", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 5: message(action=attach) captures details.visibleDelivery
-// (B33 + B40)
+// message(action=attach) captures details.visibleDelivery
 //
-// Phase 5 (15-02 cherry-pick) reshapes message-tool.ts so the `attach`
-// action returns a result whose `details` includes a `visibleDelivery`
-// record (kind, channelType, channelId, caption, deliveredAt). The
-// visibleDelivery is JSONL-persisted but NOT prompt-injected (per design
-// invariant 37). Pre-Phase-5 the attach action returns details without
-// visibleDelivery — the test fails until 15-02 lands.
+// The `attach` action returns a result whose `details` includes a
+// `visibleDelivery` record (kind, channelType, channelId, caption,
+// deliveredAt). The visibleDelivery is JSONL-persisted but NOT
+// prompt-injected.
 // ---------------------------------------------------------------------------
 describe("Phase 5: message(action=attach) captures details.visibleDelivery (B33 + B40)", () => {
   it("attach result includes details.visibleDelivery with the documented shape", async () => {

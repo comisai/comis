@@ -139,10 +139,10 @@ export interface ChannelsDeps {
   /** Optional active run registry for SDK-native steer+followup inbound routing */
   activeRunRegistry?: ActiveRunRegistry;
   /**
-   * Optional composite-key resolver (R3, B30/B34). Wired by the daemon as
+   * Optional composite-key resolver. Wired by the daemon as
    * `createBackgroundSessionResolver({ activeRunRegistry })`; supersedes
    * `activeRunRegistry.has/.get` for production lookups in the inbound
-   * pipeline. T0.33 source-grep enforces.
+   * pipeline.
    */
   sessionResolver?: BackgroundSessionResolver;
   /** RPC call dispatcher for /config chat commands (deferred dispatch -- safe to pass before wireDispatch). */
@@ -788,10 +788,10 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
           }
 
           let graphDir: string;
-          // Phase 15.1-02 (CR-02 close): Two-step safePath composition matches
-          // the canonical daemon-wiring pattern in setup-output-retention.ts.
-          // Both safePath calls throw on traversal; the surrounding catch handles
-          // either failure with a single operator-facing WARN.
+          // Two-step safePath composition matches the canonical daemon-wiring
+          // pattern in setup-output-retention.ts. Both safePath calls throw on
+          // traversal; the surrounding catch handles either failure with a
+          // single operator-facing WARN.
           try {
             const graphRunsDir = safePath(dataDir, "graph-runs");
             graphDir = safePath(graphRunsDir, graphId);

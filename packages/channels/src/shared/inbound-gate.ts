@@ -240,8 +240,8 @@ export async function evaluateInboundGate(
   if (msg.text) {
     const stopParsed = parseSlashCommand(msg.text);
     if (stopParsed.found && stopParsed.command === "stop") {
-      // Active-session lookup goes through the composite-key resolver (R3,
-      // B34). `formattedKey` is retained as a diagnostic log field so
+      // Active-session lookup goes through the composite-key resolver.
+      // `formattedKey` is retained as a diagnostic log field so
       // operators can correlate /stop-aborts with session traces.
       const formattedKey = formatSessionKey(sessionKey);
       const runHandle = deps.sessionResolver?.resolveActiveSession({
@@ -458,11 +458,10 @@ async function handleApprovalCommand(
       }
     } else {
       // Single: resolve by request ID prefix match.
-      // Phase 15.1-03 (WR-03 close): use filter+length check instead of
-      // first-match lookup — when the prefix is short and two pending
-      // requests share it, the operator must NOT silently get the first
-      // match. Warn and bail; the operator can re-issue with a longer
-      // prefix. See 15-REVIEW.md WR-03.
+      // Use filter+length check instead of first-match lookup — when the
+      // prefix is short and two pending requests share it, the operator
+      // must NOT silently get the first match. Warn and bail; the
+      // operator can re-issue with a longer prefix.
       const pending = gate.pending();
       const matches = pending.filter((r) => r.requestId.startsWith(arg));
 

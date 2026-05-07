@@ -17,11 +17,10 @@ export const TASK_DIR_NAME = "background-tasks";
 /**
  * Extract the serializable subset from a BackgroundTask.
  *
- * Phase 15 v12 (D-S1, D-S2): notificationPolicy + dispatchState are copied
- * across when present so the state machine survives daemon restart-recovery
- * (AC-5). Both fields are optional in PersistedTaskState; we use spread-when-
- * defined to avoid emitting `"notificationPolicy": undefined` to disk for
- * legacy callers that do not set them.
+ * notificationPolicy + dispatchState are copied across when present so the
+ * state machine survives daemon restart-recovery. Both fields are optional in
+ * PersistedTaskState; we use spread-when-defined to avoid emitting
+ * `"notificationPolicy": undefined` to disk for callers that do not set them.
  */
 function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedTaskState {
   return {
@@ -85,12 +84,11 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
 
   for (const agentId of agentDirs) {
     const agentDir = safePath(dataDir, agentId);
-    // Phase 15.1-03 (WR-04 close): guard against non-directory entries in
-    // dataDir. statSync may throw if the entry vanished between
-    // readdirSync and here; skip gracefully. Non-directory entries
-    // (lock files, READMEs, accidental file-with-agentId-name) MUST be
-    // skipped explicitly so they don't shadow legitimate agent recovery
-    // silently. See 15-REVIEW.md WR-04.
+    // Guard against non-directory entries in dataDir. statSync may throw if
+    // the entry vanished between readdirSync and here; skip gracefully.
+    // Non-directory entries (lock files, READMEs, accidental
+    // file-with-agentId-name) MUST be skipped explicitly so they don't
+    // shadow legitimate agent recovery silently.
     let dirStat: ReturnType<typeof statSync>;
     try {
       dirStat = statSync(agentDir);
@@ -112,11 +110,11 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
       try {
         const raw = readFileSync(filePath, "utf-8");
         const parsed = JSON.parse(raw) as Partial<PersistedTaskState>;
-        // Phase 15.2: shape guard — skip completely malformed files. Phase 14+
-        // tasks always carry id + toolName + origin; the producer-side
-        // persistTaskSync writes all three unconditionally. A file failing
-        // this guard is either truncated mid-write or a pre-Phase-14 artifact
-        // operators should clean up manually.
+        // Shape guard — skip completely malformed files. Tasks always carry
+        // id + toolName + origin; the producer-side persistTaskSync writes
+        // all three unconditionally. A file failing this guard is either
+        // truncated mid-write or a legacy artifact operators should clean
+        // up manually.
         if (!parsed.id || !parsed.toolName || !parsed.origin) {
           continue;
         }

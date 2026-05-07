@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
 
-// Phase 15.1-03 (WR-01 close): mock `@comis/scheduler` so we can capture
-// the deps passed into `createAgentHeartbeatSource` and exercise the
-// `getExecutor` closure directly. importOriginal preserves the rest of
-// the module surface (createPerAgentHeartbeatRunner, resolveEffectiveHeartbeatConfig,
+// Mock `@comis/scheduler` so we can capture the deps passed into
+// `createAgentHeartbeatSource` and exercise the `getExecutor` closure
+// directly. importOriginal preserves the rest of the module surface
+// (createPerAgentHeartbeatRunner, resolveEffectiveHeartbeatConfig,
 // createDuplicateDetector) used by the other setupHeartbeat tests in this file.
 let capturedHeartbeatSourceDeps: { getExecutor?: (agentId: string) => unknown } | undefined;
 vi.mock("@comis/scheduler", async (importOriginal) => {
@@ -235,13 +235,12 @@ describe("setupHeartbeat", () => {
     perAgentRunner!.stop();
   });
 
-  // Phase 15.1-03 (WR-01 close): explicit error when executor missing.
-  // Pre-fix: a non-null-assertion lookup against the executors Map
-  // returned undefined when the agent was heartbeat-enabled in config
-  // but missed the Map; the resulting `inner.execute(...)` produced a
-  // runtime TypeError inside a timer callback. Post-fix: getExecutor
-  // throws a typed Error eagerly so wiring gaps surface as a clean
-  // stack at the boundary.
+  // Explicit error when executor missing. A non-null-assertion lookup
+  // against the executors Map returned undefined when the agent was
+  // heartbeat-enabled in config but missed the Map; the resulting
+  // `inner.execute(...)` produced a runtime TypeError inside a timer
+  // callback. getExecutor now throws a typed Error eagerly so wiring
+  // gaps surface as a clean stack at the boundary.
   it("WR-01: getExecutor throws explicit Error when executors map lacks the heartbeat-enabled agent", () => {
     capturedHeartbeatSourceDeps = undefined;
     const container = makeContainer({

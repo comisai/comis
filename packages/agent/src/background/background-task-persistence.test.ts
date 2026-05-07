@@ -159,19 +159,6 @@ describe("background-task-persistence", () => {
       expect(recovered.find((t) => t.id === undefined)).toBeUndefined();
     });
 
-    // -----------------------------------------------------------------------
-    // Phase 15.1-03 (WR-04 close): non-directory entries in dataDir do not
-    // shadow legitimate agent recovery.
-    //
-    // Pre-fix: recoverTasks did `readdirSync(dataDir)` then for each entry
-    // attempted `readdirSync(safePath(dataDir, entry))`. A non-directory
-    // entry (lock file, README, accidental file) caused ENOTDIR; the
-    // existing `catch { continue; }` swallowed silently. In the worst
-    // case where a legitimate agent ID matched a non-directory filename,
-    // the agent's tasks were silently lost.
-    // Post-fix: explicit `statSync(agentDir).isDirectory()` guard before
-    // readdirSync skips non-directory entries cleanly.
-    // -----------------------------------------------------------------------
     it("WR-04: skips non-directory entries in dataDir without losing legitimate agent tasks", () => {
       // Create a legitimate agent directory with one task.
       const task: PersistedTaskState = {
@@ -186,9 +173,8 @@ describe("background-task-persistence", () => {
       persistTaskSync(dataDir, task);
 
       // Create a stale file in dataDir alongside the agent directory.
-      // Simulates a lock file, README, or accidental top-level file that
-      // pre-fix would cause readdirSync(safePath(dataDir, "stale.lock"))
-      // to throw ENOTDIR and silently continue.
+      // Simulates a lock file, README, or accidental top-level file
+      // (readdirSync(safePath(dataDir, "stale.lock")) would throw ENOTDIR).
       const stalePath = safePath(dataDir, "stale.lock");
       writeFileSync(stalePath, "not-a-directory", "utf-8");
 
@@ -235,19 +221,12 @@ describe("background-task-persistence", () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Phase 2 (15-04): persistTaskSync persists dispatchState (D-S2)
-  //
-  // Pre-Phase-2 toPersistedState (line 20-31) strips unknown fields. Once
-  // 15-04 extends PersistedTaskState with `dispatchState`, the field round-
-  // trips through the JSON file. RED until 15-04 lands.
-  // ---------------------------------------------------------------------------
-  describe("persistTaskSync persists dispatchState (D-S2)", () => {
+  describe("persistTaskSync persists dispatchState", () => {
     it("round-trips dispatchState='dispatched' through the BackgroundTask path (with _promise)", () => {
       // Use the BackgroundTask path (object has _promise) to exercise
-      // toPersistedState — the helper at line 20-31 that strips unknown fields
-      // pre-Phase-2. Once 15-04 adds dispatchState to PersistedTaskState +
-      // toPersistedState, the field survives the round-trip.
+      // toPersistedState — the helper that strips unknown fields. Now that
+      // dispatchState is part of PersistedTaskState + toPersistedState, the
+      // field survives the round-trip.
       const taskRecord: Record<string, unknown> = {
         id: "task-disp-1",
         toolName: "exec",
@@ -258,7 +237,7 @@ describe("background-task-persistence", () => {
         dispatchState: "dispatched",
         _promise: Promise.resolve(),
       };
-      // Cast through unknown so the test file stays buildable pre-15-04.
+      // Cast through unknown so the test file stays buildable.
       persistTaskSync(
         dataDir,
         taskRecord as unknown as import("./background-task-types.js").BackgroundTask,
@@ -266,8 +245,7 @@ describe("background-task-persistence", () => {
 
       const filePath = safePath(safePath(dataDir, "agent-disp"), "task-disp-1.json");
       const onDisk = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
-      // Pre-Phase-2: toPersistedState strips dispatchState, the round-trip loses it.
-      // Post-Phase-2: PersistedTaskState carries dispatchState, the round-trip preserves it.
+      // PersistedTaskState carries dispatchState, so the round-trip preserves it.
       expect(onDisk.dispatchState).toBe("dispatched");
     });
   });

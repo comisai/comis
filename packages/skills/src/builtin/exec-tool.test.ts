@@ -2110,14 +2110,14 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T0.20-T0.23 cross-check: exec-tool's internal escalation is the SOLE
-// backgrounding owner — no double-promotion (Phase 1 narrowing).
+// Cross-check: exec-tool's internal escalation is the SOLE backgrounding
+// owner — no double-promotion.
 //
 // The middleware test (auto-background-middleware.test.ts) already asserts
 // the wrapper is a no-op for exec; this cross-check asserts the exec-tool
 // source itself contains the internal escalation path that becomes the
 // single owner. Source-grep on exec-tool.ts for `escalateToBackground` (or
-// equivalent) ensures the contract still compiles after Phase 1 lands.
+// equivalent) ensures the contract still compiles.
 // ---------------------------------------------------------------------------
 describe("exec-tool: internal escalation is the SOLE backgrounding owner (T0.20-T0.23 cross-check)", () => {
   it("source-grep: exec-tool.ts contains the internal escalation path (escalateToBackground or equivalent)", async () => {
@@ -2131,9 +2131,10 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner (T0.20-
       .split("\n")
       .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
       .join("\n");
-    // The internal escalation path is the LOAD-BEARING contract — Phase 1
-    // depends on it being present and untouched. If it's removed or renamed
-    // by accident, this test fails to surface the regression.
+    // The internal escalation path is the LOAD-BEARING contract — the
+    // backgrounding ownership invariant depends on it being present and
+    // untouched. If it's removed or renamed by accident, this test fails
+    // to surface the regression.
     const hasInternalEscalation =
       /escalateToBackground/.test(stripped) ||
       /backgrounded.*sessionId/.test(stripped);
@@ -2152,7 +2153,7 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner (T0.20-
       .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
       .join("\n");
     // resolveDataEnv (data-env.ts) returns PATH=<venvBin> only by design
-    // (AC-7 forbids process.env in data-env.ts). The exec-tool merge site
+    // (forbids process.env in data-env.ts). The exec-tool merge site
     // MUST prepend venvBin to baseEnv.PATH so subprocesses still find
     // bash/sh/node/git/curl/etc. — without this, every non-venv binary
     // call produces ENOENT once a workspace has a pre-warmed venv.

@@ -625,13 +625,12 @@ describe("regression: mid-turn discovered tool path (Bug 1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 9d (RC-9): re-injection de-dup contract.
+// Re-injection de-dup contract.
 //
 // The de-dup tracker is the `deliveredGuides: Set<string>` parameter; passing
 // the SAME Set across calls within a turn (or session) ensures the same guide
-// id is not re-injected. This is the explicit Phase-9d contract from design
-// §"Phase 9d" — the existing Set IS the injectedGuideIds tracker; no second
-// data structure is introduced.
+// id is not re-injected. The existing Set IS the injectedGuideIds tracker;
+// no second data structure is introduced.
 // ---------------------------------------------------------------------------
 
 describe("Phase 9d: same guide is not re-injected within a single turn", () => {
@@ -670,7 +669,7 @@ describe("Phase 9d: same guide is not re-injected within a single turn", () => {
     expect(third.content).toHaveLength(1);
     expect((third.content[0] as { text: string }).text).toBe("Pipeline executed");
 
-    // The single INFO log fires only on the first injection (Phase 9d contract).
+    // The single INFO log fires only on the first injection.
     expect(logger.info).toHaveBeenCalledTimes(1);
   });
 

@@ -422,14 +422,10 @@ describe("BackgroundTaskManager", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 2 (15-04): recoverOnStartup preserves dispatchState (T0.14, AC-5)
-  //
-  // Pre-Phase-2 the BackgroundTask shape does not include `dispatchState`,
-  // so attempts to read `task.dispatchState` are undefined; this test fails
-  // and turns green when 15-04 extends BackgroundTask + PersistedTaskState
-  // and recoverOnStartup propagates the field across the boundary.
+  // recoverOnStartup propagates the persisted `dispatchState` field across the
+  // boundary so recovered tasks reflect their pre-restart dispatch state.
   // ---------------------------------------------------------------------------
-  describe("recoverOnStartup preserves dispatchState (T0.14, AC-5)", () => {
+  describe("recoverOnStartup preserves dispatchState", () => {
     it("propagates dispatchState='notified' from disk into the recovered task", () => {
       const testDir = safePath(tmpdir(), `comis-bg-mgr-disp-${randomUUID()}`);
       mkdirSync(testDir, { recursive: true });

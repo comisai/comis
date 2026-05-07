@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Phase 10 (Plan 15-08) — output retention housekeeper behavior tests.
+// Output retention housekeeper behavior tests.
 //
 // These tests exercise the actual housekeeper behavior beyond the
-// 15-01 signature checks in setup-output-retention.test.ts:
+// signature checks in setup-output-retention.test.ts:
 //   - per-class retention: files older than class.retentionMs are deleted;
 //     younger files preserved.
 //   - disk usage trends down on a synthetic load (size sum decreases).

@@ -75,11 +75,11 @@ export interface PostExecutionBridgeResult {
   cacheWrite5mTokens?: number;
   /** Estimated 1h TTL cache write tokens from TTL split data. */
   cacheWrite1hTokens?: number;
-  /** 1.3: Session-cumulative total cost across all turns (USD). */
+  /** Session-cumulative total cost across all turns (USD). */
   sessionCostUsd?: number;
-  /** 1.3: Session-cumulative cache savings across all turns (USD). */
+  /** Session-cumulative cache savings across all turns (USD). */
   sessionCacheSavedUsd?: number;
-  /** 1.5: Thinking tokens from SDK reasoningTokens field. */
+  /** Thinking tokens from SDK reasoningTokens field. */
   thinkingTokens?: number;
   // Per-execute diagnostic counters surfaced into the bookend log.
   /** Number of pre-LLM-call hash-assertion walks performed (one per turn_start). */
@@ -99,17 +99,16 @@ export interface PostExecutionBridgeResult {
 export interface PostExecutionBridge {
   getResult(): PostExecutionBridgeResult;
   /**
-   * Phase 4 (Plan 15-05 / R4): expose the bridge-owned drain inflight gate
-   * so postExecution can fire an end-of-turn backstop `drainAt(...)`. The
-   * bridge already drains on `tool_execution_end` for `message` actions
-   * (B15 inline-consumption); the end-of-turn backstop closes the residual
-   * race for turns that never invoked the `message` tool but still need
-   * the inline-consumption queue flipped (NO_REPLY-only turns, sentinel
-   * passes, etc.).
+   * Expose the bridge-owned drain inflight gate so postExecution can fire
+   * an end-of-turn backstop `drainAt(...)`. The bridge already drains on
+   * `tool_execution_end` for `message` actions (inline-consumption); the
+   * end-of-turn backstop closes the residual race for turns that never
+   * invoked the `message` tool but still need the inline-consumption
+   * queue flipped (NO_REPLY-only turns, sentinel passes, etc.).
    *
    * Both call sites share the SAME composite key gate map so concurrent
    * drains for the same `(agentId, channelType, channelId)` triple
-   * collapse to a single in-flight Promise (T0.25).
+   * collapse to a single in-flight Promise.
    */
   getDrainState(): DrainInflightState;
 }
@@ -123,8 +122,8 @@ export interface PostExecutionParams {
   msg: NormalizedMessage;
   sessionKey: SessionKey;
   formattedKey: string;
-  /** Resolver-aligned key for activeRunRegistry.deregister. Same formula as
-   *  the register call at pi-executor.ts:~1015 — T0.27h locks the contract. */
+  /** Resolver-aligned key for activeRunRegistry.deregister. Must match the
+   *  formula used at the corresponding register call site. */
   resolverRegisterKey: string;
   agentId: string | undefined;
   executionStartMs: number;
@@ -309,23 +308,14 @@ export function resetPairedMemoryDedupForTests(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4 (Plan 15-05 / R4 / AC-6) drain-seam re-exports.
+// Drain-seam re-exports.
 //
 // Canonical implementations live in ./drain-helper.ts so the bridge
 // (packages/agent/src/bridge/pi-event-bridge.ts) can import them without
 // creating a cycle through pi-executor.js. The bridge owns the
 // `drainInflightByKey: Map<string, Promise<void>>` gate state in
 // `BridgeMetricsState` and threads it into drainAt at the
-// `tool_execution_end` call site (B15 inline-consumption + composite
-// drain).
-//
-// Re-exporting here keeps the source-grep markers on this file -- T0.2
-// (tryGetContext), T0.3 (markConsumed), T0.4 (markRead/drainAt), T0.5
-// (effectiveAgentId near drainAt/markRead), T0.24 (drainAt with agentId),
-// T0.25 (drainInflightByKey single-tick gate), T0.28 (tryGetContext
-// no-op) all source-grep this file. The actual call site that drives
-// T0.5 is the explicit drainAt(...) invocation in postExecution() near
-// the end of this file.
+// `tool_execution_end` call site (inline-consumption + composite drain).
 // ---------------------------------------------------------------------------
 export {
   drainAt,
@@ -366,13 +356,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     executionCacheRetentionClear, adaptiveRetentionClear,
   } = params;
 
-  // Phase 4 (Plan 15-05 / R4 / AC-6): hoist effectiveAgentId normalization to
-  // the TOP of the function so all downstream branches (silent-sentinel gate,
-  // memory-store path, drainAt call site, skip-log debug branches) share the
-  // same normalized value. Pre-Phase-4 this was computed inside the memory-
-  // store branch only (line ~593), which left other paths reading the
-  // unnormalized `agentId` (undefined / empty / "" mixed across multi-agent
-  // runs). Closing RC-2 residual requires uniformity (T0.5, T0.24).
+  // Hoist effectiveAgentId normalization to the TOP of the function so all
+  // downstream branches (silent-sentinel gate, memory-store path, drainAt
+  // call site, skip-log debug branches) share the same normalized value.
+  // Multi-agent isolation requires uniformity across all paths.
   const effectiveAgentId = agentId ?? "default";
 
   unsubscribe();
@@ -408,7 +395,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     result.errorContext.failingTool = bridgeResult.lastActiveToolName;
   }
 
-  // R-13: Delegate token totals to SDK session stats (single source of truth).
+  // Delegate token totals to SDK session stats (single source of truth).
   // Cost stays from bridge for consistency with per-turn observability events.
   // Per-turn event emission in bridge remains manual (SDK stats are cumulative only).
   mergeSessionStats(result, () => session.getSessionStats());
@@ -511,7 +498,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       comisEstimatedTtlSplit: (bridgeResult.cacheWrite5mTokens ?? 0) > 0 || (bridgeResult.cacheWrite1hTokens ?? 0) > 0,
       costUsd: result.cost.total,
       cacheSavedUsd: result.cost.cacheSaved ?? 0,
-      // 1.3: Session-cumulative cost fields (alongside per-turn costUsd/cacheSavedUsd)
+      // Session-cumulative cost fields (alongside per-turn costUsd/cacheSavedUsd)
       sessionCostUsd: bridgeResult.sessionCostUsd ?? 0,
       sessionCacheSavedUsd: bridgeResult.sessionCacheSavedUsd ?? 0,
       // Session cache savings rate
@@ -559,7 +546,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         postBatchContinuationAttempts: result.continuationMetrics.attempts,
         postBatchContinuationOutcome: result.continuationMetrics.outcome,
       }),
-      // 1.5 + 3.2: Thinking token tracking (conditional -- only when thinking tokens detected)
+      // Thinking token tracking (conditional -- only when thinking tokens detected)
       ...(bridgeResult.thinkingTokens != null && bridgeResult.thinkingTokens > 0 && {
         thinkingTokens: bridgeResult.thinkingTokens,
         totalOutputTokens: result.tokensUsed.output ?? 0,
@@ -644,12 +631,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   const skipMemoryForOperation =
     operationType != null && MEMORY_SKIP_OPERATIONS.has(operationType);
 
-  // Layer 0 (Phase 15 v12 / B38): silent sentinels never enter memory.
-  // Closes RC-4. Idempotent under stripReplyTags + trim per @comis/shared
-  // silent-tokens.ts JSDoc contract (B46). The check happens BEFORE the
-  // operationType + content-hash dedup gates so that even when the response
-  // would otherwise pass those gates, a `NO_REPLY` / `HEARTBEAT_OK` / `[SILENT]`
-  // sentinel is rejected from memory persistence. T0.34 + T0.36 + T0.37 enforce.
+  // Layer 0: silent sentinels never enter memory. Idempotent under
+  // stripReplyTags + trim per @comis/shared silent-tokens.ts JSDoc
+  // contract. The check happens BEFORE the operationType + content-hash
+  // dedup gates so that even when the response would otherwise pass those
+  // gates, a `NO_REPLY` / `HEARTBEAT_OK` / `[SILENT]` sentinel is rejected
+  // from memory persistence.
   const isSilent = !!(deps.memoryPort && result.response && msg.text && isSilentResponse(result.response));
   if (isSilent) {
     deps.logger.debug(
@@ -716,23 +703,22 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     }
   }
 
-  // Phase 4 (Plan 15-05 / R4 / B15): end-of-turn backstop drain.
+  // End-of-turn backstop drain.
   //
   // The bridge fires `drainAt(...)` on `tool_execution_end` for successful
-  // `message(send|reply|attach)` calls (the primary B15 inline-consumption
+  // `message(send|reply|attach)` calls (the primary inline-consumption
   // call site). The end-of-turn call site below is the BACKSTOP for turns
   // that produced a response WITHOUT invoking the message tool (NO_REPLY-
   // only turns, sentinel-passthrough turns, error paths). Both call sites
   // share the SAME composite-key inflight gate (`drainInflightByKey`) so a
   // bridge-fired drain in flight collapses any backstop drain for the same
-  // composite key (T0.25 single-tick gate).
+  // composite key (single-tick gate).
   //
-  // The drain key is composed from `effectiveAgentId` (R4 / AC-6
-  // multi-agent isolation per T0.24) + `msg.channelType` + `msg.channelId`.
-  // markRead and markConsumed inside drainAt read tool context via
-  // tryGetContext() (T0.2, T0.28); when the executor runs outside an
-  // AsyncLocalStorage scope (e.g., tests with no runWithContext wrapper)
-  // the helpers fall through silently.
+  // The drain key is composed from `effectiveAgentId` (multi-agent
+  // isolation) + `msg.channelType` + `msg.channelId`. markRead and
+  // markConsumed inside drainAt read tool context via tryGetContext();
+  // when the executor runs outside an AsyncLocalStorage scope (e.g.,
+  // tests with no runWithContext wrapper) the helpers fall through silently.
   const drainKey: DrainKey = {
     agentId: effectiveAgentId,
     channelType: msg.channelType,
@@ -742,7 +728,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // do the same internally, but reading once here lets us correlate the
   // backstop-drain log line with the request's traceId without re-deriving
   // it inside the helper. Returns undefined outside any request scope --
-  // markRead/markConsumed handle that path silently (T0.28).
+  // markRead/markConsumed handle that path silently.
   const drainCtx = tryGetContext();
   if (drainCtx) {
     deps.logger.debug(
@@ -756,15 +742,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       "End-of-turn drain backstop firing",
     );
   }
-  // T0.5 marker: effectiveAgentId is threaded directly into the drainAt
-  // composite key. The duplicate inline reference is intentional -- it
-  // provides the source-grep pairing for AC-6 (multi-agent normalization
-  // shares one effectiveAgentId across the silent-sentinel gate, the
-  // memory-store path, AND the drainAt call site).
   drainAt({ agentId: effectiveAgentId, channelType: drainKey.channelType, channelId: drainKey.channelId }, bridge.getDrainState(), deps.logger);
 
-  // Deregister active run before dispose. Same resolver-aligned key as
-  // the register call at pi-executor.ts:~1015 — T0.27h locks the contract.
+  // Deregister active run before dispose. Must use the same resolver-aligned
+  // key formula as the corresponding register call site.
   if (deps.activeRunRegistry) {
     deps.activeRunRegistry.deregister(resolverRegisterKey);
   }

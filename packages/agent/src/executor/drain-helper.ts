@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 4 (Plan 15-05 / R4 / AC-6) inline-consumption drain seams.
+ * Inline-consumption drain seams.
  *
- * Per design §"Phase 4" (B15 inline-consumption + composite drain), the
- * drain trigger lives at the BRIDGE call site (`tool_execution_end` for
+ * The drain trigger lives at the BRIDGE call site (`tool_execution_end` for
  * `message` send/reply/attach) -- NOT in pi-executor.ts. The helpers in
  * this module are what the bridge invokes:
  *
  *   - markRead(key):     mark inbound messages for the composite key as read.
  *                        Reads tool context via `tryGetContext()` so the
- *                        function does NOT take a passed-in deps object
- *                        (R4, AC-6). No-op outside an AsyncLocalStorage
- *                        scope (T0.28).
+ *                        function does NOT take a passed-in deps object.
+ *                        No-op outside an AsyncLocalStorage scope.
  *
  *   - markConsumed(key): mark inbound messages for the composite key as
  *                        consumed by the agent's response. Same context
@@ -21,22 +19,21 @@
  *                        a per-composite-key single-tick inflight gate
  *                        (`drainInflightByKey: Map<string, Promise<void>>`).
  *                        Concurrent calls for the same composite key
- *                        return immediately (T0.25); concurrent calls for
+ *                        return immediately; concurrent calls for
  *                        DIFFERENT composite keys (different agentId /
- *                        channelType / channelId) drain independently
- *                        (T0.24). Failures are non-fatal: suppressError +
- *                        structured WARN log (T0.26). The
- *                        drainInflightByKey state is owned by the bridge
- *                        (BridgeMetricsState) so the bridge threads it
- *                        into drainAt at each call site.
+ *                        channelType / channelId) drain independently.
+ *                        Failures are non-fatal: suppressError +
+ *                        structured WARN log. The drainInflightByKey state
+ *                        is owned by the bridge (BridgeMetricsState) so
+ *                        the bridge threads it into drainAt at each call
+ *                        site.
  *
  * The actual inline-consumption queue does not exist as a concrete data
- * structure today -- the Phase-4 contract is the structural seam. Future
- * plans (RC-5 §9-A; output retention §10) plug their queue/state into
- * `tryGetContext()` so markRead / markConsumed read it without re-threading
- * through every caller. Today the helpers are observability-only stubs
- * that log at DEBUG when context is present and fall through silently when
- * outside any request scope.
+ * structure today -- this module provides the structural seam. Future
+ * work plugs queue/state into `tryGetContext()` so markRead / markConsumed
+ * read it without re-threading through every caller. Today the helpers
+ * are observability-only stubs that log at DEBUG when context is present
+ * and fall through silently when outside any request scope.
  *
  * This module lives in `packages/agent/src/executor/` (not in the bridge)
  * so executor-post-execution.ts can re-export the helpers for source-grep
@@ -59,9 +56,8 @@ import { suppressError } from "@comis/shared";
  * Composite drain key uniquely identifies the inline-consumption queue
  * partition for a single (agent, channel, channel-id) triple.
  *
- * Same shape as `BackgroundSessionResolver.ActiveSessionKey` (Plan 15-03)
- * so a single triple is reusable across the bridge / resolver / drain
- * surface (R3 + R4 alignment).
+ * Same shape as `BackgroundSessionResolver.ActiveSessionKey` so a single
+ * triple is reusable across the bridge / resolver / drain surface.
  */
 export interface DrainKey {
   agentId: string;
@@ -75,7 +71,7 @@ export interface DrainKey {
  * Owned by the bridge (`BridgeMetricsState.drainInflightByKey`) and
  * threaded into `drainAt` at each call site. A `Map` (rather than a single
  * `drainInflight: Promise`) is required so concurrent drains for DIFFERENT
- * composite keys can run independently (T0.24 multi-agent isolation).
+ * composite keys can run independently (multi-agent isolation).
  */
 export interface DrainInflightState {
   drainInflightByKey: Map<string, Promise<void>>;
@@ -98,10 +94,10 @@ export function formatDrainKey(key: DrainKey): string {
 /**
  * Mark inbound messages for the composite drain key as read.
  *
- * Reads tool context via `tryGetContext()` (R4) -- when called outside any
+ * Reads tool context via `tryGetContext()` -- when called outside any
  * AsyncLocalStorage scope (test fixture, sub-agent path), this is a silent
- * no-op (T0.28). Otherwise emits a DEBUG-level observability log so
- * operators can correlate drain activity with ALS context propagation.
+ * no-op. Otherwise emits a DEBUG-level observability log so operators can
+ * correlate drain activity with ALS context propagation.
  *
  * @param key - Composite drain key (agentId, channelType, channelId).
  * @param logger - Logger for the (rare) DEBUG observability path.
@@ -132,7 +128,7 @@ export function markRead(key: DrainKey, logger: ComisLogger): void {
  * Mark inbound messages for the composite drain key as consumed.
  *
  * Same context contract as `markRead`. No-op outside AsyncLocalStorage
- * scope (T0.28).
+ * scope.
  *
  * @param key - Composite drain key (agentId, channelType, channelId).
  * @param logger - Logger for the (rare) DEBUG observability path.
@@ -173,15 +169,14 @@ async function runOneDrainPass(key: DrainKey, logger: ComisLogger): Promise<void
  * `message(send|reply|attach)` calls. Runs `markRead` + `markConsumed`
  * under a per-composite-key inflight gate so:
  *   - Concurrent drains for the SAME composite key return immediately
- *     (T0.25 lock-safe drain).
+ *     (lock-safe drain).
  *   - Concurrent drains for DIFFERENT composite keys (different
- *     agentId / channelType / channelId) run independently (T0.24
- *     multi-agent isolation).
+ *     agentId / channelType / channelId) run independently (multi-agent
+ *     isolation).
  *
  * Failures are non-fatal: a per-event `.catch(...)` logs WARN with `hint`
  * + `errorKind`, and the outer `suppressError` ensures the bridge's
- * `tool_execution_end` propagation is never aborted by drain misbehavior
- * (T0.26).
+ * `tool_execution_end` propagation is never aborted by drain misbehavior.
  *
  * Map-entry cleanup (`.delete(formatted)` in `.finally(...)`) is required
  * to prevent unbounded growth across long-running sessions; the entry is
@@ -225,6 +220,6 @@ export function drainAt(
   state.drainInflightByKey.set(formatted, draining);
   // Belt-and-braces: outer suppressError ensures the bridge's
   // tool_execution_end propagation is NEVER aborted by drain misbehavior
-  // (T0.26 fire-and-forget contract).
+  // (fire-and-forget contract).
   suppressError(draining, "drain at bridge call site (B15)");
 }

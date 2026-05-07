@@ -11,12 +11,11 @@ export type { BackgroundTaskOrigin };
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "cancelled";
 
 /**
- * Notification policy for a background task. Typed enum (NOT a boolean) per
- * Phase 15 v12 D-S1: preserves intent across restart-recovery so the recovered
- * task's dispatch path matches its original promote-time intent. A boolean
- * collapses to true/false on rehydrate and loses the distinction between
- * "the operator wanted deferred routing" and "the operator wanted immediate
- * notification".
+ * Notification policy for a background task. Typed enum (NOT a boolean):
+ * preserves intent across restart-recovery so the recovered task's dispatch
+ * path matches its original promote-time intent. A boolean collapses to
+ * true/false on rehydrate and loses the distinction between "the operator
+ * wanted deferred routing" and "the operator wanted immediate notification".
  *
  * - "deferred"  — Default. Wait for the dispatcher to attempt session
  *                 re-entry; only fall back to user-visible notification
@@ -33,8 +32,8 @@ export type BackgroundTaskNotificationPolicy = "deferred" | "immediate" | "silen
 
 /**
  * Three-state session lifecycle for a background task's notification routing.
- * Per Phase 15 v12 D-S1 + D-S3: state-machine transitions are the single
- * source of truth for at-most-once fallback.
+ * State-machine transitions are the single source of truth for at-most-once
+ * fallback.
  *
  * - "pending"    — Promotion happened; no completion event yet (or completion
  *                   event arrived but dispatcher has not classified it).
@@ -57,12 +56,12 @@ export interface BackgroundTask {
    *  promote-time, persisted on disk, preserved across recoverOnStartup.
    *  Required (no silent fallback). */
   origin: BackgroundTaskOrigin;
-  /** Live notification policy (Phase 15 v12, D-S1). Optional for backward
-   *  compatibility; recovery defaults to "deferred" when absent. */
+  /** Live notification policy. Optional; recovery defaults to "deferred" when
+   *  absent. */
   notificationPolicy?: BackgroundTaskNotificationPolicy;
-  /** Live three-state session lifecycle (Phase 15 v12, D-S2). Optional for
-   *  backward compatibility; recovery defaults to "pending" when absent.
-   *  The dispatcher inspects this before firing notifyFn (D-S3). */
+  /** Live three-state session lifecycle. Optional; recovery defaults to
+   *  "pending" when absent. The dispatcher inspects this before firing
+   *  notifyFn. */
   dispatchState?: BackgroundSessionState;
   // In-memory only (not serialized):
   _promise?: Promise<unknown>;
@@ -83,16 +82,13 @@ export interface PersistedTaskState {
    *  survives daemon restarts. */
   origin: BackgroundTaskOrigin;
   /**
-   * Notification policy chosen at promote time. Optional for backward
-   * compatibility with legacy task files; recovery defaults to "deferred"
-   * when absent. (Phase 15 v12, D-S1.)
+   * Notification policy chosen at promote time. Optional; recovery defaults
+   * to "deferred" when absent.
    */
   notificationPolicy?: BackgroundTaskNotificationPolicy;
   /**
-   * Three-state session lifecycle. Optional for backward compatibility with
-   * pre-Phase-2 task files on disk; recovery defaults to "pending" when
-   * absent (Phase 15 v12, D-S2). The dispatcher inspects this before firing
-   * notifyFn (D-S3).
+   * Three-state session lifecycle. Optional; recovery defaults to "pending"
+   * when absent. The dispatcher inspects this before firing notifyFn.
    */
   dispatchState?: BackgroundSessionState;
 }

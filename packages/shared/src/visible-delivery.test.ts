@@ -2,10 +2,9 @@
 //
 // VisibleDeliveryRecord type/shape regression test.
 //
-// RED until 15-02 creates packages/shared/src/visible-delivery.ts.
 // The module is type-only at runtime, so we exercise it via a literal
-// value matching the documented shape (design §5: kind, channelType,
-// channelId, caption, deliveredAt). The test fails until the module exists.
+// value matching the documented shape: kind, channelType, channelId,
+// caption, deliveredAt.
 import { describe, it, expect } from "vitest";
 
 async function loadVisibleDelivery(): Promise<Record<string, unknown> | undefined> {
@@ -19,7 +18,7 @@ async function loadVisibleDelivery(): Promise<Record<string, unknown> | undefine
 describe("VisibleDeliveryRecord shape (T0.34 supporting type)", () => {
   it("module exists and a literal value matches the documented shape", async () => {
     const mod = await loadVisibleDelivery();
-    // Module must exist post-15-02. Until then this fails.
+    // Module must exist.
     expect(mod).toBeDefined();
 
     // Construct a value that matches the documented shape (interface in

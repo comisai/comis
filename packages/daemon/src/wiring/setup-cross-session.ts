@@ -135,10 +135,10 @@ export function setupCrossSession(deps: {
     get(sessionKey: string): { abort(): Promise<void> } | undefined;
   };
   /**
-   * Optional composite-key resolver (R3, B37). Threaded into
-   * sub-agent-runner so abort paths use `(agentId, channelType,
-   * channelId)` instead of a single-arg formatted-key lookup. Daemon
-   * builds it via `createBackgroundSessionResolver({activeRunRegistry})`.
+   * Optional composite-key resolver. Threaded into sub-agent-runner so abort
+   * paths use `(agentId, channelType, channelId)` instead of a single-arg
+   * formatted-key lookup. Daemon builds it via
+   * `createBackgroundSessionResolver({activeRunRegistry})`.
    */
   sessionResolver?: {
     resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): { abort(): Promise<void> } | undefined;
@@ -716,14 +716,12 @@ export function setupCrossSession(deps: {
   };
 
   // Create dead-letter queue for failed announcement persistence (before batcher, so batcher can reference it)
-  // Phase 15.1-02 (WR-05 close): direct safePath composition replaces the
-  // earlier `resolve(...)` + `safePath(...)` two-step. AGENTS §2.2: all paths
-  // via safePath. safePath requires an absolute base (see PathTraversalError
-  // contract in packages/core/src/security/safe-path.ts), so when
-  // container.config.dataDir is unset we fall back to process.cwd() — the
-  // exact behavior of the prior `resolve(".")` step (path.resolve(".") ===
-  // process.cwd()). process.cwd() is not banned by AGENTS §2.2 (only
-  // process.env and node:path's path.join/path.resolve are restricted).
+  // Direct safePath composition. AGENTS §2.2: all paths via safePath. safePath
+  // requires an absolute base (see PathTraversalError contract in
+  // packages/core/src/security/safe-path.ts), so when container.config.dataDir
+  // is unset we fall back to process.cwd(). process.cwd() is not banned by
+  // AGENTS §2.2 (only process.env and node:path's path.join/path.resolve are
+  // restricted).
   const deadLetterFilePath = safePath(container.config.dataDir || process.cwd(), "dead-letters.jsonl");
   const deadLetterQueue = createAnnouncementDeadLetterQueue({
     filePath: deadLetterFilePath,

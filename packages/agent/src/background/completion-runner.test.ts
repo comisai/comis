@@ -250,20 +250,14 @@ describe("createBackgroundCompletionRunner", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 15.1-03 (WR-02 close): two-phase commit on fallbackForTask.
+  // Two-phase commit on fallbackForTask.
   //
-  // Pre-fix: fallbackForTask called fallbackNotifyFn directly. After it
-  // returned, task.dispatchState was still its on-entry value (typically
-  // "pending"). On daemon SIGKILL between the await resolving and the next
-  // persist cycle, recovery loaded dispatchState != "notified", the
-  // dispatcher's at-most-once gate missed, and the runner re-fired the
-  // fallback -> user saw a duplicate notification.
-  //
-  // Post-fix: fallbackForTask now persists dispatchState="notified" via
+  // fallbackForTask persists dispatchState="notified" via
   // taskManager.transitionDispatchState BEFORE invoking fallbackNotifyFn.
   // The persist runs synchronously (persistTaskSync) so any SIGKILL after
   // the persist returns leaves the on-disk state at "notified" -> recovery
-  // sees the at-most-once gate fire -> no duplicate.
+  // sees the at-most-once gate fire -> no duplicate. Without this ordering,
+  // the gate would miss and the user would see a duplicate notification.
   // -------------------------------------------------------------------------
   it("WR-02: fallbackForTask persists dispatchState='notified' BEFORE firing fallbackNotifyFn (two-phase commit)", async () => {
     // Hop cap path is the simplest reach to fallbackForTask. With
@@ -362,18 +356,6 @@ describe("createBackgroundCompletionRunner", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Phase 9b: trace continuity sub-tests (RC-8)
-//
-// T0.29a — traceId from task.origin propagates into the synthetic
-//          NormalizedMessage.metadata.traceId. Already true in current code;
-//          regression guard.
-// T0.29b — background_task:reentered event payload includes traceId. NEW —
-//          Phase 9b extends the event schema. RED until 15-07.
-// T0.29c — Operator-facing log lines on completion-runner WARN/INFO paths
-//          include traceId from origin. NEW — currently log.info({...}) calls
-//          don't all include traceId. RED until 15-07.
-// ---------------------------------------------------------------------------
 describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
@@ -450,8 +432,6 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    // Pre-Phase-9b: event payload does NOT include traceId.
-    // Post-Phase-9b: event payload includes traceId.
     expect(reenteredEvents.length).toBeGreaterThanOrEqual(1);
     expect(reenteredEvents[0]!.traceId).toBe(traceId);
     await runner.shutdown();
@@ -477,8 +457,6 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    // Pre-Phase-9b: the log line does NOT include traceId.
-    // Post-Phase-9b: at least one logger call includes traceId from origin.
     const childLogger = (logger as unknown as { child: ReturnType<typeof vi.fn> }).child.mock?.results?.[0]?.value
       ?? logger;
     const allCalls: unknown[][] = [];

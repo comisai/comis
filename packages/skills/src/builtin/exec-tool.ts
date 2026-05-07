@@ -279,8 +279,8 @@ const SECRET_REF_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
  * Returns env vars (PATH, MPLCONFIGDIR, XDG_CACHE_HOME, MPLBACKEND,
  * PIP_DISABLE_PIP_VERSION_CHECK) derived from `workspaceDir` so python /
  * matplotlib subprocesses do NOT inherit the daemon's host PATH or
- * cache-dir defaults. Closes RC-7 (15s pip-install hot path; matplotlib
- * Fontconfig error from a non-writable default cache dir).
+ * cache-dir defaults. (15s pip-install hot path; matplotlib Fontconfig
+ * error from a non-writable default cache dir).
  *
  * Defined inline to avoid a cross-package import from `@comis/agent`
  * (`@comis/skills` does not depend on `@comis/agent` -- they are siblings
@@ -289,11 +289,10 @@ const SECRET_REF_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
  * import" precedent). The shape mirrors
  * `packages/agent/src/workspace/data-env.ts` verbatim; if the contract
  * diverges, lift this into `@comis/shared`. The agent-side `data-env.ts`
- * remains the canonical owner -- T0.17 source-grep enforces the
- * no-host-env contract there.
+ * remains the canonical owner of the no-host-env contract.
  *
- * Per CONTEXT D-W1: this helper does NOT read host env. The values are
- * pure derivations from workspaceDir + safePath (no path.join).
+ * This helper does NOT read host env. The values are pure derivations
+ * from workspaceDir + safePath (no path.join).
  */
 function resolveDataEnv(opts: { workspaceDir: string }): Record<string, string> {
   const venvBin = safePath(opts.workspaceDir, "venv", "bin");
@@ -574,7 +573,7 @@ export function createExecTool(
         // Build environment (use filtered subprocess env instead of raw process.env).
         const baseEnv = subprocessEnv ?? (process.env as Record<string, string>);
 
-        // RC-7 (Phase 8): if the workspace has a pre-warmed venv, override
+        // If the workspace has a pre-warmed venv, override
         // PATH / MPLCONFIGDIR / XDG_CACHE_HOME / MPLBACKEND /
         // PIP_DISABLE_PIP_VERSION_CHECK with workspace-internal values via
         // resolveDataEnv. This:
@@ -600,7 +599,7 @@ export function createExecTool(
             "Exec workspace venv detected",
           );
           // resolveDataEnv (data-env.ts:48) returns PATH=<venvBin> only, by
-          // design: AC-7 forbids any process.env read inside data-env.ts.
+          // design: forbids any process.env read inside data-env.ts.
           // Without this prepend the merged env's PATH would shrink to just
           // the venv bin dir, breaking every subprocess that calls bash, sh,
           // node, git, curl, etc. The merge here keeps venv binaries first

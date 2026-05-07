@@ -231,9 +231,9 @@ vi.mock("../bridge/pi-event-bridge.js", () => ({
     listener: mockBridgeListener,
     getResult: mockGetResult,
     addGhostCost: vi.fn(),
-    // Phase 4 (Plan 15-05 / R4): bridge owns the drain inflight gate so
-    // postExecution can fire an end-of-turn backstop drainAt sharing the
-    // same composite-key Map. The mock returns a fresh Map per construction.
+    // Bridge owns the drain inflight gate so postExecution can fire an
+    // end-of-turn backstop drainAt sharing the same composite-key Map.
+    // The mock returns a fresh Map per construction.
     getDrainState: () => ({ drainInflightByKey: new Map<string, Promise<void>>() }),
   }),
 }));
@@ -1221,9 +1221,8 @@ describe("PiExecutor", () => {
           listener: mockBridgeListener,
           getResult: mockGetResult,
           addGhostCost: vi.fn(),
-          // Phase 4 (Plan 15-05 / R4): same drain-state stub as the top-level
-          // mock so the per-test override in this it() block matches the
-          // PostExecutionBridge interface.
+          // Same drain-state stub as the top-level mock so the per-test
+          // override in this it() block matches the PostExecutionBridge interface.
           getDrainState: () => ({ drainInflightByKey: new Map<string, Promise<void>>() }),
         };
       });
@@ -2766,7 +2765,7 @@ describe("PiExecutor", () => {
 
       expect(mockRegistry.register).toHaveBeenCalledTimes(1);
       const [registeredKey, registeredHandle] = mockRegistry.register.mock.calls[0];
-      // Phase 15.1-01 (RC-1 close): register key mirrors BackgroundSessionResolver.formatComposite:
+      // Register key mirrors BackgroundSessionResolver.formatComposite:
       //   formatSessionKey({tenantId: "default", channelId: "test:c1", userId: "c1"}) = "default:c1:test:c1"
       // testSessionKey {tenantId: "t1", userId: "u1", channelId: "c1"} → no longer the register key.
       expect(registeredKey).toBe("default:c1:test:c1");

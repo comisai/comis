@@ -118,12 +118,12 @@ export interface MultiActionDispatchConfig<T extends TSchema> {
    * merged into `jsonResult(result).details`.
    *
    * Used by `message(action='attach')` to capture `visibleDelivery` for JSONL
-   * persistence (Phase 5, B33, R5 invariant 37). Caller-driven — the factory
-   * itself does not assume any specific augmentation shape.
+   * persistence. Caller-driven — the factory itself does not assume any
+   * specific augmentation shape.
    *
    * The augmenter MUST NOT touch `wrapped.content` — the OpenAI Responses
-   * converter strips `msg.content` only (R5 invariant 37), so anything in
-   * `details` is JSONL-only and never re-enters the prompt context.
+   * converter strips `msg.content` only, so anything in `details` is
+   * JSONL-only and never re-enters the prompt context.
    */
   augmentDetails?: Partial<Record<string, (params: Record<string, unknown>, result: unknown) => Record<string, unknown>>>;
 }
@@ -135,7 +135,7 @@ export interface MultiActionDispatchConfig<T extends TSchema> {
  * Handles the common pattern: action validation via readEnumParam +
  * action handler dispatch + jsonResult + error handling. Optionally
  * augments the returned `details` field via `config.augmentDetails[action]`
- * (Phase 5 / B33 — see `MultiActionDispatchConfig.augmentDetails`).
+ * (see `MultiActionDispatchConfig.augmentDetails`).
  *
  * @param config - Tool configuration
  * @param rpcCall - RPC call function
@@ -164,11 +164,11 @@ export function createMultiActionDispatchTool<T extends TSchema>(
         );
         const result = await config.actionHandler(action, p, rpcCall);
         const wrapped = jsonResult(result);
-        // B33: opt-in details augmentation per design §"Phase 5". Caller registers
-        // a per-action augmenter; the factory merges its output into details.
+        // Opt-in details augmentation. Caller registers a per-action
+        // augmenter; the factory merges its output into details.
         // The augmenter MUST NOT touch `wrapped.content` — the OpenAI Responses
-        // converter strips msg.content only (R5 invariant 37), so anything in
-        // details is JSONL-only and never re-enters the prompt context.
+        // converter strips msg.content only, so anything in details is
+        // JSONL-only and never re-enters the prompt context.
         const augmenter = config.augmentDetails?.[action];
         if (augmenter) {
           const augmented = augmenter(p, result);

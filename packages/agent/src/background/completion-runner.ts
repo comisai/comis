@@ -51,14 +51,13 @@ export interface BackgroundCompletionRunnerDeps {
   getExecutor: (agentId: string) => AgentExecutor;
   sessionStore: RunnerSessionStore;
   /**
-   * Phase 15.1-03 (WR-02 close): widened from `"getTask"` to also include
-   * `transitionDispatchState`. fallbackForTask uses transitionDispatchState
-   * to persist `dispatchState = "notified"` BEFORE firing
-   * `fallbackNotifyFn`, so a daemon SIGKILL between persist and fire does
-   * NOT leak a duplicate notification on recovery (D-S3 at-most-once gate
-   * binds against on-disk state). The daemon-side wiring at
+   * Includes `transitionDispatchState` in addition to `getTask`. fallbackForTask
+   * uses transitionDispatchState to persist `dispatchState = "notified"` BEFORE
+   * firing `fallbackNotifyFn`, so a daemon SIGKILL between persist and fire does
+   * NOT leak a duplicate notification on recovery (the at-most-once gate binds
+   * against on-disk state). The daemon-side wiring at
    * setup-background-completion-runner.ts already passes a manager with
-   * both methods, so no daemon-side change is required.
+   * both methods.
    */
   taskManager: Pick<BackgroundTaskManager, "getTask" | "transitionDispatchState">;
   fallbackNotifyFn: NotifyFn;
@@ -104,29 +103,28 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // Phase 15 v12 (D-S3 at-most-once): the dispatcher subscribed BEFORE this
-    // runner (see setup-background-completion-runner.ts) and already
-    // transitioned task.dispatchState. When state is "notified", the
-    // dispatcher fired the user-visible fallback; the runner stays out of
-    // the way to enforce single-owner notification routing (AC-1: zero
-    // spurious outbound).
+    // At-most-once: the dispatcher subscribed BEFORE this runner (see
+    // setup-background-completion-runner.ts) and already transitioned
+    // task.dispatchState. When state is "notified", the dispatcher fired
+    // the user-visible fallback; the runner stays out of the way to
+    // enforce single-owner notification routing (zero spurious outbound).
     if (task.dispatchState === "notified") {
       log.debug(
         {
           taskId,
           dispatchState: task.dispatchState,
-          // Phase 9b: include originating traceId so operator log streams stay
+          // Include originating traceId so operator log streams stay
           // continuous across the dispatcher / runner boundary.
           traceId: task.origin?.traceId ?? undefined,
-          hint: "Dispatcher already fired fallback notification (D-S3 at-most-once)",
+          hint: "Dispatcher already fired fallback notification (at-most-once)",
         },
         "Background completion runner: skipped (dispatcher fired fallback)",
       );
       return;
     }
 
-    // Phase 14+: origin is producer-required (background-task-manager
-    // promote() rejects missing-origin) so we read it directly.
+    // origin is producer-required (background-task-manager promote()
+    // rejects missing-origin) so we read it directly.
     const origin = task.origin;
 
     // Hop cap. Read incoming hop count from origin (schema field populated
@@ -140,7 +138,7 @@ export function createBackgroundCompletionRunner(
           agentId: origin.agentId,
           hopCount: nextHopCount,
           max: deps.maxBackgroundHops,
-          // Phase 9b: traceId from origin keeps operator logs threaded.
+          // traceId from origin keeps operator logs threaded.
           traceId: origin.traceId ?? undefined,
         },
         "Background completion: hop cap reached, falling back to user notification",
@@ -158,18 +156,17 @@ export function createBackgroundCompletionRunner(
     // originating session may have ended (user closed the channel) OR may live
     // in JSONL but not be currently registered. Either way, there is no
     // streaming channel to inject into, so skip fallback (which would only
-    // produce a WARN from notification-service). Phase 9a corrects misleading
-    // "session expired" copy in place — observability hygiene only (D-X1).
+    // produce a WARN from notification-service).
     const sessionExists = deps.sessionStore.loadByFormattedKey(origin.sessionKey) !== undefined;
     if (!sessionExists) {
       log.info(
         {
           taskId,
           sessionKey: origin.sessionKey,
-          // Phase 9b (T0.29c): traceId from origin so this INFO log line stays
-          // threaded with the originating request's trace stream even though
-          // the runner runs in a background context (the ALS traceId at this
-          // point may differ from origin.traceId).
+          // traceId from origin so this INFO log line stays threaded with the
+          // originating request's trace stream even though the runner runs in a
+          // background context (the ALS traceId at this point may differ from
+          // origin.traceId).
           traceId: origin.traceId ?? undefined,
           hint: "No active in-memory session for this sessionKey; runner will skip re-entry. Task result remains in JSONL for offline review.",
         },
@@ -185,7 +182,7 @@ export function createBackgroundCompletionRunner(
         {
           taskId,
           sessionKey: origin.sessionKey,
-          // Phase 9b: traceId from origin keeps operator logs threaded.
+          // traceId from origin keeps operator logs threaded.
           traceId: origin.traceId ?? undefined,
           hint: "Persisted sessionKey is malformed; cannot route announcement",
           errorKind: "internal" as const,
@@ -224,7 +221,7 @@ export function createBackgroundCompletionRunner(
         agentId: origin.agentId,
         toolName: task.toolName,
         hopCount: nextHopCount,
-        // Phase 9b: traceId from origin keeps debug logs threaded.
+        // traceId from origin keeps debug logs threaded.
         traceId: origin.traceId ?? undefined,
       },
       "Background completion runner: invoking executor",
@@ -233,9 +230,9 @@ export function createBackgroundCompletionRunner(
     // Emit background_task:reentered immediately before executor.execute().
     // Integration tests compute p95 latency from
     // background_task:completed.timestamp to this event's timestamp.
-    // Phase 9b (T0.29b): include traceId from origin so subscribers (and
-    // operator log streams) preserve the originating request's trace across
-    // the background_task:completed → :reentered boundary.
+    // Include traceId from origin so subscribers (and operator log streams)
+    // preserve the originating request's trace across the
+    // background_task:completed → :reentered boundary.
     deps.eventBus.emit("background_task:reentered", {
       taskId: task.id,
       agentId: origin.agentId,
@@ -259,7 +256,7 @@ export function createBackgroundCompletionRunner(
         {
           taskId,
           err,
-          // Phase 9b: traceId from origin keeps the WARN line threaded.
+          // traceId from origin keeps the WARN line threaded.
           traceId: origin.traceId ?? undefined,
           hint: "Executor failed mid-completion turn; subscription remains active",
           errorKind: "internal" as const,
@@ -270,7 +267,7 @@ export function createBackgroundCompletionRunner(
   }
 
   /**
-   * Phase 15.1-03 (WR-02 close): two-phase commit.
+   * Two-phase commit:
    *
    * 1. transitionDispatchState(taskId, "notified") — synchronously persists
    *    `dispatchState = "notified"` to disk (via persistTaskSync inside the
@@ -284,8 +281,7 @@ export function createBackgroundCompletionRunner(
    *    notification. May reject (channel offline, rate-limited, etc.); the
    *    failure is logged at WARN. The persisted state stays at "notified" —
    *    the user did not see the notification, but the at-most-once contract
-   *    takes precedence over delivery completeness in the design's D-S3
-   *    disposition.
+   *    takes precedence over delivery completeness.
    */
   async function fallbackForTask(taskId: string, agentId: string, toolName: string, message: string): Promise<void> {
     // Phase 1: persist state. transitionDispatchState may return false if

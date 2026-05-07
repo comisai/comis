@@ -17,7 +17,7 @@ export type {
 // runtime const from `completion-dispatcher.ts` only when the identifier
 // is exported once per namespace; consumers needing the type-only alias
 // must import directly from `./background-task-types.js`. Public consumers
-// outside this package use the runtime value (matches T0.12 contract).
+// outside this package use the runtime value.
 export type { BackgroundTaskNotificationPolicy as BackgroundTaskNotificationPolicyType } from "./background-task-types.js";
 export type { BackgroundTaskOrigin } from "@comis/core";
 export {

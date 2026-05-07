@@ -9,9 +9,8 @@ import { z } from "zod";
  * runs at intervalMs, scans output/, deletes files whose age exceeds
  * the class-specific retentionMs.
  *
- * Phase 10 housekeeper consumes JSONL details.visibleDelivery (R8, D-O1)
- * for offline analysis; per-class retention bounds the JSONL persistence
- * cost (closes the loop with cherry-pick D-J1).
+ * The housekeeper consumes JSONL details.visibleDelivery for offline
+ * analysis; per-class retention bounds the JSONL persistence cost.
  *
  * Per AGENTS §6.4: schema follows `z.strictObject` + `.default()` + `z.infer`
  * (mirrors schema-background-tasks.ts). Wired into AppConfigSchema as a

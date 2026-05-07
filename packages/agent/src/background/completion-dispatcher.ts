@@ -1,31 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Completion dispatcher: routes background_task:completed/failed events
- * through the BackgroundSessionState machine. Closes RC-1 + RC-2.
+ * through the BackgroundSessionState machine.
  *
  * Subscribes to background_task:completed and background_task:failed BEFORE
- * the existing BackgroundCompletionRunner (Phase 14 wiring). On each event:
+ * the existing BackgroundCompletionRunner. On each event:
  *  1. Reads `task.dispatchState`.
  *  2. If "pending": transitions to "notified" only when the runner cannot
  *     re-enter the originating session (no active session for the formatted
  *     key, or recursion limit reached). Otherwise transitions to "dispatched"
  *     and lets the completion-runner perform re-entry.
- *  3. If already "notified" or "dispatched": no-op (D-S3 at-most-once).
+ *  3. If already "notified" or "dispatched": no-op (at-most-once).
  *
  * The runner is wired AFTER the dispatcher in setup-background-completion-
  * runner.ts so its handler reads the updated `task.dispatchState` and skips
  * its own work when state is "notified" (the dispatcher already fired
- * fallback). This single-owner contract closes RC-1 (completion runner
- * reads SQLite while chat sessions live in JSONL — the dispatcher routes
- * via persistent state instead of an in-memory event handler) and RC-2
- * (`complete()` unconditionally fires user-visible notification — the
- * dispatcher gates on state).
+ * fallback). This single-owner contract ensures the completion runner does
+ * not double-fire user-visible notifications: the dispatcher routes via
+ * persistent state instead of an in-memory event handler, and gates on
+ * state instead of unconditionally firing.
  *
  * **State persistence:** every transition calls `manager.transitionDispatch
  * State(taskId, next)` (when the manager exposes it) which mutates the
  * in-memory task AND calls persistTaskSync. Recovery-after-SIGKILL reads
  * the persisted state and the manager skips re-emitting completion events
- * for already-dispatched / already-notified tasks (AC-5).
+ * for already-dispatched / already-notified tasks.
  *
  * **Failure isolation:** each handler is wrapped in suppressError so a
  * single dispatch's failure does not tear down the subscription
@@ -46,7 +45,6 @@ import type { NotifyFn } from "./background-task-manager.js";
 
 // ---------------------------------------------------------------------------
 // Runtime constants exported for downstream consumers (test surface + ops).
-// T0.11 + T0.12 enforce shape.
 // ---------------------------------------------------------------------------
 
 /**
@@ -54,7 +52,7 @@ import type { NotifyFn } from "./background-task-manager.js";
  *   pending → (notified | dispatched).
  *
  * Exported as a `readonly string[]` so tests can assert
- * `STATES === ["pending", "notified", "dispatched"]` (T0.11).
+ * `STATES === ["pending", "notified", "dispatched"]`.
  */
 export const STATES: readonly BackgroundSessionState[] = [
   "pending",
@@ -64,14 +62,14 @@ export const STATES: readonly BackgroundSessionState[] = [
 
 /**
  * Notification policy as a runtime object so it round-trips through
- * JSON.parse(JSON.stringify(...)) preserving identity. T0.12 enforces:
- * a boolean would collapse to true/false on rehydrate and lose the
- * distinction between "deferred" / "immediate" / "silent".
+ * JSON.parse(JSON.stringify(...)) preserving identity. A boolean would
+ * collapse to true/false on rehydrate and lose the distinction between
+ * "deferred" / "immediate" / "silent".
  *
- * Per CONTEXT D-S1: the typed enum is the single source of truth. This
- * runtime object is a discoverability surface (tests, debugging, logs);
- * production code uses the type-only `BackgroundTaskNotificationPolicy`
- * from `background-task-types.ts`.
+ * The typed enum is the single source of truth. This runtime object is a
+ * discoverability surface (tests, debugging, logs); production code uses
+ * the type-only `BackgroundTaskNotificationPolicy` from
+ * `background-task-types.ts`.
  */
 export const BackgroundTaskNotificationPolicy: Record<string, NotificationPolicyType> = {
   DEFERRED: "deferred",
@@ -101,7 +99,7 @@ export interface DispatcherSessionStore {
  * `transitionDispatchState` is optional so the dispatcher composes cleanly
  * with the test fixture in completion-dispatcher.test.ts (which constructs
  * `taskManager: { getTask: vi.fn() }` and asserts the at-most-once gate
- * without exercising state persistence). Production wiring (Task 4) adds
+ * without exercising state persistence). Production wiring adds
  * `transitionDispatchState` on the real BackgroundTaskManager so the
  * recovery-after-SIGKILL contract is binding.
  */
@@ -157,8 +155,8 @@ export interface CompletionDispatcherDeps {
  * Wire the completion dispatcher against an event bus + task manager.
  * Subscriptions are installed synchronously; call shutdown() to remove them.
  *
- * Per CONTEXT D-S3 (at-most-once fallback): the state-machine transitions
- * on `task.dispatchState` are the single source of truth. The dispatcher's
+ * At-most-once fallback: the state-machine transitions on
+ * `task.dispatchState` are the single source of truth. The dispatcher's
  * synchronous transitionDispatchState runs BEFORE the completion-runner's
  * handler reads the updated state, by virtue of the event-bus subscribing
  * the dispatcher first (see setup-background-completion-runner.ts).
@@ -222,17 +220,17 @@ export function createCompletionDispatcher(
 
     const current: BackgroundSessionState = task.dispatchState ?? "pending";
 
-    // D-S3 at-most-once: state machine is the single source of truth.
+    // At-most-once: state machine is the single source of truth.
     if (current === "notified" || current === "dispatched") {
       log.debug(
         {
           taskId,
           dispatchState: current,
-          // Phase 9b (RC-8): traceId from task.origin so dispatcher logs
-          // stay threaded with the originating request even when the
-          // dispatcher runs from a background ALS context.
+          // traceId from task.origin so dispatcher logs stay threaded with
+          // the originating request even when the dispatcher runs from a
+          // background ALS context.
           traceId: task.origin?.traceId ?? undefined,
-          hint: "Task already dispatched/notified; no-op (D-S3 at-most-once)",
+          hint: "Task already dispatched/notified; no-op (at-most-once)",
         },
         "Completion dispatcher: at-most-once gate",
       );
@@ -240,7 +238,7 @@ export function createCompletionDispatcher(
     }
 
     // task.dispatchState === "pending". Decide which transition to make.
-    // Phase 14+: origin is producer-required; read it directly.
+    // origin is producer-required; read it directly.
     const origin = task.origin;
 
     // Hop cap (when configured). Recursion limit reached → fallback.
@@ -278,7 +276,7 @@ export function createCompletionDispatcher(
     // Active session exists (or sessionStore not wired): the runner will
     // dispatch via re-entry. Transition to "dispatched" so the runner's
     // handler — which reads task.dispatchState — sees the updated state.
-    // We do NOT fire fallback here (D-S3, AC-1: zero spurious outbound).
+    // We do NOT fire fallback here (zero spurious outbound).
     transitionTo(taskId, "dispatched");
     log.debug(
       {
@@ -286,7 +284,7 @@ export function createCompletionDispatcher(
         sessionKey: origin.sessionKey,
         agentId: origin.agentId,
         toolName: task.toolName,
-        // Phase 9b (RC-8): traceId from origin for log continuity.
+        // traceId from origin for log continuity.
         traceId: origin.traceId ?? undefined,
         hint: "Runner will re-enter the originating session",
       },
@@ -311,7 +309,7 @@ export function createCompletionDispatcher(
       log.debug(
         {
           taskId: task.id,
-          // Phase 9b (RC-8): traceId from origin keeps log lines threaded.
+          // traceId from origin keeps log lines threaded.
           traceId: task.origin?.traceId ?? undefined,
           hint: "No fallbackNotifyFn wired; dispatcher cannot fire user-visible notification",
         },
@@ -332,7 +330,7 @@ export function createCompletionDispatcher(
           taskId: task.id,
           agentId: task.origin.agentId,
           err,
-          // Phase 9b: traceId from origin keeps the WARN line threaded.
+          // traceId from origin keeps the WARN line threaded.
           traceId: task.origin?.traceId ?? undefined,
           hint: "fallbackNotifyFn rejected; user will not see the completion notification for this task",
           errorKind: "internal" as const,

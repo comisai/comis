@@ -119,9 +119,9 @@ export interface ChannelManagerDeps {
   /** Optional active run registry for SDK-native steer+followup message routing. When absent, all messages route through CommandQueue. */
   activeRunRegistry?: ActiveRunRegistry;
   /**
-   * Optional composite-key resolver (R3, B30/B34). When present, supersedes
+   * Optional composite-key resolver. When present, supersedes
    * `activeRunRegistry.has/.get` for production lookups in the inbound
-   * pipeline. T0.33 source-grep enforces.
+   * pipeline.
    */
   sessionResolver?: BackgroundSessionResolver;
   /** Handle /config command. Returns response text or undefined if not a config command. */

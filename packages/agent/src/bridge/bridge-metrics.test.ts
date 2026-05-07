@@ -1,16 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-//
-// bridge-metrics regression-guard.
-//
-// Phase 4 (15-05) edits the bridge but MUST NOT alter the bridge-metrics
-// module's exported shape. Phase 5 (15-02 cherry-pick) will additionally
-// store `outboundLog` in this state — that's a future test owner.
-//
-// This file is in the cherry-pick's owned-tests list because Phase 4's
-// edits to the bridge could inadvertently break the metrics state shape
-// (the two modules sit side-by-side at packages/agent/src/bridge/). The
-// test is GREEN today and stays GREEN; if it goes red it signals an
-// unintended bridge-metrics regression.
 import { describe, it, expect } from "vitest";
 import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
 
