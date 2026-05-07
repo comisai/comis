@@ -2893,25 +2893,6 @@ describe("PiExecutor", () => {
       // Should not throw
       await executor.execute(testMessage, testSessionKey);
     });
-
-    it("Phase 15.1-01: skips register and WARNs when msg.channelType is missing (RC-1 defensive guard)", async () => {
-      const mockRegistry = createMockRegistry();
-      const deps = createMockDeps({ activeRunRegistry: mockRegistry });
-      const executor = createPiExecutor(testConfig, deps);
-      const msgWithoutChannelType = { ...testMessage, channelType: "" } as NormalizedMessage;
-
-      await executor.execute(msgWithoutChannelType, testSessionKey);
-
-      expect(mockRegistry.register).not.toHaveBeenCalled();
-      expect(mockRegistry.deregister).not.toHaveBeenCalled();
-      expect(deps.logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          hint: expect.stringContaining("Cannot register active run: missing channelType or channelId"),
-          errorKind: "internal",
-        }),
-        "Active run registration skipped (missing channel fields)",
-      );
-    });
   });
 
   // -------------------------------------------------------------------------

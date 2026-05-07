@@ -123,15 +123,9 @@ export interface PostExecutionParams {
   msg: NormalizedMessage;
   sessionKey: SessionKey;
   formattedKey: string;
-  /**
-   * Resolver-aligned key for activeRunRegistry.deregister. Mirrors the
-   * BackgroundSessionResolver.formatComposite shape used by the register
-   * call at pi-executor.ts:~1015 so resolver lookups find the handle.
-   * Optional because pi-executor skips register when msg.channelType /
-   * msg.channelId are missing — deregister is a no-op in that case.
-   * Phase 15.1-01 (RC-1 close).
-   */
-  resolverRegisterKey?: string;
+  /** Resolver-aligned key for activeRunRegistry.deregister. Same formula as
+   *  the register call at pi-executor.ts:~1015 — T0.27h locks the contract. */
+  resolverRegisterKey: string;
   agentId: string | undefined;
   executionStartMs: number;
   executionId: string;
@@ -769,11 +763,9 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // memory-store path, AND the drainAt call site).
   drainAt({ agentId: effectiveAgentId, channelType: drainKey.channelType, channelId: drainKey.channelId }, bridge.getDrainState(), deps.logger);
 
-  // Deregister active run before dispose. Use resolverRegisterKey
-  // (Phase 15.1-01 RC-1 close) so the slot pi-executor.ts:1015 registered
-  // is the slot we release. Falls through to a no-op when the executor
-  // skipped register (missing channelType/channelId).
-  if (deps.activeRunRegistry && resolverRegisterKey) {
+  // Deregister active run before dispose. Same resolver-aligned key as
+  // the register call at pi-executor.ts:~1015 — T0.27h locks the contract.
+  if (deps.activeRunRegistry) {
     deps.activeRunRegistry.deregister(resolverRegisterKey);
   }
 
