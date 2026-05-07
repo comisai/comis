@@ -453,7 +453,7 @@ export function setupCrossSession(deps: {
           deps.logger?.warn({
             err,
             hint: "Parent summary generation failed; proceeding without summary",
-            errorKind: "upstream",
+            errorKind: "dependency" as const,
           }, "generateParentSummary failed for parent context");
         }
       }
