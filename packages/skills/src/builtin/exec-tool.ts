@@ -599,6 +599,16 @@ export function createExecTool(
             { toolName: "exec", workspaceDir: workspacePath, hint: "Using workspace-internal venv for subprocess env" },
             "Exec workspace venv detected",
           );
+          // resolveDataEnv (data-env.ts:48) returns PATH=<venvBin> only, by
+          // design: AC-7 forbids any process.env read inside data-env.ts.
+          // Without this prepend the merged env's PATH would shrink to just
+          // the venv bin dir, breaking every subprocess that calls bash, sh,
+          // node, git, curl, etc. The merge here keeps venv binaries first
+          // (so e.g. `python` resolves to the venv's interpreter) but
+          // preserves baseEnv.PATH so system binaries remain reachable.
+          if (dataEnv.PATH && baseEnv.PATH) {
+            dataEnv.PATH = `${dataEnv.PATH}:${baseEnv.PATH}`;
+          }
         }
         const env: Record<string, string> = {
           ...baseEnv,

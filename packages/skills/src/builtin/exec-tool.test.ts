@@ -2139,4 +2139,26 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner (T0.20-
       /backgrounded.*sessionId/.test(stripped);
     expect(hasInternalEscalation).toBe(true);
   });
+
+  it("regression-guard: when venv detected, dataEnv.PATH is merged with baseEnv.PATH (CR-01)", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(path.resolve(here, "exec-tool.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // resolveDataEnv (data-env.ts) returns PATH=<venvBin> only by design
+    // (AC-7 forbids process.env in data-env.ts). The exec-tool merge site
+    // MUST prepend venvBin to baseEnv.PATH so subprocesses still find
+    // bash/sh/node/git/curl/etc. — without this, every non-venv binary
+    // call produces ENOENT once a workspace has a pre-warmed venv.
+    const hasPathMerge =
+      /dataEnv\.PATH\s*=\s*`\$\{dataEnv\.PATH\}:\$\{baseEnv\.PATH\}`/.test(stripped) ||
+      /dataEnv\.PATH\s*=\s*`\$\{venvBin\}:\$\{baseEnv\.PATH\}`/.test(stripped);
+    expect(hasPathMerge).toBe(true);
+  });
 });
