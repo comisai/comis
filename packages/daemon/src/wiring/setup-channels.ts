@@ -12,7 +12,6 @@
 
 import { readdir, readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -789,8 +788,13 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
           }
 
           let graphDir: string;
+          // Phase 15.1-02 (CR-02 close): Two-step safePath composition matches
+          // the canonical daemon-wiring pattern in setup-output-retention.ts.
+          // Both safePath calls throw on traversal; the surrounding catch handles
+          // either failure with a single operator-facing WARN.
           try {
-            graphDir = safePath(join(dataDir, "graph-runs"), graphId);
+            const graphRunsDir = safePath(dataDir, "graph-runs");
+            graphDir = safePath(graphRunsDir, graphId);
           } catch {
             channelsLogger.warn({ graphId, hint: "Path traversal attempt in graphId", errorKind: "validation" as const }, "Graph report request rejected");
             return;
@@ -817,7 +821,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
           // Try to identify leaf nodes from metadata
           let leafOutputFile: string | undefined;
           try {
-            const metadataRaw = await readFile(join(graphDir, "_run-metadata.json"), "utf8");
+            const metadataRaw = await readFile(safePath(graphDir, "_run-metadata.json"), "utf8");
             const metadata = JSON.parse(metadataRaw) as {
               nodes: Record<string, { status: string }>;
             };
@@ -830,7 +834,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
             for (const f of outputFiles) {
               const nodeId = f.replace(/-output\.md$/, "");
               if (completedNodes.includes(nodeId)) {
-                const fileStat = await stat(join(graphDir, f));
+                const fileStat = await stat(safePath(graphDir, f));
                 if (fileStat.size > maxSize) {
                   maxSize = fileStat.size;
                   leafOutputFile = f;
@@ -845,7 +849,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
             // Fallback: pick largest output file
             let maxSize = 0;
             for (const f of outputFiles) {
-              const fileStat = await stat(join(graphDir, f));
+              const fileStat = await stat(safePath(graphDir, f));
               if (fileStat.size > maxSize) {
                 maxSize = fileStat.size;
                 leafOutputFile = f;
@@ -858,7 +862,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
             return;
           }
 
-          const filePath = join(graphDir, leafOutputFile);
+          const filePath = safePath(graphDir, leafOutputFile);
           const nodeId = leafOutputFile.replace(/-output\.md$/, "");
           const caption = `Full report \u2014 ${nodeId} (graph ${graphId.slice(0, 8)})`;
 

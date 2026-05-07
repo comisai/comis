@@ -20,7 +20,6 @@ import { createSubAgentRunner } from "../sub-agent-runner.js";
 import { createAnnouncementBatcher } from "../announcement-batcher.js";
 import { createAnnouncementDeadLetterQueue } from "../announcement-dead-letter.js";
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -717,8 +716,15 @@ export function setupCrossSession(deps: {
   };
 
   // Create dead-letter queue for failed announcement persistence (before batcher, so batcher can reference it)
-  const dlqBaseDir = resolve(container.config.dataDir || ".");
-  const deadLetterFilePath = safePath(dlqBaseDir, "dead-letters.jsonl");
+  // Phase 15.1-02 (WR-05 close): direct safePath composition replaces the
+  // earlier `resolve(...)` + `safePath(...)` two-step. AGENTS §2.2: all paths
+  // via safePath. safePath requires an absolute base (see PathTraversalError
+  // contract in packages/core/src/security/safe-path.ts), so when
+  // container.config.dataDir is unset we fall back to process.cwd() — the
+  // exact behavior of the prior `resolve(".")` step (path.resolve(".") ===
+  // process.cwd()). process.cwd() is not banned by AGENTS §2.2 (only
+  // process.env and node:path's path.join/path.resolve are restricted).
+  const deadLetterFilePath = safePath(container.config.dataDir || process.cwd(), "dead-letters.jsonl");
   const deadLetterQueue = createAnnouncementDeadLetterQueue({
     filePath: deadLetterFilePath,
     maxRetries: 5,
