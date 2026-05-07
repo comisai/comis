@@ -804,7 +804,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
           try {
             await stat(graphDir);
           } catch {
-            channelsLogger.warn({ graphId, graphDir, hint: "Graph run directory not found", errorKind: "not_found" as const }, "Graph report directory missing");
+            channelsLogger.warn({ graphId, graphDir, hint: "Graph run directory not found", errorKind: "validation" as const }, "Graph report directory missing");
             await adapter.sendMessage(channelId, "Report not available \u2014 graph run data not found.", threadId ? { extra: { threadId } } : undefined);
             return;
           }
