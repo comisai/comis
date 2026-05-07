@@ -117,7 +117,7 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
         // persistTaskSync writes all three unconditionally. A file failing
         // this guard is either truncated mid-write or a pre-Phase-14 artifact
         // operators should clean up manually.
-        if (!parsed.id || !parsed.toolName) {
+        if (!parsed.id || !parsed.toolName || !parsed.origin) {
           continue;
         }
         const task = parsed as PersistedTaskState;
