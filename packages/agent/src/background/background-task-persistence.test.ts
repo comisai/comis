@@ -158,6 +158,59 @@ describe("background-task-persistence", () => {
       // Malformed file is skipped
       expect(recovered.find((t) => t.id === undefined)).toBeUndefined();
     });
+
+    // -----------------------------------------------------------------------
+    // Phase 15.1-03 (WR-04 close): non-directory entries in dataDir do not
+    // shadow legitimate agent recovery.
+    //
+    // Pre-fix: recoverTasks did `readdirSync(dataDir)` then for each entry
+    // attempted `readdirSync(safePath(dataDir, entry))`. A non-directory
+    // entry (lock file, README, accidental file) caused ENOTDIR; the
+    // existing `catch { continue; }` swallowed silently. In the worst
+    // case where a legitimate agent ID matched a non-directory filename,
+    // the agent's tasks were silently lost.
+    // Post-fix: explicit `statSync(agentDir).isDirectory()` guard before
+    // readdirSync skips non-directory entries cleanly.
+    // -----------------------------------------------------------------------
+    it("WR-04: skips non-directory entries in dataDir without losing legitimate agent tasks", () => {
+      // Create a legitimate agent directory with one task.
+      const task: PersistedTaskState = {
+        id: "wr-04-task",
+        toolName: "exec",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 2000,
+        result: "ok",
+        origin: buildOrigin({ agentId: "real-agent" }),
+      };
+      persistTaskSync(dataDir, task);
+
+      // Create a stale file in dataDir alongside the agent directory.
+      // Simulates a lock file, README, or accidental top-level file that
+      // pre-fix would cause readdirSync(safePath(dataDir, "stale.lock"))
+      // to throw ENOTDIR and silently continue.
+      const stalePath = safePath(dataDir, "stale.lock");
+      writeFileSync(stalePath, "not-a-directory", "utf-8");
+
+      // Recovery must return the legitimate task.
+      const recovered = recoverTasks(dataDir);
+      expect(recovered).toHaveLength(1);
+      expect(recovered[0]!.id).toBe("wr-04-task");
+      expect(recovered[0]!.origin.agentId).toBe("real-agent");
+
+      // The stale file is untouched.
+      expect(existsSync(stalePath)).toBe(true);
+      expect(readFileSync(stalePath, "utf-8")).toBe("not-a-directory");
+    });
+
+    it("WR-04: empty dataDir with only stale files returns empty array (no throw)", () => {
+      // dataDir contains ONLY non-directory entries — no agent dirs at all.
+      writeFileSync(safePath(dataDir, "lock1"), "x", "utf-8");
+      writeFileSync(safePath(dataDir, "lock2"), "y", "utf-8");
+
+      const recovered = recoverTasks(dataDir);
+      expect(recovered).toEqual([]);
+    });
   });
 
   describe("removeTaskFile", () => {

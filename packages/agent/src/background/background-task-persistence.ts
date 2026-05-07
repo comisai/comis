@@ -7,7 +7,7 @@
  *
  * @module
  */
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, unlinkSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, unlinkSync, existsSync } from "node:fs";
 import { safePath } from "@comis/core";
 import type { BackgroundTask, PersistedTaskState } from "./background-task-types.js";
 
@@ -85,6 +85,20 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
 
   for (const agentId of agentDirs) {
     const agentDir = safePath(dataDir, agentId);
+    // Phase 15.1-03 (WR-04 close): guard against non-directory entries in
+    // dataDir. statSync may throw if the entry vanished between
+    // readdirSync and here; skip gracefully. Non-directory entries
+    // (lock files, READMEs, accidental file-with-agentId-name) MUST be
+    // skipped explicitly so they don't shadow legitimate agent recovery
+    // silently. See 15-REVIEW.md WR-04.
+    let dirStat: ReturnType<typeof statSync>;
+    try {
+      dirStat = statSync(agentDir);
+    } catch {
+      continue;
+    }
+    if (!dirStat.isDirectory()) continue;
+
     let files: string[];
     try {
       files = readdirSync(agentDir);
