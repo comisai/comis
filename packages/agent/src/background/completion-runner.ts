@@ -125,12 +125,9 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // Legacy task without origin -- emit fallback, keep file for audit.
+    // Phase 14+: origin is producer-required (background-task-manager
+    // promote() rejects missing-origin) so we read it directly.
     const origin = task.origin;
-    if (!origin || !origin.sessionKey || !origin.agentId) {
-      await fallbackForTask(task.id, task.origin?.agentId ?? "default", task.toolName, `Background task "${task.toolName}" completed.`);
-      return;
-    }
 
     // Hop cap. Read incoming hop count from origin (schema field populated
     // by the originResolver).

@@ -112,9 +112,11 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
       try {
         const raw = readFileSync(filePath, "utf-8");
         const parsed = JSON.parse(raw) as Partial<PersistedTaskState>;
-        // Sanity guard: skip completely malformed files (no id or toolName).
-        // Files missing origin (pre-Phase-14) are passed through to the manager
-        // so recoverOnStartup can warn about them and track the skip count.
+        // Phase 15.2: shape guard — skip completely malformed files. Phase 14+
+        // tasks always carry id + toolName + origin; the producer-side
+        // persistTaskSync writes all three unconditionally. A file failing
+        // this guard is either truncated mid-write or a pre-Phase-14 artifact
+        // operators should clean up manually.
         if (!parsed.id || !parsed.toolName) {
           continue;
         }

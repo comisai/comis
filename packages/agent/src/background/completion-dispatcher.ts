@@ -240,16 +240,8 @@ export function createCompletionDispatcher(
     }
 
     // task.dispatchState === "pending". Decide which transition to make.
+    // Phase 14+: origin is producer-required; read it directly.
     const origin = task.origin;
-    if (!origin || !origin.sessionKey || !origin.agentId) {
-      // Legacy task without origin: transition to "notified" + fire fallback.
-      transitionTo(taskId, "notified");
-      await fireFallback(
-        task,
-        `Background task "${task.toolName}" completed.`,
-      );
-      return;
-    }
 
     // Hop cap (when configured). Recursion limit reached → fallback.
     if (typeof deps.maxBackgroundHops === "number") {
