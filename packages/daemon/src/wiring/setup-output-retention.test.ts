@@ -35,8 +35,8 @@ async function loadOutputRetention(): Promise<OutputRetentionModule | undefined>
   }
 }
 
-describe("Phase 10: output retention housekeeper (RC-9, AC-11)", () => {
-  it("housekeeper test 1: per-class retention — files older than class.retentionMs are deleted", async () => {
+describe("output retention housekeeper", () => {
+  it("per-class retention — files older than class.retentionMs are deleted", async () => {
     const mod = await loadOutputRetention();
     expect(mod).toBeDefined();
     if (!mod || typeof mod.setupOutputRetention !== "function") return;
@@ -47,7 +47,7 @@ describe("Phase 10: output retention housekeeper (RC-9, AC-11)", () => {
     expect(typeof mod.setupOutputRetention).toBe("function");
   });
 
-  it("housekeeper test 2: disk usage trends down on a synthetic load", async () => {
+  it("disk usage trends down on a synthetic load", async () => {
     const mod = await loadOutputRetention();
     expect(mod).toBeDefined();
     if (!mod || typeof mod.setupOutputRetention !== "function") return;
@@ -56,7 +56,7 @@ describe("Phase 10: output retention housekeeper (RC-9, AC-11)", () => {
     expect(typeof mod.setupOutputRetention).toBe("function");
   });
 
-  it("housekeeper test 3: config schema rejects retentionMs <= 0; accepts retentionMs >= 1", async () => {
+  it("config schema rejects retentionMs <= 0; accepts retentionMs >= 1", async () => {
     const mod = await loadOutputRetention();
     expect(mod).toBeDefined();
     if (!mod || typeof mod.validateOutputRetentionConfig !== "function") return;

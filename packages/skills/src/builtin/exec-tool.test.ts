@@ -2119,7 +2119,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 // single owner. Source-grep on exec-tool.ts for `escalateToBackground` (or
 // equivalent) ensures the contract still compiles.
 // ---------------------------------------------------------------------------
-describe("exec-tool: internal escalation is the SOLE backgrounding owner (T0.20-T0.23 cross-check)", () => {
+describe("exec-tool: internal escalation is the SOLE backgrounding owner", () => {
   it("source-grep: exec-tool.ts contains the internal escalation path (escalateToBackground or equivalent)", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
@@ -2141,7 +2141,7 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner (T0.20-
     expect(hasInternalEscalation).toBe(true);
   });
 
-  it("regression-guard: when venv detected, dataEnv.PATH is merged with baseEnv.PATH (CR-01)", async () => {
+  it("regression-guard: when venv detected, dataEnv.PATH is merged with baseEnv.PATH", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
     const url = await import("node:url");

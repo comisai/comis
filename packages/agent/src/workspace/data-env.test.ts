@@ -26,8 +26,8 @@ async function loadDataEnv(): Promise<
   }
 }
 
-describe("data-env (Phase 8, RC-7)", () => {
-  it("T0.17 source-grep: data-env.ts has NO process.env literal in non-comment lines (D-W1)", async () => {
+describe("data-env", () => {
+  it("source-grep: data-env.ts has NO process.env literal in non-comment lines", async () => {
     // The source-grep assertion is over the literal source text;
     // a missing file is treated as a failure.
     const fs = await import("node:fs");
@@ -52,7 +52,7 @@ describe("data-env (Phase 8, RC-7)", () => {
     expect(stripped).not.toMatch(/process\.env/);
   });
 
-  it("T0.18: resolveDataEnv({workspaceDir}) returns MPLCONFIGDIR / XDG_CACHE_HOME / PATH derived from workspaceDir", async () => {
+  it("resolveDataEnv({workspaceDir}) returns MPLCONFIGDIR / XDG_CACHE_HOME / PATH derived from workspaceDir", async () => {
     const mod = await loadDataEnv();
     expect(mod).toBeDefined();
     if (!mod) return;

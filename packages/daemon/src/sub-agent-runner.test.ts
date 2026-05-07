@@ -1946,7 +1946,7 @@ describe("createSubAgentRunner", () => {
       expect(runner.getRunStatus(runId)!.status).toBe("failed");
     });
 
-    it("watchdog aborts SDK session via sessionResolver (R3, B37)", async () => {
+    it("watchdog aborts SDK session via sessionResolver", async () => {
       deps.config.subagentContext = { maxRunTimeoutMs: 2_000, perStepTimeoutMs: 1_000 } as typeof deps.config.subagentContext;
       vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
       const mockAbort = vi.fn().mockResolvedValue(undefined);
@@ -3279,7 +3279,7 @@ describe("persistent session reuse", () => {
 // Cross-check: sub-agent-runner uses BackgroundSessionResolver for
 // parent-session lookup.
 // ---------------------------------------------------------------------------
-describe("T0.27 cross-check (B37): sub-agent-runner uses BackgroundSessionResolver for parent-session lookup", () => {
+describe("sub-agent-runner uses BackgroundSessionResolver for parent-session lookup", () => {
   it("source-grep: no remaining activeRunRegistry.get( in non-test sub-agent-runner source", async () => {
     const fs2 = await import("node:fs");
     const path2 = await import("node:path");

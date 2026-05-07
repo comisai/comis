@@ -286,7 +286,7 @@ describe("message tool", () => {
 // deliveredAt). The visibleDelivery is JSONL-persisted but NOT
 // prompt-injected.
 // ---------------------------------------------------------------------------
-describe("Phase 5: message(action=attach) captures details.visibleDelivery (B33 + B40)", () => {
+describe("message(action=attach) captures details.visibleDelivery", () => {
   it("attach result includes details.visibleDelivery with the documented shape", async () => {
     const mockRpcCall: RpcCall = vi.fn(async (method, _params) => {
       if (method === "message.attach") {

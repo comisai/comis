@@ -241,7 +241,7 @@ describe("setupHeartbeat", () => {
   // `inner.execute(...)` produced a runtime TypeError inside a timer
   // callback. getExecutor now throws a typed Error eagerly so wiring
   // gaps surface as a clean stack at the boundary.
-  it("WR-01: getExecutor throws explicit Error when executors map lacks the heartbeat-enabled agent", () => {
+  it("getExecutor throws explicit Error when executors map lacks the heartbeat-enabled agent", () => {
     capturedHeartbeatSourceDeps = undefined;
     const container = makeContainer({
       "agent-enabled": {

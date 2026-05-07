@@ -1019,7 +1019,7 @@ describe("setupDeliveryMirror", () => {
 // source-grep over setup-delivery.ts for the new log shape (canonical Pino
 // object-first).
 // ---------------------------------------------------------------------------
-describe("Phase 9c: drain log includes per-class metric (operator-facing)", () => {
+describe("drain log includes per-class metric (operator-facing)", () => {
   it("source-grep: setup-delivery.ts emits a drain log with pruned + class + durationMs", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");

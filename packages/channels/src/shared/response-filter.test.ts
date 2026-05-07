@@ -162,14 +162,14 @@ describe("filterResponse", () => {
     expect(NO_REPLY_TOKEN).toBe("NO_REPLY");
   });
 
-  describe("Phase 15 v12: helper-delegation + public-surface preservation", () => {
-    it("T0.6: filterResponse(NO_REPLY) suppresses with suppressedBy=NO_REPLY", () => {
+  describe("helper-delegation + public-surface preservation", () => {
+    it("filterResponse(NO_REPLY) suppresses with suppressedBy=NO_REPLY", () => {
       const result = filterResponse("NO_REPLY");
       expect(result.shouldDeliver).toBe(false);
       expect(result.suppressedBy).toBe("NO_REPLY");
     });
 
-    it("T0.7: filterResponse handles HEARTBEAT_OK / [SILENT] / substantive text", () => {
+    it("filterResponse handles HEARTBEAT_OK / [SILENT] / substantive text", () => {
       const heartbeat = filterResponse("HEARTBEAT_OK");
       expect(heartbeat.shouldDeliver).toBe(false);
       expect(heartbeat.suppressedBy).toBe("HEARTBEAT_OK");
@@ -183,7 +183,7 @@ describe("filterResponse", () => {
       expect(hello.cleanedText).toBe("Hello");
     });
 
-    it("T0.36: NO_REPLY_TOKEN re-exported from @comis/channels with === identity to @comis/shared (B41 + AC-10)", async () => {
+    it("NO_REPLY_TOKEN re-exported from @comis/channels with === identity to @comis/shared", async () => {
       const fromChannels = await import("@comis/channels");
       const fromShared = (await import("@comis/shared")) as unknown as {
         NO_REPLY_TOKEN?: string;

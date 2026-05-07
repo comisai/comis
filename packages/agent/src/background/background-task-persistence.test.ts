@@ -159,7 +159,7 @@ describe("background-task-persistence", () => {
       expect(recovered.find((t) => t.id === undefined)).toBeUndefined();
     });
 
-    it("WR-04: skips non-directory entries in dataDir without losing legitimate agent tasks", () => {
+    it("skips non-directory entries in dataDir without losing legitimate agent tasks", () => {
       // Create a legitimate agent directory with one task.
       const task: PersistedTaskState = {
         id: "wr-04-task",
@@ -189,7 +189,7 @@ describe("background-task-persistence", () => {
       expect(readFileSync(stalePath, "utf-8")).toBe("not-a-directory");
     });
 
-    it("WR-04: empty dataDir with only stale files returns empty array (no throw)", () => {
+    it("empty dataDir with only stale files returns empty array (no throw)", () => {
       // dataDir contains ONLY non-directory entries — no agent dirs at all.
       writeFileSync(safePath(dataDir, "lock1"), "x", "utf-8");
       writeFileSync(safePath(dataDir, "lock2"), "y", "utf-8");

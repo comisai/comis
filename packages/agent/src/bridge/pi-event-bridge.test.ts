@@ -4141,7 +4141,7 @@ describe("createPiEventBridge", () => {
 // the bridge — source-grep on pi-executor.ts shows zero `drainQueue`
 // references.
 // ---------------------------------------------------------------------------
-describe("Phase 4: drain at bridge call site (B15)", () => {
+describe("drain at bridge call site", () => {
   async function readSrcRelative(rel: string): Promise<{ src: string; stripped: string }> {
     const fs = await import("node:fs");
     const url = await import("node:url");
@@ -4156,7 +4156,7 @@ describe("Phase 4: drain at bridge call site (B15)", () => {
     return { src, stripped };
   }
 
-  it("T0.15: bridge calls drainAt({agentId, channelType, channelId}) on tool_use_complete (composite key)", async () => {
+  it("bridge calls drainAt({agentId, channelType, channelId}) on tool_use_complete (composite key)", async () => {
     const { stripped } = await readSrcRelative("pi-event-bridge.ts");
     // The bridge module imports + calls a drain helper (drainAt or
     // composite-keyed drain function).
@@ -4166,13 +4166,13 @@ describe("Phase 4: drain at bridge call site (B15)", () => {
     expect(hasComposite).toBe(true);
   });
 
-  it("T0.16: drain trigger is fire-and-forget — a drain-handler exception does NOT abort tool_use_complete propagation", async () => {
+  it("drain trigger is fire-and-forget — a drain-handler exception does NOT abort tool_use_complete propagation", async () => {
     const { stripped } = await readSrcRelative("pi-event-bridge.ts");
     // Marker: suppressError around the drain call.
     expect(stripped).toMatch(/suppressError\s*\([^)]*drain/s);
   });
 
-  it("T0.19: drain helper is removed from pi-executor.ts (the OLD home)", async () => {
+  it("drain helper is removed from pi-executor.ts (the OLD home)", async () => {
     const { stripped } = await readSrcRelative("../executor/pi-executor.ts");
     // NO drainQueue / drainSession / drainAt definition or call in
     // pi-executor.ts.

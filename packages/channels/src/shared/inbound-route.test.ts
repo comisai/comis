@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 
-describe("inbound-route uses BackgroundSessionResolver for active-session lookup (B30 / T0.27)", () => {
+describe("inbound-route uses BackgroundSessionResolver for active-session lookup", () => {
   it("source-grep: imports the resolver and does NOT directly call activeRunRegistry.get(", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(resolve(here, "inbound-route.ts"), "utf-8");

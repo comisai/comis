@@ -269,7 +269,7 @@ describe("ActiveRunRegistry", () => {
   // source trees and excludes *.test.ts files (which legitimately exercise
   // the registry directly).
   // ---------------------------------------------------------------------------
-  describe("T0.33 source-grep: production code uses BackgroundSessionResolver, not direct registry access (AC-4)", () => {
+  describe("source-grep: production code uses BackgroundSessionResolver, not direct registry access", () => {
     it("no remaining activeRunRegistry.has|get(...) in non-test production source", async () => {
       const { execSync } = await import("node:child_process");
       const { fileURLToPath } = await import("node:url");

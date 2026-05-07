@@ -17,7 +17,7 @@ import {
 } from "./__test-helpers/capturing-provider-stub.js";
 
 describe("details.visibleDelivery JSONL persistence vs prompt isolation", () => {
-  it("persists in JSONL but is absent from outgoing provider payload (B40 + B43 + B45)", async () => {
+  it("persists in JSONL but is absent from outgoing provider payload", async () => {
     const longCaption = "X".repeat(5000);
     const sessionPath = await buildFixtureSessionWithToolResult({
       toolName: "message",

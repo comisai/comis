@@ -336,7 +336,7 @@ describe("/approve and /deny command interception", () => {
   // prefix" warning and bail without resolving so the operator cannot
   // silently approve the wrong request when prefixes collide.
   // -----------------------------------------------------------------------
-  it("WR-03: /approve <prefix> matching multiple pending requests warns and does NOT resolve any", async () => {
+  it("/approve <prefix> matching multiple pending requests warns and does NOT resolve any", async () => {
     const reqA = {
       requestId: "ambig0001-aaaa-bbbb-cccc-111111111111",
       sessionKey: TEST_SESSION_KEY,
@@ -378,7 +378,7 @@ describe("/approve and /deny command interception", () => {
     expect(executorFn).not.toHaveBeenCalled();
   });
 
-  it("WR-03: /deny <prefix> matching multiple pending requests warns and does NOT resolve any", async () => {
+  it("/deny <prefix> matching multiple pending requests warns and does NOT resolve any", async () => {
     // Use a unique prefix family ("denyamb") so the count matches exactly 2.
     const reqA = {
       requestId: "denyamb01-aaaa-bbbb-cccc-333333333333",

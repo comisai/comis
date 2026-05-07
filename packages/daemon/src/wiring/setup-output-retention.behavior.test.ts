@@ -86,7 +86,7 @@ function makeFile(className: string, name: string, ageMs: number, sizeBytes = 10
   return filePath;
 }
 
-describe("Phase 10 housekeeper: per-class retention behavior (R8, AC-11)", () => {
+describe("housekeeper: per-class retention behavior", () => {
   it("deletes files older than the class's retentionMs; preserves younger ones", async () => {
     // attachment retentionMs=1_000. Old=2_000ms (deleted); young=500ms (kept).
     const oldAttachment = makeFile("attachment", "old.png", 2_000);
@@ -245,7 +245,7 @@ describe("Phase 10 housekeeper: per-class retention behavior (R8, AC-11)", () =>
   });
 });
 
-describe("Phase 10 validator: validateOutputRetentionConfig (15-01 contract)", () => {
+describe("validator: validateOutputRetentionConfig", () => {
   it("accepts retentionMs >= 1", () => {
     const r = validateOutputRetentionConfig({
       classes: [{ classId: "attachment", retentionMs: 1 }],

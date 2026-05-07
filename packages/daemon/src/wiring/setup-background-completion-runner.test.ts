@@ -81,7 +81,7 @@ function buildOrigin(over: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOr
 }
 
 describe("setupBackgroundCompletionRunner", () => {
-  it("Test 1: returns a context object with a runner.shutdown function", async () => {
+  it("returns a context object with a runner.shutdown function", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
@@ -96,7 +96,7 @@ describe("setupBackgroundCompletionRunner", () => {
     expect(typeof ctx.runner.shutdown).toBe("function");
   });
 
-  it("Test 2: shutdown() resolves cleanly", async () => {
+  it("shutdown() resolves cleanly", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
@@ -109,7 +109,7 @@ describe("setupBackgroundCompletionRunner", () => {
     await expect(ctx.runner.shutdown()).resolves.toBeUndefined();
   });
 
-  it("Test 3: shutdown() is idempotent", async () => {
+  it("shutdown() is idempotent", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
@@ -129,7 +129,7 @@ describe("setupBackgroundCompletionRunner", () => {
   // reads the updated task.dispatchState and skips when state is
   // "notified". Subscription order is the binding gate.
   // ---------------------------------------------------------------------------
-  describe("Phase 15 v12: dispatcher subscribes before runner (D-S3)", () => {
+  describe("dispatcher subscribes before runner", () => {
     it("dispatcher subscribes to background_task:completed BEFORE the runner", () => {
       const recording = makeRecordingEventBus();
       setupBackgroundCompletionRunner({
@@ -245,7 +245,7 @@ describe("setupBackgroundCompletionRunner", () => {
   // The dispatcher is not constructed in this test; we only verify the
   // manager preserves state without re-emit.
   // ---------------------------------------------------------------------------
-  describe("AC-5 SIGKILL-recovery: dispatchState survives daemon restart", () => {
+  describe("SIGKILL-recovery: dispatchState survives daemon restart", () => {
     let dataDir: string;
     beforeEach(() => {
       dataDir = safePath(tmpdir(), `comis-ac5-${randomUUID()}`);

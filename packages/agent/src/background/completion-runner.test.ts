@@ -259,7 +259,7 @@ describe("createBackgroundCompletionRunner", () => {
   // sees the at-most-once gate fire -> no duplicate. Without this ordering,
   // the gate would miss and the user would see a duplicate notification.
   // -------------------------------------------------------------------------
-  it("WR-02: fallbackForTask persists dispatchState='notified' BEFORE firing fallbackNotifyFn (two-phase commit)", async () => {
+  it("fallbackForTask persists dispatchState='notified' BEFORE firing fallbackNotifyFn (two-phase commit)", async () => {
     // Hop cap path is the simplest reach to fallbackForTask. With
     // maxBackgroundHops=3 and origin.backgroundHopCount=99, nextHopCount
     // exceeds the cap -> fallback fires.
@@ -292,7 +292,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("WR-02: SIGKILL between persist and fire — recovery's at-most-once gate fires (no duplicate)", async () => {
+  it("SIGKILL between persist and fire — recovery's at-most-once gate fires (no duplicate)", async () => {
     // Simulate the crash: transitionDispatchState succeeds (state lands on
     // disk via persistTaskSync), then fallbackNotifyFn rejects (modeling
     // \"daemon dies during the network call\"). The runner WARNs but does
@@ -323,9 +323,9 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // Phase 1 ran (persist).
+    // Persist step ran.
     expect(transitionDispatchState).toHaveBeenCalledTimes(1);
-    // Phase 2 was attempted and rejected.
+    // Fire step was attempted and rejected.
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
     // task.dispatchState is now "notified" on the in-memory task object,
     // mirroring the on-disk state that recovery would load.
@@ -356,7 +356,7 @@ describe("createBackgroundCompletionRunner", () => {
   });
 });
 
-describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
+describe("trace continuity sub-tests", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
@@ -388,7 +388,7 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     });
   }
 
-  it("T0.29a: traceId from task.origin propagates into the synthetic NormalizedMessage.metadata.traceId", async () => {
+  it("traceId from task.origin propagates into the synthetic NormalizedMessage.metadata.traceId", async () => {
     const traceId = "trace-29a";
     const task = buildTask({
       result: "ok",
@@ -412,7 +412,7 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     await runner.shutdown();
   });
 
-  it("T0.29b: background_task:reentered event payload includes traceId from origin", async () => {
+  it("background_task:reentered event payload includes traceId from origin", async () => {
     const traceId = "trace-29b";
     const reenteredEvents: Array<Record<string, unknown>> = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data as Record<string, unknown>));
@@ -437,7 +437,7 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     await runner.shutdown();
   });
 
-  it("T0.29c: operator-facing log lines on completion-runner WARN/INFO paths include traceId from origin", async () => {
+  it("operator-facing log lines on completion-runner WARN/INFO paths include traceId from origin", async () => {
     const traceId = "trace-29c";
     // Force a path that emits an INFO log: session expired (sessionStore returns undefined).
     sessionStore.loadByFormattedKey.mockReturnValue(undefined);

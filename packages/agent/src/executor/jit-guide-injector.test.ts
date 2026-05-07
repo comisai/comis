@@ -633,7 +633,7 @@ describe("regression: mid-turn discovered tool path (Bug 1)", () => {
 // no second data structure is introduced.
 // ---------------------------------------------------------------------------
 
-describe("Phase 9d: same guide is not re-injected within a single turn", () => {
+describe("same guide is not re-injected within a single turn", () => {
   it("multiple calls within one turn (same Set) do not re-inject the same guide id", () => {
     const logger = createMockLogger();
     const delivered = new Set<string>();
@@ -673,7 +673,7 @@ describe("Phase 9d: same guide is not re-injected within a single turn", () => {
     expect(logger.info).toHaveBeenCalledTimes(1);
   });
 
-  it("Phase 9d: section-key ids are de-duped independently from tool-name ids", () => {
+  it("section-key ids are de-duped independently from tool-name ids", () => {
     const logger = createMockLogger();
     const delivered = new Set<string>();
 

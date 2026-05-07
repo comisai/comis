@@ -131,7 +131,7 @@ describe("buildHeartbeatsSection", () => {
   });
 });
 
-describe("Phase 7: pre-tool-text policy line in messaging section (RC-9 partial)", () => {
+describe("pre-tool-text policy line in messaging section", () => {
   it("buildMessagingSection includes the new pre-tool-text policy line", () => {
     const result = buildMessagingSection(["message"], false, undefined);
     const joined = result.join("\n");

@@ -90,7 +90,7 @@ async function loadDispatcher(): Promise<
   }
 }
 
-describe("createCompletionDispatcher (T0.1: at-most-once routing via dispatchState)", () => {
+describe("createCompletionDispatcher: at-most-once routing via dispatchState", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let taskManager: { getTask: ReturnType<typeof vi.fn> };
   let notifyFn: ReturnType<typeof vi.fn>;
@@ -101,7 +101,7 @@ describe("createCompletionDispatcher (T0.1: at-most-once routing via dispatchSta
     notifyFn = vi.fn().mockResolvedValue(undefined);
   });
 
-  it("T0.1a: pending → dispatched transition does NOT call notifyFn (single-owner reentry)", async () => {
+  it("pending → dispatched transition does NOT call notifyFn (single-owner reentry)", async () => {
     const mod = await loadDispatcher();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -133,7 +133,7 @@ describe("createCompletionDispatcher (T0.1: at-most-once routing via dispatchSta
     await dispatcher.shutdown();
   });
 
-  it("T0.1b: already-notified state does NOT call notifyFn again (at-most-once, D-S3)", async () => {
+  it("already-notified state does NOT call notifyFn again (at-most-once)", async () => {
     const mod = await loadDispatcher();
     expect(mod).toBeDefined();
     if (!mod) return;

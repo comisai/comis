@@ -15,7 +15,7 @@ async function loadVisibleDelivery(): Promise<Record<string, unknown> | undefine
   }
 }
 
-describe("VisibleDeliveryRecord shape (T0.34 supporting type)", () => {
+describe("VisibleDeliveryRecord shape", () => {
   it("module exists and a literal value matches the documented shape", async () => {
     const mod = await loadVisibleDelivery();
     // Module must exist.

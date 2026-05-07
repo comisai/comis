@@ -52,14 +52,14 @@ async function loadResolver(): Promise<ResolverModule | undefined> {
   }
 }
 
-describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
+describe("BackgroundSessionResolver", () => {
   let registry: ReturnType<typeof createActiveRunRegistry>;
 
   beforeEach(() => {
     registry = createActiveRunRegistry();
   });
 
-  it("T0.27a: resolveActiveSession returns the RunHandle when a matching formatted-key is registered", async () => {
+  it("resolveActiveSession returns the RunHandle when a matching formatted-key is registered", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -75,7 +75,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     expect(resolver.resolveActiveSession(composite)).toBe(handle);
   });
 
-  it("T0.27b: resolveActiveSession returns undefined when no session is registered", async () => {
+  it("resolveActiveSession returns undefined when no session is registered", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -85,7 +85,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     ).toBeUndefined();
   });
 
-  it("T0.27c: distinguishes the same channelId across different agents", async () => {
+  it("distinguishes the same channelId across different agents", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -114,7 +114,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     expect(resolver.resolveActiveSession(compositeAlice)).toBe(handleAlice);
   });
 
-  it("T0.27d: distinguishes the same agentId+channelId across different channels", async () => {
+  it("distinguishes the same agentId+channelId across different channels", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -143,7 +143,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     expect(resolver.resolveActiveSession(compositeDc)).toBe(handleDiscord);
   });
 
-  it("T0.27e: hasActiveSession returns boolean, never throws on missing", async () => {
+  it("hasActiveSession returns boolean, never throws on missing", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -158,7 +158,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     expect(resolver.hasActiveSession({ agentId: "x", channelType: "y", channelId: "z" })).toBe(true);
   });
 
-  it("T0.27f: resolver uses formatSessionKey internally — does NOT accept a raw single-arg sessionKey from external callers", async () => {
+  it("resolver uses formatSessionKey internally — does NOT accept a raw single-arg sessionKey from external callers", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -183,7 +183,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     ).not.toThrow();
   });
 
-  it("T0.27g: empty / falsy agentId / channelType / channelId raises a typed Result.err (no silent fallback)", async () => {
+  it("empty / falsy agentId / channelType / channelId raises a typed Result.err (no silent fallback)", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -216,7 +216,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     expect(observedError).toBe(true);
   });
 
-  it("T0.27h: register-via-pi-executor-shape → resolve-via-resolver returns the same handle (RC-1)", async () => {
+  it("register-via-pi-executor-shape → resolve-via-resolver returns the same handle", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;

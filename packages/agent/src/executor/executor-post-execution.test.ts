@@ -37,8 +37,8 @@ async function loadSilentTokens(): Promise<
   }
 }
 
-describe("silent-sentinel response is not stored in memory.db (RC-4 / B38 / AC-3)", () => {
-  it("T0.34: source-grep — executor-post-execution imports isSilentResponse from @comis/shared", () => {
+describe("silent-sentinel response is not stored in memory.db", () => {
+  it("source-grep — executor-post-execution imports isSilentResponse from @comis/shared", () => {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     // Strip line + block comments so the gate cannot be self-invalidated.
     const stripped = src
@@ -50,7 +50,7 @@ describe("silent-sentinel response is not stored in memory.db (RC-4 / B38 / AC-3
     expect(stripped).toMatch(/import\s*\{[^}]*\bisSilentResponse\b[^}]*\}\s*from\s*"@comis\/shared"/);
   });
 
-  it("T0.34: behavior — isSilentResponse classifies NO_REPLY / [agent] NO_REPLY as silent", async () => {
+  it("behavior — isSilentResponse classifies NO_REPLY / [agent] NO_REPLY as silent", async () => {
     const mod = await loadSilentTokens();
     // The helper module must exist and be re-exported from @comis/shared.
     expect(mod).toBeDefined();
@@ -63,7 +63,7 @@ describe("silent-sentinel response is not stored in memory.db (RC-4 / B38 / AC-3
     expect(mod.isSilentResponse("[SILENT] context")).toBe(true);
   });
 
-  it("T0.34: behavior — substantive responses still pass the quality gate", () => {
+  it("behavior — substantive responses still pass the quality gate", () => {
     // Sanity: a substantive paired memory still qualifies for storage; the
     // silent-sentinel gate is a third layer ON TOP of the existing two
     // (operationType + content-hash dedup). It MUST NOT regress storage of
@@ -88,7 +88,7 @@ describe("silent-sentinel response is not stored in memory.db (RC-4 / B38 / AC-3
 // Source-grep is the load-bearing assertion mode — exercising the runtime
 // path requires scaffolding all 30+ postExecution dependencies.
 // ---------------------------------------------------------------------------
-describe("Phase 4: markRead/markConsumed via tryGetContext + drain (RC-2 residual)", () => {
+describe("markRead/markConsumed via tryGetContext + drain", () => {
   function readPostExec(): { src: string; stripped: string } {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -99,26 +99,26 @@ describe("Phase 4: markRead/markConsumed via tryGetContext + drain (RC-2 residua
     return { src, stripped };
   }
 
-  it("T0.2: markRead reads tool context via tryGetContext() (NOT a passed-in deps object)", () => {
+  it("markRead reads tool context via tryGetContext() (NOT a passed-in deps object)", () => {
     const { stripped } = readPostExec();
     // The production source either calls tryGetContext() directly OR imports
     // a helper module that does.
     expect(stripped).toMatch(/tryGetContext\s*\(/);
   });
 
-  it("T0.3: markConsumed follows the same tryGetContext pattern", () => {
+  it("markConsumed follows the same tryGetContext pattern", () => {
     const { stripped } = readPostExec();
     expect(stripped).toMatch(/markConsumed/);
   });
 
-  it("T0.4: markRead is called at the inline-consumption call site (B15) — composite drain", () => {
+  it("markRead is called at the inline-consumption call site — composite drain", () => {
     const { stripped } = readPostExec();
     // The post-execution path either calls a drainAt(...) or markRead with
     // the composite key. Either marker proves the gate.
     expect(stripped).toMatch(/(drainAt|markRead)/);
   });
 
-  it("T0.5: effectiveAgentId is referenced from a markRead/drain call-site (NOT only the memory branch)", () => {
+  it("effectiveAgentId is referenced from a markRead/drain call-site (NOT only the memory branch)", () => {
     const { stripped } = readPostExec();
     // Contract: the normalized effectiveAgentId is shared with the
     // markRead/drain call (NOT computed only inside the memory-store
@@ -129,14 +129,14 @@ describe("Phase 4: markRead/markConsumed via tryGetContext + drain (RC-2 residua
     expect(reused).toBe(true);
   });
 
-  it("T0.24: multi-agent safety — drain key includes agentId (no cross-agent contamination)", () => {
+  it("multi-agent safety — drain key includes agentId (no cross-agent contamination)", () => {
     const { stripped } = readPostExec();
     // The drain key is (agentId, channelType, channelId). Source-grep
     // proves the agent is part of the drain key.
     expect(stripped).toMatch(/(drainAt|consume).*agentId/s);
   });
 
-  it("T0.25: lock-safe drain — concurrent drains for the same composite key are gated", () => {
+  it("lock-safe drain — concurrent drains for the same composite key are gated", () => {
     const { stripped } = readPostExec();
     // Marker for the single-tick gate analog (mirrors setup-delivery.ts:113-121).
     const hasGate =
@@ -146,7 +146,7 @@ describe("Phase 4: markRead/markConsumed via tryGetContext + drain (RC-2 residua
     expect(hasGate).toBe(true);
   });
 
-  it("T0.26: markRead failure is non-fatal (suppressError + structured WARN log)", () => {
+  it("markRead failure is non-fatal (suppressError + structured WARN log)", () => {
     const { stripped } = readPostExec();
     // Marker: at least one suppressError reference plus the canonical
     // WARN log shape (hint + errorKind).
@@ -154,7 +154,7 @@ describe("Phase 4: markRead/markConsumed via tryGetContext + drain (RC-2 residua
     expect(stripped).toMatch(/(hint:.*errorKind|errorKind:.*hint)/s);
   });
 
-  it("T0.28: tryGetContext() in source falls through to no-op when undefined", () => {
+  it("tryGetContext() in source falls through to no-op when undefined", () => {
     const { stripped } = readPostExec();
     // The call-site must exist for the gate to engage.
     const tryCtxLine = stripped.match(/tryGetContext\s*\([^)]*\)/);

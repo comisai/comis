@@ -14,7 +14,7 @@ import {
 import type { RpcCall } from "./cron-tool.js";
 import { Type } from "typebox";
 
-describe("Phase 5: createMultiActionDispatchTool opt-in factory flag for details augmentation", () => {
+describe("createMultiActionDispatchTool opt-in factory flag for details augmentation", () => {
   it("augmentDetails hook adds visibleDelivery to attach action result", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({ messageId: "M", channelId: "C" }));
     const schema = Type.Object({

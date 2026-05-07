@@ -35,8 +35,8 @@ async function loadSilentTokens(): Promise<
   }
 }
 
-describe("silent-tokens module (T0.30, T0.31, T0.32)", () => {
-  it("T0.30: isSilentResponse classifies tokens vs substantive text", async () => {
+describe("silent-tokens module", () => {
+  it("isSilentResponse classifies tokens vs substantive text", async () => {
     const mod = await loadSilentTokens();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -49,7 +49,7 @@ describe("silent-tokens module (T0.30, T0.31, T0.32)", () => {
     expect(mod.isSilentResponse("")).toBe(true);
   });
 
-  it("T0.31: stripReplyTags removes <reply> wrappers and trims", async () => {
+  it("stripReplyTags removes <reply> wrappers and trims", async () => {
     const mod = await loadSilentTokens();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -58,7 +58,7 @@ describe("silent-tokens module (T0.30, T0.31, T0.32)", () => {
     expect(mod.stripReplyTags("  <reply>  X  </reply>  ")).toBe("X");
   });
 
-  it("T0.32: exported token constants match canonical values", async () => {
+  it("exported token constants match canonical values", async () => {
     const mod = await loadSilentTokens();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -70,7 +70,7 @@ describe("silent-tokens module (T0.30, T0.31, T0.32)", () => {
 });
 
 describe("isSilentResponse idempotence under stripReplyTags + trim", () => {
-  it("T0.37: agrees on raw and pre-stripped input", async () => {
+  it("agrees on raw and pre-stripped input", async () => {
     const mod = await loadSilentTokens();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -92,7 +92,7 @@ describe("isSilentResponse idempotence under stripReplyTags + trim", () => {
   });
 });
 
-describe("T0.31 source-grep: index.ts re-exports silent-tokens + visible-delivery", () => {
+describe("source-grep: index.ts re-exports silent-tokens + visible-delivery", () => {
   it("source-grep: packages/shared/src/index.ts re-exports new modules", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");

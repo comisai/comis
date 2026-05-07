@@ -93,14 +93,14 @@ describe("dispatchState 3-state machine + persistence + recovery", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("T0.11: BackgroundSessionState is a 3-element typed enum (pending/notified/dispatched)", async () => {
+  it("BackgroundSessionState is a 3-element typed enum (pending/notified/dispatched)", async () => {
     const mod = await loadDispatchTypes();
     expect(mod).toBeDefined();
     if (!mod) return;
     expect(mod.STATES).toEqual(["pending", "notified", "dispatched"]);
   });
 
-  it("T0.12: BackgroundTaskNotificationPolicy is a typed enum (NOT a boolean) and round-trips through JSON", async () => {
+  it("BackgroundTaskNotificationPolicy is a typed enum (NOT a boolean) and round-trips through JSON", async () => {
     const mod = await loadDispatchTypes();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -120,7 +120,7 @@ describe("dispatchState 3-state machine + persistence + recovery", () => {
     expect(round).toEqual(policy);
   });
 
-  it("T0.13: dispatchState persists through BackgroundTask path (D-S2, with _promise)", () => {
+  it("dispatchState persists through BackgroundTask path (with _promise)", () => {
     // Build a BackgroundTask shape (has _promise), the same code path the
     // manager's complete()/fail() funnel through. The toPersistedState
     // helper at background-task-persistence.ts:20-31 carries dispatchState
@@ -150,7 +150,7 @@ describe("dispatchState 3-state machine + persistence + recovery", () => {
     expect(reread.dispatchState).toBe("notified");
   });
 
-  it("T0.14: recovery-without-events preserves dispatchState (AC-5, D-S2 + D-S3)", () => {
+  it("recovery-without-events preserves dispatchState", () => {
     // Seed a task JSON file with dispatchState: "notified" already on disk.
     const agentDir = safePath(dataDir, "agent-recover");
     mkdirSync(agentDir, { recursive: true });

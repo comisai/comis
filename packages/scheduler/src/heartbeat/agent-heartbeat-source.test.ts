@@ -74,7 +74,7 @@ function createMockDeps(overrides?: Partial<AgentHeartbeatSourceDeps>): AgentHea
 // isQueueBusy
 // ---------------------------------------------------------------------------
 
-describe("isQueueBusy (R3, B36 -- composite-key resolver)", () => {
+describe("isQueueBusy (composite-key resolver)", () => {
   const composite = { agentId: "agent1", channelType: "telegram", channelId: "chat-1" };
 
   it("returns false when sessionResolver is undefined", () => {
@@ -644,7 +644,7 @@ describe("createAgentHeartbeatSource", () => {
 // agent-heartbeat-source uses BackgroundSessionResolver.hasActiveSession
 // instead of a single-arg activeRunRegistry.has(sessionKey).
 // ---------------------------------------------------------------------------
-describe("T0.27 cross-check (B36): heartbeat source uses BackgroundSessionResolver.hasActiveSession", () => {
+describe("heartbeat source uses BackgroundSessionResolver.hasActiveSession", () => {
   it("source-grep: no remaining activeRunRegistry.has( in non-test heartbeat source", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
