@@ -180,7 +180,16 @@ export function setupHeartbeat(deps: HeartbeatSetupDeps): HeartbeatSetupResult {
   // 4. Build AgentHeartbeatSource dependencies
   const source = createAgentHeartbeatSource({
     getExecutor: (agentId: string) => {
-      const inner = executors.get(agentId)!;
+      // Phase 15.1-03 (WR-01 close): explicit boundary throw replaces the
+      // pre-fix non-null-assertion lookup. The assertion was unsafe — if
+      // executor wiring missed an agent that's still in the heartbeat
+      // config, `inner.execute(...)` would surface as a runtime TypeError
+      // inside a timer callback (uncaught). The explicit Error gives
+      // operators a clean stack at the wiring boundary instead.
+      const inner = executors.get(agentId);
+      if (!inner) {
+        throw new Error(`No executor found for heartbeat agent ${agentId}`);
+      }
       return {
         execute: (msg: unknown, sessionKey: unknown, tools?: unknown[],
                   hbAgentId?: string, overrides?: Record<string, unknown>) =>

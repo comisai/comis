@@ -63,14 +63,19 @@ describe("createBackgroundCompletionRunner", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn> };
+  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
+  let transitionDispatchState: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     eventBus = createFakeEventBus();
     executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
     sessionStore = { loadByFormattedKey: vi.fn().mockReturnValue({ messages: [] }) };
-    taskManager = { getTask: vi.fn() };
+    transitionDispatchState = vi.fn().mockReturnValue(true);
+    taskManager = {
+      getTask: vi.fn(),
+      transitionDispatchState,
+    };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
   });
 
@@ -243,6 +248,118 @@ describe("createBackgroundCompletionRunner", () => {
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
     await runner.shutdown();
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 15.1-03 (WR-02 close): two-phase commit on fallbackForTask.
+  //
+  // Pre-fix: fallbackForTask called fallbackNotifyFn directly. After it
+  // returned, task.dispatchState was still its on-entry value (typically
+  // "pending"). On daemon SIGKILL between the await resolving and the next
+  // persist cycle, recovery loaded dispatchState != "notified", the
+  // dispatcher's at-most-once gate missed, and the runner re-fired the
+  // fallback -> user saw a duplicate notification.
+  //
+  // Post-fix: fallbackForTask now persists dispatchState="notified" via
+  // taskManager.transitionDispatchState BEFORE invoking fallbackNotifyFn.
+  // The persist runs synchronously (persistTaskSync) so any SIGKILL after
+  // the persist returns leaves the on-disk state at "notified" -> recovery
+  // sees the at-most-once gate fire -> no duplicate.
+  // -------------------------------------------------------------------------
+  it("WR-02: fallbackForTask persists dispatchState='notified' BEFORE firing fallbackNotifyFn (two-phase commit)", async () => {
+    // Hop cap path is the simplest reach to fallbackForTask. With
+    // maxBackgroundHops=3 and origin.backgroundHopCount=99, nextHopCount
+    // exceeds the cap -> fallback fires.
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ backgroundHopCount: 99 }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    const runner = build(3);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      durationMs: 1, origin: task.origin, timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    // Both must have been called once.
+    expect(transitionDispatchState).toHaveBeenCalledTimes(1);
+    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
+    expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
+
+    // Critical ordering assertion: invocationCallOrder is a global counter
+    // across all vitest mocks; smaller = earlier. transitionDispatchState's
+    // call MUST precede fallbackNotifyFn's.
+    const persistOrder = transitionDispatchState.mock.invocationCallOrder[0]!;
+    const fireOrder = fallbackNotifyFn.mock.invocationCallOrder[0]!;
+    expect(persistOrder).toBeLessThan(fireOrder);
+
+    await runner.shutdown();
+  });
+
+  it("WR-02: SIGKILL between persist and fire — recovery's at-most-once gate fires (no duplicate)", async () => {
+    // Simulate the crash: transitionDispatchState succeeds (state lands on
+    // disk via persistTaskSync), then fallbackNotifyFn rejects (modeling
+    // \"daemon dies during the network call\"). The runner WARNs but does
+    // not retry. A FRESH runner instance receiving the same task with
+    // dispatchState=\"notified\" (the persisted state) MUST skip via the
+    // at-most-once gate at completion-runner.ts handleEvent's early-return
+    // when task.dispatchState === \"notified\".
+    fallbackNotifyFn.mockRejectedValueOnce(new Error("simulated SIGKILL during fire"));
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ backgroundHopCount: 99 }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    // Mirror what the real BackgroundTaskManager.transitionDispatchState
+    // does: mutate the in-memory task object BEFORE persistTaskSync. This
+    // mirrors the on-disk state for the subsequent recovery-instance
+    // assertion below.
+    transitionDispatchState.mockImplementation((tid: string, next: string) => {
+      if (tid === task.id) (task as unknown as { dispatchState: string }).dispatchState = next;
+      return true;
+    });
+
+    const runner = build(3);
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      durationMs: 1, origin: task.origin, timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    // Phase 1 ran (persist).
+    expect(transitionDispatchState).toHaveBeenCalledTimes(1);
+    // Phase 2 was attempted and rejected.
+    expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
+    // task.dispatchState is now "notified" on the in-memory task object,
+    // mirroring the on-disk state that recovery would load.
+    expect((task as unknown as { dispatchState: string }).dispatchState).toBe("notified");
+    await runner.shutdown();
+
+    // Now simulate "daemon recovers" — fresh runner instance, same task
+    // object (dispatchState="notified" already set above).
+    taskManager.getTask.mockReset();
+    taskManager.getTask.mockReturnValue(task);
+    transitionDispatchState.mockReset();
+    fallbackNotifyFn.mockReset();
+    executor.execute.mockReset();
+    const recoveredRunner = build(3);
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      durationMs: 1, origin: task.origin, timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    // At-most-once gate (handleEvent: if task.dispatchState === "notified") returns
+    // immediately -> nothing fires.
+    expect(fallbackNotifyFn).not.toHaveBeenCalled();
+    expect(transitionDispatchState).not.toHaveBeenCalled();
+    expect(executor.execute).not.toHaveBeenCalled();
+    await recoveredRunner.shutdown();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -261,7 +378,7 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn> };
+  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let logger: ReturnType<typeof makeLogger>;
 
@@ -269,7 +386,10 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     eventBus = createFakeEventBus();
     executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
     sessionStore = { loadByFormattedKey: vi.fn().mockReturnValue({ messages: [] }) };
-    taskManager = { getTask: vi.fn() };
+    taskManager = {
+      getTask: vi.fn(),
+      transitionDispatchState: vi.fn().mockReturnValue(true),
+    };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
     logger = makeLogger();
   });
