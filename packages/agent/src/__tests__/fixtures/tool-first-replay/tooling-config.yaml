@@ -1,0 +1,30 @@
+# Phase 16 contract surface for downstream phase tests.
+# Shape follows design §4.2 (ToolingConfigSchema) and §9 (operator example).
+# Phase 17 lands the matching Zod schema; Phase 22 reads replacesPackages.
+tooling:
+  capabilityClusters:
+    clusters:
+      data-fetching-financial:
+        label: "Data fetching - financial / market"
+        priority: 10
+        preferOverInstalls: true
+  mcp:
+    capabilityHints:
+      finance-data:
+        cluster: data-fetching-financial
+        description: "Market prices, history, fundamentals, and financial lookup."
+        replacesPackages:
+          - market-data-lib
+          - finance-data-client
+          - price-history-sdk
+  skills:
+    capabilityHints:
+      financial-chart-workflow:
+        cluster: data-fetching-financial
+        description: "Workflow guidance for charting market data already available through connected tools."
+        replacesPackages:
+          - chart-workflow-sdk
+  installDetours:
+    mode: advise
+  capabilityIndex:
+    enabled: true
