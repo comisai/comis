@@ -13,7 +13,13 @@ FROM ${COMIS_NODE_BOOKWORM_IMAGE} AS build
 WORKDIR /build
 
 # Enable corepack for pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Phase 15.1-04 (IN-02 close): pin pnpm to a specific version so image
+# rebuilds are deterministic across rebuild dates. The unpinned tag
+# resolves to whatever Corepack thinks is current at build time, producing
+# non-reproducible builds. The pinned version mirrors the host's
+# `pnpm --version` output at the time of this change. Bump together
+# with the host pnpm version when upgrading.
+RUN corepack enable && corepack prepare pnpm@10.7.1 --activate
 
 # Copy dependency manifests first (layer caching)
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
@@ -174,9 +180,12 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo
 
 # Enable corepack (non-root writable location)
+# Phase 15.1-04 (IN-02 close): pin pnpm to match the build stage.
+# MUST stay in lockstep with the line-~16 pin so build and runtime
+# use identical pnpm semantics.
 ENV COREPACK_HOME=/usr/local/share/corepack
 RUN mkdir -p "$COREPACK_HOME" && chmod 777 "$COREPACK_HOME" && \
-    corepack enable && corepack prepare pnpm@latest --activate
+    corepack enable && corepack prepare pnpm@10.7.1 --activate
 
 # Create non-root user and data directory
 # Node base images ship a "node" user at UID/GID 1000 — rename it to "comis"
