@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Test-only helpers for substituting the provider's stream/fetch function
-// (B45 + CONTEXT D-T5). Mirrors the substitution-discipline pattern at
+// Test-only helpers for substituting the provider's stream/fetch function.
+// Mirrors the substitution-discipline pattern at
 // packages/agent/src/executor/fault-injector.ts:48-103.
 //
 // NOT a production code path. Lives in __test-helpers/ to be visible to
 // co-located *.test.ts only.
 //
-// **Plan 15-02 implementation note (T0.35 v12):** the binding gate per
-// CONTEXT D-J2 is the **outgoing provider payload**. The pi-ai OpenAI
+// The binding gate is the **outgoing provider payload**. The pi-ai OpenAI
 // Responses converter at
 // `node_modules/@mariozechner/pi-ai/dist/providers/openai-responses-shared.js`
 // (lines 159-163) reads `msg.content` only — `msg.details` is ignored.
@@ -16,7 +15,7 @@
 // below: a faithful, test-isolated reimplementation that mirrors what
 // pi-ai writes onto the wire. Substitution is at the binding gate (the
 // converted payload), not upstream of it (no caller-threaded `onPayload`
-// config; B45 / CONTEXT D-T5).
+// config).
 //
 // We do not import the pi-ai converter directly because pi-ai's package
 // exports do not surface `openai-responses-shared.js`. Reimplementing the
@@ -108,7 +107,7 @@ export interface RunOneTurnWithProviderOpts {
  * pi-ai's `convertResponsesMessages` content-only rule (see
  * `pi-ai/.../openai-responses-shared.js` lines 159-163). The `details` field
  * on toolResult messages is intentionally NOT included — that is the binding
- * invariant under test (R5 invariant 37, AC-8).
+ * invariant under test.
  */
 function projectMessagesToProviderPayload(messages: AnyMessage[]): unknown {
   const out: unknown[] = [];
@@ -141,7 +140,7 @@ function projectMessagesToProviderPayload(messages: AnyMessage[]): unknown {
       }
     } else {
       // toolResult — content-only projection. `details` is intentionally NOT
-      // included (R5 invariant 37; CONTEXT D-J1).
+      // included.
       const textResult = msg.content
         .filter((c) => c.type === "text")
         .map((c) => c.text)
@@ -162,16 +161,16 @@ function projectMessagesToProviderPayload(messages: AnyMessage[]): unknown {
  *
  * Reads the JSONL session file at `sessionPath`, projects the messages
  * through `projectMessagesToProviderPayload` (mirrors the production
- * binding gate per CONTEXT D-J2 + AC-8), and fires the stub's `onSend`
- * callback with the converted payload. Resolves once the synthetic
- * response would be applied (no real LLM call).
+ * binding gate), and fires the stub's `onSend` callback with the converted
+ * payload. Resolves once the synthetic response would be applied (no real
+ * LLM call).
  */
 export function runOneTurnWithProvider(opts: RunOneTurnWithProviderOpts): Promise<void> {
   const messages = loadSession(opts.sessionPath);
   const converted = projectMessagesToProviderPayload(messages);
 
   // Fire the stub's capture hook with the converted outgoing payload — this
-  // is the production-binding gate per CONTEXT D-J2.
+  // is the production-binding gate.
   opts.provider.onSend(converted);
   // Mutate the captures array (cast through unknown so the readonly hint stays
   // at the public type level — consumers should treat captures as read-only).
@@ -191,9 +190,8 @@ export interface BuildFixtureSessionOpts {
  *
  * The session contains one user message + one toolResult message (the
  * shape pi-coding-agent persists post-tool-execution). The toolResult's
- * `details` field carries the augmenter output — v12 Phase 5's
- * `visibleDelivery` record. The JSONL on disk is byte-faithful to what
- * production writes.
+ * `details` field carries the augmenter output — the `visibleDelivery`
+ * record. The JSONL on disk is byte-faithful to what production writes.
  */
 export function buildFixtureSessionWithToolResult(opts: BuildFixtureSessionOpts): Promise<string> {
   // Use a per-call temp dir so concurrent test runs do not collide.
@@ -218,7 +216,7 @@ export function buildFixtureSessionWithToolResult(opts: BuildFixtureSessionOpts)
 
   // JSONL: one message per line. Each line is a complete JSON object.
   // Production sessions persist `details` verbatim; the converter strips
-  // it on read (D-J1). The longCaption in `details.visibleDelivery.caption`
+  // it on read. The longCaption in `details.visibleDelivery.caption`
   // is preserved on disk but absent from the converter's outgoing payload.
   const lines = [JSON.stringify(userMsg), JSON.stringify(toolResultMsg)];
   writeFileSync(sessionPath, lines.join("\n") + "\n", "utf-8");

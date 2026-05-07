@@ -50,16 +50,16 @@ export interface BackgroundTaskManager {
   /**
    * Mark a task as completed.
    *
-   * Phase 15 v12 (D-S3): the legacy `notifyFn` argument is preserved for
-   * backward compatibility but unused — the completion-dispatcher subscribes
-   * to the `background_task:completed` event emitted here and decides whether
-   * to fire the user-visible fallback notification. Single-owner contract
-   * eliminates double-notify (RC-1, RC-2 closed).
+   * The legacy `notifyFn` argument is preserved for backward compatibility but
+   * unused — the completion-dispatcher subscribes to the
+   * `background_task:completed` event emitted here and decides whether to fire
+   * the user-visible fallback notification. Single-owner contract eliminates
+   * double-notify.
    */
   complete(taskId: string, result: unknown, notifyFn?: NotifyFn): void;
   /**
-   * Mark a task as failed. See `complete` for the D-S3 single-owner note —
-   * the `notifyFn` argument is unused; the dispatcher routes notification.
+   * Mark a task as failed. See `complete` for the single-owner note — the
+   * `notifyFn` argument is unused; the dispatcher routes notification.
    */
   fail(taskId: string, error: unknown, notifyFn?: NotifyFn): void;
   cancel(taskId: string): Result<void, Error>;
@@ -71,8 +71,8 @@ export interface BackgroundTaskManager {
   /**
    * Atomically transition the in-memory task's dispatchState AND persist.
    * Returns true on success; false if task does not exist. The dispatcher
-   * (Phase 15 v12) calls this from its handler so AC-5 SIGKILL-recovery
-   * preserves the recovered state across daemon restart (D-S2).
+   * calls this from its handler so SIGKILL-recovery preserves the recovered
+   * state across daemon restart.
    */
   transitionDispatchState(taskId: string, next: BackgroundSessionState): boolean;
 }
@@ -150,9 +150,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         status: "running",
         startedAt: Date.now(),
         origin,
-        // Phase 15 v12 (D-S1, D-S2): seed the dispatch state machine.
-        // Default policy is "deferred" — the dispatcher (Plan 15-04) inspects
-        // dispatchState before firing fallback notify (D-S3 at-most-once).
+        // Seed the dispatch state machine. Default policy is "deferred" —
+        // the dispatcher inspects dispatchState before firing fallback notify
+        // (at-most-once).
         notificationPolicy: notificationPolicy ?? "deferred",
         dispatchState: "pending",
         _promise: promise,
@@ -205,13 +205,12 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         timestamp: Date.now(),
       });
 
-      // Phase 15 v12 (D-S3): notification routing now lives in the
-      // completion-dispatcher (subscribed to background_task:completed
-      // above). The legacy `notifyFn` argument is kept for backward
-      // compatibility but unused here — the dispatcher inspects
-      // task.dispatchState before firing the user-visible fallback,
-      // and the runner skips when state is "notified" (single-owner
-      // contract closes RC-1 + RC-2; AC-1 zero spurious outbound).
+      // Notification routing lives in the completion-dispatcher (subscribed
+      // to background_task:completed above). The legacy `notifyFn` argument
+      // is kept for backward compatibility but unused here — the dispatcher
+      // inspects task.dispatchState before firing the user-visible fallback,
+      // and the runner skips when state is "notified" (single-owner contract,
+      // zero spurious outbound).
     },
 
     fail(taskId, error, _notifyFn?) {
@@ -237,8 +236,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         timestamp: Date.now(),
       });
 
-      // Phase 15 v12 (D-S3): see complete() above — notifyFn arg is
-      // unused; dispatcher owns routing.
+      // See complete() above — notifyFn arg is unused; dispatcher owns routing.
     },
 
     cancel(taskId) {
@@ -279,38 +277,21 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     recoverOnStartup() {
       const recovered = recoverTasks(dataDir);
       let count = 0;
-      let skipped = 0;
       let dispatchPreserved = 0;
       for (const persisted of recovered) {
-        if (!persisted.origin || typeof persisted.origin !== "object" || !persisted.origin.agentId || !persisted.origin.sessionKey) {
-          // Legacy file without origin. Skip with a warning -- the file
-          // remains on disk for audit, but the manager doesn't import it.
-          skipped++;
-          logger.warn(
-            {
-              taskId: persisted.id,
-              hint: "Legacy task file lacks origin; skipping recovery -- delete the file or wait for cleanup",
-              errorKind: "internal" as const,
-            },
-            "Skipping recovered task without origin",
-          );
-          continue;
-        }
-        // Phase 15 v12 (D-S2): preserve notificationPolicy + dispatchState
-        // from disk. Default policy "deferred"; default state "pending" for
-        // legacy files that predate Phase 2.
-        const task: BackgroundTask = {
-          ...persisted,
-          notificationPolicy: persisted.notificationPolicy ?? "deferred",
-          dispatchState: persisted.dispatchState ?? "pending",
-        };
+        // The persistence-write contract guarantees populated origin /
+        // notificationPolicy / dispatchState on every task file.
+        // background-task-persistence.ts rejects shape-malformed files
+        // (missing id / toolName) before they reach here; we propagate the
+        // persisted record as-is.
+        const task: BackgroundTask = persisted as BackgroundTask;
         tasks.set(task.id, task);
 
         if (persisted.status === "failed" && persisted.error === "Daemon restarted while task was running") {
-          // Phase 15 v12 (D-S2 + AC-5 recovery-without-events):
-          // if dispatchState is already "notified" or "dispatched", the
-          // dispatcher already routed pre-restart; do NOT re-emit the
-          // background_task:failed event (which would re-trigger fallback).
+          // Recovery-without-events: if dispatchState is already "notified" or
+          // "dispatched", the dispatcher already routed pre-restart; do NOT
+          // re-emit the background_task:failed event (which would re-trigger
+          // fallback).
           if (task.dispatchState === "notified" || task.dispatchState === "dispatched") {
             dispatchPreserved++;
             logger.debug(
@@ -344,16 +325,6 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           "Recovered tasks with preserved dispatch state (no re-emit)",
         );
       }
-      if (skipped > 0) {
-        logger.warn(
-          {
-            skipped,
-            hint: "Legacy task files cannot be recovered without origin -- they remain on disk for audit",
-            errorKind: "internal" as const,
-          },
-          "Skipped legacy task files during recovery",
-        );
-      }
     },
 
     transitionDispatchState(taskId, next) {
@@ -361,8 +332,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       if (!task) return false;
       // Idempotent — same-state transitions are allowed (no-op write).
       task.dispatchState = next;
-      // Persist atomically so recovery-after-SIGKILL sees the transition
-      // (D-S2 binding gate; AC-5 verified by replay).
+      // Persist atomically so recovery-after-SIGKILL sees the transition.
       persistTaskSync(dataDir, task);
       return true;
     },

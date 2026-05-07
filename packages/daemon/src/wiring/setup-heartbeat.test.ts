@@ -1,5 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
+
+// Mock `@comis/scheduler` so we can capture the deps passed into
+// `createAgentHeartbeatSource` and exercise the `getExecutor` closure
+// directly. importOriginal preserves the rest of the module surface
+// (createPerAgentHeartbeatRunner, resolveEffectiveHeartbeatConfig,
+// createDuplicateDetector) used by the other setupHeartbeat tests in this file.
+let capturedHeartbeatSourceDeps: { getExecutor?: (agentId: string) => unknown } | undefined;
+vi.mock("@comis/scheduler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/scheduler")>();
+  return {
+    ...actual,
+    createAgentHeartbeatSource: (deps: { getExecutor?: (agentId: string) => unknown }) => {
+      capturedHeartbeatSourceDeps = deps;
+      return { onTick: vi.fn() };
+    },
+  };
+});
+
 import { setupHeartbeat } from "./setup-heartbeat.js";
 
 // ---------------------------------------------------------------------------
@@ -215,5 +233,38 @@ describe("setupHeartbeat", () => {
     expect(state.config.intervalMs).toBe(180_000);
 
     perAgentRunner!.stop();
+  });
+
+  // Explicit error when executor missing. A non-null-assertion lookup
+  // against the executors Map returned undefined when the agent was
+  // heartbeat-enabled in config but missed the Map; the resulting
+  // `inner.execute(...)` produced a runtime TypeError inside a timer
+  // callback. getExecutor now throws a typed Error eagerly so wiring
+  // gaps surface as a clean stack at the boundary.
+  it("getExecutor throws explicit Error when executors map lacks the heartbeat-enabled agent", () => {
+    capturedHeartbeatSourceDeps = undefined;
+    const container = makeContainer({
+      "agent-enabled": {
+        model: "claude-sonnet-4-20250514",
+        scheduler: { heartbeat: { enabled: true, intervalMs: 60_000 } },
+      },
+    });
+
+    setupHeartbeat({
+      container,
+      executors: new Map(), // <-- empty by design: simulates wiring gap
+      assembleToolsForAgent: vi.fn(async () => []),
+      workspaceDirs: new Map(),
+      systemEventQueue: makeSystemEventQueue(),
+      schedulerLogger: makeLogger(),
+    } as any);
+
+    // The mocked createAgentHeartbeatSource captured the `getExecutor`
+    // closure synchronously. Invoke it for the missing agent.
+    expect(capturedHeartbeatSourceDeps).toBeDefined();
+    expect(typeof capturedHeartbeatSourceDeps!.getExecutor).toBe("function");
+    expect(() => capturedHeartbeatSourceDeps!.getExecutor!("agent-enabled")).toThrow(
+      "No executor found for heartbeat agent agent-enabled",
+    );
   });
 });

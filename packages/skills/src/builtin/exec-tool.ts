@@ -25,7 +25,7 @@
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync, writeFileSync, copyFileSync, statSync } from "node:fs";
+import { createWriteStream, mkdirSync, writeFileSync, copyFileSync, statSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { safePath, PathTraversalError } from "@comis/core";
@@ -274,6 +274,40 @@ export function buildSpawnCommand(
 const SECRET_REF_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 
 /**
+ * Workspace-internal data env resolver.
+ *
+ * Returns env vars (PATH, MPLCONFIGDIR, XDG_CACHE_HOME, MPLBACKEND,
+ * PIP_DISABLE_PIP_VERSION_CHECK) derived from `workspaceDir` so python /
+ * matplotlib subprocesses do NOT inherit the daemon's host PATH or
+ * cache-dir defaults. (15s pip-install hot path; matplotlib Fontconfig
+ * error from a non-writable default cache dir).
+ *
+ * Defined inline to avoid a cross-package import from `@comis/agent`
+ * (`@comis/skills` does not depend on `@comis/agent` -- they are siblings
+ * wired together at the daemon composition root, mirroring the
+ * `bridge-event-handlers.ts` "Defined inline to avoid cross-package
+ * import" precedent). The shape mirrors
+ * `packages/agent/src/workspace/data-env.ts` verbatim; if the contract
+ * diverges, lift this into `@comis/shared`. The agent-side `data-env.ts`
+ * remains the canonical owner of the no-host-env contract.
+ *
+ * This helper does NOT read host env. The values are pure derivations
+ * from workspaceDir + safePath (no path.join).
+ */
+function resolveDataEnv(opts: { workspaceDir: string }): Record<string, string> {
+  const venvBin = safePath(opts.workspaceDir, "venv", "bin");
+  const cacheDir = safePath(opts.workspaceDir, ".cache");
+  const mplDir = safePath(cacheDir, "matplotlib");
+  return {
+    PATH: venvBin,
+    MPLCONFIGDIR: mplDir,
+    XDG_CACHE_HOME: cacheDir,
+    MPLBACKEND: "Agg",
+    PIP_DISABLE_PIP_VERSION_CHECK: "1",
+  };
+}
+
+/**
  * Detect raw-interpreter command shapes. When `secretRefs` is present,
  * these are refused because they make `echo $TOKEN` / `print(os.environ)`
  * trivial one-liners. Agents should put credential-bearing scripts into
@@ -474,7 +508,7 @@ export function createExecTool(
 
         // Detect --break-system-packages for post-execution warning
         const breakSystemWarning = command.includes("--break-system-packages")
-          ? "\u26a0\ufe0f WARNING: --break-system-packages modifies the system Python. Use a virtualenv instead: python3 -m venv .venv && .venv/bin/pip install ...\n\n"
+          ? "\u26a0\ufe0f WARNING: --break-system-packages modifies the system Python. Use a virtualenv: the workspace's pre-warmed venv (venv/bin/pip install ...) or a per-project one (python3 -m venv projects/<name>/.venv).\n\n"
           : "";
 
         // Log command start (truncate command to 200 chars for security)
@@ -536,10 +570,51 @@ export function createExecTool(
           }
         }
 
-        // Build environment (use filtered subprocess env instead of raw process.env)
+        // Build environment (use filtered subprocess env instead of raw process.env).
         const baseEnv = subprocessEnv ?? (process.env as Record<string, string>);
+
+        // Workspace-internal env split into two halves:
+        //
+        //   1. Always-on: MPLCONFIGDIR / XDG_CACHE_HOME / MPLBACKEND /
+        //      PIP_DISABLE_PIP_VERSION_CHECK. Eliminates the matplotlib
+        //      `Fontconfig error` regardless of which venv layout (workspace-
+        //      root `venv/`, per-project `.venv/`, none) the agent uses --
+        //      the host `/root/.cache/matplotlib` may be read-only under
+        //      `ProtectSystem=strict`; the workspace cache dir is always
+        //      writable. Also prevents host XDG_CACHE_HOME leakage.
+        //
+        //   2. Conditional: PATH gets `${workspacePath}/venv/bin` prepended
+        //      only when that directory actually exists (i.e. the Dockerfile
+        //      pre-warm landed and wasn't shadowed by a stale volume). This
+        //      closes the 15s pip-install hot path for prewarm users without
+        //      shadowing per-project `projects/<name>/.venv/bin/python`
+        //      invocations the agent makes directly.
+        //
+        // Order: spread baseEnv -> override with dataEnv -> userEnv (so
+        // the agent can still pin a specific value via `env: {...}`) ->
+        // server-resolved secrets (always last; agent cannot override).
+        const dataEnv = resolveDataEnv({ workspaceDir: workspacePath });
+        const venvBin = safePath(workspacePath, "venv", "bin");
+        if (existsSync(venvBin)) {
+          logger?.debug(
+            { toolName: "exec", workspaceDir: workspacePath, hint: "Prepending workspace-prewarmed venv/bin to PATH" },
+            "Exec workspace venv detected",
+          );
+          // Prepend venv bin so `python` / `pip` resolve to the prewarm
+          // while system binaries (bash, sh, node, git, curl) remain
+          // reachable via baseEnv.PATH.
+          if (dataEnv.PATH && baseEnv.PATH) {
+            dataEnv.PATH = `${dataEnv.PATH}:${baseEnv.PATH}`;
+          }
+        } else {
+          // No prewarm on this workspace -- drop the venv-only PATH so
+          // baseEnv.PATH wins. The matplotlib + cache dir env vars survive
+          // and still kill the Fontconfig warning universally.
+          delete dataEnv.PATH;
+        }
         const env: Record<string, string> = {
           ...baseEnv,
+          ...dataEnv,
           ...(userEnv ?? {}),
           ...(resolvedSecretEnv ?? {}),
         };
@@ -590,7 +665,13 @@ export function createExecTool(
 interface EscalationContext {
   command: string;
   child: ReturnType<typeof spawn>;
+  /** performance.now() at spawn -- monotonic, used for elapsed durationMs. */
   startTime: number;
+  /** Date.now() at spawn -- Unix epoch ms, used for ProcessSession.startedAt
+   *  (which downstream code subtracts from Date.now() to compute runtimeMs).
+   *  Captured separately because performance.now() is a monotonic clock relative
+   *  to process start, not a wall clock. */
+  startTimeMs: number;
   stdoutBuf: string;
   stderrBuf: string;
   registry: ProcessRegistry;
@@ -619,7 +700,7 @@ function escalateToBackground(ctx: EscalationContext): void {
     id: generateSessionId(),
     command: ctx.command,
     pid: ctx.child.pid,
-    startedAt: Math.round(ctx.startTime),
+    startedAt: ctx.startTimeMs,
     status: "running",
     exitCode: undefined,
     stdout: ctx.stdoutBuf,
@@ -692,6 +773,7 @@ function executeForeground(
   getToolResultsDir?: () => string | undefined,
 ): Promise<AgentToolResult<unknown>> {
   const startTime = performance.now();
+  const startTimeMs = Date.now();
 
   return new Promise((resolve) => {
     const { bin, args, cwd: spawnCwd } = buildSpawnCommand(
@@ -834,7 +916,7 @@ function executeForeground(
       ? setTimeout(() => {
           if (resolved) return;
           escalateToBackground({
-            command, child, startTime, stdoutBuf, stderrBuf,
+            command, child, startTime, startTimeMs, stdoutBuf, stderrBuf,
             registry, sandboxConfig, logger, spillStream,
             signal, onAbort, timeoutTimer, resolve,
             setResolved: () => { resolved = true; },

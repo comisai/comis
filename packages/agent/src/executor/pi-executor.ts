@@ -1003,6 +1003,19 @@ export function createPiExecutor(
             (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;
           }
 
+          // Align register/deregister key shape with
+          // BackgroundSessionResolver.formatComposite so production lookups via
+          // resolveActiveSession({agentId, channelType, channelId}) find the
+          // handle this execute() call registers. session-resolver.test.ts
+          // locks the formula — drift on either side breaks that test.
+          // NormalizedMessageSchema enforces channelType / channelId are
+          // non-empty (z.string().min(1)), so this composition is unconditional.
+          const resolverRegisterKey = formatSessionKey({
+            tenantId: agentId ?? "default",
+            channelId: `${msg.channelType}:${msg.channelId}`,
+            userId: msg.channelId,
+          });
+
           // Register active run for mid-execution steering
           if (deps.activeRunRegistry) {
             const handle: RunHandle = {
@@ -1012,10 +1025,10 @@ export function createPiExecutor(
               isStreaming: () => session.isStreaming,
               isCompacting: () => session.isCompacting,
             };
-            const registered = deps.activeRunRegistry.register(formattedKey, handle);
+            const registered = deps.activeRunRegistry.register(resolverRegisterKey, handle);
             if (!registered) {
               deps.logger.warn(
-                { sessionKey: formattedKey, hint: "Session already has an active run; concurrent execution may cause issues", errorKind: "resource" as const },
+                { sessionKey: resolverRegisterKey, hint: "Session already has an active run; concurrent execution may cause issues", errorKind: "resource" as const },
                 "Active run already registered",
               );
             }
@@ -1552,7 +1565,7 @@ export function createPiExecutor(
             // Post-execution cleanup: stats merge, cache metrics, memory persist, session cleanup
             // Extracted to executor-post-execution.ts
             await postExecution({
-              result, session, sm, config, msg, sessionKey, formattedKey, agentId,
+              result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey, agentId,
               executionStartMs, executionId, executionOverrides,
               bridge, unsubscribe,
               contextEngineRef, ceSetup, streamSetup,

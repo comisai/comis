@@ -2,12 +2,12 @@
 /**
  * Background completion dispatcher + runner wiring for daemon startup.
  *
- * Phase 15 v12 (D-S3 at-most-once): subscribes the dispatcher BEFORE the
- * runner so its synchronous `transitionDispatchState` runs first; the
- * runner's handler then reads the updated `task.dispatchState` and skips
- * when state is "notified" (the dispatcher already fired fallback).
- * Subscription order matters because the event bus fires handlers in
- * registration order; the dispatcher MUST come first.
+ * Subscribes the dispatcher BEFORE the runner so its synchronous
+ * `transitionDispatchState` runs first; the runner's handler then reads
+ * the updated `task.dispatchState` and skips when state is "notified"
+ * (the dispatcher already fired fallback). Subscription order matters
+ * because the event bus fires handlers in registration order; the
+ * dispatcher MUST come first.
  *
  * Per AGENTS §2.4: composition root + factories. This wiring lives in
  * @comis/daemon (composition root); the actual factory bodies live in
@@ -36,9 +36,8 @@ export interface BackgroundCompletionRunnerContext {
 }
 
 /**
- * The taskManager arg widened in Phase 15 v12 to require
- * `transitionDispatchState` so the dispatcher can persist state-machine
- * transitions (D-S2 binding gate; AC-5 recovery-after-SIGKILL).
+ * The taskManager arg widened to require `transitionDispatchState` so the
+ * dispatcher can persist state-machine transitions.
  *
  * The runner only consumes `getTask` (existing contract); the dispatcher
  * consumes both `getTask` and `transitionDispatchState`. Daemon callers
@@ -49,9 +48,8 @@ export interface SetupBackgroundCompletionRunnerDeps {
   getExecutor: (agentId: string) => AgentExecutor;
   sessionStore: RunnerSessionStore;
   /**
-   * Phase 15 v12: must support `transitionDispatchState`; the dispatcher
-   * persists state machine transitions through it (D-S2). The runner only
-   * needs `getTask`.
+   * Must support `transitionDispatchState`; the dispatcher persists state
+   * machine transitions through it. The runner only needs `getTask`.
    */
   taskManager: Pick<BackgroundTaskManager, "getTask" | "transitionDispatchState">;
   /** bgNotifyFn closure used when the originating session is gone. */
@@ -65,16 +63,16 @@ export interface SetupBackgroundCompletionRunnerDeps {
  * Wire the dispatcher + completion runner from daemon-level dependencies.
  * Call this AFTER setupNotifications so fallbackNotifyFn is wired.
  *
- * Subscription order (D-S3): dispatcher first (synchronous transition),
- * runner second (reads updated state). Reverse-order shutdown so the
- * runner stops accepting events before the dispatcher tears down.
+ * Subscription order: dispatcher first (synchronous transition), runner
+ * second (reads updated state). Reverse-order shutdown so the runner
+ * stops accepting events before the dispatcher tears down.
  */
 export function setupBackgroundCompletionRunner(
   deps: SetupBackgroundCompletionRunnerDeps,
 ): BackgroundCompletionRunnerContext {
-  // Phase 15 v12 (D-S3): dispatcher subscribes FIRST so its synchronous
-  // transitionDispatchState runs before the runner's handler reads
-  // task.dispatchState within the same event-bus tick.
+  // Dispatcher subscribes FIRST so its synchronous transitionDispatchState
+  // runs before the runner's handler reads task.dispatchState within the
+  // same event-bus tick.
   const dispatcher = createCompletionDispatcher({
     eventBus: deps.eventBus,
     sessionStore: deps.sessionStore,

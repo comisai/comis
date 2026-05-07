@@ -504,6 +504,11 @@ export interface InfraEvents {
     agentId: string;
     sessionKey: string;
     hopCount: number;
+    /** traceId from task.origin for operator log continuity.
+     *  null when no trace was active at promote() time. Carried through so
+     *  subscribers (and operator log lines) preserve the originating trace
+     *  across the background_task:completed → :reentered boundary. */
+    traceId: string | null;
     timestamp: number;
   };
 

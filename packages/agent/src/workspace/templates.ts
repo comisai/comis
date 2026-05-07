@@ -211,7 +211,11 @@ Capture what matters. The system persists it automatically.
 ## Workspace Organization
 
 \`\`\`
-projects/    -- Code repos (each in its own subfolder, venvs inside as .venv)
+projects/    -- Code repos (each in its own subfolder, .venv per repo)
+venv/        -- Pre-warmed Python env (matplotlib, numpy, pandas on PATH).
+                Use venv/bin/python for chart/data work; venv/bin/pip
+                install <pkg> for extras. Per-project venvs go inside
+                projects/<name>/.venv (separate lifecycle).
 scripts/     -- Standalone reusable scripts
 documents/   -- Text docs, PDFs, spreadsheets, markdown
 media/       -- User-provided images, audio, video

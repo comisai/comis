@@ -20,7 +20,6 @@ import { createSubAgentRunner } from "../sub-agent-runner.js";
 import { createAnnouncementBatcher } from "../announcement-batcher.js";
 import { createAnnouncementDeadLetterQueue } from "../announcement-dead-letter.js";
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -136,10 +135,10 @@ export function setupCrossSession(deps: {
     get(sessionKey: string): { abort(): Promise<void> } | undefined;
   };
   /**
-   * Optional composite-key resolver (R3, B37). Threaded into
-   * sub-agent-runner so abort paths use `(agentId, channelType,
-   * channelId)` instead of a single-arg formatted-key lookup. Daemon
-   * builds it via `createBackgroundSessionResolver({activeRunRegistry})`.
+   * Optional composite-key resolver. Threaded into sub-agent-runner so abort
+   * paths use `(agentId, channelType, channelId)` instead of a single-arg
+   * formatted-key lookup. Daemon builds it via
+   * `createBackgroundSessionResolver({activeRunRegistry})`.
    */
   sessionResolver?: {
     resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): { abort(): Promise<void> } | undefined;
@@ -454,7 +453,7 @@ export function setupCrossSession(deps: {
           deps.logger?.warn({
             err,
             hint: "Parent summary generation failed; proceeding without summary",
-            errorKind: "upstream",
+            errorKind: "dependency" as const,
           }, "generateParentSummary failed for parent context");
         }
       }
@@ -717,8 +716,13 @@ export function setupCrossSession(deps: {
   };
 
   // Create dead-letter queue for failed announcement persistence (before batcher, so batcher can reference it)
-  const dlqBaseDir = resolve(container.config.dataDir || ".");
-  const deadLetterFilePath = safePath(dlqBaseDir, "dead-letters.jsonl");
+  // Direct safePath composition. AGENTS §2.2: all paths via safePath. safePath
+  // requires an absolute base (see PathTraversalError contract in
+  // packages/core/src/security/safe-path.ts), so when container.config.dataDir
+  // is unset we fall back to process.cwd(). process.cwd() is not banned by
+  // AGENTS §2.2 (only process.env and node:path's path.join/path.resolve are
+  // restricted).
+  const deadLetterFilePath = safePath(container.config.dataDir || process.cwd(), "dead-letters.jsonl");
   const deadLetterQueue = createAnnouncementDeadLetterQueue({
     filePath: deadLetterFilePath,
     maxRetries: 5,

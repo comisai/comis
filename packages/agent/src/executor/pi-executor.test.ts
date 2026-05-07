@@ -231,9 +231,9 @@ vi.mock("../bridge/pi-event-bridge.js", () => ({
     listener: mockBridgeListener,
     getResult: mockGetResult,
     addGhostCost: vi.fn(),
-    // Phase 4 (Plan 15-05 / R4): bridge owns the drain inflight gate so
-    // postExecution can fire an end-of-turn backstop drainAt sharing the
-    // same composite-key Map. The mock returns a fresh Map per construction.
+    // Bridge owns the drain inflight gate so postExecution can fire an
+    // end-of-turn backstop drainAt sharing the same composite-key Map.
+    // The mock returns a fresh Map per construction.
     getDrainState: () => ({ drainInflightByKey: new Map<string, Promise<void>>() }),
   }),
 }));
@@ -1221,9 +1221,8 @@ describe("PiExecutor", () => {
           listener: mockBridgeListener,
           getResult: mockGetResult,
           addGhostCost: vi.fn(),
-          // Phase 4 (Plan 15-05 / R4): same drain-state stub as the top-level
-          // mock so the per-test override in this it() block matches the
-          // PostExecutionBridge interface.
+          // Same drain-state stub as the top-level mock so the per-test
+          // override in this it() block matches the PostExecutionBridge interface.
           getDrainState: () => ({ drainInflightByKey: new Map<string, Promise<void>>() }),
         };
       });
@@ -2766,7 +2765,10 @@ describe("PiExecutor", () => {
 
       expect(mockRegistry.register).toHaveBeenCalledTimes(1);
       const [registeredKey, registeredHandle] = mockRegistry.register.mock.calls[0];
-      expect(registeredKey).toBe("t1:u1:c1");
+      // Register key mirrors BackgroundSessionResolver.formatComposite:
+      //   formatSessionKey({tenantId: "default", channelId: "test:c1", userId: "c1"}) = "default:c1:test:c1"
+      // testSessionKey {tenantId: "t1", userId: "u1", channelId: "c1"} → no longer the register key.
+      expect(registeredKey).toBe("default:c1:test:c1");
       // Verify handle has all required methods
       expect(typeof registeredHandle.steer).toBe("function");
       expect(typeof registeredHandle.followUp).toBe("function");
@@ -2782,7 +2784,7 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockRegistry.deregister).toHaveBeenCalledWith("t1:u1:c1");
+      expect(mockRegistry.deregister).toHaveBeenCalledWith("default:c1:test:c1");
       // Deregister must be called before dispose
       const deregisterOrder = mockRegistry.deregister.mock.invocationCallOrder[0];
       const disposeOrder = mockDispose.mock.invocationCallOrder[0];
@@ -2797,7 +2799,7 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockRegistry.deregister).toHaveBeenCalledWith("t1:u1:c1");
+      expect(mockRegistry.deregister).toHaveBeenCalledWith("default:c1:test:c1");
     });
 
     it("RunHandle.steer delegates to session.steer", async () => {
@@ -2874,7 +2876,7 @@ describe("PiExecutor", () => {
 
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
-          sessionKey: "t1:u1:c1",
+          sessionKey: "default:c1:test:c1",
           hint: expect.stringContaining("already has an active run"),
           errorKind: "resource",
         }),

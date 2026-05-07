@@ -609,6 +609,33 @@ describe("createExecTool", () => {
       expect(registry.size()).toBe(1);
     });
 
+    it("auto-backgrounded startedAt is wall-clock so runtimeMs reports elapsed time", { timeout: 15_000 }, async () => {
+      // Regression: escalateToBackground previously stored performance.now()
+      // (monotonic clock relative to process start, ~10^5 ms) into
+      // ProcessSession.startedAt. process-registry.status() computes
+      // runtimeMs: Date.now() - startedAt, which produced runtimeMs ≈ Date.now()
+      // (~56 years) instead of seconds-since-spawn -- and surfaced both fields
+      // verbatim to the agent via the process tool.
+      const tool = setup();
+      const t0 = Date.now();
+      const result = await tool.execute("tc1", {
+        command: "sleep 5",
+        autoBackgroundMs: 500,
+      });
+      const details = result.details as { status: string; sessionId: string };
+      expect(details.status).toBe("backgrounded");
+
+      const status = registry.status(details.sessionId);
+      expect(status).toBeDefined();
+      // startedAt MUST be near t0 (Unix epoch ms), not a small monotonic value.
+      expect(status!.startedAt).toBeGreaterThanOrEqual(t0);
+      expect(status!.startedAt).toBeLessThan(t0 + 2_000);
+      // runtimeMs is elapsed time, not Date.now()-sized. Upper bound is loose
+      // to absorb scheduler jitter on busy CI; the regressed value was ~10^12.
+      expect(status!.runtimeMs).toBeGreaterThanOrEqual(0);
+      expect(status!.runtimeMs).toBeLessThan(10_000);
+    });
+
     it("fast command completes normally without auto-backgrounding", { timeout: 10_000 }, async () => {
       const tool = setup();
       const result = await tool.execute("tc1", {
@@ -2110,16 +2137,16 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T0.20-T0.23 cross-check: exec-tool's internal escalation is the SOLE
-// backgrounding owner — no double-promotion (Phase 1 narrowing).
+// Cross-check: exec-tool's internal escalation is the SOLE backgrounding
+// owner — no double-promotion.
 //
 // The middleware test (auto-background-middleware.test.ts) already asserts
 // the wrapper is a no-op for exec; this cross-check asserts the exec-tool
 // source itself contains the internal escalation path that becomes the
 // single owner. Source-grep on exec-tool.ts for `escalateToBackground` (or
-// equivalent) ensures the contract still compiles after Phase 1 lands.
+// equivalent) ensures the contract still compiles.
 // ---------------------------------------------------------------------------
-describe("exec-tool: internal escalation is the SOLE backgrounding owner (T0.20-T0.23 cross-check)", () => {
+describe("exec-tool: internal escalation is the SOLE backgrounding owner", () => {
   it("source-grep: exec-tool.ts contains the internal escalation path (escalateToBackground or equivalent)", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
@@ -2131,12 +2158,35 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner (T0.20-
       .split("\n")
       .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
       .join("\n");
-    // The internal escalation path is the LOAD-BEARING contract — Phase 1
-    // depends on it being present and untouched. If it's removed or renamed
-    // by accident, this test fails to surface the regression.
+    // The internal escalation path is the LOAD-BEARING contract — the
+    // backgrounding ownership invariant depends on it being present and
+    // untouched. If it's removed or renamed by accident, this test fails
+    // to surface the regression.
     const hasInternalEscalation =
       /escalateToBackground/.test(stripped) ||
       /backgrounded.*sessionId/.test(stripped);
     expect(hasInternalEscalation).toBe(true);
+  });
+
+  it("regression-guard: when venv detected, dataEnv.PATH is merged with baseEnv.PATH", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(path.resolve(here, "exec-tool.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    // resolveDataEnv (data-env.ts) returns PATH=<venvBin> only by design
+    // (forbids process.env in data-env.ts). The exec-tool merge site
+    // MUST prepend venvBin to baseEnv.PATH so subprocesses still find
+    // bash/sh/node/git/curl/etc. — without this, every non-venv binary
+    // call produces ENOENT once a workspace has a pre-warmed venv.
+    const hasPathMerge =
+      /dataEnv\.PATH\s*=\s*`\$\{dataEnv\.PATH\}:\$\{baseEnv\.PATH\}`/.test(stripped) ||
+      /dataEnv\.PATH\s*=\s*`\$\{venvBin\}:\$\{baseEnv\.PATH\}`/.test(stripped);
+    expect(hasPathMerge).toBe(true);
   });
 });

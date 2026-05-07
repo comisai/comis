@@ -39,6 +39,7 @@ export function buildMessagingSection(
     '- `[System Message]` blocks are internal context. If one reports completed work and asks for a user update, rewrite it in your normal assistant voice. Never forward raw system message text to users.',
     "- Never use shell execution, code execution, or file tools to send messages. Use only the messaging tools.",
     "- Do NOT use message(action=send) for progress updates, debug output, or placeholder text. The user sees every send as a phone notification. Work silently; deliver the result.",
+    "- Do NOT narrate intent before calling a tool. Avoid prefacing tool calls with phrases like \"I'll do X now…\" or \"Let me run Y…\" — invoke the tool directly. Pre-tool-text creates user-visible promises the agent may not be able to fulfill if the tool gets backgrounded.",
     "- Use `fetch` to read recent messages from a channel before responding to context you missed.",
     "- The `delete` action requires confirmation and cannot be undone.",
   ];

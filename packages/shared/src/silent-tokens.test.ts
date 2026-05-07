@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// T0.30, T0.31, T0.32, T0.37 — silent-tokens predicate, idempotence, exports.
+// silent-tokens predicate, idempotence, exports.
 //
-// RED until 15-02 creates packages/shared/src/silent-tokens.ts. Imports
-// resolve at runtime via dynamic import + try/catch so the test reaches
-// assertions even when the module does not yet exist (D-T1: tests must
-// FAIL with assertion errors, not module-not-found errors that abort the
-// suite).
+// Imports resolve at runtime via dynamic import + try/catch so the test
+// reaches assertions even when the module does not yet exist (tests
+// must FAIL with assertion errors, not module-not-found errors that
+// abort the suite).
 import { describe, it, expect } from "vitest";
 
 // Dynamic import wrapper: returns the module or undefined.
@@ -36,10 +35,9 @@ async function loadSilentTokens(): Promise<
   }
 }
 
-describe("silent-tokens module (T0.30, T0.31, T0.32)", () => {
-  it("T0.30: isSilentResponse classifies tokens vs substantive text", async () => {
+describe("silent-tokens module", () => {
+  it("isSilentResponse classifies tokens vs substantive text", async () => {
     const mod = await loadSilentTokens();
-    // Module must exist post-15-02; until then this assertion fails.
     expect(mod).toBeDefined();
     if (!mod) return;
 
@@ -51,7 +49,7 @@ describe("silent-tokens module (T0.30, T0.31, T0.32)", () => {
     expect(mod.isSilentResponse("")).toBe(true);
   });
 
-  it("T0.31: stripReplyTags removes <reply> wrappers and trims", async () => {
+  it("stripReplyTags removes <reply> wrappers and trims", async () => {
     const mod = await loadSilentTokens();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -60,7 +58,7 @@ describe("silent-tokens module (T0.30, T0.31, T0.32)", () => {
     expect(mod.stripReplyTags("  <reply>  X  </reply>  ")).toBe("X");
   });
 
-  it("T0.32: exported token constants match canonical values", async () => {
+  it("exported token constants match canonical values", async () => {
     const mod = await loadSilentTokens();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -71,8 +69,8 @@ describe("silent-tokens module (T0.30, T0.31, T0.32)", () => {
   });
 });
 
-describe("isSilentResponse idempotence under stripReplyTags + trim (B46)", () => {
-  it("T0.37: agrees on raw and pre-stripped input", async () => {
+describe("isSilentResponse idempotence under stripReplyTags + trim", () => {
+  it("agrees on raw and pre-stripped input", async () => {
     const mod = await loadSilentTokens();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -94,8 +92,8 @@ describe("isSilentResponse idempotence under stripReplyTags + trim (B46)", () =>
   });
 });
 
-describe("T0.31 source-grep: index.ts re-exports silent-tokens + visible-delivery", () => {
-  it("source-grep: packages/shared/src/index.ts re-exports new modules (RED until 15-02)", async () => {
+describe("source-grep: index.ts re-exports silent-tokens + visible-delivery", () => {
+  it("source-grep: packages/shared/src/index.ts re-exports new modules", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");
     const url = await import("node:url");
@@ -108,7 +106,7 @@ describe("T0.31 source-grep: index.ts re-exports silent-tokens + visible-deliver
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    // Post-15-02 the index.ts re-exports the new modules. Until then this fails.
+    // index.ts re-exports the new modules.
     expect(stripped).toContain("./silent-tokens.js");
     expect(stripped).toContain("./visible-delivery.js");
   });

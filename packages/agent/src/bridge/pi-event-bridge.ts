@@ -197,11 +197,11 @@ export interface PiEventBridgeResult {
     canonical: ReadonlyMap<string, ReadonlyArray<unknown>>;
   };
   /**
-   * Phase 4 (Plan 15-05 / R4): expose the bridge-owned drain inflight gate
-   * so executor-post-execution can fire an end-of-turn backstop drainAt
-   * sharing the same composite-key gate map (T0.25). Returns the live
-   * `BridgeMetricsState` slice -- callers MUST treat this as read-mostly
-   * (the only mutation contract is `drainAt` adding/removing entries).
+   * Expose the bridge-owned drain inflight gate so executor-post-execution
+   * can fire an end-of-turn backstop drainAt sharing the same composite-key
+   * gate map. Returns the live `BridgeMetricsState` slice -- callers MUST
+   * treat this as read-mostly (the only mutation contract is `drainAt`
+   * adding/removing entries).
    */
   getDrainState: () => DrainInflightState;
 }
@@ -387,21 +387,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             ...(errorText && { errorText }),
           });
 
-          // Phase 5 (Plan 15-02 / B26 + B29 / RC-4): capture outbound deliveries.
-          // The post-execution silent-sentinel gate reads this per-turn log to
-          // make sentinel-aware decisions about paired memory persistence (R5).
-          // Reset at turn_start; bounded by per-turn outbound message count.
+          // Capture outbound deliveries. The post-execution silent-sentinel
+          // gate reads this per-turn log to make sentinel-aware decisions
+          // about paired memory persistence. Reset at turn_start; bounded by
+          // per-turn outbound message count.
           //
-          // Phase 4 (Plan 15-05 / R4 / B15): on the SAME tool_execution_end
-          // event, fire `drainAt({agentId, channelType, channelId})` (the
-          // composite-keyed inline-consumption drain). The gate state lives in
-          // bridge-metrics (`m.drainInflightByKey`) so concurrent drains for
-          // the same composite key collapse to a single in-flight Promise
-          // (T0.25); concurrent drains for different composite keys (multi-
-          // agent) run independently (T0.24). Failures inside drainAt are
-          // suppressed with WARN logging (T0.16, T0.26) -- the bridge's
-          // tool_execution_end propagation is NEVER aborted by drain
-          // misbehavior.
+          // On the SAME tool_execution_end event, fire
+          // `drainAt({agentId, channelType, channelId})` (the composite-keyed
+          // inline-consumption drain). The gate state lives in bridge-metrics
+          // (`m.drainInflightByKey`) so concurrent drains for the same
+          // composite key collapse to a single in-flight Promise; concurrent
+          // drains for different composite keys (multi-agent) run
+          // independently. Failures inside drainAt are suppressed with WARN
+          // logging -- the bridge's tool_execution_end propagation is NEVER
+          // aborted by drain misbehavior.
           if (endEvent.toolName === "message" && toolSuccess && sanitizedArgs) {
             const action = typeof sanitizedArgs.action === "string" ? sanitizedArgs.action : "";
             if (action === "send" || action === "reply" || action === "attach") {
@@ -414,23 +413,23 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 timestamp: Date.now(),
               });
 
-              // Composite-key drain at the bridge call site (B15). The
-              // composite (agentId, channelType, channelId) prevents cross-
-              // agent contamination of the inline-consumption queue
-              // (T0.24). Use the message tool's own channel_type / channel_id
-              // when present (the tool resolved them); fall back to the
-              // bridge's bound deps.channelId when the tool args were
-              // sanitized away (defensive). A drain trigger with empty
-              // channelType OR empty channelId is skipped -- formatDrainKey
-              // would otherwise produce ambiguous keys.
+              // Composite-key drain at the bridge call site. The composite
+              // (agentId, channelType, channelId) prevents cross-agent
+              // contamination of the inline-consumption queue. Use the
+              // message tool's own channel_type / channel_id when present
+              // (the tool resolved them); fall back to the bridge's bound
+              // deps.channelId when the tool args were sanitized away
+              // (defensive). A drain trigger with empty channelType OR empty
+              // channelId is skipped -- formatDrainKey would otherwise
+              // produce ambiguous keys.
               //
               // drainAt is fire-and-forget: it spawns the drain Promise and
               // wraps it in suppressError internally. The kickoffDrain
               // wrapper below double-wraps the synchronous invocation in
               // suppressError (Promise.resolve adapter) so a (impossible)
               // synchronous throw inside drainAt cannot abort the bridge's
-              // tool_execution_end propagation -- T0.16 fire-and-forget
-              // contract / T0.26 non-fatal drain failure.
+              // tool_execution_end propagation -- fire-and-forget contract /
+              // non-fatal drain failure.
               const drainChannelType = channelType.length > 0 ? channelType : "";
               const drainChannelId = channelId.length > 0 ? channelId : deps.channelId;
               if (drainChannelType.length > 0 && drainChannelId.length > 0) {
@@ -510,9 +509,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // LLM turn about to start (pre-serialize hook for assert+restore)
         // -----------------------------------------------------------------
         case "turn_start": {
-          // Phase 5 (Plan 15-02 / B26 + B29): reset per-turn outbound capture.
-          // The log accumulates message(send/reply/attach) calls across the
-          // turn so the post-execution gate can make sentinel-aware decisions.
+          // Reset per-turn outbound capture. The log accumulates
+          // message(send/reply/attach) calls across the turn so the
+          // post-execution gate can make sentinel-aware decisions.
           m.outboundLog.length = 0;
 
           // Run the executor-supplied pre-call closure once per turn, before
@@ -1483,13 +1482,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
     canonical: m.thinkingBlockCanonical,
   });
 
-  // Phase 4 (Plan 15-05 / R4 / T0.25): expose the per-composite-key drain
-  // inflight gate so executor-post-execution can fire an end-of-turn backstop
-  // drainAt that shares the SAME gate map as the bridge's
-  // tool_execution_end call site. The returned object has a live reference
-  // to the underlying Map -- mutations from the bridge AND the executor
-  // post-execution path land in the same state container, satisfying the
-  // single-tick gate contract.
+  // Expose the per-composite-key drain inflight gate so executor-post-
+  // execution can fire an end-of-turn backstop drainAt that shares the SAME
+  // gate map as the bridge's tool_execution_end call site. The returned
+  // object has a live reference to the underlying Map -- mutations from the
+  // bridge AND the executor post-execution path land in the same state
+  // container, satisfying the single-tick gate contract.
   const getDrainState = (): DrainInflightState => ({
     drainInflightByKey: m.drainInflightByKey,
   });

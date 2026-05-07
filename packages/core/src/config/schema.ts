@@ -8,6 +8,7 @@ import { ChannelConfigSchema } from "./schema-channel.js";
 import { CoalescerConfigSchema } from "./schema-coalescer.js";
 import { DaemonConfigSchema } from "./schema-daemon.js";
 import { DeliveryMirrorConfigSchema, DeliveryQueueConfigSchema, DeliveryTimingConfigSchema } from "./schema-delivery.js";
+import { OutputRetentionConfigSchema } from "./schema-output-retention.js";
 import { DocumentationConfigSchema } from "./schema-documentation.js";
 import { EmbeddingConfigSchema } from "./schema-embedding.js";
 import { EnvelopeConfigSchema } from "./schema-envelope.js";
@@ -106,6 +107,8 @@ export const AppConfigSchema = z.strictObject({
     deliveryQueue: DeliveryQueueConfigSchema.default(() => DeliveryQueueConfigSchema.parse({})),
     /** Session mirroring persistence configuration */
     deliveryMirror: DeliveryMirrorConfigSchema.default(() => DeliveryMirrorConfigSchema.parse({})),
+    /** Output retention housekeeper configuration (per-class retentionMs). */
+    outputRetention: OutputRetentionConfigSchema.default(() => OutputRetentionConfigSchema.parse({})),
     /** Inter-block delivery timing and pacing configuration */
     deliveryTiming: DeliveryTimingConfigSchema.default(() => DeliveryTimingConfigSchema.parse({})),
     /** Block coalescer: accumulates small streaming blocks before delivery */

@@ -120,11 +120,26 @@ export async function setupDeliveryQueue(deps: {
     }, queueConfig.drainIntervalMs);
     drainInterval.unref();
 
-    // --- Step 4: Prune timer (existing behavior, unchanged). ---
+    // --- Step 4: Prune timer. ---
+    // Emit a per-class drain log line with structured fields
+    // (`pruned`, `class`, `durationMs`) so operators can correlate prune
+    // activity by retention class across subsystems (delivery_queue,
+    // delivery_mirror, output retention housekeeper, etc.). The `class`
+    // field is a placeholder until the underlying pruneExpired() is
+    // extended with per-class breakdown. Canonical Pino object-first;
+    // durationMs is the canonical name (CLAUDE.md logging conventions).
     pruneInterval = setInterval(async () => {
+      const startMs = Date.now();
       const result = await deliveryQueue.pruneExpired();
       if (result.ok && result.value > 0) {
-        logger.debug({ pruned: result.value }, "Delivery queue pruned");
+        logger.debug(
+          {
+            pruned: result.value,
+            class: "delivery_queue",
+            durationMs: Date.now() - startMs,
+          },
+          "Delivery queue pruned",
+        );
       }
     }, queueConfig.pruneIntervalMs);
     pruneInterval.unref();

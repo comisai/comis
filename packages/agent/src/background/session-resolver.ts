@@ -2,24 +2,21 @@
 /**
  * BackgroundSessionResolver: composite-key wrapper around ActiveRunRegistry.
  *
- * Today's `activeRunRegistry.has(sessionKey)` and `.get(sessionKey)` take a
- * single formatted-key string. That string collapses two distinct sessions
- * for the same `channelId` across different agents (or different channelTypes)
- * into one bucket — a latent multi-agent / multi-channel correctness bug
- * (RC-1).
+ * The underlying `activeRunRegistry.has(sessionKey)` and `.get(sessionKey)`
+ * take a single formatted-key string. That string would collapse two
+ * distinct sessions for the same `channelId` across different agents (or
+ * different channelTypes) into one bucket — a latent multi-agent /
+ * multi-channel correctness bug.
  *
  * This resolver makes the composite key explicit at every public call site:
  * `(agentId, channelType, channelId)`. It internally composes the formatted
  * key via `formatSessionKey` from `@comis/core` and delegates to the
  * underlying registry.
  *
- * Per the design's "read-only behavior change" framing (design §"Phase 3"):
- * runtime semantics do not change at the registry layer — what changes is
- * the lookup-key signature surfaced to production callers. T0.33 source-grep
- * enforces that no production code outside *.test.ts retains a single-arg
- * `.has(...)` or `.get(...)` on `activeRunRegistry`.
- *
- * Closes RC-1 (composite-key resolver, AC-4).
+ * Runtime semantics do not change at the registry layer — what changes is
+ * the lookup-key signature surfaced to production callers. No production
+ * code outside *.test.ts should retain a single-arg `.has(...)` or
+ * `.get(...)` on `activeRunRegistry`.
  *
  * @module
  */
@@ -54,7 +51,7 @@ export interface ActiveSessionKey {
  *
  * The resolver exposes ONLY composite-key methods. There is no single-arg
  * fallback — production callers MUST thread `(agentId, channelType,
- * channelId)` end-to-end (T0.33 source-grep enforces).
+ * channelId)` end-to-end.
  */
 export interface BackgroundSessionResolver {
   /**
@@ -127,17 +124,17 @@ function formatComposite(key: ActiveSessionKey): string {
  * Create a BackgroundSessionResolver wrapping an ActiveRunRegistry.
  *
  * Public-facing methods accept ONLY the composite key (agentId,
- * channelType, channelId) — no single-arg fallback. T0.33 source-grep
- * enforces that production callers no longer reach into
- * `activeRunRegistry.has(...)` / `.get(...)` directly.
+ * channelType, channelId) — no single-arg fallback. Production callers
+ * no longer reach into `activeRunRegistry.has(...)` / `.get(...)`
+ * directly.
  */
 export function createBackgroundSessionResolver(
   deps: BackgroundSessionResolverDeps,
 ): BackgroundSessionResolver {
   // Local alias: the resolver IS the abstraction over the underlying
-  // single-arg registry. We rename to `registry` so T0.33's source-grep
+  // single-arg registry. We rename to `registry` so source-grep tooling
   // (`activeRunRegistry.has|get(`) does not flag this file as a callsite
-  // to migrate -- the resolver IS the migration target. AC-4 invariant:
+  // to migrate -- the resolver IS the migration target. Invariant:
   // *production callers* of `activeRunRegistry` go through this resolver;
   // the resolver itself remains the sole consumer of the underlying
   // single-arg surface.

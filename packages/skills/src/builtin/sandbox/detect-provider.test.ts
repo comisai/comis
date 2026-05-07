@@ -34,6 +34,7 @@ vi.mock("./bwrap-provider.js", () => {
     "/etc/passwd",
     "/etc/group",
     "/etc/nsswitch.conf",
+    "/etc/fonts",
   ];
   return {
     BwrapProvider: class {

@@ -33,7 +33,7 @@ import { applyToolPolicy } from "@comis/skills";
 
 /**
  * Minimal BackgroundSessionResolver shape -- only needs hasActiveSession()
- * for the queue-busy check (R3, B36). Locally re-declared to avoid the
+ * for the queue-busy check. Locally re-declared to avoid the
  * cycle from importing @comis/agent here; the daemon constructs the
  * resolver as `createBackgroundSessionResolver({activeRunRegistry})` and
  * the resulting object is structurally assignable to this shape.
@@ -71,7 +71,7 @@ export interface HeartbeatSetupDeps {
   /** Per-agent workspace directories. */
   workspaceDirs: Map<string, string>;
   /**
-   * Composite-key resolver for queue-busy detection (R3, B36, optional).
+   * Composite-key resolver for queue-busy detection (optional).
    * The daemon wires this via `createBackgroundSessionResolver`; it
    * supersedes the previous `.has(sessionKey)` lookup so multi-agent /
    * multi-channel collisions are distinguishable.
@@ -180,7 +180,16 @@ export function setupHeartbeat(deps: HeartbeatSetupDeps): HeartbeatSetupResult {
   // 4. Build AgentHeartbeatSource dependencies
   const source = createAgentHeartbeatSource({
     getExecutor: (agentId: string) => {
-      const inner = executors.get(agentId)!;
+      // Explicit boundary throw replaces a non-null-assertion lookup. The
+      // assertion was unsafe — if executor wiring missed an agent that's
+      // still in the heartbeat config, `inner.execute(...)` would surface
+      // as a runtime TypeError inside a timer callback (uncaught). The
+      // explicit Error gives operators a clean stack at the wiring
+      // boundary instead.
+      const inner = executors.get(agentId);
+      if (!inner) {
+        throw new Error(`No executor found for heartbeat agent ${agentId}`);
+      }
       return {
         execute: (msg: unknown, sessionKey: unknown, tools?: unknown[],
                   hbAgentId?: string, overrides?: Record<string, unknown>) =>

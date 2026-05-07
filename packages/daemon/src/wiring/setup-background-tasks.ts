@@ -6,7 +6,7 @@
  * @module
  */
 
-import { createBackgroundTaskManager, type BackgroundTaskManager } from "@comis/agent";
+import { createBackgroundTaskManager, TASK_DIR_NAME, type BackgroundTaskManager } from "@comis/agent";
 import type { TypedEventBus } from "@comis/core";
 import { safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -40,7 +40,7 @@ export interface SetupBackgroundTasksDeps {
  */
 export function setupBackgroundTasks(deps: SetupBackgroundTasksDeps): BackgroundTasksContext {
   const manager = createBackgroundTaskManager({
-    dataDir: safePath(deps.dataDir, "background-tasks"),
+    dataDir: safePath(deps.dataDir, TASK_DIR_NAME),
     eventBus: deps.eventBus,
     logger: deps.logger,
   });

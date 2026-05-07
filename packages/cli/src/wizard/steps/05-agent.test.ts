@@ -270,7 +270,7 @@ describe("agentStep", () => {
 
   // ---------- B1-B4: catalog-driven model picker regression tests ----------
 
-  it("B1: uses catalogModels[0].modelId as initialValue when state.model is unset", async () => {
+  it("uses catalogModels[0].modelId as initialValue when state.model is unset", async () => {
     vi.mocked(createModelCatalog).mockReturnValue({
       loadStatic: vi.fn(),
       getByProvider: vi.fn(() => [
@@ -307,7 +307,7 @@ describe("agentStep", () => {
     expect(selectCall.initialValue).toBe("claude-sonnet-4-5-20250929");
   });
 
-  it("B2: state.model takes precedence over catalogModels[0] as initialValue", async () => {
+  it("state.model takes precedence over catalogModels[0] as initialValue", async () => {
     vi.mocked(createModelCatalog).mockReturnValue({
       loadStatic: vi.fn(),
       getByProvider: vi.fn(() => [
@@ -338,7 +338,7 @@ describe("agentStep", () => {
     expect(selectCall.initialValue).toBe("my-prior-choice");
   });
 
-  it("B3: QuickStart flow still passes model='default' (regression pin)", async () => {
+  it("QuickStart flow still passes model='default' (regression pin)", async () => {
     const prompter = createMockPrompter();
     vi.mocked(prompter.text).mockResolvedValueOnce("test-agent");
 
@@ -353,7 +353,7 @@ describe("agentStep", () => {
     expect(result.model).toBe("default");
   });
 
-  it("B4: RECOMMENDED_MODELS does not appear in 05-agent.ts source", () => {
+  it("RECOMMENDED_MODELS does not appear in 05-agent.ts source", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(resolve(here, "05-agent.ts"), "utf-8");
     expect(src).not.toMatch(/RECOMMENDED_MODELS/);

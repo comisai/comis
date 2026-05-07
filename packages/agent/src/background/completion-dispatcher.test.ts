@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// T0.1 — completion dispatcher routes notify calls through state-machine
+// Completion dispatcher routes notify calls through state-machine
 // transitions and respects at-most-once.
 //
-// Phase 2 (15-04) introduces the dispatcher in
-// `packages/agent/src/background/completion-dispatcher.ts` (per CONTEXT
-// D-C3 mild preference). The dispatcher subscribes to
-// `background_task:completed` and inspects `task.dispatchState` before
-// firing the notify fallback. It is RED until 15-04 lands.
+// The dispatcher lives in `packages/agent/src/background/completion-dispatcher.ts`,
+// subscribes to `background_task:completed`, and inspects
+// `task.dispatchState` before firing the notify fallback.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { BackgroundTask } from "./background-task-types.js";
 import type { BackgroundTaskOrigin } from "@comis/core";
@@ -63,9 +61,8 @@ function makeLogger() {
   } as unknown as import("@comis/infra").ComisLogger;
 }
 
-// Dynamic loader for the not-yet-existing dispatcher factory. Until 15-04
-// creates `completion-dispatcher.ts`, the import returns undefined and the
-// asserting test fails meaningfully.
+// Dynamic loader for the dispatcher factory. If the import returns
+// undefined the asserting test fails meaningfully.
 async function loadDispatcher(): Promise<
   | {
       createCompletionDispatcher: (deps: {
@@ -93,7 +90,7 @@ async function loadDispatcher(): Promise<
   }
 }
 
-describe("createCompletionDispatcher (T0.1: at-most-once routing via dispatchState)", () => {
+describe("createCompletionDispatcher: at-most-once routing via dispatchState", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let taskManager: { getTask: ReturnType<typeof vi.fn> };
   let notifyFn: ReturnType<typeof vi.fn>;
@@ -104,7 +101,7 @@ describe("createCompletionDispatcher (T0.1: at-most-once routing via dispatchSta
     notifyFn = vi.fn().mockResolvedValue(undefined);
   });
 
-  it("T0.1a: pending → dispatched transition does NOT call notifyFn (single-owner reentry)", async () => {
+  it("pending → dispatched transition does NOT call notifyFn (single-owner reentry)", async () => {
     const mod = await loadDispatcher();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -130,13 +127,13 @@ describe("createCompletionDispatcher (T0.1: at-most-once routing via dispatchSta
     await new Promise((r) => setTimeout(r, 5));
 
     // Pending → dispatched: completion-runner reentry handles it. The
-    // dispatcher MUST NOT call the notifyFn fallback (AC-1: zero spurious
+    // dispatcher MUST NOT call the notifyFn fallback (zero spurious
     // notifications).
     expect(notifyFn).not.toHaveBeenCalled();
     await dispatcher.shutdown();
   });
 
-  it("T0.1b: already-notified state does NOT call notifyFn again (at-most-once, D-S3)", async () => {
+  it("already-notified state does NOT call notifyFn again (at-most-once)", async () => {
     const mod = await loadDispatcher();
     expect(mod).toBeDefined();
     if (!mod) return;

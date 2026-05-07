@@ -623,3 +623,82 @@ describe("regression: mid-turn discovered tool path (Bug 1)", () => {
     expect(out2.content).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Re-injection de-dup contract.
+//
+// The de-dup tracker is the `deliveredGuides: Set<string>` parameter; passing
+// the SAME Set across calls within a turn (or session) ensures the same guide
+// id is not re-injected. The existing Set IS the injectedGuideIds tracker;
+// no second data structure is introduced.
+// ---------------------------------------------------------------------------
+
+describe("same guide is not re-injected within a single turn", () => {
+  it("multiple calls within one turn (same Set) do not re-inject the same guide id", () => {
+    const logger = createMockLogger();
+    const delivered = new Set<string>();
+
+    // First call within the turn — guide fires.
+    const first = wrapToolResultWithGuide(
+      "pipeline",
+      makeToolResult("Pipeline defined"),
+      delivered,
+      logger,
+    );
+    expect(first.content).toHaveLength(2);
+    expect((first.content[1] as { text: string }).text).toContain("Pipeline Usage Guide");
+    expect(delivered.has("pipeline")).toBe(true);
+
+    // Second call within the SAME turn (same delivered Set) — no re-inject.
+    const second = wrapToolResultWithGuide(
+      "pipeline",
+      makeToolResult("Pipeline updated"),
+      delivered,
+      logger,
+    );
+    expect(second.content).toHaveLength(1);
+    expect((second.content[0] as { text: string }).text).toBe("Pipeline updated");
+
+    // Third call (still same turn) — still no re-inject.
+    const third = wrapToolResultWithGuide(
+      "pipeline",
+      makeToolResult("Pipeline executed"),
+      delivered,
+      logger,
+    );
+    expect(third.content).toHaveLength(1);
+    expect((third.content[0] as { text: string }).text).toBe("Pipeline executed");
+
+    // The single INFO log fires only on the first injection.
+    expect(logger.info).toHaveBeenCalledTimes(1);
+  });
+
+  it("section-key ids are de-duped independently from tool-name ids", () => {
+    const logger = createMockLogger();
+    const delivered = new Set<string>();
+
+    // sessions_spawn has BOTH a TOOL_GUIDE (workspace isolation) and a
+    // SYSTEM_PROMPT_GUIDE (Task Delegation, key=section:sessions_spawn).
+    // Both ids must land in `delivered` after the first call; both must
+    // de-dup independently on the second call within the same turn.
+    const first = wrapToolResultWithGuide(
+      "sessions_spawn",
+      makeToolResult("Sub-agent spawned"),
+      delivered,
+      logger,
+    );
+    expect(first.content).toHaveLength(2);
+    expect(delivered.has("sessions_spawn")).toBe(true);
+    expect(delivered.has("section:sessions_spawn")).toBe(true);
+
+    // Second call in same turn: both ids de-duped via the early-return.
+    const second = wrapToolResultWithGuide(
+      "sessions_spawn",
+      makeToolResult("Another spawn"),
+      delivered,
+      logger,
+    );
+    expect(second.content).toHaveLength(1);
+    expect(logger.info).toHaveBeenCalledTimes(1);
+  });
+});

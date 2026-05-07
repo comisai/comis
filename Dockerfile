@@ -13,7 +13,13 @@ FROM ${COMIS_NODE_BOOKWORM_IMAGE} AS build
 WORKDIR /build
 
 # Enable corepack for pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Phase 15.1-04 (IN-02 close): pin pnpm to a specific version so image
+# rebuilds are deterministic across rebuild dates. The unpinned tag
+# resolves to whatever Corepack thinks is current at build time, producing
+# non-reproducible builds. The pinned version mirrors the host's
+# `pnpm --version` output at the time of this change. Bump together
+# with the host pnpm version when upgrading.
+RUN corepack enable && corepack prepare pnpm@10.7.1 --activate
 
 # Copy dependency manifests first (layer caching)
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
@@ -174,9 +180,12 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo
 
 # Enable corepack (non-root writable location)
+# Phase 15.1-04 (IN-02 close): pin pnpm to match the build stage.
+# MUST stay in lockstep with the line-~16 pin so build and runtime
+# use identical pnpm semantics.
 ENV COREPACK_HOME=/usr/local/share/corepack
 RUN mkdir -p "$COREPACK_HOME" && chmod 777 "$COREPACK_HOME" && \
-    corepack enable && corepack prepare pnpm@latest --activate
+    corepack enable && corepack prepare pnpm@10.7.1 --activate
 
 # Create non-root user and data directory
 # Node base images ship a "node" user at UID/GID 1000 — rename it to "comis"
@@ -203,6 +212,35 @@ RUN ln -sf /app/packages/cli/dist/cli.js /usr/local/bin/comis && \
 
 # Switch to non-root user
 USER comis
+
+# Phase 15 v12 (RC-7, D-W2): pre-warm the default agent's workspace venv
+# with matplotlib + numpy + pandas. Subsequent chart-tool calls reuse the
+# venv -- no 15s pip-install in the hot path, no `Fontconfig error` from
+# a non-writable host cache. The agent's exec-tool merges
+# `${workspace}/venv/bin` onto PATH and points MPLCONFIGDIR /
+# XDG_CACHE_HOME at workspace-internal dirs (see
+# packages/skills/src/builtin/exec-tool.ts and
+# packages/agent/src/workspace/data-env.ts).
+#
+# Trade-off (CONTEXT D-W2): image size goes up ~200-300 MB. Operators on
+# disk-constrained hosts can use the slim variant (which still ships the
+# venv pre-warm; the saving is in the base layer, not in the agent venv).
+#
+# Volume-mount nuance: `/home/comis/.comis` is declared as a VOLUME below.
+# Anonymous volumes (`docker run` without `-v`) and empty named volumes
+# (first-run `docker run -v comis-data:...`) are auto-initialized from the
+# image's content -- so the venv IS preserved on first start. Subsequent
+# starts reuse the now-persisted venv on the user's volume. Existing
+# non-empty volumes shadow this layer; that is acceptable per D-W2 because
+# the on-demand `pip install` path still works for legacy volumes.
+#
+# Non-default agents (workspace-${agentId}) pip-install on-demand on first
+# use; the pre-warm only covers the default agent's workspace. KISS:
+# single RUN, --no-cache-dir, no multi-stage build complications.
+RUN mkdir -p /home/comis/.comis/workspace && \
+    python3 -m venv /home/comis/.comis/workspace/venv && \
+    /home/comis/.comis/workspace/venv/bin/pip install --no-cache-dir --disable-pip-version-check \
+        matplotlib==3.9.2 numpy==2.1.0 pandas==2.2.3
 
 # Default environment.
 # COMIS_GATEWAY_HOST=0.0.0.0 — the container's network namespace is isolated, so

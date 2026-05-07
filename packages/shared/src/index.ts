@@ -9,7 +9,7 @@ export { checkAborted } from "./abort.js";
 export { createTTLCache } from "./ttl-cache.js";
 export type { TTLCache, TTLCacheOptions } from "./ttl-cache.js";
 
-// Silent-token detection for agent responses (R5, RC-4).
+// Silent-token detection for agent responses.
 export {
   stripReplyTags,
   isSilentResponse,
@@ -18,6 +18,5 @@ export {
   SILENT_PREFIX,
 } from "./silent-tokens.js";
 
-// VisibleDeliveryRecord: JSONL-persisted-but-not-prompt-injected delivery
-// metadata (R5 invariant 37).
+// VisibleDeliveryRecord: JSONL-persisted-but-not-prompt-injected delivery metadata.
 export type { VisibleDeliveryKind, VisibleDeliveryRecord } from "./visible-delivery.js";

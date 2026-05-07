@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// T0.27 (7 sub-tests) — composite-key BackgroundSessionResolver.
+// Composite-key BackgroundSessionResolver tests.
 //
-// Phase 3 (Plan 15-03) introduces a `BackgroundSessionResolver` factory at
-// `packages/agent/src/background/session-resolver.ts` that wraps
+// The `BackgroundSessionResolver` factory at
+// `packages/agent/src/background/session-resolver.ts` wraps
 // `ActiveRunRegistry` and exposes composite-key (agentId, channelType,
 // channelId) lookups. The resolver replaces single-arg `.has(sessionKey)`
-// / `.get(sessionKey)` calls across 5 production source files (B30 +
-// B34 + B36 + B37); T0.33 source-grep enforces the migration.
+// / `.get(sessionKey)` calls across production source files.
 //
-// All 7 sub-tests are RED until 15-03 lands the resolver module. We use
-// dynamic-import-with-undefined so the suite reaches assertions and
-// fails meaningfully (not via module-not-found).
+// We use dynamic-import-with-undefined so the suite reaches assertions
+// and fails meaningfully (not via module-not-found).
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createActiveRunRegistry, type RunHandle } from "../executor/active-run-registry.js";
 import { formatSessionKey } from "@comis/core";
@@ -54,14 +52,14 @@ async function loadResolver(): Promise<ResolverModule | undefined> {
   }
 }
 
-describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
+describe("BackgroundSessionResolver", () => {
   let registry: ReturnType<typeof createActiveRunRegistry>;
 
   beforeEach(() => {
     registry = createActiveRunRegistry();
   });
 
-  it("T0.27a: resolveActiveSession returns the RunHandle when a matching formatted-key is registered", async () => {
+  it("resolveActiveSession returns the RunHandle when a matching formatted-key is registered", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -77,7 +75,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     expect(resolver.resolveActiveSession(composite)).toBe(handle);
   });
 
-  it("T0.27b: resolveActiveSession returns undefined when no session is registered", async () => {
+  it("resolveActiveSession returns undefined when no session is registered", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -87,7 +85,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     ).toBeUndefined();
   });
 
-  it("T0.27c: distinguishes the same channelId across different agents", async () => {
+  it("distinguishes the same channelId across different agents", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -116,7 +114,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     expect(resolver.resolveActiveSession(compositeAlice)).toBe(handleAlice);
   });
 
-  it("T0.27d: distinguishes the same agentId+channelId across different channels", async () => {
+  it("distinguishes the same agentId+channelId across different channels", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -145,7 +143,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     expect(resolver.resolveActiveSession(compositeDc)).toBe(handleDiscord);
   });
 
-  it("T0.27e: hasActiveSession returns boolean, never throws on missing", async () => {
+  it("hasActiveSession returns boolean, never throws on missing", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -160,7 +158,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     expect(resolver.hasActiveSession({ agentId: "x", channelType: "y", channelId: "z" })).toBe(true);
   });
 
-  it("T0.27f: resolver uses formatSessionKey internally — does NOT accept a raw single-arg sessionKey from external callers", async () => {
+  it("resolver uses formatSessionKey internally — does NOT accept a raw single-arg sessionKey from external callers", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -185,7 +183,7 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
     ).not.toThrow();
   });
 
-  it("T0.27g: empty / falsy agentId / channelType / channelId raises a typed Result.err (no silent fallback)", async () => {
+  it("empty / falsy agentId / channelType / channelId raises a typed Result.err (no silent fallback)", async () => {
     const mod = await loadResolver();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -216,5 +214,29 @@ describe("BackgroundSessionResolver (T0.27, AC-4)", () => {
       observedError = true;
     }
     expect(observedError).toBe(true);
+  });
+
+  it("register-via-pi-executor-shape → resolve-via-resolver returns the same handle", async () => {
+    const mod = await loadResolver();
+    expect(mod).toBeDefined();
+    if (!mod) return;
+    const handle = makeRunHandle("h-rc1");
+    const triple = { agentId: "default", channelType: "telegram", channelId: "678" };
+    // Mirror the EXACT key formula pi-executor.ts uses to register handles.
+    // If this drifts away from formatComposite, multi-agent isolation
+    // re-opens; the equality assertion below catches drift on either side.
+    const executorRegisterKey = formatSessionKey({
+      tenantId: triple.agentId,
+      channelId: `${triple.channelType}:${triple.channelId}`,
+      userId: triple.channelId,
+    });
+    registry.register(executorRegisterKey, handle);
+    const resolver = mod.createBackgroundSessionResolver({ activeRunRegistry: registry });
+    expect(resolver.resolveActiveSession(triple)).toBe(handle);
+    expect(resolver.hasActiveSession(triple)).toBe(true);
+    // Multi-agent isolation: a different agentId for the same (channelType, channelId)
+    // must NOT find this handle.
+    expect(resolver.hasActiveSession({ ...triple, agentId: "other" })).toBe(false);
+    expect(resolver.resolveActiveSession({ ...triple, agentId: "other" })).toBeUndefined();
   });
 });

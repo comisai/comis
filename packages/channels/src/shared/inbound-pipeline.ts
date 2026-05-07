@@ -97,7 +97,7 @@ export interface InboundPipelineDeps {
   /**
    * Optional composite-key resolver for active-session lookup. When
    * present, supersedes `activeRunRegistry.has/.get` for production
-   * lookups (R3, B30/B34). Wired by the daemon as
+   * lookups. Wired by the daemon as
    * `createBackgroundSessionResolver({ activeRunRegistry })`.
    */
   sessionResolver?: BackgroundSessionResolver;

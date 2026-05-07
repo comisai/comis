@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Phase 5: createMultiActionDispatchTool opt-in factory flag for details
-// augmentation (B33 + B40 + B43).
+// createMultiActionDispatchTool opt-in factory flag for details augmentation.
 //
-// Phase 5 (15-02 cherry-pick) extends MultiActionDispatchConfig with an
-// opt-in `augmentDetails` map that augments the `details` object on a
-// per-action basis. message-tool's `attach` action uses this hook to add
-// `visibleDelivery`. The test asserts the wrapped tool's result includes
-// the augmented details.
-//
-// Pre-Phase-5: the factory has no `augmentDetails` field. The test fails
-// because (a) the field is not declared, and (b) even if passed via cast,
-// the factory ignores it.
+// MultiActionDispatchConfig has an opt-in `augmentDetails` map that augments
+// the `details` object on a per-action basis. message-tool's `attach` action
+// uses this hook to add `visibleDelivery`. The test asserts the wrapped tool's
+// result includes the augmented details.
 import { describe, it, expect, vi } from "vitest";
 import {
   createMultiActionDispatchTool,
@@ -20,7 +14,7 @@ import {
 import type { RpcCall } from "./cron-tool.js";
 import { Type } from "typebox";
 
-describe("Phase 5: createMultiActionDispatchTool opt-in factory flag for details augmentation", () => {
+describe("createMultiActionDispatchTool opt-in factory flag for details augmentation", () => {
   it("augmentDetails hook adds visibleDelivery to attach action result", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({ messageId: "M", channelId: "C" }));
     const schema = Type.Object({
@@ -29,8 +23,8 @@ describe("Phase 5: createMultiActionDispatchTool opt-in factory flag for details
       channel_id: Type.String(),
       caption: Type.Optional(Type.String()),
     });
-    // Cast through unknown — the `augmentDetails` field is the new contract
-    // Phase 5 introduces. Pre-Phase-5 it's absent from the type and ignored.
+    // Cast through unknown — exercises the `augmentDetails` field of the
+    // factory contract.
     const config = {
       name: "msg",
       label: "Msg",
@@ -61,7 +55,7 @@ describe("Phase 5: createMultiActionDispatchTool opt-in factory flag for details
       caption: "hi",
     } as never);
 
-    // Post-Phase-5: details is augmented with the visibleDelivery record.
+    // details is augmented with the visibleDelivery record.
     const details = result.details as
       | { visibleDelivery?: { kind: string; channelType: string; channelId: string; caption: string; deliveredAt: number } }
       | undefined;

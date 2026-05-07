@@ -33,6 +33,7 @@ import {
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
+  setupOutputRetention,
 } from "./wiring/index.js";
 import { setupSingleAgent } from "./wiring/setup-agents.js";
 import { createActiveRunRegistry, createBackgroundSessionResolver, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides } from "@comis/agent";
@@ -501,11 +502,10 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // Created once and injected into both setupAgents (PiExecutor registration)
   // and setupChannels (inbound pipeline routing).
   const activeRunRegistry = createActiveRunRegistry();
-  // Composite-key resolver wraps the registry for production lookups
-  // (R3, B30/B34/B36/B37). The raw registry is still threaded for
-  // register/deregister calls in pi-executor and executor-post-execution;
-  // the resolver supersedes single-arg `.has()`/`.get()` everywhere.
-  // T0.33 source-grep is the binding gate.
+  // Composite-key resolver wraps the registry for production lookups.
+  // The raw registry is still threaded for register/deregister calls in
+  // pi-executor and executor-post-execution; the resolver supersedes
+  // single-arg `.has()`/`.get()` everywhere.
   const sessionResolver = createBackgroundSessionResolver({ activeRunRegistry });
 
   // Derive canary fallback secret from tenantId.
@@ -848,7 +848,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     queueConfig: container.config.queue,
     // steer+followup inbound routing
     activeRunRegistry,
-    // Composite-key resolver for active-session lookup (R3, B30/B34)
+    // Composite-key resolver for active-session lookup
     sessionResolver,
     // /config chat command handling via deferred RPC dispatch
     rpcCall,
@@ -932,6 +932,27 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   container.eventBus.on("system:shutdown", () => { shutdownMirror(); });
   // Structured logging for delivery queue lifecycle events
   setupDeliveryQueueLogging({ eventBus: container.eventBus, logger: daemonLogger });
+
+  // Output retention housekeeper.
+  // Mirrors the delivery-queue/mirror prune pattern — single-tick gate +
+  // .unref() interval. Scans <defaultWorkspaceDir>/output/<className>/,
+  // deletes leaf files older than the class's retentionMs. Operators can
+  // disable via outputRetention.enabled: false. Per AGENTS §6.6
+  // (security/daemon): file deletion is destructive; the destructive
+  // path is gated on enabled + per-class retentionMs.
+  if (defaultWorkspaceDir) {
+    const outputRetentionHandle = setupOutputRetention({
+      config: container.config.outputRetention,
+      workspaceDir: defaultWorkspaceDir,
+      logger: daemonLogger,
+    });
+    container.eventBus.on("system:shutdown", () => { outputRetentionHandle.shutdown(); });
+  } else {
+    daemonLogger.debug(
+      { hint: "No defaultWorkspaceDir; output retention housekeeper skipped" },
+      "Output retention: skipped (no default workspace)",
+    );
+  }
 
   // 6.6.8.0.1. Notification system
   // setupNotifications creates the NotificationService and SessionTracker.
@@ -1082,7 +1103,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     gatewaySend: gatewaySendRef,
     activeRunRegistry,
     // Composite-key resolver supersedes activeRunRegistry.get(sessionKey)
-    // for sub-agent-runner abort paths (R3, B37).
+    // for sub-agent-runner abort paths.
     sessionResolver,
     deliveryQueue,
   });
@@ -1174,7 +1195,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     executors,
     assembleToolsForAgent,
     workspaceDirs,
-    // Composite-key resolver replaces single-arg .has() (R3, B36)
+    // Composite-key resolver replaces single-arg .has()
     sessionResolver,
     duplicateDetector,
     adaptersByType,

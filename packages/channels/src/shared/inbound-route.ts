@@ -194,10 +194,10 @@ export async function routeInboundMessage(
   // -------------------------------------------------------------------
   // STEER+FOLLOWUP ROUTING
   // -------------------------------------------------------------------
-  // Active-session lookup goes through BackgroundSessionResolver (R3, B30):
+  // Active-session lookup goes through BackgroundSessionResolver:
   // composite (agentId, channelType, channelId) supersedes the single-arg
   // formatted-key lookup so multi-agent / multi-channel sessions are
-  // distinguishable. T0.33 source-grep enforces. The original
+  // distinguishable. The original
   // `formattedKey = formatSessionKey(sessionKey)` is retained ONLY for
   // diagnostic log fields (the SessionKey may itself be richer than the
   // resolver's composite triple).

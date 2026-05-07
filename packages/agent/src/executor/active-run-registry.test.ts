@@ -263,21 +263,13 @@ describe("ActiveRunRegistry", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // T0.33: no remaining single-arg .has() / .get() on activeRunRegistry
-  // outside *.test.ts (AC-4)
-  //
-  // Phase 3 (Plan 15-03) introduces BackgroundSessionResolver and rewires
-  // the 5 known production call-sites:
-  //   - packages/channels/src/shared/inbound-route.ts:202  (B30)
-  //   - packages/scheduler/src/heartbeat/agent-heartbeat-source.ts:152 (B36)
-  //   - packages/daemon/src/sub-agent-runner.ts:499 / :1401 / :1555 (B37)
-  // After Phase 3, no production source file calls
-  // `activeRunRegistry.has(...)` or `activeRunRegistry.get(...)` directly.
-  // The grep is scoped to the monorepo's package source trees and excludes
-  // *.test.ts files (which legitimately exercise the registry directly).
-  // RED until 15-03 lands.
+  // No production source file should call `activeRunRegistry.has(...)` or
+  // `activeRunRegistry.get(...)` directly — production code goes through
+  // BackgroundSessionResolver. The grep is scoped to the monorepo's package
+  // source trees and excludes *.test.ts files (which legitimately exercise
+  // the registry directly).
   // ---------------------------------------------------------------------------
-  describe("T0.33 source-grep: production code uses BackgroundSessionResolver, not direct registry access (AC-4)", () => {
+  describe("source-grep: production code uses BackgroundSessionResolver, not direct registry access", () => {
     it("no remaining activeRunRegistry.has|get(...) in non-test production source", async () => {
       const { execSync } = await import("node:child_process");
       const { fileURLToPath } = await import("node:url");
@@ -290,7 +282,7 @@ describe("ActiveRunRegistry", () => {
       // that begin with `//` after trim (line comments) to avoid the
       // self-invalidating grep gate antipattern. Trailing `|| true` keeps
       // execSync from throwing when there are zero matches (the desired
-      // post-Phase-3 state).
+      // state).
       const cmd =
         "git grep -nE 'activeRunRegistry\\.(has|get)\\(' -- 'packages/**/*.ts' ':!*.test.ts' || true";
       const out = execSync(cmd, { cwd: repoRoot, encoding: "utf-8" });
@@ -305,7 +297,6 @@ describe("ActiveRunRegistry", () => {
           // Filter out lines that begin with `//` (line comments) or `*` (block comments).
           return !sourceLine.startsWith("//") && !sourceLine.startsWith("*");
         });
-      // Pre-Phase-3: 5 matches. Post-Phase-3: 0 matches.
       expect(matches).toEqual([]);
     });
   });

@@ -50,7 +50,16 @@ export interface BackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
   getExecutor: (agentId: string) => AgentExecutor;
   sessionStore: RunnerSessionStore;
-  taskManager: Pick<BackgroundTaskManager, "getTask">;
+  /**
+   * Includes `transitionDispatchState` in addition to `getTask`. fallbackForTask
+   * uses transitionDispatchState to persist `dispatchState = "notified"` BEFORE
+   * firing `fallbackNotifyFn`, so a daemon SIGKILL between persist and fire does
+   * NOT leak a duplicate notification on recovery (the at-most-once gate binds
+   * against on-disk state). The daemon-side wiring at
+   * setup-background-completion-runner.ts already passes a manager with
+   * both methods.
+   */
+  taskManager: Pick<BackgroundTaskManager, "getTask" | "transitionDispatchState">;
   fallbackNotifyFn: NotifyFn;
   maxBackgroundHops: number;
   logger: ComisLogger;
@@ -94,42 +103,50 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // Phase 15 v12 (D-S3 at-most-once): the dispatcher subscribed BEFORE this
-    // runner (see setup-background-completion-runner.ts) and already
-    // transitioned task.dispatchState. When state is "notified", the
-    // dispatcher fired the user-visible fallback; the runner stays out of
-    // the way to enforce single-owner notification routing (AC-1: zero
-    // spurious outbound).
+    // At-most-once: the dispatcher subscribed BEFORE this runner (see
+    // setup-background-completion-runner.ts) and already transitioned
+    // task.dispatchState. When state is "notified", the dispatcher fired
+    // the user-visible fallback; the runner stays out of the way to
+    // enforce single-owner notification routing (zero spurious outbound).
     if (task.dispatchState === "notified") {
       log.debug(
         {
           taskId,
           dispatchState: task.dispatchState,
-          hint: "Dispatcher already fired fallback notification (D-S3 at-most-once)",
+          // Include originating traceId so operator log streams stay
+          // continuous across the dispatcher / runner boundary.
+          traceId: task.origin?.traceId ?? undefined,
+          hint: "Dispatcher already fired fallback notification (at-most-once)",
         },
         "Background completion runner: skipped (dispatcher fired fallback)",
       );
       return;
     }
 
-    // Legacy task without origin -- emit fallback, keep file for audit.
+    // origin is producer-required (background-task-manager promote()
+    // rejects missing-origin) so we read it directly.
     const origin = task.origin;
-    if (!origin || !origin.sessionKey || !origin.agentId) {
-      await fallbackForTask(task.toolName, task.origin?.agentId ?? "default", `Background task "${task.toolName}" completed.`);
-      return;
-    }
 
     // Hop cap. Read incoming hop count from origin (schema field populated
     // by the originResolver).
     const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
     if (nextHopCount >= deps.maxBackgroundHops) {
       log.info(
-        { taskId, toolName: task.toolName, agentId: origin.agentId, hopCount: nextHopCount, max: deps.maxBackgroundHops },
+        {
+          taskId,
+          toolName: task.toolName,
+          agentId: origin.agentId,
+          hopCount: nextHopCount,
+          max: deps.maxBackgroundHops,
+          // traceId from origin keeps operator logs threaded.
+          traceId: origin.traceId ?? undefined,
+        },
         "Background completion: hop cap reached, falling back to user notification",
       );
       await fallbackForTask(
-        task.toolName,
+        task.id,
         origin.agentId,
+        task.toolName,
         `Background task "${task.toolName}" completed but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
       );
       return;
@@ -139,12 +156,20 @@ export function createBackgroundCompletionRunner(
     // originating session may have ended (user closed the channel) OR may live
     // in JSONL but not be currently registered. Either way, there is no
     // streaming channel to inject into, so skip fallback (which would only
-    // produce a WARN from notification-service). Phase 9a corrects misleading
-    // "session expired" copy in place — observability hygiene only (D-X1).
+    // produce a WARN from notification-service).
     const sessionExists = deps.sessionStore.loadByFormattedKey(origin.sessionKey) !== undefined;
     if (!sessionExists) {
       log.info(
-        { taskId, sessionKey: origin.sessionKey, hint: "No active in-memory session for this sessionKey; runner will skip re-entry. Task result remains in JSONL for offline review." },
+        {
+          taskId,
+          sessionKey: origin.sessionKey,
+          // traceId from origin so this INFO log line stays threaded with the
+          // originating request's trace stream even though the runner runs in a
+          // background context (the ALS traceId at this point may differ from
+          // origin.traceId).
+          traceId: origin.traceId ?? undefined,
+          hint: "No active in-memory session for this sessionKey; runner will skip re-entry. Task result remains in JSONL for offline review.",
+        },
         "Background completion: no active session for re-entry",
       );
       return;
@@ -154,10 +179,17 @@ export function createBackgroundCompletionRunner(
     const parsedKey = parseFormattedSessionKey(origin.sessionKey);
     if (!parsedKey) {
       log.warn(
-        { taskId, sessionKey: origin.sessionKey, hint: "Persisted sessionKey is malformed; cannot route announcement", errorKind: "internal" as const },
+        {
+          taskId,
+          sessionKey: origin.sessionKey,
+          // traceId from origin keeps operator logs threaded.
+          traceId: origin.traceId ?? undefined,
+          hint: "Persisted sessionKey is malformed; cannot route announcement",
+          errorKind: "internal" as const,
+        },
         "Background completion: invalid sessionKey",
       );
-      await fallbackForTask(task.toolName, origin.agentId, `Background task "${task.toolName}" completed (routing failed).`);
+      await fallbackForTask(task.id, origin.agentId, task.toolName, `Background task "${task.toolName}" completed (routing failed).`);
       return;
     }
 
@@ -183,18 +215,30 @@ export function createBackgroundCompletionRunner(
     };
 
     log.debug(
-      { taskId, sessionKey: origin.sessionKey, agentId: origin.agentId, toolName: task.toolName, hopCount: nextHopCount },
+      {
+        taskId,
+        sessionKey: origin.sessionKey,
+        agentId: origin.agentId,
+        toolName: task.toolName,
+        hopCount: nextHopCount,
+        // traceId from origin keeps debug logs threaded.
+        traceId: origin.traceId ?? undefined,
+      },
       "Background completion runner: invoking executor",
     );
 
     // Emit background_task:reentered immediately before executor.execute().
     // Integration tests compute p95 latency from
     // background_task:completed.timestamp to this event's timestamp.
+    // Include traceId from origin so subscribers (and operator log streams)
+    // preserve the originating request's trace across the
+    // background_task:completed → :reentered boundary.
     deps.eventBus.emit("background_task:reentered", {
       taskId: task.id,
       agentId: origin.agentId,
       sessionKey: origin.sessionKey,
       hopCount: nextHopCount,
+      traceId: origin.traceId ?? null,
       timestamp: Date.now(),
     });
 
@@ -209,13 +253,45 @@ export function createBackgroundCompletionRunner(
       );
     } catch (err) {
       log.warn(
-        { taskId, err, hint: "Executor failed mid-completion turn; subscription remains active", errorKind: "internal" as const },
+        {
+          taskId,
+          err,
+          // traceId from origin keeps the WARN line threaded.
+          traceId: origin.traceId ?? undefined,
+          hint: "Executor failed mid-completion turn; subscription remains active",
+          errorKind: "internal" as const,
+        },
         "Background completion: executor.execute() rejected",
       );
     }
   }
 
-  async function fallbackForTask(toolName: string, agentId: string, message: string): Promise<void> {
+  /**
+   * Two-phase commit:
+   *
+   * 1. transitionDispatchState(taskId, "notified") — synchronously persists
+   *    `dispatchState = "notified"` to disk (via persistTaskSync inside the
+   *    manager). This MUST run before fallbackNotifyFn so a SIGKILL between
+   *    persist and fire does NOT leak a duplicate on recovery: the at-most-
+   *    once gate at the top of handleEvent (which reads task.dispatchState)
+   *    sees "notified" and skips re-firing. Without this ordering, the gate
+   *    misses and the user receives the notification twice.
+   *
+   * 2. fallbackNotifyFn(...) — actually deliver the user-visible
+   *    notification. May reject (channel offline, rate-limited, etc.); the
+   *    failure is logged at WARN. The persisted state stays at "notified" —
+   *    the user did not see the notification, but the at-most-once contract
+   *    takes precedence over delivery completeness.
+   */
+  async function fallbackForTask(taskId: string, agentId: string, toolName: string, message: string): Promise<void> {
+    // Phase 1: persist state. transitionDispatchState may return false if
+    // the task disappeared from the manager between handler entry and this
+    // call (e.g., explicit cleanup). In that case there is nothing to gate
+    // on; we still fire so the user sees the completion. The persist is
+    // synchronous so the on-disk state is updated before phase 2.
+    deps.taskManager.transitionDispatchState(taskId, "notified");
+
+    // Phase 2: fire user-visible notification.
     try {
       await deps.fallbackNotifyFn({
         agentId,
@@ -225,8 +301,8 @@ export function createBackgroundCompletionRunner(
       });
     } catch (err) {
       log.warn(
-        { toolName, agentId, err, hint: "fallbackNotifyFn rejected; user will not see the completion notification for this task", errorKind: "internal" as const },
-        "Background completion: fallbackNotifyFn rejected",
+        { taskId, toolName, agentId, err, hint: "fallbackNotifyFn rejected; user will not see the completion notification for this task. dispatchState already persisted as \"notified\" — no duplicate on recovery.", errorKind: "internal" as const },
+        "Background completion: fallbackNotifyFn rejected (post-persist)",
       );
     }
   }

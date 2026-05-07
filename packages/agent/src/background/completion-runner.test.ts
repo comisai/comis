@@ -63,14 +63,19 @@ describe("createBackgroundCompletionRunner", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn> };
+  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
+  let transitionDispatchState: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     eventBus = createFakeEventBus();
     executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
     sessionStore = { loadByFormattedKey: vi.fn().mockReturnValue({ messages: [] }) };
-    taskManager = { getTask: vi.fn() };
+    transitionDispatchState = vi.fn().mockReturnValue(true);
+    taskManager = {
+      getTask: vi.fn(),
+      transitionDispatchState,
+    };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
   });
 
@@ -243,25 +248,119 @@ describe("createBackgroundCompletionRunner", () => {
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
     await runner.shutdown();
   });
+
+  // -------------------------------------------------------------------------
+  // Two-phase commit on fallbackForTask.
+  //
+  // fallbackForTask persists dispatchState="notified" via
+  // taskManager.transitionDispatchState BEFORE invoking fallbackNotifyFn.
+  // The persist runs synchronously (persistTaskSync) so any SIGKILL after
+  // the persist returns leaves the on-disk state at "notified" -> recovery
+  // sees the at-most-once gate fire -> no duplicate. Without this ordering,
+  // the gate would miss and the user would see a duplicate notification.
+  // -------------------------------------------------------------------------
+  it("fallbackForTask persists dispatchState='notified' BEFORE firing fallbackNotifyFn (two-phase commit)", async () => {
+    // Hop cap path is the simplest reach to fallbackForTask. With
+    // maxBackgroundHops=3 and origin.backgroundHopCount=99, nextHopCount
+    // exceeds the cap -> fallback fires.
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ backgroundHopCount: 99 }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    const runner = build(3);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      durationMs: 1, origin: task.origin, timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    // Both must have been called once.
+    expect(transitionDispatchState).toHaveBeenCalledTimes(1);
+    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
+    expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
+
+    // Critical ordering assertion: invocationCallOrder is a global counter
+    // across all vitest mocks; smaller = earlier. transitionDispatchState's
+    // call MUST precede fallbackNotifyFn's.
+    const persistOrder = transitionDispatchState.mock.invocationCallOrder[0]!;
+    const fireOrder = fallbackNotifyFn.mock.invocationCallOrder[0]!;
+    expect(persistOrder).toBeLessThan(fireOrder);
+
+    await runner.shutdown();
+  });
+
+  it("SIGKILL between persist and fire — recovery's at-most-once gate fires (no duplicate)", async () => {
+    // Simulate the crash: transitionDispatchState succeeds (state lands on
+    // disk via persistTaskSync), then fallbackNotifyFn rejects (modeling
+    // \"daemon dies during the network call\"). The runner WARNs but does
+    // not retry. A FRESH runner instance receiving the same task with
+    // dispatchState=\"notified\" (the persisted state) MUST skip via the
+    // at-most-once gate at completion-runner.ts handleEvent's early-return
+    // when task.dispatchState === \"notified\".
+    fallbackNotifyFn.mockRejectedValueOnce(new Error("simulated SIGKILL during fire"));
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ backgroundHopCount: 99 }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    // Mirror what the real BackgroundTaskManager.transitionDispatchState
+    // does: mutate the in-memory task object BEFORE persistTaskSync. This
+    // mirrors the on-disk state for the subsequent recovery-instance
+    // assertion below.
+    transitionDispatchState.mockImplementation((tid: string, next: string) => {
+      if (tid === task.id) (task as unknown as { dispatchState: string }).dispatchState = next;
+      return true;
+    });
+
+    const runner = build(3);
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      durationMs: 1, origin: task.origin, timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    // Persist step ran.
+    expect(transitionDispatchState).toHaveBeenCalledTimes(1);
+    // Fire step was attempted and rejected.
+    expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
+    // task.dispatchState is now "notified" on the in-memory task object,
+    // mirroring the on-disk state that recovery would load.
+    expect((task as unknown as { dispatchState: string }).dispatchState).toBe("notified");
+    await runner.shutdown();
+
+    // Now simulate "daemon recovers" — fresh runner instance, same task
+    // object (dispatchState="notified" already set above).
+    taskManager.getTask.mockReset();
+    taskManager.getTask.mockReturnValue(task);
+    transitionDispatchState.mockReset();
+    fallbackNotifyFn.mockReset();
+    executor.execute.mockReset();
+    const recoveredRunner = build(3);
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      durationMs: 1, origin: task.origin, timestamp: 3,
+    });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    // At-most-once gate (handleEvent: if task.dispatchState === "notified") returns
+    // immediately -> nothing fires.
+    expect(fallbackNotifyFn).not.toHaveBeenCalled();
+    expect(transitionDispatchState).not.toHaveBeenCalled();
+    expect(executor.execute).not.toHaveBeenCalled();
+    await recoveredRunner.shutdown();
+  });
 });
 
-// ---------------------------------------------------------------------------
-// Phase 9b: trace continuity sub-tests (RC-8)
-//
-// T0.29a — traceId from task.origin propagates into the synthetic
-//          NormalizedMessage.metadata.traceId. Already true in current code;
-//          regression guard.
-// T0.29b — background_task:reentered event payload includes traceId. NEW —
-//          Phase 9b extends the event schema. RED until 15-07.
-// T0.29c — Operator-facing log lines on completion-runner WARN/INFO paths
-//          include traceId from origin. NEW — currently log.info({...}) calls
-//          don't all include traceId. RED until 15-07.
-// ---------------------------------------------------------------------------
-describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
+describe("trace continuity sub-tests", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn> };
+  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let logger: ReturnType<typeof makeLogger>;
 
@@ -269,7 +368,10 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     eventBus = createFakeEventBus();
     executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
     sessionStore = { loadByFormattedKey: vi.fn().mockReturnValue({ messages: [] }) };
-    taskManager = { getTask: vi.fn() };
+    taskManager = {
+      getTask: vi.fn(),
+      transitionDispatchState: vi.fn().mockReturnValue(true),
+    };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
     logger = makeLogger();
   });
@@ -286,7 +388,7 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     });
   }
 
-  it("T0.29a: traceId from task.origin propagates into the synthetic NormalizedMessage.metadata.traceId", async () => {
+  it("traceId from task.origin propagates into the synthetic NormalizedMessage.metadata.traceId", async () => {
     const traceId = "trace-29a";
     const task = buildTask({
       result: "ok",
@@ -310,7 +412,7 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     await runner.shutdown();
   });
 
-  it("T0.29b: background_task:reentered event payload includes traceId from origin", async () => {
+  it("background_task:reentered event payload includes traceId from origin", async () => {
     const traceId = "trace-29b";
     const reenteredEvents: Array<Record<string, unknown>> = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data as Record<string, unknown>));
@@ -330,14 +432,12 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    // Pre-Phase-9b: event payload does NOT include traceId.
-    // Post-Phase-9b: event payload includes traceId.
     expect(reenteredEvents.length).toBeGreaterThanOrEqual(1);
     expect(reenteredEvents[0]!.traceId).toBe(traceId);
     await runner.shutdown();
   });
 
-  it("T0.29c: operator-facing log lines on completion-runner WARN/INFO paths include traceId from origin", async () => {
+  it("operator-facing log lines on completion-runner WARN/INFO paths include traceId from origin", async () => {
     const traceId = "trace-29c";
     // Force a path that emits an INFO log: session expired (sessionStore returns undefined).
     sessionStore.loadByFormattedKey.mockReturnValue(undefined);
@@ -357,8 +457,6 @@ describe("Phase 9b: trace continuity sub-tests (RC-8)", () => {
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    // Pre-Phase-9b: the log line does NOT include traceId.
-    // Post-Phase-9b: at least one logger call includes traceId from origin.
     const childLogger = (logger as unknown as { child: ReturnType<typeof vi.fn> }).child.mock?.results?.[0]?.value
       ?? logger;
     const allCalls: unknown[][] = [];

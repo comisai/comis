@@ -9,9 +9,9 @@ import { setupBackgroundCompletionRunner } from "./setup-background-completion-r
 
 /**
  * Recording event bus that captures handler subscription order so tests
- * can assert the dispatcher subscribes BEFORE the runner (Phase 15 v12
- * D-S3 at-most-once gate). Subscriptions ordered by `subscribedAt`
- * timestamp — incrementing per `on()` call.
+ * can assert the dispatcher subscribes BEFORE the runner (at-most-once
+ * gate). Subscriptions ordered by `subscribedAt` timestamp — incrementing
+ * per `on()` call.
  */
 function makeRecordingEventBus() {
   let nextSubId = 0;
@@ -81,7 +81,7 @@ function buildOrigin(over: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOr
 }
 
 describe("setupBackgroundCompletionRunner", () => {
-  it("Test 1: returns a context object with a runner.shutdown function", async () => {
+  it("returns a context object with a runner.shutdown function", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
@@ -96,7 +96,7 @@ describe("setupBackgroundCompletionRunner", () => {
     expect(typeof ctx.runner.shutdown).toBe("function");
   });
 
-  it("Test 2: shutdown() resolves cleanly", async () => {
+  it("shutdown() resolves cleanly", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
@@ -109,7 +109,7 @@ describe("setupBackgroundCompletionRunner", () => {
     await expect(ctx.runner.shutdown()).resolves.toBeUndefined();
   });
 
-  it("Test 3: shutdown() is idempotent", async () => {
+  it("shutdown() is idempotent", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
@@ -124,12 +124,12 @@ describe("setupBackgroundCompletionRunner", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 15 v12 (D-S3 at-most-once): dispatcher subscribes BEFORE the
-  // runner so its synchronous transitionDispatchState runs first; the
-  // runner's handler reads the updated task.dispatchState and skips when
-  // state is "notified". Subscription order is the binding gate.
+  // At-most-once: dispatcher subscribes BEFORE the runner so its
+  // synchronous transitionDispatchState runs first; the runner's handler
+  // reads the updated task.dispatchState and skips when state is
+  // "notified". Subscription order is the binding gate.
   // ---------------------------------------------------------------------------
-  describe("Phase 15 v12: dispatcher subscribes before runner (D-S3)", () => {
+  describe("dispatcher subscribes before runner", () => {
     it("dispatcher subscribes to background_task:completed BEFORE the runner", () => {
       const recording = makeRecordingEventBus();
       setupBackgroundCompletionRunner({
@@ -239,13 +239,13 @@ describe("setupBackgroundCompletionRunner", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 15 v12 (AC-5 SIGKILL-recovery): pre-seed a task JSON file with
+  // SIGKILL-recovery: pre-seed a task JSON file with
   // dispatchState='notified', call manager.recoverOnStartup, assert NO
   // background_task:failed event re-emitted (recovery-without-events).
-  // The dispatcher is not constructed in this test (AC-5 is the manager's
-  // contract); we only verify the manager preserves state without re-emit.
+  // The dispatcher is not constructed in this test; we only verify the
+  // manager preserves state without re-emit.
   // ---------------------------------------------------------------------------
-  describe("AC-5 SIGKILL-recovery: dispatchState survives daemon restart", () => {
+  describe("SIGKILL-recovery: dispatchState survives daemon restart", () => {
     let dataDir: string;
     beforeEach(() => {
       dataDir = safePath(tmpdir(), `comis-ac5-${randomUUID()}`);
@@ -303,8 +303,8 @@ describe("setupBackgroundCompletionRunner", () => {
       expect(recovered).toBeDefined();
       expect(recovered?.dispatchState).toBe("notified");
 
-      // No background_task:failed event was emitted (recovery-without-
-      // events; D-S2; AC-5 binding).
+      // No background_task:failed event was emitted (recovery without
+      // re-emitting events).
       const failedEmits = recordedEmits.filter(
         (e) => e.event === "background_task:failed",
       );
