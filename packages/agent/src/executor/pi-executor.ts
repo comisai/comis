@@ -1003,6 +1003,39 @@ export function createPiExecutor(
             (session.agent as any).transformContext = ceSetup.contextEngine.transformContext;
           }
 
+          // Phase 15.1-01 (RC-1 close): align register/deregister key shape with
+          // BackgroundSessionResolver.formatComposite so production lookups via
+          // resolveActiveSession({agentId, channelType, channelId}) find the
+          // handle this execute() call registers. Pre-15.1, the register key was
+          // formatSessionKey(sessionKey) (collapsing channelType into channelId
+          // produced cross-agent / cross-channel collisions; resolver lookups
+          // returned undefined for executor-registered handles — RC-1).
+          //
+          // Defensive: if msg.channelType or msg.channelId is missing, skip
+          // registration. The resolver's formatComposite throws on empty fields;
+          // we cannot register a handle the resolver cannot look up. The originResolver
+          // at line ~1430 follows the same defensive pattern.
+          let resolverRegisterKey: string | undefined;
+          if (msg.channelType && msg.channelType.length > 0 && msg.channelId && msg.channelId.length > 0) {
+            resolverRegisterKey = formatSessionKey({
+              tenantId: agentId ?? "default",
+              channelId: `${msg.channelType}:${msg.channelId}`,
+              userId: msg.channelId,
+            });
+          } else {
+            deps.logger.warn(
+              {
+                agentId: agentId ?? "default",
+                sessionKey: formattedKey,
+                channelType: msg.channelType ?? null,
+                channelId: msg.channelId ?? null,
+                hint: "Cannot register active run: missing channelType or channelId on inbound message; resolver-driven steer/abort will be a no-op for this execution",
+                errorKind: "internal" as const,
+              },
+              "Active run registration skipped (missing channel fields)",
+            );
+          }
+
           // Register active run for mid-execution steering
           if (deps.activeRunRegistry) {
             const handle: RunHandle = {
@@ -1012,10 +1045,13 @@ export function createPiExecutor(
               isStreaming: () => session.isStreaming,
               isCompacting: () => session.isCompacting,
             };
-            const registered = deps.activeRunRegistry.register(formattedKey, handle);
-            if (!registered) {
+            // Skip when defensive guard above did not produce a key.
+            const registered = resolverRegisterKey
+              ? deps.activeRunRegistry.register(resolverRegisterKey, handle)
+              : false;
+            if (resolverRegisterKey && !registered) {
               deps.logger.warn(
-                { sessionKey: formattedKey, hint: "Session already has an active run; concurrent execution may cause issues", errorKind: "resource" as const },
+                { sessionKey: resolverRegisterKey, hint: "Session already has an active run; concurrent execution may cause issues", errorKind: "resource" as const },
                 "Active run already registered",
               );
             }
@@ -1552,7 +1588,7 @@ export function createPiExecutor(
             // Post-execution cleanup: stats merge, cache metrics, memory persist, session cleanup
             // Extracted to executor-post-execution.ts
             await postExecution({
-              result, session, sm, config, msg, sessionKey, formattedKey, agentId,
+              result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey, agentId,
               executionStartMs, executionId, executionOverrides,
               bridge, unsubscribe,
               contextEngineRef, ceSetup, streamSetup,
