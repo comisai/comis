@@ -508,7 +508,7 @@ export function createExecTool(
 
         // Detect --break-system-packages for post-execution warning
         const breakSystemWarning = command.includes("--break-system-packages")
-          ? "\u26a0\ufe0f WARNING: --break-system-packages modifies the system Python. Use a virtualenv instead: python3 -m venv .venv && .venv/bin/pip install ...\n\n"
+          ? "\u26a0\ufe0f WARNING: --break-system-packages modifies the system Python. Use a virtualenv: the workspace's pre-warmed venv (venv/bin/pip install ...) or a per-project one (python3 -m venv projects/<name>/.venv).\n\n"
           : "";
 
         // Log command start (truncate command to 200 chars for security)
@@ -573,41 +573,44 @@ export function createExecTool(
         // Build environment (use filtered subprocess env instead of raw process.env).
         const baseEnv = subprocessEnv ?? (process.env as Record<string, string>);
 
-        // If the workspace has a pre-warmed venv, override
-        // PATH / MPLCONFIGDIR / XDG_CACHE_HOME / MPLBACKEND /
-        // PIP_DISABLE_PIP_VERSION_CHECK with workspace-internal values via
-        // resolveDataEnv. This:
-        //   - Closes the 15s pip-install hot path (the venv is already
-        //     populated by Dockerfile pre-warm at image build time).
-        //   - Eliminates the matplotlib `Fontconfig error` (host
-        //     `/root/.cache/matplotlib` may be read-only under
-        //     `ProtectSystem=strict`; the workspace cache dir is always
-        //     writable).
-        //   - Prevents host PATH leaking into the agent's subprocess.
-        // Conservative gate: only apply when `${workspacePath}/venv/bin`
-        // exists. Workspaces without a venv keep the legacy host-env
-        // behavior unchanged.
+        // Workspace-internal env split into two halves:
+        //
+        //   1. Always-on: MPLCONFIGDIR / XDG_CACHE_HOME / MPLBACKEND /
+        //      PIP_DISABLE_PIP_VERSION_CHECK. Eliminates the matplotlib
+        //      `Fontconfig error` regardless of which venv layout (workspace-
+        //      root `venv/`, per-project `.venv/`, none) the agent uses --
+        //      the host `/root/.cache/matplotlib` may be read-only under
+        //      `ProtectSystem=strict`; the workspace cache dir is always
+        //      writable. Also prevents host XDG_CACHE_HOME leakage.
+        //
+        //   2. Conditional: PATH gets `${workspacePath}/venv/bin` prepended
+        //      only when that directory actually exists (i.e. the Dockerfile
+        //      pre-warm landed and wasn't shadowed by a stale volume). This
+        //      closes the 15s pip-install hot path for prewarm users without
+        //      shadowing per-project `projects/<name>/.venv/bin/python`
+        //      invocations the agent makes directly.
+        //
         // Order: spread baseEnv -> override with dataEnv -> userEnv (so
         // the agent can still pin a specific value via `env: {...}`) ->
         // server-resolved secrets (always last; agent cannot override).
+        const dataEnv = resolveDataEnv({ workspaceDir: workspacePath });
         const venvBin = safePath(workspacePath, "venv", "bin");
-        const venvDetected = existsSync(venvBin);
-        const dataEnv = venvDetected ? resolveDataEnv({ workspaceDir: workspacePath }) : {};
-        if (venvDetected) {
+        if (existsSync(venvBin)) {
           logger?.debug(
-            { toolName: "exec", workspaceDir: workspacePath, hint: "Using workspace-internal venv for subprocess env" },
+            { toolName: "exec", workspaceDir: workspacePath, hint: "Prepending workspace-prewarmed venv/bin to PATH" },
             "Exec workspace venv detected",
           );
-          // resolveDataEnv (data-env.ts:48) returns PATH=<venvBin> only, by
-          // design: forbids any process.env read inside data-env.ts.
-          // Without this prepend the merged env's PATH would shrink to just
-          // the venv bin dir, breaking every subprocess that calls bash, sh,
-          // node, git, curl, etc. The merge here keeps venv binaries first
-          // (so e.g. `python` resolves to the venv's interpreter) but
-          // preserves baseEnv.PATH so system binaries remain reachable.
+          // Prepend venv bin so `python` / `pip` resolve to the prewarm
+          // while system binaries (bash, sh, node, git, curl) remain
+          // reachable via baseEnv.PATH.
           if (dataEnv.PATH && baseEnv.PATH) {
             dataEnv.PATH = `${dataEnv.PATH}:${baseEnv.PATH}`;
           }
+        } else {
+          // No prewarm on this workspace -- drop the venv-only PATH so
+          // baseEnv.PATH wins. The matplotlib + cache dir env vars survive
+          // and still kill the Fontconfig warning universally.
+          delete dataEnv.PATH;
         }
         const env: Record<string, string> = {
           ...baseEnv,
