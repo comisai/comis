@@ -50,7 +50,17 @@ export interface BackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
   getExecutor: (agentId: string) => AgentExecutor;
   sessionStore: RunnerSessionStore;
-  taskManager: Pick<BackgroundTaskManager, "getTask">;
+  /**
+   * Phase 15.1-03 (WR-02 close): widened from `"getTask"` to also include
+   * `transitionDispatchState`. fallbackForTask uses transitionDispatchState
+   * to persist `dispatchState = "notified"` BEFORE firing
+   * `fallbackNotifyFn`, so a daemon SIGKILL between persist and fire does
+   * NOT leak a duplicate notification on recovery (D-S3 at-most-once gate
+   * binds against on-disk state). The daemon-side wiring at
+   * setup-background-completion-runner.ts already passes a manager with
+   * both methods, so no daemon-side change is required.
+   */
+  taskManager: Pick<BackgroundTaskManager, "getTask" | "transitionDispatchState">;
   fallbackNotifyFn: NotifyFn;
   maxBackgroundHops: number;
   logger: ComisLogger;
@@ -118,7 +128,7 @@ export function createBackgroundCompletionRunner(
     // Legacy task without origin -- emit fallback, keep file for audit.
     const origin = task.origin;
     if (!origin || !origin.sessionKey || !origin.agentId) {
-      await fallbackForTask(task.toolName, task.origin?.agentId ?? "default", `Background task "${task.toolName}" completed.`);
+      await fallbackForTask(task.id, task.origin?.agentId ?? "default", task.toolName, `Background task "${task.toolName}" completed.`);
       return;
     }
 
@@ -139,8 +149,9 @@ export function createBackgroundCompletionRunner(
         "Background completion: hop cap reached, falling back to user notification",
       );
       await fallbackForTask(
-        task.toolName,
+        task.id,
         origin.agentId,
+        task.toolName,
         `Background task "${task.toolName}" completed but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
       );
       return;
@@ -184,7 +195,7 @@ export function createBackgroundCompletionRunner(
         },
         "Background completion: invalid sessionKey",
       );
-      await fallbackForTask(task.toolName, origin.agentId, `Background task "${task.toolName}" completed (routing failed).`);
+      await fallbackForTask(task.id, origin.agentId, task.toolName, `Background task "${task.toolName}" completed (routing failed).`);
       return;
     }
 
@@ -261,7 +272,33 @@ export function createBackgroundCompletionRunner(
     }
   }
 
-  async function fallbackForTask(toolName: string, agentId: string, message: string): Promise<void> {
+  /**
+   * Phase 15.1-03 (WR-02 close): two-phase commit.
+   *
+   * 1. transitionDispatchState(taskId, "notified") — synchronously persists
+   *    `dispatchState = "notified"` to disk (via persistTaskSync inside the
+   *    manager). This MUST run before fallbackNotifyFn so a SIGKILL between
+   *    persist and fire does NOT leak a duplicate on recovery: the at-most-
+   *    once gate at the top of handleEvent (which reads task.dispatchState)
+   *    sees "notified" and skips re-firing. Without this ordering, the gate
+   *    misses and the user receives the notification twice.
+   *
+   * 2. fallbackNotifyFn(...) — actually deliver the user-visible
+   *    notification. May reject (channel offline, rate-limited, etc.); the
+   *    failure is logged at WARN. The persisted state stays at "notified" —
+   *    the user did not see the notification, but the at-most-once contract
+   *    takes precedence over delivery completeness in the design's D-S3
+   *    disposition.
+   */
+  async function fallbackForTask(taskId: string, agentId: string, toolName: string, message: string): Promise<void> {
+    // Phase 1: persist state. transitionDispatchState may return false if
+    // the task disappeared from the manager between handler entry and this
+    // call (e.g., explicit cleanup). In that case there is nothing to gate
+    // on; we still fire so the user sees the completion. The persist is
+    // synchronous so the on-disk state is updated before phase 2.
+    deps.taskManager.transitionDispatchState(taskId, "notified");
+
+    // Phase 2: fire user-visible notification.
     try {
       await deps.fallbackNotifyFn({
         agentId,
@@ -271,8 +308,8 @@ export function createBackgroundCompletionRunner(
       });
     } catch (err) {
       log.warn(
-        { toolName, agentId, err, hint: "fallbackNotifyFn rejected; user will not see the completion notification for this task", errorKind: "internal" as const },
-        "Background completion: fallbackNotifyFn rejected",
+        { taskId, toolName, agentId, err, hint: "fallbackNotifyFn rejected; user will not see the completion notification for this task. dispatchState already persisted as \"notified\" — no duplicate on recovery.", errorKind: "internal" as const },
+        "Background completion: fallbackNotifyFn rejected (post-persist)",
       );
     }
   }
