@@ -13,6 +13,8 @@ import { spawnSync } from "node:child_process";
 import { SandboxExecProvider } from "./sandbox/sandbox-exec-provider.js";
 import { BwrapProvider } from "./sandbox/bwrap-provider.js";
 import { createSecretManager } from "@comis/core";
+import type { ToolCapabilityPort } from "@comis/core";
+import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -25,9 +27,15 @@ const STUB_PLATFORM_NAMES: ReadonlySet<string> = new Set();
 
 let registry: ProcessRegistry;
 
-function setup() {
+function setup(portOverrides?: Partial<ToolCapabilityPort>) {
   registry = createProcessRegistry();
-  return createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+  return createExecTool({
+    workspacePath: tmpdir(),
+    registry,
+    secretManager: STUB_SM,
+    platformSecretNames: STUB_PLATFORM_NAMES,
+    toolCapabilityPort: createCapabilityPortStub(portOverrides),
+  });
 }
 
 afterEach(async () => {
@@ -419,7 +427,7 @@ describe("createExecTool", () => {
       const subdir = join(workspace, "nested", "dir");
       mkdirSync(subdir, { recursive: true });
       try {
-        const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+        const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
         const result = await tool.execute("tc-rel", {
           command: "pwd",
           cwd: "nested/dir",
@@ -768,7 +776,7 @@ describe("createExecTool", () => {
 
     it("persists truncated output to exec-{toolCallId}.txt when getToolResultsDir returns path", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => persistDir);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => persistDir, toolCapabilityPort: createCapabilityPortStub() });
       // Generate >50KB of output to trigger truncation (6000 lines of 10 chars each ~ 66KB)
       const result = await tool.execute("persist-tc1", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
@@ -788,7 +796,7 @@ describe("createExecTool", () => {
 
     it("truncation notice includes file path and size", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => persistDir);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => persistDir, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("persist-tc2", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
         timeoutMs: 15_000,
@@ -801,7 +809,7 @@ describe("createExecTool", () => {
 
     it("no persistence when getToolResultsDir is undefined", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("persist-tc3", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
         timeoutMs: 15_000,
@@ -814,7 +822,7 @@ describe("createExecTool", () => {
 
     it("no persistence when getToolResultsDir() returns undefined at call time", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => undefined);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => undefined, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("persist-tc4", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
         timeoutMs: 15_000,
@@ -826,7 +834,7 @@ describe("createExecTool", () => {
 
     it("uses spill file for persistence when output > ROLLING_BUFFER_MAX", { timeout: 30_000 }, async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => persistDir);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => persistDir, toolCapabilityPort: createCapabilityPortStub() });
       // Generate ~165KB of output (15000 lines x 11 bytes each) -- exceeds ROLLING_BUFFER_MAX (100KB)
       const result = await tool.execute("spill-tc1", {
         command: "seq 1 15000 | while read n; do printf '%010d\\n' $n; done",
@@ -849,7 +857,7 @@ describe("createExecTool", () => {
 
     it("regression: 50KB-100KB output persists from in-memory buffers", { timeout: 30_000 }, async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => persistDir);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => persistDir, toolCapabilityPort: createCapabilityPortStub() });
       // Generate ~66KB of output (6000 lines x 11 bytes each) -- between DEFAULT_MAX_BYTES and ROLLING_BUFFER_MAX
       const result = await tool.execute("regress-tc1", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
@@ -873,7 +881,7 @@ describe("createExecTool", () => {
       let persistDir = join(tmpdir(), `comis-cap-test-${Date.now()}`);
       mkdirSync(persistDir, { recursive: true });
       try {
-        const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => persistDir);
+        const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => persistDir, toolCapabilityPort: createCapabilityPortStub() });
         const result = await tool.execute("cap-tc1", {
           command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
           timeoutMs: 15_000,
@@ -1101,7 +1109,7 @@ describe("sandbox integration", () => {
       const workspace = createTempWorkspace();
       registry = createProcessRegistry();
       const config = createMockSandboxConfig();
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "echo hello",
         timeoutMs: 5_000,
@@ -1114,7 +1122,7 @@ describe("sandbox integration", () => {
 
     it("unsandboxed exec still works with sandboxConfig=undefined", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", { command: "echo hello" });
       const details = result.details as { exitCode: number; stdout: string };
       expect(details.exitCode).toBe(0);
@@ -1127,7 +1135,7 @@ describe("sandbox integration", () => {
       const workspace = createTempWorkspace();
       registry = createProcessRegistry();
       const config = createMockSandboxConfig();
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 0.01",
         background: true,
@@ -1140,7 +1148,7 @@ describe("sandbox integration", () => {
 
     it("unsandboxed background session has sandboxed=false", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 0.01",
         background: true,
@@ -1155,7 +1163,7 @@ describe("sandbox integration", () => {
       const workspace = createTempWorkspace();
       registry = createProcessRegistry();
       const config = createMockSandboxConfig();
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 0.01",
         background: true,
@@ -1171,7 +1179,7 @@ describe("sandbox integration", () => {
       const workspace = createTempWorkspace();
       registry = createProcessRegistry();
       const config = createMockSandboxConfig();
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       // Execute will fail because mock-sandbox binary does not exist,
       // but the tempDir creation happens before spawn
       await tool.execute("tc1", { command: "echo hello", timeoutMs: 5_000 });
@@ -1181,7 +1189,7 @@ describe("sandbox integration", () => {
     it("spillover without sandbox does NOT create .comis-tmp/", async () => {
       const workspace = createTempWorkspace();
       registry = createProcessRegistry();
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
       await tool.execute("tc1", { command: "echo hello" });
       expect(existsSync(join(workspace, ".comis-tmp"))).toBe(false);
     });
@@ -1213,7 +1221,7 @@ describe("sandbox integration", () => {
       const config = createMockSandboxConfig({
         sandbox: createMockSandboxProvider({ wrapEnv: wrapEnvSpy }),
       });
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       await tool.execute("tc1", { command: "echo hello", timeoutMs: 5_000 });
       expect(wrapEnvSpy).toHaveBeenCalledTimes(1);
       expect(wrapEnvSpy).toHaveBeenCalledWith(
@@ -1225,7 +1233,7 @@ describe("sandbox integration", () => {
     it("wrapEnv is not called when sandboxConfig is undefined", async () => {
       registry = createProcessRegistry();
       // No sandboxConfig -- wrapEnv should not be reachable
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", { command: "echo hello" });
       const details = result.details as { exitCode: number };
       expect(details.exitCode).toBe(0);
@@ -1238,7 +1246,7 @@ describe("sandbox integration", () => {
 // Backward compatibility regression suite
 // ---------------------------------------------------------------------------
 // Explicitly verifies all original exec-tool behaviors are preserved when
-// sandboxConfig is omitted. Uses createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES) -- NO
+// sandboxConfig is omitted. Uses createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() }) -- NO
 // sandboxConfig parameter -- to ensure the old API surface is untouched.
 // ---------------------------------------------------------------------------
 
@@ -1267,7 +1275,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("echo command returns stdout with exitCode 0", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", { command: "echo hello-compat" });
     const details = result.details as { exitCode: number; stdout: string };
     expect(details.exitCode).toBe(0);
@@ -1275,21 +1283,21 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("non-zero exit code is captured", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", { command: "exit 42" });
     const details = result.details as { exitCode: number };
     expect(details.exitCode).toBe(42);
   });
 
   it("stderr is captured", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", { command: "echo compat-err >&2" });
     const details = result.details as { stderr: string };
     expect(details.stderr).toContain("compat-err");
   });
 
   it("timeout kills process (exit code 124)", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", {
       command: "sleep 60",
       timeoutMs: 300,
@@ -1300,7 +1308,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("abort kills process (exit code 130)", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 200);
     const result = await tool.execute("tc1", {
@@ -1312,7 +1320,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("background mode returns started status with sessionId and pid", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", {
       command: "sleep 0.1",
       background: true,
@@ -1324,7 +1332,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("stdin input is passed through", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", {
       command: "cat",
       input: "compat-stdin-test",
@@ -1335,7 +1343,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("streaming onUpdate is called", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const updates: AgentToolResult<unknown>[] = [];
     const onUpdate = (partial: AgentToolResult<unknown>) => {
       updates.push(partial);
@@ -1347,7 +1355,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("output truncation works on large output (>2000 lines)", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", {
       command: "seq 1 3000",
       timeoutMs: 10_000,
@@ -1472,7 +1480,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("can read and write within workspace", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: `echo "sandbox-content" > ${join(workspace, "test.txt")}`,
         timeoutMs: 10_000,
@@ -1486,7 +1494,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("blocks write outside workspace", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       // Use $HOME path -- NOT in sandbox write paths (unlike /tmp and /var/folders which are blanket-writable)
       const outsidePath = join(homedir(), `comis-sandbox-test-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
       const result = await tool.execute("tc1", {
@@ -1501,7 +1509,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("blocks read of home directory", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "ls ~/",
         timeoutMs: 10_000,
@@ -1514,7 +1522,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const sharedDir = createTempDir("comis-sandbox-shared");
       const config = createRealSandboxConfig(workspace, { sharedPaths: [sharedDir] });
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: `echo "shared-content" > ${join(sharedDir, "shared.txt")}`,
         timeoutMs: 10_000,
@@ -1532,7 +1540,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
       tempDirs.push(roDir);
       writeFileSync(join(roDir, "readable.txt"), "ro-content", "utf8");
       const config = createRealSandboxConfig(workspace, { readOnlyPaths: [roDir] });
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
 
       // Read should succeed
       const readResult = await tool.execute("tc1", {
@@ -1555,7 +1563,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("system tools are accessible", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
 
       const echoResult = await tool.execute("tc1", {
         command: "/bin/echo sandbox-sys-test",
@@ -1583,7 +1591,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("timeout kills sandboxed process (exit code 124)", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 60",
         timeoutMs: 500,
@@ -1596,7 +1604,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("abort kills sandboxed process (exit code 130)", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const controller = new AbortController();
       setTimeout(() => controller.abort(), 300);
       const result = await tool.execute("tc1", {
@@ -1610,7 +1618,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("exit codes pass through sandbox", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "exit 42",
         timeoutMs: 10_000,
@@ -1622,7 +1630,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("background mode works through sandbox", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 0.1",
         background: true,
@@ -1635,7 +1643,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("streaming onUpdate works through sandbox", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const updates: AgentToolResult<unknown>[] = [];
       const onUpdate = (partial: AgentToolResult<unknown>) => {
         updates.push(partial);
@@ -1656,7 +1664,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("spillover .comis-tmp files are accessible inside sandbox", { timeout: 30_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       // Generate >50KB of output: 6000 lines of 10 chars each
       const result = await tool.execute("tc1", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
@@ -1671,7 +1679,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("sandboxed background process has sandboxed=true in registry", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 0.1",
         background: true,
@@ -1691,7 +1699,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("emits command:blocked when command is blocked by denylist", async () => {
       const mockEventBus = { emit: vi.fn(), on: vi.fn(), off: vi.fn() };
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, mockEventBus as never);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, eventBus: mockEventBus as never, toolCapabilityPort: createCapabilityPortStub() });
 
       // rm -rf / triggers Category A denylist -- throwToolError throws
       await expect(tool.execute("tc1", { command: "rm -rf /" })).rejects.toThrow("permission_denied");
@@ -1709,7 +1717,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
 
     it("does not throw differently when eventBus is undefined and command is blocked", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
 
       // Still throws permission_denied -- eventBus is just undefined, no extra error
       await expect(tool.execute("tc1", { command: "rm -rf /" })).rejects.toThrow("permission_denied");
@@ -1718,7 +1726,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("truncates commandPrefix to 200 chars for long commands", async () => {
       const mockEventBus = { emit: vi.fn(), on: vi.fn(), off: vi.fn() };
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, mockEventBus as never);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, eventBus: mockEventBus as never, toolCapabilityPort: createCapabilityPortStub() });
 
       const longCommand = "rm -rf / " + "A".repeat(300);
       await expect(tool.execute("tc1", { command: longCommand })).rejects.toThrow("permission_denied");
@@ -1738,7 +1746,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
   describe("exitCodeMeaning in results", () => {
     it("includes exitCodeMeaning for grep exit 1", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
 
       const result = await tool.execute("tc1", {
         command: "grep nonexistent_pattern_xyz /dev/null",
@@ -1752,7 +1760,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
 
     it("omits exitCodeMeaning for ls exit 0", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
 
       const result = await tool.execute("tc1", {
         command: "ls /dev/null",
@@ -1777,7 +1785,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
         CLOUDFLARE_API_TOKEN: "cfut_live_value_do_not_echo",
         CLOUDFLARE_ACCOUNT_ID: "live_account_id",
       });
-      const tool = createExecTool(tmpdir(), registry, sm, new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       const result = await tool.execute("sr1", {
         // `env` alone can't set non-allowlisted vars; this verifies the path.
@@ -1795,7 +1803,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("rejects names not matching /^[A-Z][A-Z0-9_]*$/ with invalid_value", async () => {
       registry = createProcessRegistry();
       const sm = createSecretManager({ CLOUDFLARE_API_TOKEN: "v" });
-      const tool = createExecTool(tmpdir(), registry, sm, new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       await expect(
         tool.execute("sr2", {
@@ -1812,7 +1820,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
         CLOUDFLARE_API_TOKEN: "cfut_user",
       });
       const platform = new Set(["ANTHROPIC_API_KEY"]);
-      const tool = createExecTool(tmpdir(), registry, sm, platform);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: platform, toolCapabilityPort: createCapabilityPortStub() });
 
       await expect(
         tool.execute("sr3", {
@@ -1831,7 +1839,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
 
     it("rejects unknown names with a hint toward env_list / env_set", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, createSecretManager({}), new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: createSecretManager({}), platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       await expect(
         tool.execute("sr4", {
@@ -1844,7 +1852,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("refuses raw-interpreter commands when secretRefs is present", async () => {
       registry = createProcessRegistry();
       const sm = createSecretManager({ FOO: "v" });
-      const tool = createExecTool(tmpdir(), registry, sm, new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       for (const cmd of [
         'python -c "print(1)"',
@@ -1867,7 +1875,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("allows non-interpreter commands and python file invocations with secretRefs", async () => {
       registry = createProcessRegistry();
       const sm = createSecretManager({ FOO: "bar" });
-      const tool = createExecTool(tmpdir(), registry, sm, new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       // Invoking a workspace script file is fine — echo targets are explicit
       // in the file's contents, not a one-liner.
@@ -1889,7 +1897,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("empty secretRefs array is a no-op (does not trip the raw-interpreter guard)", async () => {
       registry = createProcessRegistry();
       const sm = createSecretManager({});
-      const tool = createExecTool(tmpdir(), registry, sm, new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       // python3 -c is normally refused with secretRefs, but with an empty
       // array there's nothing to inject, so the guard does not engage.
@@ -1912,16 +1920,14 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
           return true;
         },
       };
-      const tool = createExecTool(
-        tmpdir(),
+      const tool = createExecTool({
+        workspacePath: tmpdir(),
         registry,
-        sm,
-        new Set(),
-        undefined,
-        undefined,
-        undefined,
-        mockBus as never,
-      );
+        secretManager: sm,
+        platformSecretNames: new Set(),
+        eventBus: mockBus as never,
+        toolCapabilityPort: createCapabilityPortStub(),
+      });
 
       await tool.execute("sr9", {
         command: "true",
@@ -1981,7 +1987,7 @@ describe.skipIf(!HAVE_PYTHON3)("recovery hints (Python ModuleNotFoundError integ
     mkdirSync(join(ws, "src", "missingpkg"), { recursive: true });
     writeFileSync(join(ws, "src", "missingpkg", "__init__.py"), "");
 
-    const tool = createExecTool(ws, recoveryRegistry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: ws, registry: recoveryRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("rec-pos-1", {
       command: "python3 -m missingpkg",
       timeoutMs: 10_000,
@@ -2008,7 +2014,7 @@ describe.skipIf(!HAVE_PYTHON3)("recovery hints (Python ModuleNotFoundError integ
       '[project]\nname = "missingpkg"\nversion = "0.1.0"\n',
     );
 
-    const tool = createExecTool(ws, recoveryRegistry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: ws, registry: recoveryRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("rec-neg-1", {
       command: "python3 -m missingpkg",
       timeoutMs: 10_000,
@@ -2075,7 +2081,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 
   it("npx: runs npm-distributed CLI without persistent install", { timeout: 120_000 }, async () => {
     const ws = createTempDir("comis-bwrap-npx");
-    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const tool = createExecTool({ workspacePath: ws, registry: bwrapRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: createBwrapConfig(), toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", { command: "npx -y cowsay@1 hello", timeoutMs: 90_000 });
     const details = result.details as { exitCode: number; stdout: string };
     expect(details.exitCode).toBe(0);
@@ -2084,7 +2090,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 
   it("pipx: install + invoke survives across exec calls", { timeout: 180_000 }, async () => {
     const ws = createTempDir("comis-bwrap-pipx");
-    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const tool = createExecTool({ workspacePath: ws, registry: bwrapRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: createBwrapConfig(), toolCapabilityPort: createCapabilityPortStub() });
     const installResult = await tool.execute("tc1", {
       command: "pipx install --quiet pycowsay",
       timeoutMs: 120_000,
@@ -2097,7 +2103,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 
   it("uvx: ephemeral run of pypi-distributed CLI", { timeout: 120_000 }, async () => {
     const ws = createTempDir("comis-bwrap-uvx");
-    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const tool = createExecTool({ workspacePath: ws, registry: bwrapRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: createBwrapConfig(), toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", {
       command: "uvx --quiet cowsay -t hi",
       timeoutMs: 90_000,
@@ -2107,7 +2113,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 
   it("cargo: install + invoke survives across exec calls", { timeout: 600_000 }, async () => {
     const ws = createTempDir("comis-bwrap-cargo");
-    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const tool = createExecTool({ workspacePath: ws, registry: bwrapRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: createBwrapConfig(), toolCapabilityPort: createCapabilityPortStub() });
     // ripgrep is a stable, broadly available choice. The 540s timeout absorbs
     // the cold-build cost on a fresh sandbox (no shared cargo cache).
     const installResult = await tool.execute("tc1", {
@@ -2124,7 +2130,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 
   it("go: install + invoke survives across exec calls", { timeout: 300_000 }, async () => {
     const ws = createTempDir("comis-bwrap-go");
-    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const tool = createExecTool({ workspacePath: ws, registry: bwrapRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: createBwrapConfig(), toolCapabilityPort: createCapabilityPortStub() });
     const installResult = await tool.execute("tc1", {
       command: "go install rsc.io/2fa@latest",
       timeoutMs: 240_000,
