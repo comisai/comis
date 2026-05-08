@@ -25,6 +25,7 @@ import type {
   SpawnPacket,
   DeliveryMirrorPort,
   ModelOperationType,
+  ToolCapabilityPort,
 } from "@comis/core";
 import { wrapExternalContent, safePath, formatSessionKey, generateCanaryToken } from "@comis/core";
 import { suppressError } from "@comis/shared";
@@ -238,6 +239,14 @@ export interface PromptAssemblyParams {
     mcpServerInstructions?: ReadonlyArray<{ serverName: string; instructions: string }>;
     /** Platform message character limit for auto verbosity mode. Resolved by caller from channelRegistry. */
     channelMaxChars?: number;
+    /**
+     * Tool-capability port for the gate flag (Phase 20 / CAPINDEX-RENDER-04 / -05 / -17).
+     * Only `port.isCapabilityIndexEnabled()` is read from this file — live-runtime
+     * port accessors (skill catalog, connected MCP servers, deferred-tool state)
+     * are FORBIDDEN here per the cache-fence invariant. Plan 20-04
+     * architecture-grep CAPINDEX-RENDER-16 enforces.
+     */
+    toolCapabilityPort: ToolCapabilityPort;
   };
   msg: NormalizedMessage;
   sessionKey: SessionKey;
@@ -756,6 +765,14 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
   // Shared params for both assembleRichSystemPrompt and assembleRichSystemPromptBlocks.
   // Using a single variable guarantees identity by construction.
+  //
+  // Phase 20 hot-flip safety (CAPINDEX-RENDER-17): the capability-index gate
+  // value is read once per assembleExecutionPrompt call via
+  // `deps.toolCapabilityPort.isCapabilityIndexEnabled()`. The flag is
+  // restart-required and stable across the session by config contract, so the
+  // cached system-prompt prefix is NOT retroactively rewritten when the
+  // underlying YAML changes mid-session. Plan 20-04 Task 2 owns the executable
+  // hot-flip regression test in prompt-assembly.test.ts.
   const assemblerParams: import("../bootstrap/index.js").AssemblerParams = {
     agentName: config.name,
     promptMode,
@@ -788,6 +805,14 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     subagentRole: undefined, // relocated to dynamic preamble for sub-agent cache sharing
     excludeBootstrapFromContext: true, // BOOTSTRAP.md is either elevated (onboarding) or dead weight (post-onboarding); never useful in Project Context
     workspaceProfile: config.workspace?.profile,
+    /**
+     * Phase 20 — read once per call. The value is config-derived /
+     * restart-required, so it's stable across all turns in this session
+     * (CAPINDEX-RENDER-17). Reading it via the port (rather than from
+     * config directly) isolates this code from the config-schema shape
+     * and matches the Phase 23 adapter contract.
+     */
+    capabilityIndexEnabled: deps.toolCapabilityPort.isCapabilityIndexEnabled(),
     sepEnabled: params.sepEnabled,
   };
 

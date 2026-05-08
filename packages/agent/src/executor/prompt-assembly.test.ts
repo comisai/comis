@@ -105,6 +105,12 @@ vi.mock("node:os", async (importOriginal) => {
 import { assembleExecutionPrompt, extractUserLanguage, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { formatSessionKey, type SpawnPacket } from "@comis/core";
 import { createSpawnPacketBuilder } from "../spawn/spawn-packet-builder.js";
+// Phase 20 (CAPINDEX-RENDER-04 / -05) — fixture stub for the capability-index
+// gate. Default returns `false` so existing tests stay on the legacy
+// gate-off path (byte-identical baseline). Architecture-grep boundary in
+// Plan 17-04 forbids production-stub crossover both ways: tests use the
+// __test-helpers/ source path, never the production createNoOpCapabilityPort.
+import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 
 /** Formatted session key matching makeParams() default sessionKey. */
 const DEFAULT_SESSION_KEY = formatSessionKey({ agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any);
@@ -139,7 +145,11 @@ function makeConfig(overrides?: Record<string, unknown>) {
 }
 
 function makeParams(overrides?: Partial<PromptAssemblyParams>): PromptAssemblyParams {
-  return {
+  // Phase 20: ensure every fixture supplies a ToolCapabilityPort. Overriders
+  // pass full deps objects (REPLACING the default), so we inject the stub on
+  // the merged deps rather than the default literal — the field is REQUIRED
+  // and any missing site would throw at runtime.
+  const merged: PromptAssemblyParams = {
     config: makeConfig(),
     deps: { workspaceDir: "/workspace" },
     msg: makeMsg(),
@@ -150,6 +160,15 @@ function makeParams(overrides?: Partial<PromptAssemblyParams>): PromptAssemblyPa
     operationType: "interactive",
     ...overrides,
   };
+  if (!(merged.deps as Record<string, unknown>).toolCapabilityPort) {
+    merged.deps = {
+      ...merged.deps,
+      // Default gate-off so the legacy `## Available Tools` path renders
+      // (matches every pre-Phase-20 cached-prefix snapshot in this suite).
+      toolCapabilityPort: createCapabilityPortStub({ isCapabilityIndexEnabled: () => false }),
+    };
+  }
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
