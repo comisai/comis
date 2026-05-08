@@ -7,6 +7,7 @@ import {
   type ProcessSession,
   type ProcessRegistry,
 } from "./process-registry.js";
+import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -39,14 +40,14 @@ beforeEach(() => {
 
 describe("createProcessTool", () => {
   it("has correct name, label, description", () => {
-    const tool = createProcessTool(registry);
+    const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
     expect(tool.name).toBe("process");
     expect(tool.label).toBe("Process");
     expect(tool.description).toContain("Manage background processes");
   });
 
   it("has correct parameter schema shape", () => {
-    const tool = createProcessTool(registry);
+    const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
     const props = (tool.parameters as { properties: Record<string, unknown> })
       .properties;
     expect(props).toHaveProperty("action");
@@ -57,7 +58,7 @@ describe("createProcessTool", () => {
 
   describe("list action", () => {
     it("returns empty array when no processes", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", { action: "list" });
       expect(result.details).toEqual([]);
     });
@@ -70,7 +71,7 @@ describe("createProcessTool", () => {
         makeSession({ id: "s2", command: "echo hi", status: "completed" }),
       );
 
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", { action: "list" });
       const details = result.details as Array<{ sessionId: string }>;
       expect(details).toHaveLength(2);
@@ -81,12 +82,12 @@ describe("createProcessTool", () => {
 
   describe("kill action", () => {
     it("requires sessionId (throws if missing)", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "kill" })).rejects.toThrow(/sessionId/);
     });
 
     it("throws for unknown sessionId", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "kill", sessionId: "nonexistent" })).rejects.toThrow(/not found/);
     });
   });
@@ -102,7 +103,7 @@ describe("createProcessTool", () => {
         }),
       );
 
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         action: "status",
         sessionId: "s1",
@@ -118,7 +119,7 @@ describe("createProcessTool", () => {
     });
 
     it("throws for unknown sessionId", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "status", sessionId: "nonexistent" })).rejects.toThrow(/not found/);
     });
   });
@@ -128,7 +129,7 @@ describe("createProcessTool", () => {
       const stdout = "line1\nline2\nline3\nline4\nline5";
       registry.add(makeSession({ id: "s1", stdout }));
 
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         action: "log",
         sessionId: "s1",
@@ -139,7 +140,7 @@ describe("createProcessTool", () => {
     });
 
     it("throws for unknown sessionId", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "log", sessionId: "nonexistent" })).rejects.toThrow(/not found/);
     });
 
@@ -147,7 +148,7 @@ describe("createProcessTool", () => {
       const lines = Array.from({ length: 50 }, (_, i) => `line-${i}`);
       registry.add(makeSession({ id: "s1", stdout: lines.join("\n") }));
 
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         action: "log",
         sessionId: "s1",
@@ -164,7 +165,7 @@ describe("createProcessTool", () => {
 
   describe("unknown action", () => {
     it("throws structured error for invalid action", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "restart" })).rejects.toThrow(/invalid_value.*restart/);
     });
   });
