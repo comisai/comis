@@ -25,7 +25,9 @@ import {
 import type { ProcessRegistry } from "./process-registry.js";
 import type { ToolCapabilityPort } from "@comis/core";
 import { buildInstallDetourHint } from "./exec-tool.js";
-import type { InstallDetourDecision } from "./install-detour.js";
+// `InstallDetourDecision` is imported transitively via
+// ProcessSession.installDetourDecision (process-registry.ts type-only import);
+// no direct import here per Pitfall 6 — never re-derive at status-query time.
 
 // ---------------------------------------------------------------------------
 // Parameter schema
