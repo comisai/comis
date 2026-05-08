@@ -414,5 +414,29 @@ describe("install-detour module — public API", () => {
   });
 });
 
+// ===========================================================================
+// CR-02 RED-PHASE GATE (TDD scaffold for splitTopLevelSegments `&` fix)
+// ===========================================================================
+// This block exists to assert the failing pre-fix state before Task 1 source
+// changes land. It will be REMOVED in Task 2 once the full discrimination
+// describe block supersedes it. Left here intentionally so the RED commit
+// captures the bug as an executable test.
+
+describe("parseInstallDetour — CR-02 RED gate (background-prefix evasion)", () => {
+  it("treats `&` as a top-level separator (CR-02 fix)", () => {
+    const port = createCapabilityPortStub({
+      getConnectedMcpServers: () => ["matplotlib-server"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "matplotlib-server"
+          ? { cluster: "viz", description: "y", replacesPackages: ["matplotlib"] }
+          : undefined,
+    });
+    const decision = parseInstallDetour("echo hi & pip install matplotlib", port);
+    expect(decision).not.toBeNull();
+    expect(decision!.packageManager).toBe("pip");
+    expect(decision!.packages).toEqual(["matplotlib"]);
+  });
+});
+
 // Suppress unused-import lint for the unused fixture (keeps it as a documented helper).
 void makeEmptyPort;
