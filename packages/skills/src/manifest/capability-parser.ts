@@ -22,30 +22,15 @@
  * @module
  */
 
+import type { ToolCapabilityMetadata } from "@comis/core";
 import { ComisCapabilityBlockSchema } from "./schema.js";
 
-/**
- * Capability metadata for tool routing and install-detour overlap.
- *
- * Structurally identical to `ToolCapabilityMetadata` in `@comis/core`
- * (added by Plan 17-01 in the same wave). Defined locally here because Plans
- * 17-01 and 17-03 run in parallel worktrees -- the canonical type does not
- * exist in `@comis/core` until after the wave-1 merge. Plan 17-04 (wave 2)
- * will swap this local interface for `import type { ToolCapabilityMetadata }
- * from "@comis/core"` once the merged tree exposes it.
- *
- * The shape MUST stay structurally identical to the canonical declaration in
- * `packages/core/src/tool-metadata.ts` so the swap is a one-line import
- * change with no consumer impact.
- */
-export interface ToolCapabilityMetadata {
-  /** Cluster ID this tool/skill belongs to (e.g., "data-fetching-financial"). */
-  readonly cluster?: string;
-  /** Operator-tunable display summary. */
-  readonly summary?: string;
-  /** Package names this tool/skill replaces (for install-detour overlap detection). */
-  readonly replacesPackages?: readonly string[];
-}
+// Re-export ToolCapabilityMetadata so consumers that import from
+// `@comis/skills/manifest/capability-parser` keep working after the
+// Wave 1 merge swapped the local declaration for the canonical
+// `@comis/core` type. Plan 17-03 introduced the local interface as a
+// wave-1-parallel workaround; Plan 17-04 closes that deviation.
+export type { ToolCapabilityMetadata };
 
 /** Pino-compatible logger interface. The skills package already uses this shape; reuse here. */
 interface DiscoveryLogger {

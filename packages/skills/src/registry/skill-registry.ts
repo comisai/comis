@@ -12,11 +12,17 @@
  * @module
  */
 
-import type { SkillsConfig, TypedEventBus } from "@comis/core";
+import type {
+  PromptSkillCapability,
+  SkillsConfig,
+  ToolCapabilityMetadata,
+  TypedEventBus,
+} from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import * as fs from "node:fs";
 import { emitSkillAudit } from "../audit/skill-audit.js";
+import { parseComisCapabilityDefensively } from "../manifest/capability-parser.js";
 import { parseFrontmatter, parseSkillManifest } from "../manifest/parser.js";
 import { formatAvailableSkillsXml, type PromptSkillDescription } from "../prompt/processor.js";
 import { sanitizeSkillBody } from "../prompt/sanitizer.js";
@@ -24,6 +30,20 @@ import { scanSkillContent } from "../prompt/content-scanner.js";
 import { discoverSkills, type SkillMetadata, type SkillSource } from "./discovery.js";
 import { evaluateSkillEligibility, type RuntimeEligibilityContext } from "./eligibility.js";
 import { createSkillWatcher, type SkillWatcherHandle } from "./skill-watcher.js";
+
+/**
+ * Operator hint shape consumed by `getPromptSkillCapabilities`.
+ *
+ * Mirrors the return shape of `ToolCapabilityPort.getSkillHint` in
+ * `@comis/core/ports/tool-capability.ts`. The registry stays decoupled from
+ * the port itself -- the daemon-side wiring (Phase 23) passes the port's
+ * `getSkillHint` method as the callback.
+ */
+type OperatorSkillHint = {
+  readonly cluster: string;
+  readonly description?: string;
+  readonly replacesPackages: readonly string[];
+};
 
 /** Minimal pino-compatible logger interface for skills subsystem logging. */
 interface SkillsLogger {
@@ -127,6 +147,42 @@ export interface SkillRegistry {
    * Acts as the Comis eligibility gate for SDK discovery.
    */
   getEligibleSkillNames(): Set<string>;
+
+  /**
+   * Return all visible eligible prompt skills with merged capability metadata.
+   *
+   * Applies the same `allowedSkills`/`deniedSkills` and runtime-eligibility
+   * filters as `getPromptSkillDescriptions`, PLUS an extra
+   * `disableModelInvocation !== true` filter -- skills hidden from the model
+   * are not surfaced as capability index entries.
+   *
+   * Capability merge precedence (per design v1.1 §4.2.1):
+   *   1. operator hint by `skillKey` (when the skill declares one)
+   *   2. operator hint by skill name (always available as fallback)
+   *   3. `comis.capability` from the skill manifest (already in
+   *      `metadata.capability` after Plan 17-04 wiring)
+   *   4. Fallback: `cluster` undefined (renderer falls back to the literal
+   *      `"prompt-skills"` cluster); `summary` = `description`;
+   *      `replacesPackages` = `[]`.
+   *
+   * The `getOperatorHint` callback keeps the registry decoupled from
+   * `ToolCapabilityPort` -- the daemon-side adapter (Phase 23) passes the
+   * port's `getSkillHint` method here.
+   *
+   * Fresh-per-call (no memoization in v1.1 per design §4.3
+   * method-body contract). Returns a frozen array of frozen entries.
+   *
+   * IMPORTANT -- cache fence (Pitfall 1; design §4.3 invariant):
+   * This method MUST NOT be consumed by `assembleRichSystemPrompt`'s
+   * `assemblerParams` in `packages/agent/src/executor/prompt-assembly.ts`.
+   * If a skill discovery sweep runs between turns, the cached system-prompt
+   * prefix MUST stay byte-identical. Phase 20 (CAPINDEX-RENDER-15/16) lands
+   * the architecture-grep test that enforces this; Plan 17-04 documents the
+   * invariant and seeds the placeholder file.
+   */
+  getPromptSkillCapabilities(
+    getOperatorHint: (skillName: string, skillKey?: string) => OperatorSkillHint | undefined,
+  ): readonly PromptSkillCapability[];
 
   /**
    * Populate the registry from SDK-discovered skills instead of filesystem discovery.
@@ -522,6 +578,48 @@ export function createSkillRegistry(
       return names;
     },
 
+    getPromptSkillCapabilities(
+      getOperatorHint: (skillName: string, skillKey?: string) => OperatorSkillHint | undefined,
+    ): readonly PromptSkillCapability[] {
+      const out: PromptSkillCapability[] = [];
+      for (const metadata of metadataMap.values()) {
+        // Filter chain -- mirrors getPromptSkillDescriptions PLUS the extra
+        // disableModelInvocation filter (skills hidden from the model are
+        // not capability-index entries).
+        if (!isSkillEligible(metadata.name, config.promptSkills)) continue;
+        if (!checkRuntimeEligibility(metadata)) continue;
+        if (metadata.disableModelInvocation) continue;
+
+        // Precedence (design §4.2.1):
+        //   operator(skillKey) > operator(skillName) > comis.capability > fallback.
+        const opByKey = metadata.skillKey
+          ? getOperatorHint(metadata.name, metadata.skillKey)
+          : undefined;
+        const opByName = !opByKey ? getOperatorHint(metadata.name) : undefined;
+        const operatorHint = opByKey ?? opByName;
+        const comisHint: ToolCapabilityMetadata | undefined = metadata.capability;
+
+        const cluster = operatorHint?.cluster ?? comisHint?.cluster;
+        const summary =
+          operatorHint?.description ?? comisHint?.summary ?? metadata.description;
+        const rawReplaces =
+          operatorHint?.replacesPackages ?? comisHint?.replacesPackages ?? [];
+
+        out.push(
+          Object.freeze({
+            name: metadata.name,
+            skillKey: metadata.skillKey,
+            description: metadata.description,
+            cluster,
+            summary,
+            replacesPackages: Object.freeze([...rawReplaces]),
+            source: metadata.source,
+          }),
+        );
+      }
+      return Object.freeze(out);
+    },
+
     initFromSdkSkills(sdkSkills: SdkSkill[]): void {
       const prevMetadataCount = metadataMap.size;
       const prevCacheCount = promptCache.size;
@@ -547,6 +645,7 @@ export function createSkillRegistry(
         let skillKey: string | undefined;
         let primaryEnv: string | undefined;
         let commandDispatch: string | undefined;
+        let capability: ToolCapabilityMetadata | undefined;
 
         // Enrichment: read comis: namespace from skill file frontmatter
         try {
@@ -618,6 +717,16 @@ export function createSkillRegistry(
             if (typeof rawCommandDispatch === "string") {
               commandDispatch = rawCommandDispatch;
             }
+
+            // v1.1 capability layer -- defensive parse (Pitfall 7).
+            // A typo or type mismatch in the inner block returns undefined +
+            // emits a WARN; the skill itself is NEVER hidden by malformed
+            // capability metadata.
+            capability = parseComisCapabilityDefensively(
+              ns?.["capability"],
+              sdkSkill.name,
+              logger,
+            );
           }
         } catch {
           // Non-fatal: enrichment failure means we use SDK-provided fields only
@@ -642,6 +751,7 @@ export function createSkillRegistry(
           skillKey,
           primaryEnv,
           commandDispatch,
+          capability,
         };
 
         // Apply eligibility filtering during population
