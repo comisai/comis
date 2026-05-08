@@ -171,7 +171,8 @@ export type {
 } from "./integrations/mcp-client.js";
 
 // Bridge -- MCP tool bridge
-export { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, extractMcpServerName, classifyMcpErrorType } from "./bridge/mcp-tool-bridge.js";
+export { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, classifyMcpErrorType } from "./bridge/mcp-tool-bridge.js";
+export { extractMcpServerName } from "@comis/shared";
 
 // Integrations -- Vision
 export { createVisionProviderRegistry, selectVisionProvider } from "./integrations/vision/vision-provider-registry.js";
