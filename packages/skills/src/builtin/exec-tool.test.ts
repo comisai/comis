@@ -2289,6 +2289,27 @@ describe("install-detour mode: observe (INSTALL-DTR-15, OBS-CAP-02)", () => {
     const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
     expect(installEvents).toHaveLength(2);
     expect(installEvents.every((e) => e.payload.action === "observed")).toBe(true);
+
+    // CR-01 fix verification: each event scoped to a single overlap
+    // (INSTALL-DTR-15, OBS-CAP-02). Pre-fix, the loop emitted N byte-identical
+    // payloads carrying the full overlaps[] array on every iteration.
+    expect((installEvents[0]!.payload.overlaps as ReadonlyArray<unknown>)).toHaveLength(1);
+    expect((installEvents[1]!.payload.overlaps as ReadonlyArray<unknown>)).toHaveLength(1);
+    const sourceNames = new Set(
+      installEvents.map(
+        (e) =>
+          (e.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!.sourceName,
+      ),
+    );
+    expect(sourceNames).toEqual(new Set(["finance-data", "weather-data"]));
+    // Distinctness invariant: two overlaps -> two events with non-equal sourceName.
+    expect(
+      (installEvents[0]!.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!
+        .sourceName,
+    ).not.toBe(
+      (installEvents[1]!.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!
+        .sourceName,
+    );
   }, 30_000);
 });
 
@@ -2334,6 +2355,57 @@ describe("install-detour mode: advise (INSTALL-DTR-16, -17, OBS-CAP-02)", () => 
     expect(result.details?.installDetourHint).toBeDefined();
     expect(typeof result.details?.installDetourHint).toBe("string");
     expect(result.details?.installDetourHint as string).toContain("market-data-lib");
+  }, 30_000);
+
+  it("emits N distinct payloads for N overlaps in advise mode", async () => {
+    // CR-01 fix verification (advise-mode analog of the observe N-overlap test):
+    // each emitted payload must be scoped to its single overlap. Pre-fix, the
+    // advise loop discarded the loop variable with `void overlap;` and emitted
+    // N byte-identical payloads (INSTALL-DTR-16, OBS-CAP-02).
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "advise",
+      getConnectedMcpServers: () => ["finance-data", "weather-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined => {
+        if (s === "finance-data") return { cluster: "x", description: "y", replacesPackages: ["market-data-lib"] };
+        if (s === "weather-data") return { cluster: "y", description: "z", replacesPackages: ["weather-lib"] };
+        return undefined;
+      },
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    await tool.execute("tc-advise-N-overlap", {
+      command: "pip install market-data-lib weather-lib --dry-run --no-deps",
+    });
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(2);
+    expect(installEvents.every((e) => e.payload.action === "hinted")).toBe(true);
+    expect(installEvents.every((e) => e.payload.mode === "advise")).toBe(true);
+    expect((installEvents[0]!.payload.overlaps as ReadonlyArray<unknown>)).toHaveLength(1);
+    expect((installEvents[1]!.payload.overlaps as ReadonlyArray<unknown>)).toHaveLength(1);
+    const sourceNames = new Set(
+      installEvents.map(
+        (e) =>
+          (e.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!.sourceName,
+      ),
+    );
+    expect(sourceNames).toEqual(new Set(["finance-data", "weather-data"]));
+    // Distinctness invariant: two overlaps -> two events with non-equal sourceName.
+    expect(
+      (installEvents[0]!.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!
+        .sourceName,
+    ).not.toBe(
+      (installEvents[1]!.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!
+        .sourceName,
+    );
   }, 30_000);
 
   it("populates session.installDetourDecision at spawn time for advise+overlap (Pitfall 6)", async () => {

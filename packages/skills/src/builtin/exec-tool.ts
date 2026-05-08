@@ -733,21 +733,34 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
           // Decision is non-null only when overlaps.length > 0 (parser contract).
           if (installDetourMode === "observe") {
             for (const overlap of installDetourDecision.overlaps) {
+              // CR-01 fix: scope each emit to the single overlap so downstream
+              // consumers receive distinct per-overlap payloads (INSTALL-DTR-15,
+              // OBS-CAP-02). The spread keeps packageManager / commandDigest /
+              // packages identical across the N events for a single call —
+              // only `overlaps[]` differs (design §8.2 contract).
               eventBus?.emit(
                 "tool:install_detour_detected",
-                buildInstallDetourEventPayload(installDetourDecision, "observe", "observed"),
+                buildInstallDetourEventPayload(
+                  { ...installDetourDecision, overlaps: [overlap] },
+                  "observe",
+                  "observed",
+                ),
               );
-              void overlap; // emit ONE per overlap; loop count == overlaps.length
               terminalAction = "observed";
             }
             // Fall through to spawn (observe runs unchanged) — INSTALL-DTR-15
           } else if (installDetourMode === "advise") {
             for (const overlap of installDetourDecision.overlaps) {
+              // CR-01 fix: scope each emit to the single overlap (INSTALL-DTR-16,
+              // OBS-CAP-02). See observe-loop comment above for the rationale.
               eventBus?.emit(
                 "tool:install_detour_detected",
-                buildInstallDetourEventPayload(installDetourDecision, "advise", "hinted"),
+                buildInstallDetourEventPayload(
+                  { ...installDetourDecision, overlaps: [overlap] },
+                  "advise",
+                  "hinted",
+                ),
               );
-              void overlap;
               terminalAction = "hinted";
             }
             // Fall through to spawn; envelope augmentation applied at completion sites
