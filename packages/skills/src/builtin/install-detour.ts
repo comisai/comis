@@ -159,12 +159,14 @@ export function parseInstallDetour(
 // --------------------------------------------------------------------------
 
 /**
- * Split a command on top-level `;` `&&` `||` `|` (outside quotes). Reuses
+ * Split a command on top-level `;` `&&` `||` `|` `&` (outside quotes). Reuses
  * `ShellQuoteTracker` from `exec-security.ts:21-74`. Returns `null` on
  * unbalanced quotes anywhere — the parser-bail signal (INSTALL-DTR-07).
  *
  * Deliberately separate from `exec-security.ts:splitCommandSegments`:
- * - Does NOT split on `&` (background marker, not a separator for our purposes).
+ * - Splits on `&` AS WELL — POSIX background-and-continue is a command terminator
+ *   (CR-02; same operator class as `;`). See exec-security.ts:184 for the
+ *   canonical reference and 22-VERIFICATION.md gap CR-02 for the rationale.
  * - Returns `null` on unbalanced quotes (vs returning collected-so-far).
  * Two helpers, no shared abstraction (RESEARCH §4.3, KISS-consistent).
  */
@@ -187,8 +189,10 @@ function splitTopLevelSegments(command: string): readonly string[] | null {
           continue;
         }
       }
-      // Single-char operators (NOTE: NO `&` — background marker, not separator)
-      if (ch === ";" || ch === "|") {
+      // Single-char operators. `&` is a POSIX command terminator (background-and-continue),
+      // same class as `;` — see CR-02 in 22-VERIFICATION.md and exec-security.ts:184.
+      // The two-char `&&` lookahead above runs first, so `&&` is never reached here.
+      if (ch === ";" || ch === "|" || ch === "&") {
         segments.push(current.trim());
         current = "";
         continue;
