@@ -19,16 +19,31 @@ import { findInSourceFiles } from "../../../../test/support/source-grep.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
 
-describe("@comis/shared -- architecture invariants", () => {
-  it("scaffolding: findInSourceFiles helper resolves and walks the package src tree", () => {
+describe("@comis/shared -- architecture invariants (MCPNAME-03)", () => {
+  it("MCPNAME-03 (defense-in-depth): only mcp-tool-name.ts contains the canonical parser shape", () => {
+    // Locks Phase 18's own work in @comis/shared. If a future contributor
+    // copy-pastes the slice(5)+indexOf("--") shape into another shared utility
+    // (creating a near-duplicate of the canonical parser), this test catches
+    // it. The single legitimate carrier is mcp-tool-name.ts; everything else
+    // in @comis/shared/src/ must delegate to it. RESEARCH §Pattern 6.
+    //
+    // §10.6 inverted-cycle proof captured in 18-03-SUMMARY.md (Task 3 dance:
+    // scratch _scratchExtract body added to a non-canonical shared file
+    // (e.g., abort.ts), test fired with the offending path; reverted; green).
     const result = findInSourceFiles({
       rootDir: SRC_ROOT,
-      needle: "TOOLING_CFG_19_PLACEHOLDER_xyz_should_never_match",
+      needle: /\.slice\(5\)[\s\S]{0,200}\.indexOf\(["']--["']\)/,
+      excludeFileSuffixes: [".test.ts"],
     });
-    expect(result.matches).toEqual([]);
+    const offenders = result.matches.filter((m) => !m.endsWith("mcp-tool-name.ts"));
     expect(
-      result.checkedFiles,
-      "sanity: helper walked at least one file in @comis/shared/src",
-    ).toBeGreaterThan(0);
+      offenders,
+      "Only @comis/shared/src/mcp-tool-name.ts may contain the canonical parser shape; " +
+        "any other shared utility must delegate to extractMcpServerName / parseSanitizedMcpToolName",
+    ).toEqual([]);
+    // Sanity: the canonical file MUST match — confirms the regex actually finds the shape.
+    // If this assertion fires, mcp-tool-name.ts has drifted away from the canonical body
+    // (or the regex is broken).
+    expect(result.matches.length, "sanity: mcp-tool-name.ts itself should match the canonical shape").toBeGreaterThan(0);
   });
 });
