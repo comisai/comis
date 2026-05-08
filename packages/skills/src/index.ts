@@ -35,6 +35,7 @@ export { createExecTool } from "./builtin/exec-tool.js";
 export { createProcessTool } from "./builtin/process-tool.js";
 export { createProcessRegistry } from "./builtin/process-registry.js";
 export type { ProcessRegistry } from "./builtin/process-registry.js";
+export type { InstallDetourDecision, DetourOverlap } from "./builtin/install-detour.js";
 
 // Built-in tools -- Exec sandbox types
 export type { SandboxProvider, SandboxOptions, ExecSandboxConfig } from "./builtin/sandbox/types.js";
