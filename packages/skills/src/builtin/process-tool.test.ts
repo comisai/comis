@@ -8,6 +8,7 @@ import {
   type ProcessRegistry,
 } from "./process-registry.js";
 import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
+import type { InstallDetourDecision } from "./install-detour.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,6 +28,10 @@ function makeSession(overrides: Partial<ProcessSession> = {}): ProcessSession {
     stderr: overrides.stderr ?? "",
     child: overrides.child ?? undefined,
     maxOutputChars: overrides.maxOutputChars ?? 1024 * 1024,
+    sandboxed: overrides.sandboxed ?? false,
+    // Spread last so any optional override (description, installDetourDecision,
+    // autoBackgrounded) flows through without explicit per-field plumbing.
+    ...overrides,
   };
 }
 
@@ -168,5 +173,71 @@ describe("createProcessTool", () => {
       const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "restart" })).rejects.toThrow(/invalid_value.*restart/);
     });
+  });
+});
+
+describe("process.status — install-detour retroactive hint (INSTALL-DTR-17, -18, Pitfall 6)", () => {
+  const fakeDecision: InstallDetourDecision = {
+    packageManager: "pip",
+    packages: ["market-data-lib"],
+    overlaps: [
+      {
+        packageName: "market-data-lib",
+        sourceType: "mcp",
+        sourceName: "finance-data",
+        cluster: "data-fetching-financial",
+        reason: "mcp-operator-alias",
+      },
+    ],
+    commandDigest: "abc123def456abcd",
+  };
+
+  it("returns installDetourHint when session has installDetourDecision (advise spawn-time)", async () => {
+    const reg = createProcessRegistry();
+    // Build a session WITH a decision (simulates advise-mode spawn)
+    reg.add(
+      makeSession({
+        id: "s-with-hint",
+        installDetourDecision: fakeDecision,
+      }),
+    );
+    const tool = createProcessTool({ registry: reg, toolCapabilityPort: createCapabilityPortStub() });
+    const result = (await tool.execute("tc-status-1", { action: "status", sessionId: "s-with-hint" })) as {
+      details?: Record<string, unknown>;
+    };
+    expect(result.details?.installDetourHint).toBeDefined();
+    expect(typeof result.details?.installDetourHint).toBe("string");
+    expect(result.details?.installDetourHint as string).toContain("market-data-lib");
+    expect(result.details?.installDetourHint as string).toContain("finance-data");
+  });
+
+  it("returns NO installDetourHint when session has no installDetourDecision", async () => {
+    const reg = createProcessRegistry();
+    reg.add(makeSession({ id: "s-no-hint" })); // no decision
+    const tool = createProcessTool({ registry: reg, toolCapabilityPort: createCapabilityPortStub() });
+    const result = (await tool.execute("tc-status-2", { action: "status", sessionId: "s-no-hint" })) as {
+      details?: Record<string, unknown>;
+    };
+    expect(result.details?.installDetourHint).toBeUndefined();
+  });
+
+  it("Pitfall 6: hint stays consistent with spawn-time decision even when port state has drifted", async () => {
+    // Session captured under port that returned ["finance-data"] at spawn time.
+    const reg = createProcessRegistry();
+    reg.add(makeSession({ id: "s-drift", installDetourDecision: fakeDecision }));
+
+    // Status queried under DIFFERENT port: connected-server set is now empty.
+    // The augmentation MUST still surface the hint (read back from session, not re-derived).
+    const driftedPort = createCapabilityPortStub({
+      getConnectedMcpServers: () => [], // finance-data disconnected
+      getMcpServerHint: () => undefined,
+    });
+    const tool = createProcessTool({ registry: reg, toolCapabilityPort: driftedPort });
+    const result = (await tool.execute("tc-status-3", { action: "status", sessionId: "s-drift" })) as {
+      details?: Record<string, unknown>;
+    };
+    // Critical Pitfall 6 assertion: hint still mentions finance-data despite drift
+    expect(result.details?.installDetourHint).toBeDefined();
+    expect(result.details?.installDetourHint as string).toContain("finance-data");
   });
 });
