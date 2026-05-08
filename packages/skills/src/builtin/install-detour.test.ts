@@ -88,6 +88,12 @@ describe("parseInstallDetour — positive matrix (INSTALL-DTR-01, -02, -04)", ()
     ["pip install pandas_ml",                                 "pip",  ["pandas-ml"]],
     ["pip install foo.bar",                                   "pip",  ["foo-bar"]],
     ["source .venv/bin/activate && pip install matplotlib",   "pip",  ["matplotlib"]],
+    // CR-02 fix coverage: `&` is a POSIX top-level separator (background-and-continue).
+    // Pre-fix these returned null because `&` was excluded from the single-char operator set
+    // in splitTopLevelSegments. See 22-VERIFICATION.md gap CR-02.
+    ["echo hi & pip install matplotlib",                      "pip",  ["matplotlib"]],
+    ["pip install foo & echo bg",                             "pip",  ["foo"]],
+    ["echo a & echo b & npm install lodash",                  "npm",  ["lodash"]],
   ] as const)("parses %j -> %s %j", (input, expectedPm, expectedPkgs) => {
     // Build a port that overlaps EVERY package in the expected list, so
     // parser returns non-null and we can assert the parsed shape.
@@ -104,6 +110,67 @@ describe("parseInstallDetour — positive matrix (INSTALL-DTR-01, -02, -04)", ()
     expect(decision!.packageManager).toBe(expectedPm);
     expect([...decision!.packages].sort()).toEqual([...expectedPkgsArr].sort());
     expect(decision!.commandDigest).toMatch(/^[0-9a-f]{16}$/);
+  });
+});
+
+// ===========================================================================
+// SEPARATOR DISCRIMINATION (INSTALL-DTR-03 — CR-02 fix)
+// ===========================================================================
+
+describe("parseInstallDetour — `&` vs `&&` separator discrimination (INSTALL-DTR-03, CR-02)", () => {
+  it("treats `&` as a top-level separator (background-and-continue)", () => {
+    const port = createCapabilityPortStub({
+      getConnectedMcpServers: () => ["matplotlib-server"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "matplotlib-server"
+          ? { cluster: "viz", description: "y", replacesPackages: ["matplotlib"] }
+          : undefined,
+    });
+    const decision = parseInstallDetour("echo hi & pip install matplotlib", port);
+    expect(decision).not.toBeNull();
+    expect(decision!.packageManager).toBe("pip");
+    expect(decision!.packages).toEqual(["matplotlib"]);
+  });
+
+  it("does NOT mis-split `&&` into two `&` separators (two-char lookahead runs first)", () => {
+    const port = createCapabilityPortStub({
+      getConnectedMcpServers: () => ["matplotlib-server"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "matplotlib-server"
+          ? { cluster: "viz", description: "y", replacesPackages: ["matplotlib"] }
+          : undefined,
+    });
+    // The leading segment `source .venv/bin/activate` is harmless; the install lives
+    // in the second segment after `&&`. If `&&` were mis-split, the second segment
+    // would start with `& pip install matplotlib`, which would fail parseInstallSegment.
+    const decision = parseInstallDetour("source .venv/bin/activate && pip install matplotlib", port);
+    expect(decision).not.toBeNull();
+    expect(decision!.packageManager).toBe("pip");
+    expect(decision!.packages).toEqual(["matplotlib"]);
+  });
+
+  it("respects quote state — `&` inside single quotes does NOT split", () => {
+    // `echo 'foo & bar'` is one segment; the `pip install` after the closing quote
+    // belongs to the next top-level segment.
+    const port = createCapabilityPortStub({
+      getConnectedMcpServers: () => ["x"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "x" ? { cluster: "x", description: "y", replacesPackages: ["matplotlib"] } : undefined,
+    });
+    const decision = parseInstallDetour("echo 'foo & bar' && pip install matplotlib", port);
+    expect(decision).not.toBeNull();
+    expect(decision!.packages).toEqual(["matplotlib"]);
+  });
+
+  it("bails on unbalanced quotes around `&` (INSTALL-DTR-07 contract preserved)", () => {
+    const port = createCapabilityPortStub({
+      getConnectedMcpServers: () => ["x"],
+      getMcpServerHint: (): McpServerHint | undefined =>
+        ({ cluster: "x", description: "y", replacesPackages: ["matplotlib"] }),
+    });
+    // Unbalanced double quote — splitTopLevelSegments returns null, parser bails.
+    const decision = parseInstallDetour('echo "foo & pip install matplotlib', port);
+    expect(decision).toBeNull();
   });
 });
 
@@ -411,30 +478,6 @@ describe("install-detour module — public API", () => {
     expect((mod as Record<string, unknown>).normalizeNpmName).toBeUndefined();
     expect((mod as Record<string, unknown>).parseInstallSegment).toBeUndefined();
     expect((mod as Record<string, unknown>).classifyPackageToken).toBeUndefined();
-  });
-});
-
-// ===========================================================================
-// CR-02 RED-PHASE GATE (TDD scaffold for splitTopLevelSegments `&` fix)
-// ===========================================================================
-// This block exists to assert the failing pre-fix state before Task 1 source
-// changes land. It will be REMOVED in Task 2 once the full discrimination
-// describe block supersedes it. Left here intentionally so the RED commit
-// captures the bug as an executable test.
-
-describe("parseInstallDetour — CR-02 RED gate (background-prefix evasion)", () => {
-  it("treats `&` as a top-level separator (CR-02 fix)", () => {
-    const port = createCapabilityPortStub({
-      getConnectedMcpServers: () => ["matplotlib-server"],
-      getMcpServerHint: (s: string): McpServerHint | undefined =>
-        s === "matplotlib-server"
-          ? { cluster: "viz", description: "y", replacesPackages: ["matplotlib"] }
-          : undefined,
-    });
-    const decision = parseInstallDetour("echo hi & pip install matplotlib", port);
-    expect(decision).not.toBeNull();
-    expect(decision!.packageManager).toBe("pip");
-    expect(decision!.packages).toEqual(["matplotlib"]);
   });
 });
 
