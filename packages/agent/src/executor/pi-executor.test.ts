@@ -291,6 +291,11 @@ vi.mock("node:fs", async (importOriginal) => {
 // ---------------------------------------------------------------------------
 
 import { createPiExecutor, createBeforeToolCallGuard, mergeSessionStats, clearSessionToolSchemaSnapshotHash, _getOrCreateSessionLatchesForTest, _clearSessionLatchesForTest, type PiExecutorDeps } from "./pi-executor.js";
+// Phase 20: PiExecutorDeps now requires toolCapabilityPort. Tests use the
+// test-only stub (NOT the production no-op factory createNoOpCapabilityPort
+// from @comis/core — the architecture-grep boundary in Plan 17-04 forbids
+// production-stub crossover both ways).
+import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 import { repairOrphanedMessages } from "../session/orphaned-message-repair.js";
 import { createPiEventBridge } from "../bridge/pi-event-bridge.js";
 import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../bootstrap/index.js";
@@ -406,6 +411,13 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
     workspaceDir: "/tmp/test-workspace",
     agentDir: "/tmp/test-agent-dir",
     customTools: [],
+    // Phase 20 (CAPINDEX-RENDER-02): REQUIRED on PiExecutorDeps. Stub returns
+    // gate-enabled + empty defaults — assembleTools() will invoke
+    // buildCapabilityIndexContext, which sees zero clusters/skills/servers
+    // and returns the EMPTY sentinel. The runner's array-concat then drops
+    // the empty text via .filter(Boolean). Inert-but-not-broken; matches the
+    // production no-op port behavior the daemon injects.
+    toolCapabilityPort: createCapabilityPortStub(),
     ...overrides,
   };
 }

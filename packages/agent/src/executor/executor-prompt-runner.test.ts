@@ -81,3 +81,32 @@ describe("executor-prompt-runner.ts — rate_limited branch (260501-cur)", () =>
     expect(source).toMatch(/Client-request error — skipping silent-retry and declaring terminal failure/);
   });
 });
+
+describe("executor-prompt-runner.ts — capability-index threading (Phase 20 CAPINDEX-RENDER-03 + -18)", () => {
+  it("CAPINDEX-RENDER-03: dynamic preamble uses array-concat [dynamicPreamble, capabilityIndexContext, deferredContext].filter(Boolean)", () => {
+    // Source-grep: structural lock on the design §5 array-concat shape.
+    // Behavioral verification of the rendered output lives in the renderer
+    // unit test (capability-index-context.test.ts) and Phase 24 integration tests.
+    expect(source).toMatch(
+      /\[\s*dynamicPreamble\s*,\s*capabilityIndexContext\s*,\s*deferredContext\s*\]\s*\.\s*filter\s*\(\s*Boolean\s*\)/,
+    );
+  });
+
+  it("CAPINDEX-RENDER-18 / OBS-CAP-01: Pino debug log emits the seven canonical fields with submodule label and message", () => {
+    // Each canonical field appears literally in the log object.
+    expect(source).toMatch(/capabilityIndexTokens/);
+    expect(source).toMatch(/deferredContextTokens/);
+    expect(source).toMatch(/fullPreambleTokens/);
+    expect(source).toMatch(/clusterCount/);
+    expect(source).toMatch(/activeToolCount/);
+    expect(source).toMatch(/deferredToolCount/);
+    expect(source).toMatch(/promptSkillCount/);
+    // Message text matches design §5 Placement verbatim.
+    expect(source).toMatch(/"Dynamic preamble assembled"/);
+  });
+
+  it("CAPINDEX-RENDER-18: submodule binding label is exactly 'executor.capability-index'", () => {
+    // AGENTS.md §2.7: submodule binding via deps.logger.child({ submodule: "..." }).
+    expect(source).toMatch(/submodule\s*:\s*["']executor\.capability-index["']/);
+  });
+});
