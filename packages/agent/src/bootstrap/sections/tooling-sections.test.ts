@@ -532,3 +532,111 @@ describe("buildToolingSection — capability-index gate (Phase 20)", () => {
     expect(gateOn.join("\n").length).toBeLessThan(gateOff.join("\n").length);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 21 (CAPINDEX-COUNTERWEIGHT-01 / -02 / -03) — tool-first counterweight.
+// Source of truth: design §11 Phase 5 (verbatim bullet text) + Pitfall 9
+// (snapshot+behavior+forbidden-literal triple). DO NOT auto-update via
+// `vitest -u` without re-reading design §11 Phase 5 — Pitfall 9 prevention.
+// ---------------------------------------------------------------------------
+
+describe("buildToolCallStyleSection — tool-first counterweight (Phase 21)", () => {
+  it("CAPINDEX-COUNTERWEIGHT-01: gate-on (exec + enabled=true) emits the tool-first bullet immediately before the Python venv rule (snapshot + behavior pair)", () => {
+    const result = buildToolCallStyleSection(false, ["exec"], true);
+    const joined = result.join("\n");
+
+    // Shape lock — design §11 Phase 5 verbatim. Hand-verified at authoring time.
+    // DO NOT auto-update via `vitest -u` without re-reading design §11 Phase 5.
+    expect(joined).toMatchInlineSnapshot(`
+      "## Tool Call Style
+      Default: do not narrate routine, low-risk tool calls (just call the tool).
+      Narrate only when it helps: multi-step work, complex problems, sensitive actions (e.g., deletions), or when the user explicitly asks.
+      Keep narration brief and value-dense; avoid repeating obvious steps.
+
+      - Prefer parallel tool calls when independent (see below)
+      - Read files before writing to verify current state
+      - Chain dependent calls sequentially (e.g., find → read → edit)
+      - On tool failure: check the error, fix parameters, and retry once. If it fails again, try an alternative approach or report the error to the user.
+      - Do not retry the same failing call repeatedly.
+
+      ### Coding Guidelines
+      - **Tool-first principle.** When this turn includes a \`Capabilities\` context and the task can be satisfied by a connected tool or available skill, prefer that capability over installing a Python or Node package. Use installs only for capabilities not covered by active tools, deferred tools, or visible prompt skills.
+      - **Python projects:** Always create a virtualenv per project (\`python3 -m venv .venv\`). Install packages into the project venv (\`source .venv/bin/activate && pip install ...\`). Never use \`--break-system-packages\` — it pollutes the system Python. Each project directory should have its own \`.venv\`.
+
+      ### Parallel vs Sequential
+      Call independent tools in parallel to reduce round-trips:
+      - **Parallel**: memory_search + web_search (independent data sources)
+      - **Parallel**: Multiple read calls for different files -- ALWAYS read in parallel when examining 2+ files
+      - **Parallel**: grep + find when searching for different things
+      - **Sequential**: find -> read (need file path before reading)
+      - **Sequential**: read -> edit (need current content before editing)
+      - **Sequential**: memory_search -> memory_store (need results before deciding what to store)"
+    `);
+
+    // Behavior assertions (Pattern B; Pitfall 9 prevention):
+    // (a) the bullet's lead-in identifies the tool-first principle
+    expect(joined).toContain("**Tool-first principle.**");
+    // (b) the verbatim §11 Phase 5 opening
+    expect(joined).toContain("When this turn includes a `Capabilities` context and the task can be satisfied by");
+    // (c) the verbatim §11 Phase 5 ending
+    expect(joined).toContain("Use installs only for capabilities not covered by active tools, deferred tools, or visible prompt skills");
+
+    // ORDERING: the new bullet emits BEFORE the existing Python-virtualenv rule
+    // (CAPINDEX-COUNTERWEIGHT-01 "immediately before" clause). A reorder regression
+    // would fail this check deterministically.
+    expect(joined.indexOf("Tool-first principle")).toBeLessThan(joined.indexOf("Python projects"));
+
+    // The venv rule is still emitted because `exec` is present (the inner if is
+    // structurally inside the outer if(has("exec")) block).
+    expect(joined).toContain("Python projects");
+
+    // CAPINDEX-COUNTERWEIGHT-03 forbidden literals (defense in depth at the
+    // rendered-output level; the architecture-grep at architecture.test.ts:114-209
+    // is the primary file-source enforcement).
+    expect(joined).not.toContain("discover_tools");
+    expect(joined).not.toContain("tool_search_tool_regex");
+  });
+
+  it("CAPINDEX-COUNTERWEIGHT-02a: gate-off via enabled=false (exec present, enabled=false) does NOT emit the tool-first bullet", () => {
+    const result = buildToolCallStyleSection(false, ["exec"], false);
+    const joined = result.join("\n");
+
+    // The new bullet must be absent.
+    expect(joined).not.toContain("Tool-first principle");
+    expect(joined).not.toContain("When this turn includes a `Capabilities` context");
+
+    // The venv rule is still emitted because `exec` is present (the inner if is
+    // skipped but the outer if(has("exec")) block still runs).
+    expect(joined).toContain("Python projects");
+  });
+
+  it("CAPINDEX-COUNTERWEIGHT-02b: gate-off via enabled=undefined (no third arg) is byte-identical to enabled=false (Pitfall 4 prevention)", () => {
+    // Byte-identical-to-baseline assertion: the optional `?` parameter and the
+    // strict-equals `=== true` gate collapse `undefined` and `false` to the same
+    // gate-off path. Mirrors the Phase 20 `tooling-sections.test.ts:512-517`
+    // byte-identical idiom.
+    const baseline = buildToolCallStyleSection(false, ["exec"]);
+    const explicit = buildToolCallStyleSection(false, ["exec"], false);
+    expect(explicit).toEqual(baseline);
+
+    // Sanity: both omit the new bullet.
+    expect(baseline.join("\n")).not.toContain("Tool-first principle");
+  });
+
+  it("CAPINDEX-COUNTERWEIGHT-02c: gate-off via exec absent (enabled=true, exec NOT in toolNames) does NOT emit the tool-first bullet AND skips the venv rule wholesale", () => {
+    const result = buildToolCallStyleSection(false, ["read", "write"], true);
+    const joined = result.join("\n");
+
+    // The new bullet must be absent — the inner if(capabilityIndexEnabled === true)
+    // is unreachable because the outer if(has("exec")) block is skipped wholesale.
+    expect(joined).not.toContain("Tool-first principle");
+    expect(joined).not.toContain("When this turn includes a `Capabilities` context");
+
+    // The venv rule is also absent for the same structural reason.
+    expect(joined).not.toContain("Python projects");
+
+    // Sanity: the rest of the section still renders (the function did not return
+    // empty — it just skipped the inner exec-gated block).
+    expect(joined).toContain("## Tool Call Style");
+  });
+});
