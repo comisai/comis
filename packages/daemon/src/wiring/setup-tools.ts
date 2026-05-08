@@ -11,7 +11,15 @@ import { isAbsolute, resolve } from "node:path";
 import type { AppContainer, SkillsConfig, ApprovalGate, CredentialMappingPort, WrapExternalContentOptions, SessionKey } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../rpc/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
-import { SkillsConfigSchema, sanitizeLogString, tryGetContext, parseFormattedSessionKey, safePath, formatSessionKey } from "@comis/core";
+import {
+  SkillsConfigSchema,
+  sanitizeLogString,
+  tryGetContext,
+  parseFormattedSessionKey,
+  safePath,
+  formatSessionKey,
+  createNoOpCapabilityPort,
+} from "@comis/core";
 import {
   sessionKeyToPath,
   WORKSPACE_FILE_NAMES,
@@ -494,23 +502,34 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           return safePath(sessionDir, "tool-results");
         };
 
-        tools.push(createExecTool(
-          agentWorkspaceDir,
+        tools.push(createExecTool({
+          workspacePath: agentWorkspaceDir,
           registry,
           secretManager,
           platformSecretNames,
-          skillsLogger,
-          subprocessEnv,  // Filtered subprocess environment
-          sandboxCfg,  // Per-agent sandbox config
-          eventBus,  // command:blocked + secret:accessed audit events
-          getToolResultsDir,  // Session tool-results dir for output persistence
-        ));
+          logger: skillsLogger,
+          subprocessEnv,                                     // Filtered subprocess environment
+          sandboxConfig: sandboxCfg,                         // Per-agent sandbox config
+          eventBus,                                          // command:blocked + secret:accessed audit events
+          getToolResultsDir,                                 // Session tool-results dir for output persistence
+          // Plan 22-02 — INSTALL-DTR-13. Phase 22 interim per design §11 Phase 7
+          // production-behavior; Phase 23 (WIRING-01..11) replaces with the live
+          // ToolCapabilityPort adapter constructed from container.config.tooling
+          // + skillRegistry + mcpClientManager.
+          toolCapabilityPort: createNoOpCapabilityPort(),
+          approvalGate,                                      // Soft-stop override path (Plan 22-03)
+        }));
       }
 
       // Process tool -- always instantiated; builtinTools ceiling applied after profile filtering
       {
         const registry = getOrCreateRegistry(agentId);
-        tools.push(createProcessTool(registry, skillsLogger));
+        tools.push(createProcessTool({
+          registry,
+          logger: skillsLogger,
+          // Plan 22-02 — INSTALL-DTR-13. Phase 22 interim; Phase 23 lands the live adapter.
+          toolCapabilityPort: createNoOpCapabilityPort(),
+        }));
       }
 
       // Apply patch tool -- always included, gated by tool policy
