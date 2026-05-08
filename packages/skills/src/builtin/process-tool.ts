@@ -24,6 +24,8 @@ import {
 } from "./platform/tool-helpers.js";
 import type { ProcessRegistry } from "./process-registry.js";
 import type { ToolCapabilityPort } from "@comis/core";
+import { buildInstallDetourHint } from "./exec-tool.js";
+import type { InstallDetourDecision } from "./install-detour.js";
 
 // ---------------------------------------------------------------------------
 // Parameter schema
@@ -148,6 +150,22 @@ export function createProcessTool(deps: ProcessToolDeps): AgentTool<typeof Proce
             if (!details) {
               throwToolError("not_found", `Process session not found: ${sessionId}`);
             }
+
+            // Plan 22-03 — INSTALL-DTR-17, -18: retroactive advise-mode hint augmentation.
+            // Read the spawn-time decision back from the session rather than re-deriving
+            // from current connected-server state (Pitfall 6: connected set may have
+            // drifted since spawn, producing inconsistent hint vs spawn-time event).
+            // No current-mode check (RESEARCH §7.3 + §19 Q6 — operator can switch modes
+            // mid-session via daemon restart; advise-spawned sessions keep their hint).
+            const session = registry.get(sessionId);
+            if (
+              session?.installDetourDecision &&
+              session.installDetourDecision.overlaps.length > 0
+            ) {
+              const hint = buildInstallDetourHint(session.installDetourDecision);
+              return jsonResult({ ...details, installDetourHint: hint.installDetourHint });
+            }
+
             return jsonResult(details);
           }
 
