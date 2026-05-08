@@ -50,6 +50,7 @@ import {
   type InputSecurityGuard,
   type InjectionRateLimiter,
   type SenderTrustDisplayConfig,
+  type ToolCapabilityPort,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/infra";
 import { suppressError } from "@comis/shared";
@@ -341,6 +342,13 @@ export interface PiExecutorDeps {
   embeddingEnqueue?: (entryId: string, content: string) => void;
   /** Optional embedding port for semantic search in discover_tools. */
   embeddingPort?: import("@comis/core").EmbeddingPort;
+  /**
+   * Tool-capability port for the per-turn capability-index renderer
+   * (Phase 20 / CAPINDEX-RENDER-02). Daemon wiring injects
+   * createNoOpCapabilityPort() from @comis/core until Phase 23 ships
+   * the live adapter (feedback_no_backward_compat).
+   */
+  toolCapabilityPort: ToolCapabilityPort;
   /** Sender trust display config from AppConfig. */
   senderTrustDisplayConfig?: SenderTrustDisplayConfig;
   /** Documentation config from AppConfig. */
@@ -735,6 +743,8 @@ export function createPiExecutor(
           const stableGetPromptSkillsXml = frozenPromptSkillsXml !== undefined
             ? () => frozenPromptSkillsXml
             : deps.getPromptSkillsXml;
+          // toolCapabilityPort flows through frozenDeps spread — no explicit re-assignment
+          // (Phase 20 / CAPINDEX-RENDER-02).
           const frozenDeps = { ...deps, getPromptSkillsXml: stableGetPromptSkillsXml };
 
           // Tool assembly pipeline: merge, settings, prompt, deferral, JIT, pruning, snapshot, normalization, serializer
@@ -748,7 +758,7 @@ export function createPiExecutor(
             mergedCustomTools,
           } = toolAssembly;
           const {
-            deferralResult, deferredContext,
+            deferralResult, deferredContext, capabilityIndexResult,
             modelTier, discoveryTracker, settingsManager,
             resourceLoaderOptions, promptResult, cachedSystemTokensEstimate,
           } = toolAssembly;
@@ -1481,7 +1491,7 @@ export function createPiExecutor(
             const promptRunResult = await runPrompt({
               msg, session, config, sessionKey, formattedKey, agentId, result,
               executionOverrides, executionStartMs, effectiveTimeout, executionId,
-              bridge, dynamicPreamble, deferredContext, inlineMemory,
+              bridge, dynamicPreamble, deferredContext, capabilityIndexResult, inlineMemory,
               systemPrompt,
               mergedCustomTools,
               cmdResult, sepEnabled, executionPlanRef,
