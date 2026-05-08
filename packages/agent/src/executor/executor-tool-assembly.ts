@@ -37,10 +37,13 @@ import {
   type SecretManager,
   type EnvelopeConfig,
   type SenderTrustDisplayConfig,
+  type ToolCapabilityPort,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/infra";
 import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult } from "./tool-deferral.js";
+import { buildCapabilityIndexContext } from "./capability-index-context.js";
+import type { CapabilityIndexRenderResult } from "./capability-index-context.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import { getOrCreateTracker, DEFAULT_LIFECYCLE_CONFIG } from "./tool-lifecycle.js";
@@ -86,6 +89,13 @@ export interface ToolAssemblyDeps {
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   deliveryMirrorConfig?: { maxEntriesPerInjection: number; maxCharsPerInjection: number };
   embeddingPort?: EmbeddingPort;
+  /**
+   * Tool-capability port for the per-turn capability-index renderer (Phase 20).
+   * Daemon wiring injects createNoOpCapabilityPort() from @comis/core until
+   * Phase 23 swaps for the live adapter. The no-op is a real production code
+   * path — NOT a transitional shim (feedback_no_backward_compat).
+   */
+  toolCapabilityPort: ToolCapabilityPort;
   skillRegistry?: {
     getEligibleSkillNames(): Set<string>;
     initFromSdkSkills(sdkSkills: Array<{ name: string; description: string; filePath: string; baseDir: string; source: string; disableModelInvocation: boolean }>): void;
@@ -102,6 +112,15 @@ export interface ToolAssemblyResult {
   deferralResult: ExcludeDeferralResult;
   /** Formatted deferred tools context for dynamic preamble injection. */
   deferredContext: string;
+  /**
+   * Per-turn capability-index render result (Phase 20 / CAPINDEX-RENDER-02).
+   * `text` is concatenated into the dynamic preamble; the count fields feed
+   * the OBS-CAP-01 Pino debug log emitted in `executor-prompt-runner.ts`.
+   * When the port returns gate-disabled or all counts are zero, the renderer
+   * returns the EMPTY sentinel and `text === ""` filters out via
+   * `[...].filter(Boolean)` in the runner.
+   */
+  capabilityIndexResult: CapabilityIndexRenderResult;
   /** Session-scoped guide delivery tracking set. */
   deliveredGuides: Set<string>;
   /** Model tier derived from context window: "small" | "medium" | "large". */
@@ -319,6 +338,13 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       deliveryMirror: deps.deliveryMirror,
       deliveryMirrorConfig: deps.deliveryMirrorConfig,
       channelMaxChars: deps.getChannelMaxChars?.(msg.channelType),
+      // Forward the tool-capability port so prompt-assembly.ts can read
+      // `port.isCapabilityIndexEnabled()` for the static-prompt swap gate
+      // (Phase 20 / CAPINDEX-RENDER-04 / -05 / -17). Plan 20-03 makes this
+      // field REQUIRED on PromptAssemblyParams.deps; until that plan lands,
+      // the field is unused on the consumer side and the agent package fails
+      // to type-check mid-plan (resolved when 20-02 + 20-03 both land).
+      toolCapabilityPort: deps.toolCapabilityPort,
     },
     msg,
     sessionKey,
@@ -542,6 +568,17 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deferredContext = buildDeferredToolsContext(deferralResult.deferredEntries);
   }
 
+  // Per-turn capability index (design §5; CAPINDEX-RENDER-02).
+  // Lives AFTER applyToolDeferral so the renderer sees the post-partition
+  // state (active vs deferred entries). When the port is the no-op interim
+  // (Phase 20-22 production path), the renderer's gate check still respects
+  // port.isCapabilityIndexEnabled(); if false, returns EMPTY which the
+  // runner filters via .filter(Boolean).
+  const capabilityIndexResult = buildCapabilityIndexContext(
+    deferralResult,
+    deps.toolCapabilityPort,
+  );
+
   // -------------------------------------------------------------------
   // 8. JIT guide wrapping, schema pruning, snapshot, normalization, serializer
   // -------------------------------------------------------------------
@@ -577,6 +614,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     mergedCustomTools,
     deferralResult,
     deferredContext,
+    capabilityIndexResult,
     deliveredGuides,
     modelTier,
     discoveryTracker,
