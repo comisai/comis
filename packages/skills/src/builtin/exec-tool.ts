@@ -47,6 +47,7 @@ import { extractHeredoc, validateExecCommand, interpretExitCode } from "./exec-s
 import { matchExecRecoveryHint } from "./exec-diagnostics.js";
 import type { TypedEventBus } from "@comis/core";
 import { tryGetContext } from "@comis/core";
+import type { ToolCapabilityPort, ApprovalGate } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -114,6 +115,15 @@ const ExecParams = Type.Object({
       maxItems: 8,
       description:
         "Secret/credential NAMES (not values) to inject as env vars into the subprocess. Use this to pass API tokens to CLI tools like wrangler/gh/gcloud/kubectl without tripping the env-var allowlist. Names are resolved server-side via SecretManager; values never flow through agent context. Call env_list first to discover available names. Platform-managed secrets (referenced by the daemon config, e.g. ANTHROPIC_API_KEY) are rejected. Raw-interpreter commands (python -c, node -e, bash -c, etc.) are rejected with secretRefs to prevent trivial echo-to-stdout leaks. Example: {command: 'npx wrangler pages deploy ./dist', secretRefs: ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']}",
+    }),
+  ),
+  allowInstallDetour: Type.Optional(
+    Type.Boolean({
+      description:
+        "Request an operator-approved override when the user explicitly needs " +
+        "package installation despite an equivalent connected MCP server or " +
+        "available skill. Submits an approval request — does NOT self-authorize. " +
+        "Per-commandDigest scoped (one approval does not cover a different install).",
     }),
   ),
 });
@@ -393,29 +403,67 @@ function resolveSecretRefs(
 // Factory
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Deps interface (Plan 22-02 — INSTALL-DTR-13)
+// ---------------------------------------------------------------------------
+
+/**
+ * Dependencies for the exec tool factory. Replaces the prior 9-positional
+ * signature per design §8.2. Backward compatibility is NOT preserved
+ * (see CLAUDE.md user-memory `feedback_no_backward_compat`).
+ *
+ * `toolCapabilityPort` is REQUIRED — Plan 22-03 wires the install-detour
+ * policy gate inside `execute(...)` consuming `port.getInstallDetourMode()`.
+ * Until Phase 23 lands the real adapter, daemon wiring injects
+ * `createNoOpCapabilityPort()` at the construction site
+ * (`packages/daemon/src/wiring/setup-tools.ts`); the no-op returns empty
+ * connected-server and skill arrays so the parser sees no overlaps —
+ * acceptable interim state per design §11 Phase 7 production-behavior.
+ *
+ * `approvalGate` is OPTIONAL — only required by the `soft-stop` mode
+ * override path in Plan 22-03. Missing gate → `soft-stop` denies override
+ * (fail-closed per AGENTS.md §2.1 + INSTALL-DTR-22).
+ */
+export interface ExecToolDeps {
+  readonly workspacePath: string;
+  readonly registry: ProcessRegistry;
+  readonly secretManager: SecretManager;
+  readonly platformSecretNames: ReadonlySet<string>;
+  readonly logger?: ToolLogger;
+  readonly subprocessEnv?: Record<string, string>;
+  readonly sandboxConfig?: ExecSandboxConfig;
+  readonly eventBus?: TypedEventBus;
+  readonly getToolResultsDir?: () => string | undefined;
+  /** REQUIRED for v1.1 capability layer (Phase 22). */
+  readonly toolCapabilityPort: ToolCapabilityPort;
+  /** Optional. Required only for soft-stop override path in Plan 22-03. */
+  readonly approvalGate?: ApprovalGate;
+}
+
 /**
  * Create an exec tool for shell command execution.
  *
- * @param workspacePath - Default working directory for commands
- * @param registry - ProcessRegistry for background process tracking
- * @param logger - Optional structured logger for DEBUG-level operation logging
- * @param subprocessEnv - Optional filtered env for subprocesses (defense-in-depth)
- * @param sandboxConfig - Optional sandbox configuration for OS-level isolation
- * @param eventBus - Optional TypedEventBus for emitting command:blocked audit events
- * @param getToolResultsDir - Optional getter for session tool-results directory
- * @returns AgentTool implementing the exec interface
+ * Plan 22-02: Refactored from 9-positional to deps-object per design §8.2.
+ * Backward compat NOT preserved (memory `feedback_no_backward_compat`).
+ *
+ * @param deps - Dependencies bundle. See `ExecToolDeps` for field semantics.
+ *   `toolCapabilityPort` is REQUIRED; `approvalGate` is optional but
+ *   required for the soft-stop override path landed in Plan 22-03.
+ * @returns AgentTool implementing the exec interface.
  */
-export function createExecTool(
-  workspacePath: string,
-  registry: ProcessRegistry,
-  secretManager: SecretManager,
-  platformSecretNames: ReadonlySet<string>,
-  logger?: ToolLogger,
-  subprocessEnv?: Record<string, string>,
-  sandboxConfig?: ExecSandboxConfig,
-  eventBus?: TypedEventBus,
-  getToolResultsDir?: () => string | undefined,
-): AgentTool<typeof ExecParams> {
+export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams> {
+  const {
+    workspacePath,
+    registry,
+    secretManager,
+    platformSecretNames,
+    logger,
+    subprocessEnv,
+    sandboxConfig,
+    eventBus,
+    getToolResultsDir,
+    // Plan 22-03 will read these in execute(...): toolCapabilityPort, approvalGate
+  } = deps;
   // Comis extension: promptGuidelines is not part of AgentTool type, use object
   // spread to avoid excess property checks in the return statement.
   const guidelines = {
