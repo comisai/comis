@@ -1808,3 +1808,345 @@ describe("getEligibleSkillNames", () => {
     expect(eligible.size).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// getPromptSkillCapabilities tests (TOOLING-CFG-17, TOOLING-CFG-18)
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper for tests: write a SKILL.md root file with a `comis.capability`
+ * block and (optionally) other comis fields.
+ */
+function createPromptSkillWithCapability(
+  basePath: string,
+  name: string,
+  description: string,
+  body: string,
+  fields: {
+    skillKey?: string;
+    capability?: {
+      cluster?: string;
+      summary?: string;
+      replacesPackages?: string[];
+    } | "TYPO" | "ABSENT";
+    disableModelInvocation?: boolean;
+    os?: string[];
+  } = {},
+): void {
+  const lines: string[] = [];
+  lines.push("---");
+  lines.push(`name: ${name}`);
+  lines.push(`description: "${description}"`);
+  lines.push("type: prompt");
+  lines.push("userInvocable: true");
+  if (fields.disableModelInvocation) {
+    lines.push("disableModelInvocation: true");
+  }
+
+  const comisLines: string[] = [];
+  if (fields.skillKey) {
+    comisLines.push(`  skill-key: "${fields.skillKey}"`);
+  }
+  if (fields.os && fields.os.length > 0) {
+    comisLines.push(`  os:\n${fields.os.map((v) => `    - ${v}`).join("\n")}`);
+  }
+  if (fields.capability && fields.capability !== "ABSENT") {
+    if (fields.capability === "TYPO") {
+      // Typo-d nested key: replacePackages (missing 's').
+      comisLines.push("  capability:");
+      comisLines.push("    replacePackages:");
+      comisLines.push("      - \"x\"");
+    } else {
+      comisLines.push("  capability:");
+      if (fields.capability.cluster !== undefined) {
+        comisLines.push(`    cluster: "${fields.capability.cluster}"`);
+      }
+      if (fields.capability.summary !== undefined) {
+        comisLines.push(`    summary: "${fields.capability.summary}"`);
+      }
+      if (fields.capability.replacesPackages !== undefined) {
+        comisLines.push(`    replacesPackages:\n${fields.capability.replacesPackages.map((v) => `      - "${v}"`).join("\n")}`);
+      }
+    }
+  }
+  if (comisLines.length > 0) {
+    lines.push("comis:");
+    lines.push(...comisLines);
+  }
+
+  lines.push("---");
+  lines.push("");
+  lines.push(body);
+  fs.writeFileSync(path.join(basePath, `${name}.md`), lines.join("\n"), "utf-8");
+}
+
+/**
+ * Build a SkillsConfig with optional eligibility filtering.
+ */
+function makeSkillsConfig(
+  discoveryPaths: string[],
+  overrides: Partial<{ allowedSkills: string[]; deniedSkills: string[]; maxAutoInject: number }> = {},
+): any {
+  return {
+    discoveryPaths,
+    promptSkills: {
+      maxAutoInject: 5,
+      ...overrides,
+    },
+  };
+}
+
+describe("getPromptSkillCapabilities (TOOLING-CFG-17, TOOLING-CFG-18)", () => {
+  it("returns empty readonly array when no skills are registered", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const result = registry.getPromptSkillCapabilities(() => undefined);
+    expect(result).toEqual([]);
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
+  it("returns one PromptSkillCapability for one eligible skill (no metadata, no operator hint)", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkill(skillsDir, "plain-skill", "Plain skill description", "Body.");
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const result = registry.getPromptSkillCapabilities(() => undefined);
+    expect(result).toHaveLength(1);
+    const cap = result[0];
+    expect(cap.name).toBe("plain-skill");
+    // Fallback: cluster undefined; summary = description; replacesPackages = [].
+    expect(cap.cluster).toBeUndefined();
+    expect(cap.summary).toBe("Plain skill description");
+    expect(cap.replacesPackages).toEqual([]);
+    expect(cap.source).toBe("bundled");
+  });
+
+  it("filter chain: disableModelInvocation === true is FILTERED OUT", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkillWithCapability(skillsDir, "model-skill", "Visible to model", "Body.", {});
+    createPromptSkillWithCapability(skillsDir, "user-only-skill", "Hidden from model", "Body.", {
+      disableModelInvocation: true,
+    });
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const result = registry.getPromptSkillCapabilities(() => undefined);
+    expect(result.map((r) => r.name).sort()).toEqual(["model-skill"]);
+  });
+
+  it("filter chain: deniedSkills config FILTERS skill out", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkill(skillsDir, "kept", "Kept", "Body.");
+    createPromptSkill(skillsDir, "blocked", "Blocked", "Body.");
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(
+      makeSkillsConfig([skillsDir], { deniedSkills: ["blocked"] }),
+      eventBus,
+      auditCtx,
+    );
+    registry.init();
+
+    const result = registry.getPromptSkillCapabilities(() => undefined);
+    expect(result.map((r) => r.name).sort()).toEqual(["kept"]);
+  });
+
+  it("precedence: operator hint by skillKey WINS over operator hint by name and comis.capability", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkillWithCapability(skillsDir, "financial-chart-workflow", "Skill desc", "Body.", {
+      skillKey: "fc",
+      capability: { cluster: "from-manifest", summary: "ManifestSum", replacesPackages: ["m"] },
+    });
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const getHint = (name: string, key?: string) => {
+      if (key === "fc") return { cluster: "from-op-key", description: "OpKey", replacesPackages: ["k"] };
+      if (name === "financial-chart-workflow") return { cluster: "from-op-name", description: "OpName", replacesPackages: ["n"] };
+      return undefined;
+    };
+
+    const result = registry.getPromptSkillCapabilities(getHint);
+    expect(result).toHaveLength(1);
+    expect(result[0].cluster).toBe("from-op-key");
+    expect(result[0].summary).toBe("OpKey");
+    expect(result[0].replacesPackages).toEqual(["k"]);
+  });
+
+  it("precedence: operator hint by skillName wins when no skillKey hint is set", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkillWithCapability(skillsDir, "financial-chart-workflow", "Skill desc", "Body.", {
+      skillKey: "fc",
+      capability: { cluster: "from-manifest" },
+    });
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const getHint = (name: string, key?: string) => {
+      // No hint by skillKey -> by-name fallback should win.
+      if (key !== undefined) return undefined;
+      if (name === "financial-chart-workflow") return { cluster: "from-op-name", replacesPackages: ["n"] };
+      return undefined;
+    };
+
+    const result = registry.getPromptSkillCapabilities(getHint);
+    expect(result).toHaveLength(1);
+    expect(result[0].cluster).toBe("from-op-name");
+    expect(result[0].replacesPackages).toEqual(["n"]);
+  });
+
+  it("precedence: comis.capability wins when no operator hint is supplied", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkillWithCapability(skillsDir, "manifest-driven", "Manifest desc", "Body.", {
+      capability: { cluster: "from-manifest", summary: "ManifestSum", replacesPackages: ["m"] },
+    });
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const result = registry.getPromptSkillCapabilities(() => undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].cluster).toBe("from-manifest");
+    expect(result[0].summary).toBe("ManifestSum");
+    expect(result[0].replacesPackages).toEqual(["m"]);
+  });
+
+  it("precedence: fallback when no metadata anywhere (cluster undefined, summary=description, replacesPackages=[])", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkill(skillsDir, "bare-skill", "Skill desc", "Body.");
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const result = registry.getPromptSkillCapabilities(() => undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].cluster).toBeUndefined();
+    expect(result[0].summary).toBe("Skill desc");
+    expect(result[0].replacesPackages).toEqual([]);
+  });
+
+  it("returned objects are frozen (caller cannot mutate)", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkill(skillsDir, "frozen-skill", "Frozen", "Body.");
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const result = registry.getPromptSkillCapabilities(() => undefined);
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(result).toHaveLength(1);
+    expect(Object.isFrozen(result[0])).toBe(true);
+    // replacesPackages is also frozen (defensively copied).
+    expect(Object.isFrozen(result[0].replacesPackages)).toBe(true);
+  });
+
+  it("TOOLING-CFG-18: SDK-discovered third-party skill with NO comis.capability still appears (cluster undefined)", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkill(skillsDir, "sdk-bare", "SDK bare skill", "Body.");
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.initFromSdkSkills([
+      {
+        name: "sdk-bare",
+        description: "SDK bare skill",
+        filePath: path.join(skillsDir, "sdk-bare.md"),
+        baseDir: skillsDir,
+        source: "bundled",
+        disableModelInvocation: false,
+      },
+    ]);
+
+    const result = registry.getPromptSkillCapabilities(() => undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("sdk-bare");
+    expect(result[0].cluster).toBeUndefined();
+    expect(result[0].summary).toBe("SDK bare skill");
+    expect(result[0].replacesPackages).toEqual([]);
+  });
+
+  it("Pitfall 7 end-to-end: SDK skill with malformed comis.capability still appears + WARN logged", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    // Write a SKILL.md with a TYPO in the capability block (replacePackages, missing s).
+    createPromptSkillWithCapability(skillsDir, "typo-sdk-skill", "Has a typo", "Body.", {
+      capability: "TYPO",
+    });
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      info: () => {},
+      warn: (obj: Record<string, unknown>, msg: string) => { warns.push({ obj, msg }); },
+      error: () => {},
+      debug: () => {},
+    };
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx, logger as any);
+    registry.initFromSdkSkills([
+      {
+        name: "typo-sdk-skill",
+        description: "Has a typo",
+        filePath: path.join(skillsDir, "typo-sdk-skill.md"),
+        baseDir: skillsDir,
+        source: "bundled",
+        disableModelInvocation: false,
+      },
+    ]);
+
+    const result = registry.getPromptSkillCapabilities(() => undefined);
+    // Skill is NEVER hidden by malformed capability metadata (Pitfall 7).
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("typo-sdk-skill");
+    expect(result[0].cluster).toBeUndefined();
+    // WARN was emitted with errorKind: "config" and the skill name.
+    const capWarns = warns.filter((w) => w.msg.includes("Malformed comis.capability"));
+    expect(capWarns).toHaveLength(1);
+    expect(capWarns[0].obj.errorKind).toBe("config");
+    expect(capWarns[0].obj.skillName).toBe("typo-sdk-skill");
+  });
+
+  it("filesystem-discovered skill with valid comis.capability surfaces via getPromptSkillCapabilities", () => {
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+    createPromptSkillWithCapability(skillsDir, "fs-cap-skill", "FS cap skill", "Body.", {
+      capability: { cluster: "data-fetching-financial", summary: "Fetches data", replacesPackages: ["yfinance"] },
+    });
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeSkillsConfig([skillsDir]), eventBus, auditCtx);
+    registry.init();
+
+    const result = registry.getPromptSkillCapabilities(() => undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].cluster).toBe("data-fetching-financial");
+    expect(result[0].summary).toBe("Fetches data");
+    expect(result[0].replacesPackages).toEqual(["yfinance"]);
+  });
+});
