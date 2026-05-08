@@ -260,7 +260,7 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
   { id: "language",         includeIn: MODES_ALL,      build: (p) => buildLanguageSection(p.userLanguage) },
   // --- Semi-stable body: operational-kept sections (MODES_ALL -- builders self-filter for minimal) ---
   { id: "tooling",          includeIn: MODES_ALL,      build: (p, m) => buildToolingSection(p.toolNames ?? [], m === "minimal" ? "small" as ModelTier : "large" as ModelTier, p.toolSummaries, p.capabilityIndexEnabled) },
-  { id: "tool-call-style",  includeIn: MODES_ALL,      build: (p, m) => buildToolCallStyleSection(m === "minimal", p.toolNames ?? []) },
+  { id: "tool-call-style",  includeIn: MODES_ALL,      build: (p, m) => buildToolCallStyleSection(m === "minimal", p.toolNames ?? [], p.capabilityIndexEnabled) },
   // --- Operational-stripped sections (MODES_FULL_MIN -- dropped in "operational") ---
   { id: "self-update",      includeIn: MODES_FULL_MIN, build: (p, m) => buildSelfUpdateGatingSection(p.toolNames ?? [], m === "minimal", true) },
   { id: "config-secret",    includeIn: MODES_FULL_MIN, build: (p, m) => buildConfigSecretIntegritySection(p.toolNames ?? [], m === "minimal") },
