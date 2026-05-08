@@ -268,14 +268,18 @@ describe("schema-serializer with tooling section", () => {
 // ---------------------------------------------------------------------------
 
 describe("field-metadata with tooling section", () => {
-  it("getFieldMetadata('tooling') returns metadata for tooling.* paths", () => {
+  it("getFieldMetadata('tooling') returns metadata for tooling.* paths with immutable=true (TOOLING-CFG-07)", () => {
     const fields = getFieldMetadata("tooling");
     expect(fields.length).toBeGreaterThan(0);
+    // All tooling.* fields are operator-only -- agents must not self-configure
+    // (TOOLING-CFG-07). Each path lives under the "tooling" immutable prefix.
     for (const field of fields) {
       expect(field.path.startsWith("tooling.")).toBe(true);
+      expect(field.immutable).toBe(true);
     }
     // Spot-check a known leaf field.
     const modeField = fields.find((f) => f.path === "tooling.installDetours.mode");
     expect(modeField).toBeDefined();
+    expect(modeField?.immutable).toBe(true);
   });
 });

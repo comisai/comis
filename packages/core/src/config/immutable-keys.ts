@@ -100,6 +100,10 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
 
   // Logging rotation config requires daemon restart
   "daemon.logging",         // File transport config requires daemon restart
+
+  // v1.1 capability layer -- operator-only; agents must not self-configure
+  // capability map or detour policy (TOOLING-CFG-07; design §4.2 immutable-keys).
+  "tooling",
 ] as const;
 
 /**
