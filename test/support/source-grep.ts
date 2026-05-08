@@ -33,6 +33,16 @@ export interface SourceGrepOptions {
   readonly excludeDirs?: readonly string[];
   /** File extensions to scan. Default: [".ts"]. */
   readonly extensions?: readonly string[];
+  /**
+   * File-name suffixes/substrings to skip during scan (matched against the
+   * basename, not the full path). Useful for filtering out `.test.ts` files
+   * so production-only source-grep tests do not trip on test-file string
+   * literals. Empty by default (no extra filtering).
+   *
+   * @example
+   * findInSourceFiles({ rootDir, needle, excludeFileSuffixes: [".test.ts"] })
+   */
+  readonly excludeFileSuffixes?: readonly string[];
 }
 
 export interface SourceGrepResult {
@@ -69,6 +79,7 @@ const DEFAULT_EXTENSIONS: readonly string[] = [".ts"];
 export function findInSourceFiles(opts: SourceGrepOptions): SourceGrepResult {
   const exclude = new Set(opts.excludeDirs ?? DEFAULT_EXCLUDE_DIRS);
   const extensions = opts.extensions ?? DEFAULT_EXTENSIONS;
+  const excludeSuffixes = opts.excludeFileSuffixes ?? [];
   const matches: string[] = [];
   let checkedFiles = 0;
 
@@ -89,6 +100,9 @@ export function findInSourceFiles(opts: SourceGrepOptions): SourceGrepResult {
         walk(full);
       } else if (entry.isFile()) {
         if (!extensions.some((ext) => entry.name.endsWith(ext))) continue;
+        if (excludeSuffixes.some((suffix) => entry.name.endsWith(suffix))) {
+          continue;
+        }
         checkedFiles++;
         const content = readFileSync(full, "utf8");
         const isMatch =

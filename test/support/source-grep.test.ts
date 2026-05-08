@@ -28,6 +28,10 @@ describe("findInSourceFiles", () => {
   });
 
   it("respects custom excludeDirs", () => {
+    // With __test-helpers excluded AND .test.ts files filtered, the stub
+    // literal lives nowhere in production source paths, so the result must
+    // be empty -- this is the exact invariant Plan 17-04's architecture-grep
+    // test asserts.
     const result = findInSourceFiles({
       rootDir: resolve(REPO_ROOT, "packages/core/src/ports"),
       needle: "createCapabilityPortStub",
@@ -38,10 +42,39 @@ describe("findInSourceFiles", () => {
         "node_modules",
         "__test-helpers",
       ],
+      excludeFileSuffixes: [".test.ts"],
     });
-    // With __test-helpers excluded, this token should not appear (it lives ONLY
-    // in __test-helpers/).
     expect(result.matches).toEqual([]);
+  });
+
+  it("respects excludeFileSuffixes", () => {
+    // Without the suffix filter, the stub literal IS found in the test file.
+    const noFilter = findInSourceFiles({
+      rootDir: resolve(REPO_ROOT, "packages/core/src/ports"),
+      needle: "createCapabilityPortStub",
+      excludeDirs: [
+        "__tests__",
+        "__snapshots__",
+        "dist",
+        "node_modules",
+        "__test-helpers",
+      ],
+    });
+    expect(noFilter.matches.length).toBeGreaterThan(0);
+    // With excludeFileSuffixes filtering out test files, the matches drop.
+    const withFilter = findInSourceFiles({
+      rootDir: resolve(REPO_ROOT, "packages/core/src/ports"),
+      needle: "createCapabilityPortStub",
+      excludeDirs: [
+        "__tests__",
+        "__snapshots__",
+        "dist",
+        "node_modules",
+        "__test-helpers",
+      ],
+      excludeFileSuffixes: [".test.ts"],
+    });
+    expect(withFilter.matches.length).toBeLessThan(noFilter.matches.length);
   });
 
   it("default excludes skip __tests__, __snapshots__, dist, node_modules", () => {

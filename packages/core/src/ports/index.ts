@@ -132,3 +132,15 @@ export type {
   DeliveryMirrorRecordInput,
 } from "./delivery-mirror.js";
 export { createNoOpDeliveryMirror } from "./delivery-mirror.js";
+export type {
+  ToolCapabilityPort,
+  PromptSkillCapability,
+  CapabilitySourceRef,
+  ClusterConfig,
+  McpServerHint,
+  SkillHint,
+} from "./tool-capability.js";
+export { createNoOpCapabilityPort } from "./no-op-tool-capability.js";
+// NOTE (Pitfall 13): the test-only stub factory in `__test-helpers/` is
+// intentionally NOT re-exported here. It must NEVER appear on this barrel
+// (Plan 17-04 architecture-grep enforces).

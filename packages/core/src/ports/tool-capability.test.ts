@@ -119,3 +119,36 @@ describe("ToolCapabilityPort interface (TOOLING-CFG-12)", () => {
     expect(map.size).toBe(1);
   });
 });
+
+describe("public surface re-exports (TOOLING-CFG-12, TOOLING-CFG-14)", () => {
+  it("re-exports ToolCapabilityPort + companion types from @comis/core public surface", () => {
+    // Static type-only import via import-map check -- type-level test:
+    // The following lines compile-fail if the re-exports are missing.
+    type _CheckPort = import("@comis/core").ToolCapabilityPort;
+    type _CheckSkill = import("@comis/core").PromptSkillCapability;
+    type _CheckRef = import("@comis/core").CapabilitySourceRef;
+    // Reference types so TS does not warn about unused declarations:
+    const _refs: ReadonlyArray<unknown> = [
+      undefined as unknown as _CheckPort,
+      undefined as unknown as _CheckSkill,
+      undefined as unknown as _CheckRef,
+    ];
+    expect(_refs.length).toBe(3);
+  });
+
+  it("re-exports createNoOpCapabilityPort as a runtime value", async () => {
+    const mod = await import("@comis/core");
+    expect(typeof mod.createNoOpCapabilityPort).toBe("function");
+    const port = mod.createNoOpCapabilityPort();
+    expect(port.getInstallDetourMode()).toBe("advise");
+    expect(port.isCapabilityIndexEnabled()).toBe(true);
+  });
+
+  it("does NOT re-export the test-only stub factory from @comis/core public surface", async () => {
+    const mod = await import("@comis/core");
+    // The stub must be unreachable from the public barrel:
+    expect(
+      (mod as Record<string, unknown>)["createCapabilityPortStub"],
+    ).toBeUndefined();
+  });
+});
