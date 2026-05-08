@@ -339,3 +339,167 @@ comis:
     expect(warns[0].msg).toBe("Skipping malformed skill file");
   });
 });
+
+// ---------------------------------------------------------------------------
+// SkillMetadata.capability extraction (TOOLING-CFG-10/11) -- Plan 17-04 Task 1
+// ---------------------------------------------------------------------------
+
+describe("SkillMetadata.capability extraction (TOOLING-CFG-10/11)", () => {
+  it("populates capability from valid comis.capability block", () => {
+    const dir = createTempDir();
+    const content = `---
+name: "valid-cap-skill"
+description: "Has a valid capability block"
+comis:
+  skill-key: "valid-cap-skill"
+  os:
+    - "linux"
+  capability:
+    cluster: "data-fetching-financial"
+    summary: "Fetches financial chart data"
+    replacesPackages:
+      - "yfinance"
+      - "alpha-vantage"
+---
+# Skill body
+`;
+    fs.writeFileSync(path.join(dir, "valid-cap-skill.md"), content, "utf-8");
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      warn(obj: Record<string, unknown>, msg: string) {
+        warns.push({ obj, msg });
+      },
+    };
+
+    const result = discoverSkills([dir], logger);
+    expect(result.skills).toHaveLength(1);
+    const skill = result.skills[0];
+    expect(skill.capability).toEqual({
+      cluster: "data-fetching-financial",
+      summary: "Fetches financial chart data",
+      replacesPackages: ["yfinance", "alpha-vantage"],
+    });
+    // No WARN for valid input.
+    expect(warns).toHaveLength(0);
+  });
+
+  it("returns capability=undefined and logs WARN on typo'd nested key (Pitfall 7)", () => {
+    const dir = createTempDir();
+    // Typo: replacePackages (missing "s") instead of replacesPackages.
+    const content = `---
+name: "typo-cap-skill"
+description: "Has a typo in the capability block"
+comis:
+  skill-key: "typo-cap-skill"
+  os:
+    - "linux"
+  capability:
+    replacePackages:
+      - "x"
+---
+# Skill body
+`;
+    fs.writeFileSync(path.join(dir, "typo-cap-skill.md"), content, "utf-8");
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      warn(obj: Record<string, unknown>, msg: string) {
+        warns.push({ obj, msg });
+      },
+    };
+
+    const result = discoverSkills([dir], logger);
+    // Skill is STILL discovered (Pitfall 7 contract).
+    expect(result.skills).toHaveLength(1);
+    const skill = result.skills[0];
+    expect(skill.name).toBe("typo-cap-skill");
+    expect(skill.capability).toBeUndefined();
+    // Sibling fields preserved -- defensive parse is local to capability.
+    expect(skill.skillKey).toBe("typo-cap-skill");
+    expect(skill.os).toEqual(["linux"]);
+    // WARN was emitted for the malformed capability block.
+    const capWarns = warns.filter((w) => w.msg.includes("Malformed comis.capability"));
+    expect(capWarns).toHaveLength(1);
+    expect(capWarns[0].obj.errorKind).toBe("config");
+    expect(capWarns[0].obj.skillName).toBe("typo-cap-skill");
+  });
+
+  it("returns capability=undefined when comis.capability is absent (no-op fast path, no WARN)", () => {
+    const dir = createTempDir();
+    const content = `---
+name: "no-cap-skill"
+description: "No capability block at all"
+comis:
+  skill-key: "no-cap-skill"
+  os:
+    - "linux"
+---
+# Skill body
+`;
+    fs.writeFileSync(path.join(dir, "no-cap-skill.md"), content, "utf-8");
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      warn(obj: Record<string, unknown>, msg: string) {
+        warns.push({ obj, msg });
+      },
+    };
+
+    const result = discoverSkills([dir], logger);
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].capability).toBeUndefined();
+    // No WARN -- absence is the fast path.
+    const capWarns = warns.filter((w) => w.msg.includes("Malformed comis.capability"));
+    expect(capWarns).toHaveLength(0);
+  });
+
+  it("returns capability=undefined when entire comis namespace is absent", () => {
+    const dir = createTempDir();
+    writeSkillFile(dir, "no-comis-skill.md", {
+      name: "no-comis-skill",
+      description: "No comis namespace",
+    });
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      warn(obj: Record<string, unknown>, msg: string) {
+        warns.push({ obj, msg });
+      },
+    };
+
+    const result = discoverSkills([dir], logger);
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].capability).toBeUndefined();
+    expect(warns).toHaveLength(0);
+  });
+
+  it("logs WARN with operator-actionable hint for type-mismatched cluster", () => {
+    const dir = createTempDir();
+    // cluster: 42 (number) violates z.string().min(1).optional()
+    const content = `---
+name: "type-mismatch-skill"
+description: "cluster is a number"
+comis:
+  capability:
+    cluster: 42
+---
+# Skill body
+`;
+    fs.writeFileSync(path.join(dir, "type-mismatch-skill.md"), content, "utf-8");
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      warn(obj: Record<string, unknown>, msg: string) {
+        warns.push({ obj, msg });
+      },
+    };
+
+    const result = discoverSkills([dir], logger);
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].capability).toBeUndefined();
+    const capWarns = warns.filter((w) => w.msg.includes("Malformed comis.capability"));
+    expect(capWarns).toHaveLength(1);
+    expect(capWarns[0].obj.hint).toEqual(expect.stringContaining("Fix the comis.capability block"));
+  });
+});
