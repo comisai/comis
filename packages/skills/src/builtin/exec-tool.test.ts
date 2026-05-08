@@ -12,8 +12,8 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { SandboxExecProvider } from "./sandbox/sandbox-exec-provider.js";
 import { BwrapProvider } from "./sandbox/bwrap-provider.js";
-import { createSecretManager } from "@comis/core";
-import type { ToolCapabilityPort } from "@comis/core";
+import { createSecretManager, runWithContext } from "@comis/core";
+import type { ToolCapabilityPort, McpServerHint, TypedEventBus, RequestContext } from "@comis/core";
 import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 
 // ---------------------------------------------------------------------------
@@ -2195,4 +2195,523 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner", () =>
       /dataEnv\.PATH\s*=\s*`\$\{venvBin\}:\$\{baseEnv\.PATH\}`/.test(stripped);
     expect(hasPathMerge).toBe(true);
   });
+});
+
+// ===========================================================================
+// Plan 22-03 — Mode integration (INSTALL-DTR-15..25, OBS-CAP-02)
+// ===========================================================================
+
+/** Inline mock event bus that pushes (type, payload) per emit. */
+function makeMockEventBus(
+  events: Array<{ type: string; payload: Record<string, unknown> }>,
+): TypedEventBus {
+  return {
+    emit: (type: string, payload: Record<string, unknown>) => {
+      events.push({ type, payload });
+    },
+    on: () => () => undefined,
+    off: () => undefined,
+    once: () => () => undefined,
+    removeAllListeners: () => undefined,
+  } as unknown as TypedEventBus;
+}
+
+/** Construct a minimal RequestContext for tests that exercise the approval-gate path. */
+function makeApprovalContext(): RequestContext {
+  return {
+    tenantId: "default",
+    userId: "test-user",
+    sessionKey: "test-session",
+    traceId: crypto.randomUUID(),
+    startedAt: Date.now(),
+    trustLevel: "admin",
+  };
+}
+
+describe("install-detour mode: observe (INSTALL-DTR-15, OBS-CAP-02)", () => {
+  it("emits 1 event per overlap and runs the command unchanged", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "observe",
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data"
+          ? { cluster: "data-fetching", description: "Market data MCP", replacesPackages: ["market-data-lib"] }
+          : undefined,
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    const result = await tool.execute("tc1", { command: "echo done" }); // command innocent — no overlap
+    expect(events.filter((e) => e.type === "tool:install_detour_detected")).toHaveLength(0);
+    expect(result).toBeDefined();
+
+    // Now exercise overlap path
+    events.length = 0;
+    const overlapResult = await tool.execute("tc2", { command: "pip install market-data-lib" });
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(1);
+    expect(installEvents[0]!.payload.action).toBe("observed");
+    expect(installEvents[0]!.payload.mode).toBe("observe");
+    // Command still runs (observe runs unchanged)
+    expect(overlapResult).toBeDefined();
+  }, 30_000);
+
+  it("emits N events for N overlaps in a single command", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "observe",
+      getConnectedMcpServers: () => ["finance-data", "weather-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined => {
+        if (s === "finance-data") return { cluster: "x", description: "y", replacesPackages: ["market-data-lib"] };
+        if (s === "weather-data") return { cluster: "y", description: "z", replacesPackages: ["weather-lib"] };
+        return undefined;
+      },
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    await tool.execute("tc3", { command: "pip install market-data-lib weather-lib" });
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(2);
+    expect(installEvents.every((e) => e.payload.action === "observed")).toBe(true);
+  }, 30_000);
+});
+
+describe("install-detour mode: advise (INSTALL-DTR-16, -17, OBS-CAP-02)", () => {
+  it("foreground: augments details.installDetourHint and adds sibling [hint] content block; primary content NOT mutated", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "advise",
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data" ? { cluster: "data", description: "x", replacesPackages: ["market-data-lib"] } : undefined,
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    // Use a benign command that nominally matches the parser but won't actually install
+    // (we don't have a real pip in the test sandbox; the test checks AUGMENTATION shape,
+    // not real install).
+    const result = (await tool.execute("tc4", {
+      command: "pip install market-data-lib --dry-run --no-deps",
+    })) as { content: Array<{ type: string; text?: string }>; details?: Record<string, unknown> };
+
+    // Event emitted
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(1);
+    expect(installEvents[0]!.payload.action).toBe("hinted");
+
+    // Envelope augmented: sibling [hint] block + details.installDetourHint
+    expect(result.content.length).toBeGreaterThanOrEqual(2); // primary + sibling hint
+    const hintBlock = result.content[result.content.length - 1]!;
+    expect(hintBlock.type).toBe("text");
+    expect(hintBlock.text).toContain("[hint]");
+    expect(hintBlock.text).toContain("market-data-lib");
+    expect(hintBlock.text).toContain("finance-data");
+
+    expect(result.details?.installDetourHint).toBeDefined();
+    expect(typeof result.details?.installDetourHint).toBe("string");
+    expect(result.details?.installDetourHint as string).toContain("market-data-lib");
+  }, 30_000);
+
+  it("populates session.installDetourDecision at spawn time for advise+overlap (Pitfall 6)", async () => {
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "advise",
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data" ? { cluster: "data", description: "x", replacesPackages: ["market-data-lib"] } : undefined,
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+    });
+    // background:true forces explicit-bg path; session creation site populates installDetourDecision
+    const result = (await tool.execute("tc5", {
+      command: "pip install market-data-lib --dry-run",
+      background: true,
+    })) as { details?: { sessionId?: string } };
+    const sessionId = result.details?.sessionId;
+    expect(sessionId).toBeDefined();
+    const session = registry.get(sessionId!);
+    expect(session?.installDetourDecision).toBeDefined();
+    expect(session?.installDetourDecision?.packageManager).toBe("pip");
+    expect(session?.installDetourDecision?.overlaps[0]?.sourceName).toBe("finance-data");
+  }, 30_000);
+
+  it("observe mode does NOT populate session.installDetourDecision (advise-only per design §8.2)", async () => {
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "observe", // observe — not advise
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data" ? { cluster: "data", description: "x", replacesPackages: ["market-data-lib"] } : undefined,
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+    });
+    const result = (await tool.execute("tc6", {
+      command: "pip install market-data-lib --dry-run",
+      background: true,
+    })) as { details?: { sessionId?: string } };
+    const sessionId = result.details?.sessionId;
+    expect(sessionId).toBeDefined();
+    const session = registry.get(sessionId!);
+    expect(session?.installDetourDecision).toBeUndefined(); // observe-mode sessions don't carry the field
+  }, 30_000);
+});
+
+describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -24, OBS-CAP-02)", () => {
+  function makeSoftStopPort(opts?: {
+    replacesPackages?: readonly string[];
+    cluster?: string;
+  }): ToolCapabilityPort {
+    return createCapabilityPortStub({
+      getInstallDetourMode: () => "soft-stop",
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data"
+          ? {
+              cluster: opts?.cluster ?? "data-fetching-financial",
+              description: "Market data MCP",
+              replacesPackages: opts?.replacesPackages ?? ["market-data-lib"],
+            }
+          : undefined,
+      getClusterConfig: (id: string) =>
+        id === (opts?.cluster ?? "data-fetching-financial")
+          ? { label: "Financial data", priority: 10, preferOverInstalls: true }
+          : undefined,
+    });
+  }
+
+  it("INSTALL-DTR-19: refuses pre-spawn — no subprocess, no ProcessSession, no process.status follow-up", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = makeSoftStopPort();
+    registry = createProcessRegistry();
+    const sizeBefore = registry.size();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    await expect(
+      tool.execute("tc7", { command: "pip install market-data-lib" }),
+    ).rejects.toThrow(/Refused: install overlaps/);
+    // No session was registered (refused pre-spawn)
+    expect(registry.size()).toBe(sizeBefore);
+    // Single soft_stopped event emitted
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(1);
+    expect(installEvents[0]!.payload.action).toBe("soft_stopped");
+    expect(installEvents[0]!.payload.mode).toBe("soft-stop");
+  });
+
+  it("INSTALL-DTR-23: error template snapshot + behavior assertions (Pitfall 9 snapshot+behavior triple)", async () => {
+    const port = makeSoftStopPort({ replacesPackages: ["market-data-lib"], cluster: "data-fetching-financial" });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+    });
+    let errorMessage = "";
+    try {
+      await tool.execute("tc8", { command: "pip install market-data-lib" });
+    } catch (e) {
+      errorMessage = (e as Error).message;
+    }
+
+    // SNAPSHOT — verbatim §8.2 template
+    expect(errorMessage).toMatchInlineSnapshot(`
+      "[permission_denied] Refused: install overlaps with available capability source(s).
+
+      Overlapping packages:
+      - market-data-lib -> connected MCP server "finance-data" (cluster: data-fetching-financial)
+
+      To proceed, choose one:
+      1. Use the connected tool(s) or available skill(s) listed above for the overlapping work.
+      2. If you only need the non-overlapping packages, rerun exec with the overlapping ones removed.
+      3. If you genuinely need the install despite the overlap, ask the user/operator to approve the install-detour override, then rerun this exact command with \`allowInstallDetour: true\`."
+    `);
+
+    // BEHAVIOR — explicit assertions paired with snapshot per Pitfall 9
+    expect(errorMessage).toContain("Refused: install overlaps with available capability source(s).");
+    expect(errorMessage).toContain('connected MCP server "finance-data"');
+    expect(errorMessage).toContain("(cluster: data-fetching-financial)");
+
+    // Bullet count == overlap count
+    const bullets = errorMessage.match(/^- /gm) ?? [];
+    expect(bullets).toHaveLength(1);
+
+    // FORBIDDEN — no provider-specific tool names (DEFER-04)
+    expect(errorMessage).not.toContain("discover_tools");
+    expect(errorMessage).not.toContain("tool_search_tool_regex");
+
+    // FORBIDDEN — no self-authorizing override wording (AC-9)
+    expect(errorMessage).not.toContain("we'll let you through");
+    expect(errorMessage).not.toMatch(/setting `allowInstallDetour: true` alone/);
+
+    // ARROW — ASCII not unicode
+    expect(errorMessage).not.toContain(" → ");
+  });
+
+  it("INSTALL-DTR-21: approval for one commandDigest does NOT auto-approve a different digest in same session (cache aliasing — Pitfall 5)", async () => {
+    // The existing ApprovalGate keys its caches by `${sessionKey}::${action}`
+    // (verified at packages/core/src/approval/approval-gate.ts:135 and :194).
+    // Phase 22 MUST NOT extend the gate. Instead the action string itself
+    // includes the commandDigest suffix, ensuring two distinct commands in
+    // the same session produce DIFFERENT cache keys (RESEARCH §10.1).
+    //
+    // This test verifies the executor builds DIFFERENT action strings for
+    // two distinct command digests — the precondition that makes the
+    // gate's existing cache behavior safe under install-detour overrides.
+
+    const requestApprovalMock = vi.fn().mockResolvedValue({
+      approved: true,
+      approvedBy: "test-operator",
+    });
+    const mockGate = {
+      requestApproval: requestApprovalMock,
+      resolveApproval: vi.fn(),
+      pending: vi.fn(() => []),
+      getRequest: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as Parameters<typeof createExecTool>[0]["approvalGate"];
+
+    const port = makeSoftStopPort({ replacesPackages: ["foo", "bar"] });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      approvalGate: mockGate,
+    });
+
+    // First call: pip install foo (digest A). Use --dry-run --no-deps to keep
+    // the test sandbox-stable; the gate is approved, command then attempts to
+    // run (may fail because no real pip — caught and ignored).
+    // Wrap in runWithContext so tryGetContext() returns a real ctx (the executor
+    // requires both deps.approvalGate AND ctx to submit the override request;
+    // missing either fails-closed via the case-(4) override_denied path).
+    try {
+      await runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc9a", {
+          command: "pip install foo --dry-run --no-deps",
+          allowInstallDetour: true,
+        }),
+      );
+    } catch {
+      // Spawn-time errors are OK; we only care about the approval action string.
+    }
+
+    // Second call: pip install bar (digest B). Different package → different digest.
+    try {
+      await runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc9b", {
+          command: "pip install bar --dry-run --no-deps",
+          allowInstallDetour: true,
+        }),
+      );
+    } catch {
+      // Same — spawn-time errors OK.
+    }
+
+    // The mock recorded both invocations.
+    expect(requestApprovalMock).toHaveBeenCalledTimes(2);
+
+    // Capture the action strings passed to requestApproval.
+    const callArgs = requestApprovalMock.mock.calls.map(
+      (call: unknown[]) => (call[0] as { action: string }).action,
+    );
+    expect(callArgs).toHaveLength(2);
+
+    const [actionA, actionB] = callArgs;
+
+    // Both actions carry the install-detour override prefix.
+    expect(actionA).toMatch(/^exec\.install_detour\.override:[0-9a-f]{16}$/);
+    expect(actionB).toMatch(/^exec\.install_detour\.override:[0-9a-f]{16}$/);
+
+    // CRITICAL Pitfall 5 assertion: the two action strings are NOT EQUAL.
+    expect(actionA).not.toBe(actionB);
+
+    // Both digest suffixes are valid 16-hex SHA-256 truncations.
+    const digestA = actionA.split(":").pop();
+    const digestB = actionB.split(":").pop();
+    expect(digestA).toMatch(/^[0-9a-f]{16}$/);
+    expect(digestB).toMatch(/^[0-9a-f]{16}$/);
+    expect(digestA).not.toBe(digestB);
+  }, 30_000);
+
+  it("INSTALL-DTR-22: missing approvalGate → fail-closed pre-submission (exactly 1 event: override_denied; no spawn)", async () => {
+    // Per the OBS-CAP-02 contract scoping (must_haves truth case (4)):
+    // when allowInstallDetour=true is set but the approval gate is not
+    // wired (`deps.approvalGate` undefined), the override path fails
+    // BEFORE submission. Therefore `override_requested` is NOT emitted;
+    // exactly 1 terminal `override_denied` event fires.
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = makeSoftStopPort();
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+      // NO approvalGate
+    });
+    await expect(
+      tool.execute("tc10", { command: "pip install market-data-lib", allowInstallDetour: true }),
+    ).rejects.toThrow();
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    // EXACTLY 1 event (pre-submission fail-closed; no override_requested).
+    expect(installEvents).toHaveLength(1);
+    expect(installEvents[0]!.payload.action).toBe("override_denied");
+    expect(installEvents[0]!.payload.mode).toBe("soft-stop");
+    // No subprocess spawned.
+    expect(registry.size()).toBe(0);
+  });
+
+  it("INSTALL-DTR-22: denied approval → 2-event submission pair, action sequence = ['override_requested','override_denied']", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = makeSoftStopPort();
+    registry = createProcessRegistry();
+    const denyGate = {
+      requestApproval: vi.fn().mockResolvedValue({ approved: false, reason: "test-deny" }),
+      resolveApproval: vi.fn(),
+      pending: vi.fn(() => []),
+      getRequest: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as Parameters<typeof createExecTool>[0]["approvalGate"];
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+      approvalGate: denyGate,
+    });
+    await expect(
+      runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc11", { command: "pip install market-data-lib", allowInstallDetour: true }),
+      ),
+    ).rejects.toThrow();
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    // EXACTLY 2 events.
+    expect(installEvents).toHaveLength(2);
+    // Action sequence assertion (order matters per the event-pair contract).
+    const actionSequence = installEvents.map((e) => e.payload.action);
+    expect(actionSequence).toEqual(["override_requested", "override_denied"]);
+    // No subprocess spawned.
+    expect(registry.size()).toBe(0);
+  });
+
+  it("INSTALL-DTR-20: approved override emits 2-event submission pair, action sequence = ['override_requested','overridden']; spawns the command", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = makeSoftStopPort();
+    registry = createProcessRegistry();
+    const approveGate = {
+      requestApproval: vi.fn().mockResolvedValue({ approved: true, approvedBy: "test-operator" }),
+      resolveApproval: vi.fn(),
+      pending: vi.fn(() => []),
+      getRequest: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as Parameters<typeof createExecTool>[0]["approvalGate"];
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+      approvalGate: approveGate,
+    });
+    // Innocuous command that matches the parser; --dry-run --no-deps avoids
+    // sandbox install. The execute() call may still throw post-spawn (no
+    // real pip), but the EVENT pair is what we assert.
+    try {
+      await runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc12", {
+          command: "pip install market-data-lib --dry-run --no-deps",
+          allowInstallDetour: true,
+        }),
+      );
+    } catch {
+      // Spawn-time errors are OK; the event-pair contract is what matters here.
+    }
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    // EXACTLY 2 events.
+    expect(installEvents).toHaveLength(2);
+    // Action sequence assertion (order matters per the event-pair contract).
+    const actionSequence = installEvents.map((e) => e.payload.action);
+    expect(actionSequence).toEqual(["override_requested", "overridden"]);
+  }, 30_000);
+
+  it("INSTALL-DTR-24: split-and-rerun terminates with ZERO events on non-overlapping subset", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = makeSoftStopPort({ replacesPackages: ["market-data-lib"] });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    // Step 1: refused mixed install
+    await expect(
+      tool.execute("tc13a", { command: "pip install market-data-lib matplotlib" }),
+    ).rejects.toThrow();
+    const beforeSecondCall = events.filter((e) => e.type === "tool:install_detour_detected").length;
+    expect(beforeSecondCall).toBe(1); // single soft_stopped event for the first refusal
+
+    // Step 2: rerun non-overlapping subset — ZERO events
+    events.length = 0;
+    await tool.execute("tc13b", { command: "pip install matplotlib --dry-run --no-deps" });
+    const afterSecondCall = events.filter((e) => e.type === "tool:install_detour_detected").length;
+    expect(afterSecondCall).toBe(0);
+  }, 30_000);
 });
