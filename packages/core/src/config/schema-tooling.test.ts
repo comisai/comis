@@ -9,6 +9,9 @@ import {
   DEFAULT_CLUSTER_CONFIG,
   DEFAULT_BUILTIN_ASSIGNMENTS,
 } from "./schema-tooling.js";
+import { AppConfigSchema } from "./schema.js";
+import { getConfigSchema, getConfigSections } from "./schema-serializer.js";
+import { getFieldMetadata } from "./field-metadata.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -166,7 +169,18 @@ describe("ToolingConfigSchema", () => {
     }
   });
 
-  it("Test 12: partial operator override of clusters does NOT key-merge with defaults at parse time (Pitfall 2)", () => {
+  it("Test 12 (Task 2): cross-module barrel re-exports resolve via @comis/core/config path", async () => {
+    // Re-export contract: ToolingConfigSchema, DEFAULT_CLUSTER_CONFIG,
+    // DEFAULT_BUILTIN_ASSIGNMENTS, and the ToolingConfig type all flow through
+    // the config index barrel. Importing from "./index.js" must resolve to the
+    // SAME runtime references as importing from "./schema-tooling.js".
+    const barrel = await import("./index.js");
+    expect(barrel.ToolingConfigSchema).toBe(ToolingConfigSchema);
+    expect(barrel.DEFAULT_CLUSTER_CONFIG).toBe(DEFAULT_CLUSTER_CONFIG);
+    expect(barrel.DEFAULT_BUILTIN_ASSIGNMENTS).toBe(DEFAULT_BUILTIN_ASSIGNMENTS);
+  });
+
+  it("Test 13 (Pitfall 2): partial operator override of clusters does NOT key-merge with defaults at parse time", () => {
     // Pitfall 2: z.record(...).default({}) does NOT merge with DEFAULT_CLUSTER_CONFIG.
     // Operator-supplied clusters replace the empty default record entirely.
     // The defaults-merge contract is ADAPTER-CONSTRUCTION-TIME (Phase 23), not parse-time.
@@ -192,5 +206,76 @@ describe("ToolingConfigSchema", () => {
         result.data.capabilityClusters.clusters["foo"]?.preferOverInstalls,
       ).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AppConfigSchema integration -- threads tooling through the root schema
+// ---------------------------------------------------------------------------
+
+describe("AppConfigSchema with tooling section", () => {
+  it("AppConfig empty parse populates tooling defaults", () => {
+    const result = AppConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tooling.capabilityIndex.enabled).toBe(true);
+      expect(result.data.tooling.installDetours.mode).toBe("advise");
+    }
+  });
+
+  it("AppConfig rejects unknown key inside tooling (strict-rejection inherited)", () => {
+    const result = AppConfigSchema.safeParse({ tooling: { unknownKey: 1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("AppConfig accepts valid tooling override", () => {
+    const result = AppConfigSchema.safeParse({
+      tooling: { installDetours: { mode: "soft-stop" } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.tooling.installDetours.mode).toBe("soft-stop");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Serializer integration -- tooling section is JSON-Schema-discoverable
+// ---------------------------------------------------------------------------
+
+describe("schema-serializer with tooling section", () => {
+  it("getConfigSections() includes 'tooling'", () => {
+    expect(getConfigSections()).toContain("tooling");
+  });
+
+  it("getConfigSchema('tooling') returns a JSON Schema with capabilityIndex+installDetours", () => {
+    const schema = getConfigSchema("tooling") as {
+      type?: string;
+      properties?: Record<string, unknown>;
+    };
+    expect(schema.type).toBe("object");
+    expect(schema.properties).toBeDefined();
+    expect(schema.properties).toHaveProperty("capabilityIndex");
+    expect(schema.properties).toHaveProperty("installDetours");
+    expect(schema.properties).toHaveProperty("capabilityClusters");
+    expect(schema.properties).toHaveProperty("mcp");
+    expect(schema.properties).toHaveProperty("skills");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Field metadata integration -- tooling.* fields exposed to CLI/UI
+// ---------------------------------------------------------------------------
+
+describe("field-metadata with tooling section", () => {
+  it("getFieldMetadata('tooling') returns metadata for tooling.* paths", () => {
+    const fields = getFieldMetadata("tooling");
+    expect(fields.length).toBeGreaterThan(0);
+    for (const field of fields) {
+      expect(field.path.startsWith("tooling.")).toBe(true);
+    }
+    // Spot-check a known leaf field.
+    const modeField = fields.find((f) => f.path === "tooling.installDetours.mode");
+    expect(modeField).toBeDefined();
   });
 });

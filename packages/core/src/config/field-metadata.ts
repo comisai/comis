@@ -34,6 +34,7 @@ import { SchedulerConfigSchema } from "./schema-scheduler.js";
 import { SecurityConfigSchema } from "./schema-security.js";
 import { SendPolicyConfigSchema } from "./schema-send-policy.js";
 import { StreamingConfigSchema } from "./schema-streaming.js";
+import { ToolingConfigSchema } from "./schema-tooling.js";
 
 /**
  * Maps config section names to their Zod schema objects.
@@ -56,6 +57,7 @@ const SECTION_SCHEMAS: Record<string, z.ZodType> = {
   sendPolicy: SendPolicyConfigSchema,
   embedding: EmbeddingConfigSchema,
   envelope: EnvelopeConfigSchema,
+  tooling: ToolingConfigSchema,
 };
 
 // ---------------------------------------------------------------------------

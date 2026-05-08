@@ -25,6 +25,7 @@ import { MonitoringConfigSchema } from "./schema-observability.js";
 import { ProvidersConfigSchema } from "./schema-providers.js";
 import { SchedulerConfigSchema } from "./schema-scheduler.js";
 import { SecurityConfigSchema } from "./schema-security.js";
+import { ToolingConfigSchema } from "./schema-tooling.js";
 
 // ---------------------------------------------------------------------------
 // Section schema lookup
@@ -49,6 +50,7 @@ const SECTION_SCHEMAS: Record<string, z.ZodType> = {
   providers: ProvidersConfigSchema,
   messages: MessagesConfigSchema,
   approvals: ApprovalsConfigSchema,
+  tooling: ToolingConfigSchema,
 };
 
 // ---------------------------------------------------------------------------

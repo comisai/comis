@@ -31,6 +31,7 @@ import { SenderTrustDisplayConfigSchema } from "./schema-sender-trust-display.js
 import { SendPolicyConfigSchema } from "./schema-send-policy.js";
 import { StreamingConfigSchema } from "./schema-streaming.js";
 import { TelegramFileRefGuardConfigSchema } from "./schema-telegram-file-guard.js";
+import { ToolingConfigSchema } from "./schema-tooling.js";
 import { WebhooksConfigSchema } from "./schema-webhooks.js";
 
 /**
@@ -119,6 +120,8 @@ export const AppConfigSchema = z.strictObject({
     documentation: DocumentationConfigSchema.default(() => DocumentationConfigSchema.parse({})),
     /** Telegram file reference guard: detects hallucinated file paths in responses */
     telegramFileRefGuard: TelegramFileRefGuardConfigSchema.default(() => TelegramFileRefGuardConfigSchema.parse({})),
+    /** Tool-first capability layer (v1.1) -- capability clusters, MCP/skill hints, install-detour mode. Operator-only. */
+    tooling: ToolingConfigSchema.default(() => ToolingConfigSchema.parse({})),
   }).superRefine((config, ctx) => {
     // Startup invariant: reject the reserved "default" provider name.
     // "default" collides with PerAgentConfigSchema.provider's schema default

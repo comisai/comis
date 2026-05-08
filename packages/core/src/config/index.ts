@@ -5,6 +5,12 @@
 export { AppConfigSchema } from "./schema.js";
 export { ApprovalsConfigSchema, ApprovalRuleSchema, checkApprovalsConfig } from "./schema-approvals.js";
 export {
+  ToolingConfigSchema,
+  DEFAULT_CLUSTER_CONFIG,
+  DEFAULT_BUILTIN_ASSIGNMENTS,
+} from "./schema-tooling.js";
+export type { ToolingConfig } from "./schema-tooling.js";
+export {
   AutoReplyEngineConfigSchema,
   GroupActivationModeSchema,
 } from "./schema-auto-reply-engine.js";
