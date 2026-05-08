@@ -14,8 +14,8 @@
  * Both subsystems are inert but not broken. Acceptable interim state.
  *
  * IMPORTANT -- boundary discipline (Pitfall 13):
- * Test code must NOT import this. Tests use createCapabilityPortStub (in
- * __test-helpers/) instead. The architecture-grep test in Plan 17-04
+ * Test code must NOT import this. Tests use the test-only stub factory in
+ * `__test-helpers/` instead. The architecture-grep test in Plan 17-04
  * (`packages/<pkg>/src/__tests__/architecture.test.ts`) enforces this both ways.
  *
  * @module
@@ -35,8 +35,8 @@ const EMPTY_SKILLS: readonly PromptSkillCapability[] = Object.freeze([]);
 
 /**
  * Production no-op factory. Production-OK; safe to import from any production
- * code path. Tests must NOT import this -- use createCapabilityPortStub from
- * __test-helpers/ instead.
+ * code path. Tests must NOT import this -- use the test-only stub factory in
+ * `__test-helpers/` instead.
  *
  * @returns A frozen ToolCapabilityPort with empty defaults for all 9 methods.
  */

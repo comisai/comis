@@ -8,8 +8,8 @@
  * exec runs per-tool-call (not per-turn) and needs a live getter.
  *
  * Adapters: live daemon-side adapter (Phase 23), createNoOpCapabilityPort
- * (production no-op interim, this package), createCapabilityPortStub
- * (test-only fixture, __test-helpers/ -- production source MUST NOT import).
+ * (production no-op interim, this package), test-only stub factory
+ * (lives in `__test-helpers/` -- production source MUST NOT import).
  *
  * @module
  */
@@ -83,7 +83,7 @@ export interface SkillHint {
  * interim while Phase 17 lands.
  *
  * Adapters: createNoOpCapabilityPort (production no-op, this package),
- * createCapabilityPortStub (test-only fixture, __test-helpers/),
+ * test-only stub factory in `__test-helpers/`,
  * live daemon-side adapter (Phase 23).
  */
 export interface ToolCapabilityPort {
