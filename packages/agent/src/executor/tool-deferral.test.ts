@@ -1735,7 +1735,7 @@ describe("buildDeferredToolsContext", () => {
     expect(output).toContain("<deferred-tools>");
     expect(output).toContain("</deferred-tools>");
     expect(output).toContain("The following tools are available but not loaded.");
-    expect(output).toContain('discover_tools("yfinance")');
+    expect(output).toContain("These tools are connected but not currently loaded into your active context");
     expect(output).toContain("toolA -- descA");
     expect(output).toContain("toolB -- descB");
 
@@ -1788,67 +1788,83 @@ describe("buildDeferredToolsContext", () => {
     expect(output).toContain("[beta] (2 tools): t2, t3");
   });
 
-  it("updates header text to mention server name search", () => {
+  it("includes the mechanism-neutral instruction line for MCP-only listings", () => {
     const entries: DeferredToolEntry[] = [
       { name: "mcp__srv--tool", description: "desc", original: makeTool("mcp__srv--tool") },
     ];
 
     const output = buildDeferredToolsContext(entries);
-    expect(output).toContain('discover_tools("yfinance")');
-    expect(output).toContain("search by keyword or server name");
+    expect(output).toContain("invoke the discovery mechanism available in your active toolspace");
   });
 
   // -------------------------------------------------------------------------
-  // model-aware preamble (useToolSearch option)
+  // DEFER-02: mechanism-neutral instruction line (Phase 19)
   // -------------------------------------------------------------------------
 
-  it("A1: 1-arg call preserves discover_tools teaching (useToolSearch defaults false)", () => {
+  it("DEFER-02: emits the mechanism-neutral instruction line (snapshot + behavior pair)", () => {
     const entries: DeferredToolEntry[] = [
       { name: "toolA", description: "descA", original: makeTool("toolA") },
     ];
     const output = buildDeferredToolsContext(entries);
-    expect(output).toContain("discover_tools");
-    expect(output).toContain("Call discover_tools to search by keyword or server name");
-  });
 
-  it("A1b: explicit useToolSearch:false preserves discover_tools teaching", () => {
-    const entries: DeferredToolEntry[] = [
-      { name: "toolA", description: "descA", original: makeTool("toolA") },
-    ];
-    const output = buildDeferredToolsContext(entries, { useToolSearch: false });
-    expect(output).toContain("Call discover_tools to search by keyword or server name");
-  });
+    // Shape lock: catches structural drift in the deferred-tools block layout.
+    // The inline snapshot MUST be hand-verified against design §6 verbatim text;
+    // do NOT auto-update via `vitest -u` without re-reading the design doc.
+    // See PATTERNS §Pattern E (snapshot+behavior pairing -- first instance in codebase).
+    expect(output).toMatchInlineSnapshot(`
+      "<deferred-tools>
+      The following tools are available but not loaded.
+      These tools are connected but not currently loaded into your active context. To use one, invoke the discovery mechanism available in your active toolspace, then call the loaded tool with the appropriate arguments.
 
-  it("A2: useToolSearch:true emits tool_search_tool_regex preamble and drops discover_tools teaching", () => {
-    const entries: DeferredToolEntry[] = [
-      { name: "agents_manage", description: "Manage agents", original: makeTool("agents_manage") },
-      { name: "mcp__yfinance--get_price", description: "Get stock price", original: makeTool("mcp__yfinance--get_price") },
-    ];
-    const output = buildDeferredToolsContext(entries, { useToolSearch: true });
+      toolA -- descA
+      </deferred-tools>"
+    `);
 
-    // Block structure preserved
+    // Behavior assertions (Pitfall 9 prevention -- snapshot-as-substitute is an
+    // anti-pattern; explicit semantic assertions catch drift even if a future
+    // dev runs `vitest -u` without thinking).
+    const expectedInstruction =
+      "These tools are connected but not currently loaded into your active context. " +
+      "To use one, invoke the discovery mechanism available in your active toolspace, " +
+      "then call the loaded tool with the appropriate arguments.";
+    expect(output).toContain(expectedInstruction);
     expect(output).toContain("<deferred-tools>");
     expect(output).toContain("</deferred-tools>");
-    expect(output).toContain("The following tools are available but not loaded.");
-
-    // Tool-search-aware teaching
-    expect(output).toContain("tool_search_tool_regex");
-    expect(output).toContain("auto-load");
-    // call them directly by name -- the model is told it can invoke deferred
-    // tools without a separate discovery round-trip on Anthropic tool-search.
-    expect(output.toLowerCase()).toContain("call them directly");
-
-    // Tool listings still emitted (block format unchanged)
-    expect(output).toContain("agents_manage -- Manage agents");
-    expect(output).toContain("[yfinance] (1 tools): get_price");
-
-    // Critically: the literal "discover_tools" must NOT appear when tool-search is on.
-    expect(output).not.toContain("discover_tools");
+    expect(output).toContain("toolA -- descA");
   });
 
-  it("A3: empty entries with useToolSearch:true still returns empty string", () => {
-    expect(buildDeferredToolsContext([], { useToolSearch: true })).toBe("");
-    expect(buildDeferredToolsContext([], { useToolSearch: false })).toBe("");
+  it("DEFER-02: instruction line contains no provider-specific or yfinance references", () => {
+    const entries: DeferredToolEntry[] = [
+      { name: "agents_manage", description: "Manage agents", original: makeTool("agents_manage") },
+      { name: "mcp__finance-data--get_price", description: "Get stock price", original: makeTool("mcp__finance-data--get_price") },
+    ];
+    const output = buildDeferredToolsContext(entries);
+
+    // Block structure preserved (regression guard).
+    expect(output).toContain("<deferred-tools>");
+    expect(output).toContain("</deferred-tools>");
+    expect(output).toContain("agents_manage -- Manage agents");
+    expect(output).toContain("[finance-data] (1 tools): get_price");
+
+    // DEFER-04 forbidden literals (the architecture-grep test in Plan 19-03
+    // enforces this at package scope; this test enforces it at the
+    // prompt-output level -- defense in depth).
+    expect(output).not.toContain("discover_tools");
+    expect(output).not.toContain("tool_search_tool_regex");
+    expect(output).not.toContain("yfinance");
+    // Old useToolSearch=true variant text -- must NOT appear (DEFER-01).
+    expect(output).not.toContain("Call them directly");
+    expect(output).not.toContain("auto-load");
+    // Old useToolSearch=false variant text -- must NOT appear (DEFER-01).
+    expect(output).not.toContain("Call discover_tools to search by keyword");
+    expect(output).not.toContain("search by keyword or server name");
+  });
+
+  it("DEFER-02: empty entries return empty string (single-arg signature)", () => {
+    // Verifies the post-Phase-19 single-arg signature compiles + returns "".
+    // No second arg is passed; the type system enforces this at call sites
+    // (executor-tool-assembly.ts updated in lockstep -- see Task 3).
+    expect(buildDeferredToolsContext([])).toBe("");
   });
 });
 
