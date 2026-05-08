@@ -7,7 +7,7 @@
  * @module
  */
 
-import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, PerAgentConfigSchema, type AppContainer, type InjectionRateLimiter, type OAuthCredentialStorePort, type SecretsCrypto, type PerAgentConfig } from "@comis/core";
+import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, createNoOpCapabilityPort, PerAgentConfigSchema, type AppContainer, type InjectionRateLimiter, type OAuthCredentialStorePort, type SecretsCrypto, type PerAgentConfig } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { createHmac } from "node:crypto";
 import type { ComisLogger } from "@comis/infra";
@@ -605,6 +605,7 @@ export async function setupSingleAgent(
       : undefined,
     embeddingEnqueue: deps.embeddingQueue?.enqueue.bind(deps.embeddingQueue),
     embeddingPort: deps.embeddingPort,  // Semantic search in discover_tools
+    toolCapabilityPort: createNoOpCapabilityPort(),  // Phase 20 interim; Phase 23 (WIRING-01..11) constructs the live adapter from container.config.tooling + skillRegistry + mcpClientManager.
     // DAG context engine deps (optional -- only when context engine version is dag)
     contextStore: deps.contextStore,
     db: deps.db,
