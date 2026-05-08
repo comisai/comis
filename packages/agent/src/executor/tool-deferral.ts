@@ -20,7 +20,7 @@ import type { ComisLogger } from "@comis/infra";
 import type { EmbeddingPort } from "@comis/core";
 import { getToolMetadata } from "@comis/core";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
-import { extractMcpServerName } from "../bridge/bridge-event-handlers.js";
+import { extractMcpServerName } from "@comis/shared";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
 import type { ModelTier } from "../bootstrap/sections/tooling-sections.js";
 import { LEAN_TOOL_DESCRIPTIONS } from "../bootstrap/sections/tool-descriptions.js";
