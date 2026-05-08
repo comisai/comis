@@ -175,13 +175,18 @@ export function resolveToolCallingTemperature(modelTier: ModelTier): number {
 }
 
 /**
- * Anthropic models that support server-side tool_search_tool_regex
- * (defer_loading). Sonnet 4.x+, Opus 4.x+; NOT Haiku.
+ * Anthropic models that support server-side tool-search via defer_loading.
+ * Sonnet 4.x+, Opus 4.x+; NOT Haiku.
  *
- * When this returns true, request-body-injector strips client-side
- * `discover_tools` from the API payload and appends `tool_search_tool_regex`
- * instead -- so any model-facing teaching string about `discover_tools`
- * contradicts the actual tool list and must be suppressed.
+ * **Surviving caller (post-Phase-19):** `request-body-injector.ts` (the
+ * `if (supportsToolSearch(model.id)) {...}` gate inside the Anthropic
+ * `onPayload` handler). Used to gate the API-payload reshape that strips
+ * the client-side discovery tool, appends the server-side tool-search
+ * regex tool, and marks deferred tools `defer_loading: true`. This is a
+ * runtime API-payload concern, distinct from the deferred-tool prompt
+ * teaching that Phase 19 collapsed to a single mechanism-neutral
+ * instruction line in `buildDeferredToolsContext`.
+ * DEFER-03 documented-not-deleted branch.
  *
  * Lowercase-normalize so provider-prefixed model ids
  * (`anthropic/claude-sonnet-4`, `bedrock/anthropic.claude-opus-4`) resolve
@@ -255,35 +260,20 @@ export function resolveToolDescription(tool: ToolDefinition): string {
  * Lists deferred tool names and descriptions so the LLM knows what's
  * available behind a discovery mechanism.
  *
- * The third line (the instruction line) is conditional on `useToolSearch`:
- *
- * - `useToolSearch=false` (default, every non-Anthropic provider + Haiku):
- *   teaches the model to call the client-side `discover_tools` tool, which
- *   IS present in those payloads.
- *
- * - `useToolSearch=true` (Anthropic Sonnet/Opus 4.x): the API payload no
- *   longer contains a client-side `discover_tools` tool -- the
- *   request-body-injector replaces it with the server-side
- *   `tool_search_tool_regex` and marks deferred tools `defer_loading: true`,
- *   meaning Anthropic auto-loads them on first direct invocation. The
- *   teaching string therefore points at direct invocation + tool-search by
- *   regex, never at `discover_tools`. Without this conditional, the model
- *   reads its own preamble ("call discover_tools") against a tool list that
- *   doesn't contain that tool and gives up (production repro).
+ * The instruction line is mechanism-neutral: it tells the model these
+ * tools are available but not loaded, and points it at "the discovery
+ * mechanism available in your active toolspace" without naming a specific
+ * tool. Provider-specific payload reshaping (stripping the client-side
+ * discovery tool and appending the server-side tool-search regex tool for
+ * Anthropic Sonnet/Opus 4.x) lives entirely in `request-body-injector.ts`
+ * and is gated by `supportsToolSearch(modelId)`. This separation is
+ * enforced by architecture-grep tests (DEFER-04, landed in Plan 19-03).
  *
  * @param entries - Deferred tool entries (remaining after discovery re-inclusion)
- * @param options - Optional flags. `useToolSearch=true` switches the third
- *   line to the tool-search-aware variant. Defaults to false (backward-
- *   compatible with the discover_tools teaching).
  * @returns XML block string, or empty string when no entries
  */
-export function buildDeferredToolsContext(
-  entries: DeferredToolEntry[],
-  options?: { useToolSearch?: boolean },
-): string {
+export function buildDeferredToolsContext(entries: DeferredToolEntry[]): string {
   if (entries.length === 0) return "";
-
-  const useToolSearch = options?.useToolSearch === true;
 
   // Separate MCP tools (group by server) from non-MCP tools (individual listing)
   const mcpByServer = new Map<string, DeferredToolEntry[]>();
@@ -314,9 +304,10 @@ export function buildDeferredToolsContext(
     lines.push(`[${server}] (${tools.length} tools): ${shortNames.join(", ")}`);
   }
 
-  const instruction = useToolSearch
-    ? "These tools auto-load on first invocation -- call them directly by name with the right arguments. To preview a tool's schema before calling, use tool_search_tool_regex with a regex matching the tool name (e.g., tool_search_tool_regex(pattern: \"agents_manage\"))."
-    : "Call discover_tools to search by keyword or server name (e.g., discover_tools(\"yfinance\")).";
+  const instruction =
+    "These tools are connected but not currently loaded into your active context. " +
+    "To use one, invoke the discovery mechanism available in your active toolspace, " +
+    "then call the loaded tool with the appropriate arguments.";
 
   return [
     "<deferred-tools>",
@@ -571,7 +562,7 @@ function structuredSearch(
     if (prefixMatches.length > 0) return prefixMatches;
   }
 
-  // Mode 4: Server name match (e.g., "yfinance" -> all mcp__yfinance--* tools)
+  // Mode 4: Server name match (e.g., bare server token -> all mcp__<server>--* tools)
   const serverPrefix = `mcp__${q}--`;
   const serverMatches = deferredTools.filter(t => t.name.toLowerCase().startsWith(serverPrefix));
   if (serverMatches.length > 0) return serverMatches.slice(0, maxResults);
@@ -815,7 +806,7 @@ export function createDiscoverTool(
         return {
           content: [{
             type: "text" as const,
-            text: "No matching tools found. Try an exact tool name, MCP server name (e.g. 'yfinance'), or select:tool1,tool2 syntax.",
+            text: "No matching tools found. Try an exact tool name, MCP server name, or select:tool1,tool2 syntax.",
           }],
           isError: false,
           details: undefined,
@@ -845,12 +836,11 @@ export function createDiscoverTool(
  * Match modes (checked in order, first non-empty wins):
  * 1. Exact name match (case-insensitive) against the full query.
  * 2. `mcp__` / `mcp:` prefix match against the full query.
- * 3. Bare server-name match on full query (`"yfinance"` -> all `mcp__yfinance--*`).
+ * 3. Bare server-name match on full query (e.g., bare server token -> all `mcp__<server>--*`).
  * 4. Per-token server-name fallback: for multi-word queries like
- *    `"yfinance get_stock"`, check each whitespace-separated token as a
- *    potential MCP server name. Catches the srv1593437 08:06:39Z scenario
- *    where the agent emits `{query: "yfinance get_stock"}` rather than just
- *    `{query: "yfinance"}`.
+ *    `"<server> <verb>"`, check each whitespace-separated token as a
+ *    potential MCP server name. Catches the case where the agent emits
+ *    `{query: "<server> <verb>"}` rather than just `{query: "<server>"}`.
  */
 function findActiveToolMatches(query: string, activeToolNames: ReadonlySet<string>): string[] {
   const q = query.toLowerCase().trim();
@@ -877,7 +867,7 @@ function findActiveToolMatches(query: string, activeToolNames: ReadonlySet<strin
   // Mode 4: per-token server fallback for multi-word queries.
   // Each whitespace-separated token is probed as a server name. The first
   // token that resolves to >= 1 active tool wins. This handles the common
-  // "{server} {verb}" pattern like "yfinance get_stock".
+  // "<server> <verb>" pattern like "<bare-server-token> <verb>".
   const tokens = q.split(/\s+/).filter(t => /^[a-z0-9_-]+$/.test(t));
   for (const token of tokens) {
     const tokenServerPrefix = `mcp__${token}--`;
