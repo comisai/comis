@@ -23,11 +23,16 @@
  *     the literal in comments + a `tool_search_tool_` prefix-match), and
  *     `stub-filter-injector.ts` (JSDoc explaining the payload-reshape
  *     interaction with the stub-filter).
- *   - Phase 20 (CAPINDEX-RENDER-15/16): will assert that
- *     `prompt-assembly.ts` does NOT import `getPromptSkillCapabilities`
- *     or `capability-index-context.ts` (cache-fence Pitfall 1; the
- *     JSDoc invariant landed in Plan 17-04 and the architecture-grep
- *     enforcement lands in Phase 20).
+ *   - Phase 20 (CAPINDEX-RENDER-16, DONE): asserts that `prompt-assembly.ts`
+ *     does NOT import `capability-index-context.ts` AND does NOT call the
+ *     two live-runtime port accessors that mutate between turns —
+ *     cache-fence Pitfall 1 enforcement at the source-grep boundary.
+ *     `assemblerParams` MUST stay free of live-runtime accessors so the
+ *     cached system-prompt prefix remains byte-identical when the skill
+ *     registry reloads between turns. The config-derived
+ *     `capabilityIndexEnabled` boolean IS allowed inside `assemblerParams`
+ *     because it is operator-only/restart-required and stable across the
+ *     session — the grep targets only LIVE-RUNTIME accessors.
  *
  * @module
  */
@@ -40,7 +45,7 @@ import { findInSourceFiles } from "../../../../test/support/source-grep.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
 
-describe("@comis/agent -- architecture invariants (MCPNAME-03, DEFER-04)", () => {
+describe("@comis/agent -- architecture invariants (MCPNAME-03, DEFER-04, CAPINDEX-RENDER-16)", () => {
   // FORBIDDEN_PARSER_RE: catches the canonical inline mcp__server--tool parser shape
   // (`.slice(5)` followed by `.indexOf("--")` within ~200 characters). Post-migration
   // (Plan 18-02) no production file in @comis/agent matches this pattern; the
@@ -199,6 +204,61 @@ describe("@comis/agent -- architecture invariants (MCPNAME-03, DEFER-04)", () =>
       "tool_search_tool_regex literal must not appear outside the allowlist " +
         "(request-body-injector.ts, cache-break-detection.ts, stub-filter-injector.ts) " +
         "— design §3 non-goal #2 / §6",
+    ).toEqual([]);
+    expect(result.checkedFiles, "sanity: helper walked at least one production source file").toBeGreaterThan(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 20 — CAPINDEX-RENDER-16: cache-fence invariant (Pitfall 1, the
+  // highest-cost regression class in the v1.1 milestone).
+  // ---------------------------------------------------------------------------
+  //
+  // `prompt-assembly.ts` builds the cached system-prompt prefix via
+  // `assembleRichSystemPrompt(assemblerParams)`. The prefix MUST stay
+  // byte-identical across turns; if a skill discovery sweep mutates a value
+  // that flows into `assemblerParams`, the Anthropic prompt-cache prefix
+  // invalidates every turn and the cost of the agent doubles or worse.
+  //
+  // The forbidden symbols are:
+  //   - the renderer module name (importing it from prompt-assembly.ts is
+  //     itself the regression — the renderer is per-turn dynamic, not
+  //     cached prefix.)
+  //   - the live-runtime skill-catalog accessor (mutates between turns when
+  //     skills are created/deleted/reloaded.)
+  //   - the live-runtime MCP-server accessor (mutates between turns when
+  //     servers connect/disconnect.)
+  //
+  // `capabilityIndexEnabled` (a config-derived BOOLEAN, restart-required) IS
+  // allowed inside `assemblerParams` — config-derived values are stable
+  // across the session by design. The grep below targets the LIVE-RUNTIME
+  // accessors only.
+
+  it("CAPINDEX-RENDER-16: prompt-assembly.ts does NOT import capability-index-context or call live-runtime port accessors", () => {
+    // §10.6 inverted-cycle proof — Plan 20-04 ran the dance:
+    //   1. cp packages/agent/src/executor/prompt-assembly.ts /tmp/p20-cap-fence-backup.ts
+    //   2. Append: import { buildCapabilityIndexContext as _scratchP20 } from "./capability-index-context.js";
+    //   3. pnpm --filter @comis/agent exec vitest run src/__tests__/architecture
+    //      => observed FAIL with "prompt-assembly.ts" in the offenders array
+    //   4. cp /tmp/p20-cap-fence-backup.ts packages/agent/src/executor/prompt-assembly.ts
+    //   5. diff: empty
+    //   6. Re-run: GREEN
+    //   7. Documented in 20-04-SUMMARY.md.
+    //
+    // The test scans the executor/ directory and filters for prompt-assembly.ts
+    // so the failure message names exactly that file.
+    const result = findInSourceFiles({
+      rootDir: resolve(SRC_ROOT, "executor"),
+      needle: /capability-index-context|getPromptSkillCapabilities|getConnectedMcpServers/,
+      excludeFileSuffixes: [".test.ts"],
+    });
+    const offenders = result.matches.filter((m) => m.endsWith("prompt-assembly.ts"));
+    expect(
+      offenders,
+      "prompt-assembly.ts must NOT import the capability-index renderer or " +
+        "call ToolCapabilityPort live-runtime accessors " +
+        "(getPromptSkillCapabilities, getConnectedMcpServers) — cache fence " +
+        "(Pitfall 1; design §4.3 invariant). If the cache prefix invalidates " +
+        "every turn, the Anthropic prompt-cache cost doubles or worse.",
     ).toEqual([]);
     expect(result.checkedFiles, "sanity: helper walked at least one production source file").toBeGreaterThan(0);
   });
