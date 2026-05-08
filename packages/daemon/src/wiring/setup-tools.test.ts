@@ -152,6 +152,22 @@ vi.mock("@comis/core", () => ({
   // in @comis/core/session-key; this test only needs a deterministic string.
   formatSessionKey: (k: { tenantId: string; channelId: string; userId: string }) =>
     `${k.tenantId}:${k.channelId}:${k.userId}`,
+  // Plan 22-02 — INSTALL-DTR-13. setup-tools.ts now passes a no-op
+  // ToolCapabilityPort to createExecTool / createProcessTool (Phase 22 interim
+  // until Phase 23 lands the live adapter). Mock returns an empty-defaults
+  // shape; the @comis/skills mock above accepts any deps object so test
+  // assertions don't read the port's methods.
+  createNoOpCapabilityPort: () => ({
+    isCapabilityIndexEnabled: () => true,
+    getInstallDetourMode: () => "advise",
+    getBuiltinCluster: () => undefined,
+    getClusterConfig: () => undefined,
+    getMcpServerHint: () => undefined,
+    getSkillHint: () => undefined,
+    getPackageAliasMap: () => new Map(),
+    getConnectedMcpServers: () => [],
+    getPromptSkillCapabilities: () => [],
+  }),
 }));
 
 vi.mock("@comis/agent", () => ({
@@ -1083,7 +1099,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       expect(sandboxArg.sandbox.name).toBe("mock-sandbox");
       // Default agent gets lazy sharedPaths; resolve to verify empty (only one agent, skips self)
@@ -1115,7 +1131,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       expect(sandboxArg.sandbox.name).toBe("mock-sandbox");
     });
@@ -1142,7 +1158,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeUndefined();
     });
 
@@ -1168,7 +1184,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeUndefined();
     });
 
@@ -1225,7 +1241,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       // Default agent gets lazy sharedPaths; resolve to verify
       const resolvedShared = typeof sandboxArg.sharedPaths === "function" ? sandboxArg.sharedPaths() : sandboxArg.sharedPaths;
@@ -1254,7 +1270,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/abs/skills", "/test/data/logs"]);
     });
@@ -1293,7 +1309,7 @@ describe("setupTools", () => {
 
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       // Admin agents get lazy sharedPaths -- resolve to verify contents
       const resolvedShared = typeof sandboxArg.sharedPaths === "function" ? sandboxArg.sharedPaths() : sandboxArg.sharedPaths;
@@ -1323,7 +1339,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       expect(sandboxArg.configReadOnlyPaths).toEqual(["/data/models", "/test/data/logs"]);
     });

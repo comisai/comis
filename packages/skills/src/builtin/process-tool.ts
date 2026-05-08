@@ -23,6 +23,7 @@ import {
   readNumberParam,
 } from "./platform/tool-helpers.js";
 import type { ProcessRegistry } from "./process-registry.js";
+import type { ToolCapabilityPort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Parameter schema
@@ -65,17 +66,45 @@ interface ToolLogger {
 // Factory
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Deps interface (Plan 22-02 — INSTALL-DTR-13)
+// ---------------------------------------------------------------------------
+
+/**
+ * Dependencies for the process tool factory. Replaces the prior `(registry, logger?)`
+ * positional signature per design §8.2. Backward compatibility is NOT preserved
+ * (see CLAUDE.md user-memory `feedback_no_backward_compat`).
+ *
+ * `toolCapabilityPort` is REQUIRED — Plan 22-03 reads it inside the
+ * `case "status":` branch to decide whether to augment the result envelope
+ * with the retroactive install-detour hint (Pitfall 6 mitigation: read the
+ * spawn-time `session.installDetourDecision` rather than re-deriving from
+ * current connected-server state). Until Phase 23 lands the real adapter,
+ * daemon wiring injects `createNoOpCapabilityPort()` — interim state per
+ * design §11 Phase 7 production-behavior.
+ */
+export interface ProcessToolDeps {
+  readonly registry: ProcessRegistry;
+  readonly logger?: ToolLogger;
+  /** REQUIRED for v1.1 capability layer (Phase 22) — used by Plan 22-03 process.status augmentation. */
+  readonly toolCapabilityPort: ToolCapabilityPort;
+}
+
 /**
  * Create a process management tool that delegates to a ProcessRegistry.
  *
- * @param registry - ProcessRegistry for session CRUD operations
- * @param logger - Optional structured logger for DEBUG-level operation logging
- * @returns AgentTool implementing the process management interface
+ * Plan 22-02: Refactored from `(registry, logger?)` positional to deps-object
+ * per design §8.2. Backward compat NOT preserved.
+ *
+ * @param deps - Dependencies bundle. See `ProcessToolDeps` for field semantics.
+ * @returns AgentTool implementing the process management interface.
  */
-export function createProcessTool(
-  registry: ProcessRegistry,
-  logger?: ToolLogger,
-): AgentTool<typeof ProcessParams> {
+export function createProcessTool(deps: ProcessToolDeps): AgentTool<typeof ProcessParams> {
+  const {
+    registry,
+    logger,
+    // Plan 22-03 will read this in execute(...): toolCapabilityPort
+  } = deps;
   return {
     name: "process",
     label: "Process",
