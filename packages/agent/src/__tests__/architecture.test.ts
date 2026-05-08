@@ -24,13 +24,54 @@ import { findInSourceFiles } from "../../../../test/support/source-grep.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
 
-describe("@comis/agent -- architecture invariants", () => {
-  it("scaffolding: findInSourceFiles helper resolves and walks the package src tree", () => {
+describe("@comis/agent -- architecture invariants (MCPNAME-03)", () => {
+  // FORBIDDEN_PARSER_RE: catches the canonical inline mcp__server--tool parser shape
+  // (`.slice(5)` followed by `.indexOf("--")` within ~200 characters). Post-migration
+  // (Plan 18-02) no production file in @comis/agent matches this pattern; the
+  // canonical home is `packages/shared/src/mcp-tool-name.ts`. RESEARCH §Pattern 2b.
+  const FORBIDDEN_PARSER_RE = /\.slice\(5\)[\s\S]{0,200}\.indexOf\(["']--["']\)/;
+
+  it("MCPNAME-03: bridge/bridge-event-handlers.ts has no inline mcp__...--... parser", () => {
+    // §10.6 inverted-cycle proof captured in 18-03-SUMMARY.md (Task 2 dance: scratch
+    // violation in bridge-event-handlers.ts triggered failure with its file path;
+    // scratch reverted; re-run green).
+    //
+    // The walk is scoped to bridge/ rather than the whole package because (a) test
+    // isolation — failure messages name exactly bridge/* files; (b) Phase 19 may
+    // add a new invariant scoped to executor/ that benefits from a separate it().
+    // Note: pi-event-bridge.ts also lives in bridge/ and is automatically covered
+    // by this scan; a dedicated assertion is unnecessary because pi-event-bridge.ts
+    // was never an inline-parser carrier (it only consumed the symbol).
     const result = findInSourceFiles({
-      rootDir: SRC_ROOT,
-      needle: "TOOLING_CFG_19_PLACEHOLDER_xyz_should_never_match",
+      rootDir: resolve(SRC_ROOT, "bridge"),
+      needle: FORBIDDEN_PARSER_RE,
+      excludeFileSuffixes: [".test.ts"],
     });
-    expect(result.matches).toEqual([]);
-    expect(result.checkedFiles).toBeGreaterThan(0);
+    const offenders = result.matches.filter((m) => m.endsWith("bridge-event-handlers.ts"));
+    expect(
+      offenders,
+      "bridge-event-handlers.ts must import/re-export extractMcpServerName from @comis/shared, not inline-parse",
+    ).toEqual([]);
+    // Whole-bridge sanity: no other file in bridge/ may inline-parse either
+    expect(result.matches, "no file in @comis/agent/src/bridge/ may contain the canonical parser shape").toEqual([]);
+    expect(result.checkedFiles, "sanity: helper walked at least one file in bridge/").toBeGreaterThan(0);
+  });
+
+  it("MCPNAME-03: executor/tool-deferral.ts has no inline mcp__...--... parser", () => {
+    // §10.6 inverted-cycle proof captured in 18-03-SUMMARY.md (Task 2 dance:
+    // scratch violation in tool-deferral.ts triggered failure with its file path;
+    // scratch reverted; re-run green). The test file remains independent of the
+    // bridge/ test so failure messages name exactly one directory.
+    const result = findInSourceFiles({
+      rootDir: resolve(SRC_ROOT, "executor"),
+      needle: FORBIDDEN_PARSER_RE,
+      excludeFileSuffixes: [".test.ts"],
+    });
+    const offenders = result.matches.filter((m) => m.endsWith("tool-deferral.ts"));
+    expect(
+      offenders,
+      "tool-deferral.ts must import extractMcpServerName from @comis/shared (or its re-export)",
+    ).toEqual([]);
+    expect(result.checkedFiles, "sanity: helper walked at least one file in executor/").toBeGreaterThan(0);
   });
 });
