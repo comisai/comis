@@ -39,7 +39,7 @@ import {
   type SenderTrustDisplayConfig,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/infra";
-import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, resolveModelTier, supportsToolSearch, CORE_TOOLS } from "./tool-deferral.js";
+import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult } from "./tool-deferral.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
@@ -531,26 +531,15 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     mergedCustomTools.push(...stubs);
   }
 
-  // Build deferred context for dynamic preamble injection.
-  //
-  // Under Anthropic Sonnet/Opus 4.x, request-body-injector.ts
-  // strips client-side `discover_tools` from the API payload and replaces it
-  // with the server-side `tool_search_tool_regex` + per-tool `defer_loading`
-  // flag. Pass `useToolSearch=true` so the preamble teaches the model that
-  // deferred tools auto-load on first direct invocation, rather than telling
-  // it to call a tool the model can no longer see.
-  //
-  // resolvedModel is in scope here (param of assembleToolsForAgent, see
-  // function signature ~line 143). When undefined (test paths / fallback),
-  // useToolSearch defaults to false, preserving backward-compatible
-  // discover_tools wording.
+  // Build deferred-tools context for dynamic preamble injection (mechanism-neutral).
+  // Provider-specific payload reshaping (stripping the client-side discovery
+  // tool, appending the server-side tool-search regex tool for Anthropic
+  // Sonnet/Opus 4.x) lives entirely in `request-body-injector.ts` and is
+  // gated there by a model-id capability check. See tool-deferral.ts JSDoc
+  // on `buildDeferredToolsContext` for the rationale.
   let deferredContext = "";
   if (deferralResult.deferredEntries.length > 0) {
-    const useToolSearch = supportsToolSearch(resolvedModel?.id ?? "");
-    deferredContext = buildDeferredToolsContext(
-      deferralResult.deferredEntries,
-      { useToolSearch },
-    );
+    deferredContext = buildDeferredToolsContext(deferralResult.deferredEntries);
   }
 
   // -------------------------------------------------------------------
