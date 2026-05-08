@@ -5,6 +5,7 @@ export {
   ChannelCapabilitySchema,
   createNoOpDeliveryQueue,
   createNoOpDeliveryMirror,
+  createNoOpCapabilityPort,
   validateProfileId,
   PROFILE_ID_RE,
 } from "../ports/index.js";
@@ -106,4 +107,10 @@ export type {
   ImageGenInput,
   ImageGenOutput,
   ImageGenerationPort,
+  ToolCapabilityPort,
+  PromptSkillCapability,
+  CapabilitySourceRef,
+  ClusterConfig,
+  McpServerHint,
+  SkillHint,
 } from "../ports/index.js";
