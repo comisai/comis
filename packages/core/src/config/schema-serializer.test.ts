@@ -63,9 +63,9 @@ describe("getConfigSections", () => {
     expect(sections).toContain("gateway");
   });
 
-  it("contains all 15 sections", () => {
+  it("contains all 16 sections", () => {
     const sections = getConfigSections();
-    expect(sections).toHaveLength(15);
+    expect(sections).toHaveLength(16);
     expect(sections).toContain("agents");
     expect(sections).toContain("channels");
     expect(sections).toContain("memory");
@@ -80,5 +80,7 @@ describe("getConfigSections", () => {
     expect(sections).toContain("providers");
     expect(sections).toContain("messages");
     expect(sections).toContain("approvals");
+    // v1.1 capability layer (Phase 17 -- TOOLING-CFG-01)
+    expect(sections).toContain("tooling");
   });
 });

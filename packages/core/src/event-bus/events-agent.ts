@@ -116,6 +116,48 @@ export interface AgentEvents {
     timestamp: number;
   };
 
+  /**
+   * v1.1 capability layer -- install detour detected by exec/process tool.
+   * Emission lives in Phase 22 (skills package); this is the type-only declaration.
+   *
+   * Privacy invariants (Pitfall 11; design §8.2):
+   * - NO raw command text, shell fragments, URLs, VCS specs, local paths,
+   *   registry credentials, stdout, or stderr.
+   * - `commandDigest` is a stable, non-reversible hash (SHA-256, generated in Phase 22).
+   * - `packages[].normalizedName` is a registry-safe identifier only.
+   */
+  "tool:install_detour_detected": {
+    readonly agentId?: string;
+    readonly sessionKey?: string;
+    readonly traceId?: string;
+    readonly packageManager: "pip" | "npm" | "pnpm" | "yarn";
+    /** Stable, non-reversible hash of normalized command shape. NEVER raw command. */
+    readonly commandDigest: string;
+    readonly packages: ReadonlyArray<{
+      readonly normalizedName: string;
+      readonly ecosystem: "python" | "node";
+    }>;
+    readonly overlaps: ReadonlyArray<{
+      readonly packageName: string;
+      readonly sourceType: "mcp" | "skill";
+      readonly sourceName: string;
+      readonly reason:
+        | "direct-server-name"
+        | "mcp-operator-alias"
+        | "skill-comis-alias"
+        | "skill-operator-alias";
+    }>;
+    readonly mode: "observe" | "advise" | "soft-stop";
+    readonly action:
+      | "observed"
+      | "hinted"
+      | "soft_stopped"
+      | "override_requested"
+      | "overridden"
+      | "override_denied";
+    readonly timestamp: number;
+  };
+
   /** Audit log event for compliance and security monitoring */
   "audit:event": {
     timestamp: number;

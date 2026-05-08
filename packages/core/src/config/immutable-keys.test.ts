@@ -33,8 +33,12 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("daemon.logging");
   });
 
-  it("has exactly 12 entries", () => {
-    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(12);
+  it("contains immutable prefix: tooling (v1.1 capability layer)", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toContain("tooling");
+  });
+
+  it("has exactly 13 entries", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(13);
   });
 });
 
@@ -427,5 +431,55 @@ describe("MUTABLE_CONFIG_OVERRIDES (regression: persona removed)", () => {
     for (const p of paths) {
       expect(p).not.toMatch(/persona/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TOOLING-CFG-07: tooling root prefix is operator-only.
+// Three-path test: root + known child + future-child (forward-compat).
+// Plus invariant: no MUTABLE_CONFIG_OVERRIDES shadows tooling.*.
+// ---------------------------------------------------------------------------
+describe("isImmutableConfigPath -- tooling root prefix (TOOLING-CFG-07)", () => {
+  it("rejects exact tooling section (root write)", () => {
+    expect(isImmutableConfigPath("tooling")).toBe(true);
+  });
+
+  it("rejects known child: tooling.capabilityClusters.clusters", () => {
+    expect(isImmutableConfigPath("tooling", "capabilityClusters.clusters")).toBe(true);
+  });
+
+  it("rejects known child: tooling.mcp.capabilityHints.finance-data.cluster", () => {
+    expect(
+      isImmutableConfigPath("tooling", "mcp.capabilityHints.finance-data.cluster"),
+    ).toBe(true);
+  });
+
+  it("rejects known child: tooling.skills.capabilityHints.foo.replacesPackages", () => {
+    expect(
+      isImmutableConfigPath("tooling", "skills.capabilityHints.foo.replacesPackages"),
+    ).toBe(true);
+  });
+
+  it("rejects known child: tooling.installDetours.mode", () => {
+    expect(isImmutableConfigPath("tooling", "installDetours.mode")).toBe(true);
+  });
+
+  it("rejects known child: tooling.capabilityIndex.enabled", () => {
+    expect(isImmutableConfigPath("tooling", "capabilityIndex.enabled")).toBe(true);
+  });
+
+  it("rejects future sibling key (forward-compatibility): tooling.futureSiblingKey", () => {
+    expect(isImmutableConfigPath("tooling", "futureSiblingKey")).toBe(true);
+  });
+
+  it("rejects deep future child: tooling.fooBarBaz.nested.deep", () => {
+    expect(isImmutableConfigPath("tooling", "fooBarBaz.nested.deep")).toBe(true);
+  });
+
+  it("no MUTABLE_CONFIG_OVERRIDES shadows tooling.*", () => {
+    const overrides = MUTABLE_CONFIG_OVERRIDES.filter(
+      (p) => p.startsWith("tooling.") || p === "tooling",
+    );
+    expect(overrides).toEqual([]);
   });
 });
