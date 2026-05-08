@@ -7,6 +7,7 @@ import {
   truncateContentBlocks,
   _clearRegistryForTest,
 } from "./tool-metadata.js";
+import type { ToolCapabilityMetadata } from "./tool-metadata.js";
 
 // ---------------------------------------------------------------------------
 // Registry tests
@@ -118,6 +119,50 @@ describe("tool metadata -- coDiscoverWith", () => {
     const meta = getToolMetadata("co_disc_merge");
     expect(meta!.isReadOnly).toBe(true);
     expect(meta!.coDiscoverWith).toEqual(["other_tool"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ToolCapabilityMetadata tests (v1.1 capability layer; TOOLING-CFG-08)
+// ---------------------------------------------------------------------------
+
+describe("tool metadata -- ToolCapabilityMetadata (v1.1)", () => {
+  it("Test 1: stores and retrieves a capability block", () => {
+    registerToolMetadata("cap_test_basic", {
+      capability: { cluster: "data-fetching-financial", summary: "X" },
+    });
+    const meta = getToolMetadata("cap_test_basic");
+    expect(meta).toBeDefined();
+    expect(meta!.capability).toEqual({
+      cluster: "data-fetching-financial",
+      summary: "X",
+    });
+  });
+
+  it("Test 2: spread-merge keeps capability + later non-capability fields", () => {
+    registerToolMetadata("cap_test_merge", { capability: { cluster: "c1" } });
+    registerToolMetadata("cap_test_merge", { isReadOnly: true });
+    const meta = getToolMetadata("cap_test_merge");
+    expect(meta!.capability).toEqual({ cluster: "c1" });
+    expect(meta!.isReadOnly).toBe(true);
+  });
+
+  it("Test 3: re-registering capability replaces wholesale (no deep-merge)", () => {
+    registerToolMetadata("cap_test_replace", { capability: { cluster: "c1" } });
+    registerToolMetadata("cap_test_replace", {
+      capability: { cluster: "c2", summary: "S" },
+    });
+    const meta = getToolMetadata("cap_test_replace");
+    expect(meta!.capability).toEqual({ cluster: "c2", summary: "S" });
+  });
+
+  it("Test 4: replacesPackages accepts readonly string array; round-trips", () => {
+    const cap: ToolCapabilityMetadata = {
+      replacesPackages: ["pkg-a", "pkg-b"] as const,
+    };
+    registerToolMetadata("cap_test_pkgs", { capability: cap });
+    const meta = getToolMetadata("cap_test_pkgs");
+    expect(meta!.capability?.replacesPackages).toEqual(["pkg-a", "pkg-b"]);
   });
 });
 

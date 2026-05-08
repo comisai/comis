@@ -11,6 +11,30 @@
  */
 
 // ---------------------------------------------------------------------------
+// ToolCapabilityMetadata interface (v1.1 capability layer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Capability metadata for a builtin/platform tool -- used by the v1.1 capability
+ * layer to route tools into clusters and detect install-detour overlap.
+ *
+ * All fields optional. Operators may override `cluster` per-tool via
+ * `tooling.capabilityClusters.builtinAssignments[toolName]`. The metadata
+ * default applies when no operator override is present.
+ *
+ * Per design §4.2 (capability metadata) + §4.3 (`getBuiltinCluster` precedence:
+ * operator override > metadata default > undefined).
+ */
+export interface ToolCapabilityMetadata {
+  /** Cluster ID this tool belongs to (e.g., "data-fetching-financial"). */
+  readonly cluster?: string;
+  /** Operator-tunable display summary; falls back to tool description if absent. */
+  readonly summary?: string;
+  /** Package names this tool replaces (for install-detour overlap detection). */
+  readonly replacesPackages?: readonly string[];
+}
+
+// ---------------------------------------------------------------------------
 // ComisToolMetadata interface
 // ---------------------------------------------------------------------------
 
@@ -52,6 +76,8 @@ export interface ComisToolMetadata {
   validateInput?: (
     params: Record<string, unknown>,
   ) => string | undefined | Promise<string | undefined>;
+  /** Capability metadata for tool-first routing (v1.1). */
+  capability?: ToolCapabilityMetadata;
 }
 
 // ---------------------------------------------------------------------------
