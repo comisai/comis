@@ -76,7 +76,26 @@ export function buildToolingSection(
 // 4. Tool Call Style (skip if minimal)
 // ---------------------------------------------------------------------------
 
-export function buildToolCallStyleSection(isMinimal: boolean, toolNames: string[] = []): string[] {
+/**
+ * Build the static "## Tool Call Style" section with conditional coding guidelines.
+ *
+ * @param capabilityIndexEnabled - Phase 21 / CAPINDEX-COUNTERWEIGHT-01: when `true`,
+ *   AND when `exec` is in `toolNames`, the rendered output includes the dual-gated
+ *   "Tool-first principle" bullet (design §11 Phase 5 verbatim) immediately before
+ *   the existing Python-virtualenv rule. When `false` or `undefined`, the bullet is
+ *   omitted; the existing venv rule emits unchanged when `exec` is present.
+ *
+ *   Restart-required: the gate value flows from `tooling.capabilityIndex.enabled`
+ *   via `AssemblerParams.capabilityIndexEnabled` (declared at
+ *   `system-prompt-assembler.ts:128-151`, populated at `prompt-assembly.ts:815`
+ *   from `port.isCapabilityIndexEnabled()`). The value is config-derived and stable
+ *   per session — SAFE inside the cache fence (Phase 20 contract).
+ */
+export function buildToolCallStyleSection(
+  isMinimal: boolean,
+  toolNames: string[] = [],
+  capabilityIndexEnabled?: boolean,
+): string[] {
   if (isMinimal) return [];
 
   const lines = [
@@ -122,6 +141,17 @@ export function buildToolCallStyleSection(isMinimal: boolean, toolNames: string[
     guidelines.push("- Show file paths clearly when working with files.");
   }
   if (has("exec")) {
+    // CAPINDEX-COUNTERWEIGHT-01 / design §11 Phase 5: dual-gated counterweight
+    // to the venv rule below. The bullet precedes the venv rule because the
+    // first read sets the default; the second is the install fallback.
+    // Restart-required: capabilityIndexEnabled flows from
+    // `tooling.capabilityIndex.enabled` via AssemblerParams →
+    // SECTIONS["tool-call-style"].
+    if (capabilityIndexEnabled === true) {
+      guidelines.push(
+        "- **Tool-first principle.** When this turn includes a `Capabilities` context and the task can be satisfied by a connected tool or available skill, prefer that capability over installing a Python or Node package. Use installs only for capabilities not covered by active tools, deferred tools, or visible prompt skills.",
+      );
+    }
     guidelines.push(
       "- **Python projects:** Always create a virtualenv per project (`python3 -m venv .venv`). "
       + "Install packages into the project venv (`source .venv/bin/activate && pip install ...`). "
