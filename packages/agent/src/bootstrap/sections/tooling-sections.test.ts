@@ -476,3 +476,59 @@ describe("Layer 1D buildPrivilegedToolsSection catalog interpolation", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 20 (CAPINDEX-RENDER-04 / -05 / -14 / -17 / -20) — capability-index gate.
+// Source of truth: design §5 Placement (residual one-liner verbatim) + §5 rule 15
+// (mutual-exclusion contract). DO NOT auto-update via `vitest -u` without
+// re-reading design §5 — Pitfall 9 prevention.
+// ---------------------------------------------------------------------------
+
+describe("buildToolingSection — capability-index gate (Phase 20)", () => {
+  it("CAPINDEX-RENDER-04: gate-on emits residual one-liner only (snapshot + behavior pair)", () => {
+    const result = buildToolingSection(["read", "exec"], "large", undefined, true);
+    const joined = result.join("\n");
+
+    // Shape lock — design §5 verbatim. Hand-verified at authoring time.
+    expect(joined).toMatchInlineSnapshot(`
+      "When this turn includes a \`Capabilities\` context, refer to it for grouped tool guidance before invoking tools or running installs. Tool schemas in your active toolspace are authoritative for parameter shapes."
+    `);
+
+    // Behavior assertions (Pattern B; Pitfall 9):
+    expect(joined).toContain("When this turn includes a `Capabilities` context");
+    expect(joined).toContain("authoritative for parameter shapes");
+
+    // Mutual exclusion (design §5 rule 15) — gate-on path MUST NOT emit the legacy block.
+    expect(joined).not.toContain("## Available Tools");
+    expect(joined).not.toContain("- read");
+    expect(joined).not.toContain("- exec");
+    expect(joined).not.toContain("Always use tools to gather real data");
+
+    // CAPINDEX-RENDER-14 forbidden literals.
+    expect(joined).not.toContain("discover_tools");
+    expect(joined).not.toContain("tool_search_tool_regex");
+  });
+
+  it("CAPINDEX-RENDER-05: gate-off (false) is byte-identical to undefined-default", () => {
+    // Byte-identical-to-baseline assertion (Pitfall 4 prevention).
+    const baseline = buildToolingSection(["read", "exec"], "large", undefined, undefined);
+    const explicit = buildToolingSection(["read", "exec"], "large", undefined, false);
+    expect(explicit).toEqual(baseline);
+  });
+
+  it("CAPINDEX-RENDER-05: gate-off does NOT contain the residual one-liner", () => {
+    const result = buildToolingSection(["read", "exec"], "large", undefined, false);
+    const joined = result.join("\n");
+    expect(joined).toContain("## Available Tools");
+    expect(joined).not.toContain("When this turn includes a `Capabilities` context");
+  });
+
+  it("CAPINDEX-RENDER-20: gate-on output is shorter than gate-off (static-prompt token delta)", () => {
+    // Design §12 AC-3: gate-on must NOT increase static systemPromptTokens.
+    // For a representative tool set, the residual one-liner is shorter than
+    // the legacy flat block + trailing guidance.
+    const gateOn = buildToolingSection(["read", "exec", "edit", "grep", "find"], "large", undefined, true);
+    const gateOff = buildToolingSection(["read", "exec", "edit", "grep", "find"], "large", undefined, false);
+    expect(gateOn.join("\n").length).toBeLessThan(gateOff.join("\n").length);
+  });
+});
