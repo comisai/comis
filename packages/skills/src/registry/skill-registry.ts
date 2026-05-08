@@ -23,7 +23,8 @@ import { ok, err } from "@comis/shared";
 import * as fs from "node:fs";
 import { emitSkillAudit } from "../audit/skill-audit.js";
 import { parseComisCapabilityDefensively } from "../manifest/capability-parser.js";
-import { parseFrontmatter, parseSkillManifest } from "../manifest/parser.js";
+import { parseFrontmatter } from "../manifest/parser.js";
+import { SkillManifestSchema } from "../manifest/schema.js";
 import { formatAvailableSkillsXml, type PromptSkillDescription } from "../prompt/processor.js";
 import { sanitizeSkillBody } from "../prompt/sanitizer.js";
 import { scanSkillContent } from "../prompt/content-scanner.js";
@@ -363,8 +364,11 @@ export function createSkillRegistry(
         );
       }
 
-      // Parse frontmatter to extract body
-      const fmResult = parseFrontmatter(fileContent);
+      // Parse frontmatter; defensively strip a malformed comis.capability
+      // block before strict validation so a typo in capability does NOT hide
+      // the skill at load time (Pitfall 7, design §4.2.1). Mirrors the
+      // discovery-side enrichment in discovery.ts.
+      const fmResult = parseFrontmatter<Record<string, unknown>>(fileContent);
       if (!fmResult.ok) {
         return err(fmResult.error);
       }
@@ -375,11 +379,30 @@ export function createSkillRegistry(
         return err(new Error(`Prompt skill "${name}" has no body content`));
       }
 
-      // Parse full manifest for allowedTools
-      const manifestResult = parseSkillManifest(fileContent);
-      if (!manifestResult.ok) {
-        return err(manifestResult.error);
+      const frontmatter = fmResult.value.frontmatter;
+      const ns =
+        typeof frontmatter["comis"] === "object" &&
+        frontmatter["comis"] !== null &&
+        !Array.isArray(frontmatter["comis"])
+          ? (frontmatter["comis"] as Record<string, unknown>)
+          : undefined;
+      if (ns && ns["capability"] !== undefined) {
+        // Logger omitted: discovery enrichment already emitted the WARN for
+        // this file; a second identical line at load time is just noise.
+        const cap = parseComisCapabilityDefensively(ns["capability"], name, undefined);
+        if (cap === undefined) {
+          delete (ns as Record<string, unknown>)["capability"];
+        }
       }
+
+      const manifestValidation = SkillManifestSchema.safeParse(frontmatter);
+      if (!manifestValidation.success) {
+        const issues = manifestValidation.error.issues
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ");
+        return err(new Error(`Manifest validation failed: ${issues}`));
+      }
+      const manifest = manifestValidation.data;
 
       // Sanitize body content
       const sanitized = sanitizeSkillBody(rawBody, config.promptSkills.maxBodyLength);
@@ -468,7 +491,7 @@ export function createSkillRegistry(
         location: metadata.path,
         userInvocable: metadata.userInvocable,
         disableModelInvocation: metadata.disableModelInvocation,
-        allowedTools: manifestResult.value.allowedTools,
+        allowedTools: manifest.allowedTools,
         argumentHint: metadata.argumentHint,
         source: metadata.source,
       };

@@ -856,6 +856,46 @@ describe("createSkillRegistry", () => {
     expect(typeof meta.truncated).toBe("boolean");
   });
 
+  it("loadPromptSkill recovers from malformed comis.capability (Pitfall 7 load path, BL-01)", async () => {
+    // Design §4.2.1: a typo'd `comis.capability` block must NEVER hide the
+    // skill -- not at discovery time and not at load time. Pre-fix,
+    // loadPromptSkill went through the strict SkillManifestSchema and
+    // rejected typo'd capability blocks, leaving the skill discoverable but
+    // unusable. This regression pins the load-path defensive strip.
+    const skillsDir = path.join(tmpDir, "skills");
+    fs.mkdirSync(skillsDir, { recursive: true });
+
+    createPromptSkillWithCapability(skillsDir, "typo-load-skill", "Has a typo", "Body text.", {
+      capability: "TYPO",
+    });
+
+    const warns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+    const logger = {
+      info: () => {},
+      warn: (obj: Record<string, unknown>, msg: string) => { warns.push({ obj, msg }); },
+      error: () => {},
+      debug: () => {},
+    };
+
+    const eventBus = createMockEventBus();
+    const registry = createSkillRegistry(makeConfig([skillsDir]), eventBus, auditCtx, logger as any);
+    registry.init();
+
+    const result = await registry.loadPromptSkill("typo-load-skill");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.name).toBe("typo-load-skill");
+    expect(result.value.body).toContain("Body text.");
+
+    // Exactly one WARN: discovery enrichment emits it. The load-path
+    // defensive strip suppresses its own logger to avoid a duplicate line
+    // for the same file.
+    const capWarns = warns.filter((w) => w.msg.includes("Malformed comis.capability"));
+    expect(capWarns).toHaveLength(1);
+    expect(capWarns[0].obj.errorKind).toBe("config");
+    expect(capWarns[0].obj.skillName).toBe("typo-load-skill");
+  });
+
   // -------------------------------------------------------------------------
   // Prompt skill accessor methods
   // -------------------------------------------------------------------------
