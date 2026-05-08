@@ -14,13 +14,43 @@ import { getProviders } from "@mariozechner/pi-ai";
 /** Model size tier — determines prompt verbosity for tool descriptions. */
 export type ModelTier = "small" | "medium" | "large";
 
+/**
+ * Build the static `## Available Tools` block (legacy path, gate-off) OR a
+ * single residual one-liner pointing the model at the per-turn `## Capabilities`
+ * block (Phase 20 path, gate-on).
+ *
+ * @param capabilityIndexEnabled - When `true`, emits ONLY the residual one-liner
+ *   (CAPINDEX-RENDER-04). When `false` or undefined, emits the legacy flat block
+ *   BYTE-IDENTICALLY to the pre-feature baseline (CAPINDEX-RENDER-05). The two
+ *   paths are MUTUALLY EXCLUSIVE per design §5 rule 15 (Pitfall 4 prevention).
+ *
+ *   Restart-required: this gate selects between two cached system-prompt shapes;
+ *   toggling at runtime is forbidden (CAPINDEX-RENDER-17). Phase 23 wires the
+ *   operator-facing constraint into config docs (WIRING-09).
+ */
 export function buildToolingSection(
   toolNames: string[],
   _modelTier: ModelTier,
   toolSummaries?: Record<string, string>,
+  capabilityIndexEnabled?: boolean,
 ): string[] {
   if (toolNames.length === 0) return [];
 
+  // Gate-on path: residual one-liner only (design §5 rule 15; CAPINDEX-RENDER-04).
+  // The per-turn `## Capabilities` block is rendered into the dynamic preamble
+  // by `executor-prompt-runner.ts` (Plan 20-02). The wording below is
+  // normative — see design §5 Placement.
+  if (capabilityIndexEnabled === true) {
+    return [
+      "When this turn includes a `Capabilities` context, refer to it for grouped tool guidance " +
+        "before invoking tools or running installs. Tool schemas in your active toolspace are " +
+        "authoritative for parameter shapes.",
+    ];
+  }
+
+  // Gate-off path: legacy flat block BYTE-IDENTICAL to pre-feature baseline
+  // (CAPINDEX-RENDER-05). DO NOT modify the body below — the byte-identity
+  // assertion in tooling-sections.test.ts depends on this shape staying exact.
   const summaries = { ...TOOL_SUMMARIES, ...toolSummaries };
 
   const ordered = TOOL_ORDER.filter((t) => toolNames.includes(t));
