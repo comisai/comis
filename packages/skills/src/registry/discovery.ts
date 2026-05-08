@@ -22,7 +22,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import ignore from "ignore";
+import type { ToolCapabilityMetadata } from "@comis/core";
 import { parseFrontmatter } from "../manifest/parser.js";
+import { parseComisCapabilityDefensively } from "../manifest/capability-parser.js";
 import type { ResourceDiagnostic, ResourceCollision } from "./diagnostics.js";
 
 // ---------------------------------------------------------------------------
@@ -77,6 +79,13 @@ export interface SkillMetadata {
   readonly primaryEnv?: string;
   /** Dispatch mode tag (metadata-only in this phase). */
   readonly commandDispatch?: string;
+  /**
+   * v1.1 capability layer -- extracted from `comis.capability` via defensive
+   * parse. Malformed metadata -> undefined + WARN log (Pitfall 7). The skill
+   * still renders under the fallback `prompt-skills` cluster when this is
+   * undefined; metadata absence never hides the skill.
+   */
+  readonly capability?: ToolCapabilityMetadata;
 }
 
 /** Result of skill discovery: skills found plus any diagnostics (collisions, warnings). */
@@ -183,6 +192,7 @@ interface ExtractedMetadata {
   readonly skillKey?: string;
   readonly primaryEnv?: string;
   readonly commandDispatch?: string;
+  readonly capability?: ToolCapabilityMetadata;
 }
 
 /**
@@ -194,6 +204,7 @@ interface ExtractedMetadata {
  */
 function extractMetadataFromSkillMd(
   skillMdPath: string,
+  logger?: DiscoveryLogger,
 ): ExtractedMetadata | null {
   let content: string;
   try {
@@ -258,7 +269,13 @@ function extractMetadataFromSkillMd(
   const rawCommandDispatch = ns?.["command-dispatch"];
   const commandDispatch = typeof rawCommandDispatch === "string" ? rawCommandDispatch : undefined;
 
-  return { name: obj["name"], description: obj["description"], type, userInvocable, disableModelInvocation, argumentHint, os, requires, skillKey, primaryEnv, commandDispatch };
+  // v1.1 capability layer -- defensive parse (Pitfall 7). A typo or type
+  // mismatch in `comis.capability` returns undefined + emits a WARN; the
+  // skill itself remains visible (renders under the fallback "prompt-skills"
+  // cluster downstream).
+  const capability = parseComisCapabilityDefensively(ns?.["capability"], obj["name"], logger);
+
+  return { name: obj["name"], description: obj["description"], type, userInvocable, disableModelInvocation, argumentHint, os, requires, skillKey, primaryEnv, commandDispatch, capability };
 }
 
 /**
@@ -348,7 +365,7 @@ function discoverSkillsFromDir(
     // Silent skip if same real file already loaded (same file via different symlink)
     if (realPathSet.has(realPath)) continue;
 
-    const metadata = extractMetadataFromSkillMd(fullPath);
+    const metadata = extractMetadataFromSkillMd(fullPath, logger);
     if (metadata === null) {
       logger?.warn(
         { skillPath: fullPath, hint: "Check skill file has valid YAML frontmatter with name and description fields", errorKind: "validation" as const },
@@ -393,6 +410,7 @@ function discoverSkillsFromDir(
         skillKey: metadata.skillKey,
         primaryEnv: metadata.primaryEnv,
         commandDispatch: metadata.commandDispatch,
+        capability: metadata.capability,
       };
       skillMap.set(metadata.name, skillMeta);
       realPathSet.add(realPath);
