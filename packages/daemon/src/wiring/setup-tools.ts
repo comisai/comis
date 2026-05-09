@@ -8,7 +8,7 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
-import type { AppContainer, SkillsConfig, ApprovalGate, CredentialMappingPort, WrapExternalContentOptions, SessionKey } from "@comis/core";
+import type { AppContainer, SkillsConfig, ApprovalGate, CredentialMappingPort, WrapExternalContentOptions, SessionKey, ToolCapabilityPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../rpc/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -18,7 +18,6 @@ import {
   parseFormattedSessionKey,
   safePath,
   formatSessionKey,
-  createNoOpCapabilityPort,
 } from "@comis/core";
 import {
   sessionKeyToPath,
@@ -133,6 +132,24 @@ export interface ToolsDeps {
    * without requiring a daemon restart.
    */
   mcpClientManager: McpClientManager;
+  /**
+   * Per-agent ToolCapabilityPort resolver. Populated by daemon.ts from the
+   * AgentsResult.toolCapabilityPorts map (one adapter per agent constructed
+   * inside setupSingleAgent). Used by exec / process tools to consult the
+   * live install-detour mode + connected MCP servers + visible skills, and
+   * to read operator-supplied cluster hints. Phase 23 (WIRING-01..11)
+   * replaces the Phase 22 interim no-op port factory with this per-agent
+   * live adapter resolver. The closure may throw or fall back to the
+   * default agent's port for unknown agentIds -- daemon.ts decides the
+   * contract.
+   *
+   * Consumed via the single mandated form `deps.getCapabilityPortForAgent(agentId)`
+   * inside assembleToolsForAgent (mirrors the deps.<field> direct-access
+   * convention used at lines 194-213 for nearby fields like deps.eventBus,
+   * deps.skillsLogger, deps.linkRunner, deps.subprocessEnv). Plan 23-02
+   * WIRING-11.
+   */
+  getCapabilityPortForAgent: (agentId: string) => ToolCapabilityPort;
   /** Image generation provider (undefined when API key missing -- tool not registered). */
   imageGenProvider?: ImageGenerationPort;
   /** OS-level sandbox provider detected once at daemon startup. */
@@ -512,11 +529,13 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           sandboxConfig: sandboxCfg,                         // Per-agent sandbox config
           eventBus,                                          // command:blocked + secret:accessed audit events
           getToolResultsDir,                                 // Session tool-results dir for output persistence
-          // Plan 22-02 — INSTALL-DTR-13. Phase 22 interim per design §11 Phase 7
-          // production-behavior; Phase 23 (WIRING-01..11) replaces with the live
-          // ToolCapabilityPort adapter constructed from container.config.tooling
-          // + skillRegistry + mcpClientManager.
-          toolCapabilityPort: createNoOpCapabilityPort(),
+          // Phase 23 (WIRING-01..11) -- live per-agent ToolCapabilityPort
+          // resolver populated by daemon.ts from AgentsResult.toolCapabilityPorts
+          // map. Replaces the Phase 22 interim no-op port (INSTALL-DTR-13).
+          // Single mandated form `deps.<field>(agentId)` mirrors the
+          // surrounding direct-deps-access convention (lines 194-213). See
+          // plan 23-02 WIRING-11.
+          toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
           approvalGate,                                      // Soft-stop override path (Plan 22-03)
         }));
       }
@@ -527,8 +546,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         tools.push(createProcessTool({
           registry,
           logger: skillsLogger,
-          // Plan 22-02 — INSTALL-DTR-13. Phase 22 interim; Phase 23 lands the live adapter.
-          toolCapabilityPort: createNoOpCapabilityPort(),
+          // Phase 23 (WIRING-01..11) -- live per-agent ToolCapabilityPort
+          // resolver populated by daemon.ts from AgentsResult.toolCapabilityPorts.
+          // Replaces the Phase 22 interim no-op port (INSTALL-DTR-13).
+          // Single mandated form `deps.<field>(agentId)`.
+          toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         }));
       }
 

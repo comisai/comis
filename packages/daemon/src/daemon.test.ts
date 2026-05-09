@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { PerAgentConfigSchema, type AppContainer, type GatewayConfig } from "@comis/core";
+import { PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type GatewayConfig } from "@comis/core";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { ComisLogger } from "@comis/infra";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -169,6 +169,11 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
       // setupSingleAgent now reads container.config.oauth.storage for OAuth
       // credential store wiring. Default to "file" (the YAML default).
       oauth: { storage: "file" as const },
+      // Phase 23 (WIRING-01..11) -- setupSingleAgent reads
+      // container.config.tooling to construct the per-agent
+      // ToolCapabilityPort adapter. Use the schema's full-default tree so
+      // tests don't pin individual cluster IDs.
+      tooling: ToolingConfigSchema.parse({}),
     } as unknown as AppContainer["config"],
     eventBus: createMockEventBus(),
     secretManager: {

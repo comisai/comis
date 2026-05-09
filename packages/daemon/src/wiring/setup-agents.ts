@@ -4,10 +4,21 @@
  * dependencies (circuit breaker, budget guard, cost tracker, step counter),
  * and PiExecutor creation.
  * All agents use PiExecutor (pi-coding-agent AgentSession wrapper).
+ *
+ * Phase 23 wiring decision (WIRING-03): The live ToolCapabilityPort adapter
+ * is constructed inside setupSingleAgent (this function), NOT at a higher
+ * composition site (daemon.ts). Rationale: skillRegistry is per-agent and
+ * the design §4.2.1 skill-allow/deny precedence chain is per-agent;
+ * a daemon-global adapter cannot satisfy this without breaking the port
+ * interface (would require adding agentId to every method). The per-agent
+ * port is exposed via AgentsResult.toolCapabilityPorts and threaded into
+ * setupTools via the getCapabilityPortForAgent closure on ToolsDeps.
+ *
  * @module
  */
 
-import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, createNoOpCapabilityPort, PerAgentConfigSchema, type AppContainer, type InjectionRateLimiter, type OAuthCredentialStorePort, type SecretsCrypto, type PerAgentConfig } from "@comis/core";
+import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, PerAgentConfigSchema, type AppContainer, type InjectionRateLimiter, type OAuthCredentialStorePort, type SecretsCrypto, type PerAgentConfig, type ToolCapabilityPort } from "@comis/core";
+import { createToolCapabilityAdapter } from "./tool-capability-adapter.js";
 import { suppressError } from "@comis/shared";
 import { createHmac } from "node:crypto";
 import type { ComisLogger } from "@comis/infra";
@@ -56,6 +67,7 @@ import {
   TOOL_PROFILES,
   type SkillRegistry,
   type SkillWatcherHandle,
+  type McpClientManager,
 } from "@comis/skills";
 // Types inferred from adapter return types to avoid adding
 // @mariozechner/pi-coding-agent as a daemon dependency.
@@ -138,6 +150,13 @@ export interface SingleAgentDeps {
    * shares the secretsDb connection).
    */
   oauthCredentialStore: OAuthCredentialStorePort;
+  /**
+   * Daemon-global MCP client manager. Live-runtime view consumed by the
+   * per-agent ToolCapabilityPort adapter constructed inside setupSingleAgent.
+   * Threaded from daemon.ts after the Phase 23 orchestration reorder
+   * (setupMcp runs before setupAgents) -- WIRING-02 + WIRING-03 + WIRING-11.
+   */
+  mcpClientManager: McpClientManager;
 }
 
 /** Per-agent outputs from setupSingleAgent(), matching the Maps in AgentsResult. */
@@ -150,6 +169,12 @@ export interface SingleAgentResult {
   piSessionAdapter: PiSessionAdapter;
   skillWatcherHandle?: SkillWatcherHandle;
   skillRegistry: SkillRegistry;
+  /**
+   * Per-agent live ToolCapabilityPort. Constructed via
+   * createToolCapabilityAdapter using this agent's skillRegistry and the
+   * daemon-global mcpClientManager (Plan 23-02, WIRING-03 + WIRING-11).
+   */
+  toolCapabilityPort: ToolCapabilityPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +207,13 @@ export interface AgentsResult {
   skillWatcherHandles: Map<string, SkillWatcherHandle>;
   /** Per-agent skill registries for skills.list RPC method. */
   skillRegistries: Map<string, SkillRegistry>;
+  /**
+   * Per-agent ToolCapabilityPort instances. Consumed by setupTools via the
+   * getCapabilityPortForAgent closure on ToolsDeps; mutated by hot-add /
+   * hot-remove in daemon.ts to keep the parallel map consistent with
+   * skillRegistries (Plan 23-02, WIRING-03).
+   */
+  toolCapabilityPorts: Map<string, ToolCapabilityPort>;
   /** Periodic lock cleanup timer (cleared on shutdown). */
   lockCleanupTimer: ReturnType<typeof setInterval>;
   /** Shared single-agent dependencies for hot-add closure capture. */
@@ -458,6 +490,17 @@ export async function setupSingleAgent(
   );
   skillRegistry.init();
 
+  // Per-agent ToolCapabilityPort adapter (Phase 23, WIRING-01..11). Construction
+  // sits here so the adapter can close over this agent's skillRegistry; the
+  // adapter is reused by pi-executor (capability-index renderer) AND by
+  // exec/process tools (install-detour parser via setupTools.getCapabilityPortForAgent).
+  const toolCapabilityPort = createToolCapabilityAdapter({
+    toolingConfig: container.config.tooling,
+    skillRegistry,
+    mcpClientManager: deps.mcpClientManager,
+    logger: perAgentLogger,
+  });
+
   // Opt-in file watching for automatic skill reload
   let skillWatcherHandle: SkillWatcherHandle | undefined;
   if (skillsConfig.watchEnabled) {
@@ -605,7 +648,7 @@ export async function setupSingleAgent(
       : undefined,
     embeddingEnqueue: deps.embeddingQueue?.enqueue.bind(deps.embeddingQueue),
     embeddingPort: deps.embeddingPort,  // Semantic search in discover_tools
-    toolCapabilityPort: createNoOpCapabilityPort(),  // Phase 20 interim; Phase 23 (WIRING-01..11) constructs the live adapter from container.config.tooling + skillRegistry + mcpClientManager.
+    toolCapabilityPort,  // Phase 23 (WIRING-01..11) -- live adapter constructed above from container.config.tooling + skillRegistry + mcpClientManager.
     // DAG context engine deps (optional -- only when context engine version is dag)
     contextStore: deps.contextStore,
     db: deps.db,
@@ -638,6 +681,7 @@ export async function setupSingleAgent(
     piSessionAdapter: sessionAdapter,
     skillWatcherHandle,
     skillRegistry,
+    toolCapabilityPort,  // Phase 23 -- exposed for AgentsResult.toolCapabilityPorts map
   };
 }
 
@@ -702,6 +746,13 @@ export async function setupAgents(deps: {
    * `appConfig.oauth.storage === "encrypted"` mode.
    */
   secretsDb?: Database.Database;
+  /**
+   * Daemon-global MCP client manager. Required as of Phase 23 (WIRING-01..11):
+   * setupSingleAgent constructs a per-agent ToolCapabilityPort adapter that
+   * closes over this manager. daemon.ts threads it in after running setupMcp
+   * before setupAgents (orchestration reorder; see daemon.ts upfront block).
+   */
+  mcpClientManager: McpClientManager;
 }): Promise<AgentsResult> {
   const { container, memoryAdapter, sessionStore, agentLogger } = deps;
 
@@ -773,6 +824,9 @@ export async function setupAgents(deps: {
   const piSessionAdapters = new Map<string, PiSessionAdapter>();
   const skillWatcherHandles = new Map<string, SkillWatcherHandle>();
   const skillRegistries = new Map<string, SkillRegistry>();
+  // Phase 23 (WIRING-01..11) -- per-agent live ToolCapabilityPort adapters,
+  // parallel to skillRegistries; mutated in lockstep by hot-add/hot-remove.
+  const toolCapabilityPorts = new Map<string, ToolCapabilityPort>();
 
   // Resolve sub-agent tool names from config for delegation awareness
   const subAgentToolGroups = container.config.security?.agentToAgent?.subAgentToolGroups ?? [];
@@ -842,6 +896,10 @@ export async function setupAgents(deps: {
     // Daemon-level OAuth credential store handle (constructed once above,
     // reused per-agent + threaded into RPC deps).
     oauthCredentialStore,
+    // Daemon-global MCP client manager. Threaded through so each
+    // setupSingleAgent invocation can construct a per-agent
+    // ToolCapabilityPort adapter that closes over the live MCP state.
+    mcpClientManager: deps.mcpClientManager,
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
@@ -854,6 +912,7 @@ export async function setupAgents(deps: {
     piSessionAdapters.set(agentId, result.piSessionAdapter);
     if (result.skillWatcherHandle) skillWatcherHandles.set(agentId, result.skillWatcherHandle);
     skillRegistries.set(agentId, result.skillRegistry);
+    toolCapabilityPorts.set(agentId, result.toolCapabilityPort);
   }
 
   const defaultAgentId = routingConfig.defaultAgentId;
@@ -901,6 +960,9 @@ export async function setupAgents(deps: {
     piSessionAdapters,
     skillWatcherHandles,
     skillRegistries,
+    // Phase 23 (WIRING-01..11) -- daemon.ts threads this Map into setupTools
+    // via getCapabilityPortForAgent and mutates it on hot-add/hot-remove.
+    toolCapabilityPorts,
     lockCleanupTimer,
     singleAgentDeps,
     providerHealth,
