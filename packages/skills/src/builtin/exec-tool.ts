@@ -47,6 +47,12 @@ import { extractHeredoc, validateExecCommand, interpretExitCode } from "./exec-s
 import { matchExecRecoveryHint } from "./exec-diagnostics.js";
 import type { TypedEventBus } from "@comis/core";
 import { tryGetContext } from "@comis/core";
+import type { ToolCapabilityPort, ApprovalGate } from "@comis/core";
+import {
+  parseInstallDetour,
+  type InstallDetourDecision,
+  type DetourOverlap,
+} from "./install-detour.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -114,6 +120,15 @@ const ExecParams = Type.Object({
       maxItems: 8,
       description:
         "Secret/credential NAMES (not values) to inject as env vars into the subprocess. Use this to pass API tokens to CLI tools like wrangler/gh/gcloud/kubectl without tripping the env-var allowlist. Names are resolved server-side via SecretManager; values never flow through agent context. Call env_list first to discover available names. Platform-managed secrets (referenced by the daemon config, e.g. ANTHROPIC_API_KEY) are rejected. Raw-interpreter commands (python -c, node -e, bash -c, etc.) are rejected with secretRefs to prevent trivial echo-to-stdout leaks. Example: {command: 'npx wrangler pages deploy ./dist', secretRefs: ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']}",
+    }),
+  ),
+  allowInstallDetour: Type.Optional(
+    Type.Boolean({
+      description:
+        "Request an operator-approved override when the user explicitly needs " +
+        "package installation despite an equivalent connected MCP server or " +
+        "available skill. Submits an approval request — does NOT self-authorize. " +
+        "Per-commandDigest scoped (one approval does not cover a different install).",
     }),
   ),
 });
@@ -390,32 +405,205 @@ function resolveSecretRefs(
 }
 
 // ---------------------------------------------------------------------------
+// Install-detour helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Map package manager to the structured ecosystem field used by the
+ * `tool:install_detour_detected` event payload (closed shape).
+ */
+function ecosystemFor(pm: "pip" | "npm" | "pnpm" | "yarn"): "python" | "node" {
+  return pm === "pip" ? "python" : "node";
+}
+
+/**
+ * Build the structured install-detour hint augmentation for advise mode.
+ * Returns BOTH a string (for `details.installDetourHint`) AND a sibling
+ * `[hint]` content block (for the `result.content` array). Primary content,
+ * stdout, stderr, exitCode, and status are NEVER mutated by callers.
+ *
+ * Hint is informational; primary signal stays on the
+ * exec result envelope.
+ */
+export function buildInstallDetourHint(decision: InstallDetourDecision): {
+  installDetourHint: string;
+  hintContentBlock: { type: "text"; text: string };
+} {
+  const lines = decision.overlaps.map((o) => {
+    const cluster = o.cluster ? ` (cluster: ${o.cluster})` : "";
+    return o.sourceType === "mcp"
+      ? `- ${o.packageName} -> connected MCP server "${o.sourceName}"${cluster}`
+      : `- ${o.packageName} -> available skill "${o.sourceName}"${cluster}`;
+  });
+  const text =
+    `[hint] Installed packages overlap available capabilities:\n${lines.join("\n")}\n` +
+    `If you can use these capabilities directly, do so before relying on the install.`;
+  return {
+    installDetourHint: text,
+    hintContentBlock: { type: "text", text },
+  };
+}
+
+/**
+ * Build the verbatim soft-stop error template. Returns `null` when
+ * no overlap source remains connected/visible at error-build time
+ * (overlaps disappeared mid-call; refusal no longer justified).
+ * Caller falls through to spawn in that case.
+ *
+ * Bullet count == filtered-overlap count. Cluster shown in parens when defined.
+ * MCP overlaps say `connected MCP server`; skill overlaps say `available skill`.
+ * NO provider-specific tool names; NO self-authorizing override wording.
+ */
+function buildSoftStopErrorTemplate(
+  decision: InstallDetourDecision,
+  port: ToolCapabilityPort,
+): string | null {
+  // Re-check connection/visibility at error time, not parser time.
+  // The connected-server set may have drifted since parse. Filter to overlaps
+  // whose source is currently reachable.
+  const connectedServers = new Set(port.getConnectedMcpServers());
+  const visibleSkills = new Set(port.getPromptSkillCapabilities().map((s) => s.name));
+  const filtered = decision.overlaps.filter((o) =>
+    o.sourceType === "mcp" ? connectedServers.has(o.sourceName) : visibleSkills.has(o.sourceName),
+  );
+  if (filtered.length === 0) return null; // overlaps disappeared — fall through
+
+  const bullets = filtered.map((o) => {
+    const cluster = o.cluster ? ` (cluster: ${o.cluster})` : "";
+    return o.sourceType === "mcp"
+      ? `- ${o.packageName} -> connected MCP server "${o.sourceName}"${cluster}`
+      : `- ${o.packageName} -> available skill "${o.sourceName}"${cluster}`;
+  });
+
+  return [
+    "Refused: install overlaps with available capability source(s).",
+    "",
+    "Overlapping packages:",
+    ...bullets,
+    "",
+    "To proceed, choose one:",
+    "1. Use the connected tool(s) or available skill(s) listed above for the overlapping work.",
+    "2. If you only need the non-overlapping packages, rerun exec with the overlapping ones removed.",
+    "3. If you genuinely need the install despite the overlap, ask the user/operator to approve the install-detour override, then rerun this exact command with `allowInstallDetour: true`.",
+  ].join("\n");
+}
+
+/**
+ * Build the closed `tool:install_detour_detected` event payload from a
+ * decision + the action/mode tags. Sanitized only:
+ * NEVER includes `command`, `rawCommand`, `stdout`, `stderr`, raw shell
+ * fragments, URLs, paths, or credentials.
+ */
+function buildInstallDetourEventPayload(
+  decision: InstallDetourDecision,
+  mode: "observe" | "advise" | "soft-stop",
+  action:
+    | "observed"
+    | "hinted"
+    | "soft_stopped"
+    | "override_requested"
+    | "overridden"
+    | "override_denied",
+): {
+  readonly agentId?: string;
+  readonly sessionKey?: string;
+  readonly traceId?: string;
+  readonly packageManager: "pip" | "npm" | "pnpm" | "yarn";
+  readonly commandDigest: string;
+  readonly packages: ReadonlyArray<{ readonly normalizedName: string; readonly ecosystem: "python" | "node" }>;
+  readonly overlaps: ReadonlyArray<{
+    readonly packageName: string;
+    readonly sourceType: "mcp" | "skill";
+    readonly sourceName: string;
+    readonly reason: DetourOverlap["reason"];
+  }>;
+  readonly mode: "observe" | "advise" | "soft-stop";
+  readonly action: "observed" | "hinted" | "soft_stopped" | "override_requested" | "overridden" | "override_denied";
+  readonly timestamp: number;
+} {
+  const ctx = tryGetContext();
+  return {
+    agentId: ctx?.sessionKey ?? "unknown", // sessionKey-as-agentId convention
+    sessionKey: ctx?.sessionKey ?? "unknown",
+    traceId: ctx?.traceId,
+    packageManager: decision.packageManager,
+    commandDigest: decision.commandDigest,
+    packages: decision.packages.map((p) => ({
+      normalizedName: p,
+      ecosystem: ecosystemFor(decision.packageManager),
+    })),
+    overlaps: decision.overlaps.map((o) => ({
+      packageName: o.packageName,
+      sourceType: o.sourceType,
+      sourceName: o.sourceName,
+      reason: o.reason,
+    })),
+    mode,
+    action,
+    timestamp: Date.now(),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Deps interface
+// ---------------------------------------------------------------------------
+
+/**
+ * Dependencies for the exec tool factory. Backward compatibility is NOT
+ * preserved (see CLAUDE.md user-memory `feedback_no_backward_compat`).
+ *
+ * `toolCapabilityPort` is REQUIRED — wires the install-detour policy gate
+ * inside `execute(...)` consuming `port.getInstallDetourMode()`. Daemon
+ * wiring may inject `createNoOpCapabilityPort()` at the construction site
+ * (`packages/daemon/src/wiring/setup-tools.ts`); the no-op returns empty
+ * connected-server and skill arrays so the parser sees no overlaps.
+ *
+ * `approvalGate` is OPTIONAL — only required by the `soft-stop` mode
+ * override path. Missing gate → `soft-stop` denies override
+ * (fail-closed per AGENTS.md §2.1).
+ */
+export interface ExecToolDeps {
+  readonly workspacePath: string;
+  readonly registry: ProcessRegistry;
+  readonly secretManager: SecretManager;
+  readonly platformSecretNames: ReadonlySet<string>;
+  readonly logger?: ToolLogger;
+  readonly subprocessEnv?: Record<string, string>;
+  readonly sandboxConfig?: ExecSandboxConfig;
+  readonly eventBus?: TypedEventBus;
+  readonly getToolResultsDir?: () => string | undefined;
+  /** REQUIRED for v1.1 capability layer. */
+  readonly toolCapabilityPort: ToolCapabilityPort;
+  /** Optional. Required only for soft-stop override path. */
+  readonly approvalGate?: ApprovalGate;
+}
 
 /**
  * Create an exec tool for shell command execution.
  *
- * @param workspacePath - Default working directory for commands
- * @param registry - ProcessRegistry for background process tracking
- * @param logger - Optional structured logger for DEBUG-level operation logging
- * @param subprocessEnv - Optional filtered env for subprocesses (defense-in-depth)
- * @param sandboxConfig - Optional sandbox configuration for OS-level isolation
- * @param eventBus - Optional TypedEventBus for emitting command:blocked audit events
- * @param getToolResultsDir - Optional getter for session tool-results directory
- * @returns AgentTool implementing the exec interface
+ * Backward compat NOT preserved (memory `feedback_no_backward_compat`).
+ *
+ * @param deps - Dependencies bundle. See `ExecToolDeps` for field semantics.
+ *   `toolCapabilityPort` is REQUIRED; `approvalGate` is optional but
+ *   required for the soft-stop override path.
+ * @returns AgentTool implementing the exec interface.
  */
-export function createExecTool(
-  workspacePath: string,
-  registry: ProcessRegistry,
-  secretManager: SecretManager,
-  platformSecretNames: ReadonlySet<string>,
-  logger?: ToolLogger,
-  subprocessEnv?: Record<string, string>,
-  sandboxConfig?: ExecSandboxConfig,
-  eventBus?: TypedEventBus,
-  getToolResultsDir?: () => string | undefined,
-): AgentTool<typeof ExecParams> {
+export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams> {
+  const {
+    workspacePath,
+    registry,
+    secretManager,
+    platformSecretNames,
+    logger,
+    subprocessEnv,
+    sandboxConfig,
+    eventBus,
+    getToolResultsDir,
+  } = deps;
   // Comis extension: promptGuidelines is not part of AgentTool type, use object
   // spread to avoid excess property checks in the return statement.
   const guidelines = {
@@ -505,6 +693,175 @@ export function createExecTool(
           });
           throwToolError("permission_denied", validationError.message);
         }
+
+        // ===================================================================
+        // Install-detour mode policy gate
+        //
+        // Runs synchronously BEFORE any subprocess spawn. soft-stop refuses
+        // pre-spawn; observe and advise fall through to spawn after emitting
+        // events.
+        //
+        // The decision is computed ONCE here and propagated to:
+        // - Event emission (this block)
+        // - ProcessSession population at all 3 spawn sites
+        // - Foreground / auto-bg / explicit-bg envelope augmentation (advise)
+        // - process.status retroactive augmentation (read back from session)
+        // ===================================================================
+        const installDetourMode = deps.toolCapabilityPort.getInstallDetourMode();
+        const installDetourDecision = parseInstallDetour(command, deps.toolCapabilityPort);
+        const allowInstallDetourOverride = readBooleanParam(p, "allowInstallDetour", false) ?? false;
+        // Track the terminal action emitted by the mode cascade for the per-call INFO log.
+        // Initialized to "no-decision" because the parser may return null (no install form /
+        // no overlap); when null, the mode cascade and the log block both short-circuit (the
+        // log lives inside `if (decision !== null)`).
+        let terminalAction:
+          | "observed"
+          | "hinted"
+          | "soft_stopped"
+          | "override_requested"
+          | "overridden"
+          | "override_denied"
+          | "no-decision" = "no-decision";
+
+        if (installDetourDecision !== null) {
+          // Decision is non-null only when overlaps.length > 0 (parser contract).
+          if (installDetourMode === "observe") {
+            for (const overlap of installDetourDecision.overlaps) {
+              // Scope each emit to the single overlap so downstream
+              // consumers receive distinct per-overlap payloads.
+              // The spread keeps packageManager / commandDigest /
+              // packages identical across the N events for a single call —
+              // only `overlaps[]` differs.
+              eventBus?.emit(
+                "tool:install_detour_detected",
+                buildInstallDetourEventPayload(
+                  { ...installDetourDecision, overlaps: [overlap] },
+                  "observe",
+                  "observed",
+                ),
+              );
+              terminalAction = "observed";
+            }
+            // Fall through to spawn (observe runs unchanged)
+          } else if (installDetourMode === "advise") {
+            for (const overlap of installDetourDecision.overlaps) {
+              // Scope each emit to the single overlap.
+              // See observe-loop comment above for the rationale.
+              eventBus?.emit(
+                "tool:install_detour_detected",
+                buildInstallDetourEventPayload(
+                  { ...installDetourDecision, overlaps: [overlap] },
+                  "advise",
+                  "hinted",
+                ),
+              );
+              terminalAction = "hinted";
+            }
+            // Fall through to spawn; envelope augmentation applied at completion sites
+          } else if (installDetourMode === "soft-stop") {
+            if (!allowInstallDetourOverride) {
+              // Refuse pre-spawn, single soft_stopped event
+              eventBus?.emit(
+                "tool:install_detour_detected",
+                buildInstallDetourEventPayload(installDetourDecision, "soft-stop", "soft_stopped"),
+              );
+              terminalAction = "soft_stopped";
+              const errorMessage = buildSoftStopErrorTemplate(installDetourDecision, deps.toolCapabilityPort);
+              if (errorMessage === null) {
+                // Overlaps disappeared mid-call. Fall through to spawn.
+                logger?.debug(
+                  {
+                    toolName: "exec",
+                    commandDigest: installDetourDecision.commandDigest,
+                    mode: "soft-stop",
+                    outcome: "overlaps-disappeared",
+                  },
+                  "install-detour overlap sources disappeared mid-call; falling through to spawn",
+                );
+              } else {
+                throwToolError("permission_denied", errorMessage);
+              }
+            } else {
+              // allowInstallDetour: true → submit approval request
+              const ctx = tryGetContext();
+              if (!deps.approvalGate || !ctx) {
+                // Fail-closed: missing gate or missing context → emit override_denied + throw
+                eventBus?.emit(
+                  "tool:install_detour_detected",
+                  buildInstallDetourEventPayload(installDetourDecision, "soft-stop", "override_denied"),
+                );
+                terminalAction = "override_denied";
+                const errorMessage = buildSoftStopErrorTemplate(installDetourDecision, deps.toolCapabilityPort);
+                throwToolError(
+                  "permission_denied",
+                  errorMessage ?? "Install-detour override denied: missing approval gate or request context.",
+                );
+              } else {
+                // Emit override_requested BEFORE awaiting (event-pair contract)
+                eventBus?.emit(
+                  "tool:install_detour_detected",
+                  buildInstallDetourEventPayload(installDetourDecision, "soft-stop", "override_requested"),
+                );
+                terminalAction = "override_requested";
+                const resolution = await deps.approvalGate.requestApproval({
+                  toolName: "exec",
+                  action: `exec.install_detour.override:${installDetourDecision.commandDigest}`,
+                  params: {
+                    // sanitized only
+                    packageManager: installDetourDecision.packageManager,
+                    packages: installDetourDecision.packages,
+                    overlaps: installDetourDecision.overlaps,
+                    mode: "soft-stop",
+                    commandDigest: installDetourDecision.commandDigest,
+                  },
+                  agentId: ctx.userId ?? "unknown",
+                  sessionKey: ctx.sessionKey,
+                  trustLevel: (ctx.trustLevel ?? "admin") as "admin" | "user" | "guest",
+                  channelType: ctx.channelType,
+                });
+                if (!resolution.approved) {
+                  eventBus?.emit(
+                    "tool:install_detour_detected",
+                    buildInstallDetourEventPayload(installDetourDecision, "soft-stop", "override_denied"),
+                  );
+                  terminalAction = "override_denied";
+                  throwToolError(
+                    "permission_denied",
+                    `Install-detour override denied: ${resolution.reason ?? "no reason given"}`,
+                  );
+                }
+                // Approved — emit overridden, fall through to spawn UNAUGMENTED.
+                eventBus?.emit(
+                  "tool:install_detour_detected",
+                  buildInstallDetourEventPayload(installDetourDecision, "soft-stop", "overridden"),
+                );
+                terminalAction = "overridden";
+              }
+            }
+          }
+
+          // Per-call INFO log summarizing the policy-gate evaluation
+          // (AGENTS.md §2.7 object-first convention).
+          // Fires for every command where a decision was produced AND a mode branch ran.
+          // The `terminalAction` field reflects the LAST emitted action for this call.
+          // For multi-event paths (observe/advise: 1-per-overlap; soft-stop with override:
+          // 2-event pair), `terminalAction` is the last action in the cascade for the call.
+          logger?.info(
+            {
+              toolName: "exec",
+              commandDigest: installDetourDecision.commandDigest,
+              packageManager: installDetourDecision.packageManager,
+              packageCount: installDetourDecision.packages.length,
+              overlapCount: installDetourDecision.overlaps.length,
+              mode: installDetourMode,
+              action: terminalAction,
+            },
+            "install-detour policy gate evaluated",
+          );
+        }
+        // ===================================================================
+        // End install-detour mode block
+        // ===================================================================
 
         // Detect --break-system-packages for post-execution warning
         const breakSystemWarning = command.includes("--break-system-packages")
@@ -636,10 +993,10 @@ export function createExecTool(
         }
 
         if (background) {
-          return executeBackground(command, cwd, finalEnv as NodeJS.ProcessEnv, input, registry, logger, sandboxConfig, workspacePath, tempDir, description, pty);
+          return executeBackground(command, cwd, finalEnv as NodeJS.ProcessEnv, input, registry, logger, sandboxConfig, workspacePath, tempDir, description, pty, installDetourDecision ?? undefined, installDetourMode);
         }
 
-        const result = await executeForeground(command, cwd, finalEnv as NodeJS.ProcessEnv, timeoutMs, input, signal, onUpdate, logger, sandboxConfig, workspacePath, tempDir, registry, autoBackgroundMs, pty, description, toolCallId, getToolResultsDir);
+        const result = await executeForeground(command, cwd, finalEnv as NodeJS.ProcessEnv, timeoutMs, input, signal, onUpdate, logger, sandboxConfig, workspacePath, tempDir, registry, autoBackgroundMs, pty, description, toolCallId, getToolResultsDir, installDetourDecision ?? undefined, installDetourMode);
 
         // Prepend --break-system-packages warning to stdout so the LLM sees it
         if (breakSystemWarning && result.details) {
@@ -684,6 +1041,10 @@ interface EscalationContext {
   resolve: (value: AgentToolResult<unknown>) => void;
   setResolved: () => void;
   description?: string;
+  /** Install-detour spawn-time decision (advise+overlap only). */
+  installDetourDecision?: InstallDetourDecision;
+  /** Install-detour mode at spawn time (drives augmentation). */
+  installDetourMode?: "observe" | "advise" | "soft-stop";
 }
 
 /**
@@ -710,6 +1071,14 @@ function escalateToBackground(ctx: EscalationContext): void {
     sandboxed: !!ctx.sandboxConfig,
     autoBackgrounded: true,
     ...(ctx.description && { description: ctx.description }),
+    // Spawn-time decision capture (advise+overlap only).
+    // observe-mode runs unchanged with no retroactive hint; soft-stop refused calls
+    // never reach a session-creation site (refused pre-spawn).
+    ...(ctx.installDetourDecision !== null
+      && ctx.installDetourDecision !== undefined
+      && ctx.installDetourDecision.overlaps.length > 0
+      && ctx.installDetourMode === "advise"
+      && { installDetourDecision: ctx.installDetourDecision }),
   };
 
   // Re-wire stdout/stderr from rolling buffer to session append
@@ -739,6 +1108,29 @@ function escalateToBackground(ctx: EscalationContext): void {
     "Exec auto-backgrounded after threshold",
   );
   if (ctx.spillStream) ctx.spillStream.end();
+  // Auto-bg envelope augmentation in advise mode
+  if (
+    ctx.installDetourMode === "advise" &&
+    ctx.installDetourDecision !== null &&
+    ctx.installDetourDecision !== undefined &&
+    ctx.installDetourDecision.overlaps.length > 0
+  ) {
+    const hint = buildInstallDetourHint(ctx.installDetourDecision);
+    const augmented = jsonResult({
+      status: "backgrounded",
+      sessionId: session.id,
+      pid: ctx.child.pid,
+      stdoutSoFar: truncateTail(ctx.stdoutBuf).content,
+      stderrSoFar: truncateTail(ctx.stderrBuf).content,
+      ...(ctx.description && { description: ctx.description }),
+      installDetourHint: hint.installDetourHint,
+    });
+    ctx.resolve({
+      content: [...augmented.content, hint.hintContentBlock],
+      details: augmented.details,
+    });
+    return;
+  }
   ctx.resolve(jsonResult({
     status: "backgrounded",
     sessionId: session.id,
@@ -771,6 +1163,8 @@ function executeForeground(
   description?: string,
   toolCallId?: string,
   getToolResultsDir?: () => string | undefined,
+  installDetourDecision?: InstallDetourDecision,
+  installDetourMode?: "observe" | "advise" | "soft-stop",
 ): Promise<AgentToolResult<unknown>> {
   const startTime = performance.now();
   const startTimeMs = Date.now();
@@ -921,6 +1315,9 @@ function executeForeground(
             signal, onAbort, timeoutTimer, resolve,
             setResolved: () => { resolved = true; },
             description,
+            // Forward install-detour spawn-time decision + mode
+            ...(installDetourDecision !== undefined && { installDetourDecision }),
+            ...(installDetourMode !== undefined && { installDetourMode }),
           });
         }, effectiveAutoMs)
       : null;
@@ -1057,6 +1454,21 @@ function executeForeground(
         }
       }
 
+      // Foreground completion envelope augmentation
+      if (
+        installDetourMode === "advise" &&
+        installDetourDecision !== undefined &&
+        installDetourDecision.overlaps.length > 0
+      ) {
+        const hint = buildInstallDetourHint(installDetourDecision);
+        result.installDetourHint = hint.installDetourHint;
+        const augmented = jsonResult(result);
+        resolve({
+          content: [...augmented.content, hint.hintContentBlock],
+          details: augmented.details,
+        });
+        return;
+      }
       resolve(jsonResult(result));
     });
 
@@ -1099,6 +1511,8 @@ function executeBackground(
   tempDir?: string,
   description?: string,
   pty?: boolean,
+  installDetourDecision?: InstallDetourDecision,
+  installDetourMode?: "observe" | "advise" | "soft-stop",
 ): AgentToolResult<unknown> {
   const sessionId = generateSessionId();
   const { bin, args, cwd: spawnCwd } = buildSpawnCommand(
@@ -1124,6 +1538,11 @@ function executeBackground(
     maxOutputChars: BACKGROUND_MAX_OUTPUT_CHARS,
     sandboxed: !!sandboxConfig,
     ...(description && { description }),
+    // Spawn-time decision capture (advise+overlap only).
+    ...(installDetourDecision !== undefined
+      && installDetourDecision.overlaps.length > 0
+      && installDetourMode === "advise"
+      && { installDetourDecision }),
   };
 
   // Output cleaners for stateful UTF-8 decode + ANSI strip + CR normalize + binary sanitize
@@ -1176,6 +1595,26 @@ function executeBackground(
   registry.add(session);
 
   logger?.debug({ toolName: "exec", sessionId, pid: child.pid }, "Background process spawned");
+
+  // Explicit-bg envelope augmentation in advise mode
+  if (
+    installDetourMode === "advise" &&
+    installDetourDecision !== undefined &&
+    installDetourDecision.overlaps.length > 0
+  ) {
+    const hint = buildInstallDetourHint(installDetourDecision);
+    const augmented = jsonResult({
+      status: "started",
+      sessionId,
+      pid: child.pid,
+      ...(description && { description }),
+      installDetourHint: hint.installDetourHint,
+    });
+    return {
+      content: [...augmented.content, hint.hintContentBlock],
+      details: augmented.details,
+    };
+  }
 
   return jsonResult({
     status: "started",

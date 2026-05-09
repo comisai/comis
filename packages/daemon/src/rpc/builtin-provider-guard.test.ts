@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for builtin-provider-guard.ts (260501-gyy FIX 2).
+ * Unit tests for builtin-provider-guard.ts.
  *
  * @module
  */
@@ -25,8 +25,7 @@ function pickCatalogProvider(): { providerId: string; baseUrl: string | undefine
   return { providerId, baseUrl };
 }
 
-describe("checkBuiltInProviderRedundancy (260501-gyy)", () => {
-  // A1
+describe("checkBuiltInProviderRedundancy", () => {
   it("rejects when providerId is in pi-ai catalog AND baseUrl matches catalog", () => {
     const { providerId, baseUrl } = pickCatalogProvider();
     const result = checkBuiltInProviderRedundancy(providerId, {
@@ -40,7 +39,6 @@ describe("checkBuiltInProviderRedundancy (260501-gyy)", () => {
     }
   });
 
-  // A2
   it("rejects when providerId is in pi-ai catalog AND baseUrl is undefined", () => {
     const { providerId } = pickCatalogProvider();
     const result = checkBuiltInProviderRedundancy(providerId, {
@@ -52,7 +50,6 @@ describe("checkBuiltInProviderRedundancy (260501-gyy)", () => {
     }
   });
 
-  // A3
   it("rejects when providerId is in pi-ai catalog AND baseUrl is empty string", () => {
     const { providerId } = pickCatalogProvider();
     const result = checkBuiltInProviderRedundancy(providerId, {
@@ -62,7 +59,7 @@ describe("checkBuiltInProviderRedundancy (260501-gyy)", () => {
     expect(result.ok).toBe(false);
   });
 
-  // A4 — proves .trim() is applied
+  // proves .trim() is applied
   it("rejects when providerId is in pi-ai catalog AND baseUrl is whitespace-only", () => {
     const { providerId } = pickCatalogProvider();
     const result = checkBuiltInProviderRedundancy(providerId, {
@@ -72,7 +69,6 @@ describe("checkBuiltInProviderRedundancy (260501-gyy)", () => {
     expect(result.ok).toBe(false);
   });
 
-  // A5
   it("allows when providerId is in pi-ai catalog BUT baseUrl differs from catalog (proxy use case)", () => {
     const { providerId } = pickCatalogProvider();
     const result = checkBuiltInProviderRedundancy(providerId, {
@@ -82,9 +78,8 @@ describe("checkBuiltInProviderRedundancy (260501-gyy)", () => {
     expect(result.ok).toBe(true);
   });
 
-  // A6
   it("allows when providerId is NOT in pi-ai catalog", () => {
-    const fakeProviderId = "my-custom-thing-260501-gyy";
+    const fakeProviderId = "my-custom-thing";
     const r1 = checkBuiltInProviderRedundancy(fakeProviderId, {
       baseUrl: "anything",
       apiKeyName: "MY_KEY",
@@ -96,7 +91,6 @@ describe("checkBuiltInProviderRedundancy (260501-gyy)", () => {
     expect(r2.ok).toBe(true);
   });
 
-  // A7
   it("rejection message contains the recovery instructions and interpolates providerId + apiKeyName", () => {
     const { providerId } = pickCatalogProvider();
 
@@ -123,7 +117,7 @@ describe("checkBuiltInProviderRedundancy (260501-gyy)", () => {
     }
   });
 
-  // A8 — source-grep regression: rejection-message TEMPLATE has no hardcoded provider names
+  // source-grep regression: rejection-message TEMPLATE has no hardcoded provider names
   it("rejection message TEMPLATE in source contains NO hardcoded provider names (catalog-agnostic)", async () => {
     const fs = await import("node:fs");
     const path = await import("node:path");

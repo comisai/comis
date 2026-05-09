@@ -6,10 +6,10 @@
  * older assistant messages while preserving redacted thinking blocks
  * and maintaining immutability guarantees.
  *
- * 260430-anthropic-400-thinking-block: cacheFenceIndex no longer gates
- * stripping. The cleaner is pure/deterministic so the same input must
- * produce the same cleaned output regardless of the fence value, which is
- * what Anthropic's prompt-cache validator requires.
+ * cacheFenceIndex no longer gates stripping. The cleaner is
+ * pure/deterministic so the same input must produce the same cleaned
+ * output regardless of the fence value, which is what Anthropic's
+ * prompt-cache validator requires.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -305,12 +305,12 @@ describe("createThinkingBlockCleaner", () => {
   });
 
   // -------------------------------------------------------------------------
-  // cache fence — IGNORED as of 260430-anthropic-400-thinking-block.
-  // The fence is read for diagnostic stats but no longer gates stripping.
+  // cache fence — IGNORED. The fence is read for diagnostic stats but no
+  // longer gates stripping.
   // -------------------------------------------------------------------------
 
-  describe("cache fence (260430-anthropic-400-thinking-block: ignored)", () => {
-    it("260430-anthropic-400-thinking-block: cacheFenceIndex does NOT protect old assistants from stripping", async () => {
+  describe("cache fence (ignored)", () => {
+    it("cacheFenceIndex does NOT protect old assistants from stripping", async () => {
       const layer = createThinkingBlockCleaner(2); // keepTurns=2
       // 6 assistant messages: indices 0-2 historically would be fenced,
       // 3-5 modifiable. Only the last 2 are in keep window (indices 4, 5).
@@ -513,10 +513,9 @@ describe("createThinkingBlockCleaner", () => {
     });
 
     it("onCleaned reports cacheFenceIndex for diagnostics but does not flag protected messages", async () => {
-      // 260430-anthropic-400-thinking-block: messagesProtected is intentionally
-      // omitted because no messages are fence-protected anymore. cacheFenceIndex
-      // is still surfaced for diagnostic visibility into what the cache fence
-      // would have been.
+      // messagesProtected is intentionally omitted because no messages are
+      // fence-protected anymore. cacheFenceIndex is still surfaced for
+      // diagnostic visibility into what the cache fence would have been.
       const onCleaned = vi.fn();
       const layer = createThinkingBlockCleaner(2, onCleaned);
       // 6 assistant messages, keepTurns=2, fence at index 2

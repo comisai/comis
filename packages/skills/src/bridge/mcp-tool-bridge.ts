@@ -16,6 +16,8 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type, type TSchema } from "typebox";
 import { registerToolMetadata } from "@comis/core";
+import { extractMcpServerName } from "@comis/shared";
+export { extractMcpServerName };
 import { resolveSourceProfile, type ToolSourceProfile } from "../builtin/tool-source-profiles.js";
 import type { McpToolDefinition, McpClientManager, McpToolCallResult } from "../integrations/mcp-client.js";
 import { sanitizeMcpToolResult } from "../integrations/mcp-result-sanitizer.js";
@@ -31,27 +33,8 @@ interface McpBridgeLogger {
 }
 
 // ---------------------------------------------------------------------------
-// MCP tool name parsing and error classification
+// MCP error classification
 // ---------------------------------------------------------------------------
-
-/**
- * Extract the MCP server name from a sanitized tool name.
- *
- * Sanitized MCP tool names use the format `mcp__serverName--toolName`.
- * Returns `undefined` for non-MCP tools or malformed names.
- *
- * @example
- * extractMcpServerName("mcp__context7--resolve-library-id") // "context7"
- * extractMcpServerName("mcp__srv__v2--ns--tool") // "srv__v2"
- * extractMcpServerName("bash") // undefined
- */
-export function extractMcpServerName(toolName: string): string | undefined {
-  if (!toolName.startsWith("mcp__")) return undefined;
-  const rest = toolName.slice(5); // strip "mcp__"
-  const sepIdx = rest.indexOf("--");
-  if (sepIdx <= 0) return undefined; // no separator or empty server name
-  return rest.slice(0, sepIdx);
-}
 
 /**
  * Classify an MCP error message into a category for observability.

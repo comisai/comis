@@ -5,6 +5,6 @@
     "rootDir": "src"
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts"],
+  "exclude": ["src/**/*.test.ts", "src/__tests__/**", "src/**/__test-helpers/**"],
   "references": [{ "path": "../shared" }]
 }

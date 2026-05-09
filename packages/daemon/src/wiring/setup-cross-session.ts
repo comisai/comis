@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Cross-session messaging setup: cross-session sender and sub-agent runner.
- * Extracted from daemon.ts step 6.6.9 to isolate cross-session service
- * creation from the main wiring sequence. The three callback closures
- * (executeInSession, sendToChannel, executeSubAgent) are built internally
- * from injected dependencies (assembleToolsForAgent, getExecutor, adaptersByType).
+ * Isolates cross-session service creation from the main wiring sequence.
+ * The three callback closures (executeInSession, sendToChannel,
+ * executeSubAgent) are built internally from injected dependencies
+ * (assembleToolsForAgent, getExecutor, adaptersByType).
  * @module
  */
 
@@ -25,7 +25,7 @@ import { randomUUID } from "node:crypto";
 // Result type
 // ---------------------------------------------------------------------------
 
-/** All services produced by the cross-session messaging setup phase. */
+/** All services produced by the cross-session messaging setup. */
 export interface CrossSessionResult {
   /** Cross-session message sender for agent-to-agent communication. */
   crossSessionSender: ReturnType<typeof createCrossSessionSender>;
@@ -547,14 +547,14 @@ export function setupCrossSession(deps: {
 
     // Base subagent retention is "short" (5m TTL).
     // Graph sub-agents with graphSharedDir get depth-aware retention:
-    //   - Root nodes (depth=0): "short" -- complete in <3min, consumed by Wave 2 within 3-4min
-    //   - Downstream nodes (depth >= 1): "long" -- may be consumed by further waves
+    //   - Root nodes (depth=0): "short" -- complete fast, consumed by downstream nodes within 5m
+    //   - Downstream nodes (depth >= 1): "long" -- may be consumed by further descendants
     // Non-graph sub-agents always get "short".
     const subAgentCacheRetention = graphSharedDir
       ? resolveGraphCacheRetention(graphNodeDepth, isLeafNode)
       : "short" as const;
 
-    // R-11: Session adapter for sub-agents.
+    // Session adapter for sub-agents.
     // When subAgentSessionPersistence is true, sub-agents get disk-backed JSONL sessions
     // for debugging/auditing. Default (false): ephemeral in-memory, garbage-collected.
     const subAgentPersistence = container.config.security?.agentToAgent?.subAgentSessionPersistence ?? false;
@@ -595,8 +595,8 @@ export function setupCrossSession(deps: {
       // Reuse sessions need their own cache entries (skipCacheWrite will be false
       // because spawnPacket is undefined). Force "long" retention for multi-round persistence.
       // Graph sub-agents use depth-aware retention:
-      // Root nodes (depth=0): "short" -- complete fast, consumed within 5m by Wave 2.
-      // Downstream nodes (depth>=1): "long" -- may be consumed by later waves beyond 5m.
+      // Root nodes (depth=0): "short" -- complete fast, consumed within 5m by downstream nodes.
+      // Downstream nodes (depth>=1): "long" -- may be consumed beyond 5m.
       // Model resolution's cacheRetention must NOT override graph-aware default.
       cacheRetention: isReuseSession
         ? "long" as const
@@ -643,7 +643,7 @@ export function setupCrossSession(deps: {
     };
   };
 
-  // 6.6.9a. Cross-session sender — fire-and-forget, wait, or ping-pong messaging
+  // Cross-session sender — fire-and-forget, wait, or ping-pong messaging
   const crossSessionSender = createCrossSessionSender({
     sessionStore: {
       loadByFormattedKey: (key: string) => sessionStore.loadByFormattedKey(key),
@@ -789,7 +789,7 @@ export function setupCrossSession(deps: {
     eventBus: container.eventBus,
   });
 
-  // 6.6.9b. Sub-agent runner — async sub-agent spawning with allowlist + auto-archive
+  // Sub-agent runner — async sub-agent spawning with allowlist + auto-archive
   const subAgentRunner = createSubAgentRunner({
     sessionStore: {
       save: (key: SessionKey, messages: unknown[], metadata: Record<string, unknown>) =>

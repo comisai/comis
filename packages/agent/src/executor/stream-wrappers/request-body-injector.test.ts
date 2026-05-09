@@ -3079,8 +3079,8 @@ describe("createRequestBodyInjector — defer_loading injection", () => {
     expect(tools.find(t => t.name === "discover_tools")).toBeDefined();
   });
 
-  // 260428-oyc Task 1.1: source-level regression that the local supportsToolSearch
-  // helper was removed in favor of the shared export from tool-deferral.ts.
+  // Source-level regression that the local supportsToolSearch helper was
+  // removed in favor of the shared export from tool-deferral.ts.
   it("does NOT declare its own `function supportsToolSearch` (uses shared helper)", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
@@ -4472,8 +4472,8 @@ describe("(standalone): skipCacheWrite shared-prefix marker placement", () => {
     expect(result.messages).toBeDefined();
   });
 
-  // Regression coverage for Issue #4 (260419-iv4): when skipCacheWrite=true but
-  // the sub-agent has only one user message, the shared-prefix strip+replace
+  // Regression coverage: when skipCacheWrite=true but the sub-agent has only
+  // one user message, the shared-prefix strip+replace
   // has no anchor to place a replacement marker on. Previously this code path
   // stripped all cache_control markers unconditionally, leaving the request
   // with zero caching (100% miss, full-price input). The fix bypasses the

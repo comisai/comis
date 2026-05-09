@@ -7,6 +7,8 @@ import {
   type ProcessSession,
   type ProcessRegistry,
 } from "./process-registry.js";
+import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
+import type { InstallDetourDecision } from "./install-detour.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -26,6 +28,10 @@ function makeSession(overrides: Partial<ProcessSession> = {}): ProcessSession {
     stderr: overrides.stderr ?? "",
     child: overrides.child ?? undefined,
     maxOutputChars: overrides.maxOutputChars ?? 1024 * 1024,
+    sandboxed: overrides.sandboxed ?? false,
+    // Spread last so any optional override (description, installDetourDecision,
+    // autoBackgrounded) flows through without explicit per-field plumbing.
+    ...overrides,
   };
 }
 
@@ -39,14 +45,14 @@ beforeEach(() => {
 
 describe("createProcessTool", () => {
   it("has correct name, label, description", () => {
-    const tool = createProcessTool(registry);
+    const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
     expect(tool.name).toBe("process");
     expect(tool.label).toBe("Process");
     expect(tool.description).toContain("Manage background processes");
   });
 
   it("has correct parameter schema shape", () => {
-    const tool = createProcessTool(registry);
+    const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
     const props = (tool.parameters as { properties: Record<string, unknown> })
       .properties;
     expect(props).toHaveProperty("action");
@@ -57,7 +63,7 @@ describe("createProcessTool", () => {
 
   describe("list action", () => {
     it("returns empty array when no processes", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", { action: "list" });
       expect(result.details).toEqual([]);
     });
@@ -70,7 +76,7 @@ describe("createProcessTool", () => {
         makeSession({ id: "s2", command: "echo hi", status: "completed" }),
       );
 
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", { action: "list" });
       const details = result.details as Array<{ sessionId: string }>;
       expect(details).toHaveLength(2);
@@ -81,12 +87,12 @@ describe("createProcessTool", () => {
 
   describe("kill action", () => {
     it("requires sessionId (throws if missing)", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "kill" })).rejects.toThrow(/sessionId/);
     });
 
     it("throws for unknown sessionId", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "kill", sessionId: "nonexistent" })).rejects.toThrow(/not found/);
     });
   });
@@ -102,7 +108,7 @@ describe("createProcessTool", () => {
         }),
       );
 
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         action: "status",
         sessionId: "s1",
@@ -118,7 +124,7 @@ describe("createProcessTool", () => {
     });
 
     it("throws for unknown sessionId", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "status", sessionId: "nonexistent" })).rejects.toThrow(/not found/);
     });
   });
@@ -128,7 +134,7 @@ describe("createProcessTool", () => {
       const stdout = "line1\nline2\nline3\nline4\nline5";
       registry.add(makeSession({ id: "s1", stdout }));
 
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         action: "log",
         sessionId: "s1",
@@ -139,7 +145,7 @@ describe("createProcessTool", () => {
     });
 
     it("throws for unknown sessionId", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "log", sessionId: "nonexistent" })).rejects.toThrow(/not found/);
     });
 
@@ -147,7 +153,7 @@ describe("createProcessTool", () => {
       const lines = Array.from({ length: 50 }, (_, i) => `line-${i}`);
       registry.add(makeSession({ id: "s1", stdout: lines.join("\n") }));
 
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         action: "log",
         sessionId: "s1",
@@ -164,8 +170,74 @@ describe("createProcessTool", () => {
 
   describe("unknown action", () => {
     it("throws structured error for invalid action", async () => {
-      const tool = createProcessTool(registry);
+      const tool = createProcessTool({ registry, toolCapabilityPort: createCapabilityPortStub() });
       await expect(tool.execute("tc1", { action: "restart" })).rejects.toThrow(/invalid_value.*restart/);
     });
+  });
+});
+
+describe("process.status — install-detour retroactive hint", () => {
+  const fakeDecision: InstallDetourDecision = {
+    packageManager: "pip",
+    packages: ["market-data-lib"],
+    overlaps: [
+      {
+        packageName: "market-data-lib",
+        sourceType: "mcp",
+        sourceName: "finance-data",
+        cluster: "data-fetching-financial",
+        reason: "mcp-operator-alias",
+      },
+    ],
+    commandDigest: "abc123def456abcd",
+  };
+
+  it("returns installDetourHint when session has installDetourDecision (advise spawn-time)", async () => {
+    const reg = createProcessRegistry();
+    // Build a session WITH a decision (simulates advise-mode spawn)
+    reg.add(
+      makeSession({
+        id: "s-with-hint",
+        installDetourDecision: fakeDecision,
+      }),
+    );
+    const tool = createProcessTool({ registry: reg, toolCapabilityPort: createCapabilityPortStub() });
+    const result = (await tool.execute("tc-status-1", { action: "status", sessionId: "s-with-hint" })) as {
+      details?: Record<string, unknown>;
+    };
+    expect(result.details?.installDetourHint).toBeDefined();
+    expect(typeof result.details?.installDetourHint).toBe("string");
+    expect(result.details?.installDetourHint as string).toContain("market-data-lib");
+    expect(result.details?.installDetourHint as string).toContain("finance-data");
+  });
+
+  it("returns NO installDetourHint when session has no installDetourDecision", async () => {
+    const reg = createProcessRegistry();
+    reg.add(makeSession({ id: "s-no-hint" })); // no decision
+    const tool = createProcessTool({ registry: reg, toolCapabilityPort: createCapabilityPortStub() });
+    const result = (await tool.execute("tc-status-2", { action: "status", sessionId: "s-no-hint" })) as {
+      details?: Record<string, unknown>;
+    };
+    expect(result.details?.installDetourHint).toBeUndefined();
+  });
+
+  it("hint stays consistent with spawn-time decision even when port state has drifted", async () => {
+    // Session captured under port that returned ["finance-data"] at spawn time.
+    const reg = createProcessRegistry();
+    reg.add(makeSession({ id: "s-drift", installDetourDecision: fakeDecision }));
+
+    // Status queried under DIFFERENT port: connected-server set is now empty.
+    // The augmentation MUST still surface the hint (read back from session, not re-derived).
+    const driftedPort = createCapabilityPortStub({
+      getConnectedMcpServers: () => [], // finance-data disconnected
+      getMcpServerHint: () => undefined,
+    });
+    const tool = createProcessTool({ registry: reg, toolCapabilityPort: driftedPort });
+    const result = (await tool.execute("tc-status-3", { action: "status", sessionId: "s-drift" })) as {
+      details?: Record<string, unknown>;
+    };
+    // Hint must still mention finance-data despite drift (read from session, not re-derived)
+    expect(result.details?.installDetourHint).toBeDefined();
+    expect(result.details?.installDetourHint as string).toContain("finance-data");
   });
 });

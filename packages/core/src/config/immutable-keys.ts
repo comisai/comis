@@ -23,7 +23,7 @@ export const MUTABLE_CONFIG_OVERRIDES: readonly string[] = [
   "agents.*.skills.watchDebounceMs",
   "agents.*.skills.discoveryPaths",
   "agents.*.maxSteps",
-  // 260428-rrr Bug A: removed dead "agents.*.persona" entry. PerAgentConfigSchema
+  // Bug A: removed dead "agents.*.persona" entry. PerAgentConfigSchema
   // is z.strictObject and has no `persona` field, so the override could never
   // produce a successful patch -- it only leaked a misleading capability hint
   // to LLMs (formatRedirectHint emitted "you can also patch agents.<id>.persona")
@@ -100,6 +100,10 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
 
   // Logging rotation config requires daemon restart
   "daemon.logging",         // File transport config requires daemon restart
+
+  // v1.1 capability layer -- operator-only; agents must not self-configure
+  // capability map or detour policy.
+  "tooling",
 ] as const;
 
 /**

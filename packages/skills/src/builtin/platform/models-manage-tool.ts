@@ -90,9 +90,9 @@ export function createModelsManageTool(rpcCall: RpcCall): AgentTool<typeof Model
           const provider = readStringParam(p, "provider");
           return rpcCall("models.test", { provider, _trustLevel: ctx.trustLevel });
         },
-        // Layer 1F (260430-vwt): live native-catalog provider list for
-        // agent self-discovery. Pairs with the tool-guide pointer so the
-        // agent can confirm which names auto-promote in providers.create.
+        // Live native-catalog provider list for agent self-discovery.
+        // Pairs with the tool-guide pointer so the agent can confirm which
+        // names auto-promote in providers.create.
         async list_providers(_p, rpcCall, ctx) {
           return rpcCall("models.list_providers", { _trustLevel: ctx.trustLevel });
         },

@@ -5,8 +5,7 @@
  * Provides `comis providers list` for browsing available providers from
  * the live pi-ai catalog (with daemon RPC + local fallback). Status
  * column indicates whether a provider's API key is resolvable from the
- * env (mirrors credential-resolver.ts Source B semantics from
- * 260501-2pz).
+ * env (mirrors credential-resolver.ts Source B semantics).
  *
  * Mirrors `commands/models.ts` shape -- RPC-first, local catalog
  * fallback, `--format` flag, no `set` subcommand (provider switching
@@ -67,9 +66,9 @@ async function getModelCount(provider: string): Promise<number> {
  * - `configured`  : pi-ai's `getEnvApiKey` resolves a non-empty key
  * - `missing key` : no env key found
  *
- * Mirrors `credential-resolver.ts` Source B semantics from 260501-2pz.
- * Status reflects only env-key presence; it does NOT include the key
- * value itself (T-260501-kqq-02 information-disclosure threat).
+ * Mirrors `credential-resolver.ts` Source B semantics. Status reflects
+ * only env-key presence; it does NOT include the key value itself
+ * (information-disclosure threat).
  */
 function getProviderStatus(
   provider: string,
@@ -109,7 +108,7 @@ export function registerProvidersCommand(program: Command): void {
 
         // Sequentially fetch model counts. With ~11-23 providers this
         // is acceptable (single-digit RPC roundtrips). N+1 batching is
-        // a v1.5 enhancement (T-260501-kqq-03 DoS disposition: accept).
+        // a v1.5 enhancement (DoS disposition: accept).
         const rows: Array<{
           provider: string;
           modelCount: number;

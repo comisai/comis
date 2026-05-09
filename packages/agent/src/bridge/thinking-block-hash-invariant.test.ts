@@ -264,7 +264,7 @@ describe("assertThinkingBlocksUnchanged", () => {
 });
 
 // ---------------------------------------------------------------------------
-// AssertResult return shape (260428-j0v)
+// AssertResult return shape
 // ---------------------------------------------------------------------------
 
 describe("AssertResult return shape", () => {
@@ -727,7 +727,7 @@ describe("restoreCanonicalThinkingBlocks", () => {
 });
 
 // ---------------------------------------------------------------------------
-// diffThinkingBlocksAgainstPersisted (260428-iag wire-edge diagnostic)
+// diffThinkingBlocksAgainstPersisted (wire-edge diagnostic)
 // ---------------------------------------------------------------------------
 
 describe("diffThinkingBlocksAgainstPersisted", () => {

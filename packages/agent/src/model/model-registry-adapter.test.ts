@@ -266,10 +266,10 @@ describe("registerCustomProviders", () => {
     expect(found).toBeDefined();
     expect(found!.provider).toBe("nvidia");
     expect(found!.id).toBe("moonshotai/kimi-k2.5");
-    // Layer 1A (260430-vwt): registered API is now read from the live pi-ai
-    // catalog when entry.type ("openai") is a native provider. The catalog
-    // currently reports "openai-responses" for openai. Read it dynamically
-    // so the assertion stays stable across pi-ai upgrades.
+    // Registered API is read from the live pi-ai catalog when entry.type
+    // ("openai") is a native provider. The catalog currently reports
+    // "openai-responses" for openai. Read it dynamically so the assertion
+    // stays stable across pi-ai upgrades.
     const expectedApi = getModels("openai")[0]!.api;
     expect(found!.api).toBe(expectedApi);
     expect(found!.baseUrl).toBe("https://integrate.api.nvidia.com/v1");
@@ -621,14 +621,13 @@ describe("registerCustomProviders", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Layer 1A — catalog-driven API resolution (260430-vwt-1A)
+  // Catalog-driven API resolution
   //
-  // Replaces the deleted PROVIDER_TYPE_TO_API hardcoded map. The registered
-  // API for native types comes from the live pi-ai catalog; the fallback
-  // table covers legacy custom types pi-ai does not ship.
+  // The registered API for native types comes from the live pi-ai catalog;
+  // the fallback table covers legacy custom types pi-ai does not ship.
   // -------------------------------------------------------------------------
 
-  it("Layer 1A: registered API for native type 'openrouter' matches the live pi-ai catalog", () => {
+  it("registered API for native type 'openrouter' matches the live pi-ai catalog", () => {
     // Read the expected api from the catalog at test time so the assertion
     // stays stable across pi-ai upgrades that may switch openrouter's wire
     // format.
@@ -650,7 +649,7 @@ describe("registerCustomProviders", () => {
           apiKeyName: "OPENROUTER_API_KEY",
           enabled: true,
           headers: {},
-          models: [{ id: "qwen/qwen3-coder-custom-test-1A" }], // not in built-in catalog → registered
+          models: [{ id: "qwen/qwen3-coder-custom-test" }], // not in built-in catalog → registered
         },
       },
       secretManager,
@@ -658,12 +657,12 @@ describe("registerCustomProviders", () => {
     );
 
     expect(registered).toBe(1);
-    const found = registry.find("myOpenRouter", "qwen/qwen3-coder-custom-test-1A");
+    const found = registry.find("myOpenRouter", "qwen/qwen3-coder-custom-test");
     expect(found).toBeDefined();
     expect(found!.api).toBe(expectedApi);
   });
 
-  it("Layer 1A: 'ollama' falls back to openai-completions via FALLBACK_API_FOR_CUSTOM_TYPES (not in pi-ai catalog)", () => {
+  it("'ollama' falls back to openai-completions via FALLBACK_API_FOR_CUSTOM_TYPES (not in pi-ai catalog)", () => {
     const secretManager = createSecretManager({});
     const authStorage = createAuthStorageAdapter({ secretManager });
     const registry = createModelRegistryAdapter(authStorage);
@@ -672,13 +671,13 @@ describe("registerCustomProviders", () => {
     const { registered } = registerCustomProviders(
       registry,
       {
-        "local-ollama-1A": {
+        "local-ollama-fallback": {
           type: "ollama",
           baseUrl: "http://localhost:11434/v1",
           apiKeyName: "",
           enabled: true,
           headers: {},
-          models: [{ id: "llama3.3-1A" }],
+          models: [{ id: "llama3.3-fallback" }],
         },
       },
       secretManager,
@@ -686,20 +685,20 @@ describe("registerCustomProviders", () => {
     );
 
     expect(registered).toBe(1);
-    const found = registry.find("local-ollama-1A", "llama3.3-1A");
+    const found = registry.find("local-ollama-fallback", "llama3.3-fallback");
     expect(found).toBeDefined();
     expect(found!.api).toBe("openai-completions");
   });
 
   // -------------------------------------------------------------------------
-  // Layer 1B — catalog-aware model enrichment (260430-vwt-1B)
+  // Catalog-aware model enrichment
   //
   // When a user registers a comis provider with type matching a native
   // pi-ai catalog entry, we either inherit the entire catalog (empty list)
   // or enrich each user-supplied model with catalog metadata.
   // -------------------------------------------------------------------------
 
-  it("Layer 1B: empty model list with native type inherits the entire native catalog", () => {
+  it("empty model list with native type inherits the entire native catalog", () => {
     const secretManager = createSecretManager({ OPENROUTER_API_KEY: "or-test" });
     const authStorage = createAuthStorageAdapter({ secretManager });
     const registry = createModelRegistryAdapter(authStorage);
@@ -735,7 +734,7 @@ describe("registerCustomProviders", () => {
     expect(withCost.length).toBeGreaterThanOrEqual(10);
   });
 
-  it("Layer 1B: sparse list with native type enriches missing fields from catalog", () => {
+  it("sparse list with native type enriches missing fields from catalog", () => {
     const secretManager = createSecretManager({ OPENROUTER_API_KEY: "or-test" });
     const authStorage = createAuthStorageAdapter({ secretManager });
     const registry = createModelRegistryAdapter(authStorage);
@@ -754,13 +753,13 @@ describe("registerCustomProviders", () => {
     registerCustomProviders(
       registry,
       {
-        "myrouter-1B": {
+        "myrouter-enrich": {
           type: "openrouter",
           baseUrl: "https://openrouter.example/v1", // baseUrl override avoids inherit branch
           apiKeyName: "OPENROUTER_API_KEY",
           enabled: true,
           headers: {},
-          models: [{ id: `${sampleId}-comis-test-1B` }], // not in built-in → survives dedup
+          models: [{ id: `${sampleId}-comis-test-enrich` }], // not in built-in → survives dedup
         },
       },
       secretManager,
@@ -772,7 +771,7 @@ describe("registerCustomProviders", () => {
     // hardcoded fallbacks. To test catalog enrichment, register an alias
     // provider where the user supplies a real catalog ID; lookup goes
     // through the comis name and resolves via alias to the built-in entry.
-    const found = registry.find("myrouter-1B", `${sampleId}-comis-test-1B`);
+    const found = registry.find("myrouter-enrich", `${sampleId}-comis-test-enrich`);
     expect(found).toBeDefined();
     // For the catalog-enrichment behavior (real ID), use registry.find via
     // the OPENROUTER_API_KEY-backed built-in path, which is populated from
@@ -785,7 +784,7 @@ describe("registerCustomProviders", () => {
     expect(builtinHit!.maxTokens).toBe(sample!.maxTokens);
   });
 
-  it("Layer 1B: custom (non-catalog) type uses hardcoded fallbacks for unknown models", () => {
+  it("custom (non-catalog) type uses hardcoded fallbacks for unknown models", () => {
     const secretManager = createSecretManager({ MY_PROXY_KEY: "k" });
     const authStorage = createAuthStorageAdapter({ secretManager });
     const registry = createModelRegistryAdapter(authStorage);
@@ -794,13 +793,13 @@ describe("registerCustomProviders", () => {
     const { registered } = registerCustomProviders(
       registry,
       {
-        "openai-custom-proxy-1B": {
+        "openai-custom-proxy-fallback": {
           type: "openai-custom-proxy", // NOT a native catalog provider
           baseUrl: "https://my-proxy.example.com/v1",
           apiKeyName: "MY_PROXY_KEY",
           enabled: true,
           headers: {},
-          models: [{ id: "my-model-1B" }],
+          models: [{ id: "my-model-fallback" }],
         },
       },
       secretManager,
@@ -808,7 +807,7 @@ describe("registerCustomProviders", () => {
     );
 
     expect(registered).toBe(1);
-    const found = registry.find("openai-custom-proxy-1B", "my-model-1B");
+    const found = registry.find("openai-custom-proxy-fallback", "my-model-fallback");
     expect(found).toBeDefined();
     // Hardcoded fallbacks for non-catalog custom providers
     expect(found!.contextWindow).toBe(128_000);

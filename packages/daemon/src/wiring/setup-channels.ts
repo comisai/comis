@@ -158,7 +158,7 @@ export interface ChannelsDeps {
   onMessageReceived?: (msg: NormalizedMessage, channelType: string) => void;
   /** Optional callback fired AFTER each successful inbound message processing. Used by post-processing state (e.g. notification session activity recording). */
   onMessageProcessed?: (msg: NormalizedMessage, channelType: string) => void;
-  /** Optional approval gate for /approve and /deny chat commands in inbound pipeline (APPR-CHAT). */
+  /** Optional approval gate for /approve and /deny chat commands in inbound pipeline. */
   approvalGate?: import("@comis/core").ApprovalGate;
   /** Per-agent PI session adapters for session stats/destroy in slash commands (CMD-WIRE). */
   piSessionAdapters?: Map<string, {

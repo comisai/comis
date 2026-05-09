@@ -12,7 +12,9 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { SandboxExecProvider } from "./sandbox/sandbox-exec-provider.js";
 import { BwrapProvider } from "./sandbox/bwrap-provider.js";
-import { createSecretManager } from "@comis/core";
+import { createSecretManager, runWithContext } from "@comis/core";
+import type { ToolCapabilityPort, McpServerHint, TypedEventBus, RequestContext } from "@comis/core";
+import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -25,9 +27,15 @@ const STUB_PLATFORM_NAMES: ReadonlySet<string> = new Set();
 
 let registry: ProcessRegistry;
 
-function setup() {
+function setup(portOverrides?: Partial<ToolCapabilityPort>) {
   registry = createProcessRegistry();
-  return createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+  return createExecTool({
+    workspacePath: tmpdir(),
+    registry,
+    secretManager: STUB_SM,
+    platformSecretNames: STUB_PLATFORM_NAMES,
+    toolCapabilityPort: createCapabilityPortStub(portOverrides),
+  });
 }
 
 afterEach(async () => {
@@ -419,7 +427,7 @@ describe("createExecTool", () => {
       const subdir = join(workspace, "nested", "dir");
       mkdirSync(subdir, { recursive: true });
       try {
-        const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+        const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
         const result = await tool.execute("tc-rel", {
           command: "pwd",
           cwd: "nested/dir",
@@ -768,7 +776,7 @@ describe("createExecTool", () => {
 
     it("persists truncated output to exec-{toolCallId}.txt when getToolResultsDir returns path", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => persistDir);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => persistDir, toolCapabilityPort: createCapabilityPortStub() });
       // Generate >50KB of output to trigger truncation (6000 lines of 10 chars each ~ 66KB)
       const result = await tool.execute("persist-tc1", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
@@ -788,7 +796,7 @@ describe("createExecTool", () => {
 
     it("truncation notice includes file path and size", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => persistDir);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => persistDir, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("persist-tc2", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
         timeoutMs: 15_000,
@@ -801,7 +809,7 @@ describe("createExecTool", () => {
 
     it("no persistence when getToolResultsDir is undefined", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("persist-tc3", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
         timeoutMs: 15_000,
@@ -814,7 +822,7 @@ describe("createExecTool", () => {
 
     it("no persistence when getToolResultsDir() returns undefined at call time", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => undefined);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => undefined, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("persist-tc4", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
         timeoutMs: 15_000,
@@ -826,7 +834,7 @@ describe("createExecTool", () => {
 
     it("uses spill file for persistence when output > ROLLING_BUFFER_MAX", { timeout: 30_000 }, async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => persistDir);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => persistDir, toolCapabilityPort: createCapabilityPortStub() });
       // Generate ~165KB of output (15000 lines x 11 bytes each) -- exceeds ROLLING_BUFFER_MAX (100KB)
       const result = await tool.execute("spill-tc1", {
         command: "seq 1 15000 | while read n; do printf '%010d\\n' $n; done",
@@ -849,7 +857,7 @@ describe("createExecTool", () => {
 
     it("regression: 50KB-100KB output persists from in-memory buffers", { timeout: 30_000 }, async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => persistDir);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => persistDir, toolCapabilityPort: createCapabilityPortStub() });
       // Generate ~66KB of output (6000 lines x 11 bytes each) -- between DEFAULT_MAX_BYTES and ROLLING_BUFFER_MAX
       const result = await tool.execute("regress-tc1", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
@@ -873,7 +881,7 @@ describe("createExecTool", () => {
       let persistDir = join(tmpdir(), `comis-cap-test-${Date.now()}`);
       mkdirSync(persistDir, { recursive: true });
       try {
-        const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, undefined, () => persistDir);
+        const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, getToolResultsDir: () => persistDir, toolCapabilityPort: createCapabilityPortStub() });
         const result = await tool.execute("cap-tc1", {
           command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
           timeoutMs: 15_000,
@@ -1101,7 +1109,7 @@ describe("sandbox integration", () => {
       const workspace = createTempWorkspace();
       registry = createProcessRegistry();
       const config = createMockSandboxConfig();
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "echo hello",
         timeoutMs: 5_000,
@@ -1114,7 +1122,7 @@ describe("sandbox integration", () => {
 
     it("unsandboxed exec still works with sandboxConfig=undefined", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", { command: "echo hello" });
       const details = result.details as { exitCode: number; stdout: string };
       expect(details.exitCode).toBe(0);
@@ -1127,7 +1135,7 @@ describe("sandbox integration", () => {
       const workspace = createTempWorkspace();
       registry = createProcessRegistry();
       const config = createMockSandboxConfig();
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 0.01",
         background: true,
@@ -1140,7 +1148,7 @@ describe("sandbox integration", () => {
 
     it("unsandboxed background session has sandboxed=false", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 0.01",
         background: true,
@@ -1155,7 +1163,7 @@ describe("sandbox integration", () => {
       const workspace = createTempWorkspace();
       registry = createProcessRegistry();
       const config = createMockSandboxConfig();
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 0.01",
         background: true,
@@ -1171,7 +1179,7 @@ describe("sandbox integration", () => {
       const workspace = createTempWorkspace();
       registry = createProcessRegistry();
       const config = createMockSandboxConfig();
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       // Execute will fail because mock-sandbox binary does not exist,
       // but the tempDir creation happens before spawn
       await tool.execute("tc1", { command: "echo hello", timeoutMs: 5_000 });
@@ -1181,7 +1189,7 @@ describe("sandbox integration", () => {
     it("spillover without sandbox does NOT create .comis-tmp/", async () => {
       const workspace = createTempWorkspace();
       registry = createProcessRegistry();
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
       await tool.execute("tc1", { command: "echo hello" });
       expect(existsSync(join(workspace, ".comis-tmp"))).toBe(false);
     });
@@ -1213,7 +1221,7 @@ describe("sandbox integration", () => {
       const config = createMockSandboxConfig({
         sandbox: createMockSandboxProvider({ wrapEnv: wrapEnvSpy }),
       });
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       await tool.execute("tc1", { command: "echo hello", timeoutMs: 5_000 });
       expect(wrapEnvSpy).toHaveBeenCalledTimes(1);
       expect(wrapEnvSpy).toHaveBeenCalledWith(
@@ -1225,7 +1233,7 @@ describe("sandbox integration", () => {
     it("wrapEnv is not called when sandboxConfig is undefined", async () => {
       registry = createProcessRegistry();
       // No sandboxConfig -- wrapEnv should not be reachable
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", { command: "echo hello" });
       const details = result.details as { exitCode: number };
       expect(details.exitCode).toBe(0);
@@ -1238,7 +1246,7 @@ describe("sandbox integration", () => {
 // Backward compatibility regression suite
 // ---------------------------------------------------------------------------
 // Explicitly verifies all original exec-tool behaviors are preserved when
-// sandboxConfig is omitted. Uses createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES) -- NO
+// sandboxConfig is omitted. Uses createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() }) -- NO
 // sandboxConfig parameter -- to ensure the old API surface is untouched.
 // ---------------------------------------------------------------------------
 
@@ -1267,7 +1275,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("echo command returns stdout with exitCode 0", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", { command: "echo hello-compat" });
     const details = result.details as { exitCode: number; stdout: string };
     expect(details.exitCode).toBe(0);
@@ -1275,21 +1283,21 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("non-zero exit code is captured", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", { command: "exit 42" });
     const details = result.details as { exitCode: number };
     expect(details.exitCode).toBe(42);
   });
 
   it("stderr is captured", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", { command: "echo compat-err >&2" });
     const details = result.details as { stderr: string };
     expect(details.stderr).toContain("compat-err");
   });
 
   it("timeout kills process (exit code 124)", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", {
       command: "sleep 60",
       timeoutMs: 300,
@@ -1300,7 +1308,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("abort kills process (exit code 130)", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 200);
     const result = await tool.execute("tc1", {
@@ -1312,7 +1320,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("background mode returns started status with sessionId and pid", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", {
       command: "sleep 0.1",
       background: true,
@@ -1324,7 +1332,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("stdin input is passed through", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", {
       command: "cat",
       input: "compat-stdin-test",
@@ -1335,7 +1343,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("streaming onUpdate is called", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const updates: AgentToolResult<unknown>[] = [];
     const onUpdate = (partial: AgentToolResult<unknown>) => {
       updates.push(partial);
@@ -1347,7 +1355,7 @@ describe("backward compatibility (no sandboxConfig)", () => {
   });
 
   it("output truncation works on large output (>2000 lines)", async () => {
-    const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", {
       command: "seq 1 3000",
       timeoutMs: 10_000,
@@ -1472,7 +1480,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("can read and write within workspace", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: `echo "sandbox-content" > ${join(workspace, "test.txt")}`,
         timeoutMs: 10_000,
@@ -1486,7 +1494,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("blocks write outside workspace", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       // Use $HOME path -- NOT in sandbox write paths (unlike /tmp and /var/folders which are blanket-writable)
       const outsidePath = join(homedir(), `comis-sandbox-test-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
       const result = await tool.execute("tc1", {
@@ -1501,7 +1509,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("blocks read of home directory", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "ls ~/",
         timeoutMs: 10_000,
@@ -1514,7 +1522,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const sharedDir = createTempDir("comis-sandbox-shared");
       const config = createRealSandboxConfig(workspace, { sharedPaths: [sharedDir] });
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: `echo "shared-content" > ${join(sharedDir, "shared.txt")}`,
         timeoutMs: 10_000,
@@ -1532,7 +1540,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
       tempDirs.push(roDir);
       writeFileSync(join(roDir, "readable.txt"), "ro-content", "utf8");
       const config = createRealSandboxConfig(workspace, { readOnlyPaths: [roDir] });
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
 
       // Read should succeed
       const readResult = await tool.execute("tc1", {
@@ -1555,7 +1563,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("system tools are accessible", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
 
       const echoResult = await tool.execute("tc1", {
         command: "/bin/echo sandbox-sys-test",
@@ -1583,7 +1591,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("timeout kills sandboxed process (exit code 124)", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 60",
         timeoutMs: 500,
@@ -1596,7 +1604,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("abort kills sandboxed process (exit code 130)", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const controller = new AbortController();
       setTimeout(() => controller.abort(), 300);
       const result = await tool.execute("tc1", {
@@ -1610,7 +1618,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("exit codes pass through sandbox", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "exit 42",
         timeoutMs: 10_000,
@@ -1622,7 +1630,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("background mode works through sandbox", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 0.1",
         background: true,
@@ -1635,7 +1643,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("streaming onUpdate works through sandbox", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const updates: AgentToolResult<unknown>[] = [];
       const onUpdate = (partial: AgentToolResult<unknown>) => {
         updates.push(partial);
@@ -1656,7 +1664,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("spillover .comis-tmp files are accessible inside sandbox", { timeout: 30_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       // Generate >50KB of output: 6000 lines of 10 chars each
       const result = await tool.execute("tc1", {
         command: "seq 1 6000 | while read n; do printf '%010d\\n' $n; done",
@@ -1671,7 +1679,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("sandboxed background process has sandboxed=true in registry", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
-      const tool = createExecTool(workspace, registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, config);
+      const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
       const result = await tool.execute("tc1", {
         command: "sleep 0.1",
         background: true,
@@ -1691,7 +1699,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("emits command:blocked when command is blocked by denylist", async () => {
       const mockEventBus = { emit: vi.fn(), on: vi.fn(), off: vi.fn() };
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, mockEventBus as never);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, eventBus: mockEventBus as never, toolCapabilityPort: createCapabilityPortStub() });
 
       // rm -rf / triggers Category A denylist -- throwToolError throws
       await expect(tool.execute("tc1", { command: "rm -rf /" })).rejects.toThrow("permission_denied");
@@ -1709,7 +1717,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
 
     it("does not throw differently when eventBus is undefined and command is blocked", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
 
       // Still throws permission_denied -- eventBus is just undefined, no extra error
       await expect(tool.execute("tc1", { command: "rm -rf /" })).rejects.toThrow("permission_denied");
@@ -1718,7 +1726,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("truncates commandPrefix to 200 chars for long commands", async () => {
       const mockEventBus = { emit: vi.fn(), on: vi.fn(), off: vi.fn() };
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, undefined, mockEventBus as never);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, eventBus: mockEventBus as never, toolCapabilityPort: createCapabilityPortStub() });
 
       const longCommand = "rm -rf / " + "A".repeat(300);
       await expect(tool.execute("tc1", { command: longCommand })).rejects.toThrow("permission_denied");
@@ -1738,7 +1746,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
   describe("exitCodeMeaning in results", () => {
     it("includes exitCodeMeaning for grep exit 1", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
 
       const result = await tool.execute("tc1", {
         command: "grep nonexistent_pattern_xyz /dev/null",
@@ -1752,7 +1760,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
 
     it("omits exitCodeMeaning for ls exit 0", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, STUB_SM, STUB_PLATFORM_NAMES);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
 
       const result = await tool.execute("tc1", {
         command: "ls /dev/null",
@@ -1777,7 +1785,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
         CLOUDFLARE_API_TOKEN: "cfut_live_value_do_not_echo",
         CLOUDFLARE_ACCOUNT_ID: "live_account_id",
       });
-      const tool = createExecTool(tmpdir(), registry, sm, new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       const result = await tool.execute("sr1", {
         // `env` alone can't set non-allowlisted vars; this verifies the path.
@@ -1795,7 +1803,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("rejects names not matching /^[A-Z][A-Z0-9_]*$/ with invalid_value", async () => {
       registry = createProcessRegistry();
       const sm = createSecretManager({ CLOUDFLARE_API_TOKEN: "v" });
-      const tool = createExecTool(tmpdir(), registry, sm, new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       await expect(
         tool.execute("sr2", {
@@ -1812,7 +1820,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
         CLOUDFLARE_API_TOKEN: "cfut_user",
       });
       const platform = new Set(["ANTHROPIC_API_KEY"]);
-      const tool = createExecTool(tmpdir(), registry, sm, platform);
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: platform, toolCapabilityPort: createCapabilityPortStub() });
 
       await expect(
         tool.execute("sr3", {
@@ -1831,7 +1839,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
 
     it("rejects unknown names with a hint toward env_list / env_set", async () => {
       registry = createProcessRegistry();
-      const tool = createExecTool(tmpdir(), registry, createSecretManager({}), new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: createSecretManager({}), platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       await expect(
         tool.execute("sr4", {
@@ -1844,7 +1852,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("refuses raw-interpreter commands when secretRefs is present", async () => {
       registry = createProcessRegistry();
       const sm = createSecretManager({ FOO: "v" });
-      const tool = createExecTool(tmpdir(), registry, sm, new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       for (const cmd of [
         'python -c "print(1)"',
@@ -1867,7 +1875,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("allows non-interpreter commands and python file invocations with secretRefs", async () => {
       registry = createProcessRegistry();
       const sm = createSecretManager({ FOO: "bar" });
-      const tool = createExecTool(tmpdir(), registry, sm, new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       // Invoking a workspace script file is fine — echo targets are explicit
       // in the file's contents, not a one-liner.
@@ -1889,7 +1897,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
     it("empty secretRefs array is a no-op (does not trip the raw-interpreter guard)", async () => {
       registry = createProcessRegistry();
       const sm = createSecretManager({});
-      const tool = createExecTool(tmpdir(), registry, sm, new Set());
+      const tool = createExecTool({ workspacePath: tmpdir(), registry, secretManager: sm, platformSecretNames: new Set(), toolCapabilityPort: createCapabilityPortStub() });
 
       // python3 -c is normally refused with secretRefs, but with an empty
       // array there's nothing to inject, so the guard does not engage.
@@ -1912,16 +1920,14 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
           return true;
         },
       };
-      const tool = createExecTool(
-        tmpdir(),
+      const tool = createExecTool({
+        workspacePath: tmpdir(),
         registry,
-        sm,
-        new Set(),
-        undefined,
-        undefined,
-        undefined,
-        mockBus as never,
-      );
+        secretManager: sm,
+        platformSecretNames: new Set(),
+        eventBus: mockBus as never,
+        toolCapabilityPort: createCapabilityPortStub(),
+      });
 
       await tool.execute("sr9", {
         command: "true",
@@ -1981,7 +1987,7 @@ describe.skipIf(!HAVE_PYTHON3)("recovery hints (Python ModuleNotFoundError integ
     mkdirSync(join(ws, "src", "missingpkg"), { recursive: true });
     writeFileSync(join(ws, "src", "missingpkg", "__init__.py"), "");
 
-    const tool = createExecTool(ws, recoveryRegistry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: ws, registry: recoveryRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("rec-pos-1", {
       command: "python3 -m missingpkg",
       timeoutMs: 10_000,
@@ -2008,7 +2014,7 @@ describe.skipIf(!HAVE_PYTHON3)("recovery hints (Python ModuleNotFoundError integ
       '[project]\nname = "missingpkg"\nversion = "0.1.0"\n',
     );
 
-    const tool = createExecTool(ws, recoveryRegistry, STUB_SM, STUB_PLATFORM_NAMES);
+    const tool = createExecTool({ workspacePath: ws, registry: recoveryRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("rec-neg-1", {
       command: "python3 -m missingpkg",
       timeoutMs: 10_000,
@@ -2075,7 +2081,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 
   it("npx: runs npm-distributed CLI without persistent install", { timeout: 120_000 }, async () => {
     const ws = createTempDir("comis-bwrap-npx");
-    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const tool = createExecTool({ workspacePath: ws, registry: bwrapRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: createBwrapConfig(), toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", { command: "npx -y cowsay@1 hello", timeoutMs: 90_000 });
     const details = result.details as { exitCode: number; stdout: string };
     expect(details.exitCode).toBe(0);
@@ -2084,7 +2090,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 
   it("pipx: install + invoke survives across exec calls", { timeout: 180_000 }, async () => {
     const ws = createTempDir("comis-bwrap-pipx");
-    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const tool = createExecTool({ workspacePath: ws, registry: bwrapRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: createBwrapConfig(), toolCapabilityPort: createCapabilityPortStub() });
     const installResult = await tool.execute("tc1", {
       command: "pipx install --quiet pycowsay",
       timeoutMs: 120_000,
@@ -2097,7 +2103,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 
   it("uvx: ephemeral run of pypi-distributed CLI", { timeout: 120_000 }, async () => {
     const ws = createTempDir("comis-bwrap-uvx");
-    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const tool = createExecTool({ workspacePath: ws, registry: bwrapRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: createBwrapConfig(), toolCapabilityPort: createCapabilityPortStub() });
     const result = await tool.execute("tc1", {
       command: "uvx --quiet cowsay -t hi",
       timeoutMs: 90_000,
@@ -2107,7 +2113,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 
   it("cargo: install + invoke survives across exec calls", { timeout: 600_000 }, async () => {
     const ws = createTempDir("comis-bwrap-cargo");
-    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const tool = createExecTool({ workspacePath: ws, registry: bwrapRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: createBwrapConfig(), toolCapabilityPort: createCapabilityPortStub() });
     // ripgrep is a stable, broadly available choice. The 540s timeout absorbs
     // the cold-build cost on a fresh sandbox (no shared cargo cache).
     const installResult = await tool.execute("tc1", {
@@ -2124,7 +2130,7 @@ describe.skipIf(!realBwrapAvailable)("real bwrap dev sandbox matrix", () => {
 
   it("go: install + invoke survives across exec calls", { timeout: 300_000 }, async () => {
     const ws = createTempDir("comis-bwrap-go");
-    const tool = createExecTool(ws, bwrapRegistry, STUB_SM, STUB_PLATFORM_NAMES, undefined, undefined, createBwrapConfig());
+    const tool = createExecTool({ workspacePath: ws, registry: bwrapRegistry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: createBwrapConfig(), toolCapabilityPort: createCapabilityPortStub() });
     const installResult = await tool.execute("tc1", {
       command: "go install rsc.io/2fa@latest",
       timeoutMs: 240_000,
@@ -2189,4 +2195,594 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner", () =>
       /dataEnv\.PATH\s*=\s*`\$\{venvBin\}:\$\{baseEnv\.PATH\}`/.test(stripped);
     expect(hasPathMerge).toBe(true);
   });
+});
+
+// ===========================================================================
+// install-detour mode integration
+// ===========================================================================
+
+/** Inline mock event bus that pushes (type, payload) per emit. */
+function makeMockEventBus(
+  events: Array<{ type: string; payload: Record<string, unknown> }>,
+): TypedEventBus {
+  return {
+    emit: (type: string, payload: Record<string, unknown>) => {
+      events.push({ type, payload });
+    },
+    on: () => () => undefined,
+    off: () => undefined,
+    once: () => () => undefined,
+    removeAllListeners: () => undefined,
+  } as unknown as TypedEventBus;
+}
+
+/** Construct a minimal RequestContext for tests that exercise the approval-gate path. */
+function makeApprovalContext(): RequestContext {
+  return {
+    tenantId: "default",
+    userId: "test-user",
+    sessionKey: "test-session",
+    traceId: crypto.randomUUID(),
+    startedAt: Date.now(),
+    trustLevel: "admin",
+  };
+}
+
+describe("install-detour mode: observe", () => {
+  it("emits 1 event per overlap and runs the command unchanged", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "observe",
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data"
+          ? { cluster: "data-fetching", description: "Market data MCP", replacesPackages: ["market-data-lib"] }
+          : undefined,
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    const result = await tool.execute("tc1", { command: "echo done" }); // command innocent — no overlap
+    expect(events.filter((e) => e.type === "tool:install_detour_detected")).toHaveLength(0);
+    expect(result).toBeDefined();
+
+    // Now exercise overlap path
+    events.length = 0;
+    const overlapResult = await tool.execute("tc2", { command: "pip install market-data-lib" });
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(1);
+    expect(installEvents[0]!.payload.action).toBe("observed");
+    expect(installEvents[0]!.payload.mode).toBe("observe");
+    // Command still runs (observe runs unchanged)
+    expect(overlapResult).toBeDefined();
+  }, 30_000);
+
+  it("emits N events for N overlaps in a single command", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "observe",
+      getConnectedMcpServers: () => ["finance-data", "weather-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined => {
+        if (s === "finance-data") return { cluster: "x", description: "y", replacesPackages: ["market-data-lib"] };
+        if (s === "weather-data") return { cluster: "y", description: "z", replacesPackages: ["weather-lib"] };
+        return undefined;
+      },
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    await tool.execute("tc3", { command: "pip install market-data-lib weather-lib" });
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(2);
+    expect(installEvents.every((e) => e.payload.action === "observed")).toBe(true);
+
+    // Each event scoped to a single overlap. The buggy variant of the loop
+    // emitted N byte-identical payloads carrying the full overlaps[] array
+    // on every iteration.
+    expect((installEvents[0]!.payload.overlaps as ReadonlyArray<unknown>)).toHaveLength(1);
+    expect((installEvents[1]!.payload.overlaps as ReadonlyArray<unknown>)).toHaveLength(1);
+    const sourceNames = new Set(
+      installEvents.map(
+        (e) =>
+          (e.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!.sourceName,
+      ),
+    );
+    expect(sourceNames).toEqual(new Set(["finance-data", "weather-data"]));
+    // Distinctness invariant: two overlaps -> two events with non-equal sourceName.
+    expect(
+      (installEvents[0]!.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!
+        .sourceName,
+    ).not.toBe(
+      (installEvents[1]!.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!
+        .sourceName,
+    );
+  }, 30_000);
+});
+
+describe("install-detour mode: advise", () => {
+  it("foreground: augments details.installDetourHint and adds sibling [hint] content block; primary content NOT mutated", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "advise",
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data" ? { cluster: "data", description: "x", replacesPackages: ["market-data-lib"] } : undefined,
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    // Use a benign command that nominally matches the parser but won't actually install
+    // (we don't have a real pip in the test sandbox; the test checks AUGMENTATION shape,
+    // not real install).
+    const result = (await tool.execute("tc4", {
+      command: "pip install market-data-lib --dry-run --no-deps",
+    })) as { content: Array<{ type: string; text?: string }>; details?: Record<string, unknown> };
+
+    // Event emitted
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(1);
+    expect(installEvents[0]!.payload.action).toBe("hinted");
+
+    // Envelope augmented: sibling [hint] block + details.installDetourHint
+    expect(result.content.length).toBeGreaterThanOrEqual(2); // primary + sibling hint
+    const hintBlock = result.content[result.content.length - 1]!;
+    expect(hintBlock.type).toBe("text");
+    expect(hintBlock.text).toContain("[hint]");
+    expect(hintBlock.text).toContain("market-data-lib");
+    expect(hintBlock.text).toContain("finance-data");
+
+    expect(result.details?.installDetourHint).toBeDefined();
+    expect(typeof result.details?.installDetourHint).toBe("string");
+    expect(result.details?.installDetourHint as string).toContain("market-data-lib");
+  }, 30_000);
+
+  it("emits N distinct payloads for N overlaps in advise mode", async () => {
+    // Advise-mode analog of the observe N-overlap test: each emitted payload
+    // must be scoped to its single overlap. The buggy variant of the advise
+    // loop discarded the loop variable with `void overlap;` and emitted
+    // N byte-identical payloads.
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "advise",
+      getConnectedMcpServers: () => ["finance-data", "weather-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined => {
+        if (s === "finance-data") return { cluster: "x", description: "y", replacesPackages: ["market-data-lib"] };
+        if (s === "weather-data") return { cluster: "y", description: "z", replacesPackages: ["weather-lib"] };
+        return undefined;
+      },
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    await tool.execute("tc-advise-N-overlap", {
+      command: "pip install market-data-lib weather-lib --dry-run --no-deps",
+    });
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(2);
+    expect(installEvents.every((e) => e.payload.action === "hinted")).toBe(true);
+    expect(installEvents.every((e) => e.payload.mode === "advise")).toBe(true);
+    expect((installEvents[0]!.payload.overlaps as ReadonlyArray<unknown>)).toHaveLength(1);
+    expect((installEvents[1]!.payload.overlaps as ReadonlyArray<unknown>)).toHaveLength(1);
+    const sourceNames = new Set(
+      installEvents.map(
+        (e) =>
+          (e.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!.sourceName,
+      ),
+    );
+    expect(sourceNames).toEqual(new Set(["finance-data", "weather-data"]));
+    // Distinctness invariant: two overlaps -> two events with non-equal sourceName.
+    expect(
+      (installEvents[0]!.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!
+        .sourceName,
+    ).not.toBe(
+      (installEvents[1]!.payload.overlaps as ReadonlyArray<{ sourceName: string }>)[0]!
+        .sourceName,
+    );
+  }, 30_000);
+
+  it("populates session.installDetourDecision at spawn time for advise+overlap", async () => {
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "advise",
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data" ? { cluster: "data", description: "x", replacesPackages: ["market-data-lib"] } : undefined,
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+    });
+    // background:true forces explicit-bg path; session creation site populates installDetourDecision
+    const result = (await tool.execute("tc5", {
+      command: "pip install market-data-lib --dry-run",
+      background: true,
+    })) as { details?: { sessionId?: string } };
+    const sessionId = result.details?.sessionId;
+    expect(sessionId).toBeDefined();
+    const session = registry.get(sessionId!);
+    expect(session?.installDetourDecision).toBeDefined();
+    expect(session?.installDetourDecision?.packageManager).toBe("pip");
+    expect(session?.installDetourDecision?.overlaps[0]?.sourceName).toBe("finance-data");
+  }, 30_000);
+
+  it("observe mode does NOT populate session.installDetourDecision (advise-only)", async () => {
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "observe", // observe — not advise
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data" ? { cluster: "data", description: "x", replacesPackages: ["market-data-lib"] } : undefined,
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+    });
+    const result = (await tool.execute("tc6", {
+      command: "pip install market-data-lib --dry-run",
+      background: true,
+    })) as { details?: { sessionId?: string } };
+    const sessionId = result.details?.sessionId;
+    expect(sessionId).toBeDefined();
+    const session = registry.get(sessionId!);
+    expect(session?.installDetourDecision).toBeUndefined(); // observe-mode sessions don't carry the field
+  }, 30_000);
+});
+
+describe("install-detour mode: soft-stop", () => {
+  function makeSoftStopPort(opts?: {
+    replacesPackages?: readonly string[];
+    cluster?: string;
+  }): ToolCapabilityPort {
+    return createCapabilityPortStub({
+      getInstallDetourMode: () => "soft-stop",
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data"
+          ? {
+              cluster: opts?.cluster ?? "data-fetching-financial",
+              description: "Market data MCP",
+              replacesPackages: opts?.replacesPackages ?? ["market-data-lib"],
+            }
+          : undefined,
+      getClusterConfig: (id: string) =>
+        id === (opts?.cluster ?? "data-fetching-financial")
+          ? { label: "Financial data", priority: 10, preferOverInstalls: true }
+          : undefined,
+    });
+  }
+
+  it("refuses pre-spawn — no subprocess, no ProcessSession, no process.status follow-up", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = makeSoftStopPort();
+    registry = createProcessRegistry();
+    const sizeBefore = registry.size();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    await expect(
+      tool.execute("tc7", { command: "pip install market-data-lib" }),
+    ).rejects.toThrow(/Refused: install overlaps/);
+    // No session was registered (refused pre-spawn)
+    expect(registry.size()).toBe(sizeBefore);
+    // Single soft_stopped event emitted
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(1);
+    expect(installEvents[0]!.payload.action).toBe("soft_stopped");
+    expect(installEvents[0]!.payload.mode).toBe("soft-stop");
+  });
+
+  it("error template snapshot + behavior assertions (snapshot+behavior triple)", async () => {
+    const port = makeSoftStopPort({ replacesPackages: ["market-data-lib"], cluster: "data-fetching-financial" });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+    });
+    let errorMessage = "";
+    try {
+      await tool.execute("tc8", { command: "pip install market-data-lib" });
+    } catch (e) {
+      errorMessage = (e as Error).message;
+    }
+
+    // SNAPSHOT — verbatim error template
+    expect(errorMessage).toMatchInlineSnapshot(`
+      "[permission_denied] Refused: install overlaps with available capability source(s).
+
+      Overlapping packages:
+      - market-data-lib -> connected MCP server "finance-data" (cluster: data-fetching-financial)
+
+      To proceed, choose one:
+      1. Use the connected tool(s) or available skill(s) listed above for the overlapping work.
+      2. If you only need the non-overlapping packages, rerun exec with the overlapping ones removed.
+      3. If you genuinely need the install despite the overlap, ask the user/operator to approve the install-detour override, then rerun this exact command with \`allowInstallDetour: true\`."
+    `);
+
+    // BEHAVIOR — explicit assertions paired with the snapshot
+    expect(errorMessage).toContain("Refused: install overlaps with available capability source(s).");
+    expect(errorMessage).toContain('connected MCP server "finance-data"');
+    expect(errorMessage).toContain("(cluster: data-fetching-financial)");
+
+    // Bullet count == overlap count
+    const bullets = errorMessage.match(/^- /gm) ?? [];
+    expect(bullets).toHaveLength(1);
+
+    // FORBIDDEN — no provider-specific tool names
+    expect(errorMessage).not.toContain("discover_tools");
+    expect(errorMessage).not.toContain("tool_search_tool_regex");
+
+    // FORBIDDEN — no self-authorizing override wording
+    expect(errorMessage).not.toContain("we'll let you through");
+    expect(errorMessage).not.toMatch(/setting `allowInstallDetour: true` alone/);
+
+    // ARROW — ASCII not unicode
+    expect(errorMessage).not.toContain(" → ");
+  });
+
+  it("approval for one commandDigest does NOT auto-approve a different digest in same session (cache aliasing)", async () => {
+    // The existing ApprovalGate keys its caches by `${sessionKey}::${action}`
+    // (verified at packages/core/src/approval/approval-gate.ts:135 and :194).
+    // The executor must NOT extend the gate. Instead the action string itself
+    // includes the commandDigest suffix, ensuring two distinct commands in
+    // the same session produce DIFFERENT cache keys.
+    //
+    // This test verifies the executor builds DIFFERENT action strings for
+    // two distinct command digests — the precondition that makes the
+    // gate's existing cache behavior safe under install-detour overrides.
+
+    const requestApprovalMock = vi.fn().mockResolvedValue({
+      approved: true,
+      approvedBy: "test-operator",
+    });
+    const mockGate = {
+      requestApproval: requestApprovalMock,
+      resolveApproval: vi.fn(),
+      pending: vi.fn(() => []),
+      getRequest: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as Parameters<typeof createExecTool>[0]["approvalGate"];
+
+    const port = makeSoftStopPort({ replacesPackages: ["foo", "bar"] });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      approvalGate: mockGate,
+    });
+
+    // First call: pip install foo (digest A). Use --dry-run --no-deps to keep
+    // the test sandbox-stable; the gate is approved, command then attempts to
+    // run (may fail because no real pip — caught and ignored).
+    // Wrap in runWithContext so tryGetContext() returns a real ctx (the executor
+    // requires both deps.approvalGate AND ctx to submit the override request;
+    // missing either fails-closed via the case-(4) override_denied path).
+    try {
+      await runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc9a", {
+          command: "pip install foo --dry-run --no-deps",
+          allowInstallDetour: true,
+        }),
+      );
+    } catch {
+      // Spawn-time errors are OK; we only care about the approval action string.
+    }
+
+    // Second call: pip install bar (digest B). Different package → different digest.
+    try {
+      await runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc9b", {
+          command: "pip install bar --dry-run --no-deps",
+          allowInstallDetour: true,
+        }),
+      );
+    } catch {
+      // Same — spawn-time errors OK.
+    }
+
+    // The mock recorded both invocations.
+    expect(requestApprovalMock).toHaveBeenCalledTimes(2);
+
+    // Capture the action strings passed to requestApproval.
+    const callArgs = requestApprovalMock.mock.calls.map(
+      (call: unknown[]) => (call[0] as { action: string }).action,
+    );
+    expect(callArgs).toHaveLength(2);
+
+    const [actionA, actionB] = callArgs;
+
+    // Both actions carry the install-detour override prefix.
+    expect(actionA).toMatch(/^exec\.install_detour\.override:[0-9a-f]{16}$/);
+    expect(actionB).toMatch(/^exec\.install_detour\.override:[0-9a-f]{16}$/);
+
+    // CRITICAL cache-aliasing assertion: the two action strings are NOT EQUAL.
+    expect(actionA).not.toBe(actionB);
+
+    // Both digest suffixes are valid 16-hex SHA-256 truncations.
+    const digestA = actionA.split(":").pop();
+    const digestB = actionB.split(":").pop();
+    expect(digestA).toMatch(/^[0-9a-f]{16}$/);
+    expect(digestB).toMatch(/^[0-9a-f]{16}$/);
+    expect(digestA).not.toBe(digestB);
+  }, 30_000);
+
+  it("missing approvalGate → fail-closed pre-submission (exactly 1 event: override_denied; no spawn)", async () => {
+    // When allowInstallDetour=true is set but the approval gate is not
+    // wired (`deps.approvalGate` undefined), the override path fails
+    // BEFORE submission. Therefore `override_requested` is NOT emitted;
+    // exactly 1 terminal `override_denied` event fires.
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = makeSoftStopPort();
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+      // NO approvalGate
+    });
+    await expect(
+      tool.execute("tc10", { command: "pip install market-data-lib", allowInstallDetour: true }),
+    ).rejects.toThrow();
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    // EXACTLY 1 event (pre-submission fail-closed; no override_requested).
+    expect(installEvents).toHaveLength(1);
+    expect(installEvents[0]!.payload.action).toBe("override_denied");
+    expect(installEvents[0]!.payload.mode).toBe("soft-stop");
+    // No subprocess spawned.
+    expect(registry.size()).toBe(0);
+  });
+
+  it("denied approval → 2-event submission pair, action sequence = ['override_requested','override_denied']", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = makeSoftStopPort();
+    registry = createProcessRegistry();
+    const denyGate = {
+      requestApproval: vi.fn().mockResolvedValue({ approved: false, reason: "test-deny" }),
+      resolveApproval: vi.fn(),
+      pending: vi.fn(() => []),
+      getRequest: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as Parameters<typeof createExecTool>[0]["approvalGate"];
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+      approvalGate: denyGate,
+    });
+    await expect(
+      runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc11", { command: "pip install market-data-lib", allowInstallDetour: true }),
+      ),
+    ).rejects.toThrow();
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    // EXACTLY 2 events.
+    expect(installEvents).toHaveLength(2);
+    // Action sequence assertion (order matters per the event-pair contract).
+    const actionSequence = installEvents.map((e) => e.payload.action);
+    expect(actionSequence).toEqual(["override_requested", "override_denied"]);
+    // No subprocess spawned.
+    expect(registry.size()).toBe(0);
+  });
+
+  it("approved override emits 2-event submission pair, action sequence = ['override_requested','overridden']; spawns the command", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = makeSoftStopPort();
+    registry = createProcessRegistry();
+    const approveGate = {
+      requestApproval: vi.fn().mockResolvedValue({ approved: true, approvedBy: "test-operator" }),
+      resolveApproval: vi.fn(),
+      pending: vi.fn(() => []),
+      getRequest: vi.fn(),
+      dispose: vi.fn(),
+    } as unknown as Parameters<typeof createExecTool>[0]["approvalGate"];
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+      approvalGate: approveGate,
+    });
+    // Innocuous command that matches the parser; --dry-run --no-deps avoids
+    // sandbox install. The execute() call may still throw post-spawn (no
+    // real pip), but the EVENT pair is what we assert.
+    try {
+      await runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc12", {
+          command: "pip install market-data-lib --dry-run --no-deps",
+          allowInstallDetour: true,
+        }),
+      );
+    } catch {
+      // Spawn-time errors are OK; the event-pair contract is what matters here.
+    }
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    // EXACTLY 2 events.
+    expect(installEvents).toHaveLength(2);
+    // Action sequence assertion (order matters per the event-pair contract).
+    const actionSequence = installEvents.map((e) => e.payload.action);
+    expect(actionSequence).toEqual(["override_requested", "overridden"]);
+  }, 30_000);
+
+  it("split-and-rerun terminates with ZERO events on non-overlapping subset", async () => {
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = makeSoftStopPort({ replacesPackages: ["market-data-lib"] });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+    // Step 1: refused mixed install
+    await expect(
+      tool.execute("tc13a", { command: "pip install market-data-lib matplotlib" }),
+    ).rejects.toThrow();
+    const beforeSecondCall = events.filter((e) => e.type === "tool:install_detour_detected").length;
+    expect(beforeSecondCall).toBe(1); // single soft_stopped event for the first refusal
+
+    // Step 2: rerun non-overlapping subset — ZERO events
+    events.length = 0;
+    await tool.execute("tc13b", { command: "pip install matplotlib --dry-run --no-deps" });
+    const afterSecondCall = events.filter((e) => e.type === "tool:install_detour_detected").length;
+    expect(afterSecondCall).toBe(0);
+  }, 30_000);
 });

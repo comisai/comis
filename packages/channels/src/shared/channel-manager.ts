@@ -146,9 +146,9 @@ export interface ChannelManagerDeps {
   responsePrefixConfig?: { template: string; position: "prepend" | "append" };
   /** Template context builder for response prefix variables. */
   buildTemplateContext?: (agentId: string, channelType: string, msg: NormalizedMessage) => Record<string, string>;
-  /** Optional approval gate for /approve and /deny chat commands (APPR-CHAT). When absent, approval commands pass through as plain text. */
+  /** Optional approval gate for /approve and /deny chat commands. When absent, approval commands pass through as plain text. */
   approvalGate?: InboundPipelineDeps["approvalGate"];
-  /** Handle general slash commands via command handler (CMD-WIRE). */
+  /** Handle general slash commands via command handler. */
   handleSlashCommand?: InboundPipelineDeps["handleSlashCommand"];
   /** Per-agent enforceFinalTag config lookup. */
   getEnforceFinalTag?: InboundPipelineDeps["getEnforceFinalTag"];

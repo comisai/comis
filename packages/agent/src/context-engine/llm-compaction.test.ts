@@ -479,10 +479,10 @@ describe("createLlmCompactionLayer", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R-07: Repeated compaction safety
+  // Repeated compaction safety
   // -------------------------------------------------------------------------
 
-  describe("R-07: repeated compaction safety", () => {
+  describe("Repeated compaction safety", () => {
     it("Level 1 compaction across 3 cycles preserves message content", async () => {
       const { deps } = createMockDeps();
       const layer = createLlmCompactionLayer({ compactionCooldownTurns: 0 }, deps);

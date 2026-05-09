@@ -36,4 +36,4 @@ export {
   getAllToolMetadata,
   truncateContentBlocks,
 } from "../tool-metadata.js";
-export type { ComisToolMetadata } from "../tool-metadata.js";
+export type { ComisToolMetadata, ToolCapabilityMetadata } from "../tool-metadata.js";

@@ -177,7 +177,7 @@ export function resolveToolCallIdMode(
 }
 
 // ---------------------------------------------------------------------------
-// Boot-time PROVIDER_OVERRIDES staleness validator (Layer 3C -- 260501-07g)
+// Boot-time PROVIDER_OVERRIDES staleness validator
 // ---------------------------------------------------------------------------
 
 /**

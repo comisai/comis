@@ -15,7 +15,7 @@
  */
 
 import { cpSync, mkdirSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -62,7 +62,12 @@ for (const pkg of WORKSPACE_PACKAGES) {
   }
   cpSync(distSrc, join(destDir, "dist"), {
     recursive: true,
-    filter: (src) => !src.endsWith(".test.js") && !src.endsWith(".test.d.ts") && !src.endsWith(".test.d.ts.map"),
+    filter: (src) =>
+      !src.endsWith(".test.js") &&
+      !src.endsWith(".test.d.ts") &&
+      !src.endsWith(".test.d.ts.map") &&
+      !src.includes(`${sep}__test-helpers${sep}`) &&
+      !src.endsWith(`${sep}__test-helpers`),
   });
 
   // Copy package.json with dependencies stripped — all external deps are

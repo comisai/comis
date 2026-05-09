@@ -237,13 +237,11 @@ describe("ModelScanner", () => {
       expect(result.error!.toLowerCase()).toContain("abort");
     });
 
-    // Layer 1E (260430-vwt): types other than anthropic/google are now
-    // treated as OpenAI-compatible by the scanner. Ollama (and any other
-    // local or custom OpenAI-compatible proxy) is scanned via /v1/models
-    // with a Bearer token. This is a deliberate behavioral broadening from
-    // the prior 8-type allowlist -- the scanner's role is /v1/models
-    // probing, and the catalog wire-format api ("mistral-conversations",
-    // "openai-responses", etc.) is orthogonal.
+    // Types other than anthropic/google are treated as OpenAI-compatible by
+    // the scanner. Ollama (and any other local or custom OpenAI-compatible
+    // proxy) is scanned via /v1/models with a Bearer token. The scanner's
+    // role is /v1/models probing, and the catalog wire-format api
+    // ("mistral-conversations", "openai-responses", etc.) is orthogonal.
     it("scans custom OpenAI-compatible types (ollama) via /v1/models", async () => {
       scanner = createScannerWithMock(async () =>
         jsonResponse({ data: [{ id: "llama3.3" }] }),
@@ -370,10 +368,10 @@ describe("ModelScanner", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Layer 1E (260430-vwt) -- catalog-driven helpers
+// Catalog-driven helpers
 // ---------------------------------------------------------------------------
 
-describe("Layer 1E catalog-driven helpers", () => {
+describe("catalog-driven helpers", () => {
   it("isOpenAICompatibleType returns true for native pi-ai providers other than anthropic/google", () => {
     expect(isOpenAICompatibleType("openrouter")).toBe(true);
     expect(isOpenAICompatibleType("groq")).toBe(true);

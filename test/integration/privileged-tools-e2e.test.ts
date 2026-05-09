@@ -4,32 +4,32 @@
  *
  * Validates all privileged management RPC methods against a running daemon:
  *
- * AGENT LIFECYCLE (TEST-07):
- *   TEST-07-01: agents.list returns configured agents
- *   TEST-07-02: agents.get returns agent config and state
- *   TEST-07-03: agents.create creates a new runtime agent
- *   TEST-07-04: agents.update patches an existing agent config
- *   TEST-07-05: agents.suspend suspends an agent
- *   TEST-07-06: agents.resume resumes a suspended agent
- *   TEST-07-07: agents.delete removes an agent
- *   TEST-07-08: agents.create with existing ID returns error
+ * AGENT LIFECYCLE:
+ *   agents.list returns configured agents
+ *   agents.get returns agent config and state
+ *   agents.create creates a new runtime agent
+ *   agents.update patches an existing agent config
+ *   agents.suspend suspends an agent
+ *   agents.resume resumes a suspended agent
+ *   agents.delete removes an agent
+ *   agents.create with existing ID returns error
  *
- * MEMORY MANAGEMENT (TEST-08 - Memory):
- *   TEST-08-M01: memory.stats returns stats shape
- *   TEST-08-M02: memory.store creates entries
- *   TEST-08-M03: memory.browse lists entries with pagination
- *   TEST-08-M04: memory.export returns all entries as JSON
- *   TEST-08-M05: memory.delete removes entries by ID
- *   TEST-08-M06: memory.flush clears all entries
+ * MEMORY MANAGEMENT:
+ *   memory.stats returns stats shape
+ *   memory.store creates entries
+ *   memory.browse lists entries with pagination
+ *   memory.export returns all entries as JSON
+ *   memory.delete removes entries by ID
+ *   memory.flush clears all entries
  *
- * SESSION MANAGEMENT (TEST-08 - Sessions):
- *   TEST-08-S01: session.list returns sessions shape
- *   TEST-08-S02: session seed and export returns messages (seeded via sessionStoreBridge)
- *   TEST-08-S03: session.compact returns compaction status for seeded session
- *   TEST-08-S04: session.reset clears messages for seeded session
- *   TEST-08-S05: session.delete removes seeded session
- *   TEST-08-S06: session.list with kind filter returns proper shape
- *   TEST-08-S07: session.export returns error for non-existent session
+ * SESSION MANAGEMENT:
+ *   session.list returns sessions shape
+ *   session seed and export returns messages (seeded via sessionStoreBridge)
+ *   session.compact returns compaction status for seeded session
+ *   session.reset clears messages for seeded session
+ *   session.delete removes seeded session
+ *   session.list with kind filter returns proper shape
+ *   session.export returns error for non-existent session
  *
  * Uses a dedicated config (port 8523, separate memory DB) to avoid conflicts.
  * Accesses daemon internals directly: rpcCall, sessionStoreBridge.
@@ -91,12 +91,12 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
   }, 30_000);
 
   // =========================================================================
-  // Section 1: Agent Lifecycle Management (TEST-07)
+  // Section 1: Agent Lifecycle Management
   // =========================================================================
 
-  describe.sequential("Agent Lifecycle Management (TEST-07)", () => {
+  describe.sequential("Agent Lifecycle Management", () => {
     it(
-      "TEST-07-01: agents.list returns configured agents",
+      "agents.list returns configured agents",
       async () => {
         const result = (await rpcCall("agents.list", {})) as {
           agents: string[];
@@ -112,7 +112,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-07-02: agents.get returns agent config and state",
+      "agents.get returns agent config and state",
       async () => {
         const result = (await rpcCall("agents.get", {
           agentId: "default",
@@ -141,7 +141,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-07-03: agents.create creates a new runtime agent",
+      "agents.create creates a new runtime agent",
       async () => {
         const createResult = (await rpcCall("agents.create", {
           agentId: "e2e-test-agent",
@@ -187,7 +187,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-07-04: agents.update patches an existing agent config",
+      "agents.update patches an existing agent config",
       async () => {
         const updateResult = (await rpcCall("agents.update", {
           agentId: "e2e-test-agent",
@@ -217,7 +217,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-07-05: agents.suspend suspends an agent",
+      "agents.suspend suspends an agent",
       async () => {
         const suspendResult = (await rpcCall("agents.suspend", {
           agentId: "e2e-test-agent",
@@ -242,7 +242,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-07-06: agents.resume resumes a suspended agent",
+      "agents.resume resumes a suspended agent",
       async () => {
         const resumeResult = (await rpcCall("agents.resume", {
           agentId: "e2e-test-agent",
@@ -267,7 +267,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-07-07: agents.delete removes an agent",
+      "agents.delete removes an agent",
       async () => {
         const deleteResult = (await rpcCall("agents.delete", {
           agentId: "e2e-test-agent",
@@ -296,7 +296,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-07-08: agents.create with existing ID returns error",
+      "agents.create with existing ID returns error",
       async () => {
         await expect(
           rpcCall("agents.create", {
@@ -315,15 +315,15 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
   });
 
   // =========================================================================
-  // Section 2: Memory Management (TEST-08 - Memory)
+  // Section 2: Memory Management
   // =========================================================================
 
-  describe.sequential("Memory Management (TEST-08 - Memory)", () => {
+  describe.sequential("Memory Management", () => {
     /** Track stored entry IDs for deletion tests. */
     const storedEntryIds: string[] = [];
 
     it(
-      "TEST-08-M01: memory.stats returns stats shape",
+      "memory.stats returns stats shape",
       async () => {
         const result = (await rpcCall("memory.stats", {})) as Record<
           string,
@@ -338,7 +338,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-08-M02: memory.store creates entries",
+      "memory.store creates entries",
       async () => {
         // Store 3 test entries
         const entry1 = (await rpcCall("memory.store", {
@@ -374,7 +374,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-08-M03: memory.browse lists entries with pagination",
+      "memory.browse lists entries with pagination",
       async () => {
         // Browse with limit 2
         const result = (await rpcCall("memory.browse", {
@@ -428,7 +428,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-08-M04: memory.export returns all entries as JSON",
+      "memory.export returns all entries as JSON",
       async () => {
         const result = (await rpcCall("memory.export", {})) as {
           entries: Array<{
@@ -468,7 +468,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-08-M05: memory.delete removes entries by ID",
+      "memory.delete removes entries by ID",
       async () => {
         // Delete the third entry
         const entryToDelete = storedEntryIds[2]!;
@@ -502,7 +502,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-08-M06: memory.flush clears all entries",
+      "memory.flush clears all entries",
       async () => {
         // Verify we have entries before flush
         const beforeStats = (await rpcCall("memory.stats", {})) as Record<
@@ -539,12 +539,12 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
   });
 
   // =========================================================================
-  // Section 3: Session Management (TEST-08 - Sessions)
+  // Section 3: Session Management
   // =========================================================================
 
-  describe("Session Management (TEST-08 - Sessions)", () => {
+  describe("Session Management", () => {
     it(
-      "TEST-08-S01: session.list returns sessions shape",
+      "session.list returns sessions shape",
       async () => {
         const result = (await rpcCall("session.list", {})) as {
           sessions: Array<{
@@ -584,7 +584,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
       const SESSION_KEY = "test:e2e-session-user:e2e-channel";
 
       it(
-        "TEST-08-S02: session seed and export returns messages",
+        "session seed and export returns messages",
         async () => {
           // 1. Seed a session via sessionStoreBridge
           sessionStoreBridge.saveByFormattedKey(SESSION_KEY, [
@@ -622,7 +622,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
       );
 
       it(
-        "TEST-08-S03: session.compact returns compaction status for seeded session",
+        "session.compact returns compaction status for seeded session",
         async () => {
           // 1. Compact the session
           const result = (await rpcCall("session.compact", {
@@ -647,7 +647,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
       );
 
       it(
-        "TEST-08-S04: session.reset clears messages for seeded session",
+        "session.reset clears messages for seeded session",
         async () => {
           // 1. Reset the session
           const result = (await rpcCall("session.reset", {
@@ -679,7 +679,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
       );
 
       it(
-        "TEST-08-S05: session.delete removes seeded session",
+        "session.delete removes seeded session",
         async () => {
           // 1. Delete the session
           const result = (await rpcCall("session.delete", {
@@ -711,7 +711,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     });
 
     it(
-      "TEST-08-S06: session.list with kind filter returns proper shape",
+      "session.list with kind filter returns proper shape",
       async () => {
         // dm filter
         const dmResult = (await rpcCall("session.list", {
@@ -736,7 +736,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     );
 
     it(
-      "TEST-08-S07: session.export returns error for non-existent session",
+      "session.export returns error for non-existent session",
       async () => {
         await expect(
           rpcCall("session.export", {

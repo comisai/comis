@@ -1,17 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tool assembly setup: assembleToolsForAgent and preprocessMessageText.
- * Extracted from daemon.ts steps 6.6.8.5 (tool pipeline assembly) to isolate
- * per-agent tool creation and message preprocessing from the main wiring
- * sequence.
+ * Isolates per-agent tool creation and message preprocessing from the
+ * main wiring sequence.
  * @module
  */
 
 import { isAbsolute, resolve } from "node:path";
-import type { AppContainer, SkillsConfig, ApprovalGate, CredentialMappingPort, WrapExternalContentOptions, SessionKey } from "@comis/core";
+import type { AppContainer, SkillsConfig, ApprovalGate, CredentialMappingPort, WrapExternalContentOptions, SessionKey, ToolCapabilityPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../rpc/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
-import { SkillsConfigSchema, sanitizeLogString, tryGetContext, parseFormattedSessionKey, safePath, formatSessionKey } from "@comis/core";
+import {
+  SkillsConfigSchema,
+  sanitizeLogString,
+  tryGetContext,
+  parseFormattedSessionKey,
+  safePath,
+  formatSessionKey,
+} from "@comis/core";
 import {
   sessionKeyToPath,
   WORKSPACE_FILE_NAMES,
@@ -125,6 +131,21 @@ export interface ToolsDeps {
    * without requiring a daemon restart.
    */
   mcpClientManager: McpClientManager;
+  /**
+   * Per-agent ToolCapabilityPort resolver. Populated by daemon.ts from the
+   * AgentsResult.toolCapabilityPorts map (one adapter per agent constructed
+   * inside setupSingleAgent). Used by exec / process tools to consult the
+   * live install-detour mode + connected MCP servers + visible skills, and
+   * to read operator-supplied cluster hints. The closure may throw or fall
+   * back to the default agent's port for unknown agentIds -- daemon.ts
+   * decides the contract.
+   *
+   * Consumed via the single mandated form `deps.getCapabilityPortForAgent(agentId)`
+   * inside assembleToolsForAgent (mirrors the deps.<field> direct-access
+   * convention used for nearby fields like deps.eventBus, deps.skillsLogger,
+   * deps.linkRunner, deps.subprocessEnv).
+   */
+  getCapabilityPortForAgent: (agentId: string) => ToolCapabilityPort;
   /** Image generation provider (undefined when API key missing -- tool not registered). */
   imageGenProvider?: ImageGenerationPort;
   /** OS-level sandbox provider detected once at daemon startup. */
@@ -312,7 +333,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     const ownWorkspaceDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
     await registerWorkspaceFilesInTracker(ownWorkspaceDir, fileStateTracker, skillsLogger);
 
-    // Enrich sharedPaths for admin-trust agents: grant cross-workspace file access (Quick 165)
+    // Enrich sharedPaths for admin-trust agents: grant cross-workspace file access.
     // Default agent (orchestrator) and supervisor-profile agents can access other agent workspaces.
     // Lazy callback for admin agents so hot-added workspaces are visible without re-assembling tools.
     const isDefaultAgent = agentId === defaultAgentId;
@@ -494,23 +515,36 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           return safePath(sessionDir, "tool-results");
         };
 
-        tools.push(createExecTool(
-          agentWorkspaceDir,
+        tools.push(createExecTool({
+          workspacePath: agentWorkspaceDir,
           registry,
           secretManager,
           platformSecretNames,
-          skillsLogger,
-          subprocessEnv,  // Filtered subprocess environment
-          sandboxCfg,  // Per-agent sandbox config
-          eventBus,  // command:blocked + secret:accessed audit events
-          getToolResultsDir,  // Session tool-results dir for output persistence
-        ));
+          logger: skillsLogger,
+          subprocessEnv,                                     // Filtered subprocess environment
+          sandboxConfig: sandboxCfg,                         // Per-agent sandbox config
+          eventBus,                                          // command:blocked + secret:accessed audit events
+          getToolResultsDir,                                 // Session tool-results dir for output persistence
+          // Live per-agent ToolCapabilityPort resolver populated by daemon.ts
+          // from AgentsResult.toolCapabilityPorts map. Single mandated form
+          // `deps.<field>(agentId)` mirrors the surrounding direct-deps-access
+          // convention.
+          toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
+          approvalGate,                                      // Soft-stop override path
+        }));
       }
 
       // Process tool -- always instantiated; builtinTools ceiling applied after profile filtering
       {
         const registry = getOrCreateRegistry(agentId);
-        tools.push(createProcessTool(registry, skillsLogger));
+        tools.push(createProcessTool({
+          registry,
+          logger: skillsLogger,
+          // Live per-agent ToolCapabilityPort resolver populated by daemon.ts
+          // from AgentsResult.toolCapabilityPorts. Single mandated form
+          // `deps.<field>(agentId)`.
+          toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
+        }));
       }
 
       // Apply patch tool -- always included, gated by tool policy

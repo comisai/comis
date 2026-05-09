@@ -181,7 +181,7 @@ export function registerCustomProviders(
       providerAliases.set(providerName, entry.type);
     }
 
-    // Layer 1B (260430-vwt): catalog-aware model enrichment.
+    // Catalog-aware model enrichment.
     //
     // Before computing customModels, decide whether to inherit the full
     // pi-ai catalog or to enrich the user's sparse list with catalog

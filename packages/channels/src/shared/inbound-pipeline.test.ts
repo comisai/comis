@@ -92,7 +92,7 @@ describe("allowFrom sender filtering", () => {
 
     await processInboundMessage(deps, adapter, msg, new Set(), { get: () => undefined, set: () => {}, delete: () => {} } as any);
 
-    // Executor should NOT have been called (message dropped before Phase 1)
+    // Executor should NOT have been called (message dropped before agent resolution)
     expect(deps.createExecutor).not.toHaveBeenCalled();
     // sender:blocked event should be emitted
     expect(deps.eventBus.emit).toHaveBeenCalledWith("sender:blocked", {
@@ -201,7 +201,7 @@ function makeAdapterForTest(): ChannelPort {
 }
 
 // ---------------------------------------------------------------------------
-// /approve and /deny chat command interception (APPR-CHAT)
+// /approve and /deny chat command interception
 // ---------------------------------------------------------------------------
 
 function makeMockApprovalGate(
@@ -638,7 +638,7 @@ describe("ack reaction bypass with lifecycleReactionsEnabled", () => {
 });
 
 // ---------------------------------------------------------------------------
-// General slash command interception (CMD-WIRE)
+// General slash command interception
 // ---------------------------------------------------------------------------
 
 describe("general slash command interception", () => {

@@ -2,7 +2,7 @@
 /**
  * Tool retry circuit breaker: per-tool-signature consecutive failure tracking.
  *
- * Prevents infinite retry loops (like the 48-call yfinance incident) by blocking
+ * Prevents infinite retry loops (the original repro: 48-call MCP-server retry incident) by blocking
  * tool calls after repeated failures and providing actionable LLM guidance with
  * alternative tool suggestions.
  *
@@ -36,6 +36,16 @@ export interface ToolRetryBreakerConfig {
   /** Max consecutive same-error-class failures (any args) before blocking.
    *  Stricter than args-based because same error + different args = stronger stuck signal. */
   maxConsecutiveErrorPatterns?: number;
+  /**
+   * Operator-supplied tool-alternative map. Keys are tool-name prefixes
+   * (e.g., `"mcp__finance-data"`); values are arrays of suggested alternative
+   * tool names. Used in block reasons to guide the LLM toward working tools.
+   *
+   * Defaults to an empty map (no alternatives suggested). The codebase MUST
+   * NOT ship hardcoded MCP server names — operators opt in by populating
+   * this map in their breaker config.
+   */
+  toolAlternatives?: Record<string, readonly string[]>;
 }
 
 /** Tool retry breaker interface -- tracks per-tool-signature failures. */
@@ -59,18 +69,6 @@ interface ToolSignatureState {
   consecutiveFailures: number;
   lastError?: string;
 }
-
-// ---------------------------------------------------------------------------
-// Alternative tool mapping (hardcoded v1)
-// ---------------------------------------------------------------------------
-
-/**
- * Maps tool name prefixes to alternative tools that can serve similar purposes.
- * Used in block reasons to guide the LLM toward working alternatives.
- */
-const TOOL_ALTERNATIVES: Record<string, string[]> = {
-  "mcp__yfinance": ["web_search", "mcp__tavily--tavily-search", "web_fetch"],
-};
 
 // ---------------------------------------------------------------------------
 // Error tag extraction
@@ -209,17 +207,6 @@ function fingerprint(toolName: string, args: Record<string, unknown>): string {
 }
 
 /**
- * Find alternative tools for a given tool name by prefix matching.
- * @returns Array of alternative tool names, empty if none known.
- */
-function findAlternatives(toolName: string): string[] {
-  for (const [prefix, alts] of Object.entries(TOOL_ALTERNATIVES)) {
-    if (toolName.startsWith(prefix)) return alts;
-  }
-  return [];
-}
-
-/**
  * When tool failures are caused by the macOS sandbox-exec profile denying writes
  * to protected paths (~/.comis/skills/, global node_modules, ~/.gitconfig,
  * /var/folders/), return a specific redirect message pointing the agent to
@@ -306,6 +293,7 @@ function buildBlockReason(
 export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetryBreaker {
   const { maxConsecutiveFailures, maxToolFailures, suggestAlternatives } = config;
   const maxErrorPatterns = config.maxConsecutiveErrorPatterns ?? 2;
+  const toolAlternatives: Record<string, readonly string[]> = config.toolAlternatives ?? {};
 
   // Per-fingerprint (tool+args) consecutive failure tracking
   const signatureFailures = new Map<string, ToolSignatureState>();
@@ -315,6 +303,23 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
   const blockedTools = new Set<string>();
   // Per-error-pattern consecutive failure tracking (keyed by `${toolName}::err::${errorTag}`)
   const errorPatternFailures = new Map<string, { consecutiveFailures: number; lastError?: string; failingFingerprints: Set<string> }>();
+
+  /**
+   * Find alternative tools for a given tool name by prefix matching against
+   * `config.toolAlternatives`. Closed-over the factory's `toolAlternatives`
+   * local; defaults to no alternatives when the config field is omitted.
+   * Spread to a fresh mutable array so the readonly-input / mutable-output
+   * contract documented in `ToolRetryVerdict.alternatives?: string[]` is
+   * preserved.
+   *
+   * @returns Array of alternative tool names, empty if no prefix match.
+   */
+  function findAlternatives(toolName: string): string[] {
+    for (const [prefix, alts] of Object.entries(toolAlternatives)) {
+      if (toolName.startsWith(prefix)) return [...alts];
+    }
+    return [];
+  }
 
   return {
     beforeToolCall(toolName: string, args: Record<string, unknown>): ToolRetryVerdict {

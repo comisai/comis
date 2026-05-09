@@ -35,6 +35,8 @@ export { createExecTool } from "./builtin/exec-tool.js";
 export { createProcessTool } from "./builtin/process-tool.js";
 export { createProcessRegistry } from "./builtin/process-registry.js";
 export type { ProcessRegistry } from "./builtin/process-registry.js";
+export type { InstallDetourDecision, DetourOverlap } from "./builtin/install-detour.js";
+export { parseInstallDetour } from "./builtin/install-detour.js";
 
 // Built-in tools -- Exec sandbox types
 export type { SandboxProvider, SandboxOptions, ExecSandboxConfig } from "./builtin/sandbox/types.js";
@@ -171,7 +173,8 @@ export type {
 } from "./integrations/mcp-client.js";
 
 // Bridge -- MCP tool bridge
-export { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, extractMcpServerName, classifyMcpErrorType } from "./bridge/mcp-tool-bridge.js";
+export { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, classifyMcpErrorType } from "./bridge/mcp-tool-bridge.js";
+export { extractMcpServerName } from "@comis/shared";
 
 // Integrations -- Vision
 export { createVisionProviderRegistry, selectVisionProvider } from "./integrations/vision/vision-provider-registry.js";

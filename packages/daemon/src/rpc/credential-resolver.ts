@@ -16,7 +16,7 @@
  *      injected oauthProfileLoader (the OAuthCredentialStorePort handle held by
  *      the daemon, adapted to a synchronous has-check at the call site).
  *
- * Note on synchronous loader facade (quick-260504-irq): `OAuthCredentialStorePort.has`
+ * Note on synchronous loader facade: `OAuthCredentialStorePort.has`
  * is async (returns Promise<Result<boolean, Error>>). To avoid an async cascade
  * through every call site, this resolver remains SYNCHRONOUS and accepts a
  * sync facade (`oauthProfileLoader: { has(profileId: string): boolean }`).

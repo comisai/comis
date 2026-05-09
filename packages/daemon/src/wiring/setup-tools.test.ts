@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ToolsDeps } from "./setup-tools.js";
+import type { CapabilitySourceRef } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
@@ -226,6 +227,31 @@ function createDefaultMockMcpClientManager() {
 }
 
 function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
+  // Per-agent ToolCapabilityPort resolver stub.
+  // Hoisted ABOVE the return so every call to deps.getCapabilityPortForAgent
+  // returns the SAME port instance, mirroring production wiring (which
+  // resolves through a Map<agentId, port>). assembleToolsForAgent calls
+  // deps.getCapabilityPortForAgent twice (once for exec, once for process)
+  // per invocation; a fresh object per call would mask reference-equality
+  // regressions and would also block
+  // `expect(deps.getCapabilityPortForAgent).toHaveReturnedWith(portStub)`.
+  //
+  // getPackageAliasMap is `ReadonlyMap<string, CapabilitySourceRef>` per
+  // the ToolCapabilityPort contract -- using `Map<string, string>` here
+  // would silently pass through the outer `as any` cast and bury a
+  // value-shape mismatch (consumers reading `ref.type === "mcp"` would
+  // observe `undefined`).
+  const portStub = {
+    isCapabilityIndexEnabled: () => true,
+    getInstallDetourMode: () => "advise" as const,
+    getBuiltinCluster: () => undefined,
+    getClusterConfig: () => undefined,
+    getMcpServerHint: () => undefined,
+    getSkillHint: () => undefined,
+    getPackageAliasMap: () => new Map<string, CapabilitySourceRef>(),
+    getConnectedMcpServers: () => [],
+    getPromptSkillCapabilities: () => [],
+  };
   return {
     rpcCall: vi.fn(async () => ({})),
     agents: {
@@ -258,6 +284,7 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
     } as any,
     mcpClientManager: createDefaultMockMcpClientManager() as any,
     sessionTrackerRegistry: createMockSessionTrackerRegistry() as any,
+    getCapabilityPortForAgent: vi.fn(() => portStub) as any,
     ...overrides,
   };
 }
@@ -1083,7 +1110,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       expect(sandboxArg.sandbox.name).toBe("mock-sandbox");
       // Default agent gets lazy sharedPaths; resolve to verify empty (only one agent, skips self)
@@ -1115,7 +1142,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       expect(sandboxArg.sandbox.name).toBe("mock-sandbox");
     });
@@ -1142,7 +1169,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeUndefined();
     });
 
@@ -1168,7 +1195,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeUndefined();
     });
 
@@ -1225,7 +1252,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       // Default agent gets lazy sharedPaths; resolve to verify
       const resolvedShared = typeof sandboxArg.sharedPaths === "function" ? sandboxArg.sharedPaths() : sandboxArg.sharedPaths;
@@ -1254,7 +1281,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       expect(sandboxArg.readOnlyPaths).toEqual(["/workspace/agent-1/skills", "/abs/skills", "/test/data/logs"]);
     });
@@ -1293,7 +1320,7 @@ describe("setupTools", () => {
 
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       // Admin agents get lazy sharedPaths -- resolve to verify contents
       const resolvedShared = typeof sandboxArg.sharedPaths === "function" ? sandboxArg.sharedPaths() : sandboxArg.sharedPaths;
@@ -1323,7 +1350,7 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(mockCreateExecTool).toHaveBeenCalledOnce();
-      const sandboxArg = mockCreateExecTool.mock.calls[0][6];
+      const sandboxArg = mockCreateExecTool.mock.calls[0][0].sandboxConfig;
       expect(sandboxArg).toBeDefined();
       expect(sandboxArg.configReadOnlyPaths).toEqual(["/data/models", "/test/data/logs"]);
     });
@@ -1539,9 +1566,8 @@ describe("setupTools", () => {
 
   // -------------------------------------------------------------------------
   // 21. Session-lifetime tracker resolution via sessionTrackerRegistry
-  //     (closes the 260420-ccx wiring gap: options.sessionKey must reach the
-  //      registry, not fall through to the ephemeral createFileStateTracker
-  //      branch.)
+  //     (options.sessionKey must reach the registry, not fall through to the
+  //      ephemeral createFileStateTracker branch.)
   // -------------------------------------------------------------------------
 
   describe("session-lifetime tracker resolution", () => {

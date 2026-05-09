@@ -111,13 +111,13 @@ export interface InboundPipelineDeps {
   responsePrefixConfig?: { template: string; position: "prepend" | "append" };
   /** Template context builder for response prefix variables. */
   buildTemplateContext?: (agentId: string, channelType: string, msg: NormalizedMessage) => Record<string, string>;
-  /** Optional approval gate for resolving /approve and /deny chat commands (APPR-CHAT). When absent, approval commands pass through as plain text. */
+  /** Optional approval gate for resolving /approve and /deny chat commands. When absent, approval commands pass through as plain text. */
   approvalGate?: {
     resolveApproval(requestId: string, approved: boolean, approvedBy: string, reason?: string): void;
     pending(): Array<{ requestId: string; sessionKey: string; action: string; toolName: string }>;
     getRequest(requestId: string): { requestId: string; sessionKey: string } | undefined;
   };
-  /** Handle general slash commands via command handler (CMD-WIRE). Returns CommandResult or undefined if not a command. */
+  /** Handle general slash commands via command handler. Returns CommandResult or undefined if not a command. */
   handleSlashCommand?: (text: string, sessionKey: SessionKey, agentId: string) => Promise<{ handled: boolean; response?: string; directives?: Record<string, unknown>; cleanedText?: string } | undefined>;
   /** Per-agent enforceFinalTag config lookup. Returns boolean or undefined if agent not found. */
   getEnforceFinalTag?: (agentId: string) => boolean | undefined;

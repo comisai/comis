@@ -6,6 +6,7 @@ import {
   appendOutput,
   type ProcessSession,
 } from "./process-registry.js";
+import type { InstallDetourDecision } from "./install-detour.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,6 +25,10 @@ function makeSession(overrides: Partial<ProcessSession> = {}): ProcessSession {
     child: overrides.child ?? undefined,
     maxOutputChars: overrides.maxOutputChars ?? 1024 * 1024,
     sandboxed: overrides.sandboxed ?? false,
+    // Pass-through for optional fields not enumerated above (e.g.
+    // installDetourDecision, autoBackgrounded, description) — allows tests
+    // to set installDetourDecision directly.
+    ...overrides,
   };
 }
 
@@ -385,5 +390,51 @@ describe("sandbox-aware killProcessGroup", () => {
     } finally {
       killSpy.mockRestore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ProcessSession.installDetourDecision (field shape only)
+// ---------------------------------------------------------------------------
+
+describe("ProcessSession.installDetourDecision", () => {
+  const fakeDecision: InstallDetourDecision = {
+    packageManager: "pip",
+    packages: ["market-data-lib"],
+    overlaps: [
+      {
+        packageName: "market-data-lib",
+        sourceType: "mcp",
+        sourceName: "finance-data",
+        cluster: "data-fetching-financial",
+        reason: "mcp-operator-alias",
+      },
+    ],
+    commandDigest: "abc123def456abcd",
+  };
+
+  it("accepts an installDetourDecision in the session shape and round-trips through registry", () => {
+    const registry = createProcessRegistry();
+    const session = makeSession({ id: "s1", installDetourDecision: fakeDecision });
+    registry.add(session);
+    const fetched = registry.get("s1");
+    expect(fetched).toBeDefined();
+    expect(fetched!.installDetourDecision).toBe(fakeDecision); // referential equality (no defensive copy)
+    expect(fetched!.installDetourDecision?.commandDigest).toBe("abc123def456abcd");
+  });
+
+  it("installDetourDecision is optional (defaults to undefined when not supplied)", () => {
+    const session = makeSession({ id: "s2" });
+    expect(session.installDetourDecision).toBeUndefined();
+  });
+
+  it("registry preserves installDetourDecision on get without defensive copy", () => {
+    const registry = createProcessRegistry();
+    const session = makeSession({ id: "s3", installDetourDecision: fakeDecision });
+    registry.add(session);
+    const a = registry.get("s3");
+    const b = registry.get("s3");
+    // Same session reference returned both times; the decision is the same object
+    expect(a?.installDetourDecision).toBe(b?.installDetourDecision);
   });
 });

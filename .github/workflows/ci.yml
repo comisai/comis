@@ -36,5 +36,13 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Test (deterministic integration CI gates)
+        run: |
+          npx vitest run \
+            --config test/vitest.config.ts \
+            test/integration/install-detour-soft-stop-e2e.test.ts \
+            test/integration/install-detour-advise-e2e.test.ts \
+            test/integration/tooling-fixture-render.test.ts
+
       - name: Audit dependencies
         run: pnpm audit --prod

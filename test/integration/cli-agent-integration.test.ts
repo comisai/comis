@@ -41,10 +41,10 @@ describe("CLI Agent Integration (real daemon)", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // INTEG-01 -- RPC Connectivity
+  // RPC Connectivity
   // -------------------------------------------------------------------------
 
-  describe("INTEG-01: RPC Connectivity", () => {
+  describe("RPC Connectivity", () => {
     it("connects to daemon and receives a valid JSON-RPC response", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "routing" }, 1, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -64,10 +64,10 @@ describe("CLI Agent Integration (real daemon)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INTEG-02 -- Agent List
+  // Agent List
   // -------------------------------------------------------------------------
 
-  describe("INTEG-02: Agent List", () => {
+  describe("Agent List", () => {
     it("returns routing config from config.get routing section", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "routing" }, 3, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -107,10 +107,10 @@ describe("CLI Agent Integration (real daemon)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INTEG-03 -- Agent CRUD Lifecycle (config.set/config.get round-trips)
+  // Agent CRUD Lifecycle (config.set/config.get round-trips)
   // -------------------------------------------------------------------------
 
-  describe("INTEG-03: Agent CRUD Lifecycle", () => {
+  describe("Agent CRUD Lifecycle", () => {
     const TEST_AGENT = "integ-test-" + Date.now();
     let msgId = 10;
 

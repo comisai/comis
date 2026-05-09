@@ -198,7 +198,7 @@ describe("models_manage tool", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Layer 1F (260430-vwt) -- list_providers action
+  // list_providers action
   // -----------------------------------------------------------------------
 
   describe("list_providers action", () => {

@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve, dirname } from "node:path";
 import type { EventMap } from "./events.js";
 import { TypedEventBus } from "./bus.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 describe("AgentEvents payload structure", () => {
   it("skill:loaded delivers skillName, source, timestamp", () => {
@@ -472,5 +477,71 @@ describe("AgentEvents payload structure", () => {
     expect(handler).toHaveBeenCalledWith(payload);
     const received = handler.mock.calls[0]![0] as EventMap["provider:recovered"];
     expect(received.provider).toBe("anthropic");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tool:install_detour_detected -- type + privacy invariants
+// ---------------------------------------------------------------------------
+
+describe("tool:install_detour_detected event type", () => {
+  it("type-checks against the closed shape", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const sample: EventMap["tool:install_detour_detected"] = {
+      packageManager: "pip",
+      commandDigest: "abc123def456",
+      packages: [{ normalizedName: "market-data-lib", ecosystem: "python" }],
+      overlaps: [
+        {
+          packageName: "market-data-lib",
+          sourceType: "mcp",
+          sourceName: "finance-data",
+          reason: "mcp-operator-alias",
+        },
+      ],
+      mode: "advise",
+      action: "hinted",
+      timestamp: Date.now(),
+    };
+
+    bus.on("tool:install_detour_detected", handler);
+    bus.emit("tool:install_detour_detected", sample);
+
+    expect(handler).toHaveBeenCalledWith(sample);
+    const received =
+      handler.mock.calls[0]![0] as EventMap["tool:install_detour_detected"];
+    expect(received.packageManager).toBe("pip");
+    expect(received.commandDigest).toBe("abc123def456");
+    expect(received.mode).toBe("advise");
+    expect(received.action).toBe("hinted");
+    expect(received.packages[0]?.normalizedName).toBe("market-data-lib");
+    expect(received.overlaps[0]?.reason).toBe("mcp-operator-alias");
+  });
+
+  it("payload type contains no forbidden privacy-leak fields", () => {
+    // Source-grep the install-detour event block for forbidden keys.
+    // The closed shape MUST NOT include raw command text, shell fragments,
+    // URLs, VCS specs, local paths, registry credentials, stdout, or stderr.
+    // Only `commandDigest` (a stable, non-reversible hash) is permitted.
+    const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
+    // Extract the install-detour block (between the event-key line and the
+    // first `};` that closes it).
+    const match = src.match(
+      /"tool:install_detour_detected":\s*\{[\s\S]*?\n\s*\};/,
+    );
+    expect(match, "install-detour event block must exist").toBeTruthy();
+    const block = match![0];
+
+    // Forbidden keys:
+    expect(block, "no raw `command:` field").not.toMatch(/^\s*(?:readonly\s+)?command:/m);
+    expect(block, "no `rawCommand:` field").not.toMatch(/^\s*(?:readonly\s+)?rawCommand:/m);
+    expect(block, "no `stdout:` field").not.toMatch(/^\s*(?:readonly\s+)?stdout:/m);
+    expect(block, "no `stderr:` field").not.toMatch(/^\s*(?:readonly\s+)?stderr:/m);
+    expect(block, "no `commandPrefix:` field").not.toMatch(/^\s*(?:readonly\s+)?commandPrefix:/m);
+    // Required field present:
+    expect(block, "commandDigest must be present").toMatch(
+      /^\s*readonly commandDigest:\s*string;/m,
+    );
   });
 });

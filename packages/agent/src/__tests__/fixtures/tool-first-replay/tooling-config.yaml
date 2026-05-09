@@ -1,0 +1,30 @@
+# Tool-first replay contract surface fixture.
+# Shape follows ToolingConfigSchema (operator example).
+# `replacesPackages` is read by the install-detour parser.
+tooling:
+  capabilityClusters:
+    clusters:
+      data-fetching-financial:
+        label: "Data fetching - financial / market"
+        priority: 10
+        preferOverInstalls: true
+  mcp:
+    capabilityHints:
+      finance-data:
+        cluster: data-fetching-financial
+        description: "Market prices, history, fundamentals, and financial lookup."
+        replacesPackages:
+          - market-data-lib
+          - finance-data-client
+          - price-history-sdk
+  skills:
+    capabilityHints:
+      financial-chart-workflow:
+        cluster: data-fetching-financial
+        description: "Workflow guidance for charting market data already available through connected tools."
+        replacesPackages:
+          - chart-workflow-sdk
+  installDetours:
+    mode: advise
+  capabilityIndex:
+    enabled: true

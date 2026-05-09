@@ -31,7 +31,7 @@ VALID_TOP_FIELDS = {
 }
 
 VALID_COMIS_FIELDS = {
-    "os", "requires", "skill-key", "primary-env", "command-dispatch",
+    "os", "requires", "skill-key", "primary-env", "command-dispatch", "capability",
 }
 
 VALID_PERMISSIONS_FIELDS = {"fsRead", "fsWrite", "net", "env"}

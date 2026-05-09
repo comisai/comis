@@ -449,9 +449,9 @@ describe("capability guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Inbound UUID -> platform-native message id resolution (issue #4 from
-// 260430-r4i triage; production repro 2026-04-30 17:04:31Z `message.delete`
-// failed because Number("e60f9634-...") -> NaN was passed to Telegram).
+// Inbound UUID -> platform-native message id resolution (production repro
+// 2026-04-30 17:04:31Z `message.delete` failed because
+// Number("e60f9634-...") -> NaN was passed to Telegram).
 // ---------------------------------------------------------------------------
 
 describe("inboundMessageIdResolver integration", () => {

@@ -37,10 +37,13 @@ import {
   type SecretManager,
   type EnvelopeConfig,
   type SenderTrustDisplayConfig,
+  type ToolCapabilityPort,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/infra";
-import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, resolveModelTier, supportsToolSearch, CORE_TOOLS } from "./tool-deferral.js";
+import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult } from "./tool-deferral.js";
+import { buildCapabilityIndexContext } from "./capability-index-context.js";
+import type { CapabilityIndexRenderResult } from "./capability-index-context.js";
 import { getOrCreateDiscoveryTracker } from "./discovery-tracker.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import { getOrCreateTracker, DEFAULT_LIFECYCLE_CONFIG } from "./tool-lifecycle.js";
@@ -86,6 +89,13 @@ export interface ToolAssemblyDeps {
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   deliveryMirrorConfig?: { maxEntriesPerInjection: number; maxCharsPerInjection: number };
   embeddingPort?: EmbeddingPort;
+  /**
+   * Tool-capability port for the per-turn capability-index renderer.
+   * Daemon wiring injects createNoOpCapabilityPort() from @comis/core; the
+   * live adapter is swapped in elsewhere. The no-op is a real production
+   * code path — NOT a transitional shim.
+   */
+  toolCapabilityPort: ToolCapabilityPort;
   skillRegistry?: {
     getEligibleSkillNames(): Set<string>;
     initFromSdkSkills(sdkSkills: Array<{ name: string; description: string; filePath: string; baseDir: string; source: string; disableModelInvocation: boolean }>): void;
@@ -102,6 +112,15 @@ export interface ToolAssemblyResult {
   deferralResult: ExcludeDeferralResult;
   /** Formatted deferred tools context for dynamic preamble injection. */
   deferredContext: string;
+  /**
+   * Per-turn capability-index render result.
+   * `text` is concatenated into the dynamic preamble; the count fields feed
+   * the Pino debug log emitted in `executor-prompt-runner.ts`.
+   * When the port returns gate-disabled or all counts are zero, the renderer
+   * returns the EMPTY sentinel and `text === ""` filters out via
+   * `[...].filter(Boolean)` in the runner.
+   */
+  capabilityIndexResult: CapabilityIndexRenderResult;
   /** Session-scoped guide delivery tracking set. */
   deliveredGuides: Set<string>;
   /** Model tier derived from context window: "small" | "medium" | "large". */
@@ -319,6 +338,9 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       deliveryMirror: deps.deliveryMirror,
       deliveryMirrorConfig: deps.deliveryMirrorConfig,
       channelMaxChars: deps.getChannelMaxChars?.(msg.channelType),
+      // Forward the tool-capability port so prompt-assembly.ts can read
+      // `port.isCapabilityIndexEnabled()` for the static-prompt swap gate.
+      toolCapabilityPort: deps.toolCapabilityPort,
     },
     msg,
     sessionKey,
@@ -531,27 +553,26 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     mergedCustomTools.push(...stubs);
   }
 
-  // Build deferred context for dynamic preamble injection.
-  //
-  // Under Anthropic Sonnet/Opus 4.x, request-body-injector.ts
-  // strips client-side `discover_tools` from the API payload and replaces it
-  // with the server-side `tool_search_tool_regex` + per-tool `defer_loading`
-  // flag. Pass `useToolSearch=true` so the preamble teaches the model that
-  // deferred tools auto-load on first direct invocation, rather than telling
-  // it to call a tool the model can no longer see.
-  //
-  // resolvedModel is in scope here (param of assembleToolsForAgent, see
-  // function signature ~line 143). When undefined (test paths / fallback),
-  // useToolSearch defaults to false, preserving backward-compatible
-  // discover_tools wording.
+  // Build deferred-tools context for dynamic preamble injection (mechanism-neutral).
+  // Provider-specific payload reshaping (stripping the client-side discovery
+  // tool, appending the server-side tool-search regex tool for Anthropic
+  // Sonnet/Opus 4.x) lives entirely in `request-body-injector.ts` and is
+  // gated there by a model-id capability check. See tool-deferral.ts JSDoc
+  // on `buildDeferredToolsContext` for the rationale.
   let deferredContext = "";
   if (deferralResult.deferredEntries.length > 0) {
-    const useToolSearch = supportsToolSearch(resolvedModel?.id ?? "");
-    deferredContext = buildDeferredToolsContext(
-      deferralResult.deferredEntries,
-      { useToolSearch },
-    );
+    deferredContext = buildDeferredToolsContext(deferralResult.deferredEntries);
   }
+
+  // Per-turn capability index.
+  // Lives AFTER applyToolDeferral so the renderer sees the post-partition
+  // state (active vs deferred entries). When the port is the no-op, the
+  // renderer's gate check still respects port.isCapabilityIndexEnabled();
+  // if false, returns EMPTY which the runner filters via .filter(Boolean).
+  const capabilityIndexResult = buildCapabilityIndexContext(
+    deferralResult,
+    deps.toolCapabilityPort,
+  );
 
   // -------------------------------------------------------------------
   // 8. JIT guide wrapping, schema pruning, snapshot, normalization, serializer
@@ -588,6 +609,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     mergedCustomTools,
     deferralResult,
     deferredContext,
+    capabilityIndexResult,
     deliveredGuides,
     modelTier,
     discoveryTracker,

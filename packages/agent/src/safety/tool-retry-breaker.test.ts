@@ -10,6 +10,15 @@ describe("tool retry breaker", () => {
     suggestAlternatives: true,
     // High value so existing signature/tool-level tests aren't affected by error-pattern blocking
     maxConsecutiveErrorPatterns: 100,
+    // Operator-supplied alternatives map. The production
+    // ToolRetryBreakerConfig.toolAlternatives defaults to {} — no hardcoded
+    // server names. Tests populate this fixture to simulate an operator who
+    // has configured yfinance alternatives, so existing alternative-suggestion
+    // assertions in this file (lines 103-118 etc.) continue to verify
+    // behavior at the breaker level.
+    toolAlternatives: {
+      "mcp__yfinance": ["web_search", "mcp__tavily--tavily-search", "web_fetch"],
+    },
   };
 
   function createBreaker(): ToolRetryBreaker {
@@ -724,6 +733,79 @@ describe("tool retry breaker", () => {
       );
 
       expect(breaker.getBlockedTools()).toContain("exec");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Config-driven toolAlternatives
+  // ---------------------------------------------------------------------------
+
+  describe("config-driven toolAlternatives", () => {
+    it("returns empty alternatives when toolAlternatives is undefined (default)", () => {
+      const breaker = createToolRetryBreaker({
+        maxConsecutiveFailures: 3,
+        maxToolFailures: 5,
+        suggestAlternatives: true,
+        // toolAlternatives intentionally omitted — empty map default
+      });
+      const tool = "mcp__yfinance--get_recs";
+      const args = { symbol: "NVDA" };
+      breaker.recordResult(tool, args, false, "error");
+      breaker.recordResult(tool, args, false, "error");
+      breaker.recordResult(tool, args, false, "error");
+
+      const verdict = breaker.beforeToolCall(tool, args);
+      expect(verdict.block).toBe(true);
+      expect(verdict.alternatives).toEqual([]);
+      // Generic fallback wording in buildBlockReason.
+      expect(verdict.reason).toContain("alternative approaches");
+      // Critically: no hardcoded suggestion appears when the operator hasn't
+      // populated the alternatives map. The production config ships
+      // toolAlternatives omitted.
+      expect(verdict.reason).not.toContain("web_search");
+      expect(verdict.reason).not.toContain("mcp__tavily--tavily-search");
+    });
+
+    it("returns operator-supplied alternatives when toolAlternatives is populated", () => {
+      const breaker = createToolRetryBreaker({
+        maxConsecutiveFailures: 3,
+        maxToolFailures: 5,
+        suggestAlternatives: true,
+        toolAlternatives: {
+          "mcp__custom-server": ["custom_alt_1", "custom_alt_2"],
+        },
+      });
+      const tool = "mcp__custom-server--some_op";
+      const args = { x: 1 };
+      breaker.recordResult(tool, args, false, "error");
+      breaker.recordResult(tool, args, false, "error");
+      breaker.recordResult(tool, args, false, "error");
+
+      const verdict = breaker.beforeToolCall(tool, args);
+      expect(verdict.block).toBe(true);
+      expect(verdict.alternatives).toEqual(["custom_alt_1", "custom_alt_2"]);
+      expect(verdict.reason).toContain("custom_alt_1");
+      expect(verdict.reason).toContain("custom_alt_2");
+    });
+
+    it("returns empty alternatives when no prefix matches", () => {
+      const breaker = createToolRetryBreaker({
+        maxConsecutiveFailures: 3,
+        maxToolFailures: 5,
+        suggestAlternatives: true,
+        toolAlternatives: {
+          "mcp__server-A": ["alt_a"],
+        },
+      });
+      const tool = "completely_unrelated_tool";
+      const args = { x: 1 };
+      breaker.recordResult(tool, args, false, "error");
+      breaker.recordResult(tool, args, false, "error");
+      breaker.recordResult(tool, args, false, "error");
+
+      const verdict = breaker.beforeToolCall(tool, args);
+      expect(verdict.block).toBe(true);
+      expect(verdict.alternatives).toEqual([]);
     });
   });
 });

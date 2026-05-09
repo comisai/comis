@@ -134,6 +134,10 @@ export {
   getFieldMetadata,
   validatePartial,
   createConfigGitManager,
+  // Tooling subtree (capability layer v1.1)
+  ToolingConfigSchema,
+  DEFAULT_CLUSTER_CONFIG,
+  DEFAULT_BUILTIN_ASSIGNMENTS,
   checkApprovalsConfig,
 } from "../config/index.js";
 
@@ -266,5 +270,7 @@ export type {
   OperationModelEntry,
   OperationModels,
   ModelOperationType,
+  // Tooling subtree (capability layer v1.1)
+  ToolingConfig,
   OAuthConfig,
 } from "../config/index.js";

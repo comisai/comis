@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for pi-mono adapter wrappers (version isolation, R-11: ephemeral sessions).
+ * Unit tests for pi-mono adapter wrappers (version isolation, ephemeral sessions).
  */
 
 import { describe, it, expect, vi } from "vitest";

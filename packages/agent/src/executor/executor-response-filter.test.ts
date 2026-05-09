@@ -236,7 +236,7 @@ describe("recoverEmptyFinalResponse", () => {
 });
 
 describe("recoverEmptyFinalResponse — tool-call synthesis (L3)", () => {
-  it("synthesizes summary after parallel agents_manage.create batch (the 260428-rrr repro shape)", () => {
+  it("synthesizes summary after parallel agents_manage.create batch", () => {
     const logger = mockLogger();
     const result = recoverEmptyFinalResponse({
       extractedResponse: "",
@@ -510,7 +510,7 @@ describe("recoverEmptyFinalResponse — tool-call synthesis (L3)", () => {
     expect(source).not.toContain("pre-tool-commentary");
   });
 
-  it("source no longer contains generateCompletenessNudge symbol (260428-ur1 regression)", async () => {
+  it("source no longer contains generateCompletenessNudge symbol (regression)", async () => {
     const fs = await import("node:fs");
     const url = await import("node:url");
     const sourcePath = url.fileURLToPath(new URL("./executor-response-filter.ts", import.meta.url));

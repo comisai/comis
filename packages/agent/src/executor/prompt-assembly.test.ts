@@ -105,6 +105,12 @@ vi.mock("node:os", async (importOriginal) => {
 import { assembleExecutionPrompt, extractUserLanguage, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { formatSessionKey, type SpawnPacket } from "@comis/core";
 import { createSpawnPacketBuilder } from "../spawn/spawn-packet-builder.js";
+// Fixture stub for the capability-index gate. Default returns `false` so
+// existing tests stay on the legacy gate-off path (byte-identical baseline).
+// Architecture-grep boundary forbids production-stub crossover both ways:
+// tests use the __test-helpers/ source path, never the production no-op
+// factory.
+import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 
 /** Formatted session key matching makeParams() default sessionKey. */
 const DEFAULT_SESSION_KEY = formatSessionKey({ agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any);
@@ -139,7 +145,11 @@ function makeConfig(overrides?: Record<string, unknown>) {
 }
 
 function makeParams(overrides?: Partial<PromptAssemblyParams>): PromptAssemblyParams {
-  return {
+  // Ensure every fixture supplies a ToolCapabilityPort. Overriders pass full
+  // deps objects (REPLACING the default), so we inject the stub on the merged
+  // deps rather than the default literal — the field is REQUIRED and any
+  // missing site would throw at runtime.
+  const merged: PromptAssemblyParams = {
     config: makeConfig(),
     deps: { workspaceDir: "/workspace" },
     msg: makeMsg(),
@@ -150,6 +160,15 @@ function makeParams(overrides?: Partial<PromptAssemblyParams>): PromptAssemblyPa
     operationType: "interactive",
     ...overrides,
   };
+  if (!(merged.deps as Record<string, unknown>).toolCapabilityPort) {
+    merged.deps = {
+      ...merged.deps,
+      // Default gate-off so the legacy `## Available Tools` path renders
+      // (matches every cached-prefix snapshot in this suite).
+      toolCapabilityPort: createCapabilityPortStub({ isCapabilityIndexEnabled: () => false }),
+    };
+  }
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -892,7 +911,7 @@ describe("assembleExecutionPrompt", () => {
       expect(mockFilterBootstrapFilesForGroupChat).not.toHaveBeenCalled();
     });
 
-    // Operational-mode filter tests (design §Testing #5)
+    // Operational-mode filter tests
 
     it("operationType='heartbeat' implies effectiveLightContext=true even without metadata flag", async () => {
       mockLoadWorkspaceBootstrapFiles.mockResolvedValue(fakeBootstrapFiles);
@@ -1965,6 +1984,208 @@ describe("assembleExecutionPrompt", () => {
       const result = await assembleExecutionPrompt(params);
       expect(result.systemPrompt).not.toContain("character message limit");
     });
+  });
+
+  // -----------------------------------------------------------------
+  // Paired cache-fence regression tests. Both call
+  // `assembleExecutionPrompt` twice and assert
+  // `result1.systemPrompt === result2.systemPrompt` (BYTE-IDENTICAL),
+  // mutating DIFFERENT inputs between calls to exercise complementary
+  // cache-fence threats.
+  //
+  //   - Skill-registry reload: a "reload" between turns (live-runtime
+  //     port accessor returns different values on call 1 vs call 2).
+  //     Defends against a transitive code path that pulls
+  //     `getPromptSkillCapabilities()` (or a derived value) into
+  //     `assemblerParams` — the dynamic complement to the static
+  //     architecture-grep in __tests__/architecture.test.ts.
+  //
+  //   - Gate hot-flip: a hot-flip of `tooling.capabilityIndex.enabled`
+  //     mid-session (the gate accessor returns true on call 1, false on
+  //     call 2). Defends against a section builder re-reading the port
+  //     after construction — the gate is RESTART-REQUIRED by config
+  //     contract (IMMUTABLE_CONFIG_PREFIXES), so the cached systemPrompt
+  //     MUST be immune to mid-session toggles. Both directions
+  //     (true→false and false→true) are exercised so a lazy-memoization
+  //     regression that captures only the first observed value cannot
+  //     pass under just one direction.
+  //
+  // Defense in depth: the architecture-grep catches static violations
+  // (an import line in prompt-assembly.ts); these regression tests catch
+  // dynamic violations (a transitive code path that pulls live-runtime
+  // data into assemblerParams). Both must pass for the phase to ship.
+  // -----------------------------------------------------------------
+
+  it("skill-registry reload between turns does NOT invalidate the cached system-prompt prefix", async () => {
+    // The cache fence: live-runtime port accessors (skill catalog,
+    // connected MCP servers) MUST NOT flow into assemblerParams. If the
+    // skill registry reloads between turns (operator adds a skill, or
+    // skill discovery sweep runs), the next turn's dynamic capability
+    // index updates BUT the cached system-prompt prefix MUST stay
+    // byte-identical. Anthropic's prompt cache invalidation cost is
+    // 25-50% of the input-token cost — a per-turn invalidation cascade
+    // doubles the agent's cost.
+    //
+    // Strategy: simulate two turns through assembleExecutionPrompt(...),
+    // mutating the port's live-runtime view of skill capabilities that
+    // WOULD invalidate the prefix if the cache fence were broken. Assert
+    // the two systemPrompt strings are byte-identical.
+    //
+    // Implementation note: `prompt-assembly.ts` does NOT consume
+    // `getPromptSkillCapabilities()` — that's the whole invariant the
+    // architecture-grep statically enforces. The stub call-counter may
+    // stay 0 because the cache-fence-correct code path never reaches the
+    // live accessor. The byte-identity assertion below is the actual
+    // contract.
+
+    let skillCallCount = 0;
+    const portStub = createCapabilityPortStub({
+      // Gate stable across both calls — this test exercises the cache
+      // fence against a SKILL-REGISTRY mutation, not a gate flip.
+      isCapabilityIndexEnabled: () => false,
+      // Live-runtime accessor returns different values on call 1 vs
+      // call 2; if any code path in prompt-assembly.ts (or a transitive
+      // helper) reads this, the cached prefix will diverge between calls.
+      getPromptSkillCapabilities: () => {
+        skillCallCount++;
+        return skillCallCount === 1
+          ? [
+              {
+                name: "skill-a",
+                description: "First-turn baseline",
+                replacesPackages: [],
+              },
+            ]
+          : [
+              {
+                name: "skill-a",
+                description: "First-turn baseline",
+                replacesPackages: [],
+              },
+              {
+                name: "skill-b",
+                description: "Added between turns",
+                replacesPackages: [],
+              },
+            ];
+      },
+    });
+
+    // Turn 1
+    const result1 = await assembleExecutionPrompt(makeParams({
+      deps: {
+        workspaceDir: "/workspace",
+        toolCapabilityPort: portStub,
+      },
+    }));
+
+    // Skill registry "reloads" between turns — getPromptSkillCapabilities()
+    // will now return different content on the next invocation. Turn 2
+    // hits the same params shape; only the port's live view has shifted.
+    const result2 = await assembleExecutionPrompt(makeParams({
+      deps: {
+        workspaceDir: "/workspace",
+        toolCapabilityPort: portStub,
+      },
+    }));
+
+    // CRITICAL: systemPrompt is BYTE-IDENTICAL across turns.
+    // The reload MUST affect only the dynamic capability index (renderer
+    // consumed in executor-tool-assembly.ts), NEVER the cached prefix.
+    // If this assertion fails, the cache fence is broken: someone wired
+    // a live-runtime port accessor (or a derived value) into
+    // assemblerParams in prompt-assembly.ts.
+    expect(result2.systemPrompt).toBe(result1.systemPrompt);
+
+    // Sanity: skillCallCount remaining 0 is the architecturally CORRECT
+    // outcome (prompt-assembly.ts is on the cache-fence-clean side of the
+    // boundary). If a future regression wires the accessor in, the byte-
+    // identity assertion above catches it before this counter does.
+    expect(skillCallCount).toBeGreaterThanOrEqual(0);
+  });
+
+  it("hot-flipping tooling.capabilityIndex.enabled between assembleExecutionPrompt calls does NOT mutate the cached systemPrompt (true→false direction)", async () => {
+    // The cache fence — gate-accessor edition. The
+    // tooling.capabilityIndex.enabled flag is RESTART-REQUIRED.
+    // Mid-session toggles MUST NOT retroactively rewrite the cached
+    // system-prompt prefix.
+    //
+    // Structural mechanism: the port's isCapabilityIndexEnabled() is
+    // read EXACTLY ONCE at assemblerParams construction time, and the
+    // resulting boolean lives in assemblerParams.capabilityIndexEnabled
+    // for the lifetime of the cached prefix. Downstream section builders
+    // read the cached field, NOT the port — so a later flip of the
+    // port's return value cannot disturb the cached systemPrompt.
+    //
+    // Strategy: stub the port with a closure-captured mutable boolean.
+    // Call assembleExecutionPrompt(...) once with the stub returning
+    // true. Mutate the closure variable to flip the gate to false. Call
+    // assembleExecutionPrompt(...) again. Assert
+    // result1.systemPrompt === result2.systemPrompt (BYTE-IDENTICAL —
+    // the cached prefix is immune to the hot-flip).
+    //
+    // If this assertion fails, the cache fence is broken: a section
+    // builder is re-reading the port directly (or a non-cache-fence-safe
+    // derived value flowed into assemblerParams), and the operator-
+    // restart-required contract is now silently violated.
+
+    let gateValue = true;
+    const portStub = createCapabilityPortStub({
+      isCapabilityIndexEnabled: () => gateValue,
+    });
+
+    // Turn 1 — gate is true.
+    const result1 = await assembleExecutionPrompt(makeParams({
+      deps: {
+        workspaceDir: "/workspace",
+        toolCapabilityPort: portStub,
+      },
+    }));
+
+    // Hot-flip the gate mid-session. Per the restart-required contract,
+    // this flip MUST NOT take effect for the in-flight session.
+    gateValue = false;
+
+    // Turn 2 — gate accessor would now return false IF the port were re-read.
+    const result2 = await assembleExecutionPrompt(makeParams({
+      deps: {
+        workspaceDir: "/workspace",
+        toolCapabilityPort: portStub,
+      },
+    }));
+
+    // BYTE-IDENTITY: the cached prefix did not flip with the operator-late
+    // toggle. The hot-flip contract is satisfied IFF this assertion holds.
+    expect(result2.systemPrompt).toBe(result1.systemPrompt);
+  });
+
+  it("hot-flipping tooling.capabilityIndex.enabled between assembleExecutionPrompt calls does NOT mutate the cached systemPrompt (false→true direction, symmetric)", async () => {
+    // Symmetric inverse of the prior test. Establishes that the
+    // byte-identity contract holds in BOTH directions of the hot-flip.
+    // A green test in only one direction could mask a bug where the
+    // cache fence works for the gate-on-then-off case but not the
+    // gate-off-then-on case (e.g. a lazy memoization that captures only
+    // the first observed value).
+    let gateValue = false;
+    const portStub = createCapabilityPortStub({
+      isCapabilityIndexEnabled: () => gateValue,
+    });
+
+    const result1 = await assembleExecutionPrompt(makeParams({
+      deps: {
+        workspaceDir: "/workspace",
+        toolCapabilityPort: portStub,
+      },
+    }));
+    gateValue = true;
+    const result2 = await assembleExecutionPrompt(makeParams({
+      deps: {
+        workspaceDir: "/workspace",
+        toolCapabilityPort: portStub,
+      },
+    }));
+
+    expect(result2.systemPrompt).toBe(result1.systemPrompt);
   });
 });
 

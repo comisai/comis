@@ -14,20 +14,10 @@
 
 // ---------------------------------------------------------------------------
 // MCP attribution helpers
-// Defined inline to avoid cross-package import from @comis/skills.
+// Re-exported from @comis/shared (canonical home).
 // ---------------------------------------------------------------------------
 
-/**
- * Extract the MCP server name from a sanitized tool name.
- * Format: `mcp__serverName--toolName`. Returns undefined for non-MCP tools.
- */
-export function extractMcpServerName(toolName: string): string | undefined {
-  if (!toolName.startsWith("mcp__")) return undefined;
-  const rest = toolName.slice(5);
-  const sepIdx = rest.indexOf("--");
-  if (sepIdx <= 0) return undefined;
-  return rest.slice(0, sepIdx);
-}
+export { extractMcpServerName } from "@comis/shared";
 
 /**
  * Classify an MCP error message into a category for observability.

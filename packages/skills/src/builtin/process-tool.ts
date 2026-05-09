@@ -23,6 +23,11 @@ import {
   readNumberParam,
 } from "./platform/tool-helpers.js";
 import type { ProcessRegistry } from "./process-registry.js";
+import type { ToolCapabilityPort } from "@comis/core";
+import { buildInstallDetourHint } from "./exec-tool.js";
+// `InstallDetourDecision` is imported transitively via
+// ProcessSession.installDetourDecision (process-registry.ts type-only import);
+// no direct import here — never re-derive at status-query time.
 
 // ---------------------------------------------------------------------------
 // Parameter schema
@@ -65,17 +70,43 @@ interface ToolLogger {
 // Factory
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Deps interface
+// ---------------------------------------------------------------------------
+
+/**
+ * Dependencies for the process tool factory. Backward compatibility is NOT
+ * preserved (see CLAUDE.md user-memory `feedback_no_backward_compat`).
+ *
+ * `toolCapabilityPort` is REQUIRED — read inside the `case "status":` branch
+ * to decide whether to augment the result envelope with the retroactive
+ * install-detour hint (read the spawn-time `session.installDetourDecision`
+ * rather than re-deriving from current connected-server state, since the
+ * connected set may have drifted since spawn). Daemon wiring injects
+ * `createNoOpCapabilityPort()` until the real adapter is available.
+ */
+export interface ProcessToolDeps {
+  readonly registry: ProcessRegistry;
+  readonly logger?: ToolLogger;
+  /** REQUIRED for the v1.1 capability layer — used by `process.status` augmentation. */
+  readonly toolCapabilityPort: ToolCapabilityPort;
+}
+
 /**
  * Create a process management tool that delegates to a ProcessRegistry.
  *
- * @param registry - ProcessRegistry for session CRUD operations
- * @param logger - Optional structured logger for DEBUG-level operation logging
- * @returns AgentTool implementing the process management interface
+ * Uses a deps-object signature; backward compat with the prior positional
+ * `(registry, logger?)` shape is NOT preserved.
+ *
+ * @param deps - Dependencies bundle. See `ProcessToolDeps` for field semantics.
+ * @returns AgentTool implementing the process management interface.
  */
-export function createProcessTool(
-  registry: ProcessRegistry,
-  logger?: ToolLogger,
-): AgentTool<typeof ProcessParams> {
+export function createProcessTool(deps: ProcessToolDeps): AgentTool<typeof ProcessParams> {
+  const {
+    registry,
+    logger,
+    // toolCapabilityPort is read inside execute(...) below
+  } = deps;
   return {
     name: "process",
     label: "Process",
@@ -119,6 +150,22 @@ export function createProcessTool(
             if (!details) {
               throwToolError("not_found", `Process session not found: ${sessionId}`);
             }
+
+            // Retroactive advise-mode hint augmentation. Read the spawn-time
+            // decision back from the session rather than re-deriving from current
+            // connected-server state (the connected set may have drifted since
+            // spawn, producing an inconsistent hint vs the spawn-time event).
+            // No current-mode check — operators can switch modes mid-session via
+            // daemon restart; advise-spawned sessions keep their hint.
+            const session = registry.get(sessionId);
+            if (
+              session?.installDetourDecision &&
+              session.installDetourDecision.overlaps.length > 0
+            ) {
+              const hint = buildInstallDetourHint(session.installDetourDecision);
+              return jsonResult({ ...details, installDetourHint: hint.installDetourHint });
+            }
+
             return jsonResult(details);
           }
 

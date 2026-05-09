@@ -6,11 +6,11 @@
  * running daemon. Each test verifies the correct RPC method is called, the
  * response is a valid JSON-RPC shape, and the daemon returns structured data.
  *
- *   INTEG-04: Channel status via config.get
- *   INTEG-05: Sessions list RPC round-trip
- *   INTEG-06: Memory search RPC round-trip
- *   INTEG-07: System status via gateway.status + config.get
- *   INTEG-08: Models list RPC round-trip
+ *   Channel status via config.get
+ *   Sessions list RPC round-trip
+ *   Memory search RPC round-trip
+ *   System status via gateway.status + config.get
+ *   Models list RPC round-trip
  *
  * Uses the daemon harness for programmatic daemon startup/teardown.
  */
@@ -58,10 +58,10 @@ describe("CLI Query Commands Integration (real daemon)", () => {
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // INTEG-04 -- Channel Status
+  // Channel Status
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-04: Channel Status", () => {
+  describe("Channel Status", () => {
     it("retrieves channel configuration via config.get", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "channels" }, 1, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -84,10 +84,10 @@ describe("CLI Query Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-05 -- Sessions List
+  // Sessions List
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-05: Sessions List", () => {
+  describe("Sessions List", () => {
     it("calls sessions.list RPC and gets a round-trip response", async () => {
       const response = (await sendJsonRpc(ws, "sessions.list", {}, 3, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -124,10 +124,10 @@ describe("CLI Query Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-06 -- Memory Search
+  // Memory Search
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-06: Memory Search", () => {
+  describe("Memory Search", () => {
     it("executes memory.search RPC and gets a response", async () => {
       const response = (await sendJsonRpc(ws, "memory.search", { query: "test", limit: 5 }, 5, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -151,10 +151,10 @@ describe("CLI Query Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-07 -- System Status
+  // System Status
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-07: System Status", () => {
+  describe("System Status", () => {
     it("retrieves gateway status via gateway.status RPC", async () => {
       const response = (await sendJsonRpc(ws, "gateway.status", {}, 7, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -191,10 +191,10 @@ describe("CLI Query Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-08 -- Models List
+  // Models List
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-08: Models List", () => {
+  describe("Models List", () => {
     it("calls models.list RPC and gets a round-trip response", async () => {
       const response = (await sendJsonRpc(ws, "models.list", {}, 12, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 

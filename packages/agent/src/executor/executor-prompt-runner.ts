@@ -58,6 +58,7 @@ import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";
 import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js";
 import type { LastKnownModelTracker } from "../model/last-known-model.js";
 import type { EnvelopeConfig } from "@comis/core";
+import type { CapabilityIndexRenderResult } from "./capability-index-context.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -94,6 +95,12 @@ export interface RunPromptParams {
   // Prompt assembly data
   dynamicPreamble: string | undefined;
   deferredContext: string | undefined;
+  /**
+   * Per-turn capability-index render result. The .text field is concatenated
+   * into the dynamic preamble via `[...].filter(Boolean).join("\n\n")`; the
+   * count fields feed the Pino debug log below.
+   */
+  capabilityIndexResult: CapabilityIndexRenderResult;
   inlineMemory: string | undefined;
   systemPrompt: string | undefined;
   mergedCustomTools: Array<{ name: string; description?: string; parameters?: unknown }>;
@@ -166,7 +173,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
   const {
     msg, session, config, sessionKey, formattedKey, agentId, result,
     executionStartMs, effectiveTimeout, executionId,
-    bridge, dynamicPreamble, deferredContext, inlineMemory, systemPrompt,
+    bridge, dynamicPreamble, deferredContext, capabilityIndexResult, inlineMemory, systemPrompt,
     mergedCustomTools, cmdResult, sepEnabled, executionPlanRef,
     _directives, _prevTimestamp, resolvedModel, deps, onResetTimer,
     getLastCacheWriteTokens, budgetWarningRef,
@@ -180,13 +187,39 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
   // Prepend dynamic preamble (date/time, inbound metadata)
   // relocated from system prompt for cache stability.
   // Also includes <deferred-tools> context block when deferred tools exist.
-  const fullDynamicPreamble = deferredContext
-    ? (dynamicPreamble ? dynamicPreamble + "\n\n" + deferredContext : deferredContext)
-    : dynamicPreamble;
+  //
+  // Array-concat shape. Each element either contributes a non-empty string
+  // or filters out cleanly. The renderer's EMPTY sentinel (gate-disabled OR
+  // all-zero counts) yields text === "" which .filter(Boolean) drops
+  // automatically.
+  const capabilityIndexContext = capabilityIndexResult.text;
+  const fullDynamicPreamble = [dynamicPreamble, capabilityIndexContext, deferredContext]
+    .filter(Boolean)
+    .join("\n\n");
 
   if (fullDynamicPreamble) {
     messageText = `[System context]\n${fullDynamicPreamble}\n[End system context]\n\n${messageText}`;
   }
+
+  // Pino debug log. Submodule binding per AGENTS.md §2.7:
+  // deps.logger.child({ submodule }) attaches the label only at this call
+  // site, not module-scope.
+  const submoduleLogger = deps.logger.child({ submodule: "executor.capability-index" });
+  const fullPreambleTokens = Math.ceil((fullDynamicPreamble ?? "").length / CHARS_PER_TOKEN_RATIO);
+  const deferredContextTokens = Math.ceil((deferredContext ?? "").length / CHARS_PER_TOKEN_RATIO);
+
+  submoduleLogger.debug(
+    {
+      capabilityIndexTokens: capabilityIndexResult.capabilityIndexTokens,
+      deferredContextTokens,
+      fullPreambleTokens,
+      clusterCount: capabilityIndexResult.clusterCount,
+      activeToolCount: capabilityIndexResult.activeToolCount,
+      deferredToolCount: capabilityIndexResult.deferredToolCount,
+      promptSkillCount: capabilityIndexResult.promptSkillCount,
+    },
+    "Dynamic preamble assembled",
+  );
 
   // Task 229: Inject top-1 RAG memory inline, adjacent to user message
   // for maximum LLM attention. Placed AFTER [End system context] and

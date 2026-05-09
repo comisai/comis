@@ -291,6 +291,11 @@ vi.mock("node:fs", async (importOriginal) => {
 // ---------------------------------------------------------------------------
 
 import { createPiExecutor, createBeforeToolCallGuard, mergeSessionStats, clearSessionToolSchemaSnapshotHash, _getOrCreateSessionLatchesForTest, _clearSessionLatchesForTest, type PiExecutorDeps } from "./pi-executor.js";
+// PiExecutorDeps requires toolCapabilityPort. Tests use the test-only stub
+// from @comis/core's __test-helpers/ directory (NOT the production no-op
+// factory re-exported from @comis/core — the architecture-grep boundary
+// forbids production-stub crossover both ways).
+import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 import { repairOrphanedMessages } from "../session/orphaned-message-repair.js";
 import { createPiEventBridge } from "../bridge/pi-event-bridge.js";
 import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../bootstrap/index.js";
@@ -406,6 +411,13 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
     workspaceDir: "/tmp/test-workspace",
     agentDir: "/tmp/test-agent-dir",
     customTools: [],
+    // REQUIRED on PiExecutorDeps. Stub returns gate-enabled + empty defaults —
+    // assembleTools() will invoke buildCapabilityIndexContext, which sees zero
+    // clusters/skills/servers and returns the EMPTY sentinel. The runner's
+    // array-concat then drops the empty text via .filter(Boolean).
+    // Inert-but-not-broken; matches the production no-op port behavior the
+    // daemon injects.
+    toolCapabilityPort: createCapabilityPortStub(),
     ...overrides,
   };
 }
@@ -1704,7 +1716,7 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // R-13: SDK session stats now populate cacheRead/cacheWrite alongside bridge values
+      // SDK session stats now populate cacheRead/cacheWrite alongside bridge values
       expect(result.tokensUsed).toEqual({ input: 100, output: 50, total: 150, cacheRead: 0, cacheWrite: 0 });
       expect(result.cost).toEqual({ total: 0.01 });
       expect(result.stepsExecuted).toBe(2);
@@ -5250,10 +5262,10 @@ describe("PiExecutor", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R-12: createBeforeToolCallGuard (standalone unit tests)
+// createBeforeToolCallGuard (standalone unit tests)
 // ---------------------------------------------------------------------------
 
-describe("createBeforeToolCallGuard (R-12)", () => {
+describe("createBeforeToolCallGuard", () => {
   it("blocks when step counter is exhausted", async () => {
     const stepCounter = { shouldHalt: () => true, increment: () => 1, reset: () => {}, getCount: () => 50 };
     const budgetGuard = { checkBudget: () => ok(undefined), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any;
@@ -5347,10 +5359,10 @@ describe("createBeforeToolCallGuard (R-12)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// mergeSessionStats (R-13)
+// mergeSessionStats
 // ---------------------------------------------------------------------------
 
-describe("mergeSessionStats (R-13)", () => {
+describe("mergeSessionStats", () => {
   it("overrides token totals from SDK stats", () => {
     const result = {
       tokensUsed: { input: 100, output: 50, total: 150, cacheRead: 10, cacheWrite: 5 },
