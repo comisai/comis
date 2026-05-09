@@ -256,9 +256,14 @@ describe("createToolCapabilityAdapter", () => {
       );
 
       // Lookup MUST NOT return the unresolved cluster id -- falls through to
-      // metadata (which may or may not be defined for "exec" at runtime;
-      // the key assertion is that we never see the typo string echoed back).
-      expect(port.getBuiltinCluster("exec")).not.toBe("nonexistent-cluster");
+      // getToolMetadata("exec")?.capability?.cluster (per the adapter's line
+      // 205-215 contract). This unit test does not invoke the @comis/skills
+      // registerAllToolMetadata bootstrap, so the registry has no entry for
+      // "exec" and the metadata path resolves to undefined. The positive
+      // assertion locks the contract: a future regression that returned the
+      // typo string OR a phantom cluster ID would fail here, where the
+      // previous .not.toBe(...) negative assertion would pass trivially.
+      expect(port.getBuiltinCluster("exec")).toBe(undefined);
     });
   });
 
