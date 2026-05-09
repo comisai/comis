@@ -3,9 +3,12 @@
  * Phase 24 INTEG-05: Install-detour advise-mode end-to-end
  *
  * Promotes the Phase 22 unit-level install-detour surface to integration
- * level via the real daemon-harness path. Boots the daemon with the Phase 24
- * advise-mode test config (config.test-tooling-fixtures.yaml, port 8506)
- * and exercises the install-detour code path by directly invoking
+ * level via the real daemon-harness path. Boots the daemon with this file's
+ * dedicated advise-mode config (config.test-install-detour-advise.yaml,
+ * port 8509 — sibling of config.test-tooling-fixtures.yaml on 8506; project
+ * convention is one config/port per integration test file so files can run
+ * in parallel under vitest's default fork pool).
+ * Exercises the install-detour code path by directly invoking
  * `createExecTool` against the live daemon container's eventBus and
  * secretManager.
  *
@@ -45,7 +48,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const CONFIG_PATH = resolve(
   __dirname,
-  "../config/config.test-tooling-fixtures.yaml",
+  "../config/config.test-install-detour-advise.yaml",
 );
 
 describe("Phase 24 INTEG-05: Install-detour advise-mode end-to-end", () => {

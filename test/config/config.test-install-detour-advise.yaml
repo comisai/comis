@@ -1,0 +1,106 @@
+# Comis Test Configuration (Phase 24 Install-Detour Advise E2E)
+#
+# Port 8509 -- unique to install-detour-advise-e2e.test.ts.
+# Mirrors config.test-tooling-fixtures.yaml (same advise-mode tooling block,
+# same Phase 24 skill-variant discoveryPaths) but uses a distinct port and
+# memory db so this test file can run in parallel with tooling-fixture-render.
+# Project convention: one config (one port, one db) per integration test file.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  default:
+    name: "TestAgent"
+    model: claude-opus-4-6
+    thinkingLevel: "off"
+    provider: anthropic
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+    skills:
+      discoveryPaths:
+        - "${HOME}/Projects/comisai/comis/packages/agent/src/__tests__/fixtures/phase-8-skill-variants"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8509
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-install-detour-advise"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-install-detour-advise.db"
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic
+
+tooling:
+  capabilityClusters:
+    clusters:
+      data-fetching-financial:
+        label: "Data fetching - financial / market"
+        priority: 10
+        preferOverInstalls: true
+  mcp:
+    capabilityHints:
+      finance-data:
+        cluster: data-fetching-financial
+        description: "Market prices, history, fundamentals, and financial lookup."
+        replacesPackages:
+          - market-data-lib
+          - finance-data-client
+          - price-history-sdk
+  skills:
+    capabilityHints:
+      operator-config-skill:
+        cluster: data-fetching-financial
+        description: "Operator-driven hint for fixture A."
+        replacesPackages:
+          - operator-replaceable-pkg
+  installDetours:
+    mode: advise
+  capabilityIndex:
+    enabled: true
