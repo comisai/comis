@@ -386,18 +386,22 @@ export async function setupSingleAgent(
       // Closure-stability: the closure dereferences
       // container.config.agents[agentId]?.oauthProfiles on every call.
       // This is the only correct shape because:
-      //   1. Line ~222 above writes effectiveConfig (a NEW object built
-      //      from { ...agentConfig, model, provider }) into
-      //      container.config.agents[agentId]. The local `agentConfig`
-      //      parameter diverges from the daemon's map immediately at
-      //      startup — capturing it would observe the wrong value.
+      //   1. The `container.config.agents[agentId] = effectiveConfig`
+      //      writeback above (search for that assignment in this file)
+      //      stores a NEW object built from
+      //      { ...agentConfig, model, provider } into the daemon's map.
+      //      The local `agentConfig` parameter diverges from the map
+      //      immediately at startup — capturing it would observe the
+      //      wrong value.
       //   2. agents.update at agent-handlers.ts:341 executes
       //      `deps.agents[agentId] = parsedConfig`, REPLACING the
       //      reference at that key with a new validated object. Capturing
       //      the local agentConfig parameter would miss this hot-update.
-      //   3. daemon.ts:594, 634 confirm `deps.agents` and
-      //      `container.config.agents` are THE SAME map object — the
-      //      daemon's single per-process Container.config instance.
+      //   3. daemon.ts confirms `deps.agents` and `container.config.agents`
+      //      are THE SAME map object — search for
+      //      `agents: container.config.agents` in the RpcDispatchDeps
+      //      construction. The daemon holds a single per-process
+      //      Container.config instance.
       // The map identity is stable; only the value at the agent key
       // changes. The closure-evaluated dereference observes (1) at
       // startup AND (2) on every agents.update without an event-bus
