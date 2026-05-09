@@ -227,6 +227,31 @@ function createDefaultMockMcpClientManager() {
 }
 
 function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
+  // Phase 23 (WIRING-11) -- per-agent ToolCapabilityPort resolver stub.
+  // Hoisted ABOVE the return so every call to deps.getCapabilityPortForAgent
+  // returns the SAME port instance, mirroring production wiring (which
+  // resolves through a Map<agentId, port>). assembleToolsForAgent calls
+  // deps.getCapabilityPortForAgent twice (once for exec, once for process)
+  // per invocation; a fresh object per call would mask reference-equality
+  // regressions and would also block
+  // `expect(deps.getCapabilityPortForAgent).toHaveReturnedWith(portStub)`.
+  //
+  // getPackageAliasMap is `ReadonlyMap<string, CapabilitySourceRef>` per
+  // the ToolCapabilityPort contract -- using `Map<string, string>` here
+  // would silently pass through the outer `as any` cast and bury a
+  // value-shape mismatch (consumers reading `ref.type === "mcp"` would
+  // observe `undefined`).
+  const portStub = {
+    isCapabilityIndexEnabled: () => true,
+    getInstallDetourMode: () => "advise" as const,
+    getBuiltinCluster: () => undefined,
+    getClusterConfig: () => undefined,
+    getMcpServerHint: () => undefined,
+    getSkillHint: () => undefined,
+    getPackageAliasMap: () => new Map<string, CapabilitySourceRef>(),
+    getConnectedMcpServers: () => [],
+    getPromptSkillCapabilities: () => [],
+  };
   return {
     rpcCall: vi.fn(async () => ({})),
     agents: {
@@ -259,26 +284,7 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
     } as any,
     mcpClientManager: createDefaultMockMcpClientManager() as any,
     sessionTrackerRegistry: createMockSessionTrackerRegistry() as any,
-    // Phase 23 (WIRING-11) -- per-agent ToolCapabilityPort resolver.
-    // Test stub returns the shape the exec/process tool factories rely on
-    // (empty-defaults). Plan 23-02 replaced the prior production no-op mock;
-    // this mirrors the new ToolsDeps interface.
-    //
-    // getPackageAliasMap is `ReadonlyMap<string, CapabilitySourceRef>` per
-    // ToolCapabilityPort -- using `Map<string, string>` here would silently
-    // pass through the outer `as any` cast and bury a value-shape mismatch
-    // (consumers reading `ref.type === "mcp"` would observe `undefined`).
-    getCapabilityPortForAgent: vi.fn(() => ({
-      isCapabilityIndexEnabled: () => true,
-      getInstallDetourMode: () => "advise" as const,
-      getBuiltinCluster: () => undefined,
-      getClusterConfig: () => undefined,
-      getMcpServerHint: () => undefined,
-      getSkillHint: () => undefined,
-      getPackageAliasMap: () => new Map<string, CapabilitySourceRef>(),
-      getConnectedMcpServers: () => [],
-      getPromptSkillCapabilities: () => [],
-    })) as any,
+    getCapabilityPortForAgent: vi.fn(() => portStub) as any,
     ...overrides,
   };
 }
