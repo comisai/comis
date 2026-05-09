@@ -140,13 +140,13 @@ describe("@comis/daemon -- architecture invariants (WIRING-10, WIRING-11)", () =
       needle: "createNoOpCapabilityPort",
       excludeFileSuffixes: [".test.ts"],
     });
-    // Allowlist: architecture.test.ts itself references the literal in
-    // proof-of-failure comments. The grep above already excludes *.test.ts
-    // files via excludeFileSuffixes, but architecture.test.ts is NOT a
-    // *.test.ts — it lives at __tests__/architecture.test.ts and IS a
-    // *.test.ts (excludeFileSuffixes drops it). The allowlist is therefore
-    // a defense-in-depth marker; a future filename refactor that drops
-    // the .test.ts suffix would still be safe.
+    // Allowlist: architecture.test.ts itself contains the literal in
+    // proof-of-failure comments. It is already excluded by BOTH the
+    // default `__tests__/` directory exclusion (source-grep.ts:55-60)
+    // AND the `excludeFileSuffixes: [".test.ts"]` filter above
+    // (source-grep.ts:103) -- so the allowlist is defense-in-depth
+    // against a future filename refactor that drops the `.test.ts`
+    // suffix or moves the test out of `__tests__/`.
     const ALLOWLIST = ["architecture.test.ts"];
     const offenders = result.matches.filter(
       (m) => !ALLOWLIST.some((allowed) => m.endsWith(allowed)),
