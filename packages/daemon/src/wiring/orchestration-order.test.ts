@@ -23,30 +23,34 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { setupMcp } from "./setup-mcp.js";
-// setupAgents is imported here (NOT vi.mocked) so the type-level dependency
-// surface is exercised at compile time -- a future refactor that breaks the
-// SetupAgentsDeps contract surfaces in this file. The full setupAgents body
-// pulls in pi-coding-agent + ProviderHealthMonitor + OAuth credential store
-// + secret manager + ~30 other deps; building a full in-memory fixture that
-// survives every reach into container/deps is out of scope for v1 of this
-// runtime check (see TODO(phase-24) note in the second `it` block). The
+// setupAgents is imported as TYPE-ONLY so the type-level dependency surface
+// is exercised at compile time -- a future refactor that breaks the
+// SetupAgentsDeps contract still surfaces in this file. A runtime
+// `import` would pull the entire transitive dep graph (pi-coding-agent,
+// ProviderHealthMonitor, OAuth credential store, secret manager,
+// better-sqlite3 native bindings via @comis/memory, ~30 other deps),
+// inflating module-load cost and risking unrelated load failures
+// masquerading as orchestration-order regressions.
+//
+// The full setupAgents body is out of scope for v1 of this runtime check
+// (see TODO(phase-24) note in the second `it` block). The
 // orchestration-ORDER claim (setupMcp result feeds adapter construction
 // without throwing AND the per-agent port is the live adapter) is proven
 // here by exercising the SAME factory (createToolCapabilityAdapter) that
 // setupSingleAgent invokes inside the real setupAgents loop.
-import { setupAgents } from "./setup-agents.js";
+import type { setupAgents } from "./setup-agents.js";
 import { createToolCapabilityAdapter } from "./tool-capability-adapter.js";
 import { createNoOpCapabilityPort } from "@comis/core";
 import type { ToolingConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { SkillRegistry, McpServerConnection } from "@comis/skills";
 
-// Compile-time reference to setupAgents -- ensures the import is used and
-// preserves the runtime architecture claim (the real setupAgents lives in
-// the same module surface this test consumes; a regression that breaks the
-// SetupAgentsDeps shape would surface here too via the type-level dep).
-const _setupAgentsRef: typeof setupAgents = setupAgents;
-void _setupAgentsRef;
+// Compile-time-only reference to setupAgents -- preserves the runtime
+// architecture claim (the real setupAgents lives in the same module
+// surface this test consumes; a regression that breaks the SetupAgentsDeps
+// shape would surface here too via the type-level dep) without paying the
+// runtime import cost.
+type _SetupAgentsType = typeof setupAgents;
 
 /** Minimal silent logger that satisfies ComisLogger. */
 function makeStubLogger(): ComisLogger {
