@@ -308,6 +308,15 @@ export function createToolCapabilityAdapter(
         }
       }
 
+      // Reference-stability guarantee (line 80-82 module docstring):
+      // the early-return shortcut above only fires when ALL three input
+      // sources are length-zero. Operator hints / skills / connected servers
+      // that produce zero map entries (e.g. every hint has
+      // `replacesPackages: []`) bypass that shortcut and would otherwise
+      // return a fresh empty map -- silently breaking the documented
+      // identity-stable empty-result contract. Re-check the size after the
+      // loops complete and collapse to the shared sentinel when empty.
+      if (map.size === 0) return EMPTY_ALIAS_MAP;
       return map;
     },
 
