@@ -1105,6 +1105,21 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     );
   }
 
+  // Phase 23 (WIRING-11) -- per-agent ToolCapabilityPort resolver. Falls
+  // back to the default agent's port for unknown agentIds (mirrors the
+  // setup-tools.ts:327 `agents[agentId] ?? agents[defaultAgentId]`
+  // convention). Throws if neither exists, which would indicate a daemon
+  // initialization order bug surfaced as a clear invariant violation.
+  const getCapabilityPortForAgent = (agentId: string): ToolCapabilityPort => {
+    const port = toolCapabilityPorts.get(agentId) ?? toolCapabilityPorts.get(defaultAgentId);
+    if (!port) {
+      throw new Error(
+        `No ToolCapabilityPort registered for agent '${agentId}' and no default agent fallback available -- daemon initialization invariant violated.`,
+      );
+    }
+    return port;
+  };
+
   // 6.6.8.5. Tools + message preprocessing
   const { assembleToolsForAgent, preprocessMessageText } = setupTools({
     rpcCall, agents, defaultAgentId, workspaceDirs, defaultWorkspaceDir,
@@ -1120,6 +1135,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     imageGenProvider,  // Conditional: only registered when API key is present
     backgroundTaskManager,  // Background_tasks tool registration
     sessionTrackerRegistry,
+    getCapabilityPortForAgent,  // Phase 23 (WIRING-11)
   });
 
   // Wire deferred tool assembler ref now that setupTools has returned
@@ -1338,6 +1354,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
       skillWatcherHandles.set(agentId, result.skillWatcherHandle);
     }
     skillRegistries.set(agentId, result.skillRegistry);
+    toolCapabilityPorts.set(agentId, result.toolCapabilityPort);
     container.eventBus.emit("agent:hot_added", { agentId, timestamp: Date.now() });
     daemonLogger.info({ agentId, durationMs: Date.now() - startMs }, "Agent hot-added to running daemon");
   };
@@ -1369,6 +1386,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     stepCounters.delete(agentId);
     piSessionAdapters.delete(agentId);
     skillRegistries.delete(agentId);
+    toolCapabilityPorts.delete(agentId);
     container.eventBus.emit("agent:hot_removed", { agentId, timestamp: Date.now() });
     daemonLogger.info({ agentId, durationMs: Date.now() - startMs }, "Agent hot-removed from running daemon");
   };
