@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ToolsDeps } from "./setup-tools.js";
+import type { CapabilitySourceRef } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
@@ -262,6 +263,11 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
     // Test stub returns the shape the exec/process tool factories rely on
     // (empty-defaults). Plan 23-02 replaced the prior production no-op mock;
     // this mirrors the new ToolsDeps interface.
+    //
+    // getPackageAliasMap is `ReadonlyMap<string, CapabilitySourceRef>` per
+    // ToolCapabilityPort -- using `Map<string, string>` here would silently
+    // pass through the outer `as any` cast and bury a value-shape mismatch
+    // (consumers reading `ref.type === "mcp"` would observe `undefined`).
     getCapabilityPortForAgent: vi.fn(() => ({
       isCapabilityIndexEnabled: () => true,
       getInstallDetourMode: () => "advise" as const,
@@ -269,7 +275,7 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
       getClusterConfig: () => undefined,
       getMcpServerHint: () => undefined,
       getSkillHint: () => undefined,
-      getPackageAliasMap: () => new Map<string, string>(),
+      getPackageAliasMap: () => new Map<string, CapabilitySourceRef>(),
       getConnectedMcpServers: () => [],
       getPromptSkillCapabilities: () => [],
     })) as any,
