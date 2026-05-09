@@ -167,9 +167,11 @@ describe("Phase 24 INTEG-05: Install-detour advise-mode end-to-end", () => {
         //    BOTH success and exit-with-error envelopes (exec-tool.ts:1132
         //    + :1470). NO permission_denied is raised in advise mode.
         const resultJson = JSON.stringify(result);
-        expect(resultJson).not.toMatch(
-          /permission_denied|soft-stop|refused/i,
-        );
+        // Forbidden tokens that would indicate the refusal path fired by
+        // mistake (this test is advise-mode only). The regex dot `soft.stop`
+        // matches the canonical refusal-mode tokens emitted by the policy
+        // gate when refusal fires.
+        expect(resultJson).not.toMatch(/permission_denied|soft.stop|refused/i);
 
         // installDetourHint augmentation IS expected — Phase 22 advise-mode
         // contract guarantees it on every overlap-triggering exec call.
