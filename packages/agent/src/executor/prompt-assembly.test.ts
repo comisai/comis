@@ -108,8 +108,8 @@ import { createSpawnPacketBuilder } from "../spawn/spawn-packet-builder.js";
 // Phase 20 (CAPINDEX-RENDER-04 / -05) — fixture stub for the capability-index
 // gate. Default returns `false` so existing tests stay on the legacy
 // gate-off path (byte-identical baseline). Architecture-grep boundary in
-// Plan 17-04 forbids production-stub crossover both ways: tests use the
-// __test-helpers/ source path, never the production createNoOpCapabilityPort.
+// Plan 17-04 + Plan 23-03 forbids production-stub crossover both ways: tests
+// use the __test-helpers/ source path, never the production no-op factory.
 import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 
 /** Formatted session key matching makeParams() default sessionKey. */

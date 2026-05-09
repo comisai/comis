@@ -45,7 +45,7 @@ import { findInSourceFiles } from "../../../../test/support/source-grep.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
 
-describe("@comis/agent -- architecture invariants (MCPNAME-03, DEFER-04, CAPINDEX-RENDER-16)", () => {
+describe("@comis/agent -- architecture invariants (MCPNAME-03, DEFER-04, CAPINDEX-RENDER-16, WIRING-10)", () => {
   // FORBIDDEN_PARSER_RE: catches the canonical inline mcp__server--tool parser shape
   // (`.slice(5)` followed by `.indexOf("--")` within ~200 characters). Post-migration
   // (Plan 18-02) no production file in @comis/agent matches this pattern; the
@@ -261,5 +261,76 @@ describe("@comis/agent -- architecture invariants (MCPNAME-03, DEFER-04, CAPINDE
         "every turn, the Anthropic prompt-cache cost doubles or worse.",
     ).toEqual([]);
     expect(result.checkedFiles, "sanity: helper walked at least one production source file").toBeGreaterThan(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 23 — WIRING-10a / -10b: production/test boundary for the
+  // ToolCapabilityPort. The agent package only CONSUMES ToolCapabilityPort
+  // (it never constructs one); these greps lock the test/prod crossover at
+  // the source-grep boundary so a regression cannot ship in the published
+  // comisai tarball via __test-helpers/ (NOT tsconfig-excluded — Pitfall 13).
+  // ---------------------------------------------------------------------------
+
+  it("WIRING-10a: production source does NOT import createCapabilityPortStub (Pitfall 13 — test/prod boundary)", () => {
+    // §10.6 INVERTED-CYCLE PROOF (Phase 23 Plan 23-03): planted violation:
+    //   1. cp packages/agent/src/safety/circuit-breaker.ts /tmp/p23-cb-backup.ts
+    //   2. Append: import { createCapabilityPortStub } from "../../core/src/ports/__test-helpers/tool-capability-stub.js";
+    //   3. Run: pnpm --filter @comis/agent exec vitest run src/__tests__/architecture.test.ts
+    //      Expected: WIRING-10a fails with circuit-breaker.ts in offenders.
+    //   4. cp /tmp/p23-cb-backup.ts packages/agent/src/safety/circuit-breaker.ts
+    //   5. Run again: GREEN
+    //   6. Document in 23-03-SUMMARY.md.
+    //
+    // Rationale (Pitfall 13): __test-helpers/ is NOT excluded by tsconfig;
+    // the architecture-grep is the SOLE boundary keeping the stub out of the
+    // published comisai tarball (via bundledDependencies). A production import
+    // smuggles the stub into dist/ and ships to end-users.
+    const result = findInSourceFiles({
+      rootDir: SRC_ROOT,
+      needle: "createCapabilityPortStub",
+      excludeDirs: ["__tests__", "__snapshots__", "dist", "node_modules", "__test-helpers"],
+      excludeFileSuffixes: [".test.ts"],
+    });
+    expect(
+      result.matches,
+      "@comis/agent production source must not import createCapabilityPortStub " +
+        "(use createNoOpCapabilityPort if a real adapter is unavailable; the agent " +
+        "package itself only consumes ToolCapabilityPort, never constructs one — " +
+        "see Phase 17 + Phase 23 architecture)",
+    ).toEqual([]);
+    expect(result.checkedFiles, "sanity: helper walked at least one production source file in @comis/agent").toBeGreaterThan(0);
+  });
+
+  it("WIRING-10b: test source files do NOT import createNoOpCapabilityPort (use createCapabilityPortStub from __test-helpers/ instead)", () => {
+    // §10.6 INVERTED-CYCLE PROOF (Phase 23 Plan 23-03): planted violation:
+    //   1. cp packages/agent/src/executor/capability-index-context.test.ts /tmp/p23-cic-backup.ts
+    //   2. Insert: import { createNoOpCapabilityPort } from "@comis/core";
+    //   3. Run: pnpm --filter @comis/agent exec vitest run src/__tests__/architecture.test.ts
+    //      Expected: WIRING-10b fails with capability-index-context.test.ts
+    //               in offenders (after the allowlist filter).
+    //   4. cp /tmp/p23-cic-backup.ts packages/agent/src/executor/capability-index-context.test.ts
+    //   5. Run again: GREEN
+    //   6. Document in 23-03-SUMMARY.md.
+    const result = findInSourceFiles({
+      rootDir: SRC_ROOT,
+      needle: "createNoOpCapabilityPort",
+      extensions: [".test.ts"],
+    });
+    // Allowlist: this architecture.test.ts itself legitimately references the
+    // literal (the planted-violation comment block above contains it, even in
+    // green state). The plan deliberately keeps the allowlist minimal — any
+    // OTHER test file containing the literal indicates a real bug (use
+    // createCapabilityPortStub from @comis/core's __test-helpers/ instead).
+    const ALLOWLIST = ["architecture.test.ts"];
+    const offenders = result.matches.filter(
+      (m) => !ALLOWLIST.some((allowed) => m.endsWith(allowed)),
+    );
+    expect(
+      offenders,
+      "@comis/agent test files must use createCapabilityPortStub from @comis/core's " +
+        "__test-helpers/ instead of createNoOpCapabilityPort — production no-op " +
+        "factory is for daemon-side fallback only (see Plan 17-04 + Plan 23-03)",
+    ).toEqual([]);
+    expect(result.checkedFiles, "sanity: helper walked at least one test file in @comis/agent").toBeGreaterThan(0);
   });
 });

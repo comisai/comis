@@ -260,8 +260,8 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
     sessionTrackerRegistry: createMockSessionTrackerRegistry() as any,
     // Phase 23 (WIRING-11) -- per-agent ToolCapabilityPort resolver.
     // Test stub returns the shape the exec/process tool factories rely on
-    // (empty-defaults). Plan 23-02 replaced the prior createNoOpCapabilityPort
-    // mock; this mirrors the new ToolsDeps interface.
+    // (empty-defaults). Plan 23-02 replaced the prior production no-op mock;
+    // this mirrors the new ToolsDeps interface.
     getCapabilityPortForAgent: vi.fn(() => ({
       isCapabilityIndexEnabled: () => true,
       getInstallDetourMode: () => "advise" as const,
