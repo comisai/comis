@@ -5,7 +5,7 @@
  */
 
 import { bootstrap, loadEnvFile, createApprovalGate, parseFormattedSessionKey, createConfigGitManager, envSubset, generateStrongToken, createAuditAggregator, createInjectionRateLimiter, validateMemoryWrite, checkApprovalsConfig, safePath, resolveConfigSecretRefs, formatSessionKey, BackgroundTasksConfigSchema } from "@comis/core";
-import type { SecretStorePort, WrapExternalContentOptions, PerAgentConfig } from "@comis/core";
+import type { SecretStorePort, WrapExternalContentOptions, PerAgentConfig, ToolCapabilityPort } from "@comis/core";
 import { setupSecrets as _setupSecretsImpl, createSqliteSecretStore, createNamedGraphStore, createContextStore, createObservabilityStore } from "@comis/memory";
 import type { ObservabilityStore } from "@comis/memory";
 import { ok, err, suppressError } from "@comis/shared";
@@ -36,7 +36,7 @@ import {
   setupOutputRetention,
 } from "./wiring/index.js";
 import { setupSingleAgent } from "./wiring/setup-agents.js";
-import { createActiveRunRegistry, createBackgroundSessionResolver, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides } from "@comis/agent";
+import { createActiveRunRegistry, createBackgroundSessionResolver, createModelCatalog, wireSessionStateCleanup, wireMcpDisconnectCleanup, createGeminiCacheManager, wireGeminiCacheCleanup, createSessionTrackerRegistry, validateProviderOverrides, resolveWorkspaceDir } from "@comis/agent";
 import type { GeminiCacheManager } from "@comis/agent";
 import { detectSandboxProvider, createImageGenProvider, createImageGenRateLimiter, createFileStateTracker } from "@comis/skills";
 import type { SandboxProvider, ImageGenRateLimiter } from "@comis/skills";
@@ -600,13 +600,46 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
 
   // 6.6. Agents
   const agents = container.config.agents;
+
+  // Phase 23 (WIRING-01..11) -- defaultWorkspaceDir hoisted upfront so
+  // setupMcp can run BEFORE setupAgents (it consumes defaultWorkspaceDir as
+  // defaultCwd; per-agent ToolCapabilityPort adapters constructed inside
+  // setupSingleAgent close over the daemon-global mcpClientManager). Mirrors
+  // the per-agent computation in setup-agents.ts (`resolveWorkspaceDir(
+  // effectiveConfig, agentId)` for the agent's own workspace).
+  const defaultAgentId = container.config.routing.defaultAgentId;
+  const defaultAgentConfig =
+    agents[defaultAgentId] ??
+    agents.default ??
+    ({} as PerAgentConfig);
+  const defaultWorkspaceDir = resolveWorkspaceDir(defaultAgentConfig, defaultAgentId);
+
+  // Phase 23: setupMcp moved earlier (before setupAgents) so per-agent
+  // ToolCapabilityPort adapter construction inside setupSingleAgent can
+  // close over mcpClientManager. createMcpClientManager is a pure in-memory
+  // state holder (no I/O) -- the manager is constructed before any
+  // server-connect attempts, so reordering is safe.
+  const { mcpClientManager } = await setupMcp({
+    servers: container.config.integrations.mcp.servers,
+    logger: skillsLogger,
+    callToolTimeoutMs: container.config.integrations.mcp.callToolTimeoutMs,
+    defaultCwd: defaultWorkspaceDir,
+    eventBus: container.eventBus,
+    stdioDefaultConcurrency: container.config.integrations.mcp.stdioDefaultConcurrency,
+    httpDefaultConcurrency: container.config.integrations.mcp.httpDefaultConcurrency,
+  });
+
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
-    defaultAgentId, defaultWorkspaceDir, getExecutor, piSessionAdapters,
+    getExecutor, piSessionAdapters,
     skillWatcherHandles, skillRegistries, lockCleanupTimer, singleAgentDeps, providerHealth,
     // Daemon-level OAuth credential store, threaded into RpcDispatchDeps
     // below so agents.update can validate oauthProfiles patches via has().
     oauthCredentialStore,
+    // Phase 23 (WIRING-01..11) -- per-agent live ToolCapabilityPort
+    // adapters; daemon.ts threads getCapabilityPortForAgent into setupTools
+    // and mutates this map on hot-add / hot-remove.
+    toolCapabilityPorts,
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
@@ -638,6 +671,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     // better-sqlite3 connection (no dual-handle).
     secretsCrypto,
     secretsDb,
+    // Phase 23 (WIRING-01..11) -- daemon-global MCP manager threaded into
+    // setupSingleAgent for per-agent ToolCapabilityPort adapter construction.
+    mcpClientManager,
   });
 
   // Log operation model resolutions at startup (dry-run validation)
@@ -1039,15 +1075,11 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   setupChannelHealthLogging({ eventBus: container.eventBus, logger: daemonLogger });
 
   // 6.6.8.7. MCP server connections (external tool servers)
-  const { mcpClientManager } = await setupMcp({
-    servers: container.config.integrations.mcp.servers,
-    logger: skillsLogger,
-    callToolTimeoutMs: container.config.integrations.mcp.callToolTimeoutMs,
-    defaultCwd: defaultWorkspaceDir,
-    eventBus: container.eventBus,
-    stdioDefaultConcurrency: container.config.integrations.mcp.stdioDefaultConcurrency,
-    httpDefaultConcurrency: container.config.integrations.mcp.httpDefaultConcurrency,
-  });
+  // Phase 23: setupMcp call moved earlier (before setupAgents @ line ~600)
+  // so per-agent ToolCapabilityPort adapter construction inside
+  // setupSingleAgent can close over mcpClientManager. The mcpClientManager
+  // const declared at the earlier site is in lexical scope here; no
+  // additional wiring needed at this section anchor.
 
   // Detect sandbox provider once at startup
   const sandboxProvider: SandboxProvider | undefined = detectSandboxProvider(skillsLogger);
