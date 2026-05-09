@@ -17,6 +17,7 @@ Comis has two distinct hot reload mechanisms: **config hot reload** uses RPC-bas
 | `tokens.create` / `tokens.revoke` / `tokens.rotate` | Same debounced restart path | Yes |
 | `channels.enable` / `channels.disable` | Same debounced restart path | Yes |
 | `gateway.restart` RPC | Direct `SIGUSR1` (200 ms delay to flush response) | Yes |
+| `tooling.*` (entire subtree) | `config.patch` / `config.apply` validate → write → 200 ms delayed `SIGUSR1` → process restart. **Cannot hot-flip** within a running session — `tooling.capabilityIndex.enabled` selects between two cached system-prompt shapes (one-line residual vs flat tool dump), and `tooling.installDetours.mode` is read at adapter-construction time. Operator-only: agents cannot self-edit (the entire `tooling` subtree is in `IMMUTABLE_CONFIG_PREFIXES`). | Yes |
 | New SKILL.md added to a discovery path | chokidar `add` event → debounced re-discovery, no restart | No |
 | Existing SKILL.md edited or deleted | chokidar `change` / `unlink` event → debounced re-discovery | No |
 | Editing `~/.comis/config.yaml` directly | **Not detected.** Run `comis config validate` then restart manually. | -- |
