@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pi-mono adapter wrappers for sub-agent ephemeral sessions (R-11).
+ * Pi-mono adapter wrappers for sub-agent ephemeral sessions.
  *
  * Provides `createEphemeralComisSessionManager()` — a zero-persistence
  * ComisSessionManager whose `withSession` uses `SessionManager.inMemory()`
@@ -57,10 +57,10 @@ export function createEphemeralComisSessionManager(cwd: string): ComisSessionMan
     },
 
     getSessionPath() {
-      // 260428-iag wire-edge diagnostic: ephemeral sub-agent sessions never
-      // persist a JSONL file, so there is no path to return. Empty string
-      // signals "no persisted file"; the bridge's wire-diff hook short-circuits
-      // when jsonlPath.length === 0.
+      // Wire-edge diagnostic: ephemeral sub-agent sessions never persist a
+      // JSONL file, so there is no path to return. Empty string signals
+      // "no persisted file"; the bridge's wire-diff hook short-circuits when
+      // jsonlPath.length === 0.
       return "";
     },
   };

@@ -447,11 +447,11 @@ describe("TOOL_SUMMARIES integration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Layer 1D (260430-vwt) -- buildPrivilegedToolsSection "Built-in first"
-// bullet rendered from the live pi-ai catalog
+// buildPrivilegedToolsSection "Built-in first" bullet rendered from the live
+// pi-ai catalog
 // ---------------------------------------------------------------------------
 
-describe("Layer 1D buildPrivilegedToolsSection catalog interpolation", () => {
+describe("buildPrivilegedToolsSection catalog interpolation", () => {
   it("rendered Built-in first bullet contains every name from getProviders()", async () => {
     const { getProviders } = await import("@mariozechner/pi-ai");
     const result = buildPrivilegedToolsSection(["providers_manage"], false);
@@ -478,55 +478,55 @@ describe("Layer 1D buildPrivilegedToolsSection catalog interpolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 20 (CAPINDEX-RENDER-04 / -05 / -14 / -17 / -20) — capability-index gate.
-// Source of truth: design §5 Placement (residual one-liner verbatim) + §5 rule 15
-// (mutual-exclusion contract). DO NOT auto-update via `vitest -u` without
-// re-reading design §5 — Pitfall 9 prevention.
+// Capability-index gate. The residual one-liner and the mutual-exclusion
+// contract with the legacy `## Available Tools` block are normative — DO NOT
+// auto-update inline snapshots via `vitest -u` without re-checking the
+// rendered wording.
 // ---------------------------------------------------------------------------
 
-describe("buildToolingSection — capability-index gate (Phase 20)", () => {
-  it("CAPINDEX-RENDER-04: gate-on emits residual one-liner only (snapshot + behavior pair)", () => {
+describe("buildToolingSection — capability-index gate", () => {
+  it("gate-on emits residual one-liner only (snapshot + behavior pair)", () => {
     const result = buildToolingSection(["read", "exec"], "large", undefined, true);
     const joined = result.join("\n");
 
-    // Shape lock — design §5 verbatim. Hand-verified at authoring time.
+    // Shape lock — verbatim. Hand-verified at authoring time.
     expect(joined).toMatchInlineSnapshot(`
       "When this turn includes a \`Capabilities\` context, refer to it for grouped tool guidance before invoking tools or running installs. Tool schemas in your active toolspace are authoritative for parameter shapes."
     `);
 
-    // Behavior assertions (Pattern B; Pitfall 9):
+    // Behavior assertions:
     expect(joined).toContain("When this turn includes a `Capabilities` context");
     expect(joined).toContain("authoritative for parameter shapes");
 
-    // Mutual exclusion (design §5 rule 15) — gate-on path MUST NOT emit the legacy block.
+    // Mutual exclusion — gate-on path MUST NOT emit the legacy block.
     expect(joined).not.toContain("## Available Tools");
     expect(joined).not.toContain("- read");
     expect(joined).not.toContain("- exec");
     expect(joined).not.toContain("Always use tools to gather real data");
 
-    // CAPINDEX-RENDER-14 forbidden literals.
+    // Forbidden literals.
     expect(joined).not.toContain("discover_tools");
     expect(joined).not.toContain("tool_search_tool_regex");
   });
 
-  it("CAPINDEX-RENDER-05: gate-off (false) is byte-identical to undefined-default", () => {
-    // Byte-identical-to-baseline assertion (Pitfall 4 prevention).
+  it("gate-off (false) is byte-identical to undefined-default", () => {
+    // Byte-identical-to-baseline assertion.
     const baseline = buildToolingSection(["read", "exec"], "large", undefined, undefined);
     const explicit = buildToolingSection(["read", "exec"], "large", undefined, false);
     expect(explicit).toEqual(baseline);
   });
 
-  it("CAPINDEX-RENDER-05: gate-off does NOT contain the residual one-liner", () => {
+  it("gate-off does NOT contain the residual one-liner", () => {
     const result = buildToolingSection(["read", "exec"], "large", undefined, false);
     const joined = result.join("\n");
     expect(joined).toContain("## Available Tools");
     expect(joined).not.toContain("When this turn includes a `Capabilities` context");
   });
 
-  it("CAPINDEX-RENDER-20: gate-on output is shorter than gate-off (static-prompt token delta)", () => {
-    // Design §12 AC-3: gate-on must NOT increase static systemPromptTokens.
-    // For a representative tool set, the residual one-liner is shorter than
-    // the legacy flat block + trailing guidance.
+  it("gate-on output is shorter than gate-off (static-prompt token delta)", () => {
+    // Gate-on must NOT increase static systemPromptTokens. For a
+    // representative tool set, the residual one-liner is shorter than the
+    // legacy flat block + trailing guidance.
     const gateOn = buildToolingSection(["read", "exec", "edit", "grep", "find"], "large", undefined, true);
     const gateOff = buildToolingSection(["read", "exec", "edit", "grep", "find"], "large", undefined, false);
     expect(gateOn.join("\n").length).toBeLessThan(gateOff.join("\n").length);
@@ -534,19 +534,18 @@ describe("buildToolingSection — capability-index gate (Phase 20)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 21 (CAPINDEX-COUNTERWEIGHT-01 / -02 / -03) — tool-first counterweight.
-// Source of truth: design §11 Phase 5 (verbatim bullet text) + Pitfall 9
-// (snapshot+behavior+forbidden-literal triple). DO NOT auto-update via
-// `vitest -u` without re-reading design §11 Phase 5 — Pitfall 9 prevention.
+// Tool-first counterweight. Snapshot + behavior + forbidden-literal triple
+// guards the rendered bullet wording; DO NOT auto-update via `vitest -u`
+// without verifying the rendered text by hand.
 // ---------------------------------------------------------------------------
 
-describe("buildToolCallStyleSection — tool-first counterweight (Phase 21)", () => {
-  it("CAPINDEX-COUNTERWEIGHT-01: gate-on (exec + enabled=true) emits the tool-first bullet immediately before the Python venv rule (snapshot + behavior pair)", () => {
+describe("buildToolCallStyleSection — tool-first counterweight", () => {
+  it("gate-on (exec + enabled=true) emits the tool-first bullet immediately before the Python venv rule (snapshot + behavior pair)", () => {
     const result = buildToolCallStyleSection(false, ["exec"], true);
     const joined = result.join("\n");
 
-    // Shape lock — design §11 Phase 5 verbatim. Hand-verified at authoring time.
-    // DO NOT auto-update via `vitest -u` without re-reading design §11 Phase 5.
+    // Shape lock — verbatim bullet text. Hand-verified at authoring time.
+    // DO NOT auto-update via `vitest -u` without re-checking the rendered wording.
     expect(joined).toMatchInlineSnapshot(`
       "## Tool Call Style
       Default: do not narrate routine, low-risk tool calls (just call the tool).
@@ -573,31 +572,30 @@ describe("buildToolCallStyleSection — tool-first counterweight (Phase 21)", ()
       - **Sequential**: memory_search -> memory_store (need results before deciding what to store)"
     `);
 
-    // Behavior assertions (Pattern B; Pitfall 9 prevention):
+    // Behavior assertions:
     // (a) the bullet's lead-in identifies the tool-first principle
     expect(joined).toContain("**Tool-first principle.**");
-    // (b) the verbatim §11 Phase 5 opening
+    // (b) the verbatim opening
     expect(joined).toContain("When this turn includes a `Capabilities` context and the task can be satisfied by");
-    // (c) the verbatim §11 Phase 5 ending
+    // (c) the verbatim ending
     expect(joined).toContain("Use installs only for capabilities not covered by active tools, deferred tools, or visible prompt skills");
 
-    // ORDERING: the new bullet emits BEFORE the existing Python-virtualenv rule
-    // (CAPINDEX-COUNTERWEIGHT-01 "immediately before" clause). A reorder regression
-    // would fail this check deterministically.
+    // ORDERING: the new bullet emits BEFORE the existing Python-virtualenv
+    // rule (the "immediately before" clause). A reorder regression would fail
+    // this check deterministically.
     expect(joined.indexOf("Tool-first principle")).toBeLessThan(joined.indexOf("Python projects"));
 
-    // The venv rule is still emitted because `exec` is present (the inner if is
-    // structurally inside the outer if(has("exec")) block).
+    // The venv rule is still emitted because `exec` is present (the inner if
+    // is structurally inside the outer if(has("exec")) block).
     expect(joined).toContain("Python projects");
 
-    // CAPINDEX-COUNTERWEIGHT-03 forbidden literals (defense in depth at the
-    // rendered-output level; the architecture-grep at architecture.test.ts:114-209
-    // is the primary file-source enforcement).
+    // Forbidden literals (defense in depth at the rendered-output level; the
+    // architecture-grep test is the primary file-source enforcement).
     expect(joined).not.toContain("discover_tools");
     expect(joined).not.toContain("tool_search_tool_regex");
   });
 
-  it("CAPINDEX-COUNTERWEIGHT-02a: gate-off via enabled=false (exec present, enabled=false) does NOT emit the tool-first bullet", () => {
+  it("gate-off via enabled=false (exec present, enabled=false) does NOT emit the tool-first bullet", () => {
     const result = buildToolCallStyleSection(false, ["exec"], false);
     const joined = result.join("\n");
 
@@ -610,11 +608,11 @@ describe("buildToolCallStyleSection — tool-first counterweight (Phase 21)", ()
     expect(joined).toContain("Python projects");
   });
 
-  it("CAPINDEX-COUNTERWEIGHT-02b: gate-off via enabled=undefined (no third arg) is byte-identical to enabled=false (Pitfall 4 prevention)", () => {
-    // Byte-identical-to-baseline assertion: the optional `?` parameter and the
-    // strict-equals `=== true` gate collapse `undefined` and `false` to the same
-    // gate-off path. Mirrors the Phase 20 `tooling-sections.test.ts:512-517`
-    // byte-identical idiom.
+  it("gate-off via enabled=undefined (no third arg) is byte-identical to enabled=false", () => {
+    // Byte-identical-to-baseline assertion: the optional `?` parameter and
+    // the strict-equals `=== true` gate collapse `undefined` and `false` to
+    // the same gate-off path. Mirrors the byte-identical idiom used by the
+    // capability-index gate test above.
     const baseline = buildToolCallStyleSection(false, ["exec"]);
     const explicit = buildToolCallStyleSection(false, ["exec"], false);
     expect(explicit).toEqual(baseline);
@@ -623,7 +621,7 @@ describe("buildToolCallStyleSection — tool-first counterweight (Phase 21)", ()
     expect(baseline.join("\n")).not.toContain("Tool-first principle");
   });
 
-  it("CAPINDEX-COUNTERWEIGHT-02c: gate-off via exec absent (enabled=true, exec NOT in toolNames) does NOT emit the tool-first bullet AND skips the venv rule wholesale", () => {
+  it("gate-off via exec absent (enabled=true, exec NOT in toolNames) does NOT emit the tool-first bullet AND skips the venv rule wholesale", () => {
     const result = buildToolCallStyleSection(false, ["read", "write"], true);
     const joined = result.join("\n");
 

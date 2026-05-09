@@ -1,8 +1,8 @@
-# Comis Test Configuration (Phase 24 Install-Detour Advise E2E)
+# Comis Test Configuration (Install-Detour Advise E2E)
 #
 # Port 8509 -- unique to install-detour-advise-e2e.test.ts.
 # Mirrors config.test-tooling-fixtures.yaml (same advise-mode tooling block,
-# same Phase 24 skill-variant discoveryPaths) but uses a distinct port and
+# same skill-variant discoveryPaths) but uses a distinct port and
 # memory db so this test file can run in parallel with tooling-fixture-render.
 # Project convention: one config (one port, one db) per integration test file.
 

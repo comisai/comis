@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Parser for the COMIS_E2E_TEST_PROVIDERS env var (Phase 24).
+ * Parser for the COMIS_E2E_TEST_PROVIDERS env var.
  *
  * Format: comma-separated list, e.g., "openai-codex,anthropic,google".
  * Returns an empty array when unset -- callers use `length > 0` for skip-gating
@@ -12,13 +12,13 @@
  *
  * Top-level entry-point exception applies (AGENTS.md §2.2): test fault injectors
  * may read process.env directly. This helper is the canonical injection surface
- * for the Phase 24 provider-gated suite.
+ * for the provider-gated suite.
  *
  * @module
  */
 
 /**
- * Returns the list of providers requested by the developer for the Phase 24
+ * Returns the list of providers requested by the developer for the
  * provider-gated behavioral metric suite. Empty array means "skip the suite".
  */
 export function parseTestProviders(): string[] {
@@ -31,14 +31,13 @@ export function parseTestProviders(): string[] {
 }
 
 /**
- * Default rounds-per-provider for the Phase 24 behavioral metric suite.
- * Source: RESEARCH §6 Q4 cost guardrail.
+ * Default rounds-per-provider for the behavioral metric suite (cost guardrail).
  */
 export const DEFAULT_ROUNDS_PER_PROVIDER = 10;
 
 /**
- * Returns the configured number of rounds per provider for the Phase 24
- * behavioral metric suite. Defaults to DEFAULT_ROUNDS_PER_PROVIDER.
+ * Returns the configured number of rounds per provider for the behavioral
+ * metric suite. Defaults to DEFAULT_ROUNDS_PER_PROVIDER.
  * Override via COMIS_E2E_TEST_ROUNDS=<positive-int>.
  *
  * Invalid values (non-numeric, zero, negative, NaN) silently fall back to the

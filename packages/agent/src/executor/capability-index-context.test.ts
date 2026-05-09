@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit suite for the per-turn capability-index renderer (Phase 20 Plan 01).
+ * Unit suite for the per-turn capability-index renderer.
  *
- * Covers requirements CAPINDEX-RENDER-01/06/07/08/09/10/11/12/13/14/19 with
- * snapshot+behavior pairs (Pattern E from Phase 19 / design §10.7 -- Pitfall 9
- * prevention). Every snapshot test pairs the inline shape lock with at least
- * two `.toContain` and two `.not.toContain` behavior assertions, and every
- * snapshot guards both forbidden literals (CAPINDEX-RENDER-14).
+ * Every snapshot test pairs the inline shape lock with at least two
+ * `.toContain` and two `.not.toContain` behavior assertions, and every
+ * snapshot guards both forbidden literals (the discovery-tool / regex-search
+ * names must not leak into the rendered text).
  *
- * Source of truth: design §5 Render Contract verbatim. Do NOT auto-update via
- * `vitest -u` without re-reading the design -- snapshot-as-substitute is an
- * anti-pattern and silently swallows design-doc drift.
+ * Do NOT auto-update via `vitest -u` without re-reading the render contract
+ * -- snapshot-as-substitute is an anti-pattern and silently swallows
+ * contract drift.
  *
  * @module
  */
@@ -22,8 +21,8 @@ import type { ToolCapabilityPort, PromptSkillCapability, ClusterConfig } from "@
 // Relative path through `core/src/` (4 levels up from
 // `packages/agent/src/executor/`). The `__test-helpers/` directory is excluded
 // from `core/tsconfig.json` build but vitest resolves the source file directly.
-// Production source MUST NOT use this path -- architecture-grep TOOLING-CFG-19
-// (Phase 17) catches violations.
+// Production source MUST NOT use this path -- an architecture-grep catches
+// violations.
 import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 import { TOOL_ORDER } from "../bootstrap/sections/tool-descriptions.js";
 
@@ -88,10 +87,9 @@ function makeSkill(
 }
 
 /**
- * Synthesize a chart-class fixture for the budget assertion (CAPINDEX-RENDER-19).
+ * Synthesize a chart-class fixture for the budget assertion.
  *
- * Composition (matches design §5 Budget paragraph: "~60 builtin/platform +
- * 20 MCP + 15 visible prompt skills"):
+ * Composition: ~60 builtin/platform + 20 MCP + 15 visible prompt skills.
  *  - 60 active builtin/platform tools (pad TOOL_ORDER + extra synthetic names).
  *  - 20 active MCP tools across 3 servers (alpha=8, bravo=7, charlie=5).
  *  - The caller pairs this with a port stub returning 15 visible skills.
@@ -101,7 +99,7 @@ function makeSkill(
  */
 function makeChartClassFixture(): ExcludeDeferralResult {
   const active: ToolDefinition[] = [];
-  // 60 builtins -- start with TOOL_ORDER (covers ~37) then pad with synthetic names.
+  // 60 builtins: start with TOOL_ORDER (covers ~37) then pad with synthetic names.
   for (let i = 0; i < 60; i++) {
     const name = TOOL_ORDER[i] ?? `synthetic_builtin_${i}`;
     active.push(makeTool(name));
@@ -124,11 +122,11 @@ function makeChartClassFixture(): ExcludeDeferralResult {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
+describe("buildCapabilityIndexContext", () => {
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-01: six-field struct shape lock
+  // Six-field struct shape lock
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-01: returns a frozen six-field struct with correct primitive types", () => {
+  it("returns a frozen six-field struct with correct primitive types", () => {
     const port = createCapabilityPortStub();
     const result = buildCapabilityIndexContext(makeDeferralResult(), port);
 
@@ -154,9 +152,9 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-04 gate respect (text === "" + zero counts when disabled)
+  // Gate respect (text === "" + zero counts when disabled)
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-04: returns the EMPTY sentinel when isCapabilityIndexEnabled() is false", () => {
+  it("returns the EMPTY sentinel when isCapabilityIndexEnabled() is false", () => {
     const port = createCapabilityPortStub({
       isCapabilityIndexEnabled: () => false,
       getBuiltinCluster: () => "execution",
@@ -180,9 +178,9 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-06: all-zero counts -> EMPTY (no `## Capabilities` heading)
+  // All-zero counts -> EMPTY (no `## Capabilities` heading)
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-06: returns EMPTY when all three surface counts are zero", () => {
+  it("returns EMPTY when all three surface counts are zero", () => {
     const port = createCapabilityPortStub();
     const result = buildCapabilityIndexContext(makeDeferralResult(), port);
 
@@ -194,11 +192,11 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-07 + -10: single-cluster builtin (snapshot + behavior pair)
+  // Single-cluster builtin (snapshot + behavior pair)
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-07: renders single-cluster builtin tools (snapshot + behavior pair)", () => {
-    // Source of truth: design §5 Render Contract verbatim.
-    // DO NOT auto-update via `vitest -u` without re-reading design §5.
+  it("renders single-cluster builtin tools (snapshot + behavior pair)", () => {
+    // DO NOT auto-update via `vitest -u` without re-reading the render
+    // contract.
     const port = createCapabilityPortStub({
       getBuiltinCluster: (name) =>
         name === "exec" || name === "read" ? "execution" : undefined,
@@ -225,7 +223,7 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
       - read, exec"
     `);
 
-    // Behavior assertions (Pitfall 9 prevention).
+    // Behavior assertions.
     expect(result.text).toContain("## Capabilities");
     expect(result.text).toContain("Execution");
     expect(result.text).toContain("read, exec");
@@ -236,9 +234,9 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-07: active MCP rendering (server grouping under cluster)
+  // Active MCP rendering (server grouping under cluster)
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-07: renders active MCP tools grouped by server under operator-hint cluster", () => {
+  it("renders active MCP tools grouped by server under operator-hint cluster", () => {
     const port = createCapabilityPortStub({
       getMcpServerHint: (server) =>
         server === "finance-data"
@@ -273,9 +271,9 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-09: orphan deferred dropped silently
+  // Orphan deferred dropped silently
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-09: drops deferred MCP tools whose server is not in connectedServers", () => {
+  it("drops deferred MCP tools whose server is not in connectedServers", () => {
     const port = createCapabilityPortStub({
       // No connected servers -- the deferred entry is orphaned.
       getConnectedMcpServers: () => [],
@@ -296,9 +294,9 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-08: hidden skills not rendered (port returns empty list)
+  // Hidden skills not rendered (port returns empty list)
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-08: does not render skills when getPromptSkillCapabilities() returns empty", () => {
+  it("does not render skills when getPromptSkillCapabilities() returns empty", () => {
     const port = createCapabilityPortStub({
       getPromptSkillCapabilities: () => [],
       getBuiltinCluster: (name) => (name === "exec" ? "execution" : undefined),
@@ -324,12 +322,12 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-10: reserved-cluster fallbacks
+  // Reserved-cluster fallbacks
   //   - connected MCP without operator hint -> external-integrations
   //   - skill without cluster field         -> prompt-skills
   //   - non-MCP tool without builtin cluster -> other-tools
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-10: falls back to reserved cluster IDs (external-integrations / prompt-skills / other-tools)", () => {
+  it("falls back to reserved cluster IDs (external-integrations / prompt-skills / other-tools)", () => {
     const reservedConfig: Record<string, ClusterConfig> = {
       "external-integrations": {
         label: "External integrations",
@@ -373,9 +371,9 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-11: per-server cap at 8 with `+N more` and preferOverInstalls callout
+  // Per-server cap at 8 with `+N more` and preferOverInstalls callout
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-11: caps per-server tool list at 8 with `+N more` and emits preferOverInstalls callout", () => {
+  it("caps per-server tool list at 8 with `+N more` and emits preferOverInstalls callout", () => {
     const port = createCapabilityPortStub({
       getMcpServerHint: (server) =>
         server === "big-server"
@@ -405,9 +403,9 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-12 boundary: at 32 names present, at 33 names dropped
+  // Elision boundary: at 32 names present, at 33 names dropped
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-12: at exactly 32 active tools, per-cluster name lists are present", () => {
+  it("at exactly 32 active tools, per-cluster name lists are present", () => {
     const port = createCapabilityPortStub({
       getMcpServerHint: () => ({
         cluster: "many",
@@ -437,7 +435,7 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
     expect(result.text).not.toContain("tool_search_tool_regex");
   });
 
-  it("CAPINDEX-RENDER-12: at exactly 33 active tools, per-cluster name lists are dropped (headers + counts only)", () => {
+  it("at exactly 33 active tools, per-cluster name lists are dropped (headers + counts only)", () => {
     const port = createCapabilityPortStub({
       getMcpServerHint: () => ({
         cluster: "many",
@@ -469,9 +467,9 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-13: cluster sort `(priority asc, clusterId asc)` with alphabetical-on-tie
+  // Cluster sort `(priority asc, clusterId asc)` with alphabetical-on-tie
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-13: cluster sort is (priority asc, clusterId asc) with alphabetical tie-break", () => {
+  it("cluster sort is (priority asc, clusterId asc) with alphabetical tie-break", () => {
     // Two clusters at SAME priority (100): cluster-zebra and cluster-alpha
     // -> alphabetical tie-break puts alpha BEFORE zebra.
     // A third cluster at priority 50 must render before both.
@@ -536,9 +534,9 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-13 within-cluster TOOL_ORDER: read precedes exec
+  // Within-cluster TOOL_ORDER: read precedes exec
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-13: within-cluster builtins follow TOOL_ORDER (read precedes exec; unknown last)", () => {
+  it("within-cluster builtins follow TOOL_ORDER (read precedes exec; unknown last)", () => {
     const port = createCapabilityPortStub({
       getBuiltinCluster: () => "io",
       getClusterConfig: (id) =>
@@ -571,9 +569,9 @@ describe("buildCapabilityIndexContext (Phase 20 -- CAPINDEX-RENDER)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CAPINDEX-RENDER-19: chart-class budget proof (capabilityIndexTokens <= 600)
+  // Chart-class budget proof (capabilityIndexTokens <= 600)
   // -------------------------------------------------------------------------
-  it("CAPINDEX-RENDER-19: chart-class fixture (~80 active + 15 skills) keeps capabilityIndexTokens <= 600", () => {
+  it("chart-class fixture (~80 active + 15 skills) keeps capabilityIndexTokens <= 600", () => {
     // Composition: 60 builtins + 20 MCP across 3 servers + 15 skills.
     // Total active = 80 (well above 32 elision threshold; name lists drop).
     const skills: PromptSkillCapability[] = [];

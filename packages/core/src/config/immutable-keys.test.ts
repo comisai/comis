@@ -435,11 +435,11 @@ describe("MUTABLE_CONFIG_OVERRIDES (regression: persona removed)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TOOLING-CFG-07: tooling root prefix is operator-only.
+// Tooling root prefix is operator-only.
 // Three-path test: root + known child + future-child (forward-compat).
 // Plus invariant: no MUTABLE_CONFIG_OVERRIDES shadows tooling.*.
 // ---------------------------------------------------------------------------
-describe("isImmutableConfigPath -- tooling root prefix (TOOLING-CFG-07)", () => {
+describe("isImmutableConfigPath -- tooling root prefix", () => {
   it("rejects exact tooling section (root write)", () => {
     expect(isImmutableConfigPath("tooling")).toBe(true);
   });

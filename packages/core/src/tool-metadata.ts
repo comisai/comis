@@ -22,8 +22,7 @@
  * `tooling.capabilityClusters.builtinAssignments[toolName]`. The metadata
  * default applies when no operator override is present.
  *
- * Per design §4.2 (capability metadata) + §4.3 (`getBuiltinCluster` precedence:
- * operator override > metadata default > undefined).
+ * `getBuiltinCluster` precedence: operator override > metadata default > undefined.
  */
 export interface ToolCapabilityMetadata {
   /** Cluster ID this tool belongs to (e.g., "data-fetching-financial"). */
@@ -88,7 +87,7 @@ const registry = new Map<string, ComisToolMetadata>();
 
 /**
  * Register metadata for a tool. Merges with any existing metadata via spread,
- * allowing incremental registration from different phases.
+ * allowing incremental registration from different sources.
  */
 export function registerToolMetadata(
   name: string,

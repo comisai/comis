@@ -601,12 +601,12 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // 6.6. Agents
   const agents = container.config.agents;
 
-  // Phase 23 (WIRING-01..11) -- defaultWorkspaceDir hoisted upfront so
-  // setupMcp can run BEFORE setupAgents (it consumes defaultWorkspaceDir as
-  // defaultCwd; per-agent ToolCapabilityPort adapters constructed inside
-  // setupSingleAgent close over the daemon-global mcpClientManager). Mirrors
-  // the per-agent computation in setup-agents.ts (`resolveWorkspaceDir(
-  // effectiveConfig, agentId)` for the agent's own workspace).
+  // defaultWorkspaceDir hoisted upfront so setupMcp can run BEFORE
+  // setupAgents (it consumes defaultWorkspaceDir as defaultCwd; per-agent
+  // ToolCapabilityPort adapters constructed inside setupSingleAgent close
+  // over the daemon-global mcpClientManager). Mirrors the per-agent
+  // computation in setup-agents.ts (`resolveWorkspaceDir(effectiveConfig,
+  // agentId)` for the agent's own workspace).
   const defaultAgentId = container.config.routing.defaultAgentId;
   const defaultAgentConfig =
     agents[defaultAgentId] ??
@@ -614,11 +614,11 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     ({} as PerAgentConfig);
   const defaultWorkspaceDir = resolveWorkspaceDir(defaultAgentConfig, defaultAgentId);
 
-  // Phase 23: setupMcp moved earlier (before setupAgents) so per-agent
-  // ToolCapabilityPort adapter construction inside setupSingleAgent can
-  // close over mcpClientManager. createMcpClientManager is a pure in-memory
-  // state holder (no I/O) -- the manager is constructed before any
-  // server-connect attempts, so reordering is safe.
+  // setupMcp runs before setupAgents so per-agent ToolCapabilityPort
+  // adapter construction inside setupSingleAgent can close over
+  // mcpClientManager. createMcpClientManager is a pure in-memory state
+  // holder (no I/O) -- the manager is constructed before any server-connect
+  // attempts, so the ordering is safe.
   const { mcpClientManager } = await setupMcp({
     servers: container.config.integrations.mcp.servers,
     logger: skillsLogger,
@@ -636,9 +636,9 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     // Daemon-level OAuth credential store, threaded into RpcDispatchDeps
     // below so agents.update can validate oauthProfiles patches via has().
     oauthCredentialStore,
-    // Phase 23 (WIRING-01..11) -- per-agent live ToolCapabilityPort
-    // adapters; daemon.ts threads getCapabilityPortForAgent into setupTools
-    // and mutates this map on hot-add / hot-remove.
+    // Per-agent live ToolCapabilityPort adapters; daemon.ts threads
+    // getCapabilityPortForAgent into setupTools and mutates this map on
+    // hot-add / hot-remove.
     toolCapabilityPorts,
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, outboundMediaEnabled: true,
@@ -671,8 +671,8 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     // better-sqlite3 connection (no dual-handle).
     secretsCrypto,
     secretsDb,
-    // Phase 23 (WIRING-01..11) -- daemon-global MCP manager threaded into
-    // setupSingleAgent for per-agent ToolCapabilityPort adapter construction.
+    // Daemon-global MCP manager threaded into setupSingleAgent for
+    // per-agent ToolCapabilityPort adapter construction.
     mcpClientManager,
   });
 
@@ -1075,11 +1075,11 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   setupChannelHealthLogging({ eventBus: container.eventBus, logger: daemonLogger });
 
   // 6.6.8.7. MCP server connections (external tool servers)
-  // Phase 23: setupMcp call moved earlier (before setupAgents @ line ~600)
-  // so per-agent ToolCapabilityPort adapter construction inside
-  // setupSingleAgent can close over mcpClientManager. The mcpClientManager
-  // const declared at the earlier site is in lexical scope here; no
-  // additional wiring needed at this section anchor.
+  // setupMcp is called earlier (before setupAgents @ line ~600) so per-agent
+  // ToolCapabilityPort adapter construction inside setupSingleAgent can
+  // close over mcpClientManager. The mcpClientManager const declared at the
+  // earlier site is in lexical scope here; no additional wiring needed at
+  // this section anchor.
 
   // Detect sandbox provider once at startup
   const sandboxProvider: SandboxProvider | undefined = detectSandboxProvider(skillsLogger);
@@ -1105,14 +1105,14 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     );
   }
 
-  // Phase 23 (WIRING-11) -- per-agent ToolCapabilityPort resolver. Falls
-  // back to the default agent's port for unknown agentIds (mirrors the
-  // setup-tools.ts:327 `agents[agentId] ?? agents[defaultAgentId]`
-  // convention). Throws if neither exists -- this fires both for an
-  // initialization-order bug AND for runtime hot-remove paths (agent +
-  // default both removed; stale cron/graph/heartbeat caller carrying a
-  // since-removed agentId). The message stays scenario-agnostic so the
-  // operator can diagnose either cause.
+  // Per-agent ToolCapabilityPort resolver. Falls back to the default
+  // agent's port for unknown agentIds (mirrors the setup-tools.ts:327
+  // `agents[agentId] ?? agents[defaultAgentId]` convention). Throws if
+  // neither exists -- this fires both for an initialization-order bug AND
+  // for runtime hot-remove paths (agent + default both removed; stale
+  // cron/graph/heartbeat caller carrying a since-removed agentId). The
+  // message stays scenario-agnostic so the operator can diagnose either
+  // cause.
   const getCapabilityPortForAgent = (agentId: string): ToolCapabilityPort => {
     const port = toolCapabilityPorts.get(agentId) ?? toolCapabilityPorts.get(defaultAgentId);
     if (!port) {
@@ -1138,7 +1138,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     imageGenProvider,  // Conditional: only registered when API key is present
     backgroundTaskManager,  // Background_tasks tool registration
     sessionTrackerRegistry,
-    getCapabilityPortForAgent,  // Phase 23 (WIRING-11)
+    getCapabilityPortForAgent,
   });
 
   // Wire deferred tool assembler ref now that setupTools has returned

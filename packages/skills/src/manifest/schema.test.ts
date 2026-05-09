@@ -5,7 +5,7 @@ import {
   ComisNamespaceSchema,
 } from "./schema.js";
 
-describe("ComisCapabilityBlockSchema (TOOLING-CFG-10)", () => {
+describe("ComisCapabilityBlockSchema", () => {
   it("accepts valid block with all fields", () => {
     const result = ComisCapabilityBlockSchema.safeParse({
       cluster: "data-fetching-financial",
@@ -59,7 +59,7 @@ describe("ComisCapabilityBlockSchema (TOOLING-CFG-10)", () => {
   });
 });
 
-describe("ComisNamespaceSchema with capability key (TOOLING-CFG-10)", () => {
+describe("ComisNamespaceSchema with capability key", () => {
   it("accepts comis namespace with capability sub-block", () => {
     const result = ComisNamespaceSchema.safeParse({
       "skill-key": "test-skill",
@@ -84,11 +84,10 @@ describe("ComisNamespaceSchema with capability key (TOOLING-CFG-10)", () => {
   });
 
   it("rejects comis namespace with malformed capability sub-block (strict outer behavior -- preserved invariant)", () => {
-    // This is the Pitfall 7 trigger: outer comis is strict, so a typo in
-    // capability causes the WHOLE namespace parse to fail. The recovery
-    // happens at the registry-side discovery enrichment (Plan 17-04 --
-    // parseComisCapabilityDefensively strips the bad capability and
-    // re-parses).
+    // The outer comis namespace is strict, so a typo in capability causes
+    // the WHOLE namespace parse to fail. Recovery happens at the
+    // registry-side discovery enrichment (parseComisCapabilityDefensively
+    // strips the bad capability and re-parses).
     const result = ComisNamespaceSchema.safeParse({
       "skill-key": "test-skill",
       os: ["linux"],

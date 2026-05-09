@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // This test imports the no-op port factory solely as a reference-equality
-// sentinel — see BLOCKER 3 of the Phase 23 checker review. Plan 23-03's
-// architecture-grep targets non-architecture-test files; this orchestration
-// smoke test is exempt by the *.test.ts file-extension semantics.
+// sentinel. The architecture-grep targets non-architecture-test files; this
+// orchestration smoke test is exempt by the *.test.ts file-extension
+// semantics.
 //
-// Purpose: prove at runtime that the daemon's Phase 23 orchestration order
+// Purpose: prove at runtime that the daemon's orchestration order
 // (setupMcp → per-agent ToolCapabilityPort adapter via createToolCapabilityAdapter,
 // the same factory setupSingleAgent invokes inside the real setupAgents loop)
 // completes without throwing AND that the per-agent port emerging from the
 // orchestration is the LIVE adapter, not the createNoOpCapabilityPort()
-// fallback (BLOCKER 3 mitigation; static `awk` line-ordering grep is
-// insufficient — see RESEARCH.md Pitfall C and threat T-23-15b).
+// fallback. A static `awk` line-ordering grep is insufficient.
 //
 // Two sentinels:
 //   1. Reference-equality: the port emerging from the orchestration is NOT
@@ -33,7 +32,7 @@ import { setupMcp } from "./setup-mcp.js";
 // masquerading as orchestration-order regressions.
 //
 // The full setupAgents body is out of scope for v1 of this runtime check
-// (see TODO(phase-24) note in the second `it` block). The
+// (see the deferred-coverage note in the second `it` block). The
 // orchestration-ORDER claim (setupMcp result feeds adapter construction
 // without throwing AND the per-agent port is the live adapter) is proven
 // here by exercising the SAME factory (createToolCapabilityAdapter) that
@@ -87,7 +86,7 @@ function makeStubSkillRegistry(): SkillRegistry {
   } as unknown as SkillRegistry;
 }
 
-describe("Phase 23 daemon orchestration order (WIRING-03 + WIRING-11 runtime check)", () => {
+describe("daemon orchestration order runtime check", () => {
   it("setupMcp constructs a live mcpClientManager that the per-agent ToolCapabilityPort adapter can close over without throwing", async () => {
     // === Arrange: minimal silent logger + empty skill registry ===
     const logger = makeStubLogger();
@@ -110,19 +109,19 @@ describe("Phase 23 daemon orchestration order (WIRING-03 + WIRING-11 runtime che
   });
 
   it("per-agent ToolCapabilityPort emerging from the post-setupMcp orchestration is the LIVE adapter (not createNoOpCapabilityPort) -- two sentinels (reference-equality + behavioral)", async () => {
-    // TODO(phase-24): Exercise the real setupAgents body end-to-end (not
-    // just the createToolCapabilityAdapter factory it invokes). v1 of this
-    // smoke test stops short of full setupAgents because its dependency
-    // surface (pi-coding-agent, OAuthCredentialStore, ProviderHealthMonitor,
+    // TODO: Exercise the real setupAgents body end-to-end (not just the
+    // createToolCapabilityAdapter factory it invokes). v1 of this smoke
+    // test stops short of full setupAgents because its dependency surface
+    // (pi-coding-agent, OAuthCredentialStore, ProviderHealthMonitor,
     // SecretManager + ~30 fields on container.config) requires a fixture
     // that's brittle in proportion to the daemon's wiring depth. The
-    // BLOCKER 3 invariant (setupMcp produces a manager the per-agent
-    // adapter can close over without throwing AND the resulting port is
-    // the live adapter) is proven here by running the SAME factory
-    // setupSingleAgent invokes inside setupAgents -- if that factory
-    // produces a live port for a known toolingConfig, the per-agent port
-    // emerging from the real setupAgents loop is identical (the loop has
-    // no other code path that could substitute a no-op).
+    // invariant (setupMcp produces a manager the per-agent adapter can
+    // close over without throwing AND the resulting port is the live
+    // adapter) is proven here by running the SAME factory setupSingleAgent
+    // invokes inside setupAgents -- if that factory produces a live port
+    // for a known toolingConfig, the per-agent port emerging from the real
+    // setupAgents loop is identical (the loop has no other code path that
+    // could substitute a no-op).
     const logger = makeStubLogger();
 
     // === Arrange: tooling config whose values DIFFER from the no-op
@@ -139,9 +138,9 @@ describe("Phase 23 daemon orchestration order (WIRING-03 + WIRING-11 runtime che
     };
     const skillRegistry = makeStubSkillRegistry();
 
-    // === Act 1: real setupMcp first -- mirrors daemon.ts orchestration order
-    // (Task 3a). This MUST happen before any per-agent adapter construction
-    // so the manager is in scope at adapter-build time.
+    // === Act 1: real setupMcp first -- mirrors daemon.ts orchestration order.
+    // This MUST happen before any per-agent adapter construction so the
+    // manager is in scope at adapter-build time.
     const mcpResult = await setupMcp({
       servers: [],
       logger,
@@ -229,8 +228,8 @@ describe("Phase 23 daemon orchestration order (WIRING-03 + WIRING-11 runtime che
     mcpResult.mcpClientManager.getAllConnections =
       vi.fn(() => [fakeConnection]);
 
-    // Adapter sees the new state on the next call (Pitfall E / T-23-15
-    // mitigation -- live closure, not a snapshot).
+    // Adapter sees the new state on the next call -- live closure, not a
+    // snapshot.
     expect(port.getConnectedMcpServers()).toEqual(["test-server"]);
   });
 });

@@ -481,11 +481,11 @@ describe("AgentEvents payload structure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// tool:install_detour_detected (TOOLING-CFG-16) -- type + privacy invariants
+// tool:install_detour_detected -- type + privacy invariants
 // ---------------------------------------------------------------------------
 
-describe("tool:install_detour_detected event type (TOOLING-CFG-16)", () => {
-  it("type-checks against design §8.2 closed shape", () => {
+describe("tool:install_detour_detected event type", () => {
+  it("type-checks against the closed shape", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const sample: EventMap["tool:install_detour_detected"] = {
@@ -519,7 +519,7 @@ describe("tool:install_detour_detected event type (TOOLING-CFG-16)", () => {
     expect(received.overlaps[0]?.reason).toBe("mcp-operator-alias");
   });
 
-  it("payload type contains no forbidden privacy-leak fields (Pitfall 11)", () => {
+  it("payload type contains no forbidden privacy-leak fields", () => {
     // Source-grep the install-detour event block for forbidden keys.
     // The closed shape MUST NOT include raw command text, shell fragments,
     // URLs, VCS specs, local paths, registry credentials, stdout, or stderr.
@@ -533,7 +533,7 @@ describe("tool:install_detour_detected event type (TOOLING-CFG-16)", () => {
     expect(match, "install-detour event block must exist").toBeTruthy();
     const block = match![0];
 
-    // Forbidden keys (Pitfall 11):
+    // Forbidden keys:
     expect(block, "no raw `command:` field").not.toMatch(/^\s*(?:readonly\s+)?command:/m);
     expect(block, "no `rawCommand:` field").not.toMatch(/^\s*(?:readonly\s+)?rawCommand:/m);
     expect(block, "no `stdout:` field").not.toMatch(/^\s*(?:readonly\s+)?stdout:/m);

@@ -227,7 +227,7 @@ function createDefaultMockMcpClientManager() {
 }
 
 function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
-  // Phase 23 (WIRING-11) -- per-agent ToolCapabilityPort resolver stub.
+  // Per-agent ToolCapabilityPort resolver stub.
   // Hoisted ABOVE the return so every call to deps.getCapabilityPortForAgent
   // returns the SAME port instance, mirroring production wiring (which
   // resolves through a Map<agentId, port>). assembleToolsForAgent calls
@@ -1566,9 +1566,8 @@ describe("setupTools", () => {
 
   // -------------------------------------------------------------------------
   // 21. Session-lifetime tracker resolution via sessionTrackerRegistry
-  //     (closes the 260420-ccx wiring gap: options.sessionKey must reach the
-  //      registry, not fall through to the ephemeral createFileStateTracker
-  //      branch.)
+  //     (options.sessionKey must reach the registry, not fall through to the
+  //      ephemeral createFileStateTracker branch.)
   // -------------------------------------------------------------------------
 
   describe("session-lifetime tracker resolution", () => {

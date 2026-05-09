@@ -7,13 +7,12 @@
  * `dist`, `node_modules`) plus any caller-supplied excludes, and returns
  * file paths whose contents match a string or RegExp needle.
  *
- * Used by `packages/<pkg>/src/__tests__/architecture.test.ts` files (Plan 17-04)
- * to enforce production/test boundary invariants per design §10.6 inverted
- * TDD cycle.
+ * Used by `packages/<pkg>/src/__tests__/architecture.test.ts` files to
+ * enforce production/test boundary invariants.
  *
  * Implementation: plain `node:fs.readdirSync` recursion (no glob transitive
- * dep) per RESEARCH §Open Question 5 -- keeps the helper dependency-free and
- * matches AGENTS.md §2.3 KISS/YAGNI.
+ * dep) -- keeps the helper dependency-free and matches AGENTS.md §2.3
+ * KISS/YAGNI.
  *
  * @module
  */

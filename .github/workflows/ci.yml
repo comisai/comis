@@ -36,7 +36,7 @@ jobs:
       - name: Test
         run: pnpm test
 
-      - name: Test (Phase 24 deterministic integration — INTEG-05 CI gates)
+      - name: Test (deterministic integration CI gates)
         run: |
           npx vitest run \
             --config test/vitest.config.ts \

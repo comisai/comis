@@ -141,6 +141,6 @@ export type {
   SkillHint,
 } from "./tool-capability.js";
 export { createNoOpCapabilityPort } from "./no-op-tool-capability.js";
-// NOTE (Pitfall 13): the test-only stub factory in `__test-helpers/` is
-// intentionally NOT re-exported here. It must NEVER appear on this barrel
-// (Plan 17-04 architecture-grep enforces).
+// NOTE: the test-only stub factory in `__test-helpers/` is intentionally NOT
+// re-exported here. It must NEVER appear on this barrel (the architecture-grep
+// test enforces this).

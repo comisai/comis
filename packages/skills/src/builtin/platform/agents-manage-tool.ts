@@ -224,8 +224,8 @@ export interface AgentInlineWritesError {
  * of the `agents_manage.create` tool_result. The freshest, uncached surface
  * the LLM reads on every turn -- pinned here to fix the silent-termination
  * bug where TOOL_GUIDE prescriptive text gets crowded out under high
- * parallel-tool-call load (production session 1a8b0d91 turn 13: 9 sub-agents
- * created in parallel, then a 0-text 0-thinking 0-tool turn).
+ * parallel-tool-call load (e.g. 9 sub-agents created in parallel followed
+ * by a 0-text 0-thinking 0-tool turn).
  *
  * Pure string composition. No I/O, no Result<T,E> needed (per AGENTS.md
  * §2.1: Result is for fallible paths only; this is infallible).

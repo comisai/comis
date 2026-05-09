@@ -33,10 +33,8 @@
  *   when an MCP tool errors at the event-bus boundary.
  * - `packages/agent/src/executor/tool-deferral.ts:293,912,917` —
  *   grouping `DeferredToolEntry[]` by server name.
- * - Phase 22 (future): install-detour parser will consume
- *   `parseSanitizedMcpToolName` for `{server, tool}` pair-matching.
- *
- * Source: design v1.1 §7 (Phase 2 — Canonical MCP Parser Migration).
+ * - Future install-detour parser will consume `parseSanitizedMcpToolName`
+ *   for `{server, tool}` pair-matching.
  *
  * @module
  */

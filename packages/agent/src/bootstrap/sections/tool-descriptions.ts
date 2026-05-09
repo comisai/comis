@@ -23,7 +23,7 @@ import { getToolMetadata } from "@comis/core";
 import { getProviders } from "@mariozechner/pi-ai";
 
 // ---------------------------------------------------------------------------
-// Layer 1D (260430-vwt) -- live native-catalog provider list
+// Live native-catalog provider list
 //
 // Computed once at module load time. Used by the providers_manage TOOL_GUIDE
 // "Built-in vs Custom Provider Check" block below so the text reflects
@@ -358,7 +358,7 @@ If the model IS built-in: skip provider creation. After credential pre-check pas
 If the model is NOT built-in: you need a custom provider. Proceed to the steps below, but first gather ALL required configuration.
 
 ### Choosing the \`type\` Field (POST AUTO-PROMOTE FLOW)
-After Layer 1C of the catalog-driven providers redesign, the \`type\` field follows two distinct rules depending on the provider name:
+For catalog-driven providers, the \`type\` field follows two distinct rules depending on the provider name:
 - **If \`provider_id\` matches a built-in name** (use models_manage list_providers to verify): OMIT \`type\` entirely from the create config. The daemon auto-promotes \`type\` to the native catalog name when \`provider_id\` matches a native entry AND no custom \`baseUrl\` is supplied. Setting \`type:"openai"\` for a built-in name still works (auto-promoted), but omitting it is cleaner.
 - **If \`provider_id\` is a custom OpenAI-compatible proxy** (NVIDIA NIM, Together, Fireworks, etc.) NOT in the native catalog: set \`type:"openai"\` (or whatever wire-format API matches). Auto-promotion does not fire for non-catalog names.
 - **If \`baseUrl\` differs from the native catalog URL** for a built-in name: this signals you want the OpenAI-passthrough shape (custom proxy that masquerades as the built-in). Auto-promotion is suppressed; the entry stays as \`type:"openai"\`.
@@ -390,7 +390,7 @@ To switch an agent to a different provider/model, call agents_manage update with
 **Three preconditions the LLM MUST verify before issuing the update:**
   1. The target provider exists as a \`providers.entries.<provider_id>\` key. If it does not, call providers_manage create FIRST (and gateway env_set for the API key if needed). Patching an agent to a provider that has no entry resolves under the wrong provider family at the next session — the original bug.
   2. The model id matches a \`models[].id\` in that provider entry (or is a built-in known to the pi-ai catalog for that provider type). Otherwise \`registry.find(provider, model)\` returns undefined and the next session falls back with a "Model not found" message.
-  3. **Credential pre-check passed** (see top of this guide). The target provider's apiKeyName is non-empty AND \`gateway env_list filter:"<PROVIDER>*"\` confirmed the named secret exists in env. Skipping this step is the bug that causes "No API key found" failures at the next chat turn — verified production repro on 2026-05-01.
+  3. **Credential pre-check passed** (see top of this guide). The target provider's apiKeyName is non-empty AND \`gateway env_list filter:"<PROVIDER>*"\` confirmed the named secret exists in env. Skipping this step is the bug that causes "No API key found" failures at the next chat turn.
 
 **Timing — the change is NOT hot-applied to the active session.**
 agents_manage update writes through persistToConfig WITHOUT a hot-update callback, which triggers a SIGUSR2 daemon restart (2-second debounce). The new provider/model takes effect on the next session, not the currently-running prompt. Tell the user the switch is queued and will take effect after the daemon settles.

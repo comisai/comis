@@ -856,12 +856,12 @@ describe("createSkillRegistry", () => {
     expect(typeof meta.truncated).toBe("boolean");
   });
 
-  it("loadPromptSkill recovers from malformed comis.capability (Pitfall 7 load path, BL-01)", async () => {
-    // Design §4.2.1: a typo'd `comis.capability` block must NEVER hide the
-    // skill -- not at discovery time and not at load time. Pre-fix,
-    // loadPromptSkill went through the strict SkillManifestSchema and
-    // rejected typo'd capability blocks, leaving the skill discoverable but
-    // unusable. This regression pins the load-path defensive strip.
+  it("loadPromptSkill recovers from malformed comis.capability", async () => {
+    // A typo'd `comis.capability` block must NEVER hide the skill -- not at
+    // discovery time and not at load time. Pre-fix, loadPromptSkill went
+    // through the strict SkillManifestSchema and rejected typo'd capability
+    // blocks, leaving the skill discoverable but unusable. This regression
+    // pins the load-path defensive strip.
     const skillsDir = path.join(tmpDir, "skills");
     fs.mkdirSync(skillsDir, { recursive: true });
 
@@ -1850,7 +1850,7 @@ describe("getEligibleSkillNames", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getPromptSkillCapabilities tests (TOOLING-CFG-17, TOOLING-CFG-18)
+// getPromptSkillCapabilities tests
 // ---------------------------------------------------------------------------
 
 /**
@@ -1936,7 +1936,7 @@ function makeSkillsConfig(
   };
 }
 
-describe("getPromptSkillCapabilities (TOOLING-CFG-17, TOOLING-CFG-18)", () => {
+describe("getPromptSkillCapabilities", () => {
   it("returns empty readonly array when no skills are registered", () => {
     const skillsDir = path.join(tmpDir, "skills");
     fs.mkdirSync(skillsDir, { recursive: true });
@@ -2105,7 +2105,7 @@ describe("getPromptSkillCapabilities (TOOLING-CFG-17, TOOLING-CFG-18)", () => {
     expect(Object.isFrozen(result[0].replacesPackages)).toBe(true);
   });
 
-  it("TOOLING-CFG-18: SDK-discovered third-party skill with NO comis.capability still appears (cluster undefined)", () => {
+  it("SDK-discovered third-party skill with NO comis.capability still appears (cluster undefined)", () => {
     const skillsDir = path.join(tmpDir, "skills");
     fs.mkdirSync(skillsDir, { recursive: true });
     createPromptSkill(skillsDir, "sdk-bare", "SDK bare skill", "Body.");
@@ -2131,7 +2131,7 @@ describe("getPromptSkillCapabilities (TOOLING-CFG-17, TOOLING-CFG-18)", () => {
     expect(result[0].replacesPackages).toEqual([]);
   });
 
-  it("Pitfall 7 end-to-end: SDK skill with malformed comis.capability still appears + WARN logged", () => {
+  it("end-to-end: SDK skill with malformed comis.capability still appears + WARN logged", () => {
     const skillsDir = path.join(tmpDir, "skills");
     fs.mkdirSync(skillsDir, { recursive: true });
     // Write a SKILL.md with a TYPO in the capability block (replacePackages, missing s).
@@ -2161,7 +2161,7 @@ describe("getPromptSkillCapabilities (TOOLING-CFG-17, TOOLING-CFG-18)", () => {
     ]);
 
     const result = registry.getPromptSkillCapabilities(() => undefined);
-    // Skill is NEVER hidden by malformed capability metadata (Pitfall 7).
+    // Skill is NEVER hidden by malformed capability metadata.
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe("typo-sdk-skill");
     expect(result[0].cluster).toBeUndefined();

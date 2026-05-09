@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Live ToolCapabilityPort adapter -- daemon-side wiring (Phase 23 WIRING-01..11).
+ * Live ToolCapabilityPort adapter -- daemon-side wiring.
  *
- * Replaces the interim no-op port factory (Phase 17) with a factory
- * whose 9 frozen methods read live state from:
+ * Factory whose 9 frozen methods read live state from:
  *   - `deps.toolingConfig`        (operator config; the `tooling.*` subtree)
  *   - `deps.skillRegistry`        (already applies allow/deny + eligibility +
  *                                   disableModelInvocation filters)
@@ -15,32 +14,30 @@
  *   { errorKind: "config", configPath, unresolvedClusterId, hint }
  * and DO NOT throw -- lookup-time fallback applies (`external-integrations`
  * for unresolved MCP clusters; `prompt-skills` for unresolved skill clusters).
- * See RESEARCH.md Pitfall 8 for why DEBUG would be wrong here.
+ * WARN (not DEBUG) is intentional: operator visibility for misconfiguration.
  *
- * Default merge contract (Pitfall 2 -- design §4.2 line 151 / schema-tooling.ts
- * lines 144-153 JSDoc): `mergedClusters = { ...DEFAULT_CLUSTER_CONFIG,
- * ...operator.clusters }`. Empty operator config preserves the 3 reserved IDs;
+ * Default merge contract: `mergedClusters = { ...DEFAULT_CLUSTER_CONFIG,
+ * ...operator.clusters }` because `z.record(...).default({})` would replace
+ * the entire record. Empty operator config preserves the 3 reserved IDs;
  * partial-add preserves defaults plus addition; per-key override wins for the
  * overridden key only. The same shape applies to `mergedBuiltinAssignments`.
  *
  * Liveness:
  *   - `getConnectedMcpServers()` filters `getAllConnections()` by
  *     `c.status === "connected"` on EVERY call -- never cached at construction
- *     (TOCTOU mitigation per design §4.3 line 297-299).
+ *     (TOCTOU mitigation).
  *   - `getPackageAliasMap()` rebuilds fresh per call from operator MCP hints +
- *     visible skills + universal MCP fallback. No memoization in v1.1.
+ *     visible skills + universal MCP fallback. No memoization.
  *   - `getPromptSkillCapabilities()` re-invokes `skillRegistry`'s sweep on
  *     every call; the operator-hint callback resolves through `port.getSkillHint`
- *     at call time (Pitfall E -- arrow lambda holds the `port` reference, not
- *     a snapshot of `getSkillHint`).
+ *     at call time (the arrow lambda holds the `port` reference, not a
+ *     snapshot of `getSkillHint`).
  *
  * Returned port is `Object.freeze`d -- post-construction tampering is
  * structurally impossible in strict mode (silently no-ops in sloppy mode).
  *
- * Boundary discipline (Pitfall 13): production source MUST NOT import test
- * stubs from `@comis/core/__test-helpers/`. Plan 23-03 lands the
- * architecture-grep that enforces the boundary across the daemon tree;
- * this file pre-empts the violation.
+ * Boundary discipline: production source MUST NOT import test stubs from
+ * `@comis/core/__test-helpers/`.
  *
  * @module
  */
@@ -86,7 +83,7 @@ const EMPTY_ALIAS_MAP: ReadonlyMap<string, CapabilitySourceRef> = new Map();
  *
  * - npm scoped packages (`@scope/name`) are preserved as-is, lowercased.
  * - Everything else: lowercased, with runs of `_`, `.`, `-` collapsed to a
- *   single `-`. Matches design §8.1 rule 5.
+ *   single `-`.
  *
  * @param pkg - The raw package identifier from operator config or skill metadata.
  * @returns The normalized key for `getPackageAliasMap`.
@@ -117,10 +114,9 @@ export function createToolCapabilityAdapter(
 ): ToolCapabilityPort {
   const log = deps.logger.child({ submodule: "tool-capability-adapter" });
 
-  // Pitfall 2 mitigation -- key-by-key default merge at adapter construction.
-  // Schema cannot supply DEFAULT_CLUSTER_CONFIG via `.default(...)` because
-  // z.record(...).default({}) replaces the entire record (see schema-tooling.ts
-  // lines 144-153 JSDoc).
+  // Key-by-key default merge at adapter construction. Schema cannot supply
+  // DEFAULT_CLUSTER_CONFIG via `.default(...)` because z.record(...).default({})
+  // replaces the entire record.
   const mergedClusters: Record<string, ClusterConfig> = {
     ...DEFAULT_CLUSTER_CONFIG,
     ...deps.toolingConfig.capabilityClusters.clusters,
@@ -220,7 +216,7 @@ export function createToolCapabilityAdapter(
     getMcpServerHint: (serverName: string): McpServerHint | undefined => {
       const hint = deps.toolingConfig.mcp.capabilityHints[serverName];
       if (!hint) return undefined;
-      // WIRING-06 fallback: unresolved cluster -> "external-integrations".
+      // Fallback: unresolved cluster -> "external-integrations".
       const cluster = validClusterIds.has(hint.cluster)
         ? hint.cluster
         : "external-integrations";
@@ -235,7 +231,7 @@ export function createToolCapabilityAdapter(
       skillName: string,
       skillKey?: string,
     ): SkillHint | undefined => {
-      // Precedence: operator(skillKey) > operator(skillName) (design §4.2.1).
+      // Precedence: operator(skillKey) > operator(skillName).
       const hintByKey = skillKey
         ? deps.toolingConfig.skills.capabilityHints[skillKey]
         : undefined;
@@ -244,7 +240,7 @@ export function createToolCapabilityAdapter(
         : undefined;
       const hint = hintByKey ?? hintByName;
       if (!hint) return undefined;
-      // WIRING-06 fallback: unresolved cluster -> "prompt-skills".
+      // Fallback: unresolved cluster -> "prompt-skills".
       const cluster = validClusterIds.has(hint.cluster)
         ? hint.cluster
         : "prompt-skills";
@@ -256,10 +252,10 @@ export function createToolCapabilityAdapter(
     },
 
     getPackageAliasMap: (): ReadonlyMap<string, CapabilitySourceRef> => {
-      // Fresh per call -- design §4.3 line 297-299 mandates no memoization in
-      // v1.1. Visible skills can change mid-session (file-watcher reloads,
-      // allow/deny edits); MCP servers connect/disconnect; capturing at
-      // construction would freeze stale state.
+      // Fresh per call -- no memoization. Visible skills can change
+      // mid-session (file-watcher reloads, allow/deny edits); MCP servers
+      // connect/disconnect; capturing at construction would freeze stale
+      // state.
       const skills = port.getPromptSkillCapabilities();
       const connectedServers = port.getConnectedMcpServers();
       const mcpHints = Object.entries(deps.toolingConfig.mcp.capabilityHints);
@@ -286,8 +282,8 @@ export function createToolCapabilityAdapter(
       }
 
       // 2. Visible skills -- replacesPackages entries point at the skill.
-      // Pitfall E: `port.getPromptSkillCapabilities()` reference resolves at
-      // call time; the lexical `port` const is in scope by the time
+      // `port.getPromptSkillCapabilities()` reference resolves at call time;
+      // the lexical `port` const is in scope by the time
       // `getPackageAliasMap` fires.
       for (const skill of skills) {
         for (const pkg of skill.replacesPackages) {

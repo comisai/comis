@@ -37,16 +37,16 @@ export interface ProcessSession {
   readonly autoBackgrounded?: boolean; // true when session created by auto-background escalation
   readonly description?: string; // human-readable activity label (e.g. "Installing dependencies")
   /**
-   * Plan 22-02 — INSTALL-DTR-18: install-detour decision captured at spawn time.
-   * Populated by Plan 22-03 at the three exec-tool spawn sites (auto-bg, explicit-bg,
-   * foreground escalating to background) when the spawn-time parser detected
-   * overlap AND the mode was `advise`. Soft-stop refuses pre-spawn — no session
-   * exists for those calls; this field is never populated for soft-stop refusals.
+   * Install-detour decision captured at spawn time. Populated at the three
+   * exec-tool spawn sites (auto-bg, explicit-bg, foreground escalating to
+   * background) when the spawn-time parser detected overlap AND the mode was
+   * `advise`. Soft-stop refuses pre-spawn — no session exists for those
+   * calls; this field is never populated for soft-stop refusals.
    *
-   * Pitfall 6: `process.status` reads this back on retroactive hint augmentation
-   * rather than re-deriving from current connected-server state — the connected
-   * server set may have drifted since spawn, which would produce inconsistent
-   * hint vs spawn-time event.
+   * `process.status` reads this back on retroactive hint augmentation rather
+   * than re-deriving from current connected-server state — the connected
+   * server set may have drifted since spawn, which would produce an
+   * inconsistent hint vs the spawn-time event.
    */
   readonly installDetourDecision?: InstallDetourDecision;
 }

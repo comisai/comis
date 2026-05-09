@@ -37,8 +37,8 @@ import { createSkillWatcher, type SkillWatcherHandle } from "./skill-watcher.js"
  *
  * Mirrors the return shape of `ToolCapabilityPort.getSkillHint` in
  * `@comis/core/ports/tool-capability.ts`. The registry stays decoupled from
- * the port itself -- the daemon-side wiring (Phase 23) passes the port's
- * `getSkillHint` method as the callback.
+ * the port itself -- daemon-side wiring passes the port's `getSkillHint`
+ * method as the callback.
  */
 type OperatorSkillHint = {
   readonly cluster: string;
@@ -157,29 +157,27 @@ export interface SkillRegistry {
    * `disableModelInvocation !== true` filter -- skills hidden from the model
    * are not surfaced as capability index entries.
    *
-   * Capability merge precedence (per design v1.1 §4.2.1):
+   * Capability merge precedence:
    *   1. operator hint by `skillKey` (when the skill declares one)
    *   2. operator hint by skill name (always available as fallback)
    *   3. `comis.capability` from the skill manifest (already in
-   *      `metadata.capability` after Plan 17-04 wiring)
+   *      `metadata.capability`)
    *   4. Fallback: `cluster` undefined (renderer falls back to the literal
    *      `"prompt-skills"` cluster); `summary` = `description`;
    *      `replacesPackages` = `[]`.
    *
    * The `getOperatorHint` callback keeps the registry decoupled from
-   * `ToolCapabilityPort` -- the daemon-side adapter (Phase 23) passes the
-   * port's `getSkillHint` method here.
+   * `ToolCapabilityPort` -- daemon-side adapters pass the port's
+   * `getSkillHint` method here.
    *
-   * Fresh-per-call (no memoization in v1.1 per design §4.3
-   * method-body contract). Returns a frozen array of frozen entries.
+   * Fresh-per-call (no memoization). Returns a frozen array of frozen entries.
    *
-   * IMPORTANT -- cache fence (Pitfall 1; design §4.3 invariant):
+   * IMPORTANT -- cache fence:
    * This method MUST NOT be consumed by `assembleRichSystemPrompt`'s
    * `assemblerParams` in `packages/agent/src/executor/prompt-assembly.ts`.
    * If a skill discovery sweep runs between turns, the cached system-prompt
-   * prefix MUST stay byte-identical. Phase 20 (CAPINDEX-RENDER-15/16) lands
-   * the architecture-grep test that enforces this; Plan 17-04 documents the
-   * invariant and seeds the placeholder file.
+   * prefix MUST stay byte-identical. An architecture-grep test enforces this
+   * invariant.
    */
   getPromptSkillCapabilities(
     getOperatorHint: (skillName: string, skillKey?: string) => OperatorSkillHint | undefined,
@@ -366,8 +364,8 @@ export function createSkillRegistry(
 
       // Parse frontmatter; defensively strip a malformed comis.capability
       // block before strict validation so a typo in capability does NOT hide
-      // the skill at load time (Pitfall 7, design §4.2.1). Mirrors the
-      // discovery-side enrichment in discovery.ts.
+      // the skill at load time. Mirrors the discovery-side enrichment in
+      // discovery.ts.
       const fmResult = parseFrontmatter<Record<string, unknown>>(fileContent);
       if (!fmResult.ok) {
         return err(fmResult.error);
@@ -613,7 +611,7 @@ export function createSkillRegistry(
         if (!checkRuntimeEligibility(metadata)) continue;
         if (metadata.disableModelInvocation) continue;
 
-        // Precedence (design §4.2.1):
+        // Precedence:
         //   operator(skillKey) > operator(skillName) > comis.capability > fallback.
         const opByKey = metadata.skillKey
           ? getOperatorHint(metadata.name, metadata.skillKey)
@@ -741,10 +739,9 @@ export function createSkillRegistry(
               commandDispatch = rawCommandDispatch;
             }
 
-            // v1.1 capability layer -- defensive parse (Pitfall 7).
-            // A typo or type mismatch in the inner block returns undefined +
-            // emits a WARN; the skill itself is NEVER hidden by malformed
-            // capability metadata.
+            // Capability layer -- defensive parse. A typo or type mismatch
+            // in the inner block returns undefined + emits a WARN; the skill
+            // itself is NEVER hidden by malformed capability metadata.
             capability = parseComisCapabilityDefensively(
               ns?.["capability"],
               sdkSkill.name,

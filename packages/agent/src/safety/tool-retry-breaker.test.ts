@@ -10,13 +10,12 @@ describe("tool retry breaker", () => {
     suggestAlternatives: true,
     // High value so existing signature/tool-level tests aren't affected by error-pattern blocking
     maxConsecutiveErrorPatterns: 100,
-    // Operator-supplied alternatives map (Phase 19 DEFER-05). The production
-    // ToolRetryBreakerConfig.toolAlternatives defaults to {} per design §3
-    // non-goal #4 — no hardcoded server names. Tests populate this fixture
-    // to simulate an operator who has configured yfinance alternatives, so
-    // existing alternative-suggestion assertions in this file (lines 103-118
-    // etc.) continue to verify behavior at the breaker level
-    // (feedback_no_backward_compat).
+    // Operator-supplied alternatives map. The production
+    // ToolRetryBreakerConfig.toolAlternatives defaults to {} — no hardcoded
+    // server names. Tests populate this fixture to simulate an operator who
+    // has configured yfinance alternatives, so existing alternative-suggestion
+    // assertions in this file (lines 103-118 etc.) continue to verify
+    // behavior at the breaker level.
     toolAlternatives: {
       "mcp__yfinance": ["web_search", "mcp__tavily--tavily-search", "web_fetch"],
     },
@@ -738,16 +737,16 @@ describe("tool retry breaker", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 19 DEFER-05: config-driven toolAlternatives
+  // Config-driven toolAlternatives
   // ---------------------------------------------------------------------------
 
-  describe("config-driven toolAlternatives (Phase 19 DEFER-05)", () => {
+  describe("config-driven toolAlternatives", () => {
     it("returns empty alternatives when toolAlternatives is undefined (default)", () => {
       const breaker = createToolRetryBreaker({
         maxConsecutiveFailures: 3,
         maxToolFailures: 5,
         suggestAlternatives: true,
-        // toolAlternatives intentionally omitted — empty map default per design §3 non-goal #4
+        // toolAlternatives intentionally omitted — empty map default
       });
       const tool = "mcp__yfinance--get_recs";
       const args = { symbol: "NVDA" };
@@ -758,12 +757,11 @@ describe("tool retry breaker", () => {
       const verdict = breaker.beforeToolCall(tool, args);
       expect(verdict.block).toBe(true);
       expect(verdict.alternatives).toEqual([]);
-      // Generic fallback wording in buildBlockReason — preserved from pre-Phase-19.
+      // Generic fallback wording in buildBlockReason.
       expect(verdict.reason).toContain("alternative approaches");
       // Critically: no hardcoded suggestion appears when the operator hasn't
-      // populated the alternatives map. This is the Phase 19 DEFER-05
-      // post-condition for production config (which ships toolAlternatives
-      // omitted, per feedback_no_backward_compat / no migration shim).
+      // populated the alternatives map. The production config ships
+      // toolAlternatives omitted.
       expect(verdict.reason).not.toContain("web_search");
       expect(verdict.reason).not.toContain("mcp__tavily--tavily-search");
     });

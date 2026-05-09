@@ -213,7 +213,7 @@ export async function evaluateInboundGate(
   }
 
   // -------------------------------------------------------------------
-  // /approve and /deny COMMAND INTERCEPTION (APPR-CHAT)
+  // /approve and /deny COMMAND INTERCEPTION
   // -------------------------------------------------------------------
   if (msg.text && deps.approvalGate) {
     const result = await handleApprovalCommand(deps, adapter, msg, sessionKey);
@@ -283,7 +283,7 @@ export async function evaluateInboundGate(
   }
 
   // -------------------------------------------------------------------
-  // GENERAL SLASH COMMAND INTERCEPTION (CMD-WIRE)
+  // GENERAL SLASH COMMAND INTERCEPTION
   // -------------------------------------------------------------------
   if (msg.text && deps.handleSlashCommand) {
     const cmdResult = await deps.handleSlashCommand(msg.text, sessionKey, agentId);
@@ -373,7 +373,7 @@ export async function evaluateInboundGate(
     }
   }
 
-  // Extract command directives from metadata (set by CMD-WIRE interception above)
+  // Extract command directives from metadata (set by general slash command interception above)
   const directives = msg.metadata?._commandDirectives as Record<string, unknown> | undefined;
 
   return { action: "process", processedMsg: msg, directives };

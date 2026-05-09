@@ -213,7 +213,7 @@ describe("createModelHandlers - model management", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Layer 1F (260430-vwt) -- models.list_providers
+  // models.list_providers
   // -------------------------------------------------------------------------
 
   describe("models.list_providers", () => {

@@ -14,7 +14,7 @@
 
 // ---------------------------------------------------------------------------
 // MCP attribution helpers
-// Re-exported from @comis/shared (canonical home). Phase 18 migration.
+// Re-exported from @comis/shared (canonical home).
 // ---------------------------------------------------------------------------
 
 export { extractMcpServerName } from "@comis/shared";

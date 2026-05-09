@@ -75,7 +75,7 @@ export function wrapWithMetadataEnforcement(tool: AgentTool<any>): AgentTool<any
     ): Promise<AgentToolResult<any>> {
       const meta = getToolMetadata(tool.name);
 
-      // Generic tool-entry schema validation (260504-cac).
+      // Generic tool-entry schema validation.
       // Runs BEFORE per-tool validateInput so action-shape errors short-circuit
       // before tool-specific business rules. Skips silently when the tool has
       // not registered validActions / validKeys / requiredByAction.

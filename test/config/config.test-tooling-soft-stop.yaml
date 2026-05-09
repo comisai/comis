@@ -1,13 +1,13 @@
-# Comis Test Configuration (Phase 24 Tooling Fixtures - soft-stop mode)
+# Comis Test Configuration (Tooling Fixtures - soft-stop mode)
 #
-# Port 8507 -- unique to Phase 24 soft-stop-mode integration tests
+# Port 8507 -- unique to soft-stop-mode integration tests
 # (8505 taken by config.test-sessions-lifecycle.yaml; 8506 reserved for the
 # advise-mode sibling config.test-tooling-fixtures.yaml).
 # tooling.installDetours.mode is "soft-stop" (fail-closed): install commands
 # overlapping declared capability clusters are refused pre-spawn.
 # Soft-stop test deliberately omits installDetours.approvalGate to exercise
-# the fail-closed path (INSTALL-DTR-19 success criterion 2 / Plan 22 contract).
-# Skills.discoveryPaths references the Phase 24 fixture dir created by Plan 24-01.
+# the fail-closed path.
+# Skills.discoveryPaths references the skill-variant fixture dir.
 
 tenantId: "test"
 logLevel: "debug"

@@ -341,10 +341,10 @@ comis:
 });
 
 // ---------------------------------------------------------------------------
-// SkillMetadata.capability extraction (TOOLING-CFG-10/11) -- Plan 17-04 Task 1
+// SkillMetadata.capability extraction
 // ---------------------------------------------------------------------------
 
-describe("SkillMetadata.capability extraction (TOOLING-CFG-10/11)", () => {
+describe("SkillMetadata.capability extraction", () => {
   it("populates capability from valid comis.capability block", () => {
     const dir = createTempDir();
     const content = `---
@@ -384,7 +384,7 @@ comis:
     expect(warns).toHaveLength(0);
   });
 
-  it("returns capability=undefined and logs WARN on typo'd nested key (Pitfall 7)", () => {
+  it("returns capability=undefined and logs WARN on typo'd nested key", () => {
     const dir = createTempDir();
     // Typo: replacePackages (missing "s") instead of replacesPackages.
     const content = `---
@@ -410,7 +410,7 @@ comis:
     };
 
     const result = discoverSkills([dir], logger);
-    // Skill is STILL discovered (Pitfall 7 contract).
+    // Skill is STILL discovered.
     expect(result.skills).toHaveLength(1);
     const skill = result.skills[0];
     expect(skill.name).toBe("typo-cap-skill");

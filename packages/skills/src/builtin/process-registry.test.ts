@@ -26,8 +26,8 @@ function makeSession(overrides: Partial<ProcessSession> = {}): ProcessSession {
     maxOutputChars: overrides.maxOutputChars ?? 1024 * 1024,
     sandboxed: overrides.sandboxed ?? false,
     // Pass-through for optional fields not enumerated above (e.g.
-    // installDetourDecision, autoBackgrounded, description) — allows
-    // Plan 22-02 INSTALL-DTR-18 tests to set installDetourDecision directly.
+    // installDetourDecision, autoBackgrounded, description) — allows tests
+    // to set installDetourDecision directly.
     ...overrides,
   };
 }
@@ -394,10 +394,10 @@ describe("sandbox-aware killProcessGroup", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ProcessSession.installDetourDecision (Plan 22-02 INSTALL-DTR-18 — field shape only)
+// ProcessSession.installDetourDecision (field shape only)
 // ---------------------------------------------------------------------------
 
-describe("ProcessSession.installDetourDecision (Plan 22-02 INSTALL-DTR-18)", () => {
+describe("ProcessSession.installDetourDecision", () => {
   const fakeDecision: InstallDetourDecision = {
     packageManager: "pip",
     packages: ["market-data-lib"],

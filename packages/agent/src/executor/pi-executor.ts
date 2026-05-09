@@ -131,7 +131,7 @@ import { randomUUID } from "node:crypto";
 const EVICTION_COOLDOWN_TURNS = 2;
 
 // ---------------------------------------------------------------------------
-// R-12: Proactive tool-call safety guard
+// Proactive tool-call safety guard
 // ---------------------------------------------------------------------------
 
 /**
@@ -198,11 +198,11 @@ export function createBeforeToolCallGuard(
 }
 
 // ---------------------------------------------------------------------------
-// R-13: Session stats delegation helper
+// Session stats delegation helper
 // ---------------------------------------------------------------------------
 
 /**
- * Merge SDK session stats into execution result for token totals (R-13).
+ * Merge SDK session stats into execution result for token totals.
  *
  * Token counts (input, output, cacheRead, cacheWrite, total) are sourced
  * from the SDK's cumulative session stats -- single source of truth.
@@ -343,10 +343,9 @@ export interface PiExecutorDeps {
   /** Optional embedding port for semantic search in discover_tools. */
   embeddingPort?: import("@comis/core").EmbeddingPort;
   /**
-   * Tool-capability port for the per-turn capability-index renderer
-   * (Phase 20 / CAPINDEX-RENDER-02). Daemon wiring injects
-   * createNoOpCapabilityPort() from @comis/core until Phase 23 ships
-   * the live adapter (feedback_no_backward_compat).
+   * Tool-capability port for the per-turn capability-index renderer.
+   * Daemon wiring injects createNoOpCapabilityPort() from @comis/core
+   * until the live adapter ships.
    */
   toolCapabilityPort: ToolCapabilityPort;
   /** Sender trust display config from AppConfig. */
@@ -674,7 +673,7 @@ export function createPiExecutor(
         id: resolvedModel.id,
       }) : undefined;
 
-      // f. Execute within session adapter (R-11: use ephemeral adapter if provided)
+      // f. Execute within session adapter (use ephemeral adapter if provided)
       const sessionAdapter = overrides?.ephemeralSessionAdapter ?? deps.sessionAdapter;
       const lockResult = await sessionAdapter.withSession(
         sessionKey,
@@ -743,8 +742,7 @@ export function createPiExecutor(
           const stableGetPromptSkillsXml = frozenPromptSkillsXml !== undefined
             ? () => frozenPromptSkillsXml
             : deps.getPromptSkillsXml;
-          // toolCapabilityPort flows through frozenDeps spread — no explicit re-assignment
-          // (Phase 20 / CAPINDEX-RENDER-02).
+          // toolCapabilityPort flows through frozenDeps spread — no explicit re-assignment.
           const frozenDeps = { ...deps, getPromptSkillsXml: stableGetPromptSkillsXml };
 
           // Tool assembly pipeline: merge, settings, prompt, deferral, JIT, pruning, snapshot, normalization, serializer
@@ -854,8 +852,8 @@ export function createPiExecutor(
             maxSendsPerExecution: deps.maxSendsPerExecution ?? 3,
           });
 
-          // R-12: Proactive safety -- block tool execution before it starts
-          // when safety limits are already reached. Existing reactive checks in
+          // Proactive safety -- block tool execution before it starts when
+          // safety limits are already reached. Existing reactive checks in
           // pi-event-bridge remain as fallback for limits crossed during execution.
           // NOTE: beforeToolCall replaces the extension runner's hook. Comis does
           // not load pi-mono extensions, so this override is safe.
@@ -1138,7 +1136,7 @@ export function createPiExecutor(
           }
 
           // session.sendCustomMessage() is available for operator annotations.
-          // REQUIREMENTS.md refers to appendCustomEntry() which is the SessionManager-level API;
+          // Note: appendCustomEntry() is the SessionManager-level API;
           // the AgentSession wrapper exposes this as sendCustomMessage({ customType, content, display, details }).
           // Future commands or hooks can call this to inject custom entries into the JSONL session.
 

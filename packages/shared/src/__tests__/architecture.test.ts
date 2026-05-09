@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture invariants for @comis/shared (Plan 17-04, scaffolding).
+ * Architecture invariants for @comis/shared.
  *
- * Phase 17 establishes the file location + import contract so subsequent
- * phases can append invariants without re-establishing scaffolding:
- *   - Phase 18 (MCPNAME-03) will assert that production source MUST NOT
- *     contain inline mcp__...--... regex parsers; only @comis/shared
- *     exports the canonical parser.
+ * Asserts that production source MUST NOT contain inline mcp__...--...
+ * regex parsers; only @comis/shared exports the canonical parser.
  *
  * @module
  */
@@ -19,17 +16,13 @@ import { findInSourceFiles } from "../../../../test/support/source-grep.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
 
-describe("@comis/shared -- architecture invariants (MCPNAME-03)", () => {
-  it("MCPNAME-03 (defense-in-depth): only mcp-tool-name.ts contains the canonical parser shape", () => {
-    // Locks Phase 18's own work in @comis/shared. If a future contributor
-    // copy-pastes the slice(5)+indexOf("--") shape into another shared utility
-    // (creating a near-duplicate of the canonical parser), this test catches
-    // it. The single legitimate carrier is mcp-tool-name.ts; everything else
-    // in @comis/shared/src/ must delegate to it. RESEARCH §Pattern 6.
-    //
-    // §10.6 inverted-cycle proof captured in 18-03-SUMMARY.md (Task 3 dance:
-    // scratch _scratchExtract body added to a non-canonical shared file
-    // (e.g., abort.ts), test fired with the offending path; reverted; green).
+describe("@comis/shared -- architecture invariants", () => {
+  it("defense-in-depth: only mcp-tool-name.ts contains the canonical parser shape", () => {
+    // If a future contributor copy-pastes the slice(5)+indexOf("--") shape
+    // into another shared utility (creating a near-duplicate of the canonical
+    // parser), this test catches it. The single legitimate carrier is
+    // mcp-tool-name.ts; everything else in @comis/shared/src/ must delegate
+    // to it.
     const result = findInSourceFiles({
       rootDir: SRC_ROOT,
       needle: /\.slice\(5\)[\s\S]{0,200}\.indexOf\(["']--["']\)/,

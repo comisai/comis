@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 16 tool-first replay fixture invariants.
+ * Tool-first replay fixture invariants.
  *
- * Validates the 5 contract invariants of the fixture surface created in
- * Plan 16.01. Downstream phases (17/20/22/23/24) consume these files and
- * rely on the invariants asserted here. The smoke test is the executable
- * verification surface for INTEG-01 and INTEG-02.
+ * Validates the 5 contract invariants of the fixture surface. Downstream
+ * consumers rely on the invariants asserted here. The smoke test is the
+ * executable verification surface for the replay round.
  *
  * @module
  */
@@ -21,7 +20,7 @@ import { createStubMcpServer } from "./stub-mcp-server.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-describe("Phase 16 replay fixture invariants", () => {
+describe("Replay fixture invariants", () => {
   it("messages.json parses as a non-empty pi-ai Message[] with user as first turn", () => {
     const raw = readFileSync(resolve(here, "messages.json"), "utf8");
     const messages = JSON.parse(raw) as Message[];

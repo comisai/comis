@@ -5,14 +5,12 @@
  * Why source-grep: building runner-level behavioral test infrastructure
  * (mocking AgentSession, PromptRunnerBridge, runWithModelRetry, the full
  * deps surface) is significant scope; this file pins structural invariants
- * for the rate_limited short-circuit branch added by 260501-cur and the
- * pre-existing client_request branch added by 260420-fqw. Behavioral tests
- * should be added alongside any future refactor that introduces the
- * required mocking infrastructure.
+ * for the rate_limited short-circuit branch and the pre-existing
+ * client_request branch. Behavioral tests should be added alongside any
+ * future refactor that introduces the required mocking infrastructure.
  *
  * Precedent: packages/skills/src/builtin/platform/agents-manage-tool.test.ts
- * (260428-rrr / 260501-1zs / 260501-2pz) — same readFileSync + import.meta.url
- * pattern.
+ * — same readFileSync + import.meta.url pattern.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -23,7 +21,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const sourcePath = resolve(here, "executor-prompt-runner.ts");
 const source = readFileSync(sourcePath, "utf-8");
 
-describe("executor-prompt-runner.ts — rate_limited branch (260501-cur)", () => {
+describe("executor-prompt-runner.ts — rate_limited branch", () => {
   it("contains an `else if (earlyClassification.category === \"rate_limited\")` branch", () => {
     expect(source).toMatch(/else if \(earlyClassification\.category === "rate_limited"\)/);
   });
@@ -72,27 +70,26 @@ describe("executor-prompt-runner.ts — rate_limited branch (260501-cur)", () =>
     expect(branchBody).toMatch(/Rate-limit error/);
   });
 
-  // Plan-checker fix #2 (MINOR): pin the existing client_request branch wording so a future
-  // refactor that inadvertently edits it while doing rate_limited work would be caught.
-  // Truth #7 ("client_request branch byte-identical") becomes enforceable.
-  it("client_request branch wording remains untouched (byte-identical pin from 260420-fqw)", () => {
+  // Pin the existing client_request branch wording so a future refactor that
+  // inadvertently edits it while doing rate_limited work would be caught.
+  it("client_request branch wording remains untouched (byte-identical pin)", () => {
     expect(source).toMatch(/Anthropic returned a client-side validation error/);
     expect(source).toMatch(/Client request rejected by provider:/);
     expect(source).toMatch(/Client-request error — skipping silent-retry and declaring terminal failure/);
   });
 });
 
-describe("executor-prompt-runner.ts — capability-index threading (Phase 20 CAPINDEX-RENDER-03 + -18)", () => {
-  it("CAPINDEX-RENDER-03: dynamic preamble uses array-concat [dynamicPreamble, capabilityIndexContext, deferredContext].filter(Boolean)", () => {
-    // Source-grep: structural lock on the design §5 array-concat shape.
-    // Behavioral verification of the rendered output lives in the renderer
-    // unit test (capability-index-context.test.ts) and Phase 24 integration tests.
+describe("executor-prompt-runner.ts — capability-index threading", () => {
+  it("dynamic preamble uses array-concat [dynamicPreamble, capabilityIndexContext, deferredContext].filter(Boolean)", () => {
+    // Source-grep: structural lock on the array-concat shape. Behavioral
+    // verification of the rendered output lives in the renderer unit test
+    // (capability-index-context.test.ts) and integration tests.
     expect(source).toMatch(
       /\[\s*dynamicPreamble\s*,\s*capabilityIndexContext\s*,\s*deferredContext\s*\]\s*\.\s*filter\s*\(\s*Boolean\s*\)/,
     );
   });
 
-  it("CAPINDEX-RENDER-18 / OBS-CAP-01: Pino debug log emits the seven canonical fields with submodule label and message", () => {
+  it("Pino debug log emits the seven canonical fields with submodule label and message", () => {
     // Each canonical field appears literally in the log object.
     expect(source).toMatch(/capabilityIndexTokens/);
     expect(source).toMatch(/deferredContextTokens/);
@@ -101,11 +98,11 @@ describe("executor-prompt-runner.ts — capability-index threading (Phase 20 CAP
     expect(source).toMatch(/activeToolCount/);
     expect(source).toMatch(/deferredToolCount/);
     expect(source).toMatch(/promptSkillCount/);
-    // Message text matches design §5 Placement verbatim.
+    // Message text matches expected placement verbatim.
     expect(source).toMatch(/"Dynamic preamble assembled"/);
   });
 
-  it("CAPINDEX-RENDER-18: submodule binding label is exactly 'executor.capability-index'", () => {
+  it("submodule binding label is exactly 'executor.capability-index'", () => {
     // AGENTS.md §2.7: submodule binding via deps.logger.child({ submodule: "..." }).
     expect(source).toMatch(/submodule\s*:\s*["']executor\.capability-index["']/);
   });

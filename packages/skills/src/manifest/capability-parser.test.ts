@@ -6,7 +6,7 @@ function makeLogger() {
   return { warn: vi.fn() };
 }
 
-describe("parseComisCapabilityDefensively (TOOLING-CFG-11)", () => {
+describe("parseComisCapabilityDefensively", () => {
   it("returns undefined silently when raw is undefined (no-op fast path)", () => {
     const logger = makeLogger();
     const result = parseComisCapabilityDefensively(

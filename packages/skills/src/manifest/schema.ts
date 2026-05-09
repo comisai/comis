@@ -77,15 +77,15 @@ export const SkillKeySchema = z.preprocess((val) => {
  * IMPORTANT -- defensive parse at registry-side:
  * The outer ComisNamespaceSchema is strict, so a malformed `capability` block
  * would normally cause the whole `comis:` block to fail parse and the skill
- * to become invisible (Pitfall 7). Plan 17-04 wires the registry's discovery
- * enrichment to extract `comis.capability` SEPARATELY via
- * `parseComisCapabilityDefensively`, which logs a WARN and returns undefined
- * on failure -- letting the skill render under the fallback `prompt-skills`
- * cluster. The strict schema here is the declaration of the contract; the
- * defensive parser is the recovery mechanism.
+ * to become invisible. The registry's discovery enrichment extracts
+ * `comis.capability` SEPARATELY via `parseComisCapabilityDefensively`, which
+ * logs a WARN and returns undefined on failure -- letting the skill render
+ * under the fallback `prompt-skills` cluster. The strict schema here is the
+ * declaration of the contract; the defensive parser is the recovery
+ * mechanism.
  *
- * Per design §4.2.1: "the skill itself is never hidden solely because
- * optional capability metadata is invalid."
+ * The skill itself is never hidden solely because optional capability
+ * metadata is invalid.
  */
 export const ComisCapabilityBlockSchema = z.strictObject({
   /** Cluster ID this skill belongs to (operator may override via tooling.skills.capabilityHints). */
@@ -118,8 +118,8 @@ export const ComisNamespaceSchema = z.strictObject({
   "command-dispatch": z.string().optional(),
   /**
    * v1.1 capability layer -- optional metadata for cluster, summary,
-   * package aliases. Defensively parsed at registry-side (Plan 17-04);
-   * a typo here will NOT hide the skill.
+   * package aliases. Defensively parsed at registry-side; a typo here will
+   * NOT hide the skill.
    */
   capability: ComisCapabilityBlockSchema.optional(),
 }).optional();

@@ -176,7 +176,7 @@ describe("createProcessTool", () => {
   });
 });
 
-describe("process.status — install-detour retroactive hint (INSTALL-DTR-17, -18, Pitfall 6)", () => {
+describe("process.status — install-detour retroactive hint", () => {
   const fakeDecision: InstallDetourDecision = {
     packageManager: "pip",
     packages: ["market-data-lib"],
@@ -221,7 +221,7 @@ describe("process.status — install-detour retroactive hint (INSTALL-DTR-17, -1
     expect(result.details?.installDetourHint).toBeUndefined();
   });
 
-  it("Pitfall 6: hint stays consistent with spawn-time decision even when port state has drifted", async () => {
+  it("hint stays consistent with spawn-time decision even when port state has drifted", async () => {
     // Session captured under port that returned ["finance-data"] at spawn time.
     const reg = createProcessRegistry();
     reg.add(makeSession({ id: "s-drift", installDetourDecision: fakeDecision }));
@@ -236,7 +236,7 @@ describe("process.status — install-detour retroactive hint (INSTALL-DTR-17, -1
     const result = (await tool.execute("tc-status-3", { action: "status", sessionId: "s-drift" })) as {
       details?: Record<string, unknown>;
     };
-    // Critical Pitfall 6 assertion: hint still mentions finance-data despite drift
+    // Hint must still mention finance-data despite drift (read from session, not re-derived)
     expect(result.details?.installDetourHint).toBeDefined();
     expect(result.details?.installDetourHint as string).toContain("finance-data");
   });

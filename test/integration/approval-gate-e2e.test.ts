@@ -3,15 +3,15 @@
  * APPROVAL GATE E2E: Full lifecycle integration tests for the approval gate.
  *
  * Validates the complete approval pipeline against a running daemon:
- *   TEST-06-01: admin.approval.pending returns empty when no requests pending
- *   TEST-06-02: Approve flow -- requestApproval blocks, RPC resolve unblocks with approved=true
- *   TEST-06-03: Deny flow -- requestApproval blocks, RPC resolve unblocks with approved=false
- *   TEST-06-04: Timeout flow -- requestApproval auto-denies after 3s
- *   TEST-06-05: SSE streams approval:requested and approval:resolved events
- *   TEST-06-06: Idempotent resolution does not throw on double-resolve
- *   TEST-06-07: WebSocket RPC can list pending and resolve approval requests
- *   TEST-06-08: Tool wrapper triggers approval and completes on approve
- *   TEST-06-09: Tool wrapper triggers approval and returns denial on deny
+ *   admin.approval.pending returns empty when no requests pending
+ *   Approve flow -- requestApproval blocks, RPC resolve unblocks with approved=true
+ *   Deny flow -- requestApproval blocks, RPC resolve unblocks with approved=false
+ *   Timeout flow -- requestApproval auto-denies after 3s
+ *   SSE streams approval:requested and approval:resolved events
+ *   Idempotent resolution does not throw on double-resolve
+ *   WebSocket RPC can list pending and resolve approval requests
+ *   Tool wrapper triggers approval and completes on approve
+ *   Tool wrapper triggers approval and returns denial on deny
  *
  * Uses a dedicated config (port 8522, separate memory DB) to avoid conflicts.
  * Accesses daemon internals directly: approvalGate, rpcCall.
@@ -159,8 +159,8 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
     rmSync(CONFIG_PATH, { force: true });
 
     // Copy the source config to a tmp location so persistToConfig
-    // (which writes back the agents created by TEST-06-08/09) does not
-    // mutate the checked-in fixture between runs.
+    // (which writes back the agents created by the tool-wrapper tests) does
+    // not mutate the checked-in fixture between runs.
     copyFileSync(SOURCE_CONFIG_PATH, CONFIG_PATH);
 
     handle = await startTestDaemon({ configPath: CONFIG_PATH });
@@ -194,7 +194,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
   describe("Approval Gate Pending RPC", () => {
     it(
-      "TEST-06-01: admin.approval.pending returns empty when no requests pending",
+      "admin.approval.pending returns empty when no requests pending",
       async () => {
         const result = (await rpcCall("admin.approval.pending", { _trustLevel: "admin" })) as {
           requests: unknown[];
@@ -215,7 +215,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
   describe("Approval Approve Flow", () => {
     it(
-      "TEST-06-02: requestApproval blocks, RPC resolve unblocks with approved=true",
+      "requestApproval blocks, RPC resolve unblocks with approved=true",
       async () => {
         // 1. Start requestApproval in a Promise (this BLOCKS until resolved)
         const approvalPromise = approvalGate.requestApproval({
@@ -281,7 +281,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
   describe("Approval Deny Flow", () => {
     it(
-      "TEST-06-03: requestApproval blocks, RPC resolve unblocks with approved=false and reason",
+      "requestApproval blocks, RPC resolve unblocks with approved=false and reason",
       async () => {
         // Start requestApproval
         const approvalPromise = approvalGate.requestApproval({
@@ -335,7 +335,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
   describe("Approval Timeout Auto-Deny", () => {
     it(
-      "TEST-06-04: requestApproval auto-denies after configured timeout (3s)",
+      "requestApproval auto-denies after configured timeout (3s)",
       async () => {
         const startMs = Date.now();
 
@@ -370,7 +370,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
   describe("SSE Approval Events", () => {
     it(
-      "TEST-06-05: SSE streams approval:requested and approval:resolved events",
+      "SSE streams approval:requested and approval:resolved events",
       async () => {
         // 1. Open an SSE connection to /api/events
         const controller = new AbortController();
@@ -449,7 +449,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
   describe("Idempotent Resolution", () => {
     it(
-      "TEST-06-06: double-resolve on gate is idempotent, RPC throws for already-resolved",
+      "double-resolve on gate is idempotent, RPC throws for already-resolved",
       async () => {
         // 1. Create a request and resolve it
         const approvalPromise = approvalGate.requestApproval({
@@ -497,7 +497,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
   describe("WebSocket RPC Approval Flow", () => {
     it(
-      "TEST-06-07: WebSocket RPC can list pending and resolve approval requests",
+      "WebSocket RPC can list pending and resolve approval requests",
       async () => {
         let ws: WebSocket | undefined;
 
@@ -599,7 +599,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
     });
 
     it(
-      "TEST-06-08: Tool wrapper triggers approval and completes on approve",
+      "tool wrapper triggers approval and completes on approve",
       // Disable vitest's auto-retry. The first attempt creates the agent
       // in-memory and persists it to the (tmp) config; a retry would re-run
       // against a daemon that already has the agent and fail with "Agent
@@ -660,8 +660,8 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
         // 7. Assert the result is successful (no error in details).
         // agents.create returns a 2-text-block contract: block 0 is the
-        // next-step contract (260428-sw2 Layer 1), block 1 is the JSON
-        // payload. Neither block should contain "Error:".
+        // next-step contract, block 1 is the JSON payload. Neither block
+        // should contain "Error:".
         expect(result.content.length).toBeGreaterThanOrEqual(1);
         for (const block of result.content) {
           expect(block.text).not.toContain("Error:");
@@ -683,7 +683,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
     );
 
     it(
-      "TEST-06-09: Tool wrapper triggers approval and returns denial on deny",
+      "tool wrapper triggers approval and returns denial on deny",
       // Disable vitest's auto-retry. A retry would re-run the test against a
       // daemon whose denial cache (60s TTL, in-memory only) still holds the
       // denial from this test's first attempt, causing the second attempt to
@@ -697,8 +697,9 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         const tool = createAgentsManageTool(adminRpcCall, handle.daemon.logger, approvalGate);
 
         // 2. Start tool execute in a runWithContext scope with admin trust level.
-        // Use a distinct sessionKey from TEST-06-08 to avoid the batch-approval
-        // cache (keyed by `${sessionKey}::${action}`) auto-approving this request.
+        // Use a distinct sessionKey from the approve-flow test to avoid the
+        // batch-approval cache (keyed by `${sessionKey}::${action}`) auto-
+        // approving this request.
         const executePromise = runWithContext(
           {
             tenantId: "test",

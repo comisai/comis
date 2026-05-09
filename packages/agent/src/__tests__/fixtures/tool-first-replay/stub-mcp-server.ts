@@ -18,9 +18,9 @@
  *   same constraint and uses a stub instead.
  *
  * Downstream consumers:
- *   - Phase 22 (INSTALL-DTR) — install-detour parser overlap detection.
- *   - Phase 23 (WIRING-07) — `getConnectedMcpServers()` filters by status.
- *   - Phase 24 (INTEG)     — full provider-gated replay round.
+ *   - install-detour parser overlap detection.
+ *   - `getConnectedMcpServers()` filters by status.
+ *   - Full provider-gated replay round.
  */
 
 interface StubMcpToolDefinition {

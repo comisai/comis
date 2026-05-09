@@ -96,10 +96,9 @@ export interface RunPromptParams {
   dynamicPreamble: string | undefined;
   deferredContext: string | undefined;
   /**
-   * Per-turn capability-index render result (Phase 20 / CAPINDEX-RENDER-02).
-   * The .text field is concatenated into the dynamic preamble via
-   * `[...].filter(Boolean).join("\n\n")`; the count fields feed the
-   * OBS-CAP-01 Pino debug log below.
+   * Per-turn capability-index render result. The .text field is concatenated
+   * into the dynamic preamble via `[...].filter(Boolean).join("\n\n")`; the
+   * count fields feed the Pino debug log below.
    */
   capabilityIndexResult: CapabilityIndexRenderResult;
   inlineMemory: string | undefined;
@@ -189,10 +188,10 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
   // relocated from system prompt for cache stability.
   // Also includes <deferred-tools> context block when deferred tools exist.
   //
-  // Design §5 Placement: array-concat shape. Each element either contributes
-  // a non-empty string or filters out cleanly. The renderer's EMPTY sentinel
-  // (gate-disabled OR all-zero counts) yields text === "" which .filter(Boolean)
-  // drops automatically (CAPINDEX-RENDER-06).
+  // Array-concat shape. Each element either contributes a non-empty string
+  // or filters out cleanly. The renderer's EMPTY sentinel (gate-disabled OR
+  // all-zero counts) yields text === "" which .filter(Boolean) drops
+  // automatically.
   const capabilityIndexContext = capabilityIndexResult.text;
   const fullDynamicPreamble = [dynamicPreamble, capabilityIndexContext, deferredContext]
     .filter(Boolean)
@@ -202,9 +201,9 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
     messageText = `[System context]\n${fullDynamicPreamble}\n[End system context]\n\n${messageText}`;
   }
 
-  // Pino debug log (Phase 20 / OBS-CAP-01 / CAPINDEX-RENDER-18; design §5 Placement).
-  // Submodule binding per AGENTS.md §2.7: deps.logger.child({ submodule })
-  // attaches the label only at this call site, not module-scope.
+  // Pino debug log. Submodule binding per AGENTS.md §2.7:
+  // deps.logger.child({ submodule }) attaches the label only at this call
+  // site, not module-scope.
   const submoduleLogger = deps.logger.child({ submodule: "executor.capability-index" });
   const fullPreambleTokens = Math.ceil((fullDynamicPreamble ?? "").length / CHARS_PER_TOKEN_RATIO);
   const deferredContextTokens = Math.ceil((deferredContext ?? "").length / CHARS_PER_TOKEN_RATIO);

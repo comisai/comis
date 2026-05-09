@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the install-detour parser (Plan 22-01).
+ * Tests for the install-detour parser.
  *
- * Covers INSTALL-DTR-01..12:
+ * Coverage:
  * - Positive matrix (17 rows): supported PMs, version-stripping, scoped npm, PEP-503
  * - False-positive matrix (13 rows): npm audit, npx, pwsh, python -c, heredocs,
  *   $( ), backticks, quoted echo, single-quoted segments, unbalanced quotes
@@ -10,9 +10,8 @@
  * - Alias-map construction: operator hints + comis.capability + visibility/disconnected filters
  * - commandDigest properties: 16-hex regex, deterministic, order-insensitive, distinct
  *
- * Uses `createCapabilityPortStub` from `__test-helpers/` per Phase 17 contract.
- * Pitfall 13: tests must use the test-only stub factory (NOT the production
- * no-op port). The architecture-grep at
+ * Uses `createCapabilityPortStub` from `__test-helpers/`. Tests must use the
+ * test-only stub factory (NOT the production no-op port). The architecture-grep at
  * `packages/skills/src/__tests__/architecture.test.ts:37-48` enforces this
  * by source-grepping `.test.ts` files for the production-port symbol.
  *
@@ -35,6 +34,7 @@ type _PublicTypeSurface = [InstallDetourDecision, DetourOverlap];
 // ---------------------------------------------------------------------------
 // Test fixtures (per-test factories per AGENTS.md §2.5)
 // ---------------------------------------------------------------------------
+
 
 /** Stub: empty port — no connected servers, no visible skills. Used for matrix tests. */
 function makeEmptyPort(): ToolCapabilityPort {
@@ -64,11 +64,11 @@ function makeFinanceDataPort(overrides?: Partial<{
 }
 
 // ===========================================================================
-// POSITIVE MATRIX (INSTALL-DTR-01, -02, -04)
+// POSITIVE MATRIX
 // ===========================================================================
 
-describe("parseInstallDetour — positive matrix (INSTALL-DTR-01, -02, -04)", () => {
-  // Rows from RESEARCH §5; each row uses a port that DOES produce overlaps,
+describe("parseInstallDetour — positive matrix", () => {
+  // Each row uses a port that DOES produce overlaps,
   // so decision is non-null and we can assert packageManager + packages.
   it.each([
     ["pip install matplotlib",                                "pip",  ["matplotlib"]],
@@ -88,9 +88,9 @@ describe("parseInstallDetour — positive matrix (INSTALL-DTR-01, -02, -04)", ()
     ["pip install pandas_ml",                                 "pip",  ["pandas-ml"]],
     ["pip install foo.bar",                                   "pip",  ["foo-bar"]],
     ["source .venv/bin/activate && pip install matplotlib",   "pip",  ["matplotlib"]],
-    // CR-02 fix coverage: `&` is a POSIX top-level separator (background-and-continue).
-    // Pre-fix these returned null because `&` was excluded from the single-char operator set
-    // in splitTopLevelSegments. See 22-VERIFICATION.md gap CR-02.
+    // `&` is a POSIX top-level separator (background-and-continue). These previously
+    // returned null because `&` was excluded from the single-char operator set in
+    // splitTopLevelSegments.
     ["echo hi & pip install matplotlib",                      "pip",  ["matplotlib"]],
     ["pip install foo & echo bg",                             "pip",  ["foo"]],
     ["echo a & echo b & npm install lodash",                  "npm",  ["lodash"]],
@@ -114,10 +114,10 @@ describe("parseInstallDetour — positive matrix (INSTALL-DTR-01, -02, -04)", ()
 });
 
 // ===========================================================================
-// SEPARATOR DISCRIMINATION (INSTALL-DTR-03 — CR-02 fix)
+// SEPARATOR DISCRIMINATION
 // ===========================================================================
 
-describe("parseInstallDetour — `&` vs `&&` separator discrimination (INSTALL-DTR-03, CR-02)", () => {
+describe("parseInstallDetour — `&` vs `&&` separator discrimination", () => {
   it("treats `&` as a top-level separator (background-and-continue)", () => {
     const port = createCapabilityPortStub({
       getConnectedMcpServers: () => ["matplotlib-server"],
@@ -162,7 +162,7 @@ describe("parseInstallDetour — `&` vs `&&` separator discrimination (INSTALL-D
     expect(decision!.packages).toEqual(["matplotlib"]);
   });
 
-  it("bails on unbalanced quotes around `&` (INSTALL-DTR-07 contract preserved)", () => {
+  it("bails on unbalanced quotes around `&`", () => {
     const port = createCapabilityPortStub({
       getConnectedMcpServers: () => ["x"],
       getMcpServerHint: (): McpServerHint | undefined =>
@@ -175,20 +175,19 @@ describe("parseInstallDetour — `&` vs `&&` separator discrimination (INSTALL-D
 });
 
 // ===========================================================================
-// FALSE-POSITIVE MATRIX (INSTALL-DTR-08, Pitfall 4) — DOMINANT TEST SURFACE
+// FALSE-POSITIVE MATRIX — DOMINANT TEST SURFACE
 // ===========================================================================
 
-describe("parseInstallDetour — false-positive matrix (INSTALL-DTR-08, Pitfall 4)", () => {
-  // Verbatim 13-row matrix from RESEARCH §4.6 / §5 (per ISSUE-04 fix —
-  // reproduced inline, not referenced). Each row maps to a specific
-  // parser branch and exercises one false-positive path.
+describe("parseInstallDetour — false-positive matrix", () => {
+  // 13-row matrix. Each row maps to a specific parser branch and exercises
+  // one false-positive path.
   //
   // INVARIANT: every row asserts that the parser returns `null` AND
   // therefore the executor consuming this parser's output emits ZERO
   // `tool:install_detour_detected` events. The parser is a pure
-  // function — it never emits events itself. The executor (Plan 22-03)
-  // wraps every emit in `if (decision !== null) { emit(...) }`, so a
-  // null decision is structurally equivalent to "zero events emitted."
+  // function — it never emits events itself. The executor wraps every
+  // emit in `if (decision !== null) { emit(...) }`, so a null decision
+  // is structurally equivalent to "zero events emitted."
   //
   // The port stub is constructed to produce overlap IF the parser
   // fired — so any false positive surfaces as a non-null decision
@@ -205,7 +204,7 @@ describe("parseInstallDetour — false-positive matrix (INSTALL-DTR-08, Pitfall 
     ["`echo pip install x`",                                  "backtick-substitution-not-leading-token"],
     ['echo "pip install x"',                                  "quoted-echo-leading-token-is-echo"],
     ["echo 'pip install x; rm -rf /'",                        "single-quoted-segment-leading-token-is-echo"],
-    // Unbalanced quotes — INSTALL-DTR-07 parser-bail path (splitTopLevelSegments returns null)
+    // Unbalanced quotes — parser-bail path (splitTopLevelSegments returns null)
     ['pip install "x',                                        "unbalanced-double-quote-bail"],
     ["pip install 'x",                                        "unbalanced-single-quote-bail"],
   ] as const)("returns null for %j (branch: %s) and produces zero events", (input, _branch) => {
@@ -230,10 +229,10 @@ describe("parseInstallDetour — false-positive matrix (INSTALL-DTR-08, Pitfall 
 });
 
 // ===========================================================================
-// NORMALIZATION (INSTALL-DTR-04)
+// NORMALIZATION
 // ===========================================================================
 
-describe("parseInstallDetour — name normalization (INSTALL-DTR-04)", () => {
+describe("parseInstallDetour — name normalization", () => {
   it.each([
     // PEP-503 strict: `[-_.]+` → `-`
     ["pip install pandas_ml",       "pandas-ml"],
@@ -276,10 +275,10 @@ describe("parseInstallDetour — name normalization (INSTALL-DTR-04)", () => {
 });
 
 // ===========================================================================
-// OVERLAP DETECTION (INSTALL-DTR-09, -10, -11, -12)
+// OVERLAP DETECTION
 // ===========================================================================
 
-describe("parseInstallDetour — direct overlap (INSTALL-DTR-09)", () => {
+describe("parseInstallDetour — direct overlap", () => {
   it("matches connected MCP server name directly (post-normalization)", () => {
     const port = createCapabilityPortStub({
       getConnectedMcpServers: () => ["finance-data"],
@@ -295,7 +294,7 @@ describe("parseInstallDetour — direct overlap (INSTALL-DTR-09)", () => {
     });
   });
 
-  it("does NOT infer skill names as direct aliases (design §12 AC-13)", () => {
+  it("does NOT infer skill names as direct aliases", () => {
     const port = createCapabilityPortStub({
       getConnectedMcpServers: () => [],
       getPromptSkillCapabilities: () => [
@@ -308,7 +307,7 @@ describe("parseInstallDetour — direct overlap (INSTALL-DTR-09)", () => {
   });
 });
 
-describe("parseInstallDetour — alias overlap (INSTALL-DTR-10)", () => {
+describe("parseInstallDetour — alias overlap", () => {
   it("MCP operator alias: tooling.mcp.capabilityHints[*].replacesPackages", () => {
     const port = makeFinanceDataPort();    // replaces market-data-lib, finance-data-client
     const decision = parseInstallDetour("pip install market-data-lib", port);
@@ -378,10 +377,10 @@ describe("parseInstallDetour — alias overlap (INSTALL-DTR-10)", () => {
   });
 });
 
-describe("parseInstallDetour — visibility filter (INSTALL-DTR-11)", () => {
+describe("parseInstallDetour — visibility filter", () => {
   it("hidden skills (excluded by port.getPromptSkillCapabilities()) produce no overlap", () => {
-    // The port already filters by allowedSkills/deniedSkills/eligibility/disableModelInvocation
-    // (Phase 17 contract). The parser just calls getPromptSkillCapabilities() —
+    // The port already filters by allowedSkills/deniedSkills/eligibility/disableModelInvocation.
+    // The parser just calls getPromptSkillCapabilities() —
     // hidden skills never appear in the result. Verify by passing an empty list.
     const port = createCapabilityPortStub({
       getConnectedMcpServers: () => [],
@@ -391,10 +390,10 @@ describe("parseInstallDetour — visibility filter (INSTALL-DTR-11)", () => {
   });
 });
 
-describe("parseInstallDetour — disconnected MCP filter (INSTALL-DTR-12)", () => {
+describe("parseInstallDetour — disconnected MCP filter", () => {
   it("disconnected servers (excluded by port.getConnectedMcpServers()) produce no overlap, even with a hint", () => {
-    // The runtime view filters by status === "connected" upstream
-    // (Phase 23 wiring). Verify the parser respects an empty connected list
+    // The runtime view filters by status === "connected" upstream.
+    // Verify the parser respects an empty connected list
     // even though getMcpServerHint(...) would return a hint if asked.
     const port = createCapabilityPortStub({
       getConnectedMcpServers: () => [],       // server is disconnected
@@ -409,10 +408,10 @@ describe("parseInstallDetour — disconnected MCP filter (INSTALL-DTR-12)", () =
 });
 
 // ===========================================================================
-// commandDigest PROPERTIES (RESEARCH §13.4)
+// commandDigest PROPERTIES
 // ===========================================================================
 
-describe("parseInstallDetour — commandDigest properties (INSTALL-DTR-25 stability)", () => {
+describe("parseInstallDetour — commandDigest properties", () => {
   it("is hex-only, exactly 16 chars", () => {
     const port = makeFinanceDataPort();
     const decision = parseInstallDetour("pip install market-data-lib", port);

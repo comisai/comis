@@ -1,31 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 24 OBS-CAP-03: Provider-gated behavioral metrics suite.
+ * Provider-gated behavioral metrics suite.
  *
  * GATE: skipped entirely unless COMIS_E2E_TEST_PROVIDERS is set
  * (e.g., COMIS_E2E_TEST_PROVIDERS="anthropic,openai-codex,google").
  *
- * INTEG-05 contract: rates REPORT only -- never gate CI. The deterministic
- * CI gate is the dedicated refusal-mode integration test (Plan 24-03 Task 3),
- * which lives in a separate file and runs always.
+ * Contract: rates REPORT only -- never gate CI. The deterministic CI gate is
+ * the dedicated refusal-mode integration test, which lives in a separate file
+ * and runs always.
  *
  * Cost note: ROUNDS_PER_PROVIDER x providers x ~3 tool calls per round
- * = ~3 x ROUNDS x providers API calls. Defaults to 10 rounds (RESEARCH §6 Q4).
+ * = ~3 x ROUNDS x providers API calls. Defaults to 10 rounds.
  * Override via COMIS_E2E_TEST_ROUNDS=<int>.
  *
  * @module
  */
 
 // -----------------------------------------------------------------------------
-// CI POLICY (INTEG-05; design §11 Phase Ordering Rationale point 2):
+// CI POLICY:
 //
 // This suite is GATED by COMIS_E2E_TEST_PROVIDERS. CI does NOT set this var,
 // so the suite is "skipped" on every PR. Rates report ONLY -- they are
-// documented as non-binding in the design (a flat behavioral metric after
-// Phase 21 is NOT a Phase 20-21 regression).
+// documented as non-binding (a flat behavioral metric is not a regression).
 //
 // The deterministic CI-gating behavioral surface is the refusal-mode
-// integration test (Plan 24-03 Task 3) -- separate file, runs always.
+// integration test -- separate file, runs always.
 // -----------------------------------------------------------------------------
 
 import { resolve, dirname } from "node:path";
@@ -64,16 +63,16 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Phase 24 advise-mode test config -- gateway port 8506 (24-02 reallocation
-// from the original 8505, which collides with config.test-sessions-lifecycle).
+// Advise-mode test config -- gateway port 8506 (the original 8505 collided
+// with config.test-sessions-lifecycle).
 const CONFIG_PATH = resolve(
   __dirname,
   "../config/config.test-tooling-fixtures.yaml",
 );
 
 // Output target -- mirrors test/.test-results.json from orchestrate.ts.
-// global-setup.ts does NOT auto-clean this file (RESEARCH §3.7) -- developers
-// keep the latest report locally. The file is gitignored via .gitignore.
+// global-setup.ts does NOT auto-clean this file -- developers keep the latest
+// report locally. The file is gitignored via .gitignore.
 const METRICS_FILE = resolve(__dirname, "..", ".test-behavioral-metrics.json");
 
 const PROVIDERS = parseTestProviders();
@@ -102,7 +101,7 @@ function rpcErrorMessage(response: unknown): string | undefined {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(PROVIDERS.length === 0)(
-  "Phase 24 OBS-CAP-03: Behavioral metrics -- provider-gated",
+  "Behavioral metrics -- provider-gated",
   () => {
     let handle: TestDaemonHandle;
     let eventBus: TypedEventBus;
@@ -157,7 +156,7 @@ describe.skipIf(PROVIDERS.length === 0)(
         const providerAgentId = `${provider}-test-agent`;
 
         // -------------------------------------------------------------------
-        // PINNED ADMIN TRUST-LEVEL PATH (per checker WARNING 5):
+        // PINNED ADMIN TRUST-LEVEL PATH:
         // packages/daemon/src/rpc/agent-handlers.ts:96-98 enforces
         // _trustLevel === "admin". The internal rpcCall closure does NOT
         // pass _trustLevel by default. Routing via the WebSocket gateway
@@ -165,8 +164,8 @@ describe.skipIf(PROVIDERS.length === 0)(
         // injects `_trustLevel: "admin"` for every method registered under
         // the "admin" scope (agents.create is in that batch at line 190).
         //
-        // The 24-02 test config declares scopes: ["rpc", "ws", "admin"]
-        // for the gateway token, so this path is verified at config-time.
+        // The test config declares scopes: ["rpc", "ws", "admin"] for the
+        // gateway token, so this path is verified at config-time.
         //
         // CRITICAL: distinguish the two error modes --
         //   "Agent already exists"     -> acceptable; idempotent (prior run
@@ -189,9 +188,8 @@ describe.skipIf(PROVIDERS.length === 0)(
               config: {
                 provider,
                 // Model selection is provider-specific -- leave to provider
-                // default. The Wave-3 README documents COMIS_E2E_TEST_MODELS
-                // as a future enhancement; the daemon picks the configured
-                // default for now.
+                // default. COMIS_E2E_TEST_MODELS is documented as a future
+                // enhancement; the daemon picks the configured default for now.
               },
             },
             Date.now(),
@@ -205,7 +203,7 @@ describe.skipIf(PROVIDERS.length === 0)(
               // beforeAll/afterAll boundary unless cleanup wiped the DB.
             } else if (/admin access required/i.test(createErr)) {
               // Test misconfigured -- token does NOT have admin scope.
-              // 24-02 configures scopes: ["rpc", "ws", "admin"] -- if this
+              // The config declares scopes: ["rpc", "ws", "admin"] -- if this
               // fires, someone changed the test config. Fail loudly rather
               // than silently fall back to the default agent.
               throw new Error(
@@ -263,9 +261,8 @@ describe.skipIf(PROVIDERS.length === 0)(
                 // we record one truth-value per "hinted" event, which makes
                 // the v1 installDetourHintCoverage rate structurally constant
                 // at 1.0 by construction. The metric DEFINITION is verified
-                // deterministically in 24-04's synthetic-event-stream unit
-                // tests; the v1.2+ per-overlap tracking enhancement is
-                // deferred (per 24-04 SUMMARY).
+                // deterministically in synthetic-event-stream unit tests; the
+                // v1.2+ per-overlap tracking enhancement is deferred.
                 hintAugmentations.push(true);
               }
             };
@@ -317,7 +314,7 @@ describe.skipIf(PROVIDERS.length === 0)(
         }
 
         // Structural assertion -- the round count matches what we drove.
-        // No expect on rate VALUES -- rates REPORT only (RESEARCH §5.3).
+        // No expect on rate VALUES -- rates REPORT only.
         expect(aggregator.roundCount(provider)).toBe(ROUNDS_PER_PROVIDER);
       },
       // Per-provider timeout: ROUNDS x ~30s per LLM round + buffer.
@@ -327,9 +324,9 @@ describe.skipIf(PROVIDERS.length === 0)(
     // -----------------------------------------------------------------------
     // Report shape verification (after all providers complete)
     //
-    // SHAPE assertions only -- rate VALUES are non-binding (RESEARCH §5.3).
-    // Proves field existence and numeric typing; never compares rate to a
-    // threshold like 0.5.
+    // SHAPE assertions only -- rate VALUES are non-binding. Proves field
+    // existence and numeric typing; never compares rate to a threshold
+    // like 0.5.
     // -----------------------------------------------------------------------
 
     it("emits a MetricsReport with the expected shape (rates report only -- never gate)", () => {

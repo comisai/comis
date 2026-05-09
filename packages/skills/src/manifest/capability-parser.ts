@@ -2,19 +2,18 @@
 /**
  * Defensive parser for `comis.capability` skill manifest blocks.
  *
- * Pitfall 7 mitigation. The outer `ComisNamespaceSchema` is z.strictObject --
- * a typo'd nested capability key (`replacePackages` missing `s`) would
- * normally cause the whole `comis:` block to fail parse and the skill to
- * become invisible. This function parses the capability sub-block separately
- * with try/recover semantics: on any validation failure (typo, type mismatch,
- * empty string), log a Pino WARN with `errorKind: "config"` and return
- * undefined. The skill renders under the fallback `prompt-skills` cluster.
+ * The outer `ComisNamespaceSchema` is z.strictObject -- a typo'd nested
+ * capability key (`replacePackages` missing `s`) would normally cause the
+ * whole `comis:` block to fail parse and the skill to become invisible.
+ * This function parses the capability sub-block separately with try/recover
+ * semantics: on any validation failure (typo, type mismatch, empty string),
+ * log a Pino WARN with `errorKind: "config"` and return undefined. The skill
+ * renders under the fallback `prompt-skills` cluster.
  *
- * Per design §4.2.1: capability metadata is enrichment, not a gate.
- * The skill itself is NEVER hidden solely because optional capability
- * metadata is invalid.
+ * Capability metadata is enrichment, not a gate. The skill itself is NEVER
+ * hidden solely because optional capability metadata is invalid.
  *
- * Caller pattern (Plan 17-04 wires this in two sites):
+ * Caller pattern:
  *   const ns = (typeof obj["comis"] === "object" && ...) ? ... : undefined;
  *   const capability = parseComisCapabilityDefensively(ns?.["capability"], skillName, logger);
  *   // ... include `capability` in SkillMetadata; downstream filters tolerate undefined.
@@ -26,10 +25,8 @@ import type { ToolCapabilityMetadata } from "@comis/core";
 import { ComisCapabilityBlockSchema } from "./schema.js";
 
 // Re-export ToolCapabilityMetadata so consumers that import from
-// `@comis/skills/manifest/capability-parser` keep working after the
-// Wave 1 merge swapped the local declaration for the canonical
-// `@comis/core` type. Plan 17-03 introduced the local interface as a
-// wave-1-parallel workaround; Plan 17-04 closes that deviation.
+// `@comis/skills/manifest/capability-parser` keep working alongside the
+// canonical `@comis/core` type.
 export type { ToolCapabilityMetadata };
 
 /** Pino-compatible logger interface. The skills package already uses this shape; reuse here. */

@@ -3,20 +3,20 @@
  * Production no-op factory for ToolCapabilityPort.
  *
  * Returns an empty-defaults adapter that is safe to inject from any production
- * code path. Used as the interim port between Phase 17 (port lands) and Phase 23
- * (live adapter lands) -- see design §11 Phase 7 production-behavior paragraph.
+ * code path. Used as the production no-op until the live daemon-side adapter
+ * is wired.
  *
  * With the no-op port:
  * - The capability-index renderer sees no clusters/skills/servers -> returns
- *   empty text -> executor-prompt-runner.ts filters it out (§5 empty-render rule).
+ *   empty text -> executor-prompt-runner.ts filters it out.
  * - The install-detour parser sees no overlaps -> no events emitted, no hints,
  *   no soft-stop refusals.
- * Both subsystems are inert but not broken. Acceptable interim state.
+ * Both subsystems are inert but not broken.
  *
- * IMPORTANT -- boundary discipline (Pitfall 13):
+ * IMPORTANT -- boundary discipline:
  * Test code must NOT import this. Tests use the test-only stub factory in
- * `__test-helpers/` instead. The architecture-grep test in Plan 17-04
- * (`packages/<pkg>/src/__tests__/architecture.test.ts`) enforces this both ways.
+ * `__test-helpers/` instead. The architecture-grep test in
+ * `packages/<pkg>/src/__tests__/architecture.test.ts` enforces this both ways.
  *
  * @module
  */

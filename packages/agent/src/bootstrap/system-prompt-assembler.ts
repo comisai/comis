@@ -126,27 +126,25 @@ export interface AssemblerParams {
   /** Workspace profile controlling platform instruction verbosity ('full' or 'specialist'). */
   workspaceProfile?: "full" | "specialist";
   /**
-   * Phase 20 — Capability index gate (CAPINDEX-RENDER-04 / -05 / -17).
+   * Capability index gate.
    *
-   * When `true`, `buildToolingSection` emits the §5 residual one-liner
-   * instead of the legacy `## Available Tools` flat block; the per-turn
+   * When `true`, `buildToolingSection` emits the residual one-liner instead
+   * of the legacy `## Available Tools` flat block; the per-turn
    * `## Capabilities` block is rendered into the dynamic preamble in
    * `executor-prompt-runner.ts`.
    * When `false` or `undefined`, the static prompt is byte-identical to
    * the pre-feature baseline.
    *
    * RESTART-REQUIRED: this flag selects between two cached system-prompt
-   * shapes (design §5 Placement). Daemon wiring (Phase 23 / WIRING-09)
-   * documents the operator-facing constraint.
+   * shapes. Daemon wiring documents the operator-facing constraint.
    *
    * SAFE INSIDE THE CACHE FENCE: this value is config-derived
    * (operator-only, restart-required) and stable across all turns of a
-   * session. Plumbing it through `assemblerParams` does NOT create the
-   * Pitfall 1 cache-thrash regression. Live-runtime accessors
+   * session. Plumbing it through `assemblerParams` does NOT create a
+   * cache-thrash regression. Live-runtime accessors
    * (getPromptSkillCapabilities, getConnectedMcpServers) are forbidden
-   * inside this interface and enforced by Plan 20-04 architecture-grep
-   * CAPINDEX-RENDER-16. Adding a config-derived flag to the cache fence
-   * does NOT trigger Pitfall 1.
+   * inside this interface and enforced by an architecture-grep test.
+   * Adding a config-derived flag to the cache fence is safe.
    */
   capabilityIndexEnabled?: boolean;
   /** Whether Silent Execution Planner (SEP) is enabled for this agent. */
@@ -197,7 +195,7 @@ function joinSections(sections: string[][]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Typed section descriptor (design §1b)
+// Typed section descriptor
 //
 // Replaces scattered `skipForOp ? [] :` calls. Each SECTIONS entry declares
 // which PromptModes include it via `includeIn`. Any new section MUST declare

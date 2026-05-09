@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 24 INTEG-03: Capability index renders three skill fixtures
+ * Capability index renders three skill fixtures.
  *
- * Verifies that the daemon's capability-index renderer (Phase 20) emits the
- * OBS-CAP-01 Pino debug log "Dynamic preamble assembled" carrying the seven
- * canonical fields (capabilityIndexTokens, deferredContextTokens,
- * fullPreambleTokens, clusterCount, activeToolCount, deferredToolCount,
- * promptSkillCount) when the daemon boots with the Phase 24 fixture skill
- * config (config.test-tooling-fixtures.yaml).
+ * Verifies that the daemon's capability-index renderer emits the Pino debug
+ * log "Dynamic preamble assembled" carrying the seven canonical fields
+ * (capabilityIndexTokens, deferredContextTokens, fullPreambleTokens,
+ * clusterCount, activeToolCount, deferredToolCount, promptSkillCount) when
+ * the daemon boots with the fixture skill config
+ * (config.test-tooling-fixtures.yaml).
  *
  * Trigger path: the daemon-harness auto-seeds ANTHROPIC_API_KEY with a dummy
  * value (daemon-harness.ts:67-72). When agent.execute is invoked, the
@@ -16,8 +16,7 @@
  * The LLM dispatch fails afterwards on the dummy key, but the log has
  * already fired.
  *
- * NOT skipif-wrapped — this is a deterministic CI gate (INTEG-03 +
- * INTEG-05).
+ * NOT skipif-wrapped -- this is a deterministic CI gate.
  *
  * @module
  */
@@ -47,10 +46,10 @@ const CONFIG_PATH = resolve(
   "../config/config.test-tooling-fixtures.yaml",
 );
 
-// CAPINDEX-RENDER-19 budget cap on the rendered capability-index token count.
+// Budget cap on the rendered capability-index token count.
 const CAPABILITY_INDEX_TOKEN_BUDGET = 600;
 
-describe("Phase 24 INTEG-03: Capability index renders three skill fixtures", () => {
+describe("Capability index renders three skill fixtures", () => {
   let handle: TestDaemonHandle;
   const logCapture = createLogCapture();
 
@@ -82,9 +81,9 @@ describe("Phase 24 INTEG-03: Capability index renders three skill fixtures", () 
       expect(handle.daemon.container).toBeDefined();
 
       // Pinned trigger path (verified at executor-prompt-runner.ts:208-223):
-      // the OBS-CAP-01 Pino debug log fires SYNCHRONOUSLY at the end of
-      // preamble assembly, BEFORE the LLM dispatch. The daemon-harness
-      // auto-seeds ANTHROPIC_API_KEY with a dummy value when unset
+      // the Pino debug log fires SYNCHRONOUSLY at the end of preamble
+      // assembly, BEFORE the LLM dispatch. The daemon-harness auto-seeds
+      // ANTHROPIC_API_KEY with a dummy value when unset
       // (daemon-harness.ts:67-72). The executor reaches preamble assembly,
       // emits the Pino log, and only THEN dispatches to the provider where
       // the dummy key fails. The log has already fired by then.
@@ -128,8 +127,7 @@ describe("Phase 24 INTEG-03: Capability index renders three skill fixtures", () 
       const first = preambleAssemblies[0] as LogEntry;
       expect(first).toBeDefined();
 
-      // Seven canonical fields from CAPINDEX-RENDER-18 / OBS-CAP-01
-      // (executor-prompt-runner.ts:212-223).
+      // Seven canonical fields (executor-prompt-runner.ts:212-223).
       expect(typeof first.capabilityIndexTokens).toBe("number");
       expect(first.capabilityIndexTokens).toBeGreaterThan(0);
       expect(first.capabilityIndexTokens).toBeLessThanOrEqual(
@@ -142,10 +140,10 @@ describe("Phase 24 INTEG-03: Capability index renders three skill fixtures", () 
       expect(first.activeToolCount).toBeGreaterThanOrEqual(0);
       expect(typeof first.deferredToolCount).toBe("number");
 
-      // The three Phase 24 fixture skills MUST all render. Skill registry may
-      // include additional auto-discovered skills depending on test dataDir;
-      // assert >=3 (relaxed lower bound) so the test is robust to other
-      // registered skills in the test config dataDir.
+      // The three fixture skills MUST all render. Skill registry may include
+      // additional auto-discovered skills depending on test dataDir; assert
+      // >=3 (relaxed lower bound) so the test is robust to other registered
+      // skills in the test config dataDir.
       expect(first.promptSkillCount).toBeGreaterThanOrEqual(3);
     },
   );
@@ -154,12 +152,12 @@ describe("Phase 24 INTEG-03: Capability index renders three skill fixtures", () 
     "Cluster placement: data-fetching-financial cluster appears in the rendered preamble",
     () => {
       // The Pino debug log fields alone do NOT carry cluster names — only
-      // counts. The capability-index renderer (Phase 20) may emit the
-      // cluster-by-cluster preamble in a separate log line. If captured,
-      // assert the data-fetching-financial cluster contains the expected
-      // skill names. If the log is not captured, the cluster verification is
-      // implicit — the promptSkillCount >= 3 check above proves all three
-      // fixtures render.
+      // counts. The capability-index renderer may emit the cluster-by-cluster
+      // preamble in a separate log line. If captured, assert the
+      // data-fetching-financial cluster contains the expected skill names.
+      // If the log is not captured, the cluster verification is implicit —
+      // the promptSkillCount >= 3 check above proves all three fixtures
+      // render.
       const entries = logCapture.getEntries();
       const preambleBodies = filterLogs(entries, {
         msg: /(?:## Capabilities|data-fetching-financial)/i,

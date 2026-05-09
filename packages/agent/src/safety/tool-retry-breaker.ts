@@ -41,10 +41,9 @@ export interface ToolRetryBreakerConfig {
    * (e.g., `"mcp__finance-data"`); values are arrays of suggested alternative
    * tool names. Used in block reasons to guide the LLM toward working tools.
    *
-   * Defaults to an empty map (no alternatives suggested). Per design §3
-   * non-goal #4, the codebase MUST NOT ship hardcoded MCP server names —
-   * operators opt in by populating this map in their breaker config.
-   * (DEFER-05 — Phase 19 lifted this from a module-scope hardcoded Map.)
+   * Defaults to an empty map (no alternatives suggested). The codebase MUST
+   * NOT ship hardcoded MCP server names — operators opt in by populating
+   * this map in their breaker config.
    */
   toolAlternatives?: Record<string, readonly string[]>;
 }

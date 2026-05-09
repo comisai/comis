@@ -185,11 +185,11 @@ export function registerAllToolMetadata(): void {
 
   // Gateway tool -- action enum + immutable path rejection for patch and apply.
   // Whitelist is derived from the tool's exported GATEWAY_ACTIONS tuple so
-  // bridge + handler cannot drift (quick-260420-iv2 regression fix).
+  // bridge + handler cannot drift.
   // When the rejected section has a dedicated *_manage tool, the message
   // includes a parameter-correct redirect via formatRedirectHint() so any
   // LLM (Opus/Sonnet/Haiku, GPT-5, Gemini, Mistral, etc.) can self-recover
-  // without model-specific prompting (quick-260425-t40).
+  // without model-specific prompting.
   registerToolMetadata("gateway", {
     validateInput: (params) => {
       const action = typeof params.action === "string" ? params.action : undefined;
@@ -224,7 +224,7 @@ export function registerAllToolMetadata(): void {
   });
 
   // =========================================================================
-  // Tool-Entry Schema (260504-cac)
+  // Tool-Entry Schema
   //
   // Generic action enum + valid keys + per-action required fields. Consumed
   // by validateToolEntry() in ./schema-validator.ts via
@@ -549,7 +549,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("heartbeat_manage", { searchHint: "heartbeat keepalive watchdog health probe interval alive" });
 
   // =========================================================================
-  // Co-discovery Relationships (quick-260414-ppo)
+  // Co-discovery Relationships
   // =========================================================================
 
   // Model switching requires both models_manage (catalog) and agents_manage (apply model to agent)

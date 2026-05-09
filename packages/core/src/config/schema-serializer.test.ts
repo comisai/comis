@@ -80,7 +80,7 @@ describe("getConfigSections", () => {
     expect(sections).toContain("providers");
     expect(sections).toContain("messages");
     expect(sections).toContain("approvals");
-    // v1.1 capability layer (Phase 17 -- TOOLING-CFG-01)
+    // v1.1 capability layer
     expect(sections).toContain("tooling");
   });
 });

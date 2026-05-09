@@ -178,15 +178,13 @@ export function resolveToolCallingTemperature(modelTier: ModelTier): number {
  * Anthropic models that support server-side tool-search via defer_loading.
  * Sonnet 4.x+, Opus 4.x+; NOT Haiku.
  *
- * **Surviving caller (post-Phase-19):** `request-body-injector.ts` (the
+ * **Surviving caller:** `request-body-injector.ts` (the
  * `if (supportsToolSearch(model.id)) {...}` gate inside the Anthropic
  * `onPayload` handler). Used to gate the API-payload reshape that strips
  * the client-side discovery tool, appends the server-side tool-search
  * regex tool, and marks deferred tools `defer_loading: true`. This is a
  * runtime API-payload concern, distinct from the deferred-tool prompt
- * teaching that Phase 19 collapsed to a single mechanism-neutral
- * instruction line in `buildDeferredToolsContext`.
- * DEFER-03 documented-not-deleted branch.
+ * teaching emitted by `buildDeferredToolsContext`.
  *
  * Lowercase-normalize so provider-prefixed model ids
  * (`anthropic/claude-sonnet-4`, `bedrock/anthropic.claude-opus-4`) resolve
@@ -267,7 +265,7 @@ export function resolveToolDescription(tool: ToolDefinition): string {
  * discovery tool and appending the server-side tool-search regex tool for
  * Anthropic Sonnet/Opus 4.x) lives entirely in `request-body-injector.ts`
  * and is gated by `supportsToolSearch(modelId)`. This separation is
- * enforced by architecture-grep tests (DEFER-04, landed in Plan 19-03).
+ * enforced by architecture-grep tests.
  *
  * @param entries - Deferred tool entries (remaining after discovery re-inclusion)
  * @returns XML block string, or empty string when no entries

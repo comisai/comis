@@ -7,7 +7,7 @@
 // to be visible to co-located *.test.ts files only.
 // production source MUST NOT import this.
 //
-// The architecture-grep test (Plan 17-04, packages/<pkg>/src/__tests__/architecture.test.ts)
+// The architecture-grep test (packages/<pkg>/src/__tests__/architecture.test.ts)
 // enforces this boundary by source-grepping production paths for the literal
 // `createCapabilityPortStub` and asserting zero matches. Without that test,
 // the stub would compile into `dist/__test-helpers/` (tsconfig does NOT exclude

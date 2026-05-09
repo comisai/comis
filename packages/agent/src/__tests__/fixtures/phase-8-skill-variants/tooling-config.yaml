@@ -1,5 +1,5 @@
-# Phase 24 fixture — operator config for the three skill-variant fixtures.
-# Shape mirrors design §4.2 (ToolingConfigSchema) and §9 (operator example).
+# Operator config for the three skill-variant fixtures.
+# Shape mirrors ToolingConfigSchema.
 # See ./README.md for the role each fixture plays.
 tooling:
   capabilityClusters:

@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Install-detour parser: detect pip/npm/pnpm/yarn install commands that
- * overlap connected MCP servers or visible prompt skills (design §8.1).
+ * overlap connected MCP servers or visible prompt skills.
  *
  * Pure parser — no IO, no per-call state beyond inputs. Returns `null` on
  * parser-bail (unbalanced quotes, no install form found, no overlap detected)
  * to signal "let the command run unchanged."
  *
  * Consumed by:
- * - packages/skills/src/builtin/exec-tool.ts (Plan 22-03 mode policy gate)
- * - packages/skills/src/builtin/process-tool.ts (Plan 22-03 advise-mode retroactive hint)
- * - packages/skills/src/builtin/process-registry.ts (Plan 22-02 InstallDetourDecision type for ProcessSession field)
+ * - packages/skills/src/builtin/exec-tool.ts (mode policy gate)
+ * - packages/skills/src/builtin/process-tool.ts (advise-mode retroactive hint)
+ * - packages/skills/src/builtin/process-registry.ts (InstallDetourDecision type for ProcessSession field)
  *
- * Design anchor: §8.1 (parser + tokenization), §8.2 (consumer integration).
- * Privacy invariant (Pitfall 11; INSTALL-DTR-25): the parser produces only
- * sanitized identifiers (`commandDigest`, `packages[].normalizedName`,
- * `overlaps[].sourceName`). Raw command text NEVER leaves this module.
+ * Privacy invariant: the parser produces only sanitized identifiers
+ * (`commandDigest`, `packages[].normalizedName`, `overlaps[].sourceName`).
+ * Raw command text NEVER leaves this module.
  *
  * @module
  */
@@ -33,8 +32,8 @@ import { ShellQuoteTracker } from "./exec-security.js";
  * MCP server or visible prompt skill that should be used instead.
  *
  * The 4 `reason` literals are pinned to match the closed event shape at
- * `packages/core/src/event-bus/events-agent.ts:120-159` (Phase 17). Do NOT
- * add new literals here without updating the event type in core.
+ * `packages/core/src/event-bus/events-agent.ts:120-159`. Do NOT add new
+ * literals here without updating the event type in core.
  */
 export interface DetourOverlap {
   /** Normalized package name (PEP-503 for python, lowercase + scope-preserving for npm). */
@@ -59,7 +58,7 @@ export interface DetourOverlap {
  */
 export interface InstallDetourDecision {
   readonly packageManager: "pip" | "npm" | "pnpm" | "yarn";
-  /** Sorted alphabetically — required for `commandDigest` stability (RESEARCH §19 Q5). */
+  /** Sorted alphabetically — required for `commandDigest` stability. */
   readonly packages: readonly string[];
   readonly overlaps: readonly DetourOverlap[];
   /** SHA-256 of `${packageManager}:${sortedPackages.join(",")}` truncated to 16 hex chars. */
@@ -73,11 +72,11 @@ export interface InstallDetourDecision {
 /**
  * Parse a shell command for install-detour overlap. Pure function — no IO,
  * no module state, no memoization. Built fresh per call from the port's
- * runtime state to avoid Pitfall 5 (skill-visibility race).
+ * runtime state to avoid the skill-visibility race.
  *
  * Returns `null` when:
- * - `splitTopLevelSegments` bails (unbalanced quotes anywhere) — INSTALL-DTR-07
- * - No top-level segment matches the leading-token rule — INSTALL-DTR-06
+ * - `splitTopLevelSegments` bails (unbalanced quotes anywhere)
+ * - No top-level segment matches the leading-token rule
  * - The matched segment yields no parsed packages after token classification
  * - `overlaps.length === 0` (no detected overlap)
  *
@@ -89,7 +88,7 @@ export function parseInstallDetour(
   port: ToolCapabilityPort,
 ): InstallDetourDecision | null {
   const segments = splitTopLevelSegments(command);
-  if (segments === null) return null;     // unbalanced quotes — INSTALL-DTR-07
+  if (segments === null) return null;     // unbalanced quotes
 
   // Try each top-level segment until one matches an install form
   for (const segment of segments) {
@@ -111,7 +110,7 @@ export function parseInstallDetour(
     const packages = [...new Set(cleanedNames.map(normalize))].sort();
     if (packages.length === 0) continue;
 
-    // Build alias map FRESH per call (RESEARCH §15 Risk 5 — no memoization)
+    // Build alias map FRESH per call — no memoization (avoids skill-visibility race)
     const { pythonAliases, npmAliases } = buildPackageAliasMap(port);
     const aliasMap = ecosystem === "python" ? pythonAliases : npmAliases;
     const connectedServersNorm = new Set(
@@ -161,14 +160,13 @@ export function parseInstallDetour(
 /**
  * Split a command on top-level `;` `&&` `||` `|` `&` (outside quotes). Reuses
  * `ShellQuoteTracker` from `exec-security.ts:21-74`. Returns `null` on
- * unbalanced quotes anywhere — the parser-bail signal (INSTALL-DTR-07).
+ * unbalanced quotes anywhere — the parser-bail signal.
  *
  * Deliberately separate from `exec-security.ts:splitCommandSegments`:
  * - Splits on `&` AS WELL — POSIX background-and-continue is a command terminator
- *   (CR-02; same operator class as `;`). See exec-security.ts:184 for the
- *   canonical reference and 22-VERIFICATION.md gap CR-02 for the rationale.
+ *   (same operator class as `;`). See exec-security.ts:184 for the canonical reference.
  * - Returns `null` on unbalanced quotes (vs returning collected-so-far).
- * Two helpers, no shared abstraction (RESEARCH §4.3, KISS-consistent).
+ * Two helpers, no shared abstraction (KISS-consistent).
  */
 function splitTopLevelSegments(command: string): readonly string[] | null {
   const tracker = new ShellQuoteTracker();
@@ -190,8 +188,8 @@ function splitTopLevelSegments(command: string): readonly string[] | null {
         }
       }
       // Single-char operators. `&` is a POSIX command terminator (background-and-continue),
-      // same class as `;` — see CR-02 in 22-VERIFICATION.md and exec-security.ts:184.
-      // The two-char `&&` lookahead above runs first, so `&&` is never reached here.
+      // same class as `;` — see exec-security.ts:184. The two-char `&&` lookahead above
+      // runs first, so `&&` is never reached here.
       if (ch === ";" || ch === "|" || ch === "&") {
         segments.push(current.trim());
         current = "";
@@ -217,7 +215,7 @@ function splitTopLevelSegments(command: string): readonly string[] | null {
  * leading token. Returns the matched package manager + the raw remaining
  * tokens (after the install verb) when a form is found.
  *
- * Per design §8.1 leading-token rule — ONLY these forms are recognized:
+ * Leading-token rule — ONLY these forms are recognized:
  *   pip install …
  *   pip3 install …
  *   python -m pip install …
@@ -270,7 +268,7 @@ function parseInstallSegment(
 /**
  * Classify one raw token from the install args:
  * - Returns `null` if it's a flag (starts with `-`).
- * - Returns `null` if it's URL/VCS/local-path/file spec (design §8.1 rule 7).
+ * - Returns `null` if it's URL/VCS/local-path/file spec.
  * - Returns the package name with version stripped for unscoped names.
  * - Preserves `@scope/name` and strips `@version` only at the SECOND `@`.
  */
@@ -280,7 +278,7 @@ function classifyPackageToken(
 ): string | null {
   if (token.startsWith("-")) return null;        // flag — skip
 
-  // URL / VCS / local-path / file spec rejection (design §8.1 rule 7)
+  // URL / VCS / local-path / file spec rejection
   if (
     token.includes("://") ||
     token.startsWith("git+") ||
@@ -316,7 +314,7 @@ function classifyPackageToken(
   return namePart;
 }
 
-/** PEP 503 strict normalization: lowercase + collapse `-`/`_`/`.` runs to single `-` (RESEARCH §A1). */
+/** PEP 503 strict normalization: lowercase + collapse `-`/`_`/`.` runs to single `-`. */
 function normalizePythonName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/g, "-");
 }
@@ -343,7 +341,7 @@ function buildCommandDigest(pm: string, packages: readonly string[]): string {
 
 /**
  * Build per-call alias maps from the port's runtime view. NEVER memoize
- * across calls (RESEARCH §15 Risk 5 — skill-visibility race).
+ * across calls — avoids the skill-visibility race.
  *
  * Two SEPARATE maps keyed by ecosystem to avoid cross-ecosystem aliasing
  * collisions when an operator declares `replacesPackages: ["foo_bar"]`
@@ -381,7 +379,7 @@ function buildPackageAliasMap(port: ToolCapabilityPort): {
   }
 
   // 2. Skill aliases (operator hints + comis.capability — both pre-merged
-  //    by port.getPromptSkillCapabilities() per Phase 17 contract).
+  //    by port.getPromptSkillCapabilities()).
   //    Visibility filter (allowed/denied/eligibility/disableModelInvocation)
   //    is already applied at the port level — no re-filter here.
   for (const skill of port.getPromptSkillCapabilities()) {

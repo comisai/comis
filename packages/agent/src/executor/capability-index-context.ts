@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-turn capability-index renderer (design §5).
+ * Per-turn capability-index renderer.
  *
  * Renders the `## Capabilities` block for the dynamic preamble. Lives
  * post-deferral in the executor lifecycle; consumes a `ToolCapabilityPort`
@@ -11,11 +11,11 @@
  * module state beyond frozen module-level constants. Mirrors the shape of
  * `buildDeferredToolsContext` in `tool-deferral.ts`.
  *
- * IMPORTANT -- cache fence (Pitfall 1; design §4.3 invariant):
+ * IMPORTANT -- cache fence:
  * This module is consumed ONLY by `executor-tool-assembly.ts`. It MUST NOT
  * be imported by `prompt-assembly.ts` -- the static prompt cache prefix MUST
  * stay byte-identical when the skill registry reloads between turns.
- * Architecture-grep CAPINDEX-RENDER-16 (Plan 20-04) enforces.
+ * An architecture-grep enforces this invariant.
  *
  * @module
  */
@@ -60,8 +60,8 @@ export interface CapabilityIndexRenderResult {
 
 /**
  * Frozen empty result. Returned when the gate is off or when all three
- * surface counts are zero (CAPINDEX-RENDER-04/05/06). Identity-stable so
- * callers can do cheap reference equality checks if useful.
+ * surface counts are zero. Identity-stable so callers can do cheap reference
+ * equality checks if useful.
  */
 const EMPTY: CapabilityIndexRenderResult = Object.freeze({
   text: "",
@@ -74,14 +74,14 @@ const EMPTY: CapabilityIndexRenderResult = Object.freeze({
 
 /**
  * Active-tool count threshold above which all per-cluster name lists are
- * dropped (cluster headers + `(N tools)` counts remain). Design §5 rule 17.
+ * dropped (cluster headers + `(N tools)` counts remain).
  * Constant in v1.1; revisit only if telemetry shows fleets clustering near it.
  */
 const ELISION_THRESHOLD = 32;
 
 /**
  * Maximum names rendered per server (active MCP) or per skill cluster
- * before `+N more` truncation. Design §5 rules 10/11.
+ * before `+N more` truncation.
  */
 const PER_GROUP_NAME_CAP = 8;
 
@@ -108,12 +108,12 @@ interface ClusterRender {
 }
 
 // ---------------------------------------------------------------------------
-// Reserved cluster IDs (design §5 rules 7/8/9; Phase 17 DEFAULT_CLUSTER_CONFIG)
+// Reserved cluster IDs
 //
 // Inlined as string literals at the three fallback sites instead of named
 // constants -- the IDs are part of the user-visible config schema in
 // `packages/core/src/config/schema-tooling.ts`. Renaming them is intentionally
-// not supported (design §5 rules 7/8/9 -- "the cluster ID itself is fixed").
+// not supported -- the cluster ID itself is fixed.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -123,30 +123,28 @@ interface ClusterRender {
 /**
  * Build the per-turn capability-index render result.
  *
- * Implements design §5 rules 1-17:
- *  - Gate respect: returns {@link EMPTY} when `port.isCapabilityIndexEnabled()` is false (CAPINDEX-RENDER-04/05).
- *  - Empty-input fast path: returns {@link EMPTY} when all three surface counts are zero (CAPINDEX-RENDER-06).
+ * Behavior:
+ *  - Gate respect: returns {@link EMPTY} when `port.isCapabilityIndexEnabled()` is false.
+ *  - Empty-input fast path: returns {@link EMPTY} when all three surface counts are zero.
  *  - Cluster bucketing: builtins -> `getBuiltinCluster()` (or `"other-tools"`),
  *    MCP -> `getMcpServerHint().cluster` (or `"external-integrations"`),
  *    skills -> `skill.cluster` (or `"prompt-skills"`).
  *  - Orphan-drop: deferred MCP tools whose server is not in the live
- *    `getConnectedMcpServers()` snapshot are dropped silently (CAPINDEX-RENDER-09).
+ *    `getConnectedMcpServers()` snapshot are dropped silently.
  *  - Sort: `(priority asc, clusterId asc)` for clusters; `TOOL_ORDER` for
  *    builtins (alphabetical fallback for unknowns); alphabetical for MCP
- *    servers and skills (CAPINDEX-RENDER-13).
- *  - Per-group cap: 8 names + `+N more` (CAPINDEX-RENDER-11).
- *  - >32 elision: drop ALL per-cluster name lists; keep headers + counts only (CAPINDEX-RENDER-12).
- *  - Forbidden-literal discipline (CAPINDEX-RENDER-14): the rendered text
- *    names neither the client-side discovery tool nor the server-side tool
- *    search regex tool. The deferred-tools preamble bullet uses the
- *    mechanism-neutral `"discovery mechanism available in your active
- *    toolspace"` wording from §5 verbatim. Architecture-grep DEFER-04
- *    enforces the file-level invariant.
+ *    servers and skills.
+ *  - Per-group cap: 8 names + `+N more`.
+ *  - >32 elision: drop ALL per-cluster name lists; keep headers + counts only.
+ *  - Forbidden-literal discipline: the rendered text names neither the
+ *    client-side discovery tool nor the server-side tool search regex tool.
+ *    The deferred-tools preamble bullet uses the mechanism-neutral
+ *    `"discovery mechanism available in your active toolspace"` wording.
+ *    An architecture-grep enforces the file-level invariant.
  *
  * Restart-required note: `tooling.capabilityIndex.enabled` requires a daemon
- * restart to take effect (design §5 Placement). The renderer respects the
- * port's reported value at render time but does not enforce the restart
- * constraint -- Phase 23 WIRING-09 documents the operator constraint.
+ * restart to take effect. The renderer respects the port's reported value at
+ * render time but does not enforce the restart constraint.
  *
  * @param deferralResult - Output of `applyToolDeferral` (active + deferred tool partition).
  * @param port - The capability port (gate flag, cluster/skill resolution, live runtime view).
@@ -156,19 +154,19 @@ export function buildCapabilityIndexContext(
   deferralResult: ExcludeDeferralResult,
   port: ToolCapabilityPort,
 ): CapabilityIndexRenderResult {
-  // Gate (CAPINDEX-RENDER-04/05; design §5 Placement; restart-required).
+  // Gate (restart-required).
   if (!port.isCapabilityIndexEnabled()) return EMPTY;
 
-  // Snapshot the live runtime view ONCE per render (design §4.3 consumers
-  // paragraph). Re-querying the port mid-render would risk inconsistent state
-  // if a server connect/disconnect happens between two reads.
+  // Snapshot the live runtime view ONCE per render. Re-querying the port
+  // mid-render would risk inconsistent state if a server connect/disconnect
+  // happens between two reads.
   const connectedServers = new Set(port.getConnectedMcpServers());
   const visibleSkills = port.getPromptSkillCapabilities();
 
   // Bucket every input source into a clusterId -> ClusterRender map.
   const clusterMap = new Map<string, ClusterRender>();
 
-  // Active builtin / non-MCP tools (rule 1).
+  // Active builtin / non-MCP tools.
   for (const tool of deferralResult.activeTools) {
     if (extractMcpServerName(tool.name) !== undefined) continue;
     const clusterId = port.getBuiltinCluster(tool.name) ?? "other-tools";
@@ -176,7 +174,7 @@ export function buildCapabilityIndexContext(
     cluster.builtins.push(tool.name);
   }
 
-  // Active MCP tools (rule 2). Group by server within their cluster.
+  // Active MCP tools. Group by server within their cluster.
   for (const tool of deferralResult.activeTools) {
     const server = extractMcpServerName(tool.name);
     if (server === undefined) continue;
@@ -186,14 +184,14 @@ export function buildCapabilityIndexContext(
     bucket.activeTools.push(tool.name);
   }
 
-  // Deferred MCP tools (rule 3 + rule 6 orphan-drop). Non-MCP deferred entries
-  // are dropped entirely -- a header-only shell would be misleading because
-  // the renderer cannot teach what to do with a non-MCP deferred name.
+  // Deferred MCP tools (with orphan-drop). Non-MCP deferred entries are
+  // dropped entirely -- a header-only shell would be misleading because the
+  // renderer cannot teach what to do with a non-MCP deferred name.
   let deferredToolCount = 0;
   for (const entry of deferralResult.deferredEntries) {
     const server = extractMcpServerName(entry.name);
     if (server === undefined) continue;
-    if (!connectedServers.has(server)) continue; // orphan-drop (CAPINDEX-RENDER-09)
+    if (!connectedServers.has(server)) continue; // orphan-drop
     const clusterId = port.getMcpServerHint(server)?.cluster ?? "external-integrations";
     const cluster = ensureCluster(clusterMap, clusterId, port);
     const bucket = ensureServerBucket(cluster, server);
@@ -201,8 +199,8 @@ export function buildCapabilityIndexContext(
     deferredToolCount += 1;
   }
 
-  // Visible prompt skills (rule 4 + rule 8). The port has already merged
-  // operator > comis.capability > fallback per §4.2.1; we only resolve cluster.
+  // Visible prompt skills. The port has already merged
+  // operator > comis.capability > fallback; we only resolve cluster.
   for (const skill of visibleSkills) {
     const clusterId = skill.cluster ?? "prompt-skills";
     const cluster = ensureCluster(clusterMap, clusterId, port);
@@ -218,21 +216,21 @@ export function buildCapabilityIndexContext(
     }
   }
 
-  // Empty-input fast path (CAPINDEX-RENDER-06; design §5 Placement empty-render rule).
+  // Empty-input fast path.
   if (activeToolCount + deferredToolCount + visibleSkills.length === 0) {
     return EMPTY;
   }
 
-  // Sort clusters: (priority asc, clusterId asc) -- design §5 rule 16.
+  // Sort clusters: (priority asc, clusterId asc).
   const orderedClusters = [...clusterMap.values()].sort(
     (a, b) => a.config.priority - b.config.priority || a.id.localeCompare(b.id),
   );
 
   // Determine elision: when total active exceeds 32, drop all per-cluster
-  // name lists (cluster headers + `(N tools)` counts remain). Rule 17.
+  // name lists (cluster headers + `(N tools)` counts remain).
   const eliminateNameLists = activeToolCount > ELISION_THRESHOLD;
 
-  // Render the text envelope (design §5 Render Contract verbatim).
+  // Render the text envelope.
   const lines: string[] = [];
   lines.push("## Capabilities");
   lines.push("");
@@ -257,7 +255,7 @@ export function buildCapabilityIndexContext(
       );
     }
     if (eliminateNameLists) {
-      // Headers + count-only -- §5 rule 17.
+      // Headers + count-only.
       const tools = cluster.builtins.length + sumActiveServerTools(cluster);
       lines.push(`(${tools} tools)`);
       const deferredHere = sumDeferredServerTools(cluster);
@@ -293,8 +291,8 @@ export function buildCapabilityIndexContext(
  * Lookup-or-create a {@link ClusterRender} bucket for a cluster ID. The
  * cluster's {@link ClusterConfig} resolves through the port; missing config
  * for a non-reserved ID falls back to a synthesized default labelled by the
- * cluster ID itself. Phase 23 WIRING-05 emits a WARN for missing configs;
- * Phase 20 only renders.
+ * cluster ID itself. The wiring layer emits a WARN for missing configs; the
+ * renderer only renders.
  */
 function ensureCluster(
   map: Map<string, ClusterRender>,
@@ -318,7 +316,7 @@ function ensureCluster(
 /**
  * Synthesize a {@link ClusterConfig} for a cluster ID the port does not
  * recognize. This keeps the renderer total pure -- it never throws on
- * misconfiguration. Phase 23 WIRING-05 owns the WARN path; here we render
+ * misconfiguration. The wiring layer owns the WARN path; here we render
  * with the cluster ID as both label and a sentinel `9999` priority (sorts
  * last) and `preferOverInstalls: false`.
  */
@@ -353,7 +351,7 @@ function sumDeferredServerTools(cluster: ClusterRender): number {
 /**
  * Sort builtin/non-MCP tool names within a cluster: known names follow
  * {@link TOOL_ORDER}; unknown names fall through to alphabetical via
- * `localeCompare`. Design §5 rule 16 within-cluster ordering.
+ * `localeCompare`.
  */
 function sortBuiltinsInCluster(builtins: string[]): string[] {
   const orderIndex = (name: string): number => {
@@ -375,8 +373,8 @@ function sortBuiltinsInCluster(builtins: string[]): string[] {
  *      optional `(N deferred)` suffix when deferred entries exist.
  *   3. Prompt skills alphabetical, capped at 8 + `+N more`.
  *
- * Rule 17 elision is handled by the caller (skip this body, emit count-only
- * lines instead).
+ * Elision is handled by the caller (skip this body, emit count-only lines
+ * instead).
  */
 function appendClusterBody(lines: string[], cluster: ClusterRender): void {
   if (cluster.builtins.length > 0) {

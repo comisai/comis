@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 24 behavioral-metric aggregator (OBS-CAP-03).
+ * Behavioral-metric aggregator.
  *
- * Computes per-provider rates for the four OBS-CAP-03 metrics from a typed
+ * Computes per-provider rates for four behavioral metrics from a typed
  * event stream:
  *
  *   1. firstNonDiscoveryActionIsMcp
@@ -19,28 +19,28 @@
  *
  *   4. installDetourHintCoverage
  *      Among rounds with at least one tool:install_detour_detected event of
- *      action: "hinted", did the Wave-3 caller record at least one `true` in
- *      hintAugmentations[]? Phase 24's Wave-3 caller (24-05) records `true`
- *      per hinted event by construction (the structurally-constant fallback);
- *      v1 reports the rate as 1.0 by design. The metric DEFINITION is
- *      verified at the unit-test level via synthetic event streams in
+ *      action: "hinted", did the caller record at least one `true` in
+ *      hintAugmentations[]? The caller records `true` per hinted event by
+ *      construction (the structurally-constant fallback); v1 reports the
+ *      rate as 1.0 by design. The metric DEFINITION is verified at the
+ *      unit-test level via synthetic event streams in
  *      metric-aggregator.test.ts (RoundSignals.installDetourHintCoverage =
  *      true / false / null cases).
  *
- * Discovery-action classifier (RESEARCH §3.6 -- closed list + regex):
+ * Discovery-action classifier (closed list + regex):
  *   - Fixed names: discover_tools, tool_search_tool_regex, mcp_list_tools.
  *   - Regex: /^(list|search|discover|find).*tool/i.
  *
- * The aggregator lives under test/support/ (NOT packages/*\/src/) per
- * RESEARCH §5.9 -- Phase 19's DEFER-04 architecture-grep blocks
- * `discover_tools` / `tool_search_tool_regex` literals in production source.
+ * The aggregator lives under test/support/ (NOT packages/*\/src/) because
+ * the architecture-grep blocks `discover_tools` / `tool_search_tool_regex`
+ * literals in production source.
  *
  * Install classifier scope: "is this an install command?" only. Detour
  * overlap detection is the production parser's job (parseInstallDetour) --
  * this helper does NOT need to know about overlaps to classify install vs
- * non-install events for the OBS-CAP-03 first-action contract. This is a
- * deliberate design choice: parseInstallDetour returns null when no overlap
- * is detected (install-detour.ts:143), so passing a no-op port would
+ * non-install events for the first-action contract. This is a deliberate
+ * design choice: parseInstallDetour returns null when no overlap is
+ * detected (install-detour.ts:143), so passing a no-op port would
  * misclassify every install command as non-install. The leading-token rule
  * here mirrors install-detour.ts:232-268 (parseInstallSegment).
  *
@@ -98,7 +98,7 @@ export interface ProviderReport {
   installDetourHintCoverage: { rate: number; count: number };
 }
 
-/** Top-level JSON report written by the Wave-3 behavioral suite. */
+/** Top-level JSON report written by the behavioral suite. */
 export interface MetricsReport {
   providers: Record<string, ProviderReport>;
   totalRounds: number;
@@ -107,10 +107,10 @@ export interface MetricsReport {
 }
 
 // ---------------------------------------------------------------------------
-// Classifiers (exported -- consumed by the Wave-3 behavioral suite)
+// Classifiers (exported -- consumed by the behavioral suite)
 // ---------------------------------------------------------------------------
 
-/** Closed discovery-tool name list (RESEARCH §3.6). */
+/** Closed discovery-tool name list. */
 const FIXED_DISCOVERY_NAMES: ReadonlySet<string> = new Set([
   "discover_tools",
   "tool_search_tool_regex",
@@ -146,8 +146,7 @@ export function isMcpTool(toolName: string): boolean {
 }
 
 /**
- * Classify an exec call as an install command using the design §8.1
- * leading-token rule.
+ * Classify an exec call as an install command using the leading-token rule.
  *
  * Mirrors install-detour.ts:232-268 (parseInstallSegment). This is the
  * "is this an install command?" question only -- it does NOT consult
@@ -191,8 +190,8 @@ function isFinanceDataMcpFetch(toolName: string): boolean {
  * parser's job. Pure function, no module state.
  */
 function isInstallCommand(command: string): boolean {
-  // Reject commands with shell-meta segments that the design defers to the
-  // top-level segment splitter. We accept simple top-level forms only.
+  // Reject commands with shell-meta segments deferred to the top-level
+  // segment splitter. We accept simple top-level forms only.
   // (The aggregator's contract is per-event classification, not policy.)
   const tokens = command.split(/\s+/).filter((t) => t.length > 0);
   if (tokens.length < 2) return false;
@@ -230,7 +229,7 @@ function isInstallCommand(command: string): boolean {
  *
  * @param events            All tool:executed events captured during the round (any order; sorted internally by timestamp).
  * @param detourEvents      All tool:install_detour_detected events captured during the round.
- * @param hintAugmentations Booleans recorded by the Wave-3 caller per hinted event: did the result envelope carry details.installDetourHint?
+ * @param hintAugmentations Booleans recorded by the caller per hinted event: did the result envelope carry details.installDetourHint?
  */
 export function computeRoundSignals(
   events: readonly ToolEvent[],
@@ -258,7 +257,7 @@ export function computeRoundSignals(
   // - true iff every recorded augmentation flag is true (every hinted overlap had
   //   a corresponding hint augmentation in the result envelope).
   // - false otherwise.
-  // The Wave-3 caller (24-05) records hintAugmentations.length === hintedCount by
+  // The caller records hintAugmentations.length === hintedCount by
   // construction; v1 reports the rate as structurally constant -- see module JSDoc.
   const hintedCount = detourEvents.filter((e) => e.action === "hinted").length;
   let installDetourHintCoverage: boolean | null;
@@ -346,7 +345,7 @@ export class MetricAggregator {
       providers,
       totalRounds,
       fixturesRun: [...fixturesRun],
-      // ISO-8601 UTC -- no PII, no local-time leak (T-24-04-02 disposition: accept).
+      // ISO-8601 UTC -- no PII, no local-time leak.
       timestamp: new Date().toISOString(),
     };
   }

@@ -2,10 +2,8 @@
 /**
  * Gateway setup: RPC bridge (deferred dispatch), RPC adapter wiring, dynamic
  * method registration, webhook mounting, OpenAI-compatible route mounting,
- * and gateway server creation/start.
- * Extracted from daemon.ts to isolate the single
- * largest inline block from the main wiring sequence. Covers the full
- * gateway lifecycle from RPC bridge creation through server start.
+ * and gateway server creation/start. Covers the full gateway lifecycle from
+ * RPC bridge creation through server start.
  * @module
  */
 
@@ -95,7 +93,7 @@ export function buildExecutionRequestedLogFields(input: {
 // RPC Bridge (deferred dispatch wiring)
 // ===========================================================================
 
-/** All services produced by the RPC bridge setup phase. */
+/** All services produced by the RPC bridge setup. */
 export interface RpcBridgeResult {
   /** The rpcCall function usable immediately (delegates to inner dispatch once wired). */
   rpcCall: RpcCall;
@@ -429,7 +427,7 @@ export interface GatewayDeps {
   suspendedAgents?: ReadonlySet<string>;
 }
 
-/** All services produced by the gateway setup phase. */
+/** All services produced by the gateway setup. */
 export interface GatewayResult {
   /** Gateway server handle (undefined when gateway is disabled). */
   gatewayHandle?: GatewayServerHandle;
@@ -629,7 +627,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
         // Session history bridging is non-fatal
       }
 
-      // Token usage now captured by tokenTracker's bus subscription (quick-138):
+      // Token usage captured by tokenTracker's bus subscription:
       // PiEventBridge emits observability:token_usage at turn_end -> tokenTracker
       // bus handler stores it. No direct record() call needed here.
 

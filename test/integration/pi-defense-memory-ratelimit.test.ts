@@ -3,13 +3,13 @@
  * PI Defense Memory + Rate Limiter E2E Tests (real daemon)
  *
  * Validates memory write validation and injection rate limiter in a running daemon:
- *   TEST-10-01: Clean content passes memory.store without modification
- *   TEST-10-02: CRITICAL content is blocked from memory.store
- *   TEST-10-03: WARN content is stored with downgraded trust and tainted tag
- *   TEST-10-04: security:memory_tainted event includes pattern information
- *   TEST-11-01: 3rd high-risk detection triggers security:injection_rate_exceeded with warn action
- *   TEST-11-02: 5th high-risk detection triggers reinforce action and audit:event
- *   TEST-11-03: Different users have independent rate limit counters
+ *   Clean content passes memory.store without modification
+ *   CRITICAL content is blocked from memory.store
+ *   WARN content is stored with downgraded trust and tainted tag
+ *   security:memory_tainted event includes pattern information
+ *   3rd high-risk detection triggers security:injection_rate_exceeded with warn action
+ *   5th high-risk detection triggers reinforce action and audit:event
+ *   Different users have independent rate limit counters
  *
  * Uses port 8611 and unique database path to avoid conflicts with other test suites.
  * Echo provider returns deterministic responses -- no real LLM calls needed.
@@ -79,12 +79,12 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
   }, 30_000);
 
   // =========================================================================
-  // TEST-10: Memory Write Validation
+  // Memory Write Validation
   // =========================================================================
 
-  describe("Memory Write Validation (TEST-10)", () => {
+  describe("Memory Write Validation", () => {
     // -----------------------------------------------------------------------
-    // TEST-10-01: Clean content passes without modification
+    // Clean content passes without modification
     // -----------------------------------------------------------------------
 
     it(
@@ -113,7 +113,7 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
     );
 
     // -----------------------------------------------------------------------
-    // TEST-10-02: CRITICAL content is blocked
+    // CRITICAL content is blocked
     // -----------------------------------------------------------------------
 
     it(
@@ -160,7 +160,7 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
     );
 
     // -----------------------------------------------------------------------
-    // TEST-10-03: WARN content stored with downgraded trust
+    // WARN content stored with downgraded trust
     // -----------------------------------------------------------------------
 
     it(
@@ -208,7 +208,7 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
     );
 
     // -----------------------------------------------------------------------
-    // TEST-10-04: Event includes pattern information
+    // Event includes pattern information
     // -----------------------------------------------------------------------
 
     it(
@@ -247,10 +247,10 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
   });
 
   // =========================================================================
-  // TEST-11: Injection Rate Limiter
+  // Injection Rate Limiter
   // =========================================================================
 
-  describe("Injection Rate Limiter (TEST-11)", () => {
+  describe("Injection Rate Limiter", () => {
     /**
      * Helper: Send a high-risk injection message through agent.execute via
      * WebSocket. This triggers the full InputSecurityGuard -> RateLimiter pipeline.
@@ -292,7 +292,7 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
     }
 
     // -----------------------------------------------------------------------
-    // TEST-11-01: 3rd high-risk detection triggers warn
+    // 3rd high-risk detection triggers warn
     // -----------------------------------------------------------------------
 
     it(
@@ -331,7 +331,7 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
     );
 
     // -----------------------------------------------------------------------
-    // TEST-11-02: 5th high-risk detection triggers reinforce + audit
+    // 5th high-risk detection triggers reinforce + audit
     // -----------------------------------------------------------------------
 
     it(
@@ -385,7 +385,7 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
     );
 
     // -----------------------------------------------------------------------
-    // TEST-11-03: Different users have independent counters
+    // Different users have independent counters
     // -----------------------------------------------------------------------
 
     it(

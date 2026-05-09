@@ -1,10 +1,10 @@
-# Comis Test Configuration (Phase 24 Tooling Fixtures - advise mode)
+# Comis Test Configuration (Tooling Fixtures - advise mode)
 #
-# Port 8506 -- unique to Phase 24 advise-mode integration tests
+# Port 8506 -- unique to advise-mode integration tests
 # Reallocated from 8505 (already taken by config.test-sessions-lifecycle.yaml).
 # tooling.installDetours.mode is "advise" (soft override): tool calls allowed
 # but advisory text appears in capability index.
-# Skills.discoveryPaths references the Phase 24 fixture dir created by Plan 24-01.
+# Skills.discoveryPaths references the skill-variant fixture dir.
 
 tenantId: "test"
 logLevel: "debug"

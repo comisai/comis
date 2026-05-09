@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Built-in provider redundancy guard for providers.create (260501-gyy FIX 2).
+ * Built-in provider redundancy guard for providers.create.
  *
  * Rejects providers_manage create attempts that would shadow pi-ai's
  * dynamic catalog with a redundant custom entry. A built-in provider
@@ -16,7 +16,7 @@
  * in the source template (catalog-agnostic). Pinned by source-grep
  * regression test in builtin-provider-guard.test.ts.
  *
- * Mirrors credential-resolver.ts shape (260501-2pz precedent).
+ * Mirrors credential-resolver.ts shape.
  *
  * @module
  */

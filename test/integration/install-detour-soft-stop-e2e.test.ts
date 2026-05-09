@@ -1,38 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 24 INTEG-05 (HEADLINE): Install-detour soft-stop refuses pre-spawn
+ * Install-detour soft-stop refuses pre-spawn
  *
- * The deterministic CI-gating behavioral surface of Phase 24. Phase 22's
- * unit-level soft-stop contract promoted to integration level via the real
- * daemon-harness. Boots the daemon with config.test-tooling-soft-stop.yaml
- * (port 8507, mode="soft-stop", no approvalGate), constructs createExecTool
- * inline against the live daemon container's eventBus + secretManager, and
- * verifies that `pip install market-data-lib` is refused PRE-SPAWN with the
- * §8.2 permission_denied template.
+ * Deterministic CI-gating behavioral surface for the soft-stop contract.
+ * Boots the daemon with config.test-tooling-soft-stop.yaml (port 8507,
+ * mode="soft-stop", no approvalGate), constructs createExecTool inline
+ * against the live daemon container's eventBus + secretManager, and verifies
+ * that `pip install market-data-lib` is refused PRE-SPAWN with the
+ * permission_denied template.
  *
  * Refusal pre-spawn means:
  * 1. ONE `tool:install_detour_detected` event with action="soft_stopped"
  * 2. tool.execute() throws "[permission_denied] ..." (caught by exec-tool's
- *    outer try/catch which re-throws when message starts with "["; verified
- *    at exec-tool.ts:1016-1018, exec-tool.test.ts:2502-2504)
+ *    outer try/catch which re-throws when message starts with "["; see
+ *    exec-tool.ts:1016-1018, exec-tool.test.ts:2502-2504)
  * 3. NO successful `tool:executed` event (verified via negative awaiter — a
  *    listener captures all exec events during a 1-second window after the
  *    refusal; assertion verifies none have success=true)
  * 4. Privacy invariant — payload JSON does not contain raw command/cwd
  *
- * exec is NOT an RPC method (verified at planning time at
- * packages/daemon/src/wiring/setup-gateway-rpc.ts — no exec.* allowlist
- * entry). Driving the install-detour code path requires inline createExecTool
- * + tool.execute().
+ * exec is NOT an RPC method (packages/daemon/src/wiring/setup-gateway-rpc.ts
+ * has no exec.* allowlist entry). Driving the install-detour code path
+ * requires inline createExecTool + tool.execute().
  *
  * @module
  */
 
 // -----------------------------------------------------------------------------
-// CI POLICY (INTEG-05; design §11 Phase 8): This test is the deterministic
-// CI-gating behavioral surface of Phase 24. It MUST run on every PR — do NOT
-// wrap the describe block in a conditional skip. Provider-gated metric tests
-// (24-05) are conditionally skipped; this one is not.
+// CI POLICY: This test is the deterministic CI-gating behavioral surface for
+// install-detour soft-stop. It MUST run on every PR — do NOT wrap the
+// describe block in a conditional skip. Provider-gated metric tests are
+// conditionally skipped; this one is not.
 // -----------------------------------------------------------------------------
 
 import { resolve, dirname } from "node:path";
@@ -58,7 +56,7 @@ const CONFIG_PATH = resolve(
   "../config/config.test-tooling-soft-stop.yaml",
 );
 
-describe("Phase 24 INTEG-05 (HEADLINE): Install-detour soft-stop refuses pre-spawn", () => {
+describe("Install-detour soft-stop refuses pre-spawn", () => {
   let handle: TestDaemonHandle;
   let eventBus: TypedEventBus;
 
@@ -82,16 +80,16 @@ describe("Phase 24 INTEG-05 (HEADLINE): Install-detour soft-stop refuses pre-spa
   }, 30_000);
 
   it(
-    "INTEG-05 GATE: pip install of overlapping package is refused pre-spawn in soft-stop mode",
+    "pip install of overlapping package is refused pre-spawn in soft-stop mode",
     async () => {
       const awaiter = createEventAwaiter(eventBus);
       // Negative awaiter: capture every tool:executed for "exec" within a
       // 1-second window after the refusal. Soft-stop refusal happens
-      // PRE-SPAWN (Phase 22 contract; verified at exec-tool.ts:767-789 —
-      // throwToolError("permission_denied", ...) fires BEFORE any spawn
-      // site). Therefore tool:executed for "exec" with success=true MUST
-      // NOT fire. The exec-tool may emit tool:executed with success=false
-      // OR not emit at all; both pass the assertion below.
+      // PRE-SPAWN (see exec-tool.ts:767-789 — throwToolError(
+      // "permission_denied", ...) fires BEFORE any spawn site). Therefore
+      // tool:executed for "exec" with success=true MUST NOT fire. The
+      // exec-tool may emit tool:executed with success=false OR not emit
+      // at all; both pass the assertion below.
       type ExecutedPayload = EventMap["tool:executed"];
       const collectedExecEvents: ExecutedPayload[] = [];
       const execListener = (e: ExecutedPayload): void => {
@@ -183,8 +181,8 @@ describe("Phase 24 INTEG-05 (HEADLINE): Install-detour soft-stop refuses pre-spa
           });
 
         // Re-run inside try/catch to capture the exact message for additional
-        // assertions on the §8.2 template content. (expect.rejects.toThrow
-        // does not expose the error object directly.)
+        // assertions on the template content. (expect.rejects.toThrow does
+        // not expose the error object directly.)
         try {
           await tool.execute("test-soft-stop-2", {
             command: "pip install market-data-lib",
@@ -213,8 +211,8 @@ describe("Phase 24 INTEG-05 (HEADLINE): Install-detour soft-stop refuses pre-spa
         expect(event.commandDigest).toMatch(/^[0-9a-f]{16}$/);
 
         // 6. Privacy invariant — payload does NOT contain raw command shape
-        //    or the `cwd` we passed in. Note: design §8.2 closed payload
-        //    excludes both raw command and cwd.
+        //    or the `cwd` we passed in. The closed payload excludes both
+        //    raw command and cwd.
         const payloadJson = JSON.stringify(event);
         expect(payloadJson).not.toMatch(/pip install/);
         expect(payloadJson).not.toContain("/tmp");
@@ -223,9 +221,9 @@ describe("Phase 24 INTEG-05 (HEADLINE): Install-detour soft-stop refuses pre-spa
         //    were going to.
         await new Promise((r) => setTimeout(r, 1000));
 
-        // 8. Assert: NO successful exec subprocess. Refusal is pre-spawn
-        //    (Phase 22 contract). Any captured exec event MUST have
-        //    success !== true; preferably none were captured at all.
+        // 8. Assert: NO successful exec subprocess. Refusal is pre-spawn,
+        //    so any captured exec event MUST have success !== true;
+        //    preferably none were captured at all.
         for (const exe of collectedExecEvents) {
           expect(exe.success).not.toBe(true);
         }

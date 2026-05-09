@@ -4,7 +4,7 @@
  * Handles model catalog query methods:
  *   models.list           -- List available models (optionally filtered by provider)
  *   models.test           -- Check provider configuration and catalog status
- *   models.list_providers -- Live native pi-ai catalog provider list (Layer 1F)
+ *   models.list_providers -- Live native pi-ai catalog provider list
  * All handlers are read-only -- no approval gate required.
  * @module
  */
@@ -88,7 +88,7 @@ export function createModelHandlers(deps: ModelHandlerDeps): Record<string, RpcH
     },
 
     // -----------------------------------------------------------------------
-    // List native pi-ai catalog providers (Layer 1F -- 260430-vwt)
+    // List native pi-ai catalog providers
     //
     // Live self-discovery for the agent: returns the de-duplicated, sorted
     // list of provider names from the pi-ai native catalog. Pairs with the

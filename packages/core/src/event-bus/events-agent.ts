@@ -118,12 +118,12 @@ export interface AgentEvents {
 
   /**
    * v1.1 capability layer -- install detour detected by exec/process tool.
-   * Emission lives in Phase 22 (skills package); this is the type-only declaration.
+   * Emission lives in the skills package; this is the type-only declaration.
    *
-   * Privacy invariants (Pitfall 11; design §8.2):
+   * Privacy invariants:
    * - NO raw command text, shell fragments, URLs, VCS specs, local paths,
    *   registry credentials, stdout, or stderr.
-   * - `commandDigest` is a stable, non-reversible hash (SHA-256, generated in Phase 22).
+   * - `commandDigest` is a stable, non-reversible hash (SHA-256).
    * - `packages[].normalizedName` is a registry-safe identifier only.
    */
   "tool:install_detour_detected": {

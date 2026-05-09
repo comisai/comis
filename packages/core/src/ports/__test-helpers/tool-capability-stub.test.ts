@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { createCapabilityPortStub } from "./tool-capability-stub.js";
 
-describe("createCapabilityPortStub (TOOLING-CFG-15 test fixture)", () => {
+describe("createCapabilityPortStub test fixture", () => {
   it("returns all 9 methods with default behaviors when called with no overrides", () => {
     const port = createCapabilityPortStub();
     expect(port.isCapabilityIndexEnabled()).toBe(true);

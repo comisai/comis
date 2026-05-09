@@ -146,7 +146,7 @@ describe("ToolingConfigSchema", () => {
     expect(Object.isFrozen(DEFAULT_BUILTIN_ASSIGNMENTS)).toBe(true);
   });
 
-  it("Test 11: Phase 16 fixture YAML round-trip parses cleanly", () => {
+  it("Test 11: fixture YAML round-trip parses cleanly", () => {
     // packages/core/src/config/ -> packages/agent/src/__tests__/fixtures/...
     // here = packages/core/src/config; ../../../agent/src/__tests__/fixtures/...
     const fixturePath = resolve(
@@ -169,7 +169,7 @@ describe("ToolingConfigSchema", () => {
     }
   });
 
-  it("Test 12 (Task 2): cross-module barrel re-exports resolve via @comis/core/config path", async () => {
+  it("Test 12: cross-module barrel re-exports resolve via @comis/core/config path", async () => {
     // Re-export contract: ToolingConfigSchema, DEFAULT_CLUSTER_CONFIG,
     // DEFAULT_BUILTIN_ASSIGNMENTS, and the ToolingConfig type all flow through
     // the config index barrel. Importing from "./index.js" must resolve to the
@@ -180,10 +180,10 @@ describe("ToolingConfigSchema", () => {
     expect(barrel.DEFAULT_BUILTIN_ASSIGNMENTS).toBe(DEFAULT_BUILTIN_ASSIGNMENTS);
   });
 
-  it("Test 13 (Pitfall 2): partial operator override of clusters does NOT key-merge with defaults at parse time", () => {
-    // Pitfall 2: z.record(...).default({}) does NOT merge with DEFAULT_CLUSTER_CONFIG.
+  it("Test 13: partial operator override of clusters does NOT key-merge with defaults at parse time", () => {
+    // z.record(...).default({}) does NOT merge with DEFAULT_CLUSTER_CONFIG.
     // Operator-supplied clusters replace the empty default record entirely.
-    // The defaults-merge contract is ADAPTER-CONSTRUCTION-TIME (Phase 23), not parse-time.
+    // The defaults-merge contract is enforced at adapter-construction time, not parse-time.
     const result = ToolingConfigSchema.safeParse({
       capabilityClusters: {
         clusters: {
@@ -268,11 +268,11 @@ describe("schema-serializer with tooling section", () => {
 // ---------------------------------------------------------------------------
 
 describe("field-metadata with tooling section", () => {
-  it("getFieldMetadata('tooling') returns metadata for tooling.* paths with immutable=true (TOOLING-CFG-07)", () => {
+  it("getFieldMetadata('tooling') returns metadata for tooling.* paths with immutable=true", () => {
     const fields = getFieldMetadata("tooling");
     expect(fields.length).toBeGreaterThan(0);
-    // All tooling.* fields are operator-only -- agents must not self-configure
-    // (TOOLING-CFG-07). Each path lives under the "tooling" immutable prefix.
+    // All tooling.* fields are operator-only -- agents must not self-configure.
+    // Each path lives under the "tooling" immutable prefix.
     for (const field of fields) {
       expect(field.path.startsWith("tooling.")).toBe(true);
       expect(field.immutable).toBe(true);

@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Canonical sanitized MCP tool name parser tests.
-//
-// Source: design v1.1 §7 (Phase 2 — Canonical MCP Parser Migration);
-// RESEARCH §Pattern 3 (verified parametric edge-case tables).
 
 import { describe, it, expect } from "vitest";
 import { extractMcpServerName, parseSanitizedMcpToolName } from "./mcp-tool-name.js";
@@ -52,13 +49,13 @@ describe("parseSanitizedMcpToolName", () => {
 });
 
 describe("extractMcpServerName / parseSanitizedMcpToolName asymmetry", () => {
-  it("documents the empty-tool case where the two functions diverge (Pitfall 5)", () => {
+  it("documents the empty-tool case where the two functions diverge", () => {
     // extractMcpServerName tolerates empty tool — group-by-server callers
     // (tool-deferral.ts:293,912,917) tolerate malformed names that still
     // identify a server. Do NOT "fix" this to also return undefined.
     expect(extractMcpServerName("mcp__foo--")).toBe("foo");
     // parseSanitizedMcpToolName rejects empty tool — pair-extracting callers
-    // (Phase 22 install-detour parser) require BOTH halves to be non-empty.
+    // (install-detour parser) require BOTH halves to be non-empty.
     expect(parseSanitizedMcpToolName("mcp__foo--")).toBeUndefined();
   });
 });

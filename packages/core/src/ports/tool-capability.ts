@@ -4,12 +4,11 @@
  *
  * Provides both a static config-derived view (clusters, hints, aliases) AND a
  * live runtime view (connected MCP servers, visible prompt skills). One port,
- * two views -- per design §4.3, the earlier two-port split was rejected because
- * exec runs per-tool-call (not per-turn) and needs a live getter.
+ * two views -- exec runs per-tool-call (not per-turn) and needs a live getter.
  *
- * Adapters: live daemon-side adapter (Phase 23), createNoOpCapabilityPort
- * (production no-op interim, this package), test-only stub factory
- * (lives in `__test-helpers/` -- production source MUST NOT import).
+ * Adapters: live daemon-side adapter, createNoOpCapabilityPort (production
+ * no-op, this package), test-only stub factory (lives in `__test-helpers/` --
+ * production source MUST NOT import).
  *
  * @module
  */
@@ -78,13 +77,11 @@ export interface SkillHint {
 
 /**
  * The capability port. Covers both the static config-derived view and a live
- * runtime view. Adapter implementation lives in @comis/daemon (Phase 23);
- * the in-package createNoOpCapabilityPort serves as the production no-op
- * interim while Phase 17 lands.
+ * runtime view. Adapter implementation lives in @comis/daemon; the in-package
+ * createNoOpCapabilityPort serves as the production no-op.
  *
  * Adapters: createNoOpCapabilityPort (production no-op, this package),
- * test-only stub factory in `__test-helpers/`,
- * live daemon-side adapter (Phase 23).
+ * test-only stub factory in `__test-helpers/`, live daemon-side adapter.
  */
 export interface ToolCapabilityPort {
   // ---------------------------------------------------------------------------
@@ -95,7 +92,7 @@ export interface ToolCapabilityPort {
   /**
    * Whether the per-turn capability index renderer should fire at all. When
    * false, the renderer returns empty text and the executor-prompt-runner
-   * filters it out (§5 empty-render rule).
+   * filters it out.
    *
    * @returns `true` if the operator has enabled the capability index.
    */
@@ -148,10 +145,10 @@ export interface ToolCapabilityPort {
    * Pre-normalized package alias map (PEP-503-like keys for Python:
    * lowercase, `_` and `.` collapsed to `-`).
    *
-   * Build fresh on each call (no memoization in v1.1 per design §4.3
-   * method-body contract -- visible skills can change mid-session
-   * (skill discovery, allow/deny edits), connected MCP servers can
-   * connect/disconnect, capturing at construction would freeze stale state).
+   * Build fresh on each call (no memoization in v1.1) -- visible skills can
+   * change mid-session (skill discovery, allow/deny edits), connected MCP
+   * servers can connect/disconnect, capturing at construction would freeze
+   * stale state.
    *
    * @returns A read-only map keyed by normalized package name pointing at
    *   the matching MCP server or prompt skill.
@@ -176,12 +173,12 @@ export interface ToolCapabilityPort {
    * AND `disableModelInvocation !== true`.
    * Merging: operator(skillKey) > operator(skillName) > comis.capability > fallback.
    *
-   * IMPORTANT -- cache fence (design §4.3 invariant; Pitfall 1):
+   * IMPORTANT -- cache fence:
    * This method MUST NOT be consumed by `assembleRichSystemPrompt`'s
    * `assemblerParams` in `packages/agent/src/executor/prompt-assembly.ts`.
    * If a skill discovery sweep runs between turns, the cached system-prompt
    * prefix MUST stay byte-identical. Consumers: per-turn capability index
-   * renderer (Phase 20) + install-detour parser (Phase 22) ONLY.
+   * renderer + install-detour parser ONLY.
    *
    * @returns A read-only array of merged capability views.
    */

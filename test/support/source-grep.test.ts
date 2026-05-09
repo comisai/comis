@@ -30,8 +30,8 @@ describe("findInSourceFiles", () => {
   it("respects custom excludeDirs", () => {
     // With __test-helpers excluded AND .test.ts files filtered, the stub
     // literal lives nowhere in production source paths, so the result must
-    // be empty -- this is the exact invariant Plan 17-04's architecture-grep
-    // test asserts.
+    // be empty -- this is the exact invariant the architecture-grep test
+    // asserts.
     const result = findInSourceFiles({
       rootDir: resolve(REPO_ROOT, "packages/core/src/ports"),
       needle: "createCapabilityPortStub",
@@ -109,7 +109,7 @@ describe("findInSourceFiles", () => {
   });
 });
 
-describe("tsconfig __tests__ exclude (TOOLING-CFG-15 prep)", () => {
+describe("tsconfig __tests__ exclude", () => {
   for (const pkg of ["core", "shared", "skills", "daemon"] as const) {
     it(`packages/${pkg}/tsconfig.json excludes src/__tests__/**`, () => {
       const tsconfigPath = resolve(REPO_ROOT, `packages/${pkg}/tsconfig.json`);

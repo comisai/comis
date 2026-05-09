@@ -131,7 +131,7 @@ describe("getVisibleAssistantText", () => {
       ],
     };
     expect(getVisibleAssistantText(session)).toBe("Hello world");
-    // Function must NOT delegate to SDK on the no-commentary path (260501-egj).
+    // Function must NOT delegate to SDK on the no-commentary path.
     expect(session.getLastAssistantText).not.toHaveBeenCalled();
   });
 
@@ -189,7 +189,7 @@ describe("getVisibleAssistantText", () => {
       ],
     };
     // Last non-aborted assistant has no commentary → returns its text directly
-    // (no SDK delegation on the no-commentary path — 260501-egj).
+    // (no SDK delegation on the no-commentary path).
     expect(getVisibleAssistantText(session)).toBe("first response");
     expect(session.getLastAssistantText).not.toHaveBeenCalled();
   });
@@ -236,7 +236,7 @@ describe("getVisibleAssistantText", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getVisibleAssistantText — synthetic + empty-error filtering (260501-egj)
+// getVisibleAssistantText — synthetic + empty-error filtering
 // ---------------------------------------------------------------------------
 
 describe("getVisibleAssistantText — synthetic + empty-error filtering", () => {
@@ -298,11 +298,11 @@ describe("getVisibleAssistantText — synthetic + empty-error filtering", () => 
     expect(session.getLastAssistantText).not.toHaveBeenCalled();
   });
 
-  it("production-repro: synthetic + sysctx-user + empty-error → '' (260501-egj)", () => {
+  it("production-repro: synthetic + sysctx-user + empty-error → ''", () => {
     // Exact JSONL shape from session 678314278~peer~678314278.jsonl (2026-05-01 07:10:18 UTC).
     // Before the fix this returned the 51-char synthetic placeholder, defeating the
     // candidateResponse === "" gate at executor-prompt-runner.ts:407 and preventing
-    // 260501-cur's rate_limited branch from firing.
+    // the rate_limited branch from firing.
     const session = {
       getLastAssistantText: vi.fn(),
       messages: [
@@ -374,12 +374,13 @@ describe("getVisibleAssistantText — synthetic + empty-error filtering", () => 
 });
 
 // ---------------------------------------------------------------------------
-// getVisibleAssistantText — cross-turn walk-back bound (260501-gyy)
+// getVisibleAssistantText — cross-turn walk-back bound
 // ---------------------------------------------------------------------------
 
-describe("getVisibleAssistantText — cross-turn walk-back bound (260501-gyy)", () => {
-  // Local helpers — re-defined inline (parallel to the 260501-egj block above)
-  // so each describe block is independently readable. Byte-identical signatures.
+describe("getVisibleAssistantText — cross-turn walk-back bound", () => {
+  // Local helpers — re-defined inline (parallel to the synthetic + empty-error
+  // block above) so each describe block is independently readable.
+  // Byte-identical signatures.
   const make = (overrides: Record<string, unknown>) => ({
     role: "assistant",
     content: [],
@@ -398,7 +399,7 @@ describe("getVisibleAssistantText — cross-turn walk-back bound (260501-gyy)", 
   const emptyErrorAssistant = (model = "qwen/qwen3-coder:free") =>
     make({ model, content: [], stopReason: "error" });
 
-  it("production-repro: pre-restart claude scaffolding does NOT leak across synthetic-user boundary (260501-gyy)", () => {
+  it("production-repro: pre-restart claude scaffolding does NOT leak across synthetic-user boundary", () => {
     // Mirrors the production session JSONL shape from
     // /Users/.../678314278~peer~678314278.jsonl (2026-05-01 08:54 UTC).
     // Before FIX 1 the find() walk skipped synthetic + 2 toolResults +

@@ -460,7 +460,7 @@ describe("applyToolDeferral - discover_tools creation", () => {
 
     // Verify enriched WARN shape (query + hint + errorKind).
     // Zero-signal queries (rawTopScore === 0) emit the
-    // "query tokens absent from deferred corpus" variant per design §5.3.
+    // "query tokens absent from deferred corpus" variant.
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "zzzznonexistent_xyzzy",
@@ -579,9 +579,8 @@ describe("discover_tools score-floor filter", () => {
     expect(sideEffects.discoveredTools).toEqual([]);
 
     // Zero-signal queries emit the "query tokens absent from deferred corpus"
-    // variant (rawTopScore === 0 branch of design §5.3). The "generate" token
-    // happens to not overlap any doc after tokenization on this fixture
-    // -> rawTopScore === 0.
+    // variant (rawTopScore === 0 branch). The "generate" token happens to not
+    // overlap any doc after tokenization on this fixture -> rawTopScore === 0.
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "gemini image generate",
@@ -606,11 +605,10 @@ describe("discover_tools score-floor filter", () => {
 
   it("normalized BM25: top match with any positive signal always surfaces at default threshold (regression pin)", async () => {
     // BM25 scores are normalized to [0, 1] before the floor.
-    // Design §6.4 explicitly notes the pre-fix "spurious match filtered"
-    // assertion flips: whenever any doc has a positive BM25 signal, the top
-    // normalizes to 1.0 and clears the 0.8 default floor. So this regression
-    // pin asserts: the top match DOES surface at the default threshold, and
-    // the fraction-of-top contract is honored.
+    // Whenever any doc has a positive BM25 signal, the top normalizes to 1.0
+    // and clears the 0.8 default floor. So this regression pin asserts: the
+    // top match DOES surface at the default threshold, and the
+    // fraction-of-top contract is honored.
     //
     // The zero-threshold override branch remains meaningful: it surfaces
     // even secondary matches that sit below the 0.8 fraction floor.
@@ -1084,7 +1082,7 @@ describe("discover_tools -- searchHint BM25 enrichment", () => {
 
     // Verify enriched WARN shape (query + hint + errorKind).
     // Zero-signal query emits "query tokens absent from deferred corpus"
-    // variant (rawTopScore === 0 branch of design §5.3).
+    // variant (rawTopScore === 0 branch).
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "zzzznonexistent_xyzzy",
@@ -1798,19 +1796,18 @@ describe("buildDeferredToolsContext", () => {
   });
 
   // -------------------------------------------------------------------------
-  // DEFER-02: mechanism-neutral instruction line (Phase 19)
+  // mechanism-neutral instruction line
   // -------------------------------------------------------------------------
 
-  it("DEFER-02: emits the mechanism-neutral instruction line (snapshot + behavior pair)", () => {
+  it("emits the mechanism-neutral instruction line (snapshot + behavior pair)", () => {
     const entries: DeferredToolEntry[] = [
       { name: "toolA", description: "descA", original: makeTool("toolA") },
     ];
     const output = buildDeferredToolsContext(entries);
 
     // Shape lock: catches structural drift in the deferred-tools block layout.
-    // The inline snapshot MUST be hand-verified against design §6 verbatim text;
-    // do NOT auto-update via `vitest -u` without re-reading the design doc.
-    // See PATTERNS §Pattern E (snapshot+behavior pairing -- first instance in codebase).
+    // The inline snapshot MUST be hand-verified against the canonical text;
+    // do NOT auto-update via `vitest -u` without thinking.
     expect(output).toMatchInlineSnapshot(`
       "<deferred-tools>
       The following tools are available but not loaded.
@@ -1820,9 +1817,9 @@ describe("buildDeferredToolsContext", () => {
       </deferred-tools>"
     `);
 
-    // Behavior assertions (Pitfall 9 prevention -- snapshot-as-substitute is an
-    // anti-pattern; explicit semantic assertions catch drift even if a future
-    // dev runs `vitest -u` without thinking).
+    // Behavior assertions: snapshot-as-substitute is an anti-pattern; explicit
+    // semantic assertions catch drift even if a future dev runs `vitest -u`
+    // without thinking.
     const expectedInstruction =
       "These tools are connected but not currently loaded into your active context. " +
       "To use one, invoke the discovery mechanism available in your active toolspace, " +
@@ -1833,7 +1830,7 @@ describe("buildDeferredToolsContext", () => {
     expect(output).toContain("toolA -- descA");
   });
 
-  it("DEFER-02: instruction line contains no provider-specific or yfinance references", () => {
+  it("instruction line contains no provider-specific or yfinance references", () => {
     const entries: DeferredToolEntry[] = [
       { name: "agents_manage", description: "Manage agents", original: makeTool("agents_manage") },
       { name: "mcp__finance-data--get_price", description: "Get stock price", original: makeTool("mcp__finance-data--get_price") },
@@ -1846,24 +1843,24 @@ describe("buildDeferredToolsContext", () => {
     expect(output).toContain("agents_manage -- Manage agents");
     expect(output).toContain("[finance-data] (1 tools): get_price");
 
-    // DEFER-04 forbidden literals (the architecture-grep test in Plan 19-03
-    // enforces this at package scope; this test enforces it at the
-    // prompt-output level -- defense in depth).
+    // Forbidden literals: an architecture-grep test enforces this at package
+    // scope; this test enforces it at the prompt-output level -- defense in
+    // depth.
     expect(output).not.toContain("discover_tools");
     expect(output).not.toContain("tool_search_tool_regex");
     expect(output).not.toContain("yfinance");
-    // Old useToolSearch=true variant text -- must NOT appear (DEFER-01).
+    // Old useToolSearch=true variant text -- must NOT appear.
     expect(output).not.toContain("Call them directly");
     expect(output).not.toContain("auto-load");
-    // Old useToolSearch=false variant text -- must NOT appear (DEFER-01).
+    // Old useToolSearch=false variant text -- must NOT appear.
     expect(output).not.toContain("Call discover_tools to search by keyword");
     expect(output).not.toContain("search by keyword or server name");
   });
 
-  it("DEFER-02: empty entries return empty string (single-arg signature)", () => {
-    // Verifies the post-Phase-19 single-arg signature compiles + returns "".
+  it("empty entries return empty string (single-arg signature)", () => {
+    // Verifies the single-arg signature compiles + returns "".
     // No second arg is passed; the type system enforces this at call sites
-    // (executor-tool-assembly.ts updated in lockstep -- see Task 3).
+    // (executor-tool-assembly.ts updated in lockstep).
     expect(buildDeferredToolsContext([])).toBe("");
   });
 });
@@ -1873,7 +1870,7 @@ describe("buildDeferredToolsContext", () => {
 // ---------------------------------------------------------------------------
 
 describe("supportsToolSearch", () => {
-  it("A4: returns true for Anthropic Sonnet/Opus 4.x model ids", () => {
+  it("returns true for Anthropic Sonnet/Opus 4.x model ids", () => {
     expect(supportsToolSearch("claude-sonnet-4-5")).toBe(true);
     expect(supportsToolSearch("claude-opus-4-1")).toBe(true);
     expect(supportsToolSearch("claude-opus-4-6")).toBe(true);
@@ -1883,12 +1880,12 @@ describe("supportsToolSearch", () => {
     expect(supportsToolSearch("bedrock/anthropic.claude-opus-4")).toBe(true);
   });
 
-  it("A4: returns false for Haiku (Anthropic, no defer_loading support)", () => {
+  it("returns false for Haiku (Anthropic, no defer_loading support)", () => {
     expect(supportsToolSearch("claude-haiku-4-5")).toBe(false);
     expect(supportsToolSearch("anthropic/claude-haiku-4-5")).toBe(false);
   });
 
-  it("A4: returns false for non-Anthropic providers", () => {
+  it("returns false for non-Anthropic providers", () => {
     expect(supportsToolSearch("gpt-5")).toBe(false);
     expect(supportsToolSearch("gpt-4o")).toBe(false);
     expect(supportsToolSearch("gemini-2.5-pro")).toBe(false);
@@ -1897,7 +1894,7 @@ describe("supportsToolSearch", () => {
     expect(supportsToolSearch("mistral-large")).toBe(false);
   });
 
-  it("A4: returns false for empty string", () => {
+  it("returns false for empty string", () => {
     expect(supportsToolSearch("")).toBe(false);
   });
 });
@@ -2320,7 +2317,7 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
 
   it("embedding failure (throws) falls back to normalized BM25 and emits one dependency WARN", async () => {
     const deferred = [makeEntry("mcp_manage", "Manage MCP servers: install, connect")];
-    // Throw-based failure exercises the try/catch WARN path from design §5.3.
+    // Throw-based failure exercises the try/catch WARN path.
     const embedding: EmbeddingPort = {
       provider: "mock",
       dimensions: 3,
@@ -2339,8 +2336,8 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
   });
 
   it("embedding result-err falls back to normalized BM25 without WARN (Result is a valid signal, not an error)", async () => {
-    // Result-err path: embed() resolves with { ok: false }. Design §5.3 keeps
-    // this silent -- the code only WARNs for thrown exceptions.
+    // Result-err path: embed() resolves with { ok: false }. This stays silent
+    // -- the code only WARNs for thrown exceptions.
     const deferred = [makeEntry("mcp_manage", "Manage MCP servers: install, connect")];
     const embedding: EmbeddingPort = {
       provider: "mock",

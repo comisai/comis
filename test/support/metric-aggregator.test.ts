@@ -6,8 +6,8 @@
  *   - The three classifier predicates (isDiscoveryTool, isMcpTool,
  *     isInstallExec) return correct positive + negative answers.
  *   - computeRoundSignals() correctly converts synthetic event streams into
- *     the four binary RoundSignals (the canonical OBS-CAP-03 metric-
- *     definition verification surface -- see 24-04 PLAN <success_criteria>).
+ *     the four binary RoundSignals (the canonical metric-definition
+ *     verification surface).
  *   - MetricAggregator records rounds and aggregates rates correctly,
  *     including the null-aware nullable-rate denominator for
  *     installDetourHintCoverage.
@@ -24,7 +24,7 @@ import {
   type InstallDetourEvent,
 } from "./metric-aggregator.js";
 
-describe("Phase 24 metric aggregator (OBS-CAP-03)", () => {
+describe("behavioral metric aggregator", () => {
   // -------------------------------------------------------------------------
   // Block 1 -- Classifier correctness
   // -------------------------------------------------------------------------
@@ -110,7 +110,7 @@ describe("Phase 24 metric aggregator (OBS-CAP-03)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Block 2 -- computeRoundSignals (the canonical OBS-CAP-03 surface)
+  // Block 2 -- computeRoundSignals (the canonical metric surface)
   // -------------------------------------------------------------------------
 
   describe("computeRoundSignals", () => {

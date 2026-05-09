@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 24 skill-variant fixture invariants.
+ * Skill-variant fixture invariants.
  *
  * Validates the contract surface of the three SKILL.md fixtures + co-located
- * operator YAML created in Plan 24-01. Downstream Wave-2 plans (24-02 / 24-03)
- * and the Wave-3 behavioral-metrics suite (24-05) consume these files and rely
- * on the invariants asserted here. The smoke test is the executable
- * verification surface for INTEG-03 at the fixture level.
+ * operator YAML. Downstream consumers and the behavioral-metrics suite consume
+ * these files and rely on the invariants asserted here. The smoke test is the
+ * executable verification surface at the fixture level.
  *
  * @module
  */
@@ -74,7 +73,7 @@ interface ToolingConfigShape {
   };
 }
 
-describe("Phase 24 skill-variant fixture invariants", () => {
+describe("Skill-variant fixture invariants", () => {
   it("operator-config-skill.md parses with NO comis.capability block", () => {
     const raw = readFileSync(resolve(here, "operator-config-skill.md"), "utf8");
     const { data } = parseFrontmatter(raw);

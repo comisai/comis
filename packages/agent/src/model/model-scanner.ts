@@ -72,7 +72,7 @@ export interface ModelScanner {
 }
 
 // ---------------------------------------------------------------------------
-// Catalog-driven endpoint resolution (Layer 1E -- 260430-vwt)
+// Catalog-driven endpoint resolution
 // ---------------------------------------------------------------------------
 
 /**

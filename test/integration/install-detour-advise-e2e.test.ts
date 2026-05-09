@@ -1,29 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 24 INTEG-05: Install-detour advise-mode end-to-end
+ * Install-detour advise-mode end-to-end
  *
- * Promotes the Phase 22 unit-level install-detour surface to integration
- * level via the real daemon-harness path. Boots the daemon with this file's
- * dedicated advise-mode config (config.test-install-detour-advise.yaml,
- * port 8509 — sibling of config.test-tooling-fixtures.yaml on 8506; project
- * convention is one config/port per integration test file so files can run
- * in parallel under vitest's default fork pool).
- * Exercises the install-detour code path by directly invoking
- * `createExecTool` against the live daemon container's eventBus and
- * secretManager.
+ * Exercises the install-detour surface at integration level via the real
+ * daemon-harness path. Boots the daemon with this file's dedicated
+ * advise-mode config (config.test-install-detour-advise.yaml, port 8509 —
+ * sibling of config.test-tooling-fixtures.yaml on 8506; project convention
+ * is one config/port per integration test file so files can run in parallel
+ * under vitest's default fork pool). Exercises the install-detour code path
+ * by directly invoking `createExecTool` against the live daemon container's
+ * eventBus and secretManager.
  *
- * exec is NOT an RPC method (verified at planning time:
- * packages/daemon/src/wiring/setup-gateway-rpc.ts has no exec.* in the
- * allowlist). It is an AgentTool registered at exec-tool.ts:600. Driving
- * the install-detour code path requires constructing the tool inline and
- * calling tool.execute() directly.
+ * exec is NOT an RPC method (packages/daemon/src/wiring/setup-gateway-rpc.ts
+ * has no exec.* in the allowlist). It is an AgentTool registered at
+ * exec-tool.ts:600. Driving the install-detour code path requires
+ * constructing the tool inline and calling tool.execute() directly.
  *
  * In advise mode the tool emits a `tool:install_detour_detected` event with
  * action="hinted" for each overlap, then falls through to spawn the
  * subprocess. The result envelope carries `details.installDetourHint`
- * augmentation (Phase 22 contract).
+ * augmentation.
  *
- * NOT skipif-wrapped — deterministic CI gate (INTEG-05).
+ * Deterministic CI gate — not skipif-wrapped.
  *
  * @module
  */
@@ -51,7 +49,7 @@ const CONFIG_PATH = resolve(
   "../config/config.test-install-detour-advise.yaml",
 );
 
-describe("Phase 24 INTEG-05: Install-detour advise-mode end-to-end", () => {
+describe("Install-detour advise-mode end-to-end", () => {
   let handle: TestDaemonHandle;
   let eventBus: TypedEventBus;
 
@@ -156,19 +154,18 @@ describe("Phase 24 INTEG-05: Install-detour advise-mode end-to-end", () => {
 
         // 6. Privacy invariant — payload MUST NOT contain raw command text.
         //    The normalized package name "market-data-lib" IS a legitimate
-        //    field of the closed payload (event.packages[0].normalizedName,
-        //    design §8.2). Only the verbatim raw command form must be
-        //    absent.
+        //    field of the closed payload (event.packages[0].normalizedName).
+        //    Only the verbatim raw command form must be absent.
         const payloadJson = JSON.stringify(event);
         expect(payloadJson).not.toMatch(/pip install/);
 
         // 7. Advise mode is non-blocking — the tool.execute() returned a
         //    result envelope. The actual subprocess (pip install of a
         //    fictional package) errors at the OS level; the result envelope
-        //    captures that as exitCode != 0 with stderr. The Phase 22
-        //    advise-mode contract injects details.installDetourHint into
-        //    BOTH success and exit-with-error envelopes (exec-tool.ts:1132
-        //    + :1470). NO permission_denied is raised in advise mode.
+        //    captures that as exitCode != 0 with stderr. The advise-mode
+        //    contract injects details.installDetourHint into BOTH success
+        //    and exit-with-error envelopes (exec-tool.ts:1132 + :1470). NO
+        //    permission_denied is raised in advise mode.
         const resultJson = JSON.stringify(result);
         // Forbidden tokens that would indicate the refusal path fired by
         // mistake (this test is advise-mode only). The regex dot `soft.stop`
@@ -176,7 +173,7 @@ describe("Phase 24 INTEG-05: Install-detour advise-mode end-to-end", () => {
         // gate when refusal fires.
         expect(resultJson).not.toMatch(/permission_denied|soft.stop|refused/i);
 
-        // installDetourHint augmentation IS expected — Phase 22 advise-mode
+        // installDetourHint augmentation IS expected — the advise-mode
         // contract guarantees it on every overlap-triggering exec call.
         const details = (result as { details?: Record<string, unknown> })
           .details;

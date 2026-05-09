@@ -23,7 +23,7 @@ function makeToolCapabilityPort(
   };
 }
 
-describe("ToolCapabilityPort interface (TOOLING-CFG-12)", () => {
+describe("ToolCapabilityPort interface", () => {
   it("declares all 9 methods (7 config-view + 2 runtime-view)", () => {
     const port = makeToolCapabilityPort();
     // 7 config-view methods:
@@ -120,7 +120,7 @@ describe("ToolCapabilityPort interface (TOOLING-CFG-12)", () => {
   });
 });
 
-describe("public surface re-exports (TOOLING-CFG-12, TOOLING-CFG-14)", () => {
+describe("public surface re-exports", () => {
   it("re-exports ToolCapabilityPort + companion types from @comis/core public surface", () => {
     // Static type-only import via import-map check -- type-level test:
     // The following lines compile-fail if the re-exports are missing.

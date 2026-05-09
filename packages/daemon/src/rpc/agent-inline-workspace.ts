@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Best-effort writer for inline ROLE.md / IDENTITY.md content supplied via
- * the L2 single-call agents.create path (260428-vyf).
+ * the L2 single-call agents.create path.
  *
  * Collapses the previous 3-call agent-creation workflow
  * (`agents_manage.create` -> `write(ROLE.md)` -> `write(IDENTITY.md)`)

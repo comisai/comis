@@ -17,16 +17,16 @@ export type ModelTier = "small" | "medium" | "large";
 /**
  * Build the static `## Available Tools` block (legacy path, gate-off) OR a
  * single residual one-liner pointing the model at the per-turn `## Capabilities`
- * block (Phase 20 path, gate-on).
+ * block (gate-on path).
  *
- * @param capabilityIndexEnabled - When `true`, emits ONLY the residual one-liner
- *   (CAPINDEX-RENDER-04). When `false` or undefined, emits the legacy flat block
- *   BYTE-IDENTICALLY to the pre-feature baseline (CAPINDEX-RENDER-05). The two
- *   paths are MUTUALLY EXCLUSIVE per design §5 rule 15 (Pitfall 4 prevention).
+ * @param capabilityIndexEnabled - When `true`, emits ONLY the residual
+ *   one-liner. When `false` or undefined, emits the legacy flat block
+ *   BYTE-IDENTICALLY to the pre-feature baseline. The two paths are MUTUALLY
+ *   EXCLUSIVE.
  *
- *   Restart-required: this gate selects between two cached system-prompt shapes;
- *   toggling at runtime is forbidden (CAPINDEX-RENDER-17). Phase 23 wires the
- *   operator-facing constraint into config docs (WIRING-09).
+ *   Restart-required: this gate selects between two cached system-prompt
+ *   shapes; toggling at runtime is forbidden. Operator-facing constraint is
+ *   documented in config docs.
  */
 export function buildToolingSection(
   toolNames: string[],
@@ -36,10 +36,9 @@ export function buildToolingSection(
 ): string[] {
   if (toolNames.length === 0) return [];
 
-  // Gate-on path: residual one-liner only (design §5 rule 15; CAPINDEX-RENDER-04).
-  // The per-turn `## Capabilities` block is rendered into the dynamic preamble
-  // by `executor-prompt-runner.ts` (Plan 20-02). The wording below is
-  // normative — see design §5 Placement.
+  // Gate-on path: residual one-liner only. The per-turn `## Capabilities`
+  // block is rendered into the dynamic preamble by `executor-prompt-runner.ts`.
+  // The wording below is normative.
   if (capabilityIndexEnabled === true) {
     return [
       "When this turn includes a `Capabilities` context, refer to it for grouped tool guidance " +
@@ -48,9 +47,9 @@ export function buildToolingSection(
     ];
   }
 
-  // Gate-off path: legacy flat block BYTE-IDENTICAL to pre-feature baseline
-  // (CAPINDEX-RENDER-05). DO NOT modify the body below — the byte-identity
-  // assertion in tooling-sections.test.ts depends on this shape staying exact.
+  // Gate-off path: legacy flat block BYTE-IDENTICAL to pre-feature baseline.
+  // DO NOT modify the body below — the byte-identity assertion in
+  // tooling-sections.test.ts depends on this shape staying exact.
   const summaries = { ...TOOL_SUMMARIES, ...toolSummaries };
 
   const ordered = TOOL_ORDER.filter((t) => toolNames.includes(t));
@@ -79,17 +78,16 @@ export function buildToolingSection(
 /**
  * Build the static "## Tool Call Style" section with conditional coding guidelines.
  *
- * @param capabilityIndexEnabled - Phase 21 / CAPINDEX-COUNTERWEIGHT-01: when `true`,
- *   AND when `exec` is in `toolNames`, the rendered output includes the dual-gated
- *   "Tool-first principle" bullet (design §11 Phase 5 verbatim) immediately before
- *   the existing Python-virtualenv rule. When `false` or `undefined`, the bullet is
- *   omitted; the existing venv rule emits unchanged when `exec` is present.
+ * @param capabilityIndexEnabled - When `true`, AND when `exec` is in
+ *   `toolNames`, the rendered output includes the dual-gated "Tool-first
+ *   principle" bullet immediately before the existing Python-virtualenv rule.
+ *   When `false` or `undefined`, the bullet is omitted; the existing venv
+ *   rule emits unchanged when `exec` is present.
  *
  *   Restart-required: the gate value flows from `tooling.capabilityIndex.enabled`
- *   via `AssemblerParams.capabilityIndexEnabled` (declared at
- *   `system-prompt-assembler.ts:128-151`, populated at `prompt-assembly.ts:815`
- *   from `port.isCapabilityIndexEnabled()`). The value is config-derived and stable
- *   per session — SAFE inside the cache fence (Phase 20 contract).
+ *   via `AssemblerParams.capabilityIndexEnabled`, populated at the prompt
+ *   assembly site from `port.isCapabilityIndexEnabled()`. The value is
+ *   config-derived and stable per session — SAFE inside the cache fence.
  */
 export function buildToolCallStyleSection(
   isMinimal: boolean,
@@ -141,11 +139,10 @@ export function buildToolCallStyleSection(
     guidelines.push("- Show file paths clearly when working with files.");
   }
   if (has("exec")) {
-    // CAPINDEX-COUNTERWEIGHT-01 / design §11 Phase 5: dual-gated counterweight
-    // to the venv rule below. The bullet precedes the venv rule because the
-    // first read sets the default; the second is the install fallback.
-    // Restart-required: capabilityIndexEnabled flows from
-    // `tooling.capabilityIndex.enabled` via AssemblerParams →
+    // Dual-gated counterweight to the venv rule below. The bullet precedes
+    // the venv rule because the first read sets the default; the second is
+    // the install fallback. Restart-required: capabilityIndexEnabled flows
+    // from `tooling.capabilityIndex.enabled` via AssemblerParams →
     // SECTIONS["tool-call-style"].
     if (capabilityIndexEnabled === true) {
       guidelines.push(

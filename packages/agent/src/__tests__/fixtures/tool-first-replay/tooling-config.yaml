@@ -1,6 +1,6 @@
-# Phase 16 contract surface for downstream phase tests.
-# Shape follows design §4.2 (ToolingConfigSchema) and §9 (operator example).
-# Phase 17 lands the matching Zod schema; Phase 22 reads replacesPackages.
+# Tool-first replay contract surface fixture.
+# Shape follows ToolingConfigSchema (operator example).
+# `replacesPackages` is read by the install-detour parser.
 tooling:
   capabilityClusters:
     clusters:

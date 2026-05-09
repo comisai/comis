@@ -4,8 +4,7 @@
  *
  * Verifies surrogate detection (lone high, lone low, valid pair),
  * signature stripping behavior, redacted-block skipping, missing-signature
- * skipping, immutability, and that cacheFenceIndex is IGNORED
- * (260430-anthropic-400-thinking-block).
+ * skipping, immutability, and that cacheFenceIndex is IGNORED.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -208,7 +207,7 @@ describe("createSignatureSurrogateGuard", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Cache fence is IGNORED (260430-anthropic-400-thinking-block)
+  // Cache fence is IGNORED
   //
   // The guard must scrub uniformly across the array, regardless of
   // budget.cacheFenceIndex. Stripping is pure/deterministic so the same
@@ -216,7 +215,7 @@ describe("createSignatureSurrogateGuard", () => {
   // Anthropic's prompt-cache validator requires.
   // -------------------------------------------------------------------------
 
-  it("260430-anthropic-400-thinking-block: cacheFenceIndex is ignored — fence-protected tainted blocks are still scrubbed", async () => {
+  it("cacheFenceIndex is ignored — fence-protected tainted blocks are still scrubbed", async () => {
     const onGuarded = vi.fn();
     const layer = createSignatureSurrogateGuard({ onGuarded });
     const messages: AgentMessage[] = [
@@ -242,7 +241,7 @@ describe("createSignatureSurrogateGuard", () => {
     expect(onGuarded).toHaveBeenCalledWith({ signaturesStripped: 3 });
   });
 
-  it("260430-anthropic-400-thinking-block: deterministic across cacheFenceIndex variations", async () => {
+  it("deterministic across cacheFenceIndex variations", async () => {
     // Pin the prefix-stability invariant: the bug was that fence=-1 produced
     // one prefix and fence>0 produced a different prefix for the SAME on-disk
     // messages. The fix makes the output independent of cacheFenceIndex.

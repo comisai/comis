@@ -34,10 +34,9 @@ const ClusterEntrySchema = z.strictObject({
  * Capability hint shape for an MCP server.
  *
  * BOTH `cluster` and `description` are required. The asymmetry vs. skills is
- * intentional (design §4.2 schema-asymmetry note): MCP servers do not carry
- * an in-band human-readable description suitable for the renderer, so the
- * operator must supply one. Skills already carry `description` in the
- * manifest, so the hint may omit it.
+ * intentional: MCP servers do not carry an in-band human-readable description
+ * suitable for the renderer, so the operator must supply one. Skills already
+ * carry `description` in the manifest, so the hint may omit it.
  */
 const McpCapabilityHintSchema = z.strictObject({
   cluster: z.string().min(1),
@@ -99,8 +98,8 @@ const InstallDetoursSubSchema = z.strictObject({
  * empty `tooling: {}` block (or omitting `tooling` entirely from
  * AppConfig) yields a fully-populated default tree.
  *
- * Per design §4.2 (capability-layer config) and §5 rules 7-9 (immutable
- * tree, operator-only authority).
+ * The entire tree is immutable at runtime and operator-only -- agents must
+ * not self-configure capability routing or detour policy.
  */
 export const ToolingConfigSchema = z.strictObject({
   /**
@@ -109,7 +108,7 @@ export const ToolingConfigSchema = z.strictObject({
    * NOTE: `clusters` is a `z.record(...)` whose default is `{}`, NOT
    * `DEFAULT_CLUSTER_CONFIG`. See the load-bearing JSDoc on
    * DEFAULT_CLUSTER_CONFIG below for why -- the merge-with-defaults
-   * contract is enforced at adapter-construction time (Phase 23).
+   * contract is enforced at adapter-construction time.
    */
   capabilityClusters: CapabilityClustersSubSchema.default(() =>
     CapabilityClustersSubSchema.parse({}),
@@ -138,18 +137,16 @@ export type ToolingConfig = z.infer<typeof ToolingConfigSchema>;
  * - "other-tools" -- non-MCP tools without getBuiltinCluster() resolution
  *
  * Operators may override label, priority, preferOverInstalls per-key, but the IDs
- * themselves are fixed. Per design §4.2 + §5 rules 7/8/9.
+ * themselves are fixed.
  *
  * IMPORTANT: This object is intentionally NOT used as a `.default(...)` argument on
  * `clusters` because z.record(...).default({}) does NOT key-merge -- it replaces
- * the whole record. The merge MUST happen at adapter construction (Phase 23):
+ * the whole record. The merge MUST happen at adapter construction:
  *
  *   const mergedClusters = {
  *     ...DEFAULT_CLUSTER_CONFIG,
  *     ...config.tooling.capabilityClusters.clusters,  // operator wins per-key
  *   };
- *
- * See Pitfall 2 in research/PITFALLS.md for the full rationale.
  */
 export const DEFAULT_CLUSTER_CONFIG: Readonly<
   Record<

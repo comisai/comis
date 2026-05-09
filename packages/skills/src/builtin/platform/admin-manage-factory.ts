@@ -75,11 +75,11 @@ export interface AdminManageDescriptor<T extends TSchema = TSchema> {
  * `AgentToolResult` (multi-block content + typed `details`), so the factory
  * passes it through verbatim instead of re-wrapping via `jsonResult`.
  *
- * Used by `agents_manage.create` (260428-sw2 Layer 1) to emit a 2-text-block
- * tool_result: a high-attention next-step contract first, the JSON-rendered
- * RPC fields second. The 7 sibling admin manage tools (cron/heartbeat/
- * sessions/tokens/etc.) keep returning plain objects from their overrides --
- * they hit the `jsonResult` branch unchanged. Additive, zero-impact change.
+ * Used by `agents_manage.create` to emit a 2-text-block tool_result: a
+ * high-attention next-step contract first, the JSON-rendered RPC fields
+ * second. The 7 sibling admin manage tools (cron/heartbeat/sessions/tokens/
+ * etc.) keep returning plain objects from their overrides -- they hit the
+ * `jsonResult` branch unchanged. Additive, zero-impact change.
  */
 function isAgentToolResult(value: unknown): value is AgentToolResult<unknown> {
   return (

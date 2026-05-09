@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Co-located unit tests for createToolCapabilityAdapter (Phase 23 WIRING-01..11).
+// Co-located unit tests for createToolCapabilityAdapter.
 //
 // Coverage matrix:
-//   - WIRING-04 (key-by-key default merge): 3 cases (empty / partial / per-key override)
-//   - WIRING-05/-06 (cluster-ID typo WARN+fallback): 3 surfaces
+//   - Key-by-key default merge: 3 cases (empty / partial / per-key override)
+//   - Cluster-ID typo WARN+fallback: 3 surfaces
 //     (mcp.capabilityHints, skills.capabilityHints, builtinAssignments)
-//   - WIRING-07 (disconnected MCP filter): 1 order-independent case
-//   - Pitfall E (callback timing) + getPackageAliasMap freshness: 2 cases
+//   - Disconnected MCP filter: 1 order-independent case
+//   - Callback timing + getPackageAliasMap freshness: 2 cases
 //   - Object.freeze + sanity (capabilityIndex / installDetours / builtinCluster): 4 cases
 //
 // Boundary discipline: this file MUST NOT import the test-only stub from
-// @comis/core/__test-helpers/* (would violate the architecture-grep landed
-// in Plan 23-03 WIRING-10b).
+// @comis/core/__test-helpers/*.
 
 import { describe, it, expect, vi } from "vitest";
 import {
@@ -86,11 +85,11 @@ function makeMinimalToolingConfig(
 
 describe("createToolCapabilityAdapter", () => {
   // ---------------------------------------------------------------------------
-  // WIRING-04 group -- key-by-key merge (3 cases mirroring schema-tooling.test.ts:183)
+  // Key-by-key merge (3 cases mirroring schema-tooling.test.ts:183)
   // ---------------------------------------------------------------------------
 
-  describe("WIRING-04 default merge -- key-by-key", () => {
-    it("Test 1: empty operator config preserves all 3 reserved cluster IDs at priority 9999", () => {
+  describe("default merge -- key-by-key", () => {
+    it("empty operator config preserves all 3 reserved cluster IDs at priority 9999", () => {
       const port = createToolCapabilityAdapter({
         toolingConfig: makeMinimalToolingConfig(),
         skillRegistry: makeStubSkillRegistry(),
@@ -103,7 +102,7 @@ describe("createToolCapabilityAdapter", () => {
       expect(port.getClusterConfig("other-tools")?.priority).toBe(9999);
     });
 
-    it("Test 2: partial operator add preserves defaults alongside addition", () => {
+    it("partial operator add preserves defaults alongside addition", () => {
       const port = createToolCapabilityAdapter({
         toolingConfig: makeMinimalToolingConfig({
           capabilityClusters: {
@@ -129,7 +128,7 @@ describe("createToolCapabilityAdapter", () => {
       expect(port.getClusterConfig("other-tools")?.priority).toBe(9999);
     });
 
-    it("Test 3: per-key override wins for the overridden key only", () => {
+    it("per-key override wins for the overridden key only", () => {
       const port = createToolCapabilityAdapter({
         toolingConfig: makeMinimalToolingConfig({
           capabilityClusters: {
@@ -157,11 +156,11 @@ describe("createToolCapabilityAdapter", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // WIRING-05/-06 group -- cluster-ID typo WARN+fallback (3 surfaces; assert BOTH halves).
+  // Cluster-ID typo WARN+fallback (3 surfaces; assert BOTH halves).
   // ---------------------------------------------------------------------------
 
-  describe("WIRING-05/-06 cluster-ID typo: WARN + lookup-time fallback", () => {
-    it("Test 4: mcp.capabilityHints typo falls back to external-integrations and emits WARN (does not throw)", () => {
+  describe("cluster-ID typo: WARN + lookup-time fallback", () => {
+    it("mcp.capabilityHints typo falls back to external-integrations and emits WARN (does not throw)", () => {
       const { logger, warnSpy } = makeStubLogger();
       const config = makeMinimalToolingConfig({
         mcp: {
@@ -198,7 +197,7 @@ describe("createToolCapabilityAdapter", () => {
       );
     });
 
-    it("Test 5: skills.capabilityHints typo falls back to prompt-skills and emits WARN", () => {
+    it("skills.capabilityHints typo falls back to prompt-skills and emits WARN", () => {
       const { logger, warnSpy } = makeStubLogger();
       const port = createToolCapabilityAdapter({
         toolingConfig: makeMinimalToolingConfig({
@@ -230,7 +229,7 @@ describe("createToolCapabilityAdapter", () => {
       );
     });
 
-    it("Test 6: builtinAssignments typo emits WARN and getBuiltinCluster does not return the unresolved id", () => {
+    it("builtinAssignments typo emits WARN and getBuiltinCluster does not return the unresolved id", () => {
       const { logger, warnSpy } = makeStubLogger();
       const port = createToolCapabilityAdapter({
         toolingConfig: makeMinimalToolingConfig({
@@ -268,11 +267,11 @@ describe("createToolCapabilityAdapter", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // WIRING-07 group -- disconnected MCP filter (order-independent)
+  // Disconnected MCP filter (order-independent)
   // ---------------------------------------------------------------------------
 
-  describe("WIRING-07 getConnectedMcpServers filters by status === connected", () => {
-    it("Test 7: returns only connected servers; disconnected/error/reconnecting/connecting filtered out", () => {
+  describe("getConnectedMcpServers filters by status === connected", () => {
+    it("returns only connected servers; disconnected/error/reconnecting/connecting filtered out", () => {
       const port = createToolCapabilityAdapter({
         toolingConfig: makeMinimalToolingConfig(),
         skillRegistry: makeStubSkillRegistry(),
@@ -287,18 +286,18 @@ describe("createToolCapabilityAdapter", () => {
       });
 
       const result = port.getConnectedMcpServers();
-      // Resilient (order-independent) assertions per plan acceptance.
+      // Resilient (order-independent) assertions.
       expect(result).toHaveLength(1);
       expect(result).toContain("finance-data");
     });
   });
 
   // ---------------------------------------------------------------------------
-  // Pitfall E + freshness group
+  // Callback timing + freshness
   // ---------------------------------------------------------------------------
 
-  describe("Pitfall E callback timing + alias-map freshness", () => {
-    it("Test 8: getPromptSkillCapabilities passes a function whose call-time output equals port.getSkillHint", () => {
+  describe("callback timing + alias-map freshness", () => {
+    it("getPromptSkillCapabilities passes a function whose call-time output equals port.getSkillHint", () => {
       const stubReg = makeStubSkillRegistry([]);
       const port = createToolCapabilityAdapter({
         toolingConfig: makeMinimalToolingConfig({
@@ -333,7 +332,7 @@ describe("createToolCapabilityAdapter", () => {
       });
     });
 
-    it("Test 9: getPackageAliasMap rebuilds fresh -- two calls reflect intermediate-state mutation (no memoization)", () => {
+    it("getPackageAliasMap rebuilds fresh -- two calls reflect intermediate-state mutation (no memoization)", () => {
       let connections: McpConnection[] = [
         { name: "alpha", status: "connected" } as McpConnection,
       ];
@@ -381,7 +380,7 @@ describe("createToolCapabilityAdapter", () => {
   // ---------------------------------------------------------------------------
 
   describe("structural integrity + sanity", () => {
-    it("Test 10: returned port is Object.freeze'd", () => {
+    it("returned port is Object.freeze'd", () => {
       const port = createToolCapabilityAdapter({
         toolingConfig: makeMinimalToolingConfig(),
         skillRegistry: makeStubSkillRegistry(),
@@ -392,7 +391,7 @@ describe("createToolCapabilityAdapter", () => {
       expect(Object.isFrozen(port)).toBe(true);
     });
 
-    it("Test 11: isCapabilityIndexEnabled mirrors capabilityIndex.enabled", () => {
+    it("isCapabilityIndexEnabled mirrors capabilityIndex.enabled", () => {
       const portTrue = createToolCapabilityAdapter({
         toolingConfig: makeMinimalToolingConfig({
           capabilityIndex: { enabled: true },
@@ -418,7 +417,7 @@ describe("createToolCapabilityAdapter", () => {
       ["observe" as const],
       ["advise" as const],
       ["soft-stop" as const],
-    ])("Test 12: getInstallDetourMode returns the configured mode (%s)", (mode) => {
+    ])("getInstallDetourMode returns the configured mode (%s)", (mode) => {
       const port = createToolCapabilityAdapter({
         toolingConfig: makeMinimalToolingConfig({
           installDetours: { mode },
@@ -430,7 +429,7 @@ describe("createToolCapabilityAdapter", () => {
       expect(port.getInstallDetourMode()).toBe(mode);
     });
 
-    it("Test 13: getBuiltinCluster honors operator override when cluster resolves; falls through to metadata otherwise", () => {
+    it("getBuiltinCluster honors operator override when cluster resolves; falls through to metadata otherwise", () => {
       // With operator override pointing at a defined cluster ("shell-tools"
       // added to operator clusters).
       const portWithOverride = createToolCapabilityAdapter({

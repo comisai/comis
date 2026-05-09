@@ -68,9 +68,9 @@ describe("tool metadata registry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tool-entry schema tests (quick-260504-cac): validActions, validKeys,
-// requiredByAction support the generic schema-validator wired into
-// wrapWithMetadataEnforcement before the per-tool validateInput hook.
+// Tool-entry schema tests: validActions, validKeys, requiredByAction support
+// the generic schema-validator wired into wrapWithMetadataEnforcement before
+// the per-tool validateInput hook.
 // ---------------------------------------------------------------------------
 
 describe("tool metadata -- tool-entry schema (validActions/validKeys/requiredByAction)", () => {
@@ -102,7 +102,7 @@ describe("tool metadata -- tool-entry schema (validActions/validKeys/requiredByA
 });
 
 // ---------------------------------------------------------------------------
-// coDiscoverWith tests (quick-260414-ppo)
+// coDiscoverWith tests
 // ---------------------------------------------------------------------------
 
 describe("tool metadata -- coDiscoverWith", () => {
@@ -123,7 +123,7 @@ describe("tool metadata -- coDiscoverWith", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ToolCapabilityMetadata tests (v1.1 capability layer; TOOLING-CFG-08)
+// ToolCapabilityMetadata tests (v1.1 capability layer)
 // ---------------------------------------------------------------------------
 
 describe("tool metadata -- ToolCapabilityMetadata (v1.1)", () => {

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tool assembly setup: assembleToolsForAgent and preprocessMessageText.
- * Extracted from daemon.ts steps 6.6.8.5 (tool pipeline assembly) to isolate
- * per-agent tool creation and message preprocessing from the main wiring
- * sequence.
+ * Isolates per-agent tool creation and message preprocessing from the
+ * main wiring sequence.
  * @module
  */
 
@@ -137,17 +136,14 @@ export interface ToolsDeps {
    * AgentsResult.toolCapabilityPorts map (one adapter per agent constructed
    * inside setupSingleAgent). Used by exec / process tools to consult the
    * live install-detour mode + connected MCP servers + visible skills, and
-   * to read operator-supplied cluster hints. Phase 23 (WIRING-01..11)
-   * replaces the Phase 22 interim no-op port factory with this per-agent
-   * live adapter resolver. The closure may throw or fall back to the
-   * default agent's port for unknown agentIds -- daemon.ts decides the
-   * contract.
+   * to read operator-supplied cluster hints. The closure may throw or fall
+   * back to the default agent's port for unknown agentIds -- daemon.ts
+   * decides the contract.
    *
    * Consumed via the single mandated form `deps.getCapabilityPortForAgent(agentId)`
    * inside assembleToolsForAgent (mirrors the deps.<field> direct-access
-   * convention used at lines 194-213 for nearby fields like deps.eventBus,
-   * deps.skillsLogger, deps.linkRunner, deps.subprocessEnv). Plan 23-02
-   * WIRING-11.
+   * convention used for nearby fields like deps.eventBus, deps.skillsLogger,
+   * deps.linkRunner, deps.subprocessEnv).
    */
   getCapabilityPortForAgent: (agentId: string) => ToolCapabilityPort;
   /** Image generation provider (undefined when API key missing -- tool not registered). */
@@ -337,7 +333,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     const ownWorkspaceDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
     await registerWorkspaceFilesInTracker(ownWorkspaceDir, fileStateTracker, skillsLogger);
 
-    // Enrich sharedPaths for admin-trust agents: grant cross-workspace file access (Quick 165)
+    // Enrich sharedPaths for admin-trust agents: grant cross-workspace file access.
     // Default agent (orchestrator) and supervisor-profile agents can access other agent workspaces.
     // Lazy callback for admin agents so hot-added workspaces are visible without re-assembling tools.
     const isDefaultAgent = agentId === defaultAgentId;
@@ -529,14 +525,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           sandboxConfig: sandboxCfg,                         // Per-agent sandbox config
           eventBus,                                          // command:blocked + secret:accessed audit events
           getToolResultsDir,                                 // Session tool-results dir for output persistence
-          // Phase 23 (WIRING-01..11) -- live per-agent ToolCapabilityPort
-          // resolver populated by daemon.ts from AgentsResult.toolCapabilityPorts
-          // map. Replaces the Phase 22 interim no-op port (INSTALL-DTR-13).
-          // Single mandated form `deps.<field>(agentId)` mirrors the
-          // surrounding direct-deps-access convention (lines 194-213). See
-          // plan 23-02 WIRING-11.
+          // Live per-agent ToolCapabilityPort resolver populated by daemon.ts
+          // from AgentsResult.toolCapabilityPorts map. Single mandated form
+          // `deps.<field>(agentId)` mirrors the surrounding direct-deps-access
+          // convention.
           toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
-          approvalGate,                                      // Soft-stop override path (Plan 22-03)
+          approvalGate,                                      // Soft-stop override path
         }));
       }
 
@@ -546,10 +540,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         tools.push(createProcessTool({
           registry,
           logger: skillsLogger,
-          // Phase 23 (WIRING-01..11) -- live per-agent ToolCapabilityPort
-          // resolver populated by daemon.ts from AgentsResult.toolCapabilityPorts.
-          // Replaces the Phase 22 interim no-op port (INSTALL-DTR-13).
-          // Single mandated form `deps.<field>(agentId)`.
+          // Live per-agent ToolCapabilityPort resolver populated by daemon.ts
+          // from AgentsResult.toolCapabilityPorts. Single mandated form
+          // `deps.<field>(agentId)`.
           toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         }));
       }

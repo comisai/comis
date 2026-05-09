@@ -27,7 +27,7 @@ import type { ToolCapabilityPort } from "@comis/core";
 import { buildInstallDetourHint } from "./exec-tool.js";
 // `InstallDetourDecision` is imported transitively via
 // ProcessSession.installDetourDecision (process-registry.ts type-only import);
-// no direct import here per Pitfall 6 — never re-derive at status-query time.
+// no direct import here — never re-derive at status-query time.
 
 // ---------------------------------------------------------------------------
 // Parameter schema
@@ -71,34 +71,32 @@ interface ToolLogger {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Deps interface (Plan 22-02 — INSTALL-DTR-13)
+// Deps interface
 // ---------------------------------------------------------------------------
 
 /**
- * Dependencies for the process tool factory. Replaces the prior `(registry, logger?)`
- * positional signature per design §8.2. Backward compatibility is NOT preserved
- * (see CLAUDE.md user-memory `feedback_no_backward_compat`).
+ * Dependencies for the process tool factory. Backward compatibility is NOT
+ * preserved (see CLAUDE.md user-memory `feedback_no_backward_compat`).
  *
- * `toolCapabilityPort` is REQUIRED — Plan 22-03 reads it inside the
- * `case "status":` branch to decide whether to augment the result envelope
- * with the retroactive install-detour hint (Pitfall 6 mitigation: read the
- * spawn-time `session.installDetourDecision` rather than re-deriving from
- * current connected-server state). Until Phase 23 lands the real adapter,
- * daemon wiring injects `createNoOpCapabilityPort()` — interim state per
- * design §11 Phase 7 production-behavior.
+ * `toolCapabilityPort` is REQUIRED — read inside the `case "status":` branch
+ * to decide whether to augment the result envelope with the retroactive
+ * install-detour hint (read the spawn-time `session.installDetourDecision`
+ * rather than re-deriving from current connected-server state, since the
+ * connected set may have drifted since spawn). Daemon wiring injects
+ * `createNoOpCapabilityPort()` until the real adapter is available.
  */
 export interface ProcessToolDeps {
   readonly registry: ProcessRegistry;
   readonly logger?: ToolLogger;
-  /** REQUIRED for v1.1 capability layer (Phase 22) — used by Plan 22-03 process.status augmentation. */
+  /** REQUIRED for the v1.1 capability layer — used by `process.status` augmentation. */
   readonly toolCapabilityPort: ToolCapabilityPort;
 }
 
 /**
  * Create a process management tool that delegates to a ProcessRegistry.
  *
- * Plan 22-02: Refactored from `(registry, logger?)` positional to deps-object
- * per design §8.2. Backward compat NOT preserved.
+ * Uses a deps-object signature; backward compat with the prior positional
+ * `(registry, logger?)` shape is NOT preserved.
  *
  * @param deps - Dependencies bundle. See `ProcessToolDeps` for field semantics.
  * @returns AgentTool implementing the process management interface.
@@ -107,7 +105,7 @@ export function createProcessTool(deps: ProcessToolDeps): AgentTool<typeof Proce
   const {
     registry,
     logger,
-    // Plan 22-03 will read this in execute(...): toolCapabilityPort
+    // toolCapabilityPort is read inside execute(...) below
   } = deps;
   return {
     name: "process",
@@ -153,12 +151,12 @@ export function createProcessTool(deps: ProcessToolDeps): AgentTool<typeof Proce
               throwToolError("not_found", `Process session not found: ${sessionId}`);
             }
 
-            // Plan 22-03 — INSTALL-DTR-17, -18: retroactive advise-mode hint augmentation.
-            // Read the spawn-time decision back from the session rather than re-deriving
-            // from current connected-server state (Pitfall 6: connected set may have
-            // drifted since spawn, producing inconsistent hint vs spawn-time event).
-            // No current-mode check (RESEARCH §7.3 + §19 Q6 — operator can switch modes
-            // mid-session via daemon restart; advise-spawned sessions keep their hint).
+            // Retroactive advise-mode hint augmentation. Read the spawn-time
+            // decision back from the session rather than re-deriving from current
+            // connected-server state (the connected set may have drifted since
+            // spawn, producing an inconsistent hint vs the spawn-time event).
+            // No current-mode check — operators can switch modes mid-session via
+            // daemon restart; advise-spawned sessions keep their hint.
             const session = registry.get(sessionId);
             if (
               session?.installDetourDecision &&

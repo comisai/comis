@@ -90,10 +90,10 @@ export interface ToolAssemblyDeps {
   deliveryMirrorConfig?: { maxEntriesPerInjection: number; maxCharsPerInjection: number };
   embeddingPort?: EmbeddingPort;
   /**
-   * Tool-capability port for the per-turn capability-index renderer (Phase 20).
-   * Daemon wiring injects createNoOpCapabilityPort() from @comis/core until
-   * Phase 23 swaps for the live adapter. The no-op is a real production code
-   * path — NOT a transitional shim (feedback_no_backward_compat).
+   * Tool-capability port for the per-turn capability-index renderer.
+   * Daemon wiring injects createNoOpCapabilityPort() from @comis/core; the
+   * live adapter is swapped in elsewhere. The no-op is a real production
+   * code path — NOT a transitional shim.
    */
   toolCapabilityPort: ToolCapabilityPort;
   skillRegistry?: {
@@ -113,9 +113,9 @@ export interface ToolAssemblyResult {
   /** Formatted deferred tools context for dynamic preamble injection. */
   deferredContext: string;
   /**
-   * Per-turn capability-index render result (Phase 20 / CAPINDEX-RENDER-02).
+   * Per-turn capability-index render result.
    * `text` is concatenated into the dynamic preamble; the count fields feed
-   * the OBS-CAP-01 Pino debug log emitted in `executor-prompt-runner.ts`.
+   * the Pino debug log emitted in `executor-prompt-runner.ts`.
    * When the port returns gate-disabled or all counts are zero, the renderer
    * returns the EMPTY sentinel and `text === ""` filters out via
    * `[...].filter(Boolean)` in the runner.
@@ -339,11 +339,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       deliveryMirrorConfig: deps.deliveryMirrorConfig,
       channelMaxChars: deps.getChannelMaxChars?.(msg.channelType),
       // Forward the tool-capability port so prompt-assembly.ts can read
-      // `port.isCapabilityIndexEnabled()` for the static-prompt swap gate
-      // (Phase 20 / CAPINDEX-RENDER-04 / -05 / -17). Plan 20-03 makes this
-      // field REQUIRED on PromptAssemblyParams.deps; until that plan lands,
-      // the field is unused on the consumer side and the agent package fails
-      // to type-check mid-plan (resolved when 20-02 + 20-03 both land).
+      // `port.isCapabilityIndexEnabled()` for the static-prompt swap gate.
       toolCapabilityPort: deps.toolCapabilityPort,
     },
     msg,
@@ -568,12 +564,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deferredContext = buildDeferredToolsContext(deferralResult.deferredEntries);
   }
 
-  // Per-turn capability index (design §5; CAPINDEX-RENDER-02).
+  // Per-turn capability index.
   // Lives AFTER applyToolDeferral so the renderer sees the post-partition
-  // state (active vs deferred entries). When the port is the no-op interim
-  // (Phase 20-22 production path), the renderer's gate check still respects
-  // port.isCapabilityIndexEnabled(); if false, returns EMPTY which the
-  // runner filters via .filter(Boolean).
+  // state (active vs deferred entries). When the port is the no-op, the
+  // renderer's gate check still respects port.isCapabilityIndexEnabled();
+  // if false, returns EMPTY which the runner filters via .filter(Boolean).
   const capabilityIndexResult = buildCapabilityIndexContext(
     deferralResult,
     deps.toolCapabilityPort,

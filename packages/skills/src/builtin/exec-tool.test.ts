@@ -2198,7 +2198,7 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner", () =>
 });
 
 // ===========================================================================
-// Plan 22-03 — Mode integration (INSTALL-DTR-15..25, OBS-CAP-02)
+// install-detour mode integration
 // ===========================================================================
 
 /** Inline mock event bus that pushes (type, payload) per emit. */
@@ -2228,7 +2228,7 @@ function makeApprovalContext(): RequestContext {
   };
 }
 
-describe("install-detour mode: observe (INSTALL-DTR-15, OBS-CAP-02)", () => {
+describe("install-detour mode: observe", () => {
   it("emits 1 event per overlap and runs the command unchanged", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
@@ -2290,9 +2290,9 @@ describe("install-detour mode: observe (INSTALL-DTR-15, OBS-CAP-02)", () => {
     expect(installEvents).toHaveLength(2);
     expect(installEvents.every((e) => e.payload.action === "observed")).toBe(true);
 
-    // CR-01 fix verification: each event scoped to a single overlap
-    // (INSTALL-DTR-15, OBS-CAP-02). Pre-fix, the loop emitted N byte-identical
-    // payloads carrying the full overlaps[] array on every iteration.
+    // Each event scoped to a single overlap. The buggy variant of the loop
+    // emitted N byte-identical payloads carrying the full overlaps[] array
+    // on every iteration.
     expect((installEvents[0]!.payload.overlaps as ReadonlyArray<unknown>)).toHaveLength(1);
     expect((installEvents[1]!.payload.overlaps as ReadonlyArray<unknown>)).toHaveLength(1);
     const sourceNames = new Set(
@@ -2313,7 +2313,7 @@ describe("install-detour mode: observe (INSTALL-DTR-15, OBS-CAP-02)", () => {
   }, 30_000);
 });
 
-describe("install-detour mode: advise (INSTALL-DTR-16, -17, OBS-CAP-02)", () => {
+describe("install-detour mode: advise", () => {
   it("foreground: augments details.installDetourHint and adds sibling [hint] content block; primary content NOT mutated", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
@@ -2358,10 +2358,10 @@ describe("install-detour mode: advise (INSTALL-DTR-16, -17, OBS-CAP-02)", () => 
   }, 30_000);
 
   it("emits N distinct payloads for N overlaps in advise mode", async () => {
-    // CR-01 fix verification (advise-mode analog of the observe N-overlap test):
-    // each emitted payload must be scoped to its single overlap. Pre-fix, the
-    // advise loop discarded the loop variable with `void overlap;` and emitted
-    // N byte-identical payloads (INSTALL-DTR-16, OBS-CAP-02).
+    // Advise-mode analog of the observe N-overlap test: each emitted payload
+    // must be scoped to its single overlap. The buggy variant of the advise
+    // loop discarded the loop variable with `void overlap;` and emitted
+    // N byte-identical payloads.
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
     const port = createCapabilityPortStub({
@@ -2408,7 +2408,7 @@ describe("install-detour mode: advise (INSTALL-DTR-16, -17, OBS-CAP-02)", () => 
     );
   }, 30_000);
 
-  it("populates session.installDetourDecision at spawn time for advise+overlap (Pitfall 6)", async () => {
+  it("populates session.installDetourDecision at spawn time for advise+overlap", async () => {
     const port = createCapabilityPortStub({
       getInstallDetourMode: () => "advise",
       getConnectedMcpServers: () => ["finance-data"],
@@ -2436,7 +2436,7 @@ describe("install-detour mode: advise (INSTALL-DTR-16, -17, OBS-CAP-02)", () => 
     expect(session?.installDetourDecision?.overlaps[0]?.sourceName).toBe("finance-data");
   }, 30_000);
 
-  it("observe mode does NOT populate session.installDetourDecision (advise-only per design §8.2)", async () => {
+  it("observe mode does NOT populate session.installDetourDecision (advise-only)", async () => {
     const port = createCapabilityPortStub({
       getInstallDetourMode: () => "observe", // observe — not advise
       getConnectedMcpServers: () => ["finance-data"],
@@ -2462,7 +2462,7 @@ describe("install-detour mode: advise (INSTALL-DTR-16, -17, OBS-CAP-02)", () => 
   }, 30_000);
 });
 
-describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -24, OBS-CAP-02)", () => {
+describe("install-detour mode: soft-stop", () => {
   function makeSoftStopPort(opts?: {
     replacesPackages?: readonly string[];
     cluster?: string;
@@ -2485,7 +2485,7 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
     });
   }
 
-  it("INSTALL-DTR-19: refuses pre-spawn — no subprocess, no ProcessSession, no process.status follow-up", async () => {
+  it("refuses pre-spawn — no subprocess, no ProcessSession, no process.status follow-up", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
     const port = makeSoftStopPort();
@@ -2511,7 +2511,7 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
     expect(installEvents[0]!.payload.mode).toBe("soft-stop");
   });
 
-  it("INSTALL-DTR-23: error template snapshot + behavior assertions (Pitfall 9 snapshot+behavior triple)", async () => {
+  it("error template snapshot + behavior assertions (snapshot+behavior triple)", async () => {
     const port = makeSoftStopPort({ replacesPackages: ["market-data-lib"], cluster: "data-fetching-financial" });
     registry = createProcessRegistry();
     const tool = createExecTool({
@@ -2528,7 +2528,7 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
       errorMessage = (e as Error).message;
     }
 
-    // SNAPSHOT — verbatim §8.2 template
+    // SNAPSHOT — verbatim error template
     expect(errorMessage).toMatchInlineSnapshot(`
       "[permission_denied] Refused: install overlaps with available capability source(s).
 
@@ -2541,7 +2541,7 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
       3. If you genuinely need the install despite the overlap, ask the user/operator to approve the install-detour override, then rerun this exact command with \`allowInstallDetour: true\`."
     `);
 
-    // BEHAVIOR — explicit assertions paired with snapshot per Pitfall 9
+    // BEHAVIOR — explicit assertions paired with the snapshot
     expect(errorMessage).toContain("Refused: install overlaps with available capability source(s).");
     expect(errorMessage).toContain('connected MCP server "finance-data"');
     expect(errorMessage).toContain("(cluster: data-fetching-financial)");
@@ -2550,11 +2550,11 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
     const bullets = errorMessage.match(/^- /gm) ?? [];
     expect(bullets).toHaveLength(1);
 
-    // FORBIDDEN — no provider-specific tool names (DEFER-04)
+    // FORBIDDEN — no provider-specific tool names
     expect(errorMessage).not.toContain("discover_tools");
     expect(errorMessage).not.toContain("tool_search_tool_regex");
 
-    // FORBIDDEN — no self-authorizing override wording (AC-9)
+    // FORBIDDEN — no self-authorizing override wording
     expect(errorMessage).not.toContain("we'll let you through");
     expect(errorMessage).not.toMatch(/setting `allowInstallDetour: true` alone/);
 
@@ -2562,12 +2562,12 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
     expect(errorMessage).not.toContain(" → ");
   });
 
-  it("INSTALL-DTR-21: approval for one commandDigest does NOT auto-approve a different digest in same session (cache aliasing — Pitfall 5)", async () => {
+  it("approval for one commandDigest does NOT auto-approve a different digest in same session (cache aliasing)", async () => {
     // The existing ApprovalGate keys its caches by `${sessionKey}::${action}`
     // (verified at packages/core/src/approval/approval-gate.ts:135 and :194).
-    // Phase 22 MUST NOT extend the gate. Instead the action string itself
+    // The executor must NOT extend the gate. Instead the action string itself
     // includes the commandDigest suffix, ensuring two distinct commands in
-    // the same session produce DIFFERENT cache keys (RESEARCH §10.1).
+    // the same session produce DIFFERENT cache keys.
     //
     // This test verifies the executor builds DIFFERENT action strings for
     // two distinct command digests — the precondition that makes the
@@ -2640,7 +2640,7 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
     expect(actionA).toMatch(/^exec\.install_detour\.override:[0-9a-f]{16}$/);
     expect(actionB).toMatch(/^exec\.install_detour\.override:[0-9a-f]{16}$/);
 
-    // CRITICAL Pitfall 5 assertion: the two action strings are NOT EQUAL.
+    // CRITICAL cache-aliasing assertion: the two action strings are NOT EQUAL.
     expect(actionA).not.toBe(actionB);
 
     // Both digest suffixes are valid 16-hex SHA-256 truncations.
@@ -2651,9 +2651,8 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
     expect(digestA).not.toBe(digestB);
   }, 30_000);
 
-  it("INSTALL-DTR-22: missing approvalGate → fail-closed pre-submission (exactly 1 event: override_denied; no spawn)", async () => {
-    // Per the OBS-CAP-02 contract scoping (must_haves truth case (4)):
-    // when allowInstallDetour=true is set but the approval gate is not
+  it("missing approvalGate → fail-closed pre-submission (exactly 1 event: override_denied; no spawn)", async () => {
+    // When allowInstallDetour=true is set but the approval gate is not
     // wired (`deps.approvalGate` undefined), the override path fails
     // BEFORE submission. Therefore `override_requested` is NOT emitted;
     // exactly 1 terminal `override_denied` event fires.
@@ -2682,7 +2681,7 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
     expect(registry.size()).toBe(0);
   });
 
-  it("INSTALL-DTR-22: denied approval → 2-event submission pair, action sequence = ['override_requested','override_denied']", async () => {
+  it("denied approval → 2-event submission pair, action sequence = ['override_requested','override_denied']", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
     const port = makeSoftStopPort();
@@ -2718,7 +2717,7 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
     expect(registry.size()).toBe(0);
   });
 
-  it("INSTALL-DTR-20: approved override emits 2-event submission pair, action sequence = ['override_requested','overridden']; spawns the command", async () => {
+  it("approved override emits 2-event submission pair, action sequence = ['override_requested','overridden']; spawns the command", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
     const port = makeSoftStopPort();
@@ -2760,7 +2759,7 @@ describe("install-detour mode: soft-stop (INSTALL-DTR-19, -20, -21, -22, -23, -2
     expect(actionSequence).toEqual(["override_requested", "overridden"]);
   }, 30_000);
 
-  it("INSTALL-DTR-24: split-and-rerun terminates with ZERO events on non-overlapping subset", async () => {
+  it("split-and-rerun terminates with ZERO events on non-overlapping subset", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
     const port = makeSoftStopPort({ replacesPackages: ["market-data-lib"] });

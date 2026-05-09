@@ -3,11 +3,11 @@
  * Hot-Add Multi-Agent E2E Integration Tests
  *
  * Validates the full multi-agent hot-add/remove workflow end-to-end:
- *   TEST-05-01: Creates agent at runtime and it appears in agents.list
- *   TEST-05-02: Creates multiple agents without restart
- *   TEST-05-03: SSE stream delivers agent:hot_added event on create
- *   TEST-05-04: SSE stream delivers agent:hot_removed event on delete
- *   TEST-05-05: Deleted agent is no longer in agents.list
+ *   Creates agent at runtime and it appears in agents.list
+ *   Creates multiple agents without restart
+ *   SSE stream delivers agent:hot_added event on create
+ *   SSE stream delivers agent:hot_removed event on delete
+ *   Deleted agent is no longer in agents.list
  *
  * Uses a dedicated config (port 8720, single admin token, separate memory DB)
  * to avoid conflicts with other test suites.
@@ -200,11 +200,11 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // TEST-05-01: Creates agent at runtime and it appears in agents.list
+  // Creates agent at runtime and it appears in agents.list
   // -------------------------------------------------------------------------
 
   it(
-    "TEST-05-01: creates agent at runtime and it appears in agents.list",
+    "creates agent at runtime and it appears in agents.list",
     async () => {
       // Create a single agent at runtime
       const createResult = await rpcCall("agents.create", {
@@ -226,11 +226,11 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
   );
 
   // -------------------------------------------------------------------------
-  // TEST-05-02: Creates multiple agents without restart
+  // Creates multiple agents without restart
   // -------------------------------------------------------------------------
 
   it(
-    "TEST-05-02: creates multiple agents without restart",
+    "creates multiple agents without restart",
     async () => {
       // Create 3 agents sequentially
       for (const agentId of ["hot-e2e-agent-2", "hot-e2e-agent-3", "hot-e2e-agent-4"]) {
@@ -243,7 +243,7 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
         expect(result.created).toBe(true);
       }
 
-      // Verify all agents (including default + agent-1 from TEST-05-01) appear in list
+      // Verify all agents (including default + agent-1 from the prior test) appear in list
       const listResult = await rpcCall("agents.list", {}) as {
         agents: string[];
       };
@@ -260,11 +260,11 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
   );
 
   // -------------------------------------------------------------------------
-  // TEST-05-03: SSE stream delivers agent:hot_added event on create
+  // SSE stream delivers agent:hot_added event on create
   // -------------------------------------------------------------------------
 
   it(
-    "TEST-05-03: SSE stream delivers agent:hot_added event on create",
+    "SSE stream delivers agent:hot_added event on create",
     async () => {
       const controller = new AbortController();
 
@@ -326,11 +326,11 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
   );
 
   // -------------------------------------------------------------------------
-  // TEST-05-04: SSE stream delivers agent:hot_removed event on delete
+  // SSE stream delivers agent:hot_removed event on delete
   // -------------------------------------------------------------------------
 
   it(
-    "TEST-05-04: SSE stream delivers agent:hot_removed event on delete",
+    "SSE stream delivers agent:hot_removed event on delete",
     async () => {
       // Create agent first
       const createResult = await rpcCall("agents.create", {
@@ -384,11 +384,11 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
   );
 
   // -------------------------------------------------------------------------
-  // TEST-05-05: Deleted agent is no longer in agents.list
+  // Deleted agent is no longer in agents.list
   // -------------------------------------------------------------------------
 
   it(
-    "TEST-05-05: deleted agent is no longer in agents.list",
+    "deleted agent is no longer in agents.list",
     async () => {
       // Create agent
       const createResult = await rpcCall("agents.create", {

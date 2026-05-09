@@ -63,8 +63,8 @@ export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
  * SubAgentRun does not carry the original inbound channelType -- the
  * abort path is best-effort regardless (the SDK session may already be
  * in cleanup), so a no-op when the resolver does not find a handle is
- * acceptable. The runtime semantic gap is documented in 15-03-SUMMARY.md
- * (deviation: composite-key triple vs registered formatted-key shape).
+ * acceptable. There is a runtime semantic gap (deviation: composite-key
+ * triple vs registered formatted-key shape).
  */
 function deriveCompositeForRun(run: SubAgentRun): {
   agentId: string;

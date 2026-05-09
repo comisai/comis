@@ -134,7 +134,7 @@ export {
   getFieldMetadata,
   validatePartial,
   createConfigGitManager,
-  // Tooling subtree (capability layer v1.1 — Phase 23 WIRING-01..11)
+  // Tooling subtree (capability layer v1.1)
   ToolingConfigSchema,
   DEFAULT_CLUSTER_CONFIG,
   DEFAULT_BUILTIN_ASSIGNMENTS,
@@ -270,7 +270,7 @@ export type {
   OperationModelEntry,
   OperationModels,
   ModelOperationType,
-  // Tooling subtree (capability layer v1.1 — Phase 23 WIRING-01..11)
+  // Tooling subtree (capability layer v1.1)
   ToolingConfig,
   OAuthConfig,
 } from "../config/index.js";
