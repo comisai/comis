@@ -29,5 +29,12 @@ export default defineConfig({
     pool: "forks",
     maxConcurrency: 1,
     retry: 1,
+    env: {
+      // Repo root, exposed to test daemon configs as ${COMIS_REPO_ROOT}.
+      // Replaces hardcoded ${HOME}/Projects/comisai/comis in test-only YAMLs
+      // so the integration suite is portable across CI runners, worktrees,
+      // and contributor checkouts.
+      COMIS_REPO_ROOT: resolve(__dirname, ".."),
+    },
   },
 });

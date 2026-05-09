@@ -35,7 +35,7 @@ agents:
         enabled: false
     skills:
       discoveryPaths:
-        - "${HOME}/Projects/comisai/comis/packages/agent/src/__tests__/fixtures/phase-8-skill-variants"
+        - "${COMIS_REPO_ROOT}/packages/agent/src/__tests__/fixtures/phase-8-skill-variants"
 
 gateway:
   enabled: true

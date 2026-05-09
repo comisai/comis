@@ -116,7 +116,14 @@ const FIXED_DISCOVERY_NAMES: ReadonlySet<string> = new Set([
   "tool_search_tool_regex",
   "mcp_list_tools",
 ]);
-const DISCOVERY_PATTERN = /^(list|search|discover|find).*tool/i;
+// Match snake_case / kebab-case forms only -- require an explicit separator
+// before "tool". The earlier `^(list|search|discover|find).*tool/i` matched
+// camelCase names like `findFootprintTool` and `searchengine_for_a_cool_tool`
+// because `.*` greedy-consumed everything before "tool". This rules them out
+// while still matching the deliberate discovery-style names in the unit tests
+// (`list_tools`, `search_for_tool`, `find_my_tool`, `discover_my_tool`).
+const DISCOVERY_PATTERN =
+  /^(list|search|discover|find)(?:[_-][a-z]+)*[_-]tools?$/i;
 
 /**
  * Classify a tool name as a discovery action.
