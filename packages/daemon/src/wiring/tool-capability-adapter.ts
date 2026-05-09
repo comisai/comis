@@ -90,7 +90,7 @@ const EMPTY_ALIAS_MAP: ReadonlyMap<string, CapabilitySourceRef> = new Map();
  */
 function normalizeAliasKey(pkg: string): string {
   if (pkg.startsWith("@")) return pkg.toLowerCase();
-  return pkg.toLowerCase().replace(/[_.\-]+/g, "-");
+  return pkg.toLowerCase().replace(/[_.-]+/g, "-");
 }
 
 /**
