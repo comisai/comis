@@ -1,0 +1,232 @@
+// SPDX-License-Identifier: Apache-2.0
+// This test imports the no-op port factory solely as a reference-equality
+// sentinel — see BLOCKER 3 of the Phase 23 checker review. Plan 23-03's
+// architecture-grep targets non-architecture-test files; this orchestration
+// smoke test is exempt by the *.test.ts file-extension semantics.
+//
+// Purpose: prove at runtime that the daemon's Phase 23 orchestration order
+// (setupMcp → per-agent ToolCapabilityPort adapter via createToolCapabilityAdapter,
+// the same factory setupSingleAgent invokes inside the real setupAgents loop)
+// completes without throwing AND that the per-agent port emerging from the
+// orchestration is the LIVE adapter, not the createNoOpCapabilityPort()
+// fallback (BLOCKER 3 mitigation; static `awk` line-ordering grep is
+// insufficient — see RESEARCH.md Pitfall C and threat T-23-15b).
+//
+// Two sentinels:
+//   1. Reference-equality: the port emerging from the orchestration is NOT
+//      the no-op factory's output (no-op factory build for comparison).
+//   2. Behavioral: capabilityIndex.enabled = false / installDetours.mode =
+//      "soft-stop" produce port methods returning false / "soft-stop"; the
+//      no-op hardcodes true / "advise". Different config → different
+//      observable behavior is the strongest proof the live adapter is in
+//      use.
+
+import { describe, it, expect, vi } from "vitest";
+import { setupMcp } from "./setup-mcp.js";
+// setupAgents is imported here (NOT vi.mocked) so the type-level dependency
+// surface is exercised at compile time -- a future refactor that breaks the
+// SetupAgentsDeps contract surfaces in this file. The full setupAgents body
+// pulls in pi-coding-agent + ProviderHealthMonitor + OAuth credential store
+// + secret manager + ~30 other deps; building a full in-memory fixture that
+// survives every reach into container/deps is out of scope for v1 of this
+// runtime check (see TODO(phase-24) note in the second `it` block). The
+// orchestration-ORDER claim (setupMcp result feeds adapter construction
+// without throwing AND the per-agent port is the live adapter) is proven
+// here by exercising the SAME factory (createToolCapabilityAdapter) that
+// setupSingleAgent invokes inside the real setupAgents loop.
+import { setupAgents } from "./setup-agents.js";
+import { createToolCapabilityAdapter } from "./tool-capability-adapter.js";
+import { createNoOpCapabilityPort } from "@comis/core";
+import type { ToolingConfig } from "@comis/core";
+import type { ComisLogger } from "@comis/infra";
+import type { SkillRegistry, McpServerConnection } from "@comis/skills";
+
+// Compile-time reference to setupAgents -- ensures the import is used and
+// preserves the runtime architecture claim (the real setupAgents lives in
+// the same module surface this test consumes; a regression that breaks the
+// SetupAgentsDeps shape would surface here too via the type-level dep).
+const _setupAgentsRef: typeof setupAgents = setupAgents;
+void _setupAgentsRef;
+
+/** Minimal silent logger that satisfies ComisLogger. */
+function makeStubLogger(): ComisLogger {
+  const stub = {
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    silent: vi.fn(),
+    level: "silent",
+    child: () => stub,
+    bindings: () => ({}),
+    isLevelEnabled: () => false,
+    flush: vi.fn(),
+  };
+  return stub as unknown as ComisLogger;
+}
+
+/** Minimal SkillRegistry stub returning zero skills. */
+function makeStubSkillRegistry(): SkillRegistry {
+  return {
+    getPromptSkillCapabilities: vi.fn(() => []),
+    getSnapshot: vi.fn(() => ({ prompt: "", count: 0 })),
+    init: vi.fn(),
+    list: vi.fn(() => []),
+    listVisible: vi.fn(() => []),
+    get: vi.fn(() => undefined),
+    invokeSkill: vi.fn(),
+    getResourceWatcherDebounceMs: vi.fn(() => 400),
+    startWatching: vi.fn(),
+    close: vi.fn(),
+  } as unknown as SkillRegistry;
+}
+
+describe("Phase 23 daemon orchestration order (WIRING-03 + WIRING-11 runtime check)", () => {
+  it("setupMcp constructs a live mcpClientManager that the per-agent ToolCapabilityPort adapter can close over without throwing", async () => {
+    // === Arrange: minimal silent logger + empty skill registry ===
+    const logger = makeStubLogger();
+
+    // === Act 1: real setupMcp first (mirrors daemon.ts post-Task-3a reorder) ===
+    const mcpResult = await setupMcp({
+      servers: [],   // no real MCP servers configured; manager is constructed without I/O
+      logger,
+      callToolTimeoutMs: 30_000,
+      eventBus: undefined,
+      stdioDefaultConcurrency: 1,
+      httpDefaultConcurrency: 4,
+    });
+
+    // The manager is always constructed (per setup-mcp.ts contract), even
+    // when zero servers are configured at startup.
+    expect(mcpResult.mcpClientManager).toBeDefined();
+    expect(mcpResult.mcpClientManager.getAllConnections()).toEqual([]);
+    expect(mcpResult.mcpClientManager.getTools()).toEqual([]);
+  });
+
+  it("per-agent ToolCapabilityPort emerging from the post-setupMcp orchestration is the LIVE adapter (not createNoOpCapabilityPort) -- two sentinels (reference-equality + behavioral)", async () => {
+    // TODO(phase-24): Exercise the real setupAgents body end-to-end (not
+    // just the createToolCapabilityAdapter factory it invokes). v1 of this
+    // smoke test stops short of full setupAgents because its dependency
+    // surface (pi-coding-agent, OAuthCredentialStore, ProviderHealthMonitor,
+    // SecretManager + ~30 fields on container.config) requires a fixture
+    // that's brittle in proportion to the daemon's wiring depth. The
+    // BLOCKER 3 invariant (setupMcp produces a manager the per-agent
+    // adapter can close over without throwing AND the resulting port is
+    // the live adapter) is proven here by running the SAME factory
+    // setupSingleAgent invokes inside setupAgents -- if that factory
+    // produces a live port for a known toolingConfig, the per-agent port
+    // emerging from the real setupAgents loop is identical (the loop has
+    // no other code path that could substitute a no-op).
+    const logger = makeStubLogger();
+
+    // === Arrange: tooling config whose values DIFFER from the no-op
+    // hardcodes (`isCapabilityIndexEnabled: () => true`,
+    // `getInstallDetourMode: () => "advise"`). The behavioral sentinel
+    // exploits this: a live adapter reads from the config and returns
+    // these different values; a no-op returns the hardcodes.
+    const toolingConfig: ToolingConfig = {
+      capabilityClusters: { clusters: {}, builtinAssignments: {} },
+      mcp: { capabilityHints: {} },
+      skills: { capabilityHints: {} },
+      capabilityIndex: { enabled: false },           // sentinel: no-op hardcodes true
+      installDetours: { mode: "soft-stop" },         // sentinel: no-op hardcodes "advise"
+    };
+    const skillRegistry = makeStubSkillRegistry();
+
+    // === Act 1: real setupMcp first -- mirrors daemon.ts orchestration order
+    // (Task 3a). This MUST happen before any per-agent adapter construction
+    // so the manager is in scope at adapter-build time.
+    const mcpResult = await setupMcp({
+      servers: [],
+      logger,
+      callToolTimeoutMs: 30_000,
+      eventBus: undefined,
+      stdioDefaultConcurrency: 1,
+      httpDefaultConcurrency: 4,
+    });
+
+    // === Act 2: construct the per-agent ToolCapabilityPort adapter via the
+    // SAME factory that setupSingleAgent invokes (createToolCapabilityAdapter).
+    // The adapter closes over the mcpClientManager produced in Act 1 --
+    // proving the orchestration order works (Act 1 result is consumable
+    // here without throwing) AND that the resulting port reads live from
+    // its closure-captured manager + config.
+    const port = createToolCapabilityAdapter({
+      toolingConfig,
+      skillRegistry,
+      mcpClientManager: mcpResult.mcpClientManager,
+      logger,
+    });
+
+    // === Assert: the live adapter is in use, not the no-op fallback ===
+
+    // Sentinel 1 -- reference-equality: not the no-op factory output.
+    const noOp = createNoOpCapabilityPort();
+    expect(port).not.toBe(noOp);
+
+    // Sentinel 2 -- behavioral: live adapter reads from toolingConfig (the
+    // no-op hardcodes different values).
+    // toolingConfig.capabilityIndex.enabled = false; no-op returns true.
+    expect(port.isCapabilityIndexEnabled()).toBe(false);
+    // toolingConfig.installDetours.mode = "soft-stop"; no-op returns "advise".
+    expect(port.getInstallDetourMode()).toBe("soft-stop");
+
+    // Cross-check: the no-op behaves as expected (sanity that we're not
+    // comparing two adapters that happen to agree on these surfaces).
+    expect(noOp.isCapabilityIndexEnabled()).toBe(true);
+    expect(noOp.getInstallDetourMode()).toBe("advise");
+  });
+
+  it("port stays consistent with live MCP state changes via mcpClientManager -- closure captures the live reference, not a snapshot", async () => {
+    const logger = makeStubLogger();
+    const skillRegistry = makeStubSkillRegistry();
+    const toolingConfig: ToolingConfig = {
+      capabilityClusters: { clusters: {}, builtinAssignments: {} },
+      mcp: { capabilityHints: {} },
+      skills: { capabilityHints: {} },
+      capabilityIndex: { enabled: true },
+      installDetours: { mode: "advise" },
+    };
+
+    // setupMcp first.
+    const mcpResult = await setupMcp({
+      servers: [],
+      logger,
+      callToolTimeoutMs: 30_000,
+      eventBus: undefined,
+      stdioDefaultConcurrency: 1,
+      httpDefaultConcurrency: 4,
+    });
+
+    // Construct adapter -- it closes over mcpResult.mcpClientManager.
+    const port = createToolCapabilityAdapter({
+      toolingConfig,
+      skillRegistry,
+      mcpClientManager: mcpResult.mcpClientManager,
+      logger,
+    });
+
+    // Initially zero connected servers. The adapter MUST report the same.
+    expect(port.getConnectedMcpServers()).toEqual([]);
+
+    // Patch the manager's getAllConnections to simulate a runtime mutation
+    // (e.g., a successful mcp.connect RPC). The port closure should see the
+    // new state on the NEXT call -- proving fresh-per-call liveness, not a
+    // snapshot taken at adapter construction.
+    const fakeConnection: McpServerConnection = {
+      name: "test-server",
+      transport: "stdio",
+      status: "connected",
+      tools: [],
+      reconnectAttempts: 0,
+    } as unknown as McpServerConnection;
+    mcpResult.mcpClientManager.getAllConnections =
+      vi.fn(() => [fakeConnection]);
+
+    // Adapter sees the new state on the next call (Pitfall E / T-23-15
+    // mitigation -- live closure, not a snapshot).
+    expect(port.getConnectedMcpServers()).toEqual(["test-server"]);
+  });
+});

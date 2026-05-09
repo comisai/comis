@@ -152,22 +152,6 @@ vi.mock("@comis/core", () => ({
   // in @comis/core/session-key; this test only needs a deterministic string.
   formatSessionKey: (k: { tenantId: string; channelId: string; userId: string }) =>
     `${k.tenantId}:${k.channelId}:${k.userId}`,
-  // Plan 22-02 — INSTALL-DTR-13. setup-tools.ts now passes a no-op
-  // ToolCapabilityPort to createExecTool / createProcessTool (Phase 22 interim
-  // until Phase 23 lands the live adapter). Mock returns an empty-defaults
-  // shape; the @comis/skills mock above accepts any deps object so test
-  // assertions don't read the port's methods.
-  createNoOpCapabilityPort: () => ({
-    isCapabilityIndexEnabled: () => true,
-    getInstallDetourMode: () => "advise",
-    getBuiltinCluster: () => undefined,
-    getClusterConfig: () => undefined,
-    getMcpServerHint: () => undefined,
-    getSkillHint: () => undefined,
-    getPackageAliasMap: () => new Map(),
-    getConnectedMcpServers: () => [],
-    getPromptSkillCapabilities: () => [],
-  }),
 }));
 
 vi.mock("@comis/agent", () => ({
@@ -274,6 +258,21 @@ function createMinimalDeps(overrides: Partial<ToolsDeps> = {}): ToolsDeps {
     } as any,
     mcpClientManager: createDefaultMockMcpClientManager() as any,
     sessionTrackerRegistry: createMockSessionTrackerRegistry() as any,
+    // Phase 23 (WIRING-11) -- per-agent ToolCapabilityPort resolver.
+    // Test stub returns the shape the exec/process tool factories rely on
+    // (empty-defaults). Plan 23-02 replaced the prior createNoOpCapabilityPort
+    // mock; this mirrors the new ToolsDeps interface.
+    getCapabilityPortForAgent: vi.fn(() => ({
+      isCapabilityIndexEnabled: () => true,
+      getInstallDetourMode: () => "advise" as const,
+      getBuiltinCluster: () => undefined,
+      getClusterConfig: () => undefined,
+      getMcpServerHint: () => undefined,
+      getSkillHint: () => undefined,
+      getPackageAliasMap: () => new Map<string, string>(),
+      getConnectedMcpServers: () => [],
+      getPromptSkillCapabilities: () => [],
+    })) as any,
     ...overrides,
   };
 }
