@@ -1,0 +1,109 @@
+# Comis Test Configuration (Phase 24 Tooling Fixtures - soft-stop mode)
+#
+# Port 8507 -- unique to Phase 24 soft-stop-mode integration tests
+# (8505 taken by config.test-sessions-lifecycle.yaml; 8506 reserved for the
+# advise-mode sibling config.test-tooling-fixtures.yaml).
+# tooling.installDetours.mode is "soft-stop" (fail-closed): install commands
+# overlapping declared capability clusters are refused pre-spawn.
+# Soft-stop test deliberately omits installDetours.approvalGate to exercise
+# the fail-closed path (INSTALL-DTR-19 success criterion 2 / Plan 22 contract).
+# Skills.discoveryPaths references the Phase 24 fixture dir created by Plan 24-01.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  default:
+    name: "TestAgent"
+    model: claude-opus-4-6
+    thinkingLevel: "off"
+    provider: anthropic
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+    skills:
+      discoveryPaths:
+        - "${HOME}/Projects/comisai/comis/packages/agent/src/__tests__/fixtures/phase-8-skill-variants"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8507
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-tooling-soft-stop"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-tooling-soft-stop.db"
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic
+
+tooling:
+  capabilityClusters:
+    clusters:
+      data-fetching-financial:
+        label: "Data fetching - financial / market"
+        priority: 10
+        preferOverInstalls: true
+  mcp:
+    capabilityHints:
+      finance-data:
+        cluster: data-fetching-financial
+        description: "Market prices, history, fundamentals, and financial lookup."
+        replacesPackages:
+          - market-data-lib
+          - finance-data-client
+          - price-history-sdk
+  skills:
+    capabilityHints:
+      operator-config-skill:
+        cluster: data-fetching-financial
+        description: "Operator-driven hint for fixture A."
+        replacesPackages:
+          - operator-replaceable-pkg
+  installDetours:
+    mode: soft-stop
+  capabilityIndex:
+    enabled: true
