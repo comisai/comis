@@ -292,9 +292,10 @@ vi.mock("node:fs", async (importOriginal) => {
 
 import { createPiExecutor, createBeforeToolCallGuard, mergeSessionStats, clearSessionToolSchemaSnapshotHash, _getOrCreateSessionLatchesForTest, _clearSessionLatchesForTest, type PiExecutorDeps } from "./pi-executor.js";
 // Phase 20: PiExecutorDeps now requires toolCapabilityPort. Tests use the
-// test-only stub (NOT the production no-op factory createNoOpCapabilityPort
-// from @comis/core — the architecture-grep boundary in Plan 17-04 forbids
-// production-stub crossover both ways).
+// test-only stub from @comis/core's __test-helpers/ directory (NOT the
+// production no-op factory re-exported from @comis/core — the architecture-
+// grep boundary in Plan 17-04 + Plan 23-03 forbids production-stub crossover
+// both ways).
 import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
 import { repairOrphanedMessages } from "../session/orphaned-message-repair.js";
 import { createPiEventBridge } from "../bridge/pi-event-bridge.js";

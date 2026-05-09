@@ -1604,6 +1604,24 @@ Plugin system configuration.
 
 </AccordionGroup>
 
+## tooling
+
+The tool-first capability layer (v1.1+). Operator-only — agents cannot self-configure capability routing or detour policy. The entire `tooling` tree is added to `IMMUTABLE_CONFIG_PREFIXES` and rejected by `config.patch` from agent-callable surfaces.
+
+<Warning>
+  **Restart required.** Changes to `tooling.capabilityIndex.enabled` and `tooling.installDetours.mode` apply only after the daemon restarts. The `capabilityIndex.enabled` toggle selects between two cached system-prompt shapes (one-line residual vs flat tool dump); in-process reload is not supported in v1.1. Operator config edits go through the standard `config.patch` / `config.apply` path which validates → writes → 200 ms delayed `SIGUSR1` → process restart.
+</Warning>
+
+Top-level fields:
+
+- `capabilityClusters` — cluster definitions and builtin tool→cluster assignments. Operator-defined clusters merge key-by-key with the three reserved IDs (`external-integrations`, `prompt-skills`, `other-tools`); operator values win per key.
+- `mcp.capabilityHints` — operator hints for connected MCP servers (record keyed by server name; each entry is `{ cluster, description, replacesPackages }`).
+- `skills.capabilityHints` — operator hints for prompt skills (record keyed by skill name or skill key; each entry is `{ cluster, description?, replacesPackages }`).
+- `capabilityIndex.enabled` — boolean toggle for the per-turn `## Capabilities` block (default `true`).
+- `installDetours.mode` — `"observe"` / `"advise"` / `"soft-stop"` (default `"advise"`). Controls how the install-detour validator acts when an exec command would `pip install` / `npm install` a package that overlaps with an already-connected MCP server or skill.
+
+Operator typos in any cluster reference (under `capabilityClusters.builtinAssignments[*]`, `mcp.capabilityHints[*].cluster`, or `skills.capabilityHints[*].cluster`) emit a Pino WARN at daemon startup with `errorKind: "config"`, an operator-actionable hint, and the offending `{ configPath, unresolvedClusterId }` payload — the daemon does NOT crash; unresolved cluster references fall back to `external-integrations` (for MCP hints) or `prompt-skills` (for skill hints). Check `pm2 logs comis` or `journalctl -u comis` after restart to surface typos.
+
 ## Streaming & Messaging
 
 <AccordionGroup>
