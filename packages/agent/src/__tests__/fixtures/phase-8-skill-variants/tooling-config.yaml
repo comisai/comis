@@ -1,0 +1,30 @@
+# Phase 24 fixture — operator config for the three skill-variant fixtures.
+# Shape mirrors design §4.2 (ToolingConfigSchema) and §9 (operator example).
+# See ./README.md for the role each fixture plays.
+tooling:
+  capabilityClusters:
+    clusters:
+      data-fetching-financial:
+        label: "Data fetching - financial / market"
+        priority: 10
+        preferOverInstalls: true
+  mcp:
+    capabilityHints:
+      finance-data:
+        cluster: data-fetching-financial
+        description: "Market prices, history, fundamentals, and financial lookup."
+        replacesPackages:
+          - market-data-lib
+          - finance-data-client
+          - price-history-sdk
+  skills:
+    capabilityHints:
+      operator-config-skill:
+        cluster: data-fetching-financial
+        description: "Operator-driven hint for fixture A."
+        replacesPackages:
+          - operator-replaceable-pkg
+  installDetours:
+    mode: advise
+  capabilityIndex:
+    enabled: true
