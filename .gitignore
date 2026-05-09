@@ -41,6 +41,7 @@ website/.astro/
 
 # Integration test artifacts
 test/.test-results.json
+test/.test-behavioral-metrics.json
 test/.test-daemon.log
 test/config/*.last-good.yaml
 # Nested config-git repo created by the test daemon's git-manager
