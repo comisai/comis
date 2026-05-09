@@ -1108,13 +1108,16 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // Phase 23 (WIRING-11) -- per-agent ToolCapabilityPort resolver. Falls
   // back to the default agent's port for unknown agentIds (mirrors the
   // setup-tools.ts:327 `agents[agentId] ?? agents[defaultAgentId]`
-  // convention). Throws if neither exists, which would indicate a daemon
-  // initialization order bug surfaced as a clear invariant violation.
+  // convention). Throws if neither exists -- this fires both for an
+  // initialization-order bug AND for runtime hot-remove paths (agent +
+  // default both removed; stale cron/graph/heartbeat caller carrying a
+  // since-removed agentId). The message stays scenario-agnostic so the
+  // operator can diagnose either cause.
   const getCapabilityPortForAgent = (agentId: string): ToolCapabilityPort => {
     const port = toolCapabilityPorts.get(agentId) ?? toolCapabilityPorts.get(defaultAgentId);
     if (!port) {
       throw new Error(
-        `No ToolCapabilityPort registered for agent '${agentId}' and no default agent fallback available -- daemon initialization invariant violated.`,
+        `No ToolCapabilityPort registered for agent '${agentId}' and no default agent ('${defaultAgentId}') fallback available -- the agent may have been removed or the daemon failed to initialize.`,
       );
     }
     return port;
