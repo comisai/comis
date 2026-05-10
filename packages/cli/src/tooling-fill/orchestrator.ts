@@ -336,6 +336,17 @@ export async function runToolingFill(
   let agentFailureFatal = false;
   let agentFailureMessage = "";
 
+  // Test-only fault injector: when the test-fixture env var is set, use its
+  // value as the literal agent response instead of POSTing to /api/chat. Lets
+  // daemon-bound integration tests exercise the full state machine
+  // deterministically without booting an LLM provider. AGENTS.md §2.2
+  // explicitly lists "test fault injectors" as an exception to the
+  // no-runtime-env rule. Undocumented in user-facing CLI help; production
+  // operators have no documented reason to set it (T-26-21 — theoretical
+  // threat, mitigated by the grep-detectable env-var name on the line below).
+  // eslint-disable-next-line no-restricted-syntax -- test fault injector (AGENTS.md §2.2 exception)
+  const testAgentResponse = process.env["COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE"];
+
   for (const entry of entries) {
     const prompt = buildFillPrompt({
       kind: entry.kind,
@@ -350,13 +361,16 @@ export async function runToolingFill(
           : undefined,
     });
 
-    const callRes = await callAgent({
-      port,
-      token,
-      prompt,
-      agentId: opts.agentId,
-      timeoutMs: 30_000,
-    });
+    const callRes =
+      testAgentResponse !== undefined
+        ? ok({ response: testAgentResponse })
+        : await callAgent({
+            port,
+            token,
+            prompt,
+            agentId: opts.agentId,
+            timeoutMs: 30_000,
+          });
     if (!callRes.ok) {
       // Single-hint: bail with exit 1 immediately.
       // --all: record skip and continue to next hint (TOOLFILL-10
