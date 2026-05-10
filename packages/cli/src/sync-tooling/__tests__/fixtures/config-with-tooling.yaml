@@ -1,0 +1,43 @@
+# Fixture: config with operator-customized tooling block.
+# Used by append-only preservation + comment-preservation tests.
+
+integrations:
+  mcp:
+    servers:
+      - name: yfinance
+        transport: stdio
+        command: npx
+        args:
+          - -y
+          - yfinance-mcp-ts
+
+agents:
+  default:
+    skills:
+      discoveryPaths:
+        - ./skills
+
+tooling:
+  capabilityClusters:
+    clusters:
+      data-fetching-financial:
+        label: "Data fetching - financial / market"
+        priority: 10
+        preferOverInstalls: true
+  mcp:
+    capabilityHints:
+      placeholder-mcp:
+        cluster: external-integrations
+        description: "Placeholder so the operator-note attaches to yfinance"
+        replacesPackages: []
+      # operator note: curated package list below
+      yfinance:
+        cluster: data-fetching-financial
+        description: "Yahoo Finance market prices, history, fundamentals"
+        replacesPackages:
+          - yfinance
+          - yahoo-finance2
+  installDetours:
+    mode: advise
+  capabilityIndex:
+    enabled: true
