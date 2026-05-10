@@ -1,0 +1,141 @@
+# Comis Test Configuration (Phase 26 — tooling-fill CLI integration test)
+#
+# Port 8526 — unique to test/integration/cli-tooling-fill.test.ts. Verified
+# next-free against the existing 60+ fixtures (range 4766 + 8447–8740).
+#
+# Contains DELIBERATELY STUB-VALUED hints under both `tooling.mcp.capabilityHints`
+# and `tooling.skills.capabilityHints` so `comis config tooling-fill` (with or
+# without `--all`) has work to do:
+#
+#   - tooling.mcp.capabilityHints.yfinance      — description: TODO, replacesPackages: []
+#   - tooling.skills.capabilityHints.comis-capability-skill
+#                                               — description: TODO, replacesPackages: []
+#
+# The yfinance MCP entry under `integrations.mcp.servers` uses `enabled: false`
+# (NOT `disabled: true` — the schema field is `enabled` per
+# packages/core/src/config/schema-integrations.ts). The daemon will not attempt
+# to spawn it because `enabled: false` skips the connect path in setup-mcp.ts.
+#
+# Path portability: the test's `beforeEach` substitutes `${COMIS_REPO_ROOT}` at
+# copy-time so both the CLI's `loadConfigFile` (which does NOT expand `${VAR}`
+# without a getSecret callback) and the daemon's bootstrap (which does) see an
+# identical absolute path. Mirrors Phase 25-04's fixture pattern.
+#
+# Skill discovery target: `packages/agent/src/__tests__/fixtures/phase-8-skill-variants`
+# — three SKILL.md fixtures with distinct cluster behaviours. After tooling-fill
+# materializes hints, the daemon's preamble assembly bucketizes them into 2+
+# clusters (`data-fetching-financial` from the manifest skill + `prompt-skills`
+# for the other two), satisfying SPEC AC-13's `clusterCount >= 2` assertion
+# without requiring a connected MCP.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  default:
+    name: "TestAgent"
+    model: claude-opus-4-6
+    thinkingLevel: "off"
+    provider: anthropic
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+    skills:
+      discoveryPaths:
+        - "${COMIS_REPO_ROOT}/packages/agent/src/__tests__/fixtures/phase-8-skill-variants"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8526
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-tooling-fill"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-tooling-fill.db"
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic
+
+integrations:
+  mcp:
+    servers:
+      # Disabled stub MCP — provides one entry under integrations.mcp.servers
+      # so tooling-fill has a real MCP name to fill a hint for. The daemon
+      # will not attempt to spawn it because `enabled: false` (schema field
+      # is `enabled`, NOT `disabled` — Plan 25-04 deviation #2).
+      - name: yfinance
+        transport: stdio
+        command: echo
+        args: ["fake-yfinance-stub"]
+        enabled: false
+
+tooling:
+  capabilityClusters:
+    clusters:
+      external-integrations:
+        label: "External integrations"
+        priority: 5
+        preferOverInstalls: true
+  mcp:
+    capabilityHints:
+      yfinance:
+        cluster: external-integrations
+        # Stub-valued — tooling-fill replaces this with the LLM-suggested one-liner.
+        description: TODO
+        # TODO: list packages this MCP/skill replaces
+        replacesPackages: []
+  skills:
+    capabilityHints:
+      comis-capability-skill:
+        cluster: prompt-skills
+        # Stub-valued — tooling-fill replaces this with the LLM-suggested one-liner.
+        description: TODO
+        # TODO: list packages this MCP/skill replaces
+        replacesPackages: []
+  installDetours:
+    mode: advise
+  capabilityIndex:
+    enabled: true
