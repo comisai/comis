@@ -127,3 +127,71 @@ export function writeBackup(
 
   return ok({ backupPath });
 }
+
+/**
+ * Prune `config.pre-<prefix>-*.yaml` backups under `${homeDir}/.comis/`,
+ * keeping the `keep` most recent. Default keep=5.
+ *
+ * Best-effort: any I/O error is swallowed (returns 0) — backup retention
+ * is housekeeping, not a correctness requirement. Callers should invoke
+ * after a successful mutation, not before — pruning a backup the operator
+ * may need is far worse than retaining a few extra files.
+ *
+ * Returns the number of files actually deleted, for telemetry / summary
+ * lines.
+ *
+ * @param homeDir - Operator's home directory; pruning scoped to `${homeDir}/.comis/`.
+ * @param prefix - Backup filename prefix to match (e.g. "sync-tooling" or "tooling-fill").
+ * @param keep - Most recent N to retain (default 5).
+ */
+export function pruneOldBackups(
+  homeDir: string,
+  prefix: string,
+  keep: number = 5,
+): { deleted: number } {
+  const dirPathRes = tryCatch(() => safePath(homeDir, ".comis"));
+  if (!dirPathRes.ok) return { deleted: 0 };
+  const dirPath = dirPathRes.value;
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return { deleted: 0 };
+  }
+
+  // Match the D-10 pattern with a prefix-specific anchor. Anchor on the
+  // literal prefix to avoid pruning Phase 25 backups when called for
+  // Phase 26 (and vice versa).
+  const re = new RegExp(`^config\\.pre-${prefix}-.+\\.yaml$`);
+  const candidates = entries
+    .filter((e) => e.isFile() && re.test(e.name))
+    .map((e) => {
+      const fullPathRes = tryCatch(() => safePath(homeDir, ".comis", e.name));
+      if (!fullPathRes.ok) return null;
+      let mtimeMs = 0;
+      try {
+        mtimeMs = fs.statSync(fullPathRes.value).mtimeMs;
+      } catch {
+        return null;
+      }
+      return { path: fullPathRes.value, mtimeMs };
+    })
+    .filter((x): x is { path: string; mtimeMs: number } => x !== null);
+
+  if (candidates.length <= keep) return { deleted: 0 };
+
+  // Sort newest-first; drop the first `keep`; delete the rest.
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const toDelete = candidates.slice(keep);
+  let deleted = 0;
+  for (const { path } of toDelete) {
+    try {
+      fs.unlinkSync(path);
+      deleted++;
+    } catch {
+      // best-effort
+    }
+  }
+  return { deleted };
+}

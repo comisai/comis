@@ -31,8 +31,16 @@
  * @module
  */
 
-import type { Document } from "yaml";
+import { isMap, isPair, isScalar, type Document } from "yaml";
 import { ok, err, type Result } from "@comis/shared";
+
+/**
+ * Phase 25's generate.ts emits this commentBefore on the `replacesPackages`
+ * Pair when materializing a stub. Once tooling-fill populates the field
+ * with real packages, the TODO is stale — strip it so the YAML stays clean.
+ * Keep operator-authored comments (anything else) intact.
+ */
+const PHASE_25_TODO_COMMENT = " TODO: list npm/pip packages this MCP replaces";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -137,6 +145,29 @@ export function setHintFields(
     [...hintPath, "replacesPackages"],
     doc.createNode([...fields.replacesPackages]),
   );
+
+  // Phase 26.1: strip the stale `# TODO: list npm/pip packages this MCP replaces`
+  // commentBefore that Phase 25 generate.ts emits as a stub prompt. Once the
+  // operator (or LLM) has populated replacesPackages with real values, the
+  // TODO is misleading and clutters the YAML. We preserve any other
+  // commentBefore (operator-authored notes), only matching the literal Phase
+  // 25 stub.
+  if (fields.replacesPackages.length > 0) {
+    const hintMapNode = doc.getIn(hintPath, true);
+    if (isMap(hintMapNode)) {
+      for (const p of hintMapNode.items) {
+        if (!isPair(p)) continue;
+        if (!isScalar(p.key)) continue;
+        if (p.key.value !== "replacesPackages") continue;
+        // Strip ONLY the Phase 25 stub. Operator-authored commentBefore on
+        // the same key is left alone.
+        if (p.key.commentBefore === PHASE_25_TODO_COMMENT) {
+          delete p.key.commentBefore;
+        }
+        break;
+      }
+    }
+  }
 
   return ok(undefined);
 }

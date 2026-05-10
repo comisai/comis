@@ -40,6 +40,7 @@ export {
 export {
   writeBackup,
   buildBackupFilename,
+  pruneOldBackups,
   type BackupError,
 } from "./backup.js";
 

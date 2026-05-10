@@ -35,6 +35,10 @@ vi.mock("./supervisor.js", () => ({
   detectSupervisor: vi.fn(),
   stopDaemon: vi.fn(),
   startDaemon: vi.fn(),
+  // Phase 26.1 — verify-alive poll. Default mock returns ok(undefined)
+  // (daemon came up); per-test overrides can return err for the
+  // boot-failure scenario. Imported into the test handle below.
+  waitForDaemonAlive: vi.fn(),
   MANUAL_RECIPE_HINT:
     "Could not auto-detect daemon supervisor (none of systemctl, pm2, pgrep matched). Run manually: systemctl stop comis && <edit config.yaml> && systemctl start comis. Or pass --restart-cmd \"<full stop+start command>\" to override.",
 }));
@@ -65,7 +69,7 @@ vi.mock("@comis/core", async (importOriginal) => {
 
 // Dynamic imports after mocks
 const { callAgent } = await import("./agent-call.js");
-const { detectSupervisor, stopDaemon, startDaemon } = await import(
+const { detectSupervisor, stopDaemon, startDaemon, waitForDaemonAlive } = await import(
   "./supervisor.js"
 );
 const { atomicWriteFile, writeBackup, isDaemonRunning } = await import(
@@ -240,6 +244,7 @@ beforeEach(() => {
   vi.mocked(detectSupervisor).mockReset();
   vi.mocked(stopDaemon).mockReset();
   vi.mocked(startDaemon).mockReset();
+  vi.mocked(waitForDaemonAlive).mockReset();
   vi.mocked(atomicWriteFile).mockReset();
   vi.mocked(writeBackup).mockReset();
   vi.mocked(isDaemonRunning).mockReset();
@@ -251,6 +256,7 @@ beforeEach(() => {
   vi.mocked(detectSupervisor).mockResolvedValue({ kind: "systemd" });
   vi.mocked(stopDaemon).mockResolvedValue(ok(undefined));
   vi.mocked(startDaemon).mockResolvedValue(ok(undefined));
+  vi.mocked(waitForDaemonAlive).mockResolvedValue(ok(undefined));
   vi.mocked(writeBackup).mockReturnValue(
     ok({ backupPath: "/tmp/backup.yaml" }),
   );

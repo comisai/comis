@@ -238,3 +238,50 @@ export async function startDaemon(
       });
   }
 }
+
+/**
+ * Poll `livenessProbe` until it returns true, or timeout elapses.
+ *
+ * `systemctl start` (and `pm2 start`, and most --restart-cmd shapes) exit 0
+ * once the unit is *queued*, not once the daemon has actually finished
+ * booting. If the daemon then crashes during boot — e.g. config file owned
+ * by the wrong user, or invalid YAML — the orchestrator's startDaemon Result
+ * is ok but the daemon is dead. This helper closes that gap by polling the
+ * actual liveness probe (the same one used pre-LLM-call) until it succeeds
+ * or we give up.
+ *
+ * Phase 26.1 — added after the VPS test surfaced the silent-failure mode.
+ *
+ * @param livenessProbe - Async predicate that returns true iff the daemon is alive.
+ *                        In production this wraps `isDaemonRunning()` from daemon-guard.ts.
+ * @param totalTimeoutMs - Total wait budget (default 15s — daemon boot averages 4s).
+ * @param pollIntervalMs - Interval between probes (default 500ms).
+ */
+export async function waitForDaemonAlive(
+  livenessProbe: () => Promise<boolean>,
+  totalTimeoutMs: number = 15_000,
+  pollIntervalMs: number = 500,
+): Promise<Result<void, SupervisorError>> {
+  const deadline = Date.now() + totalTimeoutMs;
+  // First check is immediate — daemon may already be up.
+  while (Date.now() < deadline) {
+    let alive = false;
+    try {
+      alive = await livenessProbe();
+    } catch {
+      // Probe threw (network glitch, etc) — treat as not-alive and retry.
+    }
+    if (alive) return ok(undefined);
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  // One last probe after the loop, in case the timing aligned awkwardly.
+  try {
+    if (await livenessProbe()) return ok(undefined);
+  } catch {
+    /* intentional */
+  }
+  return err({
+    kind: "timeout",
+    message: `Daemon failed to come up within ${totalTimeoutMs}ms after start. Check 'systemctl status comis' / 'journalctl -u comis -n 50' for boot errors.`,
+  });
+}

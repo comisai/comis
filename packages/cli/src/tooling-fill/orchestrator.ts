@@ -68,6 +68,7 @@ import {
   detectSupervisor,
   stopDaemon,
   startDaemon,
+  waitForDaemonAlive,
   MANUAL_RECIPE_HINT,
   type Supervisor,
 } from "./supervisor.js";
@@ -82,6 +83,7 @@ import { setHintFields, type FillKind } from "./apply-hint.js";
 import {
   atomicWriteFile,
   writeBackup,
+  pruneOldBackups,
   isDaemonRunning,
 } from "../sync-tooling/index.js";
 
@@ -570,17 +572,36 @@ export async function runToolingFill(
     };
   }
 
-  // ---- 10. startDaemon (best-effort warn) ------------------------------
+  // ---- 10. startDaemon + verify-alive (Phase 26.1) ---------------------
+  // `systemctl start` exits 0 once the unit is queued, not once the daemon
+  // has finished booting. If the daemon then crashes during boot (e.g.
+  // misowned config, invalid YAML), the orchestrator was previously a
+  // false-positive on success. Phase 26.1: poll isDaemonRunning() for up
+  // to 15s after the start command; if the daemon doesn't come up,
+  // restore the backup and try again — never leave the operator with a
+  // dead daemon and a "success" message.
   if (willRestart) {
     const startRes = await startDaemon(supervisor);
     if (!startRes.ok) {
-      // File is good; surface the restart error in summary but exit 0.
       const filledNames = filled.map((f) => f.name).join(", ");
       const droppedReport = renderDroppedReport(filled);
       const skippedReport = renderSkippedReport(skipped);
       return {
         exitCode: 0,
         summary: `Filled ${filled.length} hint(s): ${filledNames}.${droppedReport}${skippedReport} Backup: ${backupPath}. WARNING: daemon failed to restart: ${startRes.error.message}`,
+      };
+    }
+    // Liveness verification: poll until the gateway answers /api/system.ping
+    // or we hit the timeout.
+    const aliveRes = await waitForDaemonAlive(isDaemonRunning);
+    if (!aliveRes.ok) {
+      // Daemon didn't come up. Try to restore the backup and restart.
+      // Whether or not that succeeds, we exit non-zero.
+      const rb = await rollback(opts.configPath, rawYaml, willRestart, supervisor);
+      const filledNames = filled.map((f) => f.name).join(", ");
+      return {
+        exitCode: 2,
+        summary: `Daemon failed to come up after start (${aliveRes.error.message}). Filled hints (${filledNames}) were rolled back to ${backupPath}. ${rolledBackSuffix(backupPath, opts.configPath, rb)}`,
       };
     }
   }
@@ -598,12 +619,18 @@ export async function runToolingFill(
     };
   }
 
-  // ---- 12. Success exit ------------------------------------------------
+  // ---- 12. Backup retention (Phase 26.1) -------------------------------
+  // Keep the 5 most recent tooling-fill backups, drop older. Best-effort —
+  // never failing the success path on a housekeeping miss.
+  const pruneRes = pruneOldBackups(opts.homeDir, "tooling-fill", 5);
+  const pruneSuffix = pruneRes.deleted > 0 ? ` (pruned ${pruneRes.deleted} older backup(s))` : "";
+
+  // ---- 13. Success exit ------------------------------------------------
   const filledNames = filled.map((f) => f.name).join(", ");
   const droppedReport = renderDroppedReport(filled);
   return {
     exitCode: 0,
-    summary: `Filled ${filled.length} hint(s): ${filledNames}.${droppedReport} Backup: ${backupPath}.`,
+    summary: `Filled ${filled.length} hint(s): ${filledNames}.${droppedReport} Backup: ${backupPath}.${pruneSuffix}`,
   };
 }
 

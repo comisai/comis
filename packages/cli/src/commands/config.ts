@@ -29,6 +29,7 @@ import {
   renderInspectHuman,
   renderInspectJson,
   writeBackup,
+  pruneOldBackups,
   type InspectPayload,
 } from "../sync-tooling/index.js";
 import {
@@ -595,6 +596,15 @@ export function registerConfigCommand(program: Command): void {
           warn(
             `⚠ overwrote ${configPath} — entire tooling: block regenerated. Backup: ${backup.value.backupPath}`,
           );
+        }
+
+        // Phase 26.1 housekeeping: keep the 5 most recent sync-tooling
+        // backups under ~/.comis/, drop older. Best-effort — backup
+        // pruning is never load-bearing, and the freshly-written backup
+        // counts toward the keep set.
+        const pruneRes = pruneOldBackups(homeDir, "sync-tooling", 5);
+        if (pruneRes.deleted > 0) {
+          info(`(pruned ${pruneRes.deleted} older sync-tooling backup(s))`);
         }
 
         process.exit(0);
