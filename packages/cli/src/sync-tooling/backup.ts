@@ -5,8 +5,13 @@
  * Writes a byte-equal copy of the active config under `~/.comis/` with
  * a timestamped filename matching the D-10 pattern:
  *
- *   config.pre-sync-tooling-<ISO-with-ms>-<6-hex>.yaml
+ *   config.pre-<prefix>-<ISO-with-ms>-<6-hex>.yaml
  *   e.g. config.pre-sync-tooling-2026-05-10T12-34-56.789-a3f2c1.yaml
+ *        config.pre-tooling-fill-2026-05-10T12-34-56.789-a3f2c1.yaml
+ *
+ * The `prefix` defaults to `"sync-tooling"` for back-compat with Phase 25
+ * callers; Phase 26 (`comis config tooling-fill`) passes `"tooling-fill"`
+ * to land its backups beside Phase 25's.
  *
  * The 6-char hex suffix is `crypto.randomBytes(3).toString('hex')`,
  * not `Math.random` — collisions in the same millisecond are
@@ -38,24 +43,27 @@ export type BackupError =
   | { code: "BACKUP_WRITE_FAILED"; path: string; cause: string };
 
 /**
- * Build a sync-tooling backup filename per D-10.
+ * Build a backup filename per D-10 with a customizable command prefix.
  *
  * The optional parameters exist for testability — production callers
- * pass no args and get fresh `Date` + `randomBytes` each call.
+ * pass no args (Phase 25 sync-tooling) or only `prefix` (Phase 26
+ * tooling-fill) and get a fresh `Date` + `randomBytes` each call.
  *
  * @param now - Override the timestamp (default: `new Date()`).
  * @param rng - Override the 6-char hex suffix generator (default: `randomBytes(3).toString('hex')`).
+ * @param prefix - Command prefix for the filename (default: `"sync-tooling"` for back-compat).
  */
 export function buildBackupFilename(
   now: Date = new Date(),
   rng: () => string = () => randomBytes(3).toString("hex"),
+  prefix: string = "sync-tooling",
 ): string {
   // toISOString() → "2026-05-10T12:34:56.789Z"
   // Replace ':' → '-' (not filesystem-safe on all platforms) and drop trailing 'Z'.
   const iso = now.toISOString();
   const fsSafe = iso.replace(/:/g, "-").replace(/Z$/, "");
   const suffix = rng();
-  return `config.pre-sync-tooling-${fsSafe}-${suffix}.yaml`;
+  return `config.pre-${prefix}-${fsSafe}-${suffix}.yaml`;
 }
 
 /**
@@ -70,10 +78,12 @@ export function buildBackupFilename(
  *
  * @param configPath - Absolute path of the source config to back up.
  * @param homeDir - Operator's home directory; backup goes under `${homeDir}/.comis/`.
+ * @param prefix - Command prefix for the backup filename (default: `"sync-tooling"` for back-compat).
  */
 export function writeBackup(
   configPath: string,
   homeDir: string,
+  prefix: string = "sync-tooling",
 ): Result<{ backupPath: string }, BackupError> {
   // Step 1: read the source as raw bytes (Buffer, not utf-8 decoded).
   // We intentionally preserve byte-for-byte equality so tests can assert
@@ -93,7 +103,7 @@ export function writeBackup(
   // safePath throws PathTraversalError on null bytes / traversal escapes;
   // we wrap with tryCatch and surface as BACKUP_WRITE_FAILED so the caller
   // sees a single failure mode for "could not produce a backup."
-  const filename = buildBackupFilename();
+  const filename = buildBackupFilename(new Date(), undefined, prefix);
   const safePathResult = tryCatch(() => safePath(homeDir, ".comis", filename));
   if (!safePathResult.ok) {
     const cause =

@@ -183,4 +183,34 @@ describe("writeBackup", () => {
       expect(filename).toMatch(D10_REGEX);
     }
   });
+
+  // Test 9 — buildBackupFilename with custom prefix (Phase 26 / TOOLFILL-9)
+  it("buildBackupFilename with custom prefix uses tooling-fill literal", () => {
+    const filename = buildBackupFilename(
+      new Date("2026-05-10T12:34:56.789Z"),
+      () => "a3f2c1",
+      "tooling-fill",
+    );
+    expect(filename).toBe(
+      "config.pre-tooling-fill-2026-05-10T12-34-56.789-a3f2c1.yaml",
+    );
+  });
+
+  // Test 10 — writeBackup with prefix='tooling-fill' writes the renamed file
+  // Regression-fence: the literal "config.pre-tooling-fill-" prefix below
+  // must appear in the basename — anchors the Phase 26 backup-naming D-10
+  // contract. Both the regex and the literal startsWith check guard against
+  // accidental drift back to "config.pre-sync-tooling-".
+  it("writeBackup with prefix='tooling-fill' writes the renamed file", () => {
+    const result = writeBackup(configPath, homeDir, "tooling-fill");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const basename = result.value.backupPath.slice(configDir.length + 1);
+      expect(basename.startsWith("config.pre-tooling-fill-")).toBe(true);
+      expect(basename).toMatch(/^config\.pre-tooling-fill-.*\.yaml$/);
+      expect(fs.existsSync(result.value.backupPath)).toBe(true);
+      const mode = fs.statSync(result.value.backupPath).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
+  });
 });
