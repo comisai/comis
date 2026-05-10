@@ -1,0 +1,105 @@
+# Comis Test Configuration (Phase 25 — sync-tooling CLI integration test)
+#
+# Port 8525 — unique to test/integration/cli-sync-tooling.test.ts.
+# Intentionally has NO `tooling:` block — the integration test runs
+# `comis config sync-tooling --write` against this fixture and asserts
+# the daemon boots cleanly with the synthesized block (SPEC AC-10).
+#
+# Path portability: the test file's beforeEach substitutes ${COMIS_REPO_ROOT}
+# at copy-time so both the CLI (which does NOT expand ${VAR} via loadConfigFile
+# without a getSecret callback) and the daemon (which does) see an identical
+# absolute path. This sidesteps the asymmetry between the two read paths.
+#
+# Skill discovery target: packages/agent/src/__tests__/fixtures/phase-8-skill-variants
+# — this directory ships three SKILL.md fixtures with distinct cluster
+# behaviours (manifest-driven `data-fetching-financial`, fallback `prompt-skills`,
+# fallback `prompt-skills`). After sync-tooling materializes hints for all three,
+# the daemon's preamble assembly bucketizes them into 2+ clusters
+# (`data-fetching-financial` from the manifest skill + `prompt-skills` for the
+# other two), satisfying SPEC AC-10's `clusterCount >= 2` assertion without
+# requiring a connected MCP.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: ""
+
+agents:
+  default:
+    name: "TestAgent"
+    model: claude-opus-4-6
+    thinkingLevel: "off"
+    provider: anthropic
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: false
+    skills:
+      discoveryPaths:
+        - "${COMIS_REPO_ROOT}/packages/agent/src/__tests__/fixtures/phase-8-skill-variants"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8525
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-sync-tooling"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: false
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-sync-tooling.db"
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic
+
+integrations:
+  mcp:
+    servers:
+      # Disabled stub server — provides one entry under integrations.mcp.servers
+      # so sync-tooling has at least one MCP to materialize a hint for. The
+      # daemon will not attempt to spawn it because `enabled: false`.
+      # NOTE: McpServerEntrySchema field is `enabled` (not `disabled`); a
+      # falsy `enabled` skips the connect path in setup-mcp.ts.
+      - name: stub-mcp-alpha
+        transport: stdio
+        command: echo
+        args: ["fake-mcp-stub"]
+        enabled: false
