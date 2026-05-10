@@ -12,7 +12,11 @@ Comis is a security-first platform. Security is built into the architecture at e
 
 **Do not open public GitHub issues for security vulnerabilities.**
 
-To report a vulnerability, email **security@comis.dev** with:
+**Preferred:** Use GitHub's private vulnerability reporting. Open the repo's [Security tab](https://github.com/comisai/comis/security) and click **"Report a vulnerability"**. This creates a private draft advisory visible only to maintainers and the reporter, and lets us coordinate the fix, request a CVE, and publish disclosure in one place.
+
+**Fallback:** If you can't use GitHub (no account, restricted network, etc.), email **security@comis.dev**.
+
+In either channel, please include:
 
 - A description of the vulnerability
 - Steps to reproduce
