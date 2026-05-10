@@ -22,13 +22,19 @@ import { setHintFields, type FillKind } from "./apply-hint.js";
 // touch.
 // ---------------------------------------------------------------------------
 
+// Note: keep the integrations: block in pure block-style — yaml@2.8.4
+// re-normalizes flow-array whitespace (`["x"]` → `[ "x" ]`) on every
+// toString(), even for unmodified sections. The byte-identity test
+// asserts the mutator's contract (don't touch siblings), so we choose
+// a fixture format where toString() is a fixed point.
 const FIXTURE_YAML = `integrations:
   mcp:
     servers:
       - name: yfinance
         transport: stdio
         command: uvx
-        args: ["yfinance-mcp@latest"]
+        args:
+          - yfinance-mcp@latest
 tooling:
   mcp:
     capabilityHints:
