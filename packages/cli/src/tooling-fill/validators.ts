@@ -28,6 +28,7 @@
  *   - empty/scope:    "", "@/no-name"
  */
 export const PACKAGE_NAME_REGEX =
+  // eslint-disable-next-line security/detect-unsafe-regex -- TOOLFILL-7 SPEC literal; no catastrophic backtracking (no nested/overlapping quantifiers; two `[a-z0-9._-]*` runs separated by literal `/`; anchored ^…$; bounded short input).
   /^@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?$/i;
 
 export interface ValidatedPackages {
