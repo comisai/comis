@@ -254,7 +254,26 @@ integrations:
 
 Your agent would see tools like `mcp:sqlite-db/query`, `mcp:github/list_repos`, and `mcp:analytics/run_report` -- each clearly indicating which server provides it.
 
+## Telling the agent when to prefer this MCP
+
+Connecting an MCP server makes its tools discoverable, but the agent will still reach for `pip install <X>` when the model thinks it needs a Python lib that overlaps with what the MCP already provides. To close that gap, declare a **capability hint** under `tooling.mcp.capabilityHints.<server-name>` listing the packages this MCP supersedes. The install-detour subsystem then refuses (or warns about) `pip install <X>` / `npm install <X>` for any matching package and routes the agent to the connected MCP instead.
+
+Two CLI commands automate this:
+
+```bash
+# 1. Materialize stub hints from connected MCPs + installed skills
+systemctl stop comis && comis config sync-tooling --write && systemctl start comis
+
+# 2. Fill description + replacesPackages on each stub via the live agent
+comis config tooling-fill --all --yes --restart
+```
+
+See the [Tool-First Capability Layer](/skills/tooling-layer) guide for the full workflow, idempotency contract, and operator-edit preservation rules.
+
 <CardGroup cols={2}>
+  <Card title="Tool-First Capability Layer" icon="compass" href="/skills/tooling-layer">
+    `sync-tooling` + `tooling-fill` operator workflow
+  </Card>
   <Card title="Skills Overview" icon="wand-magic-sparkles" href="/skills/index">
     Understanding the three types of skills
   </Card>
@@ -263,8 +282,5 @@ Your agent would see tools like `mcp:sqlite-db/query`, `mcp:github/list_repos`, 
   </Card>
   <Card title="Config Reference" icon="file-code" href="/reference/config-yaml">
     Full configuration reference including MCP settings
-  </Card>
-  <Card title="Secrets Management" icon="key" href="/security/secrets">
-    Securely store API keys for MCP servers
   </Card>
 </CardGroup>

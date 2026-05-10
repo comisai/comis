@@ -265,6 +265,8 @@ Configuration management commands for validating, viewing, modifying, and versio
 | `config history` | Display config change history (git-backed) |
 | `config diff [sha]` | Display config diff against HEAD or a specific commit |
 | `config rollback <sha>` | Restore config from a previous commit |
+| `config sync-tooling` | Discover MCPs/skills and sync the `tooling:` config block (Phase 25) |
+| `config tooling-fill [hint]` | Fill `description` + `replacesPackages` on a tooling hint via the live agent (Phase 26) |
 
 #### `config validate`
 
@@ -315,6 +317,115 @@ comis config history --limit 5
 # Rollback to a previous config version
 comis config rollback abc1234 --yes
 ```
+
+#### `config sync-tooling`
+
+Discovers connected MCP servers (from `integrations.mcp.servers[].name`) and installed skills (walks `agents.<id>.skills.discoveryPaths` plus the daemon defaults `~/.comis/skills` and `~/.comis/workspace/skills`) and materializes the `tooling:` block in `config.yaml`.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--write` | `boolean` | `false` | Apply the diff atomically to `config.yaml`; writes a timestamped backup beside the active config first. **Daemon must be stopped** — `tooling.*` is restart-required. |
+| `--overwrite` | `boolean` | `false` | With `--write`, regenerate the entire managed sub-tree. Preserves operator-authored `tooling.capabilityClusters.clusters` byte-for-byte; wipes and rebuilds `mcp.capabilityHints`, `skills.capabilityHints`, `installDetours`, `capabilityIndex`. Errors without `--write`. |
+| `--format <format>` | `human` \| `json` | `human` | Output format for inspect mode (default — no flags). |
+| `-c, --config <path>` | `string` | `~/.comis/config.yaml` | Config file path. |
+
+**Modes:**
+
+- **Inspect (default)** — prints the discovered/existing/diff/wouldWrite shape to stdout; never touches `config.yaml`. Daemon may be running.
+- **`--write`** — atomic write with `config.pre-sync-tooling-<ISO>-<hex>.yaml` backup. Append-only on existing keys (operator hand-edits to `description` / `replacesPackages` are preserved); stale hints (MCPs/skills no longer in discovery) are pruned.
+- **`--write --overwrite`** — full regenerate of the managed sub-tree, plus the destructive-overwrite warning.
+
+**Stub-emission contract:** newly-generated MCP and skill hints land with `description: TODO`, `replacesPackages: []`, and a `# TODO: list npm/pip packages this MCP replaces` comment. Operators fill these by hand or via `config tooling-fill` (below). Until they're filled, the install-detour subsystem cannot fire on alias overlaps for that hint.
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success (inspect printed; or `--write` applied / no-op) |
+| `1` | Daemon-active guard fired (daemon running with `--write`); usage error (`--overwrite` without `--write`); LLM-related failures |
+| `2` | Backup or atomic-write failure |
+| `3` | Config parse error (invalid YAML in `config.yaml`) |
+
+```bash
+# Inspect what would change (safe, daemon may be running)
+comis config sync-tooling
+
+# JSON output for scripting
+comis config sync-tooling --format json
+
+# Apply (daemon must be stopped first)
+systemctl stop comis
+comis config sync-tooling --write
+systemctl start comis
+
+# Full regenerate (destructive of managed sub-tree, preserves operator clusters)
+systemctl stop comis
+comis config sync-tooling --write --overwrite
+systemctl start comis
+```
+
+#### `config tooling-fill [hint-name]`
+
+Fills the `description` and `replacesPackages` fields of a tooling capability hint via the live Comis agent. Automates the LLM call, the daemon-stop window, the AST-aware YAML edit, and the daemon-restart cycle. Use after `config sync-tooling --write` has materialized stubs.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--all` | `boolean` | `false` | Fill every stub-valued hint in one daemon-restart cycle. Skips operator-filled hints silently unless `--force` is also set. |
+| `--force` | `boolean` | `false` | Overwrite hints that already have non-stub values. Required to refill an operator-edited hint. |
+| `--dry-run` | `boolean` | `false` | Call the agent, print the suggested values + diff, exit 0. Never stops the daemon, never writes the file. |
+| `--yes` | `boolean` | `false` | Skip the values-confirmation prompt. Required for non-TTY runs. |
+| `--restart` | `boolean` | `false` | Authorize the daemon stop+start window. Required for non-TTY runs. `--allow-restart` is an accepted alias. |
+| `--no-restart` | `boolean` | `false` | Write the file but skip the daemon stop+start cycle. Mutually exclusive with `--allow-restart`. |
+| `--restart-cmd <cmd>` | `string` | (auto-detect) | Override the supervisor with a literal shell command. Use for non-standard setups (custom init, container runtime, etc.). The command runs once, after the file is written. |
+| `--force-no-validate` | `boolean` | `false` | Skip the npm/pip name-shape regex on `replacesPackages`. Escape hatch — emits a loud warning. |
+| `-c, --config <path>` | `string` | `~/.comis/config.yaml` | Config file path. |
+| `--agent <id>` | `string` | (daemon's first agent) | Agent ID for the LLM call. |
+| `--kind <kind>` | `mcp` \| `skills` | (auto-resolved) | Disambiguate hint kind when the same name appears in both `tooling.mcp.capabilityHints` and `tooling.skills.capabilityHints`. |
+
+**Operating principles:**
+
+- Daemon must be **up** for the LLM call (the CLI POSTs to `/api/chat` on the local gateway). The CLI then stops the daemon, mutates the file atomically, writes a `config.pre-tooling-fill-<ISO>-<hex>.yaml` backup, and restarts.
+- After `systemctl start` (or the equivalent) succeeds, the orchestrator polls `/api/system.ping` for up to 15 s to confirm the daemon actually came up — not just that the unit was queued. If the daemon crashed during boot (e.g. invalid YAML), the orchestrator restores the backup and exits 2 with a manual-recovery hint.
+- File ownership of `config.yaml` is preserved across the atomic write, even when run as root on behalf of an unprivileged service user (the typical VPS setup with `comis` user under systemd).
+- Backups older than the 5 most recent are pruned automatically after a successful run. The `tooling-fill` and `sync-tooling` prefixes prune independently.
+- The agent's response is restricted to a strict 2-line format (`DESCRIPTION:` and `REPLACES_PACKAGES:`); any other field is stripped from the parsed output. Package names that fail the npm/pip name-shape regex are silently dropped (or surface as a hard failure if all are dropped).
+
+**Idempotency:** A hint is "stub-valued" iff `description ∈ {missing, "", "TODO"}` AND `replacesPackages ∈ {missing, []}`. Stub-valued hints fill freely; hints with any operator-authored value refuse without `--force`.
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success (filled, dry-run, or operator declined at confirmation prompt) |
+| `1` | Idempotency guard fired without `--force`; non-TTY without `--yes`/`--restart`; daemon unreachable; LLM call failed; all package names invalid |
+| `2` | Backup, atomic-write, validate, or post-restart liveness failure (rolled back to backup state — message includes the backup path and recovery command if rollback itself failed) |
+
+```bash
+# Fill a single hint interactively (prompts for values + restart)
+comis config tooling-fill yfinance
+
+# Non-interactive (CI / scripts)
+comis config tooling-fill yfinance --yes --restart
+
+# Preview what the agent would suggest, without touching anything
+comis config tooling-fill yfinance --dry-run
+
+# Fill all stub-valued hints in one daemon-restart cycle
+comis config tooling-fill --all --yes --restart
+
+# Overwrite an operator-edited hint (force replace)
+comis config tooling-fill yfinance --force --yes --restart
+
+# Custom supervisor (e.g. a container restart command)
+comis config tooling-fill yfinance --yes --restart-cmd "docker compose restart comis"
+
+# Write the file but skip the restart (operator handles it manually)
+comis config tooling-fill yfinance --yes --no-restart && systemctl restart comis
+```
+
+<Note>
+  `comis config tooling-fill` requires the daemon to be **running** at invocation time (the LLM call goes through the local gateway). It then stops the daemon, writes the file, and restarts. This inverts the daemon-state requirement of `config sync-tooling --write` (which requires the daemon to be **stopped** at invocation time).
+</Note>
 
 ---
 
