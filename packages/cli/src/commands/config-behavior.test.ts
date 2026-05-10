@@ -76,6 +76,23 @@ vi.mock("../sync-tooling/index.js", async (importOriginal) => {
   };
 });
 
+// Mock the tooling-fill barrel so the new tooling-fill registration tests
+// can capture the OrchestratorOpts the action callback builds without
+// actually invoking the orchestrator (LLM calls, supervisor probes, fs
+// I/O). Pure helpers (parsers, validators) pass through to the actuals
+// in case any test wants to exercise them; runToolingFill itself is
+// fully mocked.
+const mockRunToolingFill = vi.fn();
+
+vi.mock("../tooling-fill/index.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../tooling-fill/index.js")>();
+  return {
+    ...actual,
+    runToolingFill: mockRunToolingFill,
+  };
+});
+
 // Mock RPC client for daemon-connected subcommands
 vi.mock("../client/rpc-client.js", () => ({
   withClient: vi.fn(),
@@ -1570,5 +1587,393 @@ describe("config sync-tooling --write --overwrite emits the destructive warning"
 
     const out = getSpyOutput(consoleSpy.log);
     expect(out).toContain("overwrote");
+  });
+});
+
+// =============================================================================
+// Phase 26 — config tooling-fill sub-subcommand
+// In-process Commander.parseAsync tests covering registration + flag
+// plumbing. Spies on `runToolingFill` so the action callback is exercised
+// without the orchestrator actually running (no LLM calls, no supervisor
+// probes, no fs I/O). Each test asserts the OrchestratorOpts the
+// callback builds matches the operator's argv.
+// =============================================================================
+
+// -- Test A: tooling-fill registration ---------------------------------------
+
+describe("config tooling-fill is registered with the right options", () => {
+  it("registers as the 8th sub-subcommand with all 12 flag definitions", () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    const configCmd = program.commands.find((c) => c.name() === "config");
+    expect(configCmd).toBeDefined();
+
+    const fillCmd = configCmd!.commands.find(
+      (c) => c.name() === "tooling-fill",
+    );
+    expect(fillCmd).toBeDefined();
+
+    const optionFlags = fillCmd!.options.map((o) => o.long);
+    // TOOLFILL-1 / AC-2: documented flags
+    expect(optionFlags).toContain("--all");
+    expect(optionFlags).toContain("--force");
+    expect(optionFlags).toContain("--dry-run");
+    expect(optionFlags).toContain("--yes");
+    expect(optionFlags).toContain("--restart");
+    expect(optionFlags).toContain("--allow-restart");
+    // Commander represents `--no-restart` as a negation of `--restart`
+    // (longFlag: "--restart", negate: true) — assert via the option's
+    // .flags or by counting the boolean restart slots.
+    const restartOpt = fillCmd!.options.find((o) => o.long === "--restart");
+    expect(restartOpt).toBeDefined();
+    const negateRestartOpt = fillCmd!.options.find(
+      (o) => o.long === "--no-restart" || o.flags?.includes("--no-restart"),
+    );
+    expect(negateRestartOpt).toBeDefined();
+    expect(optionFlags).toContain("--restart-cmd");
+    expect(optionFlags).toContain("--force-no-validate");
+    expect(optionFlags).toContain("--config");
+    expect(optionFlags).toContain("--agent");
+    expect(optionFlags).toContain("--kind");
+  });
+
+  it("is the 8th sub-subcommand alongside the existing 7", () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    const configCmd = program.commands.find((c) => c.name() === "config");
+    const subNames = configCmd!.commands.map((c) => c.name());
+    // The 7 pre-Phase-26 sub-subcommands plus tooling-fill plus help.
+    expect(subNames).toContain("validate");
+    expect(subNames).toContain("show");
+    expect(subNames).toContain("set");
+    expect(subNames).toContain("history");
+    expect(subNames).toContain("diff");
+    expect(subNames).toContain("rollback");
+    expect(subNames).toContain("sync-tooling");
+    expect(subNames).toContain("tooling-fill");
+  });
+});
+
+// -- Test B: --all without hint-name plumbs through --------------------------
+
+describe("config tooling-fill --all plumbs all=true through to runToolingFill", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    mockRunToolingFill.mockReset();
+    mockRunToolingFill.mockResolvedValue({
+      exitCode: 0,
+      summary: "filled 1 hint",
+    });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("runs runToolingFill with all=true and undefined hintName", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "tooling-fill",
+        "--all",
+        "--yes",
+        "--restart",
+      ]);
+    } catch (e) {
+      // process.exit(0) is mocked to throw — sentinel pattern.
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(mockRunToolingFill).toHaveBeenCalledTimes(1);
+    const opts = mockRunToolingFill.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(opts.all).toBe(true);
+    expect(opts.hintName).toBeUndefined();
+    expect(opts.yes).toBe(true);
+    expect(opts.restart).toBe(true);
+  });
+});
+
+// -- Test C: bare hint-name + --dry-run plumbs through -----------------------
+
+describe("config tooling-fill <hint> --dry-run plumbs hintName + dryRun", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    mockRunToolingFill.mockReset();
+    mockRunToolingFill.mockResolvedValue({ exitCode: 0, summary: "ok" });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("runs with hintName='yfinance' and dryRun=true", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "tooling-fill",
+        "yfinance",
+        "--dry-run",
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(mockRunToolingFill).toHaveBeenCalledTimes(1);
+    const opts = mockRunToolingFill.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(opts.hintName).toBe("yfinance");
+    expect(opts.dryRun).toBe(true);
+    expect(opts.all).toBe(false);
+  });
+});
+
+// -- Test D: --restart-cmd plumbs through ------------------------------------
+
+describe("config tooling-fill --restart-cmd plumbs restartCmd through", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    mockRunToolingFill.mockReset();
+    mockRunToolingFill.mockResolvedValue({ exitCode: 0, summary: "ok" });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("forwards --restart-cmd value to OrchestratorOpts.restartCmd", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "tooling-fill",
+        "yfinance",
+        "--restart-cmd",
+        "echo override",
+        "--yes",
+        "--restart",
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    const opts = mockRunToolingFill.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(opts.restartCmd).toBe("echo override");
+  });
+});
+
+// -- Test E: --kind plumbs through -------------------------------------------
+
+describe("config tooling-fill --kind plumbs kindHint through", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    mockRunToolingFill.mockReset();
+    mockRunToolingFill.mockResolvedValue({ exitCode: 0, summary: "ok" });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("forwards --kind skills to OrchestratorOpts.kindHint", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "tooling-fill",
+        "stub-skill",
+        "--kind",
+        "skills",
+        "--yes",
+        "--restart",
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    const opts = mockRunToolingFill.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(opts.kindHint).toBe("skills");
+    expect(opts.hintName).toBe("stub-skill");
+  });
+});
+
+// -- Test F: exit code propagation -------------------------------------------
+
+describe("config tooling-fill exit code propagates from runToolingFill", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    mockRunToolingFill.mockReset();
+    mockRunToolingFill.mockResolvedValue({
+      exitCode: 7,
+      summary: "custom exit",
+    });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("calls process.exit with the orchestrator's exitCode", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "tooling-fill",
+        "yfinance",
+        "--yes",
+        "--restart",
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(7);
+  });
+});
+
+// -- Test G: --no-restart resolves to restart:false --------------------------
+
+describe("config tooling-fill --no-restart plumbs restart=false", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    mockRunToolingFill.mockReset();
+    mockRunToolingFill.mockResolvedValue({ exitCode: 0, summary: "ok" });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("forwards restart=false when --no-restart is passed", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "tooling-fill",
+        "yfinance",
+        "--yes",
+        "--no-restart",
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    const opts = mockRunToolingFill.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(opts.restart).toBe(false);
+  });
+});
+
+// -- Test H: --allow-restart alias resolves to restart:true ------------------
+
+describe("config tooling-fill --allow-restart aliases --restart", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    mockRunToolingFill.mockReset();
+    mockRunToolingFill.mockResolvedValue({ exitCode: 0, summary: "ok" });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("forwards restart=true when --allow-restart is passed", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "tooling-fill",
+        "yfinance",
+        "--yes",
+        "--allow-restart",
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    const opts = mockRunToolingFill.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(opts.restart).toBe(true);
   });
 });

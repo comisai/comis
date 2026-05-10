@@ -31,6 +31,11 @@ import {
   writeBackup,
   type InspectPayload,
 } from "../sync-tooling/index.js";
+import {
+  runToolingFill,
+  type PromptIO,
+} from "../tooling-fill/index.js";
+import * as readline from "node:readline/promises";
 
 /** Default config paths to check (matching daemon defaults). */
 const DEFAULT_CONFIG_PATHS = [
@@ -593,6 +598,140 @@ export function registerConfigCommand(program: Command): void {
         }
 
         process.exit(0);
+      },
+    );
+
+  // --- config tooling-fill --------------------------------------------------
+  // Phase 26 — operator UX for materializing the description +
+  // replacesPackages fields on tooling capability hints via the live
+  // Comis daemon. The orchestrator owns the full state machine; this
+  // callback is the composition root (AGENTS.md §2.4) — it builds the
+  // OrchestratorOpts bag, instantiates the readline-backed PromptIO,
+  // and routes the result's exitCode into process.exit.
+  //
+  // 9 documented flags (TOOLFILL-1 / AC-2 — counted as 10 tokens with
+  // `--allow-restart` alias and `--force-no-validate` escape hatch).
+  // Wiring boundary: ALL discovery, AST mutation, fs I/O, daemon
+  // probing, supervisor calls, and LLM round-trips live in
+  // `packages/cli/src/tooling-fill/*` (Wave 1 + Wave 2). See
+  // `.planning/phases/26-tooling-fill/26-SPEC.md` for full requirements.
+  config
+    .command("tooling-fill [hint-name]")
+    .description(
+      "Fill description + replacesPackages on a tooling capability hint via the live agent",
+    )
+    .option("--all", "Fill every stub-valued hint (TOOLFILL-10)")
+    .option("--force", "Overwrite operator-filled hints (TOOLFILL-5)")
+    .option(
+      "--dry-run",
+      "Print agent suggestion + diff; never stop daemon, never write file (TOOLFILL-8)",
+    )
+    .option("--yes", "Skip values-confirmation prompt (TOOLFILL-4)")
+    .option("--restart", "Authorize daemon-stop+start window (TOOLFILL-4)")
+    .option("--allow-restart", "Alias for --restart")
+    .option("--no-restart", "Write file but skip daemon stop+start")
+    .option(
+      "--restart-cmd <cmd>",
+      "Override supervisor with full stop+start command (TOOLFILL-3)",
+    )
+    .option(
+      "--force-no-validate",
+      "Skip package-name shape validation (TOOLFILL-7 escape hatch — loud warning)",
+    )
+    .option(
+      "-c, --config <path>",
+      "Config file path",
+      SYNC_TOOLING_DEFAULT_CONFIG,
+    )
+    .option(
+      "--agent <id>",
+      "Agent ID for the LLM call (default: daemon's first agent)",
+    )
+    .option(
+      "--kind <kind>",
+      "Disambiguate hint kind: mcp or skills (when both maps contain the same key)",
+    )
+    .action(
+      async (
+        hintName: string | undefined,
+        options: {
+          all?: boolean;
+          force?: boolean;
+          dryRun?: boolean;
+          yes?: boolean;
+          restart?: boolean;
+          allowRestart?: boolean;
+          restartCmd?: string;
+          forceNoValidate?: boolean;
+          config?: string;
+          agent?: string;
+          kind?: string;
+        },
+      ) => {
+        // Build readline-backed PromptIO. Even when not used (--yes
+        // --restart on a TTY), we still need to construct it so the
+        // orchestrator's PromptIO contract is satisfied. The interface
+        // is closed at action-callback exit via rl.close().
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        const prompts: PromptIO = {
+          confirmValues: async (diff: string): Promise<boolean> => {
+            process.stdout.write(diff + "\n");
+            const ans = await rl.question("Apply these values? [y/N] ");
+            const norm = ans.trim().toLowerCase();
+            return norm === "y" || norm === "yes";
+          },
+          confirmRestart: async (s): Promise<boolean> => {
+            const ans = await rl.question(
+              `Stop and restart daemon (${s.kind})? [y/N] `,
+            );
+            const norm = ans.trim().toLowerCase();
+            return norm === "y" || norm === "yes";
+          },
+        };
+
+        // --restart vs --no-restart vs unset — Commander convention:
+        //   --restart       → options.restart === true
+        //   --no-restart    → options.restart === false
+        //   neither         → options.restart === undefined
+        // --allow-restart is an alias: if either is set, treat as true.
+        const restartFlag: boolean | undefined =
+          options.allowRestart === true
+            ? true
+            : options.restart === undefined
+              ? undefined
+              : options.restart;
+
+        const result = await runToolingFill({
+          hintName,
+          all: options.all === true,
+          force: options.force === true,
+          forceNoValidate: options.forceNoValidate === true,
+          dryRun: options.dryRun === true,
+          yes: options.yes === true,
+          restart: restartFlag,
+          restartCmd: options.restartCmd,
+          configPath: options.config ?? SYNC_TOOLING_DEFAULT_CONFIG,
+          homeDir: os.homedir(),
+          kindHint:
+            options.kind === "mcp" || options.kind === "skills"
+              ? options.kind
+              : undefined,
+          agentId: options.agent,
+          isTty: process.stdout.isTTY === true,
+          prompts,
+          clock: () => new Date(),
+        });
+        rl.close();
+
+        if (result.exitCode === 0) {
+          success(result.summary);
+        } else {
+          error(result.summary);
+        }
+        process.exit(result.exitCode);
       },
     );
 }
