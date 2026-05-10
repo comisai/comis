@@ -6,13 +6,21 @@
  * json output exposes `wouldWrite` field; renderUnifiedDiff emits + / - prefixes.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
+import chalk from "chalk";
 import {
   renderInspectHuman,
   renderInspectJson,
   renderUnifiedDiff,
   type InspectPayload,
 } from "./diff.js";
+
+// Vitest pipes stdout, so chalk auto-detects no-TTY and disables colors.
+// Force level=1 so the human renderer actually emits SGR codes — Test 6
+// asserts that ANSI-stripped output is strictly shorter than colored.
+beforeAll(() => {
+  chalk.level = 1;
+});
 
 /** Strip ANSI escape codes for substring assertions that ignore color. */
 function stripAnsi(text: string): string {
