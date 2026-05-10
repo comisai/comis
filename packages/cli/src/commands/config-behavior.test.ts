@@ -25,15 +25,56 @@ import {
   getSpyOutput,
 } from "../test-helpers.js";
 
-// Mock @comis/core to control loadConfigFile and validateConfig
-vi.mock("@comis/core", () => ({
-  AppConfigSchema: {},
-  loadConfigFile: vi.fn(),
-  validateConfig: vi.fn(),
-  deepMerge: vi.fn((a: Record<string, unknown>, b: Record<string, unknown>) => ({ ...a, ...b })),
-  loadEnvFile: vi.fn(() => 0),
-  sanitizeLogString: vi.fn((s: string) => s),
-}));
+// Mock @comis/core to control loadConfigFile and validateConfig.
+// safePath + PathTraversalError are spread from the real module so the
+// sync-tooling helpers (discover.ts, backup.ts) can import them when
+// the new sync-tooling tests below pass through to actual implementations.
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    AppConfigSchema: {},
+    loadConfigFile: vi.fn(),
+    validateConfig: vi.fn(),
+    deepMerge: vi.fn(
+      (a: Record<string, unknown>, b: Record<string, unknown>) => ({ ...a, ...b }),
+    ),
+    loadEnvFile: vi.fn(() => 0),
+    sanitizeLogString: vi.fn((s: string) => s),
+  };
+});
+
+// Mock the sync-tooling barrel so the new sync-tooling tests can control
+// boundary functions (daemon probe, backup, atomic write) and assert
+// applyToDocument call counts. The discovery + render + plan helpers are
+// passed through to their actual implementations so the doc.toString()
+// preview is byte-realistic.
+const mockIsDaemonRunning = vi.fn();
+const mockWriteBackup = vi.fn();
+const mockAtomicWriteFile = vi.fn();
+const mockApplyToDocument = vi.fn();
+const mockDiscoverSkills = vi.fn();
+const mockReadMcpServers = vi.fn();
+
+vi.mock("../sync-tooling/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../sync-tooling/index.js")>();
+  return {
+    ...actual,
+    // Boundary fns — fully mocked, set per-test.
+    isDaemonRunning: mockIsDaemonRunning,
+    writeBackup: mockWriteBackup,
+    atomicWriteFile: mockAtomicWriteFile,
+    // Discovery — fully mocked (avoid real filesystem walks during tests).
+    readMcpServers: mockReadMcpServers,
+    discoverSkills: mockDiscoverSkills,
+    // applyToDocument — record call args, then delegate to actual so the
+    // mutation actually happens and doc.toString() reflects reality.
+    applyToDocument: vi.fn((...args: Parameters<typeof actual.applyToDocument>) => {
+      mockApplyToDocument(...args);
+      return actual.applyToDocument(...args);
+    }),
+  };
+});
 
 // Mock RPC client for daemon-connected subcommands
 vi.mock("../client/rpc-client.js", () => ({
@@ -804,5 +845,596 @@ describe("config rollback RPC error exits 1", () => {
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
     const errOutput = getSpyOutput(consoleSpy.error);
     expect(errOutput.toLowerCase()).toContain("rollback");
+  });
+});
+
+// =============================================================================
+// Phase 25 — config sync-tooling sub-subcommand
+// In-process Commander tests covering registration + inspect/write/overwrite
+// modes. Boundary fns (isDaemonRunning, writeBackup, atomicWriteFile) and
+// discovery (readMcpServers, discoverSkills) are mocked at the sync-tooling
+// barrel so we don't probe the daemon, hit the filesystem, or walk skill
+// directories during the test run. applyToDocument is wrapped in a spy that
+// delegates to the real implementation so doc.toString() previews are
+// byte-realistic.
+// =============================================================================
+
+import * as path from "node:path";
+import * as fsRaw from "node:fs";
+import * as os from "node:os";
+import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const FIXTURES_DIR = path.resolve(
+  __dirname,
+  "..",
+  "sync-tooling",
+  "__tests__",
+  "fixtures",
+);
+const FIXTURE_NO_TOOLING = path.join(FIXTURES_DIR, "config-no-tooling.yaml");
+const FIXTURE_WITH_TOOLING = path.join(FIXTURES_DIR, "config-with-tooling.yaml");
+
+/**
+ * Read a fixture YAML file and return the parsed JS shape. Mirrors what
+ * `loadConfigFile` would return on success (without the Result wrapper).
+ */
+function readFixtureAsJs(fixturePath: string): Record<string, unknown> {
+  const raw = fsRaw.readFileSync(fixturePath, "utf-8");
+  return parseYaml(raw) as Record<string, unknown>;
+}
+
+/**
+ * Reset all sync-tooling mocks to their default state for inspect-mode happy
+ * paths: daemon NOT running, backup ok, atomic write ok, discovery returns
+ * the fixture's MCP servers, no skills.
+ */
+function resetSyncToolingMocks(opts: {
+  configJs: Record<string, unknown>;
+  mcps?: { name: string; description: undefined }[];
+  skills?: Array<{
+    name: string;
+    description: string | undefined;
+    cluster: string | undefined;
+    sourceDir: string;
+  }>;
+}): void {
+  vi.mocked(core.loadConfigFile).mockReset();
+  vi.mocked(core.loadConfigFile).mockReturnValue({ ok: true, value: opts.configJs } as never);
+
+  mockIsDaemonRunning.mockReset();
+  mockIsDaemonRunning.mockResolvedValue(false);
+
+  mockWriteBackup.mockReset();
+  mockWriteBackup.mockReturnValue({
+    ok: true,
+    value: { backupPath: "/tmp/backup-fixture.yaml" },
+  } as never);
+
+  mockAtomicWriteFile.mockReset();
+  mockAtomicWriteFile.mockReturnValue({ ok: true, value: undefined } as never);
+
+  mockApplyToDocument.mockReset();
+
+  mockReadMcpServers.mockReset();
+  mockReadMcpServers.mockReturnValue(opts.mcps ?? []);
+
+  mockDiscoverSkills.mockReset();
+  mockDiscoverSkills.mockReturnValue(opts.skills ?? []);
+}
+
+// -- Test 1 (SPEC-1 / registration) ------------------------------------------
+
+describe("config sync-tooling is registered with the right options", () => {
+  it("registers as the 7th sub-subcommand with --write/--overwrite/--format/--config", () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    const configCmd = program.commands.find((c) => c.name() === "config");
+    expect(configCmd).toBeDefined();
+
+    const syncCmd = configCmd!.commands.find((c) => c.name() === "sync-tooling");
+    expect(syncCmd).toBeDefined();
+
+    const optionFlags = syncCmd!.options.map((o) => o.long);
+    expect(optionFlags).toContain("--write");
+    expect(optionFlags).toContain("--overwrite");
+    expect(optionFlags).toContain("--format");
+    expect(optionFlags).toContain("--config");
+  });
+});
+
+// -- Test 2 (SPEC-2 / inspect happy path) ------------------------------------
+
+describe("config sync-tooling inspect mode prints diff and exits 0", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+  let stdoutSpy: ReturnType<typeof vi.spyOn>;
+  const stdoutChunks: string[] = [];
+  let mtimeBefore: number;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    stdoutChunks.length = 0;
+    stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: string | Uint8Array) => {
+        stdoutChunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf-8"));
+        return true;
+      });
+
+    resetSyncToolingMocks({
+      configJs: readFixtureAsJs(FIXTURE_NO_TOOLING),
+      mcps: [{ name: "yfinance", description: undefined }],
+      skills: [],
+    });
+    mtimeBefore = fsRaw.statSync(FIXTURE_NO_TOOLING).mtimeMs;
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+    stdoutSpy.mockRestore();
+  });
+
+  it("exits 0, leaves config.yaml unchanged, and emits a tooling: preview", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--config",
+        FIXTURE_NO_TOOLING,
+      ]);
+    } catch (e) {
+      // process.exit(0) is mocked to throw — sentinel pattern.
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(0);
+    expect(mockWriteBackup).not.toHaveBeenCalled();
+    expect(mockAtomicWriteFile).not.toHaveBeenCalled();
+
+    // mtime unchanged → file not touched (REQ-2 acceptance).
+    const mtimeAfter = fsRaw.statSync(FIXTURE_NO_TOOLING).mtimeMs;
+    expect(mtimeAfter).toBe(mtimeBefore);
+
+    const stdout = stdoutChunks.join("");
+    expect(stdout).toContain("tooling:");
+  });
+});
+
+// -- Test 3 (SPEC-2 / --format json) -----------------------------------------
+
+describe("config sync-tooling --format json emits a parseable JSON payload", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    resetSyncToolingMocks({
+      configJs: readFixtureAsJs(FIXTURE_NO_TOOLING),
+      mcps: [{ name: "yfinance", description: undefined }],
+    });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("prints a single JSON object with discovered/existing/diff/wouldWrite keys", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--format",
+        "json",
+        "--config",
+        FIXTURE_NO_TOOLING,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(0);
+
+    // The json() helper goes through console.log; the existing test-helpers
+    // already spies on console.log via createConsoleSpy.
+    const out = getSpyOutput(consoleSpy.log);
+    // Find the JSON-shaped chunk and parse it.
+    const jsonStart = out.indexOf("{");
+    const jsonEnd = out.lastIndexOf("}");
+    expect(jsonStart).toBeGreaterThanOrEqual(0);
+    expect(jsonEnd).toBeGreaterThan(jsonStart);
+    const parsed = JSON.parse(out.slice(jsonStart, jsonEnd + 1)) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed).toHaveProperty("discovered");
+    expect(parsed).toHaveProperty("existing");
+    expect(parsed).toHaveProperty("diff");
+    expect(parsed).toHaveProperty("wouldWrite");
+  });
+});
+
+// -- Test 4 (SPEC-3 / --write happy path) ------------------------------------
+
+describe("config sync-tooling --write writes backup BEFORE atomic write", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    resetSyncToolingMocks({
+      configJs: readFixtureAsJs(FIXTURE_NO_TOOLING),
+      mcps: [{ name: "yfinance", description: undefined }],
+    });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("calls writeBackup before atomicWriteFile and exits 0", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--write",
+        "--config",
+        FIXTURE_NO_TOOLING,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(0);
+    expect(mockWriteBackup).toHaveBeenCalledTimes(1);
+    expect(mockAtomicWriteFile).toHaveBeenCalledTimes(1);
+    // Strict ordering — backup must complete before atomic write begins.
+    const backupOrder = mockWriteBackup.mock.invocationCallOrder[0]!;
+    const writeOrder = mockAtomicWriteFile.mock.invocationCallOrder[0]!;
+    expect(backupOrder).toBeLessThan(writeOrder);
+  });
+});
+
+// -- Test 5 (SPEC-8 / daemon-running guard) ----------------------------------
+
+describe("config sync-tooling --write exits 1 when daemon is running", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    resetSyncToolingMocks({
+      configJs: readFixtureAsJs(FIXTURE_NO_TOOLING),
+      mcps: [{ name: "yfinance", description: undefined }],
+    });
+    // Override default — daemon is up.
+    mockIsDaemonRunning.mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("never calls writeBackup and emits 'daemon is running' on stderr", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--write",
+        "--config",
+        FIXTURE_NO_TOOLING,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(1);
+    expect(mockIsDaemonRunning).toHaveBeenCalledTimes(1);
+    expect(mockWriteBackup).not.toHaveBeenCalled();
+    expect(mockAtomicWriteFile).not.toHaveBeenCalled();
+
+    const errOutput = getSpyOutput(consoleSpy.error);
+    expect(errOutput).toContain("daemon is running");
+  });
+});
+
+// -- Test 6 (D-12 / backup-fail-fast) ----------------------------------------
+
+describe("config sync-tooling --write aborts when writeBackup fails", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    resetSyncToolingMocks({
+      configJs: readFixtureAsJs(FIXTURE_NO_TOOLING),
+      mcps: [{ name: "yfinance", description: undefined }],
+    });
+    mockWriteBackup.mockReturnValue({
+      ok: false,
+      error: { code: "BACKUP_WRITE_FAILED", path: "/x", cause: "ENOSPC: no space left on device" },
+    } as never);
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("exits 2 and never calls atomicWriteFile when backup write fails", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--write",
+        "--config",
+        FIXTURE_NO_TOOLING,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(2);
+    expect(mockWriteBackup).toHaveBeenCalledTimes(1);
+    expect(mockAtomicWriteFile).not.toHaveBeenCalled();
+  });
+});
+
+// -- Test 7 (D-03 / usage error: --overwrite without --write) ----------------
+
+describe("config sync-tooling --overwrite without --write is a usage error", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    resetSyncToolingMocks({
+      configJs: readFixtureAsJs(FIXTURE_NO_TOOLING),
+      mcps: [{ name: "yfinance", description: undefined }],
+    });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("exits 1 before any I/O — daemon probe never fires", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--overwrite",
+        "--config",
+        FIXTURE_NO_TOOLING,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(1);
+    expect(mockIsDaemonRunning).not.toHaveBeenCalled();
+    expect(mockWriteBackup).not.toHaveBeenCalled();
+    expect(mockAtomicWriteFile).not.toHaveBeenCalled();
+
+    const errOutput = getSpyOutput(consoleSpy.error);
+    expect(errOutput).toContain("--overwrite requires --write");
+  });
+});
+
+// -- Test 8 (D-25 / parse error → exit 3) ------------------------------------
+
+describe("config sync-tooling exits 3 on malformed YAML", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+  let badYamlPath: string;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+
+    // Write an unbalanced YAML file to a tmpdir for the parseDocument path.
+    const tmpDir = fsRaw.mkdtempSync(path.join(os.tmpdir(), "sync-tooling-test-"));
+    badYamlPath = path.join(tmpDir, "config-bad.yaml");
+    fsRaw.writeFileSync(
+      badYamlPath,
+      "integrations:\n  mcp:\n    servers:\n      - name: [unbalanced\n",
+      "utf-8",
+    );
+
+    // loadConfigFile mock returns ok({}) so the parse-error gate is the
+    // only thing that can trigger exit(3) — isolates the behavior under test.
+    vi.mocked(core.loadConfigFile).mockReset();
+    vi.mocked(core.loadConfigFile).mockReturnValue({ ok: true, value: {} } as never);
+
+    mockIsDaemonRunning.mockReset();
+    mockIsDaemonRunning.mockResolvedValue(false);
+    mockWriteBackup.mockReset();
+    mockAtomicWriteFile.mockReset();
+    mockReadMcpServers.mockReset();
+    mockReadMcpServers.mockReturnValue([]);
+    mockDiscoverSkills.mockReset();
+    mockDiscoverSkills.mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+    try {
+      fsRaw.rmSync(path.dirname(badYamlPath), { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
+    }
+  });
+
+  it("exits 3 with a YAML-parse error message on stderr", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--config",
+        badYamlPath,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(3);
+    const errOutput = getSpyOutput(consoleSpy.error);
+    expect(errOutput.toLowerCase()).toMatch(/invalid yaml|failed to parse/);
+  });
+});
+
+// -- Test 9 (RESEARCH Open Question 2 / nothing to sync) ---------------------
+
+describe("config sync-tooling exits 0 with 'nothing to sync' on empty discovery", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    resetSyncToolingMocks({
+      configJs: readFixtureAsJs(FIXTURE_NO_TOOLING),
+      mcps: [],
+      skills: [],
+    });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("--write is a no-op (no backup) when discovery is empty", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--write",
+        "--config",
+        FIXTURE_NO_TOOLING,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(0);
+    expect(mockWriteBackup).not.toHaveBeenCalled();
+    expect(mockAtomicWriteFile).not.toHaveBeenCalled();
+
+    const out = getSpyOutput(consoleSpy.log);
+    expect(out.toLowerCase()).toContain("nothing to sync");
+  });
+});
+
+// -- Test 10 (SPEC-6 / overwrite mode) ---------------------------------------
+
+describe("config sync-tooling --write --overwrite emits the destructive warning", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    resetSyncToolingMocks({
+      configJs: readFixtureAsJs(FIXTURE_WITH_TOOLING),
+      mcps: [
+        { name: "placeholder-mcp", description: undefined },
+        { name: "yfinance", description: undefined },
+      ],
+      skills: [],
+    });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("calls applyToDocument({ overwrite: true }) and prints the ⚠ overwrote warning", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--write",
+        "--overwrite",
+        "--config",
+        FIXTURE_WITH_TOOLING,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(0);
+    expect(mockApplyToDocument).toHaveBeenCalled();
+    // Last positional arg is the options object.
+    const lastCall = mockApplyToDocument.mock.calls.at(-1) as unknown as [
+      unknown,
+      unknown,
+      { overwrite: boolean },
+    ];
+    expect(lastCall[2].overwrite).toBe(true);
+
+    const out = getSpyOutput(consoleSpy.log);
+    expect(out).toContain("overwrote");
   });
 });
