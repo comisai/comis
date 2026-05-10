@@ -490,7 +490,7 @@ export function registerConfigCommand(program: Command): void {
         // Compute the read-only mutation plan against the current AST.
         const plan = computeMutationPlan(doc, artifacts);
 
-        // "Nothing to sync" cases:
+        // "Nothing to sync" cases (write-path only — inspect mode always renders):
         //  (a) Fresh config — operator has installed no MCPs/skills AND no tooling
         //      block exists yet. Writing an empty skeleton would be churn.
         //  (b) Plan is a no-op against an existing tooling block (no adds, no
@@ -506,8 +506,12 @@ export function registerConfigCommand(program: Command): void {
           plan.skillRemoves.length === 0 &&
           !plan.needsSkeleton;
         const nothingToDo = isFreshAndEmpty || planIsNoop;
-        if (nothingToDo && !isOverwrite) {
-          info("(nothing to sync — no MCPs or skills discovered)");
+        if (nothingToDo && isWrite && !isOverwrite) {
+          info(
+            isFreshAndEmpty
+              ? "(nothing to sync — no MCPs or skills discovered)"
+              : "(nothing to sync — config is already in sync)",
+          );
           process.exit(0);
           return;
         }

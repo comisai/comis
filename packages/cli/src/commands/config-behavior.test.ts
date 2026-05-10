@@ -1381,6 +1381,88 @@ describe("config sync-tooling exits 0 with 'nothing to sync' on empty discovery"
   });
 });
 
+// -- Test 9c (inspect mode always renders, even on no-op) -------------------
+
+describe("config sync-tooling inspect mode always renders the diff", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+  let stdoutSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    // Empty discovery + no tooling block → plan is a no-op, but inspect mode
+    // must still render so operators can see what was discovered.
+    resetSyncToolingMocks({
+      configJs: readFixtureAsJs(FIXTURE_NO_TOOLING),
+      mcps: [],
+      skills: [],
+    });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+    stdoutSpy.mockRestore();
+  });
+
+  it("inspect (no flags) renders the human diff even when plan is a no-op", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--config",
+        FIXTURE_NO_TOOLING,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(0);
+    expect(mockWriteBackup).not.toHaveBeenCalled();
+    expect(mockAtomicWriteFile).not.toHaveBeenCalled();
+
+    const stdoutCalls = stdoutSpy.mock.calls.map((c) => String(c[0])).join("");
+    expect(stdoutCalls.toLowerCase()).toContain("discovered mcps");
+    expect(stdoutCalls.toLowerCase()).toContain("discovered skills");
+  });
+
+  it("inspect --format json emits a parseable JSON document on no-op", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--format",
+        "json",
+        "--config",
+        FIXTURE_NO_TOOLING,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(0);
+
+    const out = getSpyOutput(consoleSpy.log);
+    // Must contain `{` and the canonical inspect JSON keys — proves the JSON
+    // path was taken, not the info() short-circuit.
+    expect(out).toContain('"discovered"');
+    expect(out).toContain('"diff"');
+    expect(out).toContain('"wouldWrite"');
+  });
+});
+
 // -- Test 9b (SPEC-4 / empty discovery still prunes stale hints) -------------
 
 describe("config sync-tooling --write prunes stale hints when discovery is empty", () => {
