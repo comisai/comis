@@ -2,11 +2,10 @@
 /**
  * Inspect-mode renderers for `comis config sync-tooling`.
  *
- * Pure functions: take an `InspectPayload` (assembled by the Wave 3 action
+ * Pure functions: take an `InspectPayload` (assembled by the action
  * callback), return a string. NO console.log calls, NO fs I/O, NO Commander.
  * The caller emits via the existing `format.ts` helpers.
  *
- * D-04 governs the section list and order. REQ-2's acceptance criterion
  * "stdout contains `tooling:`" is satisfied because `payload.wouldWrite` (the
  * post-mutation `doc.toString()` output) is appended verbatim into the
  * "Would write:" preview section.
@@ -33,18 +32,18 @@ export interface InspectPayload {
     readonly add: { readonly mcps: string[]; readonly skills: string[] };
     readonly remove: { readonly mcps: string[]; readonly skills: string[] };
   };
-  /** Post-mutation `doc.toString()` (REQ-2 acceptance: contains literal `tooling:`). */
+  /** Post-mutation `doc.toString()` (contains literal `tooling:`). */
   readonly wouldWrite: string;
 }
 
 // ---------------------------------------------------------------------------
-// Human renderer (D-04)
+// Human renderer
 // ---------------------------------------------------------------------------
 
 /**
  * Render the inspect-mode human-readable summary.
  *
- * Sections (D-04):
+ * Sections:
  *   - Discovered MCPs (N) — list each name
  *   - Discovered Skills (N) — list each name
  *   - Existing tooling block: present|absent
@@ -109,7 +108,7 @@ export function renderInspectHuman(payload: InspectPayload): string {
     }
   }
 
-  // Would write — verbatim YAML preview (REQ-2 acceptance: contains "tooling:")
+  // Would write — verbatim YAML preview (contains "tooling:")
   lines.push(chalk.bold.cyan("Would write:"));
   lines.push(payload.wouldWrite);
 

@@ -2,8 +2,8 @@
 /**
  * Tests for sync-tooling/diff.ts — inspect-mode renderers.
  *
- * Covers REQ-2 acceptance: human output contains literal `tooling:` substring;
- * json output exposes `wouldWrite` field; renderUnifiedDiff emits + / - prefixes.
+ * Covers: human output contains literal `tooling:` substring; json output
+ * exposes `wouldWrite` field; renderUnifiedDiff emits + / - prefixes.
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -16,8 +16,8 @@ import {
 } from "./diff.js";
 
 // Vitest pipes stdout, so chalk auto-detects no-TTY and disables colors.
-// Force level=1 so the human renderer actually emits SGR codes — Test 6
-// asserts that ANSI-stripped output is strictly shorter than colored.
+// Force level=1 so the human renderer actually emits SGR codes — the color
+// test asserts that ANSI-stripped output is strictly shorter than colored.
 beforeAll(() => {
   chalk.level = 1;
 });
@@ -42,7 +42,7 @@ function makePayload(overrides: Partial<InspectPayload> = {}): InspectPayload {
 }
 
 describe("renderInspectHuman", () => {
-  it("Test 1: empty discovered + absent tooling block emits canonical zero-state strings", () => {
+  it("empty discovered + absent tooling block emits canonical zero-state strings", () => {
     const out = stripAnsi(renderInspectHuman(makePayload()));
     expect(out).toContain("Discovered MCPs (0)");
     expect(out).toContain("Discovered Skills (0)");
@@ -51,7 +51,7 @@ describe("renderInspectHuman", () => {
     expect(out).toContain("Would remove (0)");
   });
 
-  it("Test 2: with two MCPs + one skill, emits the right counts and lists each name on a separate line", () => {
+  it("with two MCPs + one skill, emits the right counts and lists each name on a separate line", () => {
     const out = stripAnsi(
       renderInspectHuman(
         makePayload({
@@ -74,12 +74,12 @@ describe("renderInspectHuman", () => {
     expect(out).toContain("alpha");
   });
 
-  it("Test 3: emits the literal `tooling:` substring inside the YAML preview block (REQ-2 AC)", () => {
+  it("emits the literal `tooling:` substring inside the YAML preview block", () => {
     const out = stripAnsi(renderInspectHuman(makePayload()));
     expect(out).toContain("tooling:");
   });
 
-  it("Test 6: applies chalk colors (verifiable by ANSI-stripping = original text minus codes)", () => {
+  it("applies chalk colors (verifiable by ANSI-stripping = original text minus codes)", () => {
     const raw = renderInspectHuman(makePayload());
     const stripped = stripAnsi(raw);
     // ANSI-stripped output must be strictly shorter than the colored output
@@ -91,7 +91,7 @@ describe("renderInspectHuman", () => {
 });
 
 describe("renderInspectJson", () => {
-  it("Test 4: emits a parseable JSON object with the four canonical top-level keys", () => {
+  it("emits a parseable JSON object with the four canonical top-level keys", () => {
     const out = renderInspectJson(makePayload());
     const parsed = JSON.parse(out);
     expect(Object.keys(parsed)).toEqual(
@@ -99,7 +99,7 @@ describe("renderInspectJson", () => {
     );
   });
 
-  it("Test 5: wouldWrite field is a string containing `tooling:` (or empty if no mutations)", () => {
+  it("wouldWrite field is a string containing `tooling:` (or empty if no mutations)", () => {
     const out = renderInspectJson(makePayload());
     const parsed = JSON.parse(out) as InspectPayload;
     expect(typeof parsed.wouldWrite).toBe("string");
@@ -108,7 +108,7 @@ describe("renderInspectJson", () => {
 });
 
 describe("renderUnifiedDiff", () => {
-  it("Test 7: produces lines prefixed with `+ ` for additions and `- ` for removals", () => {
+  it("produces lines prefixed with `+ ` for additions and `- ` for removals", () => {
     const before = "alpha\nbeta\ngamma\n";
     const after = "alpha\nbeta-modified\ngamma\ndelta\n";
     const out = renderUnifiedDiff(before, after);

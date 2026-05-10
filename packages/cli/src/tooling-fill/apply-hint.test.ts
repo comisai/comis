@@ -2,13 +2,13 @@
 /**
  * Tests for tooling-fill/apply-hint.ts — leaf-key AST mutator.
  *
- * Validates TOOLFILL-6 (strict scope: only description + replacesPackages
- * are touched), TOOLFILL-9 (atomic / idempotent — same input twice produces
- * byte-identical output), and TOOLFILL-11 (skill hints are first-class,
- * symmetrical with mcp).
+ * Validates strict scope (only description + replacesPackages are
+ * touched), atomicity / idempotency (same input twice produces
+ * byte-identical output), and that skill hints are first-class,
+ * symmetrical with mcp.
  *
- * Snapshots use `doc.toString()` (AST stringification) — same convention as
- * Phase 25's generate.test.ts.
+ * Snapshots use `doc.toString()` (AST stringification) — same convention
+ * as generate.test.ts.
  */
 
 import { describe, it, expect } from "vitest";
@@ -16,10 +16,9 @@ import { parseDocument } from "yaml";
 import { setHintFields, type FillKind } from "./apply-hint.js";
 
 // ---------------------------------------------------------------------------
-// Inline fixture — self-contained per the plan's test contract. Mirrors the
-// shape of Phase 25's config-with-tooling.yaml fixture but stripped to the
-// keys this mutator touches plus comments + sibling sections we must NOT
-// touch.
+// Inline fixture — self-contained. Mirrors the shape of the
+// config-with-tooling.yaml fixture but stripped to the keys this mutator
+// touches plus comments + sibling sections we must NOT touch.
 // ---------------------------------------------------------------------------
 
 // Note: keep the integrations: block in pure block-style — yaml@2.8.4
@@ -57,11 +56,11 @@ tooling:
 `;
 
 // ---------------------------------------------------------------------------
-// Test 1: happy path — mcp hint
+// happy path — mcp hint
 // ---------------------------------------------------------------------------
 
 describe("setHintFields — happy path", () => {
-  it("Test 1: mcp hint — updates description + replacesPackages", () => {
+  it("mcp hint — updates description + replacesPackages", () => {
     const doc = parseDocument(FIXTURE_YAML);
     const result = setHintFields(doc, "mcp", "yfinance", {
       description: "Yahoo Finance MCP",
@@ -75,7 +74,7 @@ describe("setHintFields — happy path", () => {
     expect(out).toContain("- yahoo-finance2");
   });
 
-  it("Test 2: skill hint — TOOLFILL-11 symmetry with mcp", () => {
+  it("skill hint — symmetry with mcp", () => {
     const doc = parseDocument(FIXTURE_YAML);
     const result = setHintFields(doc, "skills", "stub-skill", {
       description: "Stub skill description",
@@ -90,11 +89,11 @@ describe("setHintFields — happy path", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests 3-5: TOOLFILL-6 strict scope — sibling preservation
+// strict scope — sibling preservation
 // ---------------------------------------------------------------------------
 
-describe("setHintFields — TOOLFILL-6 strict scope (siblings preserved)", () => {
-  it("Test 3: cluster on the targeted hint is preserved verbatim", () => {
+describe("setHintFields — strict scope (siblings preserved)", () => {
+  it("cluster on the targeted hint is preserved verbatim", () => {
     const doc = parseDocument(FIXTURE_YAML);
     setHintFields(doc, "mcp", "yfinance", {
       description: "Yahoo Finance MCP",
@@ -104,7 +103,7 @@ describe("setHintFields — TOOLFILL-6 strict scope (siblings preserved)", () =>
     expect(out).toContain("cluster: data-fetching-financial");
   });
 
-  it("Test 4: sibling hint (placeholder-mcp) is byte-identical pre/post", () => {
+  it("sibling hint (placeholder-mcp) is byte-identical pre/post", () => {
     const doc = parseDocument(FIXTURE_YAML);
     // Capture the placeholder-mcp block from the original.
     const placeholderBlockBefore = extractBlock(
@@ -128,7 +127,7 @@ describe("setHintFields — TOOLFILL-6 strict scope (siblings preserved)", () =>
     expect(placeholderBlockAfter).toContain("replacesPackages: []");
   });
 
-  it("Test 5: non-tooling section (integrations:) is byte-identical pre/post", () => {
+  it("non-tooling section (integrations:) is byte-identical pre/post", () => {
     const doc = parseDocument(FIXTURE_YAML);
     const integrationsBefore = extractBlock(FIXTURE_YAML, "integrations:", "tooling:");
     setHintFields(doc, "mcp", "yfinance", {
@@ -142,11 +141,11 @@ describe("setHintFields — TOOLFILL-6 strict scope (siblings preserved)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// Tests 6-7: comment preservation
+// comment preservation
 // ---------------------------------------------------------------------------
 
 describe("setHintFields — commentBefore preservation", () => {
-  it("Test 6: commentBefore on the hint key (yfinance) is preserved at the same position", () => {
+  it("commentBefore on the hint key (yfinance) is preserved at the same position", () => {
     const doc = parseDocument(FIXTURE_YAML);
     setHintFields(doc, "mcp", "yfinance", {
       description: "Yahoo Finance MCP",
@@ -164,7 +163,7 @@ describe("setHintFields — commentBefore preservation", () => {
     expect(between).not.toMatch(/^\s+\w+:/m);
   });
 
-  it("Test 7: commentBefore on replacesPackages (# TODO: list packages this MCP/skill replaces) is preserved when the value is replaced with a non-empty array", () => {
+  it("commentBefore on replacesPackages (# TODO: list packages this MCP/skill replaces) is preserved when the value is replaced with a non-empty array", () => {
     const doc = parseDocument(FIXTURE_YAML);
     setHintFields(doc, "mcp", "yfinance", {
       description: "Yahoo Finance MCP",
@@ -185,11 +184,11 @@ describe("setHintFields — commentBefore preservation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests 8-9: hint-not-found
+// hint-not-found
 // ---------------------------------------------------------------------------
 
 describe("setHintFields — hint-not-found", () => {
-  it("Test 8: missing hint returns err({kind:'hint-not-found', path}); doc unmutated", () => {
+  it("missing hint returns err({kind:'hint-not-found', path}); doc unmutated", () => {
     const doc = parseDocument(FIXTURE_YAML);
     const before = doc.toString();
     const result = setHintFields(doc, "mcp", "nonexistent-mcp", {
@@ -205,7 +204,7 @@ describe("setHintFields — hint-not-found", () => {
     expect(doc.toString()).toBe(before);
   });
 
-  it("Test 9: missing parent map (no tooling.skills.capabilityHints) → hint-not-found", () => {
+  it("missing parent map (no tooling.skills.capabilityHints) → hint-not-found", () => {
     const yamlNoSkills = `tooling:
   mcp:
     capabilityHints:
@@ -230,11 +229,11 @@ describe("setHintFields — hint-not-found", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 10: idempotency (TOOLFILL-9 atomic-edit semantics)
+// idempotency (atomic-edit semantics)
 // ---------------------------------------------------------------------------
 
-describe("setHintFields — TOOLFILL-9 idempotency", () => {
-  it("Test 10: same input twice produces byte-identical output", () => {
+describe("setHintFields — idempotency", () => {
+  it("same input twice produces byte-identical output", () => {
     const doc1 = parseDocument(FIXTURE_YAML);
     setHintFields(doc1, "mcp", "yfinance", {
       description: "Yahoo Finance MCP",
@@ -261,11 +260,11 @@ describe("setHintFields — TOOLFILL-9 idempotency", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests 11-12: runtime guards
+// runtime guards
 // ---------------------------------------------------------------------------
 
 describe("setHintFields — runtime guards", () => {
-  it("Test 11: invalid kind (cast around) returns err({kind:'invalid-kind'})", () => {
+  it("invalid kind (cast around) returns err({kind:'invalid-kind'})", () => {
     const doc = parseDocument(FIXTURE_YAML);
     const result = setHintFields(
       doc,
@@ -279,7 +278,7 @@ describe("setHintFields — runtime guards", () => {
     }
   });
 
-  it("Test 12: empty document (doc.contents === null) returns err({kind:'doc-corrupt'})", () => {
+  it("empty document (doc.contents === null) returns err({kind:'doc-corrupt'})", () => {
     const doc = parseDocument("");
     const result = setHintFields(doc, "mcp", "anything", {
       description: "x",
@@ -293,11 +292,11 @@ describe("setHintFields — runtime guards", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests 13-14: replacesPackages serialization + roundtrip
+// replacesPackages serialization + roundtrip
 // ---------------------------------------------------------------------------
 
 describe("setHintFields — replacesPackages serialization", () => {
-  it("Test 13: empty replacesPackages array stays empty (yaml emits flow [])", () => {
+  it("empty replacesPackages array stays empty (yaml emits flow [])", () => {
     const doc = parseDocument(FIXTURE_YAML);
     const result = setHintFields(doc, "mcp", "yfinance", {
       description: "Yahoo Finance MCP",
@@ -309,7 +308,7 @@ describe("setHintFields — replacesPackages serialization", () => {
     expect(out).toMatch(/yfinance:[\s\S]*?replacesPackages: \[\]/);
   });
 
-  it("Test 14: round-trip via parseDocument — re-parsed doc has the new values", () => {
+  it("round-trip via parseDocument — re-parsed doc has the new values", () => {
     const doc = parseDocument(FIXTURE_YAML);
     setHintFields(doc, "mcp", "yfinance", {
       description: "Yahoo Finance market prices, history, fundamentals",
@@ -325,10 +324,10 @@ describe("setHintFields — replacesPackages serialization", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Bonus: T-26-11 mitigation — description containing YAML metacharacters
+// Bonus: description containing YAML metacharacters
 // ---------------------------------------------------------------------------
 
-describe("setHintFields — T-26-11 metacharacter quoting", () => {
+describe("setHintFields — metacharacter quoting", () => {
   it("description containing ':' and ',' is auto-quoted by yaml@2.8.4", () => {
     const doc = parseDocument(FIXTURE_YAML);
     setHintFields(doc, "mcp", "yfinance", {

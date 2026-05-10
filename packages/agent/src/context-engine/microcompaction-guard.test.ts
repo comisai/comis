@@ -80,7 +80,6 @@ describe("installMicrocompactionGuard", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  // Test 1: Small tool result passes through unmodified
   it("passes through small tool results unmodified (under 8K threshold)", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -97,7 +96,6 @@ describe("installMicrocompactionGuard", () => {
     expect(existsSync(toolResultsDir)).toBe(false);
   });
 
-  // Test 2: Tool result exceeding default threshold is offloaded
   it("offloads tool results exceeding the default 8K threshold to disk", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -125,7 +123,6 @@ describe("installMicrocompactionGuard", () => {
     expect(logger.debug).toHaveBeenCalled();
   });
 
-  // Test 3: MCP tool result exceeding MCP threshold is offloaded
   it("offloads MCP tool results exceeding the 15K threshold", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -141,7 +138,6 @@ describe("installMicrocompactionGuard", () => {
     expect(existsSync(diskPath)).toBe(true);
   });
 
-  // Test 4: read tool under file-read threshold is NOT offloaded
   it("does NOT offload read tool results under the 15K threshold", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -159,7 +155,6 @@ describe("installMicrocompactionGuard", () => {
     expect(existsSync(toolResultsDir)).toBe(false);
   });
 
-  // Test 5: Tool result exceeding hard cap is truncated THEN offloaded
   it("truncates tool results exceeding 100K hard cap before offloading", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -185,7 +180,6 @@ describe("installMicrocompactionGuard", () => {
     expect(warnCall[0]).toHaveProperty("hardCapChars", TOOL_RESULT_HARD_CAP_CHARS);
   });
 
-  // Test 6: Disk file contains raw text content (not JSON envelope)
   it("writes raw text content to disk (not JSON envelope)", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -214,7 +208,6 @@ describe("installMicrocompactionGuard", () => {
     expect(diskText.length).toBe(10_000);
   });
 
-  // Test 7: Non-toolResult messages pass through completely unmodified
   it("passes non-toolResult messages through unmodified", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -230,8 +223,7 @@ describe("installMicrocompactionGuard", () => {
     expect(sm.appended[0]).toBe(userMessage);
   });
 
-  // Test 8a: onOffloaded callback fires when tool result is offloaded to disk (threshold path)
-  it("fires onOffloaded callback when tool result is offloaded to disk (G-09)", () => {
+  it("fires onOffloaded callback when tool result is offloaded to disk", () => {
     const sm = createMockSessionManager(tempDir);
     const onOffloaded = vi.fn();
     installMicrocompactionGuard(sm as any, tempDir, logger, onOffloaded);
@@ -243,8 +235,7 @@ describe("installMicrocompactionGuard", () => {
     expect(onOffloaded).toHaveBeenCalledWith("bash");
   });
 
-  // Test 8b: onOffloaded callback fires for hard cap path
-  it("fires onOffloaded callback when tool result exceeds hard cap (G-09)", () => {
+  it("fires onOffloaded callback when tool result exceeds hard cap", () => {
     const sm = createMockSessionManager(tempDir);
     const onOffloaded = vi.fn();
     installMicrocompactionGuard(sm as any, tempDir, logger, onOffloaded);
@@ -256,7 +247,6 @@ describe("installMicrocompactionGuard", () => {
     expect(onOffloaded).toHaveBeenCalledWith("bash");
   });
 
-  // Test 8c (PIPELINE-FIX): In-memory content is mutated to compact reference after offload
   it("mutates original message content in-place for pipeline visibility (threshold path)", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -271,7 +261,6 @@ describe("installMicrocompactionGuard", () => {
     expect(originalContent[0].text.length).toBeLessThan(5000);
   });
 
-  // Test 8d (PIPELINE-FIX): In-memory content is mutated after hard cap truncation
   it("mutates original message content in-place for pipeline visibility (hard cap path)", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -286,8 +275,7 @@ describe("installMicrocompactionGuard", () => {
     expect(originalContent[0].text.length).toBeLessThan(5000);
   });
 
-  // Test 8e: onOffloaded callback does NOT fire for under-threshold tool results
-  it("does not fire onOffloaded for under-threshold tool results (G-09)", () => {
+  it("does not fire onOffloaded for under-threshold tool results", () => {
     const sm = createMockSessionManager(tempDir);
     const onOffloaded = vi.fn();
     installMicrocompactionGuard(sm as any, tempDir, logger, onOffloaded);
@@ -298,7 +286,6 @@ describe("installMicrocompactionGuard", () => {
     expect(onOffloaded).not.toHaveBeenCalled();
   });
 
-  // Test 8 original: Reference message text contains the disk path
   it("includes disk path in the inline reference for file_read recovery", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -317,7 +304,6 @@ describe("installMicrocompactionGuard", () => {
     expect(referenceText).toContain("bash");
   });
 
-  // Test 9: Exec-based recovery hint for large offloaded results (>= 15K chars)
   it("shows exec-based recovery hint for large offloaded results (>= 15K chars)", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -341,7 +327,6 @@ describe("installMicrocompactionGuard", () => {
     expect(referenceText.startsWith("[Tool result offloaded to disk:")).toBe(true);
   });
 
-  // Test 10: Read-tool recovery hint for smaller offloaded results (< 15K chars)
   it("shows read-tool recovery hint for smaller offloaded results (< 15K chars)", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);
@@ -359,7 +344,6 @@ describe("installMicrocompactionGuard", () => {
     expect(referenceText).not.toContain("python");
   });
 
-  // Test 11: Exec hint includes actual disk path in the python example
   it("exec hint includes actual disk path in the python example", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, logger);

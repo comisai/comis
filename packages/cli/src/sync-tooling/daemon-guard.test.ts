@@ -4,12 +4,12 @@
  * Promise.race with a 1-second deadline.
  *
  * Covers:
- *   - Test 1: returns true when withClient resolves successfully
- *   - Test 2: returns false on ECONNREFUSED
- *   - Test 3: returns false on "method not found" (regression — fail-closed)
- *   - Test 4: returns false when the RPC hangs longer than the timeout (default 1000ms)
- *   - Test 5: default timeout is 1000ms (asserted by Test 4 with no explicit arg)
- *   - Test 6: the literal RPC method name is "system.ping" (drift item 1)
+ *   - returns true when withClient resolves successfully
+ *   - returns false on ECONNREFUSED
+ *   - returns false on "method not found" (regression — fail-closed)
+ *   - returns false when the RPC hangs longer than the timeout (default 1000ms)
+ *   - default timeout is 1000ms (asserted by the timeout case with no explicit arg)
+ *   - the literal RPC method name is "system.ping"
  *
  * @module
  */
@@ -32,7 +32,7 @@ describe("isDaemonRunning", () => {
     vi.useRealTimers();
   });
 
-  // Test 1 — returns true on RPC success
+  // returns true on RPC success
   it("returns true when withClient invokes the callback and call() resolves", async () => {
     vi.mocked(withClient).mockImplementation(
       async (fn: (client: { call: (m: string) => Promise<unknown> }) => Promise<unknown>) => {
@@ -46,7 +46,7 @@ describe("isDaemonRunning", () => {
     expect(running).toBe(true);
   });
 
-  // Test 2 — returns false on ECONNREFUSED
+  // returns false on ECONNREFUSED
   it("returns false when withClient throws ECONNREFUSED", async () => {
     const e = new Error("ECONNREFUSED") as Error & { code?: string };
     e.code = "ECONNREFUSED";
@@ -57,7 +57,7 @@ describe("isDaemonRunning", () => {
     expect(running).toBe(false);
   });
 
-  // Test 3 — returns false on "method not found" (regression / fail-closed)
+  // returns false on "method not found" (regression / fail-closed)
   it("returns false when the underlying call() rejects with method-not-found", async () => {
     vi.mocked(withClient).mockImplementation(
       async (fn: (client: { call: (m: string) => Promise<unknown> }) => Promise<unknown>) => {
@@ -73,7 +73,7 @@ describe("isDaemonRunning", () => {
     expect(running).toBe(false);
   });
 
-  // Test 4 — returns false on 1s timeout when RPC hangs (also covers Test 5)
+  // returns false on 1s timeout when RPC hangs (also covers default-timeout assertion)
   it("returns false when the RPC hangs longer than the default 1000ms", async () => {
     vi.useFakeTimers();
     vi.mocked(withClient).mockImplementation(
@@ -92,7 +92,7 @@ describe("isDaemonRunning", () => {
     await expect(promise).resolves.toBe(false);
   });
 
-  // Test 6 — the literal RPC method is "system.ping" (drift item 1)
+  // the literal RPC method is "system.ping"
   it("calls client.call('system.ping') exactly — not 'health.ping'", async () => {
     const callMock = vi.fn().mockResolvedValue({ pong: true });
     vi.mocked(withClient).mockImplementation(

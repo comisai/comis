@@ -2,26 +2,26 @@
 /**
  * Daemon supervisor auto-detection + control for `comis config tooling-fill`.
  *
- * Detection order (TOOLFILL-3 / D-2 — first hit wins):
+ * Detection order (first hit wins):
  *   1. `systemctl is-active comis`     → {kind: "systemd"}
  *   2. `pm2 jlist` containing comis    → {kind: "pm2"}
  *   3. `pgrep -f 'node.*daemon\.js'`   → {kind: "bare-process"}
  *   4. nothing matched                 → {kind: "none"}
  *
  * The operator can override with `--restart-cmd "<full stop+start>"` —
- * the orchestrator (Wave 2) constructs `{kind: "manual", cmd}`. This
- * module never builds a manual entry on its own.
+ * the orchestrator constructs `{kind: "manual", cmd}`. This module
+ * never builds a manual entry on its own.
  *
  * MUST use `promisify(execFile)` — the synchronous variants deadlock
- * the in-process daemon harness (Plan 25-04 Rule 1 lesson).
+ * the in-process daemon harness.
  *
  * All shell-outs route through `bash -c "<cmd>"` so the systemd /
  * pm2 / pkill / operator-supplied commands have a uniform launch path.
  * The argv list passed to `execFileAsync` is fixed (`["bash","-c",cmd]`)
  * — operator-controlled shell expansion only happens inside `<cmd>`,
- * which is operator-trusted (T-26-04: operator IS root for their own
- * daemon, accept). Each command carries a 10s timeout that SIGKILLs on
- * elapse; ETIMEDOUT maps to err({kind:"timeout"}).
+ * which is operator-trusted (operator IS root for their own daemon).
+ * Each command carries a 10s timeout that SIGKILLs on elapse; ETIMEDOUT
+ * maps to err({kind:"timeout"}).
  *
  * @module
  */
@@ -53,10 +53,10 @@ export interface SupervisorError {
 }
 
 /**
- * Canonical TOOLFILL-3 manual recipe — emitted on `{kind:"none"}` from
+ * Canonical manual recipe — emitted on `{kind:"none"}` from
  * `stopDaemon` / `startDaemon`. The orchestrator surfaces this to stderr
- * (the helper itself is pure of console output per the plan's "must_haves
- * truths" — orchestrator owns user-facing strings).
+ * (the helper itself is pure of console output — the orchestrator owns
+ * user-facing strings).
  */
 export const MANUAL_RECIPE_HINT =
   "Could not auto-detect daemon supervisor (none of systemctl, pm2, pgrep matched). " +
@@ -179,19 +179,19 @@ export async function stopDaemon(
     case "bare-process":
       return runShell("pkill -f 'node.*daemon\\.js'", timeoutMs);
     case "manual":
-      // CR-03 fix: --restart-cmd is documented as the operator's full
-      // stop+start command. Running it BOTH at stopDaemon and startDaemon
-      // would (a) effectively run "stop && start && stop && start" and
+      // --restart-cmd is documented as the operator's full stop+start
+      // command. Running it BOTH at stopDaemon and startDaemon would
+      // (a) effectively run "stop && start && stop && start" and
       // (b) leave the daemon UP during the file edit, violating the
-      // TOOLFILL-9 protected window. Treat manual mode as start-only:
-      // stopDaemon is a no-op; the operator's cmd runs once at startDaemon
-      // time, after the file edit is complete. The "protected window"
+      // protected window. Treat manual mode as start-only: stopDaemon
+      // is a no-op; the operator's cmd runs once at startDaemon time,
+      // after the file edit is complete. The "protected window"
       // guarantee weakens under --restart-cmd because we cannot invert
-      // an arbitrary command — but the operator chose this path explicitly,
-      // and the daemon does not watch config.yaml for changes (Phase 25
-      // design), so a write during a still-running daemon is benign:
-      // it just doesn't take effect until the operator's restart command
-      // lands.
+      // an arbitrary command — but the operator chose this path
+      // explicitly, and the daemon does not watch config.yaml for
+      // changes, so a write during a still-running daemon is benign:
+      // it just doesn't take effect until the operator's restart
+      // command lands.
       return ok(undefined);
     case "none":
       return err({
@@ -249,8 +249,6 @@ export async function startDaemon(
  * is ok but the daemon is dead. This helper closes that gap by polling the
  * actual liveness probe (the same one used pre-LLM-call) until it succeeds
  * or we give up.
- *
- * Phase 26.1 — added after the VPS test surfaced the silent-failure mode.
  *
  * @param livenessProbe - Async predicate that returns true iff the daemon is alive.
  *                        In production this wraps `isDaemonRunning()` from daemon-guard.ts.

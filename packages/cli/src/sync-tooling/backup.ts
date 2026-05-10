@@ -3,23 +3,22 @@
  * Pre-mutation backup helper for sync-tooling `--write` operations.
  *
  * Writes a byte-equal copy of the active config under `~/.comis/` with
- * a timestamped filename matching the D-10 pattern:
+ * a timestamped filename:
  *
  *   config.pre-<prefix>-<ISO-with-ms>-<6-hex>.yaml
  *   e.g. config.pre-sync-tooling-2026-05-10T12-34-56.789-a3f2c1.yaml
  *        config.pre-tooling-fill-2026-05-10T12-34-56.789-a3f2c1.yaml
  *
- * The `prefix` defaults to `"sync-tooling"` for back-compat with Phase 25
- * callers; Phase 26 (`comis config tooling-fill`) passes `"tooling-fill"`
- * to land its backups beside Phase 25's.
+ * The `prefix` defaults to `"sync-tooling"`; the `tooling-fill` command
+ * passes `"tooling-fill"` to land its backups in the same location.
  *
  * The 6-char hex suffix is `crypto.randomBytes(3).toString('hex')`,
  * not `Math.random` — collisions in the same millisecond are
  * vanishingly rare and the suffix carries no security claim.
  *
- * Backup-fail-fast (D-12): callers MUST NOT proceed with mutation
- * if `writeBackup` returns err. The Wave 3 caller maps a Result.err
- * here to exit code 2 with the failed backup path on stderr.
+ * Backup-fail-fast: callers MUST NOT proceed with mutation if
+ * `writeBackup` returns err. The caller maps a Result.err here to
+ * exit code 2 with the failed backup path on stderr.
  *
  * @module
  */
@@ -43,15 +42,15 @@ export type BackupError =
   | { code: "BACKUP_WRITE_FAILED"; path: string; cause: string };
 
 /**
- * Build a backup filename per D-10 with a customizable command prefix.
+ * Build a backup filename with a customizable command prefix.
  *
  * The optional parameters exist for testability — production callers
- * pass no args (Phase 25 sync-tooling) or only `prefix` (Phase 26
- * tooling-fill) and get a fresh `Date` + `randomBytes` each call.
+ * pass no args (sync-tooling) or only `prefix` (tooling-fill) and get
+ * a fresh `Date` + `randomBytes` each call.
  *
  * @param now - Override the timestamp (default: `new Date()`).
  * @param rng - Override the 6-char hex suffix generator (default: `randomBytes(3).toString('hex')`).
- * @param prefix - Command prefix for the filename (default: `"sync-tooling"` for back-compat).
+ * @param prefix - Command prefix for the filename (default: `"sync-tooling"`).
  */
 export function buildBackupFilename(
   now: Date = new Date(),
@@ -74,11 +73,11 @@ export function buildBackupFilename(
  *
  * MUST be called BEFORE any mutation. If this returns err, the caller
  * MUST abort with exit code 2 and emit the failed backup path on
- * stderr (D-12 backup-fail-fast).
+ * stderr (backup-fail-fast).
  *
  * @param configPath - Absolute path of the source config to back up.
  * @param homeDir - Operator's home directory; backup goes under `${homeDir}/.comis/`.
- * @param prefix - Command prefix for the backup filename (default: `"sync-tooling"` for back-compat).
+ * @param prefix - Command prefix for the backup filename (default: `"sync-tooling"`).
  */
 export function writeBackup(
   configPath: string,
@@ -160,9 +159,9 @@ export function pruneOldBackups(
     return { deleted: 0 };
   }
 
-  // Match the D-10 pattern with a prefix-specific anchor. Anchor on the
-  // literal prefix to avoid pruning Phase 25 backups when called for
-  // Phase 26 (and vice versa).
+  // Match the backup pattern with a prefix-specific anchor. Anchor on the
+  // literal prefix to avoid pruning sync-tooling backups when called for
+  // tooling-fill (and vice versa).
   const re = new RegExp(`^config\\.pre-${prefix}-.+\\.yaml$`);
   const candidates = entries
     .filter((e) => e.isFile() && re.test(e.name))

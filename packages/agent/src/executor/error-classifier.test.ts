@@ -77,9 +77,9 @@ describe("classifyError", () => {
       '400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.13.content.5 thinking/redacted_thinking blocks cannot be modified"}}'
     );
     const result = classifyError(error);
-    // Re-classified by Fix #1: signature noun + verb + JSON path all hit,
-    // so this is the more-specific signed-replay subcategory. Retryable
-    // because the runner scrubs signed state and re-enters the model retry chain.
+    // Signature noun + verb + JSON path all hit, so this is the more-specific
+    // signed-replay subcategory. Retryable because the runner scrubs signed
+    // state and re-enters the model retry chain.
     expect(result.category).toBe("client_request_signed_replay");
     expect(result.retryable).toBe(true);
     // userMessage must not leak raw provider internals
@@ -140,7 +140,7 @@ describe("classifyError", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Provider-agnostic signed-replay (Fix #1)
+  // Provider-agnostic signed-replay
   // -------------------------------------------------------------------------
 
   it("classifies Gemini-flavored thoughtSignature mismatch as client_request_signed_replay", () => {

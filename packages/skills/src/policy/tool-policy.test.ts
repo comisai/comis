@@ -465,7 +465,6 @@ describe("applyToolPolicy - supervisor profile", () => {
 
 // ---------------------------------------------------------------------------
 // Operational profiles (cron-minimal + heartbeat-minimal)
-// Design-doc §Testing #4
 // ---------------------------------------------------------------------------
 
 /** Tools representative of a real cron context: includes tools in cron-minimal
@@ -515,7 +514,7 @@ describe("TOOL_PROFILES operational presets", () => {
   });
 });
 
-describe("applyToolPolicy - operational opt-in behavior (design-doc §Testing #4)", () => {
+describe("applyToolPolicy - operational opt-in behavior", () => {
   it("opt-in inheritance: cron job without toolPolicy keeps every tool via agent-level 'full' policy", () => {
     // Scenario: cron job.toolPolicy is undefined, agent.toolPolicy = full
     // Resolution: { profile: "full", allow: [], deny: [] } -> passthrough

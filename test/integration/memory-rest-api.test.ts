@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MEM-REST: Memory REST API Integration Tests
+ * Memory REST API Integration Tests
  *
  * Validates the memory REST API endpoints (GET /api/memory/search, GET /api/memory/stats)
  * covering HTTP contract validation, auth enforcement, and parameter validation.
  *
- * Test IDs:
- *   MEM-REST-01: GET /api/memory/stats returns 200 with stats shape on empty DB
- *   MEM-REST-02: GET /api/memory/search returns 400 without q param
- *   MEM-REST-03: GET /api/memory/search with q returns 200 + results shape
- *   MEM-REST-04: GET /api/memory/search limit param is respected
- *   MEM-REST-05: GET /api/memory/stats without Authorization returns 401
- *   MEM-REST-06: GET /api/memory/search without Authorization returns 401
- *   MEM-REST-07: GET /api/memory/stats rejects query param token
- *   MEM-REST-08: GET /api/memory/search with invalid bearer token returns 401
- *   MEM-REST-10: GET /api/memory/search with empty q returns 400
+ * Coverage:
+ *   - GET /api/memory/stats returns 200 with stats shape on empty DB
+ *   - GET /api/memory/search returns 400 without q param
+ *   - GET /api/memory/search with q returns 200 + results shape
+ *   - GET /api/memory/search limit param is respected
+ *   - GET /api/memory/stats without Authorization returns 401
+ *   - GET /api/memory/search without Authorization returns 401
+ *   - GET /api/memory/stats rejects query param token
+ *   - GET /api/memory/search with invalid bearer token returns 401
+ *   - GET /api/memory/search with empty q returns 400
  *
  * Uses a dedicated config (port 8507, separate memory DB) to avoid conflicts.
  */
@@ -40,7 +40,7 @@ const CONFIG_PATH = resolve(__dirname, "../config/config.test-memory-rest.yaml")
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("MEM-REST: Memory REST API", () => {
+describe("Memory REST API", () => {
   let handle: TestDaemonHandle;
   let gatewayUrl: string;
   let authToken: string;
@@ -69,7 +69,7 @@ describe("MEM-REST: Memory REST API", () => {
   // -------------------------------------------------------------------------
 
   it(
-    "GET /api/memory/stats without Authorization returns 401 (MEM-REST-05)",
+    "GET /api/memory/stats without Authorization returns 401",
     async () => {
       const res = await fetch(`${gatewayUrl}/api/memory/stats`);
       expect(res.status).toBe(401);
@@ -81,7 +81,7 @@ describe("MEM-REST: Memory REST API", () => {
   );
 
   it(
-    "GET /api/memory/search without Authorization returns 401 (MEM-REST-06)",
+    "GET /api/memory/search without Authorization returns 401",
     async () => {
       const res = await fetch(`${gatewayUrl}/api/memory/search?q=test`);
       expect(res.status).toBe(401);
@@ -93,7 +93,7 @@ describe("MEM-REST: Memory REST API", () => {
   );
 
   it(
-    "GET /api/memory/search with invalid bearer token returns 401 (MEM-REST-08)",
+    "GET /api/memory/search with invalid bearer token returns 401",
     async () => {
       const res = await fetch(`${gatewayUrl}/api/memory/search?q=test`, {
         headers: makeAuthHeaders("invalid-token-xxx"),
@@ -107,7 +107,7 @@ describe("MEM-REST: Memory REST API", () => {
   );
 
   it(
-    "GET /api/memory/stats rejects query param token (MEM-REST-07)",
+    "GET /api/memory/stats rejects query param token",
     async () => {
       // Query param tokens are NOT supported by REST API auth middleware
       // It only reads from Authorization header
@@ -124,7 +124,7 @@ describe("MEM-REST: Memory REST API", () => {
   // -------------------------------------------------------------------------
 
   it(
-    "GET /api/memory/stats returns 200 with stats shape on empty DB (MEM-REST-01)",
+    "GET /api/memory/stats returns 200 with stats shape on empty DB",
     async () => {
       const res = await fetch(`${gatewayUrl}/api/memory/stats`, {
         headers: makeAuthHeaders(authToken),
@@ -144,7 +144,7 @@ describe("MEM-REST: Memory REST API", () => {
   );
 
   it(
-    "GET /api/memory/search returns 400 without q param (MEM-REST-02)",
+    "GET /api/memory/search returns 400 without q param",
     async () => {
       const res = await fetch(`${gatewayUrl}/api/memory/search`, {
         headers: makeAuthHeaders(authToken),
@@ -161,7 +161,7 @@ describe("MEM-REST: Memory REST API", () => {
   );
 
   it(
-    "GET /api/memory/search with empty q returns 400 (MEM-REST-10)",
+    "GET /api/memory/search with empty q returns 400",
     async () => {
       const res = await fetch(`${gatewayUrl}/api/memory/search?q=`, {
         headers: makeAuthHeaders(authToken),
@@ -178,7 +178,7 @@ describe("MEM-REST: Memory REST API", () => {
   );
 
   it(
-    "GET /api/memory/search with q returns 200 + results shape (MEM-REST-03)",
+    "GET /api/memory/search with q returns 200 + results shape",
     async () => {
       const res = await fetch(`${gatewayUrl}/api/memory/search?q=test`, {
         headers: makeAuthHeaders(authToken),
@@ -192,11 +192,11 @@ describe("MEM-REST: Memory REST API", () => {
   );
 
   it(
-    "GET /api/memory/search limit param is respected (MEM-REST-04)",
+    "GET /api/memory/search limit param is respected",
     async () => {
       const headers = makeAuthHeaders(authToken);
 
-      // Test 1: explicit limit=5
+      // explicit limit=5
       const res1 = await fetch(
         `${gatewayUrl}/api/memory/search?q=test&limit=5`,
         { headers },
@@ -205,21 +205,21 @@ describe("MEM-REST: Memory REST API", () => {
       const body1 = (await res1.json()) as Record<string, unknown>;
       expect(Array.isArray(body1.results)).toBe(true);
 
-      // Test 2: limit=0 (clamped to 1)
+      // limit=0 (clamped to 1)
       const res2 = await fetch(
         `${gatewayUrl}/api/memory/search?q=test&limit=0`,
         { headers },
       );
       expect(res2.status).toBe(200);
 
-      // Test 3: limit=999 (clamped to 100)
+      // limit=999 (clamped to 100)
       const res3 = await fetch(
         `${gatewayUrl}/api/memory/search?q=test&limit=999`,
         { headers },
       );
       expect(res3.status).toBe(200);
 
-      // Test 4: limit=abc (NaN, defaults to 10)
+      // limit=abc (NaN, defaults to 10)
       const res4 = await fetch(
         `${gatewayUrl}/api/memory/search?q=test&limit=abc`,
         { headers },

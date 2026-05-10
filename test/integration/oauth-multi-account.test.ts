@@ -389,7 +389,7 @@ function extractAccountIdFromJwt(token: string): string {
 // ---------------------------------------------------------------------------
 
 describe("multi-account profile selection", () => {
-  it("Test 1: routes each agent's LLM call to its configured oauthProfile (Bearer header + chatgpt-account-id header)", async () => {
+  it("routes each agent's LLM call to its configured oauthProfile (Bearer header + chatgpt-account-id header)", async () => {
     const TOKEN_A = await seedProfile(
       store,
       "openai-codex:user-a@example.com",
@@ -435,7 +435,7 @@ describe("multi-account profile selection", () => {
     expect(calls[1]!.accountId).toBe("ACC_B");
   });
 
-  it("Test 2: decoded JWT chatgpt_account_id claim per request matches the configured profile", async () => {
+  it("decoded JWT chatgpt_account_id claim per request matches the configured profile", async () => {
     await seedProfile(
       store,
       "openai-codex:user-a@example.com",
@@ -481,10 +481,11 @@ describe("multi-account profile selection", () => {
     expect(extractAccountId(calls[1]!.authorization)).toBe("ACC_B");
   });
 
-  it("Test 3a (round-trip - closure-mutation contract): direct in-place oauthProfiles mutation updates the next call's profile", async () => {
+  it("round-trip closure-mutation contract: direct in-place oauthProfiles mutation updates the next call's profile", async () => {
     // Low-level test: documents the closure-stability contract at the
     // OAuthTokenManager getter boundary. Does NOT drive the actual RPC
-    // handler. Test 3b below is the production-path round-trip.
+    // handler. The sibling end-to-end test below is the production-path
+    // round-trip.
 
     const TOKEN_A = await seedProfile(
       store,
@@ -514,7 +515,8 @@ describe("multi-account profile selection", () => {
     // low-level contract). Reassigning the SAME agent key with a new
     // PerAgentConfig is the contract; in-place edit of the existing
     // object would also work but reference-replacement is what the
-    // production agents.update RPC does (Test 3b verifies that).
+    // production agents.update RPC does (the end-to-end test below verifies
+    // that).
     agents["agent-b"] = makeAgent("openai-codex:user-b@example.com");
 
     mockServer.reset();
@@ -524,7 +526,7 @@ describe("multi-account profile selection", () => {
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN_B}`);
   });
 
-  it("Test 3b (round-trip - END-TO-END via actual agents.update RPC handler; falsifiable proof of closure-stability)", async () => {
+  it("round-trip END-TO-END via actual agents.update RPC handler; falsifiable proof of closure-stability", async () => {
     // Production-path test: drives the actual `handlers["agents.update"]`
     // RPC, which executes the reference-replacement at agent-handlers.ts:386
     // (`deps.agents[agentId] = parsedConfig`). The OAuthTokenManager's
@@ -617,7 +619,7 @@ describe("multi-account profile selection", () => {
     expect(calls[0]!.authorization).toBe(`Bearer ${TOKEN_B}`);
   });
 
-  it("Test 4: PROFILE_NOT_FOUND propagates as fatal error when configured profile is missing from store", async () => {
+  it("PROFILE_NOT_FOUND propagates as fatal error when configured profile is missing from store", async () => {
     // Seed only profile A; agent points at NON-existent profile B.
     await seedProfile(
       store,

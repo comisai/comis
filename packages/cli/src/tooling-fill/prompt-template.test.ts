@@ -3,11 +3,11 @@
  * Tests for tooling-fill/prompt-template.ts.
  *
  * Covers:
- * - TOOLFILL-2: prompt requires the strict 2-line response contract.
- * - TOOLFILL-6: prompt forbids any other text/fields/commentary; the
- *   forbidden-tokens list explicitly names CLUSTER: and INSTALL_DETOURS:.
- * - TOOLFILL-11: skill prompts ask the agent to REFINE the manifest
- *   description (not invent), and "REFINE" appears in uppercase.
+ * - Prompt requires the strict 2-line response contract.
+ * - Prompt forbids any other text/fields/commentary; the forbidden-tokens
+ *   list explicitly names CLUSTER: and INSTALL_DETOURS:.
+ * - Skill prompts ask the agent to REFINE the manifest description (not
+ *   invent), and "REFINE" appears in uppercase.
  * - Determinism: byte-identical output for byte-identical input.
  */
 
@@ -45,14 +45,14 @@ describe("buildFillPrompt — MCP variant", () => {
   });
 });
 
-describe("buildFillPrompt — Skills variant (TOOLFILL-11)", () => {
+describe("buildFillPrompt — Skills variant", () => {
   it("asks the agent to REFINE the existing manifest description (not invent)", () => {
     const out = buildFillPrompt({
       kind: "skills",
       name: "stub-skill",
       skillDescription: "Markdown formatting",
     });
-    // TOOLFILL-11: refinement, not invention.
+    // Refinement, not invention.
     expect(out).toContain("REFINE");
     expect(out).toContain("Markdown formatting");
   });
@@ -63,7 +63,7 @@ describe("buildFillPrompt — Skills variant (TOOLFILL-11)", () => {
   });
 });
 
-describe("buildFillPrompt — TOOLFILL-2 / TOOLFILL-6 strict scope", () => {
+describe("buildFillPrompt — strict scope", () => {
   it("contains the literal forbid clause across all variants", () => {
     const literal = "Do NOT include any other text, fields, or commentary.";
     expect(
@@ -89,7 +89,7 @@ describe("buildFillPrompt — TOOLFILL-2 / TOOLFILL-6 strict scope", () => {
     expect(out).toContain("INSTALL_DETOURS:");
   });
 
-  it("contains the TOOLFILL-2 grammar shape for both DESCRIPTION and REPLACES_PACKAGES", () => {
+  it("contains the grammar shape for both DESCRIPTION and REPLACES_PACKAGES", () => {
     const out = buildFillPrompt({
       kind: "mcp",
       name: "n",

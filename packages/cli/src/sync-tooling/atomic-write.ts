@@ -65,7 +65,7 @@ export type AtomicWriteError =
  *      This prevents the common production trap where running the CLI
  *      as root (because `systemctl` requires it) silently re-owns
  *      `~/.comis/config.yaml` to root and locks the unprivileged daemon
- *      service user out at the next restart (Phase 26.1).
+ *      service user out at the next restart.
  *
  * @param configPath - Absolute path of the target file to atomically replace.
  * @param content - File contents to write (UTF-8 string).
@@ -145,12 +145,12 @@ export function atomicWriteFile(
     // Non-fatal: macOS dev environments may reject dir-fd fsync.
   }
 
-  // Phase 5: ownership preservation (Phase 26.1). The rename creates a
-  // file owned by the calling process; if the original was owned by a
-  // different uid:gid (e.g. CLI run as root, daemon runs as `comis`),
-  // chown back to the original owner. Skip the chown when uid:gid
-  // already match — that's the common path on dev workstations and
-  // doesn't need CAP_CHOWN.
+  // Phase 5: ownership preservation. The rename creates a file owned
+  // by the calling process; if the original was owned by a different
+  // uid:gid (e.g. CLI run as root, daemon runs as `comis`), chown
+  // back to the original owner. Skip the chown when uid:gid already
+  // match — that's the common path on dev workstations and doesn't
+  // need CAP_CHOWN.
   if (preserveUid !== undefined && preserveGid !== undefined) {
     let needsChown = true;
     try {

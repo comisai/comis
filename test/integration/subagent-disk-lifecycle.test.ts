@@ -2,17 +2,17 @@
 /**
  * Integration tests for subagent disk offload write and sweep cleanup lifecycle.
  *
- * Exercises ResultCondenser disk persistence (COND-05) and sweepResultFiles
- * cleanup (DISK-02/DISK-03) with real filesystem operations in temp directories.
- * No daemon, no LLM, no network.
+ * Exercises ResultCondenser disk persistence and sweepResultFiles cleanup with
+ * real filesystem operations in temp directories. No daemon, no LLM, no
+ * network.
  *
  * Covers:
- * - TEST-08: Disk offload write (ResultCondenser persists full result JSON)
- * - TEST-08: Sweep removes expired files (utimesSync + sweepResultFiles)
- * - TEST-08: Sweep preserves fresh files
- * - TEST-08: Sweep cleans up empty session directories
- * - TEST-08: Sweep handles missing results directory gracefully
- * - TEST-08: End-to-end condenser write then sweep cleanup lifecycle
+ * - Disk offload write (ResultCondenser persists full result JSON)
+ * - Sweep removes expired files (utimesSync + sweepResultFiles)
+ * - Sweep preserves fresh files
+ * - Sweep cleans up empty session directories
+ * - Sweep handles missing results directory gracefully
+ * - End-to-end condenser write then sweep cleanup lifecycle
  *
  * @module
  */
@@ -67,10 +67,10 @@ function createMockLogger() {
 describe("subagent disk lifecycle integration", () => {
 
   // -------------------------------------------------------------------------
-  // (a) ResultCondenser writes full result to disk (COND-05)
+  // (a) ResultCondenser writes full result to disk
   // -------------------------------------------------------------------------
 
-  it("ResultCondenser writes full result to disk (COND-05)", async () => {
+  it("ResultCondenser writes full result to disk", async () => {
     const mockLogger = createMockLogger();
 
     const condenser = createResultCondenser({

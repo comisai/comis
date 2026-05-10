@@ -511,15 +511,12 @@ describe("agents_manage tool", () => {
   // buildCreateContract uses to decide between the SHORT, PARTIAL, and
   // 2-step (existing) contract forms.
   //
-  // Tests 1-4: TypeBox schema accept/reject for the new shape + size limits.
-  // Test 5: handler strips role/identity from config + forwards inlineContent.
-  // Tests 6-9: buildCreateContract 3-state branches + IO failure fallthrough.
   // ---------------------------------------------------------------------------
   describe("create inline workspace content", () => {
     // ---------------------------------------------------------------------
-    // Test 1-4: schema accept/reject
+    // schema accept/reject
     // ---------------------------------------------------------------------
-    it("Test 1 — schema accepts workspace.role + workspace.identity", () => {
+    it("schema accepts workspace.role + workspace.identity", () => {
       const ok = Value.Check(AgentsManageToolParams, {
         action: "create",
         agent_id: "vyf-a",
@@ -530,7 +527,7 @@ describe("agents_manage tool", () => {
       expect(ok).toBe(true);
     });
 
-    it("Test 2 — schema rejects oversize role (>16384 chars)", () => {
+    it("schema rejects oversize role (>16384 chars)", () => {
       const ok = Value.Check(AgentsManageToolParams, {
         action: "create",
         agent_id: "vyf-big-r",
@@ -541,7 +538,7 @@ describe("agents_manage tool", () => {
       expect(ok).toBe(false);
     });
 
-    it("Test 3 — schema rejects oversize identity (>4096 chars)", () => {
+    it("schema rejects oversize identity (>4096 chars)", () => {
       const ok = Value.Check(AgentsManageToolParams, {
         action: "create",
         agent_id: "vyf-big-i",
@@ -552,7 +549,7 @@ describe("agents_manage tool", () => {
       expect(ok).toBe(false);
     });
 
-    it("Test 4 — schema accepts role-only and identity-only shapes", () => {
+    it("schema accepts role-only and identity-only shapes", () => {
       const roleOnly = Value.Check(AgentsManageToolParams, {
         action: "create",
         agent_id: "vyf-r",
@@ -568,9 +565,9 @@ describe("agents_manage tool", () => {
     });
 
     // ---------------------------------------------------------------------
-    // Test 5: handler strips role/identity from config + forwards inlineContent
+    // handler strips role/identity from config + forwards inlineContent
     // ---------------------------------------------------------------------
-    it("Test 5 — handler strips role/identity from RPC config and forwards inlineContent", async () => {
+    it("handler strips role/identity from RPC config and forwards inlineContent", async () => {
       mockRpcCall.mockResolvedValue({
         agentId: "vyf-strip",
         created: true,
@@ -605,9 +602,9 @@ describe("agents_manage tool", () => {
     });
 
     // ---------------------------------------------------------------------
-    // Test 6: buildCreateContract — both written → SHORT contract
+    // buildCreateContract — both written → SHORT contract
     // ---------------------------------------------------------------------
-    it("Test 6 — buildCreateContract: both written emits SHORT operationally-ready contract", () => {
+    it("buildCreateContract: both written emits SHORT operationally-ready contract", () => {
       const text = buildCreateContract("agt-a", "/tmp/workspace-agt-a", {
         roleWritten: true,
         identityWritten: true,
@@ -624,9 +621,9 @@ describe("agents_manage tool", () => {
     });
 
     // ---------------------------------------------------------------------
-    // Test 7: buildCreateContract — partial (role only) → mixed contract
+    // buildCreateContract — partial (role only) → mixed contract
     // ---------------------------------------------------------------------
-    it("Test 7 — buildCreateContract: role-only partial mentions ROLE.md written + IDENTITY.md still template", () => {
+    it("buildCreateContract: role-only partial mentions ROLE.md written + IDENTITY.md still template", () => {
       const text = buildCreateContract("agt-p", "/tmp/workspace-agt-p", {
         roleWritten: true,
         identityWritten: false,
@@ -642,9 +639,9 @@ describe("agents_manage tool", () => {
     });
 
     // ---------------------------------------------------------------------
-    // Test 8: buildCreateContract — neither (regression) emits existing 2-step
+    // buildCreateContract — neither (regression) emits existing 2-step
     // ---------------------------------------------------------------------
-    it("Test 8 — buildCreateContract: neither/undefined falls through to existing 2-step contract", () => {
+    it("buildCreateContract: neither/undefined falls through to existing 2-step contract", () => {
       const undefinedResult = buildCreateContract("agt-n", "/tmp/workspace-agt-n");
       expect(undefinedResult).toContain("✓ Agent agt-n created at /tmp/workspace-agt-n.");
       expect(undefinedResult).toContain("Workspace files are TEMPLATES");
@@ -664,9 +661,9 @@ describe("agents_manage tool", () => {
     });
 
     // ---------------------------------------------------------------------
-    // Test 9: buildCreateContract — IO failure shape falls through to 2-step
+    // buildCreateContract — IO failure shape falls through to 2-step
     // ---------------------------------------------------------------------
-    it("Test 9 — buildCreateContract: helper IO failure shape falls through to existing 2-step contract", () => {
+    it("buildCreateContract: helper IO failure shape falls through to existing 2-step contract", () => {
       const text = buildCreateContract("agt-f", "/tmp/workspace-agt-f", {
         ok: false,
         error: { kind: "io", file: "ROLE.md", message: "EACCES" },

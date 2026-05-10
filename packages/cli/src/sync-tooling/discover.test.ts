@@ -5,9 +5,9 @@
  * Covers:
  * - readMcpServers (pure config read)
  * - discoverSkills (filesystem walk + frontmatter parse + dedupe)
- * - Pitfall 7 description priority (comis.capability.summary > frontmatter.description > undefined)
+ * - description priority (comis.capability.summary > frontmatter.description > undefined)
  * - First-loaded-wins dedupe by skill name
- * - Per-agent discoveryPaths union (RESEARCH Open Question 1)
+ * - Per-agent discoveryPaths union
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -35,11 +35,11 @@ function writeSkill(
 }
 
 describe("readMcpServers", () => {
-  it("Test 1: returns [] for empty config", () => {
+  it("returns [] for empty config", () => {
     expect(readMcpServers({})).toEqual([]);
   });
 
-  it("Test 2: returns one entry per MCP server", () => {
+  it("returns one entry per MCP server", () => {
     const result = readMcpServers({
       integrations: {
         mcp: {
@@ -50,7 +50,7 @@ describe("readMcpServers", () => {
     expect(result).toEqual([{ name: "yfinance", description: undefined }]);
   });
 
-  it("Test 3: ignores entries without a string `name` field", () => {
+  it("ignores entries without a string `name` field", () => {
     const result = readMcpServers({
       integrations: {
         mcp: {
@@ -82,7 +82,7 @@ describe("discoverSkills", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("Test 4: walks discoveryPaths from agent config + the two daemon defaults; skips paths that do not exist", () => {
+  it("walks discoveryPaths from agent config + the two daemon defaults; skips paths that do not exist", () => {
     // Write one skill under a custom discovery path
     const customDir = path.join(tmp, "custom-skills");
     writeSkill(
@@ -113,7 +113,7 @@ describe("discoverSkills", () => {
     expect(names).toEqual(["alpha", "beta"]);
   });
 
-  it("Test 5: comis.capability.summary takes priority over frontmatter.description", () => {
+  it("comis.capability.summary takes priority over frontmatter.description", () => {
     const skillDir = path.join(homeDir, ".comis", "skills");
     writeSkill(
       skillDir,
@@ -132,7 +132,7 @@ describe("discoverSkills", () => {
     expect(result[0]!.description).toBe("Capability summary wins");
   });
 
-  it("Test 6: falls back to frontmatter.description when comis.capability.summary is absent", () => {
+  it("falls back to frontmatter.description when comis.capability.summary is absent", () => {
     const skillDir = path.join(homeDir, ".comis", "skills");
     writeSkill(
       skillDir,
@@ -145,7 +145,7 @@ describe("discoverSkills", () => {
     expect(result[0]!.description).toBe("Just a frontmatter description");
   });
 
-  it("Test 7: returns description=undefined when both summary and frontmatter description are missing", () => {
+  it("returns description=undefined when both summary and frontmatter description are missing", () => {
     // Note: SkillManifestSchema requires `description` — but discover reads
     // pre-validation, so a malformed manifest still surfaces with description=undefined.
     const skillDir = path.join(homeDir, ".comis", "skills");
@@ -160,7 +160,7 @@ describe("discoverSkills", () => {
     expect(result[0]!.description).toBeUndefined();
   });
 
-  it("Test 8: dedupes by skill name (first-loaded-wins)", () => {
+  it("dedupes by skill name (first-loaded-wins)", () => {
     const dirA = path.join(tmp, "a");
     const dirB = path.join(tmp, "b");
     writeSkill(dirA, "shared", "name: shared\ndescription: From A");
@@ -181,7 +181,7 @@ describe("discoverSkills", () => {
     expect(result[0]!.description).toBe("From A");
   });
 
-  it("Test 9: returns DiscoveredSkill.cluster from comis.capability.cluster when present, undefined otherwise", () => {
+  it("returns DiscoveredSkill.cluster from comis.capability.cluster when present, undefined otherwise", () => {
     const skillDir = path.join(homeDir, ".comis", "skills");
     writeSkill(
       skillDir,
@@ -206,7 +206,7 @@ describe("discoverSkills", () => {
     expect(byName.get("nocluster")!.cluster).toBeUndefined();
   });
 
-  it("Test 10: unions paths from multiple agents and dedupes the union", () => {
+  it("unions paths from multiple agents and dedupes the union", () => {
     const dirAlpha = path.join(tmp, "alpha-skills");
     const dirBeta = path.join(tmp, "beta-skills");
     writeSkill(dirAlpha, "only-alpha", "name: only-alpha\ndescription: Alpha");

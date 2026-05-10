@@ -6,11 +6,11 @@
  * composition root, has active listeners after startup, and remains
  * functional through normal RPC traffic.
  *
- *   EBD-01: Daemon container exposes event bus
- *   EBD-02: Event bus has active listeners after daemon startup
- *   EBD-03: Can emit and receive events through daemon event bus
- *   EBD-05: Plugin registry events are wired through daemon event bus
- *   EBD-06: Event bus survives normal RPC traffic
+ *   - Daemon container exposes event bus
+ *   - Event bus has active listeners after daemon startup
+ *   - Can emit and receive events through daemon event bus
+ *   - Plugin registry events are wired through daemon event bus
+ *   - Event bus survives normal RPC traffic
  *
  * Uses port 8503 and unique database path to avoid conflicts with other test suites.
  */
@@ -60,7 +60,7 @@ describe("EventBus Daemon E2E", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // EBD-01: Daemon container exposes event bus
+  // Daemon container exposes event bus
   // -------------------------------------------------------------------------
 
   it("daemon container exposes event bus with full API surface", () => {
@@ -73,7 +73,7 @@ describe("EventBus Daemon E2E", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EBD-02: Event bus has active listeners after daemon startup
+  // Event bus has active listeners after daemon startup
   // -------------------------------------------------------------------------
 
   it("event bus has active listeners after daemon startup", () => {
@@ -90,7 +90,7 @@ describe("EventBus Daemon E2E", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EBD-03: Can emit and receive events through daemon event bus
+  // Can emit and receive events through daemon event bus
   // -------------------------------------------------------------------------
 
   it("can emit and receive events through daemon event bus", () => {
@@ -122,7 +122,7 @@ describe("EventBus Daemon E2E", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EBD-05: Plugin registry events wired through daemon event bus
+  // Plugin registry events wired through daemon event bus
   // -------------------------------------------------------------------------
 
   it("plugin registry events are wired through daemon event bus", () => {
@@ -171,7 +171,7 @@ describe("EventBus Daemon E2E", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EBD-06: Event bus survives normal RPC traffic
+  // Event bus survives normal RPC traffic
   // -------------------------------------------------------------------------
 
   it("event bus survives normal RPC traffic without disruption", async () => {

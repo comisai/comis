@@ -39,10 +39,10 @@ describe("Gateway: Concurrent WebSocket RPC and Close-During-Flight", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // GW-02 — Concurrent WebSocket RPC per-connection correctness
+  // Concurrent WebSocket RPC per-connection correctness
   // -------------------------------------------------------------------------
 
-  describe("GW-02: Concurrent WebSocket RPC", () => {
+  describe("Concurrent WebSocket RPC", () => {
     it("3 concurrent WebSocket connections each receive correct per-connection RPC responses", async () => {
       const connections = await Promise.all(
         Array.from({ length: 3 }, () =>
@@ -101,10 +101,10 @@ describe("Gateway: Concurrent WebSocket RPC and Close-During-Flight", () => {
   });
 
   // -------------------------------------------------------------------------
-  // GW-04 — WebSocket close during in-flight RPC
+  // WebSocket close during in-flight RPC
   // -------------------------------------------------------------------------
 
-  describe("GW-04: WebSocket close during in-flight RPC", () => {
+  describe("WebSocket close during in-flight RPC", () => {
     it("closing WebSocket during in-flight RPC does not crash the gateway", async () => {
       const ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
 

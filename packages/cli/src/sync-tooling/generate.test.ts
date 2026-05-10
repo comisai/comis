@@ -2,8 +2,8 @@
 /**
  * Tests for sync-tooling/generate.ts — AST mutators (skeleton + adds + prunes).
  *
- * Snapshots use `doc.toString()` (AST stringification) per CONTEXT
- * Discretion item 3 — handles trailing-whitespace flakiness portably.
+ * Snapshots use `doc.toString()` (AST stringification) — handles
+ * trailing-whitespace flakiness portably.
  */
 
 import { describe, it, expect } from "vitest";
@@ -42,7 +42,7 @@ function skill(
 }
 
 describe("buildSkeleton", () => {
-  it("Test 1: initializes empty doc.contents and writes the four-section skeleton", () => {
+  it("initializes empty doc.contents and writes the four-section skeleton", () => {
     const doc = parseDocument("");
     const artifacts: DiscoveredArtifacts = {
       mcps: [mcp("yfinance")],
@@ -63,16 +63,16 @@ describe("buildSkeleton", () => {
     expect(out).toContain("alpha:");
   });
 
-  it("Test 2: empty mcps + empty skills emits empty maps, not missing keys", () => {
+  it("empty mcps + empty skills emits empty maps, not missing keys", () => {
     const doc = parseDocument("");
     buildSkeleton(doc, emptyArtifacts());
     const out = doc.toString();
-    // Both capabilityHints maps must be present (D-18) — even though empty.
+    // Both capabilityHints maps must be present — even though empty.
     expect(out).toMatch(/mcp:\s*\n\s*capabilityHints:\s*\{\}/);
     expect(out).toMatch(/skills:\s*\n\s*capabilityHints:\s*\{\}/);
   });
 
-  it("Test 3: each generated MCP hint has cluster=external-integrations, description='TODO', replacesPackages=[] with TODO commentBefore", () => {
+  it("each generated MCP hint has cluster=external-integrations, description='TODO', replacesPackages=[] with TODO commentBefore", () => {
     const doc = parseDocument("");
     buildSkeleton(doc, { mcps: [mcp("yfinance")], skills: [] });
     const out = doc.toString();
@@ -82,7 +82,7 @@ describe("buildSkeleton", () => {
     expect(out).toContain("replacesPackages: []");
   });
 
-  it("Test 4: skill hints default to cluster=prompt-skills with description fallback to TODO; explicit cluster + description preserved", () => {
+  it("skill hints default to cluster=prompt-skills with description fallback to TODO; explicit cluster + description preserved", () => {
     const doc = parseDocument("");
     buildSkeleton(doc, {
       mcps: [],
@@ -101,7 +101,7 @@ describe("buildSkeleton", () => {
 });
 
 describe("computeMutationPlan", () => {
-  it("Test 5: against config-with-tooling.yaml + a NEW MCP `slack-mcp` returns mcpAdds=[slack-mcp], no removes", () => {
+  it("against config-with-tooling.yaml + a NEW MCP `slack-mcp` returns mcpAdds=[slack-mcp], no removes", () => {
     const doc = parseDocument(readFixture("config-with-tooling.yaml"));
     const artifacts: DiscoveredArtifacts = {
       mcps: [mcp("placeholder-mcp"), mcp("yfinance"), mcp("slack-mcp")],
@@ -117,7 +117,7 @@ describe("computeMutationPlan", () => {
 });
 
 describe("applyToDocument — append-only preservation", () => {
-  it("Test 6: adding slack-mcp leaves the yfinance entry byte-identical (description, replacesPackages, # operator note)", () => {
+  it("adding slack-mcp leaves the yfinance entry byte-identical (description, replacesPackages, # operator note)", () => {
     const raw = readFixture("config-with-tooling.yaml");
     const doc = parseDocument(raw);
     applyToDocument(
@@ -139,7 +139,7 @@ describe("applyToDocument — append-only preservation", () => {
 });
 
 describe("applyToDocument — pruning", () => {
-  it("Test 7: applyToDocument with no yfinance in discovered set prunes tooling.mcp.capabilityHints.yfinance entirely", () => {
+  it("applyToDocument with no yfinance in discovered set prunes tooling.mcp.capabilityHints.yfinance entirely", () => {
     const doc = parseDocument(readFixture("config-with-tooling.yaml"));
     // placeholder-mcp stays (it's still in the discovered set), yfinance is pruned.
     applyToDocument(
@@ -149,13 +149,13 @@ describe("applyToDocument — pruning", () => {
     );
     const out = doc.toString();
     expect(out).not.toContain("yfinance:");
-    // commentBefore on the pruned key dies with the Pair (Pitfall 4).
+    // commentBefore on the pruned key dies with the Pair.
     expect(out).not.toContain("# operator note");
   });
 });
 
 describe("applyToDocument — preservation of unrecognized keys", () => {
-  it("Test 8: unrecognized operator-authored key tooling.foo is preserved verbatim (D-17)", () => {
+  it("unrecognized operator-authored key tooling.foo is preserved verbatim", () => {
     const raw = `tooling:\n  foo: bar\n  capabilityIndex:\n    enabled: true\n`;
     const doc = parseDocument(raw);
     applyToDocument(doc, { mcps: [mcp("zzz")], skills: [] }, { overwrite: false });
@@ -166,7 +166,7 @@ describe("applyToDocument — preservation of unrecognized keys", () => {
 });
 
 describe("applyToDocument — overwrite mode", () => {
-  it("Test 9: overwrite=true rebuilds managed sections but preserves capabilityClusters.clusters byte-for-byte (D-19)", () => {
+  it("overwrite=true rebuilds managed sections but preserves capabilityClusters.clusters byte-for-byte", () => {
     const raw = readFixture("config-with-tooling.yaml");
     const doc = parseDocument(raw);
     applyToDocument(
@@ -187,7 +187,7 @@ describe("applyToDocument — overwrite mode", () => {
 });
 
 describe("applyToDocument — operator-customized fields are never overwritten on existing entries", () => {
-  it("Test 10: pre-mutation yfinance.description/replacesPackages stay intact when yfinance is in discovered set (D-22)", () => {
+  it("pre-mutation yfinance.description/replacesPackages stay intact when yfinance is in discovered set", () => {
     const raw = readFixture("config-with-tooling.yaml");
     const doc = parseDocument(raw);
     // yfinance IS in the discovered set — the entry already exists and is operator-edited.
@@ -207,7 +207,7 @@ describe("applyToDocument — operator-customized fields are never overwritten o
 });
 
 describe("applyToDocument — comment + key-order preservation", () => {
-  it("Test 11: an unchanged config (no adds, no removes) roundtrips byte-identical", () => {
+  it("an unchanged config (no adds, no removes) roundtrips byte-identical", () => {
     const raw = readFixture("config-with-tooling.yaml");
     const doc = parseDocument(raw);
     applyToDocument(

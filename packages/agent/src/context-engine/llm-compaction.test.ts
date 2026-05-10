@@ -1024,10 +1024,6 @@ describe("three-zone middle-out compaction", () => {
     return messages;
   }
 
-  // -------------------------------------------------------------------------
-  // Test 1: Head preservation and middle-only summarization
-  // -------------------------------------------------------------------------
-
   it("preserves head messages and summarizes only middle zone", async () => {
     const { deps } = createMockDeps();
     const layer = createLlmCompactionLayer(
@@ -1068,10 +1064,6 @@ describe("three-zone middle-out compaction", () => {
     expect(lastResult).toBe(messages[messages.length - 1]);
   });
 
-  // -------------------------------------------------------------------------
-  // Test 2: prefixAnchorTurns=0 backward compatibility
-  // -------------------------------------------------------------------------
-
   it("prefixAnchorTurns=0 uses tail-only behavior (backward compatible)", async () => {
     const { deps } = createMockDeps();
     const layer = createLlmCompactionLayer(
@@ -1094,10 +1086,6 @@ describe("three-zone middle-out compaction", () => {
     const firstMsg = result[0] as unknown as { compactionSummary: boolean };
     expect(firstMsg.compactionSummary).toBe(true);
   });
-
-  // -------------------------------------------------------------------------
-  // Test 3: Head exceeds budget falls back to tail-only
-  // -------------------------------------------------------------------------
 
   it("falls back to tail-only when head exceeds budget", async () => {
     const { deps, logger } = createMockDeps();
@@ -1127,10 +1115,6 @@ describe("three-zone middle-out compaction", () => {
       "Cache-preserving compaction fallback to tail-only",
     );
   });
-
-  // -------------------------------------------------------------------------
-  // Test 4: Middle too small, skip compaction
-  // -------------------------------------------------------------------------
 
   it("skips compaction when middle zone is too small", async () => {
     const { deps, logger } = createMockDeps();
@@ -1170,10 +1154,6 @@ describe("three-zone middle-out compaction", () => {
     );
     expect(triggerWarnCalls).toHaveLength(0);
   });
-
-  // -------------------------------------------------------------------------
-  // Test 5: Pair safety extends head boundary
-  // -------------------------------------------------------------------------
 
   it("extends head boundary for pair safety (tool_use/tool_result)", async () => {
     const { deps } = createMockDeps();
@@ -1225,10 +1205,6 @@ describe("three-zone middle-out compaction", () => {
     expect(summarizedMessages).not.toContain(messages[2]);
   });
 
-  // -------------------------------------------------------------------------
-  // Test 6: persistCompaction preserves head entries
-  // -------------------------------------------------------------------------
-
   it("persistCompaction preserves head entries and removes only middle", async () => {
     const { deps, mockSm } = createMockDeps();
     const layer = createLlmCompactionLayer(
@@ -1272,10 +1248,6 @@ describe("three-zone middle-out compaction", () => {
     expect(msgEntries.length).toBeLessThan(10);
   });
 
-  // -------------------------------------------------------------------------
-  // Test 7: Empty middle returns unchanged
-  // -------------------------------------------------------------------------
-
   it("empty middle with all messages fitting in head+tail returns unchanged", async () => {
     const { deps, logger } = createMockDeps();
     const layer = createLlmCompactionLayer(
@@ -1311,10 +1283,6 @@ describe("three-zone middle-out compaction", () => {
     );
     expect(triggerWarnCalls).toHaveLength(0);
   });
-
-  // -------------------------------------------------------------------------
-  // Test 8: V5 regression — block-count storm with structurally-empty middle
-  // -------------------------------------------------------------------------
 
   it("does not warn-storm when block_count exceeds threshold but middle is structurally empty", async () => {
     // Reproduces the V5 production incident:

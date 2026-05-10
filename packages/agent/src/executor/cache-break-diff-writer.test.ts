@@ -201,10 +201,10 @@ describe("cache-break-diff-writer", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // DIFF-CONTENT: Unified diff file generation tests
+  // Unified diff file generation tests
   // ---------------------------------------------------------------------------
 
-  it("writes a .diff file alongside .json when event has system content (DIFF-CONTENT)", () => {
+  it("writes a .diff file alongside .json when event has system content", () => {
     const logger = createMockLogger();
     const handler = createCacheBreakDiffWriter({
       outputDir: "/tmp/test-cache-breaks",

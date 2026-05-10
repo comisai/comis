@@ -2,11 +2,11 @@
 /**
  * Pure validators for `comis config tooling-fill`.
  *
- * - PACKAGE_NAME_REGEX: TOOLFILL-7 — npm scoped-pkg + pip name shape.
+ * - PACKAGE_NAME_REGEX: npm scoped-pkg + pip name shape.
  *   /^@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?$/i
  * - validatePackageNames: drops names that fail the regex; returns
  *   {valid, dropped}; dedupes valid (preserves first occurrence).
- * - isStubValued (TOOLFILL-5 / D-4): a hint is "stub-valued" iff
+ * - isStubValued: a hint is "stub-valued" iff
  *   description ∈ {missing, "", "TODO"} AND replacesPackages ∈ {missing, []}.
  *
  * No I/O, no logger, no Result-wrapping at this layer (callers compose).
@@ -15,7 +15,7 @@
  */
 
 /**
- * TOOLFILL-7 SPEC string — single source of truth for package-name shape.
+ * Single source of truth for package-name shape.
  *
  * Matches:
  *   - bare npm/pip names: yfinance, pandas-datareader, yfinance.cache, Pillow
@@ -28,7 +28,7 @@
  *   - empty/scope:    "", "@/no-name"
  */
 export const PACKAGE_NAME_REGEX =
-  // eslint-disable-next-line security/detect-unsafe-regex -- TOOLFILL-7 SPEC literal; no catastrophic backtracking (no nested/overlapping quantifiers; two `[a-z0-9._-]*` runs separated by literal `/`; anchored ^…$; bounded short input).
+  // eslint-disable-next-line security/detect-unsafe-regex -- no catastrophic backtracking (no nested/overlapping quantifiers; two `[a-z0-9._-]*` runs separated by literal `/`; anchored ^…$; bounded short input).
   /^@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?$/i;
 
 export interface ValidatedPackages {
@@ -76,7 +76,7 @@ export interface HintShape {
 }
 
 /**
- * TOOLFILL-5 / D-4 stub predicate.
+ * Stub predicate.
  *
  * A hint is "stub-valued" iff:
  *   - description is missing, "", or "TODO", AND

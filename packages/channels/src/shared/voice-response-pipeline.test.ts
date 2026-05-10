@@ -113,7 +113,7 @@ describe("executeVoiceResponse", () => {
     );
   });
 
-  // Test 1: Returns voiceSent:false when autoMode logic says no
+  // Returns voiceSent:false when autoMode logic says no
   it("should return voiceSent:false when shouldAutoTts says no", async () => {
     const deps = createMockDeps({
       shouldAutoTts: vi.fn().mockReturnValue({ shouldSynthesize: false }),
@@ -131,7 +131,7 @@ describe("executeVoiceResponse", () => {
     expect(deps.ttsAdapter.synthesize).not.toHaveBeenCalled();
   });
 
-  // Test 2: Returns voiceSent:true when autoMode is "inbound" and original message has voice
+  // Returns voiceSent:true when autoMode is "inbound" and original message has voice
   it("should return voiceSent:true with voice attachment on happy path", async () => {
     const deps = createMockDeps();
     const ctx = createMockCtx();
@@ -156,7 +156,7 @@ describe("executeVoiceResponse", () => {
     );
   });
 
-  // Test 3: Handles TTS synthesis failure gracefully
+  // Handles TTS synthesis failure gracefully
   it("should return voiceSent:false on TTS synthesis failure (not error)", async () => {
     const deps = createMockDeps({
       ttsAdapter: {
@@ -181,7 +181,7 @@ describe("executeVoiceResponse", () => {
     );
   });
 
-  // Test 4: Handles conversion failure gracefully
+  // Handles conversion failure gracefully
   it("should return voiceSent:false on prepareVoicePayload failure", async () => {
     mockPrepareVoicePayload.mockResolvedValue(
       err(new Error("ffmpeg conversion failed")),
@@ -202,7 +202,7 @@ describe("executeVoiceResponse", () => {
     );
   });
 
-  // Test 5: Truncates text exceeding maxTextLength before synthesis
+  // Truncates text exceeding maxTextLength before synthesis
   it("should truncate text exceeding maxTextLength", async () => {
     const longText = "A".repeat(5000);
     const deps = createMockDeps({
@@ -234,7 +234,7 @@ describe("executeVoiceResponse", () => {
     );
   });
 
-  // Test 6: Skips voice when audioConverter is undefined and TTS outputs MP3
+  // Skips voice when audioConverter is undefined and TTS outputs MP3
   it("should skip voice when audioConverter is undefined and TTS outputs MP3", async () => {
     const deps = createMockDeps({
       ttsAdapter: {
@@ -260,7 +260,7 @@ describe("executeVoiceResponse", () => {
     );
   });
 
-  // Test 7: Sends voice attachment with correct OGG/Opus MIME type and metadata
+  // Sends voice attachment with correct OGG/Opus MIME type and metadata
   it("should send voice attachment with correct MIME type and metadata", async () => {
     mockPrepareVoicePayload.mockResolvedValue(
       ok({
@@ -285,7 +285,7 @@ describe("executeVoiceResponse", () => {
     }, undefined);
   });
 
-  // Test 8: Semaphore.run is called
+  // Semaphore.run is called
   it("should invoke mediaSemaphore.run for concurrency control", async () => {
     const deps = createMockDeps();
     const ctx = createMockCtx();
@@ -296,7 +296,7 @@ describe("executeVoiceResponse", () => {
     expect(deps.mediaSemaphore.run).toHaveBeenCalledWith(expect.any(Function));
   });
 
-  // Test 9: Handles sendAttachment failure gracefully
+  // Handles sendAttachment failure gracefully
   it("should return voiceSent:false on sendAttachment failure", async () => {
     const deps = createMockDeps();
     const ctx = createMockCtx({
@@ -321,7 +321,7 @@ describe("executeVoiceResponse", () => {
     );
   });
 
-  // Test 10: Tagged mode returns strippedText in result
+  // Tagged mode returns strippedText in result
   it("should return strippedText in tagged mode", async () => {
     const deps = createMockDeps({
       shouldAutoTts: vi.fn().mockReturnValue({
@@ -347,7 +347,7 @@ describe("executeVoiceResponse", () => {
     );
   });
 
-  // Test 11: Selects correct provider format via providerFormatKey
+  // Selects correct provider format via providerFormatKey
   it("should select ElevenLabs format when providerFormatKey is 'elevenlabs'", async () => {
     const deps = createMockDeps({
       ttsConfig: {
@@ -390,7 +390,7 @@ describe("executeVoiceResponse", () => {
     );
   });
 
-  // Test 12: Returns voiceSent:false when mediaTempManager.getManagedDir() returns undefined
+  // Returns voiceSent:false when mediaTempManager.getManagedDir() returns undefined
   it("should return voiceSent:false when getManagedDir returns undefined", async () => {
     const deps = createMockDeps({
       mediaTempManager: {

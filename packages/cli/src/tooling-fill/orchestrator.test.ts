@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Behavior tests for runToolingFill — the Phase 26 state machine that
- * composes Wave 1 helpers into the `comis config tooling-fill` command.
+ * Behavior tests for runToolingFill — the state machine that composes
+ * helpers into the `comis config tooling-fill` command.
  *
  * Mocks at the boundary helpers (callAgent, supervisor, atomicWriteFile,
  * writeBackup, isDaemonRunning) and at @comis/core's validateConfig +
- * loadConfigFile. Pure helpers (apply-hint, prompt-template,
- * response-parser, validators) are passed through to the actuals so the
+ * loadConfigFile. Pure helpers are passed through to the actuals so the
  * doc.toString() YAML round-trip is byte-realistic.
  *
  * Each test constructs a minimal in-memory fixture (yaml string), wires
@@ -24,7 +23,7 @@ import * as path from "node:path";
 import { ok, err } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
-// Boundary mocks — vi.mock at file-top per AGENTS.md §2.5
+// Boundary mocks — vi.mock at file-top per AGENTS.md
 // ---------------------------------------------------------------------------
 
 vi.mock("./agent-call.js", () => ({
@@ -35,9 +34,9 @@ vi.mock("./supervisor.js", () => ({
   detectSupervisor: vi.fn(),
   stopDaemon: vi.fn(),
   startDaemon: vi.fn(),
-  // Phase 26.1 — verify-alive poll. Default mock returns ok(undefined)
-  // (daemon came up); per-test overrides can return err for the
-  // boot-failure scenario. Imported into the test handle below.
+  // Verify-alive poll. Default mock returns ok(undefined) (daemon came
+  // up); per-test overrides can return err for the boot-failure
+  // scenario. Imported into the test handle below.
   waitForDaemonAlive: vi.fn(),
   MANUAL_RECIPE_HINT:
     "Could not auto-detect daemon supervisor (none of systemctl, pm2, pgrep matched). Run manually: systemctl stop comis && <edit config.yaml> && systemctl start comis. Or pass --restart-cmd \"<full stop+start command>\" to override.",
@@ -289,7 +288,7 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("runToolingFill — Test 1: happy path single hint --yes --restart", () => {
+describe("runToolingFill — happy path single hint --yes --restart", () => {
   it("returns exit 0, calls boundary helpers in correct order, mutates yfinance hint", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -331,7 +330,7 @@ describe("runToolingFill — Test 1: happy path single hint --yes --restart", ()
   });
 });
 
-describe("runToolingFill — Test 2: TOOLFILL-2 daemon down → exit 1 with literal SPEC string", () => {
+describe("runToolingFill — daemon down → exit 1 with literal SPEC string", () => {
   it("emits the SPEC string and never calls callAgent", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(isDaemonRunning).mockResolvedValue(false);
@@ -349,7 +348,7 @@ describe("runToolingFill — Test 2: TOOLFILL-2 daemon down → exit 1 with lite
   });
 });
 
-describe("runToolingFill — Test 3: TOOLFILL-8 --dry-run never stops daemon", () => {
+describe("runToolingFill — --dry-run never stops daemon", () => {
   it("returns exit 0, does NOT stop daemon, does NOT write file", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -374,7 +373,7 @@ describe("runToolingFill — Test 3: TOOLFILL-8 --dry-run never stops daemon", (
   });
 });
 
-describe("runToolingFill — Test 4: TOOLFILL-5 idempotency: refuses operator-filled without --force", () => {
+describe("runToolingFill — idempotency: refuses operator-filled without --force", () => {
   it("exits 1 with 'already filled' message; never stops daemon", async () => {
     const configPath = writeFixture(OPERATOR_FILLED_YFINANCE_YAML);
     // No callAgent mock setup — should not be reached
@@ -389,7 +388,7 @@ describe("runToolingFill — Test 4: TOOLFILL-5 idempotency: refuses operator-fi
   });
 });
 
-describe("runToolingFill — Test 5: TOOLFILL-5 --force overwrites operator-filled hint", () => {
+describe("runToolingFill — --force overwrites operator-filled hint", () => {
   it("returns exit 0 and writes new values over the operator's", async () => {
     const configPath = writeFixture(OPERATOR_FILLED_YFINANCE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -413,7 +412,7 @@ describe("runToolingFill — Test 5: TOOLFILL-5 --force overwrites operator-fill
   });
 });
 
-describe("runToolingFill — Test 6: TOOLFILL-4 non-TTY without --yes → exit 1", () => {
+describe("runToolingFill — non-TTY without --yes → exit 1", () => {
   it("emits '--yes required' and never calls callAgent", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
 
@@ -431,7 +430,7 @@ describe("runToolingFill — Test 6: TOOLFILL-4 non-TTY without --yes → exit 1
   });
 });
 
-describe("runToolingFill — Test 7: TOOLFILL-4 non-TTY without --restart → exit 1", () => {
+describe("runToolingFill — non-TTY without --restart → exit 1", () => {
   it("emits '--restart required' for non-interactive runs", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -457,7 +456,7 @@ describe("runToolingFill — Test 7: TOOLFILL-4 non-TTY without --restart → ex
   });
 });
 
-describe("runToolingFill — Test 8: TOOLFILL-7 all package names dropped → exit 1", () => {
+describe("runToolingFill — all package names dropped → exit 1", () => {
   it("treats all-dropped as agent failure; does not stop daemon", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -476,7 +475,7 @@ describe("runToolingFill — Test 8: TOOLFILL-7 all package names dropped → ex
   });
 });
 
-describe("runToolingFill — Test 9: TOOLFILL-7 some dropped → proceed with valid + warn", () => {
+describe("runToolingFill — some dropped → proceed with valid + warn", () => {
   it("filters dropped names and writes only valid ones", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -497,7 +496,7 @@ describe("runToolingFill — Test 9: TOOLFILL-7 some dropped → proceed with va
   });
 });
 
-describe("runToolingFill — Test 10: TOOLFILL-9 validate-failure rollback", () => {
+describe("runToolingFill — validate-failure rollback", () => {
   it("restores backup, restarts daemon, exits 1 with rollback SPEC string", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -526,7 +525,7 @@ describe("runToolingFill — Test 10: TOOLFILL-9 validate-failure rollback", () 
   });
 });
 
-describe("runToolingFill — Test 11: TOOLFILL-10 --all skips operator-filled silently", () => {
+describe("runToolingFill — --all skips operator-filled silently", () => {
   it("fills only stub hints; --all without --force skips slack-mcp", async () => {
     const configPath = writeFixture(ALL_MIXED_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -554,7 +553,7 @@ describe("runToolingFill — Test 11: TOOLFILL-10 --all skips operator-filled si
   });
 });
 
-describe("runToolingFill — Test 12: TOOLFILL-10 --all partial failure exits 1", () => {
+describe("runToolingFill — --all partial failure exits 1", () => {
   it("commits filled hints and reports skipped on stderr summary", async () => {
     const configPath = writeFixture(TWO_STUB_HINTS_YAML);
     vi.mocked(callAgent)
@@ -594,7 +593,7 @@ describe("runToolingFill — Test 12: TOOLFILL-10 --all partial failure exits 1"
   });
 });
 
-describe("runToolingFill — Test 13: TOOLFILL-3 supervisor detection failure", () => {
+describe("runToolingFill — supervisor detection failure", () => {
   it("exits 1 with MANUAL_RECIPE_HINT; does not stop daemon", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -614,7 +613,7 @@ describe("runToolingFill — Test 13: TOOLFILL-3 supervisor detection failure", 
   });
 });
 
-describe("runToolingFill — Test 14: TOOLFILL-11 skills hint", () => {
+describe("runToolingFill — skills hint", () => {
   it("fills tooling.skills.capabilityHints.<name> when kindHint='skills'", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -640,7 +639,7 @@ describe("runToolingFill — Test 14: TOOLFILL-11 skills hint", () => {
   });
 });
 
-describe("runToolingFill — Test 15: call-order strict invariant", () => {
+describe("runToolingFill — call-order strict invariant", () => {
   it("stopDaemon < writeBackup < atomicWriteFile < startDaemon (happy path)", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
@@ -659,7 +658,7 @@ describe("runToolingFill — Test 15: call-order strict invariant", () => {
     expect(stopOrder).toBeLessThan(backupOrder);
     expect(backupOrder).toBeLessThan(writeOrder);
     expect(writeOrder).toBeLessThan(startOrder);
-    // callAgent must precede stopDaemon (TOOLFILL-2 — daemon up for LLM call)
+    // callAgent must precede stopDaemon — daemon up for LLM call
     const callOrder = vi.mocked(callAgent).mock.invocationCallOrder[0]!;
     expect(callOrder).toBeLessThan(stopOrder);
   });

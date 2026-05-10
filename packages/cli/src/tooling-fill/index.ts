@@ -6,9 +6,9 @@
  *
  * Public API consumed by `packages/cli/src/commands/config.ts` (the
  * `comis config tooling-fill` sub-subcommand registered there). Mirrors
- * Phase 25's `packages/cli/src/sync-tooling/index.ts` barrel pattern:
- * single import path for callers, public types co-located with the
- * functions that produce them.
+ * the `packages/cli/src/sync-tooling/index.ts` barrel pattern: single
+ * import path for callers, public types co-located with the functions
+ * that produce them.
  *
  * @module
  */

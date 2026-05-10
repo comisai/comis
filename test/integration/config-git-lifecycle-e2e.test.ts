@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CONFIG-GIT-LIFECYCLE-E2E: Config Git Versioning Lifecycle E2E Tests
+ * Config Git Versioning Lifecycle E2E Tests
  *
  * Validates the complete config git versioning lifecycle through a real daemon:
  *   config.patch  -- creates git commit with structured metadata
@@ -10,8 +10,6 @@
  *
  * Uses temp config copy (config.patch writes to disk -- must not mutate source YAML).
  * Mocks process.kill for SIGUSR1 to prevent daemon restart during tests.
- *
- * Requirement: E2E-01
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
@@ -62,7 +60,7 @@ interface HistoryEntry {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("CONFIG-GIT-LIFECYCLE-E2E", () => {
+describe("Config Git Versioning Lifecycle", () => {
   let handle: TestDaemonHandle;
   let rpcCall: RpcCall;
   let tmpDir: string;
@@ -140,7 +138,7 @@ describe("CONFIG-GIT-LIFECYCLE-E2E", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Test 1: config.patch creates git commit queryable via config.history
+  // config.patch creates git commit queryable via config.history
   // -------------------------------------------------------------------------
 
   it("config.patch creates git commit queryable via config.history", async () => {
@@ -184,7 +182,7 @@ describe("CONFIG-GIT-LIFECYCLE-E2E", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Test 2: config.diff returns unified diff against previous commit
+  // config.diff returns unified diff against previous commit
   // -------------------------------------------------------------------------
 
   it("config.diff returns unified diff against previous commit", async () => {
@@ -210,7 +208,7 @@ describe("CONFIG-GIT-LIFECYCLE-E2E", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Test 3: config.rollback restores to previous version
+  // config.rollback restores to previous version
   // -------------------------------------------------------------------------
 
   it("config.rollback restores to previous version", async () => {
@@ -251,7 +249,7 @@ describe("CONFIG-GIT-LIFECYCLE-E2E", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Test 4: config.history returns entries array without error
+  // config.history returns entries array without error
   // -------------------------------------------------------------------------
 
   it("config.history returns entries array without error", async () => {

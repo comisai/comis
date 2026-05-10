@@ -147,7 +147,7 @@ describe("Graph Persistence: Named Graph RPC Round-Trip", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Test 1: graph.save creates a new named graph
+  // graph.save creates a new named graph
   // -------------------------------------------------------------------------
 
   it("graph.save creates a new named graph", async () => {
@@ -161,7 +161,7 @@ describe("Graph Persistence: Named Graph RPC Round-Trip", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 2: graph.load retrieves the saved graph
+  // graph.load retrieves the saved graph
   // -------------------------------------------------------------------------
 
   it("graph.load retrieves the saved graph", async () => {
@@ -193,7 +193,7 @@ describe("Graph Persistence: Named Graph RPC Round-Trip", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 3: graph.save upserts an existing graph
+  // graph.save upserts an existing graph
   // -------------------------------------------------------------------------
 
   it("graph.save upserts an existing graph", async () => {
@@ -217,7 +217,7 @@ describe("Graph Persistence: Named Graph RPC Round-Trip", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 4: graph.list returns saved graphs with pagination
+  // graph.list returns saved graphs with pagination
   // -------------------------------------------------------------------------
 
   it("graph.list returns saved graphs with pagination", async () => {
@@ -246,7 +246,7 @@ describe("Graph Persistence: Named Graph RPC Round-Trip", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 5: graph.list entries have summary fields
+  // graph.list entries have summary fields
   // -------------------------------------------------------------------------
 
   it("graph.list entries have summary fields", async () => {
@@ -273,7 +273,7 @@ describe("Graph Persistence: Named Graph RPC Round-Trip", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 6: graph.delete soft-deletes a graph
+  // graph.delete soft-deletes a graph
   // -------------------------------------------------------------------------
 
   it("graph.delete soft-deletes a graph", async () => {
@@ -301,7 +301,7 @@ describe("Graph Persistence: Named Graph RPC Round-Trip", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 7: graph.load throws for non-existent graph
+  // graph.load throws for non-existent graph
   // -------------------------------------------------------------------------
 
   it("graph.load throws for non-existent graph", async () => {
@@ -311,7 +311,7 @@ describe("Graph Persistence: Named Graph RPC Round-Trip", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 8: graph.delete throws for non-existent graph
+  // graph.delete throws for non-existent graph
   // -------------------------------------------------------------------------
 
   it("graph.delete throws for non-existent graph", async () => {

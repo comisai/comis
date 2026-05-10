@@ -4,11 +4,11 @@
  *
  * Two test suites:
  * 1. Package-level rate limiter tests (app.request() -- no daemon, fast and deterministic)
- *    - GW-05: Exact boundary enforcement
- *    - GW-06: Window reset after expiry
- *    - GW-07: Per-client keying and anonymous sharing
+ *    - Exact boundary enforcement
+ *    - Window reset after expiry
+ *    - Per-client keying and anonymous sharing
  * 2. Daemon-level JSON-RPC error format tests (real daemon via startTestDaemon)
- *    - GW-09: Parse error, method not found, batch exceeded, insufficient scope
+ *    - Parse error, method not found, batch exceeded, insufficient scope
  *
  * @module
  */
@@ -52,12 +52,12 @@ function createTestApp(maxRequests: number, windowMs = 60_000) {
 }
 
 // ===========================================================================
-// DESCRIBE BLOCK 1: Package-level rate limiter tests
+// Package-level rate limiter tests
 // ===========================================================================
 
 describe("Rate Limiter: Boundary, Reset, and Per-Client Keying", () => {
   // -------------------------------------------------------------------------
-  // GW-05: Exact boundary enforcement
+  // Exact boundary enforcement
   // -------------------------------------------------------------------------
 
   it("exactly maxRequests requests succeed, maxRequests+1 returns 429 with JSON-RPC error", async () => {
@@ -83,7 +83,7 @@ describe("Rate Limiter: Boundary, Reset, and Per-Client Keying", () => {
   });
 
   // -------------------------------------------------------------------------
-  // GW-06: Window reset
+  // Window reset
   // -------------------------------------------------------------------------
 
   it("rate limit resets after window expiry and allows requests again", async () => {
@@ -105,13 +105,13 @@ describe("Rate Limiter: Boundary, Reset, and Per-Client Keying", () => {
     await new Promise((r) => setTimeout(r, 2000));
 
     // Should succeed again after window reset
-    // MemoryStore resets on next request after window expiry (per Research pitfall 5)
+    // MemoryStore resets on next request after window expiry
     const reset = await app.request("/rpc?clientId=reset-client", { method: "POST" });
     expect(reset.status).toBe(200);
   });
 
   // -------------------------------------------------------------------------
-  // GW-07: Per-client keying
+  // Per-client keying
   // -------------------------------------------------------------------------
 
   it("separate clientIds have independent rate limits", async () => {
@@ -150,10 +150,10 @@ describe("Rate Limiter: Boundary, Reset, and Per-Client Keying", () => {
 });
 
 // ===========================================================================
-// DESCRIBE BLOCK 2: Daemon-level JSON-RPC error format tests (GW-09)
+// Daemon-level JSON-RPC error format tests
 // ===========================================================================
 
-describe("Gateway: JSON-RPC Error Format Compliance (GW-09)", () => {
+describe("Gateway: JSON-RPC Error Format Compliance", () => {
   let handle: TestDaemonHandle;
   const rpcOnlyToken = "rpc-only-secret-key-for-ratelimit-tests";
 
@@ -177,7 +177,7 @@ describe("Gateway: JSON-RPC Error Format Compliance (GW-09)", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // GW-09 Test 1: Parse error (-32700)
+  // Parse error (-32700)
   // -------------------------------------------------------------------------
 
   it("invalid JSON over WebSocket returns parse error -32700", async () => {
@@ -218,7 +218,7 @@ describe("Gateway: JSON-RPC Error Format Compliance (GW-09)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // GW-09 Test 2: Method not found (-32601)
+  // Method not found (-32601)
   // -------------------------------------------------------------------------
 
   it("nonexistent RPC method returns method not found -32601", async () => {
@@ -237,7 +237,7 @@ describe("Gateway: JSON-RPC Error Format Compliance (GW-09)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // GW-09 Test 3: Batch size exceeded (-32600)
+  // Batch size exceeded (-32600)
   // -------------------------------------------------------------------------
 
   it("oversized batch returns batch size exceeded -32600", async () => {
@@ -287,7 +287,7 @@ describe("Gateway: JSON-RPC Error Format Compliance (GW-09)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // GW-09 Test 4: Insufficient scope (-32603)
+  // Insufficient scope (-32603)
   // -------------------------------------------------------------------------
 
   it("calling admin method with rpc-only token returns insufficient scope -32603", async () => {

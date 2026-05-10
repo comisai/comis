@@ -75,7 +75,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       db.close();
     });
 
-    // Test 1.1
     it("initOAuthProfileSchema is idempotent", () => {
       expect(() => {
         initOAuthProfileSchema(db);
@@ -83,7 +82,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       }).not.toThrow();
     });
 
-    // Test 1.2
     it("initOAuthProfileSchema creates the oauth_profiles table", () => {
       initOAuthProfileSchema(db);
       const row = db
@@ -92,7 +90,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(row).toEqual({ name: "oauth_profiles" });
     });
 
-    // Test 1.3
     it("initOAuthProfileSchema creates idx_oauth_profiles_provider", () => {
       initOAuthProfileSchema(db);
       const row = db
@@ -103,7 +100,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(row).toEqual({ name: "idx_oauth_profiles_provider" });
     });
 
-    // Test 1.4
     it("createOAuthProfileStoreEncrypted returns a frozen object", () => {
       initOAuthProfileSchema(db);
       const store = createOAuthProfileStoreEncrypted(db, makeCrypto());
@@ -130,7 +126,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       db.close();
     });
 
-    // Test 2.1
     it("set + get returns the same profile (deep-equal)", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       const profile = makeProfile();
@@ -139,14 +134,12 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(loaded).toEqual(profile);
     });
 
-    // Test 2.2
     it("get(unknownId) returns ok(undefined)", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       const result = unwrap(await store.get("openai-codex:nonexistent@example.com"));
       expect(result).toBeUndefined();
     });
 
-    // Test 2.3
     it("re-set overwrites (UPSERT semantics)", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       unwrap(await store.set("openai-codex:user_a@example.com", makeProfile({ access: "v1" })));
@@ -155,7 +148,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(loaded?.access).toBe("v2");
     });
 
-    // Test 2.4
     it("list returns all and list({ provider }) filters", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       unwrap(await store.set("openai-codex:user_a@example.com", makeProfile()));
@@ -174,7 +166,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(onlyCodex).toHaveLength(1);
     });
 
-    // Test 2.5
     it("delete returns ok(true) when present, ok(false) when not", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       unwrap(await store.set("openai-codex:user_a@example.com", makeProfile()));
@@ -184,7 +175,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(removedAgain).toBe(false);
     });
 
-    // Test 2.6
     it("has reflects set/delete state correctly", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       const before = unwrap(await store.has("openai-codex:user_a@example.com"));
@@ -219,7 +209,7 @@ describe("createOAuthProfileStoreEncrypted", () => {
       }
     });
 
-    // Test 3.1 — access token canary
+    // access token canary
     it("PLAINTEXT_CANARY_TOKEN_ access-token substring is NOT present in raw DB file", async () => {
       const crypto = makeCrypto();
       const db = openSqliteDatabase({
@@ -240,7 +230,7 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(raw.indexOf(Buffer.from("PLAINTEXT_CANARY_TOKEN_8f3d2a1c"))).toBe(-1);
     });
 
-    // Test 3.2 — refresh token canary
+    // refresh token canary
     it("PLAINTEXT_REFRESH_CANARY_ refresh-token substring is NOT present in raw DB file", async () => {
       const crypto = makeCrypto();
       const db = openSqliteDatabase({
@@ -260,7 +250,7 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(raw.indexOf(Buffer.from("PLAINTEXT_REFRESH_CANARY_a1b2c3d4"))).toBe(-1);
     });
 
-    // Test 3.3 — email canary
+    // email canary
     it("EMAIL_PLAINTEXT_CANARY_ email substring is NOT present in raw DB file", async () => {
       const crypto = makeCrypto();
       const db = openSqliteDatabase({
@@ -302,7 +292,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       db.close();
     });
 
-    // Test 4.1
     it("after set, raw expires_at column matches the profile's expires field", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       unwrap(
@@ -317,7 +306,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(row?.expires_at).toBe(1714680000_000);
     });
 
-    // Test 4.2
     it("after re-set with a different expires, the raw column updates (not stale)", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       unwrap(
@@ -338,7 +326,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(row?.expires_at).toBe(1900000000_000);
     });
 
-    // Test 4.3
     it("provider index supports SELECT WHERE provider AND expires_at < ? without decryption", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       unwrap(
@@ -388,7 +375,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       }
     });
 
-    // Test 5.1
     it("write in instance 1, close DB, reopen + read in instance 2 (same crypto) returns identical profile", async () => {
       const crypto = makeCrypto();
       const db1 = openSqliteDatabase({
@@ -416,7 +402,7 @@ describe("createOAuthProfileStoreEncrypted", () => {
       expect(loaded).toEqual(profile);
     });
 
-    // Test 5.2 — different crypto (new master key) → decryption fails
+    // different crypto (new master key) → decryption fails
     it("reopen with a DIFFERENT crypto returns err (decryption fails / auth-tag mismatch)", async () => {
       const crypto1 = makeCrypto();
       const db1 = openSqliteDatabase({
@@ -464,7 +450,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       db.close();
     });
 
-    // Test 6.1
     it("set('invalid-no-colon', profile) returns err with 'Invalid profile ID'", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       const result = await store.set(
@@ -475,7 +460,6 @@ describe("createOAuthProfileStoreEncrypted", () => {
       if (!result.ok) expect(result.error.message).toContain("Invalid profile ID");
     });
 
-    // Test 6.2
     it("get('invalid-no-colon') returns err with 'Invalid profile ID'", async () => {
       const store = createOAuthProfileStoreEncrypted(db, crypto);
       const result = await store.get("invalid-no-colon");

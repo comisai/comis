@@ -235,7 +235,7 @@ describe("recoverEmptyFinalResponse", () => {
   });
 });
 
-describe("recoverEmptyFinalResponse — tool-call synthesis (L3)", () => {
+describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
   it("synthesizes summary after parallel agents_manage.create batch", () => {
     const logger = mockLogger();
     const result = recoverEmptyFinalResponse({
@@ -458,9 +458,9 @@ describe("recoverEmptyFinalResponse — tool-call synthesis (L3)", () => {
     expect(unknownOutput).not.toContain("totally_unknown_tool({");
 
     // Case F: malformed (no name field) → unknown_tool fallback, no throw.
-    // Note (per Step B item 1 implementation contract): non-string `name` blocks ARE
-    // summarized as "unknown_tool" but are NOT added to toolNamesSet — so a hypothetical
-    // INFO-log assertion for this batch would expect toolNames: [].
+    // Note: non-string `name` blocks ARE summarized as "unknown_tool" but are
+    // NOT added to toolNamesSet — so a hypothetical INFO-log assertion for
+    // this batch would expect toolNames: [].
     expect(() => runSingle({ type: "toolCall", id: "tc", arguments: { x: 1 } })).not.toThrow();
     expect(runSingle({ type: "toolCall", id: "tc", arguments: { x: 1 } }))
       .toContain("unknown_tool");

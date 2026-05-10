@@ -1,32 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 25 — sync-tooling CLI integration test (SPEC AC-10).
+ * sync-tooling CLI integration test.
  *
- * The only daemon-bound test in Phase 25. Boots a real daemon via
+ * The only daemon-bound test in this suite. Boots a real daemon via
  * `daemon-harness`, runs the BUILT CLI binary against a fixture config,
  * restarts the daemon against the now-mutated config, and asserts the
  * daemon's `Dynamic preamble assembled` Pino debug log fires with
  * `clusterCount >= 2`.
  *
  * End-to-end coverage:
- *  - Test 1 (SPEC-8 / drift item 1): `comis config sync-tooling --write` exits
- *    with code 1 and stderr "daemon is running" while a daemon is up. This is
- *    the live-daemon canary for `daemon-guard.ts`'s `system.ping` probe — if
- *    Plan 02's drift fix regresses (back to `health.ping`), this test fails.
- *  - Test 2 (SPEC-2): inspect mode (no `--write`) does NOT trigger the daemon
- *    guard; stdout contains the literal `tooling:`; mtime unchanged.
- *  - Test 3 (SPEC-3, SPEC-5, AC-6, AC-7): `--write` (daemon down) materializes
- *    a `tooling:` block including `installDetours.mode: advise` and
- *    `capabilityIndex.enabled: true`; backup file matches the D-10 regex; the
- *    backup contents are byte-equal to the pre-overwrite file.
- *  - Test 4 (SPEC AC-10): boot daemon against the synthesized config, trigger
- *    preamble assembly via `agent.execute`, observe the Pino debug log with
+ *  - Test 1: `comis config sync-tooling --write` exits with code 1 and stderr
+ *    "daemon is running" while a daemon is up. This is the live-daemon canary
+ *    for `daemon-guard.ts`'s `system.ping` probe — if it regresses to
+ *    `health.ping`, this test fails.
+ *  - Test 2: inspect mode (no `--write`) does NOT trigger the daemon guard;
+ *    stdout contains the literal `tooling:`; mtime unchanged.
+ *  - Test 3: `--write` (daemon down) materializes a `tooling:` block including
+ *    `installDetours.mode: advise` and `capabilityIndex.enabled: true`;
+ *    backup file matches the timestamp regex; the backup contents are
+ *    byte-equal to the pre-overwrite file.
+ *  - Test 4: boot daemon against the synthesized config, trigger preamble
+ *    assembly via `agent.execute`, observe the Pino debug log with
  *    `clusterCount >= 2`.
  *
  * Pre-req: `pnpm build` MUST have run before this test — otherwise
- * `packages/cli/dist/cli.js` is stale and the test silently uses old code
- * (RESEARCH Pitfall 8). The `beforeEach` enforces this with an `existsSync`
- * check that throws a clear error message.
+ * `packages/cli/dist/cli.js` is stale and the test silently uses old code.
+ * The `beforeEach` enforces this with an `existsSync` check that throws a
+ * clear error message.
  *
  * @module
  */
@@ -79,7 +79,7 @@ const FIXTURE_SOURCE = resolve(
   "test/config/config.test-sync-tooling.yaml",
 );
 
-/** D-10 backup filename regex (millisecond ISO + 6-char hex). */
+/** Backup filename regex (millisecond ISO + 6-char hex). */
 const BACKUP_REGEX =
   /^config\.pre-sync-tooling-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}-[0-9a-f]{6}\.yaml$/;
 
@@ -95,14 +95,13 @@ const execFileAsync = promisify(execFile);
  * Async wrapper around `execFile` that always resolves with
  * `{ exitCode, stdout, stderr }` regardless of the child's exit code.
  *
- * CRITICAL: this MUST be async (not `execFileSync`/`spawnSync`). The Phase 25
+ * CRITICAL: this MUST be async (not `execFileSync`/`spawnSync`). The
  * integration test boots the daemon IN THE SAME PROCESS as the test runner
  * (daemon-harness imports `@comis/daemon` and calls `main()`). A synchronous
  * child_process call would block the test process's event loop, which is the
  * SAME event loop serving the in-process daemon's WebSocket gateway. The
  * CLI's `withClient` probe would then time out on connection accept and the
- * daemon-active guard would silently fail open (Rule 1 bug discovered during
- * Test 1's first run — see SUMMARY deviations).
+ * daemon-active guard would silently fail open.
  */
 async function runCli(args: string[], opts: {
   env?: NodeJS.ProcessEnv;
@@ -140,7 +139,7 @@ async function runCli(args: string[], opts: {
  * Suppress the "Daemon exit with code N" error that `cleanup()` rethrows on
  * the daemon-harness side. The harness intentionally overrides `process.exit`
  * to throw so the test process is not killed; the cleanup graceful-shutdown
- * path then re-raises that thrown error. Phase 24 tests use the same wrapper.
+ * path then re-raises that thrown error.
  */
 async function cleanupDaemon(handle: TestDaemonHandle): Promise<void> {
   try {
@@ -162,9 +161,9 @@ function toWsGatewayUrl(httpGatewayUrl: string): string {
 
 /**
  * Read all `~/.comis/config.pre-sync-tooling-*.yaml` files currently on disk.
- * Used in afterEach to clean up backups produced by the test (RESEARCH
- * Assumption A1 / Threat T-25-18 — backups land in the dev's real ~/.comis/
- * because the CLI resolves homeDir via os.homedir() at runtime).
+ * Used in afterEach to clean up backups produced by the test — backups land
+ * in the dev's real ~/.comis/ because the CLI resolves homeDir via
+ * os.homedir() at runtime.
  */
 function listBackupFiles(): string[] {
   const dir = join(homedir(), ".comis");
@@ -185,15 +184,15 @@ function listBackupFiles(): string[] {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
+describe("comis config sync-tooling integration", () => {
   let workDir: string;
   let workConfigPath: string;
   let handle: TestDaemonHandle | undefined;
   let backupSnapshotBefore: Set<string>;
 
   beforeEach(() => {
-    // RESEARCH Pitfall 8: refuse to run if the CLI binary is missing.
-    // Without this guard a stale dist/ would silently mask src/ edits.
+    // Refuse to run if the CLI binary is missing. Without this guard a stale
+    // dist/ would silently mask src/ edits.
     if (!existsSync(CLI_BINARY)) {
       throw new Error(
         `CLI binary not found at ${CLI_BINARY} — run 'pnpm build' first ` +
@@ -214,7 +213,7 @@ describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
     // packages/core/src/config/loader.ts:101-116). The daemon's bootstrap path
     // DOES substitute, but we want both readers to agree on the literal path,
     // so we expand once here. Also keeps the fixture portable across worktrees
-    // and CI runners (Phase 24 BLOCKER lesson).
+    // and CI runners.
     const fixtureContent = readFileSync(FIXTURE_SOURCE, "utf-8").replaceAll(
       REPO_ROOT_PLACEHOLDER,
       REPO_ROOT,
@@ -254,7 +253,7 @@ describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
   });
 
   it(
-    "Test 1: daemon-active guard fires while daemon is up (drift item 1: system.ping)",
+    "daemon-active guard fires while daemon is up (system.ping)",
     async () => {
       const logCapture = createLogCapture();
       handle = await startTestDaemon({
@@ -279,14 +278,14 @@ describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain("daemon is running");
-      // SPEC AC-9: mtime unchanged when guard fires.
+      // mtime unchanged when guard fires.
       expect(mtimeAfter).toBe(mtimeBefore);
     },
     DAEMON_STARTUP_MS + 30_000,
   );
 
   it(
-    "Test 2: inspect mode does NOT trigger the daemon guard (SPEC-2)",
+    "inspect mode does NOT trigger the daemon guard",
     async () => {
       const logCapture = createLogCapture();
       handle = await startTestDaemon({
@@ -313,16 +312,16 @@ describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
 
       expect(exitCode).toBe(0);
       // diff.ts:114 emits `payload.wouldWrite` which always contains the
-      // literal `tooling:` key (REQ-2 acceptance criterion).
+      // literal `tooling:` key.
       expect(stdout).toContain("tooling:");
-      // SPEC AC-2: mtime unchanged in inspect mode.
+      // mtime unchanged in inspect mode.
       expect(mtimeAfter).toBe(mtimeBefore);
     },
     DAEMON_STARTUP_MS + 30_000,
   );
 
   it(
-    "Test 3: --write materializes tooling: block + writes backup (SPEC-5, D-10, D-18, AC-6, AC-7)",
+    "--write materializes tooling: block + writes backup",
     async () => {
       // No daemon running for this test — we want the happy --write path.
       const preWriteContent = readFileSync(workConfigPath, "utf-8");
@@ -349,23 +348,23 @@ describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
       const post = readFileSync(workConfigPath, "utf-8");
       expect(post).toContain("tooling:");
       expect(post).toContain("installDetours:");
-      expect(post).toContain("mode: advise"); // D-18
+      expect(post).toContain("mode: advise");
       expect(post).toContain("capabilityIndex:");
-      expect(post).toContain("enabled: true"); // D-18
+      expect(post).toContain("enabled: true");
 
-      // Parse backup path from the success line `(backup: <path>)` (D-23).
+      // Parse backup path from the success line `(backup: <path>)`.
       const backupMatch = stdout.match(/\(backup:\s*([^)]+)\)/);
       expect(backupMatch).not.toBeNull();
       const backupPath = backupMatch![1]!.trim();
 
-      // SPEC AC-6: backup file exists.
+      // Backup file exists.
       expect(existsSync(backupPath)).toBe(true);
 
-      // D-10 regex: backup filename matches the timestamp + hex pattern.
+      // Backup filename matches the timestamp + hex pattern.
       const backupBasename = backupPath.split("/").pop() ?? "";
       expect(backupBasename).toMatch(BACKUP_REGEX);
 
-      // SPEC AC-7: backup is byte-equal to the pre-overwrite content.
+      // Backup is byte-equal to the pre-overwrite content.
       const backupContent = readFileSync(backupPath, "utf-8");
       expect(backupContent).toBe(preWriteContent);
     },
@@ -373,7 +372,7 @@ describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
   );
 
   it(
-    "Test 4: daemon boots cleanly with synthesized tooling: block (SPEC AC-10)",
+    "daemon boots cleanly with synthesized tooling: block",
     async () => {
       // Step 1: write the tooling block via the CLI (daemon NOT running).
       const writeResult = await runCli(
@@ -404,10 +403,9 @@ describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
         logStream: logCapture.stream,
       });
 
-      // Step 3: trigger preamble assembly. Mirror the Phase 24 pattern from
-      // tooling-fixture-render.test.ts:90-108 — open WS, send agent.execute.
-      // The daemon-harness auto-seeds ANTHROPIC_API_KEY with a dummy value, so
-      // the executor reaches preamble assembly (executor-prompt-runner.ts:208-223)
+      // Step 3: trigger preamble assembly. Open WS, send agent.execute. The
+      // daemon-harness auto-seeds ANTHROPIC_API_KEY with a dummy value, so the
+      // executor reaches preamble assembly (executor-prompt-runner.ts:208-223)
       // and emits the Pino debug log SYNCHRONOUSLY before the LLM dispatch
       // fails on the dummy key.
       const ws = await openAuthenticatedWebSocket(
@@ -424,7 +422,7 @@ describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
         );
       } catch {
         // Expected: dummy ANTHROPIC_API_KEY causes auth-error AFTER preamble
-        // assembly has already fired the Pino log. Phase 24 pattern.
+        // assembly has already fired the Pino log.
       } finally {
         ws.close();
       }
@@ -440,7 +438,7 @@ describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
 
       // Inspect ALL matching entries — the daemon may emit more than one
       // assembly during multi-step preamble construction. The first one has
-      // the canonical clusterCount (SPEC AC-10).
+      // the canonical clusterCount.
       const entries = logCapture.getEntries();
       const assemblies = filterLogs(entries, {
         msg: /Dynamic preamble assembled/,
@@ -450,10 +448,10 @@ describe("Phase 25 — comis config sync-tooling integration (AC-10)", () => {
 
       const first = assemblies[0] as LogEntry & { clusterCount?: unknown };
       expect(typeof first.clusterCount).toBe("number");
-      // SPEC AC-10: clusterCount >= 2. Achieved via the Phase 8 skill-variants
-      // fixture: `comis-capability-skill` (manifest cluster:
-      // data-fetching-financial) + `operator-config-skill` and
-      // `sdk-fallback-skill` (both fall through to prompt-skills).
+      // clusterCount >= 2. Achieved via the skill-variants fixture:
+      // `comis-capability-skill` (manifest cluster: data-fetching-financial)
+      // + `operator-config-skill` and `sdk-fallback-skill` (both fall through
+      // to prompt-skills).
       expect(first.clusterCount as number).toBeGreaterThanOrEqual(2);
     },
     DAEMON_STARTUP_MS + 90_000,

@@ -148,14 +148,12 @@ afterEach(() => {
 });
 
 describe("detectSupervisor", () => {
-  // Test 1 — systemd path
   it("returns {kind:'systemd'} when systemctl is-active comis is active", async () => {
     scriptExecFile({ stdout: "active\n" });
     const s = await detectSupervisor();
     expect(s).toEqual({ kind: "systemd" });
   });
 
-  // Test 2 — systemd inactive falls through to pm2
   it("falls through to pm2 when systemctl reports inactive", async () => {
     scriptExecFile(
       { stdout: "inactive\n" },
@@ -165,7 +163,6 @@ describe("detectSupervisor", () => {
     expect(s).toEqual({ kind: "pm2" });
   });
 
-  // Test 3 — both fall through to bare-process
   it("falls through to bare-process when systemd and pm2 both fail", async () => {
     const sysErr = Object.assign(new Error("not installed"), {
       code: "ENOENT",
@@ -182,7 +179,6 @@ describe("detectSupervisor", () => {
     expect(s).toEqual({ kind: "bare-process" });
   });
 
-  // Test 4 — nothing → none
   it("returns {kind:'none'} when no probe matches", async () => {
     const e = Object.assign(new Error("not found"), { code: "ENOENT" });
     scriptExecFile({ error: e }, { error: e }, { error: e });
@@ -192,7 +188,6 @@ describe("detectSupervisor", () => {
 });
 
 describe("stopDaemon", () => {
-  // Test 5 — systemd
   it("runs `systemctl stop comis` for systemd", async () => {
     const { capturedArgs } = scriptExecFile({ stdout: "" });
     const r = await stopDaemon({ kind: "systemd" });
@@ -201,7 +196,6 @@ describe("stopDaemon", () => {
     expect(capturedArgs[0].args).toEqual(["-c", "systemctl stop comis"]);
   });
 
-  // Test 6 — pm2
   it("runs `pm2 stop comis` for pm2", async () => {
     const { capturedArgs } = scriptExecFile({ stdout: "" });
     const r = await stopDaemon({ kind: "pm2" });
@@ -209,7 +203,6 @@ describe("stopDaemon", () => {
     expect(capturedArgs[0].args).toEqual(["-c", "pm2 stop comis"]);
   });
 
-  // Test 7 — bare-process
   it("runs `pkill -f 'node.*daemon\\.js'` for bare-process", async () => {
     const { capturedArgs } = scriptExecFile({ stdout: "" });
     const r = await stopDaemon({ kind: "bare-process" });
@@ -220,13 +213,13 @@ describe("stopDaemon", () => {
     ]);
   });
 
-  // Test 9 (stop manual is a no-op — CR-03 fix)
+  // stop manual is a no-op.
   // The operator's --restart-cmd is a single command that does both stop+start.
   // If we ran it at stopDaemon AND startDaemon it would (a) execute twice and
   // (b) leave the daemon UP during the file edit. Treat manual mode as
   // start-only: stopDaemon is a no-op; the operator's cmd runs once at
   // startDaemon, after the file edit lands.
-  it("is a no-op for {kind:'manual'} (operator's cmd runs at startDaemon only — CR-03)", async () => {
+  it("is a no-op for {kind:'manual'} (operator's cmd runs at startDaemon only)", async () => {
     const { capturedArgs } = scriptExecFile({ stdout: "" });
     const r = await stopDaemon({
       kind: "manual",
@@ -236,7 +229,6 @@ describe("stopDaemon", () => {
     expect(capturedArgs).toHaveLength(0);
   });
 
-  // Test 10 (stop none)
   it("returns err({kind:'detection-failed'}) with the manual recipe for {kind:'none'}", async () => {
     const r = await stopDaemon({ kind: "none" });
     expect(r.ok).toBe(false);
@@ -246,7 +238,6 @@ describe("stopDaemon", () => {
     }
   });
 
-  // Test 11 — ETIMEDOUT
   it("maps ETIMEDOUT to err({kind:'timeout'})", async () => {
     const e = Object.assign(new Error("timed out"), {
       code: "ETIMEDOUT",
@@ -261,7 +252,6 @@ describe("stopDaemon", () => {
 });
 
 describe("startDaemon", () => {
-  // Test 8 — bare-process unsupported
   it("returns err({kind:'unsupported'}) for bare-process startDaemon", async () => {
     const r = await startDaemon({ kind: "bare-process" });
     expect(r.ok).toBe(false);

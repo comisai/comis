@@ -3,11 +3,11 @@
  * Tests for tooling-fill/validators.ts.
  *
  * Covers:
- * - TOOLFILL-7: PACKAGE_NAME_REGEX must match the SPEC literal
+ * - PACKAGE_NAME_REGEX must match the literal
  *   /^@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?$/i exactly.
  * - validatePackageNames partitions into valid/dropped, dedupes, preserves
  *   original case, drops non-strings.
- * - TOOLFILL-5 / D-4: isStubValued returns true iff
+ * - isStubValued returns true iff
  *   description ∈ {missing, "", "TODO"} AND replacesPackages ∈ {missing, []}.
  */
 
@@ -18,7 +18,7 @@ import {
   isStubValued,
 } from "./validators.js";
 
-describe("PACKAGE_NAME_REGEX (TOOLFILL-7)", () => {
+describe("PACKAGE_NAME_REGEX", () => {
   it("matches the canonical npm/pip name shapes", () => {
     expect(PACKAGE_NAME_REGEX.test("yfinance")).toBe(true);
     expect(PACKAGE_NAME_REGEX.test("@scope/pkg")).toBe(true);
@@ -75,7 +75,7 @@ describe("validatePackageNames", () => {
   });
 });
 
-describe("isStubValued (TOOLFILL-5 / D-4)", () => {
+describe("isStubValued", () => {
   it("returns true for an empty hint object (both fields missing)", () => {
     expect(isStubValued({})).toBe(true);
   });
@@ -84,7 +84,7 @@ describe("isStubValued (TOOLFILL-5 / D-4)", () => {
     expect(isStubValued({ description: "TODO" })).toBe(true);
   });
 
-  it("returns true for the canonical Phase 25 stub shape", () => {
+  it("returns true for the canonical stub shape", () => {
     expect(
       isStubValued({ description: "TODO", replacesPackages: [] }),
     ).toBe(true);

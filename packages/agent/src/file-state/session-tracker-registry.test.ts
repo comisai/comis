@@ -49,7 +49,7 @@ function makeFactory(): () => TestTracker {
 // ---------------------------------------------------------------------------
 
 describe("createSessionTrackerRegistry", () => {
-  it("Test 1: returns { get, release, size } with function shape", () => {
+  it("returns { get, release, size } with function shape", () => {
     const registry = createSessionTrackerRegistry<TestTracker>(makeFactory());
     expect(typeof registry.get).toBe("function");
     expect(typeof registry.release).toBe("function");
@@ -57,7 +57,7 @@ describe("createSessionTrackerRegistry", () => {
     expect(registry.size()).toBe(0);
   });
 
-  it("Test 2: same sessionKey returns the same tracker instance across calls", () => {
+  it("same sessionKey returns the same tracker instance across calls", () => {
     const registry = createSessionTrackerRegistry<TestTracker>(makeFactory());
     const first = registry.get("sess-a");
     const second = registry.get("sess-a");
@@ -65,7 +65,7 @@ describe("createSessionTrackerRegistry", () => {
     expect(first.id).toBe(second.id);
   });
 
-  it("Test 3: different sessionKeys return independent trackers; writes do not leak", () => {
+  it("different sessionKeys return independent trackers; writes do not leak", () => {
     const registry = createSessionTrackerRegistry<TestTracker>(makeFactory());
     const a = registry.get("sess-a");
     const b = registry.get("sess-b");
@@ -78,7 +78,7 @@ describe("createSessionTrackerRegistry", () => {
     expect(b.hasBeenRead("/path/one")).toBe(false);
   });
 
-  it("Test 4: size() reflects get/release operations correctly", () => {
+  it("size() reflects get/release operations correctly", () => {
     const registry = createSessionTrackerRegistry<TestTracker>(makeFactory());
     expect(registry.size()).toBe(0);
 
@@ -99,7 +99,7 @@ describe("createSessionTrackerRegistry", () => {
     expect(registry.size()).toBe(0);
   });
 
-  it("Test 5: release() on unknown key is a no-op (does not throw, does not change size)", () => {
+  it("release() on unknown key is a no-op (does not throw, does not change size)", () => {
     const registry = createSessionTrackerRegistry<TestTracker>(makeFactory());
     expect(() => registry.release("never-existed")).not.toThrow();
     expect(registry.size()).toBe(0);
@@ -109,7 +109,7 @@ describe("createSessionTrackerRegistry", () => {
     expect(registry.size()).toBe(1);
   });
 
-  it("Test 6: after release, re-get returns a FRESH tracker (entry was dropped, state reset)", () => {
+  it("after release, re-get returns a FRESH tracker (entry was dropped, state reset)", () => {
     const registry = createSessionTrackerRegistry<TestTracker>(makeFactory());
     const first = registry.get("sess-a");
     first.recordRead("/file", 1000);
@@ -123,7 +123,7 @@ describe("createSessionTrackerRegistry", () => {
     expect(second.hasBeenRead("/file")).toBe(false);
   });
 
-  it("Test 7: released trackers remain functional for external references (GC-eligible only)", () => {
+  it("released trackers remain functional for external references (GC-eligible only)", () => {
     const registry = createSessionTrackerRegistry<TestTracker>(makeFactory());
     const tracker = registry.get("sess-a");
     tracker.recordRead("/file", 1000);

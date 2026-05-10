@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CONFIG-APPLY-E2E: Config Apply Full Section Replacement E2E Tests
+ * Config Apply Full Section Replacement E2E Tests
  *
- * Validates config.apply full section replacement lifecycle (E2E-06):
+ * Validates config.apply full section replacement lifecycle:
  *   - Replaces entire scheduler section atomically (not deep merge)
  *   - Passes through the same safety pipeline as config.patch (trust, rate limit, restart)
  *   - Non-admin trust level is rejected
@@ -47,7 +47,7 @@ type RpcCall = (method: string, params: Record<string, unknown>) => Promise<unkn
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("CONFIG-APPLY-E2E: Config Apply Full Section Replacement", () => {
+describe("Config Apply Full Section Replacement", () => {
   let handle: TestDaemonHandle;
   let rpcCall: RpcCall;
   let tmpDir: string;
@@ -124,7 +124,7 @@ describe("CONFIG-APPLY-E2E: Config Apply Full Section Replacement", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Test 1: config.apply replaces entire scheduler section atomically
+  // config.apply replaces entire scheduler section atomically
   // -------------------------------------------------------------------------
 
   it(
@@ -179,7 +179,7 @@ describe("CONFIG-APPLY-E2E: Config Apply Full Section Replacement", () => {
   );
 
   // -------------------------------------------------------------------------
-  // Test 2: config.apply triggers git commit queryable via config.history
+  // config.apply triggers git commit queryable via config.history
   // -------------------------------------------------------------------------
 
   it(
@@ -213,7 +213,7 @@ describe("CONFIG-APPLY-E2E: Config Apply Full Section Replacement", () => {
   );
 
   // -------------------------------------------------------------------------
-  // Test 3: config.apply rejects non-admin trust level
+  // config.apply rejects non-admin trust level
   // -------------------------------------------------------------------------
 
   it(
@@ -233,7 +233,7 @@ describe("CONFIG-APPLY-E2E: Config Apply Full Section Replacement", () => {
   );
 
   // -------------------------------------------------------------------------
-  // Test 4: config.apply rejects immutable section
+  // config.apply rejects immutable section
   // -------------------------------------------------------------------------
 
   it(
@@ -253,7 +253,7 @@ describe("CONFIG-APPLY-E2E: Config Apply Full Section Replacement", () => {
   );
 
   // -------------------------------------------------------------------------
-  // Test 5: config.apply triggers SIGUSR2 restart
+  // config.apply triggers SIGUSR2 restart
   // -------------------------------------------------------------------------
 
   it(

@@ -5,28 +5,29 @@
  * Updates ONLY `description` and `replacesPackages` under
  * `tooling.<kind>.capabilityHints.<name>` — sibling keys (`cluster`,
  * any future fields), sibling hints, and non-tooling sections are
- * byte-preserved (TOOLFILL-6 strict scope; TOOLFILL-9 atomic-edit
- * semantics; TOOLFILL-11 mcp + skills symmetry).
+ * byte-preserved (strict scope; atomic-edit semantics; mcp + skills
+ * symmetry).
  *
  * The mutator NEVER creates a new hint — if the path is absent it
- * returns err. Creating new hints is Phase 25 generate.ts's job
+ * returns err. Creating new hints is generate.ts's job
  * (`comis config sync-tooling --write` materializes them; tooling-fill
  * populates the stubs after).
  *
- * commentBefore on `replacesPackages` (Phase 25's
- * `# TODO: list npm/pip packages this MCP replaces` line) and any
- * commentBefore on the hint key itself are preserved automatically
- * because we replace the VALUE node only, not the Pair's key — yaml@2.8.4
- * setIn at a leaf path replaces just the value Pair's right-hand side.
+ * commentBefore on `replacesPackages` (the
+ * `# TODO: list npm/pip packages this MCP replaces` line emitted by
+ * generate.ts) and any commentBefore on the hint key itself are
+ * preserved automatically because we replace the VALUE node only, not
+ * the Pair's key — yaml@2.8.4 setIn at a leaf path replaces just the
+ * value Pair's right-hand side.
  *
  * Design notes:
  *  - Pure function: no fs I/O, no Commander wiring. Caller wraps
  *    parseDocument + this module + doc.toString() in a Result shell.
  *  - Result<void, ApplyHintError> over throw — AGENTS.md §2.1.
- *  - Same yaml@2.8.4 primitives as Phase 25 generate.ts (hasIn, setIn,
- *    createNode) — D-15 carryover; no js-yaml dependency.
- *  - replacesPackages is fully replaced (not merged) — TOOLFILL-10
- *    `--force=replace`; TOOLFILL-5 `--force` overwrite.
+ *  - Same yaml@2.8.4 primitives as generate.ts (hasIn, setIn,
+ *    createNode); no js-yaml dependency.
+ *  - replacesPackages is fully replaced (not merged) — `--force=replace`
+ *    overwrite semantics.
  *
  * @module
  */
@@ -35,9 +36,9 @@ import { isMap, isPair, isScalar, type Document } from "yaml";
 import { ok, err, type Result } from "@comis/shared";
 
 /**
- * Phase 25's generate.ts emits this commentBefore on the `replacesPackages`
- * Pair when materializing a stub. Once tooling-fill populates the field
- * with real packages, the TODO is stale — strip it so the YAML stays clean.
+ * generate.ts emits this commentBefore on the `replacesPackages` Pair
+ * when materializing a stub. Once tooling-fill populates the field with
+ * real packages, the TODO is stale — strip it so the YAML stays clean.
  * Keep operator-authored comments (anything else) intact.
  */
 const PHASE_25_TODO_COMMENT = " TODO: list npm/pip packages this MCP replaces";
@@ -83,7 +84,7 @@ export interface HintFields {
  *                 (never merged).
  * @returns ok(undefined) on success;
  *          err({kind:"hint-not-found"}) if the path is absent (caller
- *          decides whether to refuse or to create the hint via Phase 25);
+ *          decides whether to refuse or to create the hint);
  *          err({kind:"invalid-kind"}) if `kind` is something other than
  *          "mcp"/"skills" after a runtime cast-around;
  *          err({kind:"doc-corrupt"}) if doc.contents is null/undefined.
@@ -105,10 +106,10 @@ export function setHintFields(
     });
   }
 
-  // Pitfall 9 carryover from Phase 25: parseDocument("") produces a Document
-  // with contents === null. setIn on null content would silently bootstrap a
-  // root map, but for tooling-fill we want an explicit failure — the caller
-  // is operating on an existing config that already has hints.
+  // parseDocument("") produces a Document with contents === null. setIn on
+  // null content would silently bootstrap a root map, but for tooling-fill
+  // we want an explicit failure — the caller is operating on an existing
+  // config that already has hints.
   if (doc.contents == null) {
     return err({
       kind: "doc-corrupt",
@@ -132,26 +133,26 @@ export function setHintFields(
   // Update description (string scalar). yaml@2.8.4's setIn at this leaf path
   // replaces only the Pair's value — the key Scalar (and any commentBefore
   // attached to it) is not rewritten. yaml auto-quotes the value when it
-  // contains YAML metacharacters (T-26-11 mitigation: `: `, `,`, `#` etc.).
+  // contains YAML metacharacters (`: `, `,`, `#` etc.).
   doc.setIn([...hintPath, "description"], fields.description);
 
   // Update replacesPackages — fully replace the YAMLSeq with a fresh node.
   // createNode wraps the JS array as a YAMLSeq (yaml's default for arrays
   // is block-style for non-empty + flow-style for empty `[]`, matching the
-  // existing Phase 25 fixture). We spread into a mutable array because
-  // createNode accepts a JS value and `readonly string[]` from the input
-  // would otherwise propagate as a frozen value into the AST.
+  // existing fixture). We spread into a mutable array because createNode
+  // accepts a JS value and `readonly string[]` from the input would
+  // otherwise propagate as a frozen value into the AST.
   doc.setIn(
     [...hintPath, "replacesPackages"],
     doc.createNode([...fields.replacesPackages]),
   );
 
-  // Phase 26.1: strip the stale `# TODO: list npm/pip packages this MCP replaces`
-  // commentBefore that Phase 25 generate.ts emits as a stub prompt. Once the
+  // Strip the stale `# TODO: list npm/pip packages this MCP replaces`
+  // commentBefore that generate.ts emits as a stub prompt. Once the
   // operator (or LLM) has populated replacesPackages with real values, the
   // TODO is misleading and clutters the YAML. We preserve any other
-  // commentBefore (operator-authored notes), only matching the literal Phase
-  // 25 stub.
+  // commentBefore (operator-authored notes), only matching the literal
+  // generated stub.
   if (fields.replacesPackages.length > 0) {
     const hintMapNode = doc.getIn(hintPath, true);
     if (isMap(hintMapNode)) {
@@ -159,8 +160,8 @@ export function setHintFields(
         if (!isPair(p)) continue;
         if (!isScalar(p.key)) continue;
         if (p.key.value !== "replacesPackages") continue;
-        // Strip ONLY the Phase 25 stub. Operator-authored commentBefore on
-        // the same key is left alone.
+        // Strip ONLY the generated stub. Operator-authored commentBefore
+        // on the same key is left alone.
         if (p.key.commentBefore === PHASE_25_TODO_COMMENT) {
           delete p.key.commentBefore;
         }

@@ -6,9 +6,9 @@
  * composition root, provider config is accessible via RPC, and daemon logs
  * contain no raw credentials.
  *
- *   SMD-01: Daemon Bootstrap with SecretManager
- *   SMD-02: Provider Config Wiring
- *   SMD-03: Daemon Log Sanitization Verification
+ *   - Daemon bootstrap with SecretManager
+ *   - Provider config wiring
+ *   - Daemon log sanitization verification
  *
  * Uses the daemon harness for programmatic daemon startup/teardown.
  */
@@ -63,10 +63,10 @@ describe("SecretManager Daemon E2E Tests (real daemon)", () => {
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // SMD-01 -- Daemon Bootstrap with SecretManager
+  // Daemon Bootstrap with SecretManager
   // ---------------------------------------------------------------------------
 
-  describe("SMD-01: Daemon Bootstrap with SecretManager", () => {
+  describe("Daemon Bootstrap with SecretManager", () => {
     it("config.get with no section returns valid JSON-RPC result (bootstrap complete)", async () => {
       const response = (await sendJsonRpc(ws, "config.get", {}, 10, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -91,10 +91,10 @@ describe("SecretManager Daemon E2E Tests (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SMD-02 -- Provider Config Wiring
+  // Provider Config Wiring
   // ---------------------------------------------------------------------------
 
-  describe("SMD-02: Provider Config Wiring", () => {
+  describe("Provider Config Wiring", () => {
     it("config.get({section: 'agents'}) returns agent config with provider field", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "agents" }, 20, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -149,10 +149,10 @@ describe("SecretManager Daemon E2E Tests (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SMD-03 -- Daemon Log Sanitization Verification
+  // Daemon Log Sanitization Verification
   // ---------------------------------------------------------------------------
 
-  describe("SMD-03: Daemon Log Sanitization Verification", () => {
+  describe("Daemon Log Sanitization Verification", () => {
     it("daemon log entries contain no raw credential patterns", async () => {
       // After daemon startup and RPC calls, capture all log entries
       const entries = logCapture.getEntries();

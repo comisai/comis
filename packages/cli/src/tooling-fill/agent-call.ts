@@ -5,7 +5,7 @@
  * POSTs to http://127.0.0.1:<port>/api/chat with bearer auth, parses the
  * `{response: string}` field of the gateway's chat response, and returns a
  * typed `Result<{response}, AgentCallError>`. No SDK deps — `node:http`
- * only (TOOLFILL-2 + Phase 26 SPEC §Constraints "no axios, no node-fetch").
+ * only ("no axios, no node-fetch" per SPEC §Constraints).
  *
  * Failure modes (`AgentCallErrorKind`):
  * - `network`     — ECONNREFUSED / ENOTFOUND / EHOSTUNREACH; emits the
@@ -19,7 +19,7 @@
  *                   field (the gateway contract is broken).
  *
  * The token comes from the caller — this module never reads the
- * environment directly. Wave 2's Commander callback resolves the token via
+ * environment directly. The Commander callback resolves the token via
  * `loadEnvFile` and passes it explicitly (per AGENTS.md §2.2).
  *
  * @module
@@ -66,7 +66,7 @@ export interface AgentCallResponse {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-/** Literal TOOLFILL-2 SPEC string. Anti-regression grep counts this exact string. */
+/** Literal SPEC string. Anti-regression grep counts this exact string. */
 const GATEWAY_UNREACHABLE_MSG =
   "Cannot reach Comis daemon — gateway unreachable. Start the daemon and retry.";
 
@@ -212,9 +212,9 @@ export async function callAgent(
   });
 
   // Note: `status` is captured at the moment of an event firing. The
-  // server `error` field is surfaced verbatim — never logged elsewhere
-  // (T-26-03: token never appears in error.message; only the bearer
-  //  header carries it, and that is constructed inline above).
+  // server `error` field is surfaced verbatim — never logged elsewhere.
+  // The token never appears in error.message; only the bearer header
+  // carries it, and that is constructed inline above.
 }
 
 // Internal export for testability of the literal SPEC string.

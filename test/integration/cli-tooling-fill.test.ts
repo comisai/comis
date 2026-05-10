@@ -1,57 +1,54 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 26 — tooling-fill CLI daemon-bound integration test (SPEC AC-3 +
- * AC-5 + AC-7 + AC-11 + AC-13). The acceptance gate at the daemon-boundary
- * level. Mirrors Phase 25 Plan 04's `cli-sync-tooling.test.ts` architecture.
+ * tooling-fill CLI daemon-bound integration test. The acceptance gate at the
+ * daemon-boundary level.
  *
  * End-to-end coverage:
  *
- *  - Test 1 (TOOLFILL-2 / SPEC AC-3 negative): `comis config tooling-fill
- *    yfinance --yes --restart-cmd 'echo skipped'` with NO daemon running
- *    exits with code 1 and stderr contains the TOOLFILL-2 SPEC string
- *    (anchored as the runtime constant TOOLFILL_2_SPEC_STRING below — single
- *    source of truth, anti-regression grep `== 1`). The fixture's mtime is
- *    unchanged and no `~/.comis/config.pre-tooling-fill-*.yaml` backup is
- *    written. Anchors Plan 26-04's daemon-up gate (orchestrator step 4) at
- *    the integration boundary — if Plan 02's drift fix regresses (back to
- *    `health.ping`), this test fails because isDaemonRunning() returns true
- *    against a real daemon answering `system.ping`.
+ *  - Daemon-down negative: `comis config tooling-fill yfinance --yes
+ *    --restart-cmd 'echo skipped'` with NO daemon running exits with code 1
+ *    and stderr contains the gateway-unreachable string (anchored as the
+ *    runtime constant GATEWAY_UNREACHABLE_STRING below — single source of
+ *    truth). The fixture's mtime is unchanged and no
+ *    `~/.comis/config.pre-tooling-fill-*.yaml` backup is written. Anchors the
+ *    daemon-up gate at the integration boundary — if the `system.ping` probe
+ *    regresses to `health.ping`, this test fails because isDaemonRunning()
+ *    returns true against a real daemon answering `system.ping`.
  *
- *  - Test 2 (SPEC AC-3 happy boundary): with a real daemon up, run
- *    `tooling-fill yfinance --yes --restart-cmd 'echo skipped'` (no test
- *    fault injector). The daemon's executor will fail on the dummy
- *    ANTHROPIC_API_KEY seeded by daemon-harness. That's fine — the boundary
- *    check is whether the CLI's POST hits /api/chat. The daemon's hono-
- *    server.ts middleware logs every non-/health request as
- *    `Request completed` with `path: "/api/chat"`. Assert that log entry
- *    exists at info level. Exit code is acceptable as either 0 or non-zero
- *    (the LLM-provider downstream may emit a `dependency` error that
- *    surfaces in summary; the contract is the /api/chat round-trip).
+ *  - Happy boundary: with a real daemon up, run `tooling-fill yfinance --yes
+ *    --restart-cmd 'echo skipped'` (no test fault injector). The daemon's
+ *    executor will fail on the dummy ANTHROPIC_API_KEY seeded by
+ *    daemon-harness. That's fine — the boundary check is whether the CLI's
+ *    POST hits /api/chat. The daemon's hono-server.ts middleware logs every
+ *    non-/health request as `Request completed` with `path: "/api/chat"`.
+ *    Assert that log entry exists at info level. Exit code is acceptable as
+ *    either 0 or non-zero (the LLM-provider downstream may emit a
+ *    `dependency` error that surfaces in summary; the contract is the
+ *    /api/chat round-trip).
  *
- *  - Test 3 (SPEC AC-5 + AC-7): with a real daemon up AND
+ *  - Atomic write + backup: with a real daemon up AND
  *    COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE set to a canned 2-line response,
  *    run `tooling-fill yfinance --yes --restart-cmd 'echo skipped' --config
- *    <fixture-copy>`. The orchestrator skips the /api/chat call (the env
- *    var is the test-only fault injector landed in 26-05's first commit),
- *    runs the full state machine: stop daemon (no-op via 'echo skipped') →
- *    write backup → setHintFields → atomicWriteFile → validateConfig →
- *    start daemon (no-op). Assert: exit 0; the post-fill YAML contains the
- *    new description and `- yfinance` package; backup file lives under
- *    ~/.comis/ matching the `config.pre-tooling-fill-*.yaml` regex; backup
- *    contents are byte-equal to the pre-overwrite file.
+ *    <fixture-copy>`. The orchestrator skips the /api/chat call (the env var
+ *    is a test-only fault injector), runs the full state machine: stop daemon
+ *    (no-op via 'echo skipped') → write backup → setHintFields →
+ *    atomicWriteFile → validateConfig → start daemon (no-op). Assert: exit 0;
+ *    the post-fill YAML contains the new description and `- yfinance`
+ *    package; backup file lives under ~/.comis/ matching the
+ *    `config.pre-tooling-fill-*.yaml` regex; backup contents are byte-equal
+ *    to the pre-overwrite file.
  *
- *  - Test 4 (SPEC AC-11): after Test 3's post-fill state, run `comis config
- *    sync-tooling --format json --config <filled-fixture>` against the
- *    mutated fixture. Assert exit 0; the JSON has empty add.mcps,
- *    add.skills, remove.mcps, remove.skills arrays — Phase 25's append-only
- *    invariant (D-22) holds: tooling-fill did NOT add or remove any hint,
- *    only filled the two stub-valued fields in place.
+ *  - Round-trip / append-only invariant: after the atomic-write test's
+ *    post-fill state, run `comis config sync-tooling --format json --config
+ *    <filled-fixture>` against the mutated fixture. Assert exit 0; the JSON
+ *    has empty add.mcps, add.skills, remove.mcps, remove.skills arrays — the
+ *    append-only invariant holds: tooling-fill did NOT add or remove any
+ *    hint, only filled the two stub-valued fields in place.
  *
  * Pre-req: `pnpm build` (or `npx tsc -b packages/cli && npx tsc -b
- * packages/daemon` — Plan 25-04 deviation #4: full pnpm build may fail on
- * `packages/web`) MUST have run before this test. Otherwise
- * `packages/cli/dist/cli.js` is stale and the test silently uses old code
- * (RESEARCH Pitfall 8). The `beforeEach` enforces this with an `existsSync`
+ * packages/daemon` — full pnpm build may fail on `packages/web`) MUST have run
+ * before this test. Otherwise `packages/cli/dist/cli.js` is stale and the test
+ * silently uses old code. The `beforeEach` enforces this with an `existsSync`
  * check that throws a clear error message.
  *
  * @module
@@ -98,7 +95,7 @@ const FIXTURE_SOURCE = resolve(
   "test/config/config.test-tooling-fill.yaml",
 );
 
-/** D-10/Phase-26 backup filename regex (millisecond ISO + 6-char hex). */
+/** Backup filename regex (millisecond ISO + 6-char hex). */
 const BACKUP_REGEX =
   /^config\.pre-tooling-fill-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}-[0-9a-f]{6}\.yaml$/;
 
@@ -109,17 +106,19 @@ const BACKUP_FILENAME_PREFIX = "config.pre-tooling-fill-";
 const REPO_ROOT_PLACEHOLDER = "${COMIS_REPO_ROOT}";
 
 /**
- * Literal TOOLFILL-2 SPEC string (single source of truth: orchestrator.ts
- * + agent-call.ts). Anti-regression assertion in Test 1 — if either source
- * file drifts away from this exact wording, the test fails.
+ * Literal gateway-unreachable error string (single source of truth:
+ * orchestrator.ts + agent-call.ts). Anti-regression assertion in the
+ * daemon-down test — if either source file drifts away from this exact
+ * wording, the test fails.
  */
-const TOOLFILL_2_SPEC_STRING =
+const GATEWAY_UNREACHABLE_STRING =
   "Cannot reach Comis daemon — gateway unreachable. Start the daemon and retry.";
 
 /**
  * Canned 2-line agent response per the parser's strict contract
  * (response-parser.ts: `DESCRIPTION: <one-line>` then
- * `REPLACES_PACKAGES: <json-array>`). Used by Tests 3 + 4 via the test-only
+ * `REPLACES_PACKAGES: <json-array>`). Used by the atomic-write and
+ * round-trip tests via the test-only
  * `COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE` fault injector.
  */
 const CANNED_AGENT_RESPONSE =
@@ -132,13 +131,13 @@ const execFileAsync = promisify(execFile);
  * Async wrapper around `execFile` that always resolves with
  * `{ exitCode, stdout, stderr }` regardless of the child's exit code.
  *
- * CRITICAL: this MUST be async (not `execFileSync`/`spawnSync`). The Phase
- * 25 + 26 integration tests boot the daemon IN THE SAME PROCESS as the test
- * runner (daemon-harness imports `@comis/daemon` and calls `main()`). A
- * synchronous child_process call would block the test process's event loop,
- * which is the SAME event loop serving the in-process daemon's HTTP+WS
- * gateway. The CLI's `withClient` probe + the /api/chat POST would then
- * time out on connection accept (Plan 25-04 deviation #1).
+ * CRITICAL: this MUST be async (not `execFileSync`/`spawnSync`). The
+ * integration tests boot the daemon IN THE SAME PROCESS as the test runner
+ * (daemon-harness imports `@comis/daemon` and calls `main()`). A synchronous
+ * child_process call would block the test process's event loop, which is the
+ * SAME event loop serving the in-process daemon's HTTP+WS gateway. The CLI's
+ * `withClient` probe + the /api/chat POST would then time out on connection
+ * accept.
  */
 async function runCli(
   args: string[],
@@ -179,8 +178,7 @@ async function runCli(
  * Suppress the "Daemon exit with code N" error that `cleanup()` rethrows on
  * the daemon-harness side. The harness intentionally overrides `process.exit`
  * to throw so the test process is not killed; the cleanup graceful-shutdown
- * path then re-raises that thrown error. Phase 24/25 tests use the same
- * wrapper.
+ * path then re-raises that thrown error.
  */
 async function cleanupDaemon(handle: TestDaemonHandle): Promise<void> {
   try {
@@ -215,7 +213,7 @@ function listBackupFiles(comisDir: string): string[] {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7 + AC-11 + AC-13)", () => {
+describe("comis config tooling-fill integration", () => {
   let workDir: string;
   let workConfigPath: string;
   /**
@@ -225,7 +223,7 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
    * (`<HOME>/.comis/skills`, `<HOME>/.comis/workspace/skills`) both resolve
    * here. This isolates the test from the developer's real `~/.comis/skills/`
    * which on a contributor machine may contain skills (e.g. `skill-creator`)
-   * that would otherwise show up as `add` entries in Test 4's sync-tooling
+   * that would otherwise show up as `add` entries in the sync-tooling
    * round-trip diff.
    */
   let fakeHomeDir: string;
@@ -234,8 +232,8 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
   let backupSnapshotBefore: Set<string>;
 
   beforeEach(() => {
-    // RESEARCH Pitfall 8: refuse to run if the CLI binary is missing.
-    // Without this guard a stale dist/ would silently mask src/ edits.
+    // Refuse to run if the CLI binary is missing. Without this guard a stale
+    // dist/ would silently mask src/ edits.
     if (!existsSync(CLI_BINARY)) {
       throw new Error(
         `CLI binary not found at ${CLI_BINARY} — run 'pnpm build' first ` +
@@ -248,7 +246,7 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
 
     // Per-test working directory under the OS temp dir (NOT the repo) — the
     // CLI mutates this file via tooling-fill, and we want each test in
-    // isolation. Plan 25-04 established this convention.
+    // isolation.
     workDir = mkdtempSync(join(tmpdir(), "comis-tooling-fill-it-"));
     workConfigPath = join(workDir, "config.yaml");
 
@@ -257,7 +255,7 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
     // sync-tooling's daemon-default skill-discovery paths
     // (`~/.comis/skills`, `~/.comis/workspace/skills`) do NOT pick up the
     // developer's real skills (which would surface as `add` entries in
-    // Test 4's round-trip diff).
+    // the round-trip diff).
     fakeHomeDir = join(workDir, "home");
     fakeComisDir = join(fakeHomeDir, ".comis");
     mkdirSync(fakeComisDir, { recursive: true });
@@ -267,8 +265,7 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
     // packages/core/src/config/loader.ts:101-116). The daemon's bootstrap
     // path DOES substitute, but we want both readers to agree on the literal
     // path, so we expand once here. Also keeps the fixture portable across
-    // worktrees and CI runners (Phase 24 BLOCKER lesson; Plan 25-04
-    // pattern).
+    // worktrees and CI runners.
     const fixtureContent = readFileSync(FIXTURE_SOURCE, "utf-8").replaceAll(
       REPO_ROOT_PLACEHOLDER,
       REPO_ROOT,
@@ -308,7 +305,7 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
   });
 
   it(
-    "Test 1 (TOOLFILL-2): daemon-down → exit 1 + literal SPEC string + no file mutation",
+    "daemon-down → exit 1 + literal gateway-unreachable string + no file mutation",
     async () => {
       // No daemon started for this test.
       const mtimeBefore = statSync(workConfigPath).mtimeMs;
@@ -340,15 +337,15 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
       );
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain(TOOLFILL_2_SPEC_STRING);
+      expect(stderr).toContain(GATEWAY_UNREACHABLE_STRING);
 
-      // SPEC AC-5: file untouched when guard fires.
+      // File untouched when guard fires.
       const mtimeAfter = statSync(workConfigPath).mtimeMs;
       expect(mtimeAfter).toBe(mtimeBefore);
       expect(readFileSync(workConfigPath, "utf-8")).toBe(preContent);
 
       // No backup written — the orchestrator's daemon-up check fires
-      // BEFORE writeBackup (state-machine step 4 vs step 9b).
+      // BEFORE writeBackup.
       const backupsAfter = listBackupFiles(fakeComisDir);
       const newBackups = backupsAfter.filter(
         (p) => !backupSnapshotBefore.has(p),
@@ -359,7 +356,7 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
   );
 
   it(
-    "Test 2 (AC-3): real /api/chat call lands on the daemon (boundary check)",
+    "real /api/chat call lands on the daemon (boundary check)",
     async () => {
       const logCapture = createLogCapture();
       handle = await startTestDaemon({
@@ -405,9 +402,8 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
       );
       expect(logResult.matched).toBe(true);
 
-      // SPEC AC-3 boundary check: at least one /api/chat request reached
-      // the daemon. Multiple is fine (the orchestrator may retry on
-      // transient errors).
+      // Boundary check: at least one /api/chat request reached the daemon.
+      // Multiple is fine (the orchestrator may retry on transient errors).
       const entries = logCapture.getEntries();
       const chatRequests = filterLogs(entries, {
         msg: /Request completed/,
@@ -420,7 +416,7 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
       // dependency/internal error). Either way, the boundary was crossed.
       // We DO assert that the failure mode (if any) is NOT the gateway-
       // unreachable string — the daemon WAS up.
-      expect(stderr).not.toContain(TOOLFILL_2_SPEC_STRING);
+      expect(stderr).not.toContain(GATEWAY_UNREACHABLE_STRING);
       // Exit code must be a valid integer the harness produced (not the
       // sentinel -1 we emit on `signal` kills).
       expect(exitCode).toBeGreaterThanOrEqual(0);
@@ -429,7 +425,7 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
   );
 
   it(
-    "Test 3 (AC-5 + AC-7): tooling-fill writes config + backup atomically (fault-injected agent response)",
+    "tooling-fill writes config + backup atomically (fault-injected agent response)",
     async () => {
       const logCapture = createLogCapture();
       handle = await startTestDaemon({
@@ -459,7 +455,7 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
             COMIS_GATEWAY_TOKEN: handle.authToken,
             // Test-only fault injector — orchestrator skips /api/chat and
             // uses this as the literal agent response. AGENTS.md §2.2
-            // exception list explicitly allows test fault injectors.
+            // exception list allows test fault injectors.
             COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE: CANNED_AGENT_RESPONSE,
           },
           timeoutMs: 30_000,
@@ -471,7 +467,7 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
       // the diagnostic context they need without polluting passing runs.
       expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
 
-      // SPEC AC-5: file mutated.
+      // File mutated.
       const postContent = readFileSync(workConfigPath, "utf-8");
       const postMtime = statSync(workConfigPath).mtimeMs;
       expect(postContent).not.toBe(preContent);
@@ -486,14 +482,14 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
       expect(postContent).toContain("- yfinance");
       expect(postContent).toContain("- pandas-datareader");
 
-      // Comments + key-order preserved (REQ-7 / D-22 append-only).
+      // Comments + key-order preserved (append-only invariant).
       expect(postContent).toContain("tooling:");
       expect(postContent).toContain("capabilityIndex:");
       expect(postContent).toContain("installDetours:");
 
-      // SPEC AC-5: backup file lands under <fake-home>/.comis/ (the per-test
-      // fake HOME directs `os.homedir()` in the CLI subprocess to fakeHomeDir,
-      // so writeBackup's safePath(homeDir, ".comis", ...) lands here).
+      // Backup file lands under <fake-home>/.comis/ (the per-test fake HOME
+      // directs `os.homedir()` in the CLI subprocess to fakeHomeDir, so
+      // writeBackup's safePath(homeDir, ".comis", ...) lands here).
       const backupsAfter = listBackupFiles(fakeComisDir);
       const newBackups = backupsAfter.filter(
         (p) => !backupSnapshotBefore.has(p),
@@ -501,11 +497,11 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
       expect(newBackups.length).toBe(1);
       const backupPath = newBackups[0]!;
 
-      // Phase 26 backup naming regex: config.pre-tooling-fill-<ISO_TS>-<6-hex>.yaml
+      // Backup naming regex: config.pre-tooling-fill-<ISO_TS>-<6-hex>.yaml
       const backupBasename = backupPath.split("/").pop() ?? "";
       expect(backupBasename).toMatch(BACKUP_REGEX);
 
-      // SPEC AC-7: backup is byte-equal to the pre-overwrite content.
+      // Backup is byte-equal to the pre-overwrite content.
       const backupContent = readFileSync(backupPath, "utf-8");
       expect(backupContent).toBe(preContent);
 
@@ -517,10 +513,10 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
   );
 
   it(
-    "Test 4 (AC-11): sync-tooling reports no drift after tooling-fill (Phase 25 round-trip / append-only invariant)",
+    "sync-tooling reports no drift after tooling-fill (round-trip / append-only invariant)",
     async () => {
-      // Reuse the Test 3 setup pattern: boot daemon, run tooling-fill via
-      // the fault injector to mutate the fixture, then run sync-tooling
+      // Reuse the prior test's setup pattern: boot daemon, run tooling-fill
+      // via the fault injector to mutate the fixture, then run sync-tooling
       // against the post-fill state and assert no drift.
       const logCapture = createLogCapture();
       handle = await startTestDaemon({
@@ -553,8 +549,8 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
       expect(fillResult.exitCode).toBe(0);
 
       // Now run sync-tooling in inspect mode (NO --write) so the daemon-up
-      // guard is skipped (D-13/D-14: write paths only). --format json gives
-      // a machine-checkable diff payload (diff.ts:130+).
+      // guard is skipped (write paths only). --format json gives a
+      // machine-checkable diff payload (diff.ts:130+).
       const syncResult = await runCli(
         [
           "config",
@@ -594,11 +590,10 @@ describe("Phase 26 — comis config tooling-fill integration (AC-3 + AC-5 + AC-7
       };
       const payload = JSON.parse(syncResult.stdout) as SyncJsonPayload;
 
-      // Phase 25 D-22 append-only invariant: tooling-fill must NEVER add
-      // or remove any hint — only fill the description + replacesPackages
-      // fields in place. After tooling-fill runs, sync-tooling's diff
-      // against the same discovered artifacts MUST be empty in both
-      // directions.
+      // Append-only invariant: tooling-fill must NEVER add or remove any
+      // hint — only fill the description + replacesPackages fields in place.
+      // After tooling-fill runs, sync-tooling's diff against the same
+      // discovered artifacts MUST be empty in both directions.
       expect(payload.diff.add.mcps).toEqual([]);
       expect(payload.diff.add.skills).toEqual([]);
       expect(payload.diff.remove.mcps).toEqual([]);

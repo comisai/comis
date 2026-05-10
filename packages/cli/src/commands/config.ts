@@ -49,9 +49,9 @@ const DEFAULT_CONFIG_PATHS = [
 /**
  * Default config path for `sync-tooling` — single path, not the merged
  * 4-path list used by `validate`. Hardcoded to `~/.comis/config.yaml` so
- * the no-flag invocation is safe by construction (T-25-11 reconciliation
- * — operator-supplied `--config` is operator-trusted; the default is
- * not operator-derived and therefore not subject to traversal concerns).
+ * the no-flag invocation is safe by construction — operator-supplied
+ * `--config` is operator-trusted; the default is not operator-derived
+ * and therefore not subject to traversal concerns.
  */
 const SYNC_TOOLING_DEFAULT_CONFIG = os.homedir() + "/.comis/config.yaml";
 
@@ -386,25 +386,23 @@ export function registerConfigCommand(program: Command): void {
     });
 
   // --- config sync-tooling --------------------------------------------------
-  // Phase 25 — operator UX for materializing the `tooling:` block from
-  // discovered MCPs and skills. Three modes:
+  // Operator UX for materializing the `tooling:` block from discovered MCPs
+  // and skills. Three modes:
   //   1. inspect (default)   — print diff, exit 0, never touch the file
   //   2. --write             — backup + append-only mutation + atomic write
   //   3. --write --overwrite — backup + regenerate the entire managed block
   //
   // Wiring boundary: this callback is the orchestrator. All discovery,
   // AST mutation, fs I/O, and daemon probing live in
-  // `packages/cli/src/sync-tooling/*` (Wave 1 + Wave 2). See
-  // `.planning/phases/25-sync-tooling-cli/25-SPEC.md` for full requirements
-  // and `25-CONTEXT.md` D-01..D-25 for locked decisions referenced inline.
+  // `packages/cli/src/sync-tooling/*`.
   config
     .command("sync-tooling")
     .description("Discover MCPs/skills and sync the tooling: config block")
     .option("--write", "Apply changes to config.yaml (default: inspect-only)")
     .option("--overwrite", "Regenerate the entire tooling block (requires --write)")
     .option("--format <format>", "Inspect-mode output format (human|json)", "human")
-    // T-25-11: --config is operator-supplied and operator-trusted. The default
-    // is hardcoded so the no-flag invocation is safe by construction.
+    // --config is operator-supplied and operator-trusted. The default is
+    // hardcoded so the no-flag invocation is safe by construction.
     .option("-c, --config <path>", "Config file path", SYNC_TOOLING_DEFAULT_CONFIG)
     .action(
       async (options: {
@@ -419,7 +417,7 @@ export function registerConfigCommand(program: Command): void {
         const isOverwrite = options.overwrite === true;
         const fmt = options.format ?? "human";
 
-        // D-03: --overwrite requires --write — usage error before any I/O.
+        // --overwrite requires --write — usage error before any I/O.
         if (isOverwrite && !isWrite) {
           error("--overwrite requires --write");
           process.exit(1);
@@ -431,8 +429,8 @@ export function registerConfigCommand(program: Command): void {
           return;
         }
 
-        // D-13/D-14: daemon-active guard fires for write paths only. Inspect
-        // mode is read-only so the daemon's restart-required `tooling.*`
+        // Daemon-active guard fires for write paths only. Inspect mode is
+        // read-only so the daemon's restart-required `tooling.*`
         // configuration is unaffected.
         if (isWrite) {
           const running = await isDaemonRunning();
@@ -449,11 +447,11 @@ export function registerConfigCommand(program: Command): void {
         //   (1) loadConfigFile → JS shape for discover.ts (validates structure,
         //       returns ok({}) on missing/empty file).
         //   (2) parseDocument  → AST for generate.ts (preserves comments and
-        //       key order across mutations, REQ-7).
+        //       key order across mutations).
         const loaded = loadConfigFile(configPath);
         if (!loaded.ok) {
           // FILE_NOT_FOUND is recoverable — init-when-absent path. Anything
-          // else (parse error, permission denied) → exit 3 per D-25.
+          // else (parse error, permission denied) → exit 3.
           if (loaded.error.code !== "FILE_NOT_FOUND") {
             error(`Failed to load ${configPath}: ${loaded.error.message}`);
             process.exit(3);
@@ -501,8 +499,8 @@ export function registerConfigCommand(program: Command): void {
         //      block exists yet. Writing an empty skeleton would be churn.
         //  (b) Plan is a no-op against an existing tooling block (no adds, no
         //      removes, no skeleton needed).
-        // SPEC-4: when discovery is empty BUT a tooling block exists with stale
-        // hints, the plan will report removes — that path must NOT short-circuit.
+        // When discovery is empty BUT a tooling block exists with stale hints,
+        // the plan will report removes — that path must NOT short-circuit.
         const isFreshAndEmpty =
           mcps.length === 0 && skills.length === 0 && plan.needsSkeleton;
         const planIsNoop =
@@ -565,8 +563,7 @@ export function registerConfigCommand(program: Command): void {
           return;
         }
 
-        // --write path: D-12 backup-fail-fast → D-11 atomic write → D-23/D-24
-        // summary lines.
+        // --write path: backup-fail-fast → atomic write → summary lines.
         const backup = writeBackup(configPath, homeDir);
         if (!backup.ok) {
           error(
@@ -584,24 +581,24 @@ export function registerConfigCommand(program: Command): void {
           return;
         }
 
-        // D-23: terse one-line summary so operators see the backup path.
+        // Terse one-line summary so operators see the backup path.
         const totalAdded = counts.mcpAdded + counts.skillAdded;
         const totalRemoved = counts.mcpRemoved + counts.skillRemoved;
         success(
           `tooling: +${totalAdded} hints, -${totalRemoved} hints (backup: ${backup.value.backupPath})`,
         );
 
-        // D-24: extra warning for overwrite (destructive of operator intent).
+        // Extra warning for overwrite (destructive of operator intent).
         if (isOverwrite) {
           warn(
             `⚠ overwrote ${configPath} — entire tooling: block regenerated. Backup: ${backup.value.backupPath}`,
           );
         }
 
-        // Phase 26.1 housekeeping: keep the 5 most recent sync-tooling
-        // backups under ~/.comis/, drop older. Best-effort — backup
-        // pruning is never load-bearing, and the freshly-written backup
-        // counts toward the keep set.
+        // Housekeeping: keep the 5 most recent sync-tooling backups under
+        // ~/.comis/, drop older. Best-effort — backup pruning is never
+        // load-bearing, and the freshly-written backup counts toward the
+        // keep set.
         const pruneRes = pruneOldBackups(homeDir, "sync-tooling", 5);
         if (pruneRes.deleted > 0) {
           info(`(pruned ${pruneRes.deleted} older sync-tooling backup(s))`);
@@ -612,41 +609,38 @@ export function registerConfigCommand(program: Command): void {
     );
 
   // --- config tooling-fill --------------------------------------------------
-  // Phase 26 — operator UX for materializing the description +
-  // replacesPackages fields on tooling capability hints via the live
-  // Comis daemon. The orchestrator owns the full state machine; this
-  // callback is the composition root (AGENTS.md §2.4) — it builds the
-  // OrchestratorOpts bag, instantiates the readline-backed PromptIO,
-  // and routes the result's exitCode into process.exit.
+  // Operator UX for materializing the description + replacesPackages fields
+  // on tooling capability hints via the live Comis daemon. The orchestrator
+  // owns the full state machine; this callback is the composition root
+  // (AGENTS.md §2.4) — it builds the OrchestratorOpts bag, instantiates the
+  // readline-backed PromptIO, and routes the result's exitCode into
+  // process.exit.
   //
-  // 9 documented flags (TOOLFILL-1 / AC-2 — counted as 10 tokens with
-  // `--allow-restart` alias and `--force-no-validate` escape hatch).
-  // Wiring boundary: ALL discovery, AST mutation, fs I/O, daemon
-  // probing, supervisor calls, and LLM round-trips live in
-  // `packages/cli/src/tooling-fill/*` (Wave 1 + Wave 2). See
-  // `.planning/phases/26-tooling-fill/26-SPEC.md` for full requirements.
+  // Wiring boundary: ALL discovery, AST mutation, fs I/O, daemon probing,
+  // supervisor calls, and LLM round-trips live in
+  // `packages/cli/src/tooling-fill/*`.
   config
     .command("tooling-fill [hint-name]")
     .description(
       "Fill description + replacesPackages on a tooling capability hint via the live agent",
     )
-    .option("--all", "Fill every stub-valued hint (TOOLFILL-10)")
-    .option("--force", "Overwrite operator-filled hints (TOOLFILL-5)")
+    .option("--all", "Fill every stub-valued hint")
+    .option("--force", "Overwrite operator-filled hints")
     .option(
       "--dry-run",
-      "Print agent suggestion + diff; never stop daemon, never write file (TOOLFILL-8)",
+      "Print agent suggestion + diff; never stop daemon, never write file",
     )
-    .option("--yes", "Skip values-confirmation prompt (TOOLFILL-4)")
-    .option("--restart", "Authorize daemon-stop+start window (TOOLFILL-4)")
+    .option("--yes", "Skip values-confirmation prompt")
+    .option("--restart", "Authorize daemon-stop+start window")
     .option("--allow-restart", "Alias for --restart")
     .option("--no-restart", "Write file but skip daemon stop+start")
     .option(
       "--restart-cmd <cmd>",
-      "Override supervisor with full stop+start command (TOOLFILL-3)",
+      "Override supervisor with full stop+start command",
     )
     .option(
       "--force-no-validate",
-      "Skip package-name shape validation (TOOLFILL-7 escape hatch — loud warning)",
+      "Skip package-name shape validation (escape hatch — loud warning)",
     )
     .option(
       "-c, --config <path>",
@@ -707,7 +701,7 @@ export function registerConfigCommand(program: Command): void {
         //   --no-restart    → options.restart === false
         //   neither         → options.restart === undefined
         // --allow-restart is an alias: if either is set, treat as true.
-        // WR-02 fix: explicit --no-restart + --allow-restart is a contradiction;
+        // Explicit --no-restart + --allow-restart is a contradiction;
         // refuse rather than silently letting the alias win.
         if (options.allowRestart === true && options.restart === false) {
           error("--allow-restart and --no-restart are mutually exclusive");

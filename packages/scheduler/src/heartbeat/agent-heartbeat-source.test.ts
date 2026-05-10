@@ -339,7 +339,7 @@ describe("createAgentHeartbeatSource", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Response processing integration (RPROC wiring in onTick)
+  // Response processing integration in onTick
   // -----------------------------------------------------------------------
 
   it("suppresses delivery when executor returns HEARTBEAT_OK", async () => {

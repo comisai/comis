@@ -3,11 +3,11 @@
  * Tests for tooling-fill/response-parser.ts.
  *
  * Covers:
- * - TOOLFILL-2 grammar: DESCRIPTION: <one-line> + REPLACES_PACKAGES: <json-array>.
- * - TOOLFILL-6 / AC-9 strict scope: malicious extra fields (CLUSTER:,
- *   INSTALL_DETOURS:, shell-injection lines) are stripped from the parsed result.
+ * - Grammar: DESCRIPTION: <one-line> + REPLACES_PACKAGES: <json-array>.
+ * - Strict scope: malicious extra fields (CLUSTER:, INSTALL_DETOURS:,
+ *   shell-injection lines) are stripped from the parsed result.
  * - All failure modes return Result.err with kind="validation" and a discriminated
- *   `reason` from the closed union (AGENTS.md §2.1 errorKind discipline).
+ *   `reason` from the closed union (AGENTS.md errorKind discipline).
  */
 
 import { describe, it, expect } from "vitest";
@@ -50,7 +50,7 @@ describe("parseFillResponse — happy paths", () => {
   });
 });
 
-describe("parseFillResponse — TOOLFILL-6 / AC-9 defense-in-depth", () => {
+describe("parseFillResponse — defense-in-depth", () => {
   it("strips malicious CLUSTER:, INSTALL_DETOURS:, and shell-injection lines", () => {
     // The agent emits a hostile payload trying to influence cluster, leak
     // commands, and inject shell metacharacters. The parser MUST extract

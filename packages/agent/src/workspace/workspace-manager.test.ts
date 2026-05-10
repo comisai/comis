@@ -416,7 +416,7 @@ describe("workspace-manager", () => {
       };
     }
 
-    it("Test 1: second invocation with unchanged files returns zero registered, N skipped", async () => {
+    it("second invocation with unchanged files returns zero registered, N skipped", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
       const tracker = createIdempotencyTracker();
@@ -432,7 +432,7 @@ describe("workspace-manager", () => {
       expect(second.durationMs).toBeGreaterThanOrEqual(0);
     });
 
-    it("Test 2: after touching one file, second invocation re-registers just that file", async () => {
+    it("after touching one file, second invocation re-registers just that file", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
       const tracker = createIdempotencyTracker();
@@ -450,7 +450,7 @@ describe("workspace-manager", () => {
       expect(second.skipped).toBe(WORKSPACE_FILE_NAMES.length - 1);
     });
 
-    it("Test 3: invokes logger.debug exactly once per call with canonical object shape", async () => {
+    it("invokes logger.debug exactly once per call with canonical object shape", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
       const tracker = createIdempotencyTracker();
@@ -470,7 +470,7 @@ describe("workspace-manager", () => {
       expect(typeof debugCalls[0].obj.durationMs).toBe("number");
     });
 
-    it("Test 4: empty workspace directory returns zero counts and still emits one debug line", async () => {
+    it("empty workspace directory returns zero counts and still emits one debug line", async () => {
       const dir = await makeTempDir();
       await fs.mkdir(dir, { recursive: true });
       const tracker = createIdempotencyTracker();
@@ -485,7 +485,7 @@ describe("workspace-manager", () => {
       expect(debugCalls[0].obj).toMatchObject({ dir, registered: 0, skipped: 0 });
     });
 
-    it("Test 5: back-compat -- no-logger form still succeeds and returns counts", async () => {
+    it("back-compat -- no-logger form still succeeds and returns counts", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
       const tracker = createIdempotencyTracker();

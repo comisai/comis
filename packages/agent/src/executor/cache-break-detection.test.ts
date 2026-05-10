@@ -1952,7 +1952,7 @@ describe("API error suppression", () => {
     detector.recordPromptState(makeBaseInput());
   }
 
-  it("Test 1: checkResponseForCacheBreak with apiError=true returns null (no break event emitted)", () => {
+  it("checkResponseForCacheBreak with apiError=true returns null (no break event emitted)", () => {
     establishBaseline();
     const event = detector.checkResponseForCacheBreak({
       sessionKey: "test-session", provider: "anthropic",
@@ -1962,7 +1962,7 @@ describe("API error suppression", () => {
     expect(event).toBeNull();
   });
 
-  it("Test 2: checkResponseForCacheBreak with apiError=true does NOT update previousCacheReadTokens (baseline preserved)", () => {
+  it("checkResponseForCacheBreak with apiError=true does NOT update previousCacheReadTokens (baseline preserved)", () => {
     establishBaseline();
     // API error with zero tokens -- should NOT update baseline
     detector.checkResponseForCacheBreak({
@@ -1979,7 +1979,7 @@ describe("API error suppression", () => {
     expect(event).toBeNull();
   });
 
-  it("Test 3: API error then recovery -- no false break on return to previous cache level", () => {
+  it("API error then recovery -- no false break on return to previous cache level", () => {
     establishBaseline();
     // API error turn with 0 tokens
     detector.checkResponseForCacheBreak({
@@ -1997,7 +1997,7 @@ describe("API error suppression", () => {
     expect(event).toBeNull();
   });
 
-  it("Test 4: API error then real eviction -- genuine cache miss IS detected after recovery", () => {
+  it("API error then real eviction -- genuine cache miss IS detected after recovery", () => {
     establishBaseline();
     // API error turn
     detector.checkResponseForCacheBreak({

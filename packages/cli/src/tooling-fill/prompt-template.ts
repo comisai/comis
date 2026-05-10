@@ -3,16 +3,15 @@
  * Strict-scope prompt template for `comis config tooling-fill`.
  *
  * Generates the prompt that goes to the local daemon's `/api/chat`. The
- * prompt enforces TOOLFILL-2 (strict 2-line response contract) and
- * TOOLFILL-6 (only DESCRIPTION + REPLACES_PACKAGES emitted; no extra
- * fields, prose, or commentary).
+ * prompt enforces a strict 2-line response contract: only DESCRIPTION +
+ * REPLACES_PACKAGES are emitted; no extra fields, prose, or commentary.
  *
  * Variants:
  *   - "mcp" — describes an MCP server and the npm/pip packages it replaces
- *     (drives the install-detour subsystem in Phase 22).
- *   - "skills" (TOOLFILL-11) — REFINES an existing SKILL.md description
- *     rather than inventing a new one. replacesPackages is rare for skills
- *     but supported (e.g. a markdown-formatter skill replaces prettier).
+ *     (drives the install-detour subsystem).
+ *   - "skills" — REFINES an existing SKILL.md description rather than
+ *     inventing a new one. replacesPackages is rare for skills but
+ *     supported (e.g. a markdown-formatter skill replaces prettier).
  *
  * Pure string template — deterministic, no Date.now, no randomness, no
  * Result wrapping (AGENTS.md §2.3 KISS).
@@ -27,7 +26,7 @@ export interface FillPromptArgs {
   readonly name: string;
   /** For MCP: the install/run command (e.g. "uvx yfinance-mcp@latest"). */
   readonly mcpCommand?: string;
-  /** For skills: the manifest description (TOOLFILL-11 — refine, don't invent). */
+  /** For skills: the manifest description (refine, don't invent). */
   readonly skillDescription?: string;
   /**
    * Existing description (operator forced refill via --force) — provides
@@ -92,8 +91,8 @@ export function buildFillPrompt(args: FillPromptArgs): string {
         `Existing manifest description: "${args.skillDescription}"`,
       );
       sections.push(
-        // TOOLFILL-11: REFINE / CONDENSE, do not invent. "REFINE" must
-        // appear in uppercase per acceptance test.
+        // REFINE / CONDENSE: do not invent. "REFINE" must appear in
+        // uppercase per acceptance test.
         "Task: REFINE OR CONDENSE the existing description (do not invent " +
           "a new one). Then list any npm/pip packages this skill replaces — " +
           "usually [] for skills, but supported (e.g. a markdown-formatter " +

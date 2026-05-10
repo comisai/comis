@@ -1140,7 +1140,7 @@ describe("PiExecutor", () => {
     // L4 post-batch continuation integration
     // -----------------------------------------------------------------------
 
-    it("Test 10 — emits postBatchContinuation log fields when handler fires after empty-final-after-tool-batch", async () => {
+    it("emits postBatchContinuation log fields when handler fires after empty-final-after-tool-batch", async () => {
       // Conversation ending with an empty assistant turn after agents_manage
       // succeeded. pi-coding-agent session shape: tool results live in
       // role: "toolResult" entries (NOT role: "user" with tool_result blocks).
@@ -1211,7 +1211,7 @@ describe("PiExecutor", () => {
       expect(mockFollowUp).toHaveBeenCalledTimes(1);
     });
 
-    it("Test 11 — emits sepStepsPlanned/sepStepsCompleted; does NOT emit sepNudgeTriggered (SEP observability after L4 downgrade)", async () => {
+    it("emits sepStepsPlanned/sepStepsCompleted; does NOT emit sepNudgeTriggered (SEP observability after L4 downgrade)", async () => {
       // Inject a synthetic SEP plan into executionPlanRef.current via the
       // bridge mock. executor-post-execution.ts:339 reads the ref to
       // populate result.plannerMetrics, which feeds the bookend log.

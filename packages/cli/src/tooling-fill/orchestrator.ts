@@ -1,42 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `comis config tooling-fill` orchestrator — the load-bearing state
- * machine that composes Wave 1 helpers into the Phase 26 product surface.
+ * machine that composes the helpers into the product surface.
  *
- * State sequence (TOOLFILL-1..11; see 26-SPEC.md):
+ * State sequence:
  *
  *  1. Resolve hint(s) to fill — load config, parseDocument, list candidates.
  *     Single hint: `--kindHint mcp|skills` disambiguates name collisions.
  *     `--all`: every stub-valued hint across both maps (operator-filled
- *     hints are skipped silently per TOOLFILL-10).
+ *     hints are skipped silently).
  *  2. Pre-flight daemon-up check — `isDaemonRunning()` MUST be true for
- *     the LLM call (TOOLFILL-2). On failure exit 1 with the gateway-
- *     unreachable SPEC string and DO NOT touch config.yaml.
+ *     the LLM call. On failure exit 1 with the gateway-unreachable string
+ *     and DO NOT touch config.yaml.
  *  3. Resolve gateway port + token from configJs (port) +
  *     loadEnvFile($HOME/.comis/.env) → COMIS_GATEWAY_TOKEN env reference.
  *     Token resolution mirrors rpc-client.ts:resolveEnvRef so the same
  *     `${VAR}` pattern lands on the same value.
  *  4. Resolve supervisor — `--restart-cmd` overrides; else
  *     detectSupervisor(); `kind:"none"` AND not dry-run → exit 1 with
- *     MANUAL_RECIPE_HINT (TOOLFILL-3).
+ *     MANUAL_RECIPE_HINT.
  *  5. For each hint:
  *     a. buildFillPrompt → callAgent → parseFillResponse → validatePackageNames
  *     b. all-dropped (≠0 in, 0 out) AND not --force-no-validate → exit 1
- *        as agent failure (TOOLFILL-7).
+ *        as agent failure.
  *     c. Idempotency: !isStubValued(currentHint) AND !force →
- *        exit 1 with the TOOLFILL-5 idempotency-refusal SPEC string
- *        (see source for the literal).
- *  6. --dry-run short-circuit (TOOLFILL-8): print suggestion + diff,
- *     exit 0. NEVER stop daemon. NEVER touch file.
- *  7. Confirmation prompt (TOOLFILL-4 first half): if !yes && isTty →
+ *        exit 1 with the idempotency-refusal string (see source for the
+ *        literal).
+ *  6. --dry-run short-circuit: print suggestion + diff, exit 0. NEVER
+ *     stop daemon. NEVER touch file.
+ *  7. Confirmation prompt (values): if !yes && isTty →
  *     prompts.confirmValues(diff). Non-TTY without --yes → exit 1 with
- *     the TOOLFILL-4 yes-required SPEC string.
- *  8. Restart-authorization prompt (TOOLFILL-4 second half): if
- *     restart===undefined && isTty → prompts.confirmRestart(supervisor).
- *     Non-TTY without --restart → exit 1 with the TOOLFILL-4 restart-
- *     required SPEC string. With --no-restart: write the file but skip
- *     stop+start (warn that operator must restart manually).
- *  9. **Protected mutation window (TOOLFILL-9)**:
+ *     the yes-required string.
+ *  8. Restart-authorization prompt: if restart===undefined && isTty →
+ *     prompts.confirmRestart(supervisor). Non-TTY without --restart →
+ *     exit 1 with the restart-required string. With --no-restart: write
+ *     the file but skip stop+start (warn that operator must restart
+ *     manually).
+ *  9. **Protected mutation window**:
  *     a. stopDaemon — bail with err if it fails (do NOT proceed).
  *     b. writeBackup(configPath, homeDir, "tooling-fill") — backup-fail
  *        → restart daemon best-effort + exit 2.
@@ -46,7 +46,7 @@
  *        restore + start daemon + exit 2.
  *     e. validateConfig(loadConfigFile(configPath).value) — validate-fail
  *        → restore (atomicWriteFile original raw), start daemon, exit 1
- *        with the TOOLFILL-9 rollback SPEC string.
+ *        with the rollback string.
  * 10. startDaemon — best-effort warn-and-continue on failure.
  * 11. Success: exitCode=0, summary lists filled hints + backup path.
  *
@@ -100,7 +100,7 @@ export interface PromptIO {
   readonly confirmValues: (diff: string) => Promise<boolean>;
   /**
    * Ask "stop and restart daemon under <supervisor>?" — separate gate
-   * from values-confirmation per TOOLFILL-4 two-flag model.
+   * from values-confirmation per the two-flag model.
    */
   readonly confirmRestart: (supervisor: Supervisor) => Promise<boolean>;
 }
@@ -113,13 +113,13 @@ export interface PromptIO {
 export interface OrchestratorOpts {
   /** Single-hint mode: the bare hint key. Undefined when --all. */
   readonly hintName?: string;
-  /** Fill every stub-valued hint (TOOLFILL-10). */
+  /** Fill every stub-valued hint. */
   readonly all: boolean;
-  /** Overwrite operator-filled hints (TOOLFILL-5). */
+  /** Overwrite operator-filled hints. */
   readonly force: boolean;
-  /** Bypass package-name shape validation (TOOLFILL-7 escape hatch). */
+  /** Bypass package-name shape validation (escape hatch). */
   readonly forceNoValidate: boolean;
-  /** Print suggestion + diff, never touch daemon or file (TOOLFILL-8). */
+  /** Print suggestion + diff, never touch daemon or file. */
   readonly dryRun: boolean;
   /** Skip values-confirmation prompt. */
   readonly yes: boolean;
@@ -149,7 +149,7 @@ export interface OrchestratorResult {
 }
 
 // ---------------------------------------------------------------------------
-// SPEC literal strings — anchored by anti-regression greps.
+// Literal strings — anchored by anti-regression greps.
 // ---------------------------------------------------------------------------
 
 const TOOLFILL_2_GATEWAY_UNREACHABLE =
@@ -282,7 +282,7 @@ export async function runToolingFill(
     }
   }
 
-  // ---- Pre-flight: daemon must be UP for the LLM call (TOOLFILL-2) -----
+  // ---- Pre-flight: daemon must be UP for the LLM call -----------------
   const daemonUp = await isDaemonRunning();
   if (!daemonUp) {
     return {
@@ -310,7 +310,7 @@ export async function runToolingFill(
   }
   // For dry-run, supervisor.kind === "none" is OK — we don't need to stop
   // the daemon. With --no-restart the operator explicitly declines the
-  // restart leg, so a missing supervisor is also fine (WR-01 fix).
+  // restart leg, so a missing supervisor is also fine.
   // Otherwise surface MANUAL_RECIPE_HINT.
   if (supervisor.kind === "none" && !opts.dryRun && opts.restart !== false) {
     return {
@@ -319,7 +319,7 @@ export async function runToolingFill(
     };
   }
 
-  // ---- TOOLFILL-4 non-TTY gates (fail-fast BEFORE the LLM call) --------
+  // ---- Non-TTY gates (fail-fast BEFORE the LLM call) ------------------
   // The agent call is the expensive step; if we know we cannot confirm
   // (non-TTY without --yes) or cannot restart (non-TTY without --restart
   // or --no-restart), exit immediately so we don't burn an LLM round-trip.
@@ -343,9 +343,9 @@ export async function runToolingFill(
   // agent response instead of POSTing to /api/chat. Gated on a test-runtime
   // signal (NODE_ENV or VITEST) — fails LOUD if set in a production
   // environment so a poisoned ~/.comis/.env cannot silently substitute
-  // attacker-controlled description/replacesPackages values into config
-  // (CR-04 fix). AGENTS.md §2.2 lists "test fault injectors" as an exception
-  // to the no-runtime-env rule.
+  // attacker-controlled description/replacesPackages values into config.
+  // AGENTS.md §2.2 lists "test fault injectors" as an exception to the
+  // no-runtime-env rule.
   // eslint-disable-next-line no-restricted-syntax -- test fault injector (AGENTS.md §2.2 exception)
   const testAgentResponseRaw = process.env["COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE"];
   // eslint-disable-next-line no-restricted-syntax -- test runtime detection
@@ -385,8 +385,8 @@ export async function runToolingFill(
           });
     if (!callRes.ok) {
       // Single-hint: bail with exit 1 immediately.
-      // --all: record skip and continue to next hint (TOOLFILL-10
-      // partial success: previously-filled hints stay committed).
+      // --all: record skip and continue to next hint (partial success:
+      // previously-filled hints stay committed).
       const msg = `${callRes.error.kind}: ${callRes.error.message}`;
       if (opts.all) {
         skipped.push({ name: entry.name, reason: callRes.error.kind });
@@ -450,7 +450,7 @@ export async function runToolingFill(
   // ---- Build the diff string for dry-run / confirmation ----------------
   const diffString = renderFillDiff(filled, entries);
 
-  // ---- Dry-run short-circuit (TOOLFILL-8) -----------------------------
+  // ---- Dry-run short-circuit ------------------------------------------
   if (opts.dryRun) {
     return {
       exitCode: 0,
@@ -458,7 +458,7 @@ export async function runToolingFill(
     };
   }
 
-  // ---- Confirmation prompt (TOOLFILL-4 first half — values) ------------
+  // ---- Confirmation prompt (values) -----------------------------------
   if (!opts.yes) {
     if (!opts.isTty) {
       return { exitCode: 1, summary: TOOLFILL_4_YES_REQUIRED };
@@ -469,7 +469,7 @@ export async function runToolingFill(
     }
   }
 
-  // ---- Restart authorization prompt (TOOLFILL-4 second half) ----------
+  // ---- Restart authorization prompt -----------------------------------
   let willRestart: boolean;
   if (opts.restart === false) {
     // --no-restart explicit: write file but skip stop+start.
@@ -483,15 +483,15 @@ export async function runToolingFill(
     }
     const okRestart = await opts.prompts.confirmRestart(supervisor);
     if (!okRestart) {
-      // WR-03 fix: operator-driven aborts exit 0 (matches values-decline).
-      // Shell scripts that distinguish "user said no" from "command failed"
+      // Operator-driven aborts exit 0 (matches values-decline). Shell
+      // scripts that distinguish "user said no" from "command failed"
       // expect a clean exit on either prompt.
       return { exitCode: 0, summary: "operator declined daemon restart" };
     }
     willRestart = true;
   }
 
-  // ---- TOOLFILL-9 protected mutation window ---------------------------
+  // ---- Protected mutation window --------------------------------------
   // 9a. stopDaemon
   if (willRestart) {
     const stopRes = await stopDaemon(supervisor);
@@ -544,7 +544,7 @@ export async function runToolingFill(
   }
 
   // 9e. validateConfig — re-load + validate the freshly written file.
-  // CR-01 fix: env-substitute `${VAR}` references before validation, mirroring
+  // Env-substitute `${VAR}` references before validation, mirroring
   // `comis config validate` (commands/config.ts:131-133). Without this, any
   // config using the documented `${COMIS_GATEWAY_TOKEN}` pattern would fail
   // Zod's `z.string().min(32)` on the literal `${...}` (22 chars) and trigger
@@ -572,14 +572,14 @@ export async function runToolingFill(
     };
   }
 
-  // ---- 10. startDaemon + verify-alive (Phase 26.1) ---------------------
+  // ---- 10. startDaemon + verify-alive ---------------------------------
   // `systemctl start` exits 0 once the unit is queued, not once the daemon
   // has finished booting. If the daemon then crashes during boot (e.g.
   // misowned config, invalid YAML), the orchestrator was previously a
-  // false-positive on success. Phase 26.1: poll isDaemonRunning() for up
-  // to 15s after the start command; if the daemon doesn't come up,
-  // restore the backup and try again — never leave the operator with a
-  // dead daemon and a "success" message.
+  // false-positive on success. Poll isDaemonRunning() for up to 15s after
+  // the start command; if the daemon doesn't come up, restore the backup
+  // and try again — never leave the operator with a dead daemon and a
+  // "success" message.
   if (willRestart) {
     const startRes = await startDaemon(supervisor);
     if (!startRes.ok) {
@@ -606,7 +606,7 @@ export async function runToolingFill(
     }
   }
 
-  // ---- 11. TOOLFILL-10 partial success on --all ------------------------
+  // ---- 11. Partial success on --all -----------------------------------
   if (skipped.length > 0) {
     const filledNames = filled.map((f) => f.name).join(", ");
     const skippedReport = skipped
@@ -619,7 +619,7 @@ export async function runToolingFill(
     };
   }
 
-  // ---- 12. Backup retention (Phase 26.1) -------------------------------
+  // ---- 12. Backup retention -------------------------------------------
   // Keep the 5 most recent tooling-fill backups, drop older. Best-effort —
   // never failing the success path on a housekeeping miss.
   const pruneRes = pruneOldBackups(opts.homeDir, "tooling-fill", 5);
@@ -965,7 +965,7 @@ function renderSkippedReport(skipped: SkippedEntry[]): string {
 }
 
 /** Outcome of a rollback attempt — both legs reported separately so the
- * orchestrator can compose accurate operator-facing summaries (CR-02). */
+ * orchestrator can compose accurate operator-facing summaries. */
 interface RollbackOutcome {
   writeOk: boolean;
   startOk: boolean;
@@ -1001,7 +1001,7 @@ async function rollback(
 }
 
 /** Compose the standard `Validation failed; rolled back …` summary, honestly
- * reflecting any partial-rollback failure (CR-02). */
+ * reflecting any partial-rollback failure. */
 function rolledBackSummary(
   backupPath: string,
   configPath: string,
@@ -1042,7 +1042,7 @@ const ENV_REF_RE = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
  * post-write `validateConfig` call sees the same substituted shape that
  * `comis config validate` would. Without this, configs using the documented
  * `${COMIS_GATEWAY_TOKEN}` pattern fail Zod's min(32) check on the literal
- * `${...}` (22 chars) and trigger a false-positive rollback (CR-01).
+ * `${...}` (22 chars) and trigger a false-positive rollback.
  */
 function resolveEnvRefs(obj: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(obj)) {

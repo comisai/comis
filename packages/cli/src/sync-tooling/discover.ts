@@ -4,12 +4,9 @@
  *
  * Pure helpers (no daemon RPC, no Commander wiring): given a parsed config
  * and a homeDir, return the union of installed MCPs and skills the operator
- * has on disk. The CLI command callback in `commands/config.ts` (Wave 3)
- * orchestrates: it resolves homeDir via `os.homedir()`, calls `loadConfigFile`,
- * passes both into these functions, then feeds the result into `generate.ts`.
- *
- * Reference: `.planning/phases/25-sync-tooling-cli/25-RESEARCH.md` Pitfalls 6, 7
- * and `25-01-PLAN.md` interfaces section.
+ * has on disk. The CLI command callback in `commands/config.ts` orchestrates:
+ * it resolves homeDir via `os.homedir()`, calls `loadConfigFile`, passes both
+ * into these functions, then feeds the result into `generate.ts`.
  *
  * @module
  */
@@ -28,8 +25,8 @@ export interface DiscoveredMcp {
   readonly name: string;
   /**
    * Always `undefined` — `McpServerEntrySchema` is `z.strictObject` and has
-   * no `description` field (RESEARCH Pitfall 6). The CLI generates the stub
-   * `"TODO"` literal in `generate.ts`, never here.
+   * no `description` field. The CLI generates the stub `"TODO"` literal in
+   * `generate.ts`, never here.
    */
   readonly description: undefined;
 }
@@ -39,13 +36,13 @@ export interface DiscoveredSkill {
   /** Skill name from frontmatter `name`. */
   readonly name: string;
   /**
-   * Description priority chain (RESEARCH Pitfall 7):
+   * Description priority chain:
    *   1. `comis.capability.summary`
    *   2. `frontmatter.description`
    *   3. `undefined` (the stub fallback fires later in generate.ts)
    */
   readonly description: string | undefined;
-  /** Explicit cluster from `comis.capability.cluster`, undefined otherwise (D-09). */
+  /** Explicit cluster from `comis.capability.cluster`, undefined otherwise. */
   readonly cluster: string | undefined;
   /** Filesystem path of the directory containing the SKILL.md. */
   readonly sourceDir: string;
@@ -107,13 +104,13 @@ export function readMcpServers(config: Record<string, unknown>): DiscoveredMcp[]
  *
  * Discovery rules:
  * - Iterate every `discoveryPaths` entry under any `agents.<id>.skills` —
- *   the union across all agents (RESEARCH Open Question 1 recommendation).
+ *   the union across all agents.
  * - Append the two daemon defaults.
  * - For each path that exists, read first-level entries; for each subdirectory,
  *   look for `SKILL.md`.
  * - Parse frontmatter inline (small, structured); pull `name`, `description`,
  *   `comis.capability.summary`, `comis.capability.cluster`.
- * - Build description per Pitfall 7: `summary ?? description ?? undefined`.
+ * - Build description by priority: `summary ?? description ?? undefined`.
  *
  * NEVER throws on filesystem or frontmatter errors — malformed entries are
  * silently skipped (the daemon's startup validation will catch any blocker;
@@ -260,7 +257,7 @@ function tryParseSkillFrontmatter(skillMdPath: string): {
     }
   }
 
-  // Pitfall 7 priority: summary > frontmatter description > undefined.
+  // Priority: summary > frontmatter description > undefined.
   const description = summary ?? frontmatterDesc;
 
   return { name, description, cluster };

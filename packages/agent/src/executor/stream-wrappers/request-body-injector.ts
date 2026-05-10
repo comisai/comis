@@ -71,17 +71,17 @@ export interface RequestBodyInjectorConfig {
   cacheBreakpointStrategy?: "auto" | "multi-zone" | "single";
   /** Skip cache_control on final messages for sub-agent spawns. */
   skipCacheWrite?: boolean;
-  /** 2.1: Timestamp (ms since epoch) of the parent's last confirmed cache write.
+  /** Timestamp (ms since epoch) of the parent's last confirmed cache write.
    *  Used by the TTL expiry guard to disable skipCacheWrite when the shared prefix
    *  cache has likely expired (>80% of TTL elapsed). */
   cacheWriteTimestamp?: number;
-  /** 2.1: Parent's cache retention tier ("short" or "long"). Used alongside
+  /** Parent's cache retention tier ("short" or "long"). Used alongside
    *  cacheWriteTimestamp to determine the TTL boundary for the expiry guard. */
   parentCacheRetention?: string;
   /** Session key for rendered tool cache. When provided, tools rendered by
    *  the SDK are cached and replayed byte-identically on subsequent turns. */
   sessionKey?: string;
-  /** DEFER-TOOL: Getter for deferred tool names from tool deferral pipeline.
+  /** Getter for deferred tool names from tool deferral pipeline.
    *  When provided and non-empty (for Anthropic non-Haiku models), tools matching
    *  these names get defer_loading: true injected in onPayload, and a
    *  tool_search_tool_regex server tool is appended. */
@@ -147,7 +147,7 @@ export interface RequestBodyInjectorConfig {
   /** Number of consecutive unchanged calls before promoting a
    *  message breakpoint to 1h TTL. Default: 3. Only used when blockStabilityTracker is set. */
   stabilityThreshold?: number;
-  /** / 49-01: Callback invoked after cache breakpoint placement with per-TTL token estimates.
+  /** Callback invoked after cache breakpoint placement with per-TTL token estimates.
    *  Counts tokens under 5m vs 1h cache_control markers for accurate cost attribution.
    *  The bridge normalizes these estimates against the actual SDK-reported cacheWriteTokens. */
   onTtlSplitEstimate?: (estimate: { cacheWrite5mTokens: number; cacheWrite1hTokens: number }) => void;
@@ -1077,7 +1077,7 @@ export function maybePromoteBreakpoints(
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// 49-01: Per-block token estimator for TTL split estimation
+// Per-block token estimator for TTL split estimation
 // ---------------------------------------------------------------------------
 
 /**
@@ -1144,7 +1144,7 @@ export function createRequestBodyInjector(
           headers["anthropic-beta"] = existingBetas.join(", ");
           mergedHeaders = headers;
         }
-        // SESS-LATCH: Latch beta header on first use
+        // Latch beta header on first use
         const betaLatch = config.getBetaHeaderLatch?.();
         if (betaLatch) {
           if (mergedHeaders) {
@@ -1162,7 +1162,7 @@ export function createRequestBodyInjector(
         }
 
         // Sticky-on beta header latches -- accumulate individual beta
-        // values across calls. Unlike SESS-LATCH (set-once for entire string), this
+        // values across calls. Unlike the set-once latch (set-once for entire string), this
         // tracks individual values and ensures once-seen-always-included semantics.
         if (config.sessionKey) {
           // Ensure mergedHeaders exists (even if CONTEXT_1M_BETA was already present)
@@ -1234,13 +1234,13 @@ export function createRequestBodyInjector(
             reorderContentForStablePrefix(result.messages as Array<Record<string, unknown>>);
           }
 
-          // 2.1: TTL expiry guard for skipCacheWrite -- when the parent's cache write
+          // TTL expiry guard for skipCacheWrite -- when the parent's cache write
           // timestamp indicates the shared prefix cache has likely expired (>80% of TTL
           // elapsed), disable skipCacheWrite so the sub-agent creates its own cache entry
           // instead of referencing a stale one. Prevents 100% cache misses on round-2
           // sub-agents where the 5-minute TTL expired between rounds.
-          // Computed early so the W2 guard below can defer to the sub-agent bypass
-          // path (line ~1854) for SDK-placed tool markers.
+          // Computed early so the tool-breakpoint guard below can defer to the sub-agent
+          // bypass path (line ~1854) for SDK-placed tool markers.
           let effectiveSkipCacheWrite = config.skipCacheWrite ?? false;
           if (effectiveSkipCacheWrite && config.cacheWriteTimestamp != null) {
             const TTL_MAP: Record<string, number> = { short: 300_000, long: 3_600_000 };
@@ -1257,7 +1257,7 @@ export function createRequestBodyInjector(
           }
 
           // pi-ai 0.67.4+ auto-places cache_control on the last tool in
-          // convertTools(). W2 keeps tools at zero breakpoints (cached
+          // convertTools(). Tools are kept at zero breakpoints (cached
           // implicitly via the cumulative hash at the system breakpoint), so
           // strip the auto-placed marker before our budget + zone strategy runs.
           //
@@ -1581,14 +1581,14 @@ export function createRequestBodyInjector(
               );
             }
 
-            // W2: Tool breakpoint removed -- tools cached implicitly via cumulative hash
+            // Tool breakpoint removed -- tools cached implicitly via cumulative hash
             // at system breakpoint position (zero tool breakpoints).
 
-            // DEFER-TOOL: Inject defer_loading on deferred tools for Anthropic non-Haiku models.
+            // Inject defer_loading on deferred tools for Anthropic non-Haiku models.
             // Runs after tool cache breakpoints so deferred marking doesn't pollute breakpoint logic.
             if (config.getDeferredToolNames && supportsToolSearch(model.id)) {
               const deferredNames = config.getDeferredToolNames();
-              // SESS-LATCH: Latch defer_loading activation
+              // Latch defer_loading activation
               const deferLatch = config.getDeferLoadingLatch?.();
               const shouldDeferLoad = deferLatch
                 ? deferLatch.setOnce(deferredNames.size > 0)
@@ -1632,8 +1632,8 @@ export function createRequestBodyInjector(
               }
             }
 
-            // GRAPH-BREAKPOINT: Place a cache breakpoint on graph context envelope.
-            // Wave 2+ subagents and graph-enabled sessions receive injected research
+            // Place a cache breakpoint on graph context envelope.
+            // Subagents and graph-enabled sessions receive injected research
             // results as the first user message. This dynamic content (~100K+ tokens)
             // falls between the standard cache breakpoints, paying full uncached input
             // rate. Placing a breakpoint captures it under the cache prefix.
@@ -1699,7 +1699,7 @@ export function createRequestBodyInjector(
                 );
               }
 
-              // W12: Unconditional scan for ANY message breakpoint (including SDK auto-marker).
+              // Unconditional scan for ANY message breakpoint (including SDK auto-marker).
               // Ensures cacheFenceIndex is set for all sessions, not just those with explicit placements.
               if (config.onBreakpointsPlaced && Array.isArray(result.messages)) {
                 let highestBreakpointIdx = -1;
@@ -1726,7 +1726,7 @@ export function createRequestBodyInjector(
               }
             }
 
-            // W12-FALLBACK: When all breakpoint slots are consumed, still scan for SDK auto-marker
+            // Fallback: when all breakpoint slots are consumed, still scan for SDK auto-marker
             // to set cache fence. The SDK always places a marker on the last user message.
             if (slotsAvailable <= 0 && config.onBreakpointsPlaced && Array.isArray(result.messages)) {
               let highestBreakpointIdx = -1;
@@ -1779,7 +1779,7 @@ export function createRequestBodyInjector(
               }
             }
 
-            // W7: Diagnostic WARN when breakpoint budget exhausted on mature conversation.
+            // Diagnostic WARN when breakpoint budget exhausted on mature conversation.
             if (slotsAvailable <= 0 && Array.isArray(result.messages) && (result.messages as unknown[]).length >= 20) {
               logger.warn(
                 {
@@ -1897,7 +1897,7 @@ export function createRequestBodyInjector(
             }
           }
 
-          // SDK-UPGRADE: Upgrade SDK auto-placed 5m markers to 1h when retention is long.
+          // Upgrade SDK auto-placed 5m markers to 1h when retention is long.
           // The pi-ai SDK places cache_control: { type: "ephemeral" } (5m TTL) on the last
           // user message. When the session uses "long" retention, these 5m writes waste money
           // because they expire before the conversation can reuse them. Upgrading to 1h aligns

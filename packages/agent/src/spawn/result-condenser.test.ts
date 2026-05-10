@@ -100,9 +100,6 @@ describe("ResultCondenser", () => {
     vi.clearAllMocks();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 1: Level 1 passthrough for short results
-  // -------------------------------------------------------------------------
   it("Level 1: passthrough for short results below maxResultTokens", async () => {
     const deps = createTestDeps({ maxResultTokens: 1000 });
     const condenser = createResultCondenser(deps);
@@ -124,9 +121,6 @@ describe("ResultCondenser", () => {
     expect(diskJson.condensationLevel).toBe(1);
   });
 
-  // -------------------------------------------------------------------------
-  // Test 2: Strategy "never" always produces Level 1
-  // -------------------------------------------------------------------------
   it("Level 1: strategy 'never' always produces passthrough even for huge results", async () => {
     const deps = createTestDeps({
       maxResultTokens: 100,
@@ -146,9 +140,6 @@ describe("ResultCondenser", () => {
     expect(generateSummary).not.toHaveBeenCalled();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 3: Level 2 LLM condensation with valid JSON output
-  // -------------------------------------------------------------------------
   it("Level 2: LLM condensation with valid JSON output", async () => {
     const deps = createTestDeps({ maxResultTokens: 100 });
     const condenser = createResultCondenser(deps);
@@ -173,9 +164,6 @@ describe("ResultCondenser", () => {
     expect(result.result.filePaths).toContain("/src/foo.ts");
   });
 
-  // -------------------------------------------------------------------------
-  // Test 4: Level 2 LLM output with markdown fencing
-  // -------------------------------------------------------------------------
   it("Level 2: handles markdown-fenced JSON output from LLM", async () => {
     const deps = createTestDeps({ maxResultTokens: 100 });
     const condenser = createResultCondenser(deps);
@@ -197,9 +185,6 @@ describe("ResultCondenser", () => {
     expect(result.result.summary).toBe("Fenced condensed result");
   });
 
-  // -------------------------------------------------------------------------
-  // Test 5: Strategy "always" forces condensation even for short results
-  // -------------------------------------------------------------------------
   it("Level 2: strategy 'always' forces condensation even for short results", async () => {
     const deps = createTestDeps({
       maxResultTokens: 10000,
@@ -224,9 +209,6 @@ describe("ResultCondenser", () => {
     expect(generateSummary).toHaveBeenCalled();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 6: Level 3 fallback when generateSummary throws
-  // -------------------------------------------------------------------------
   it("Level 3: fallback when generateSummary throws", async () => {
     const deps = createTestDeps({ maxResultTokens: 100 });
     const condenser = createResultCondenser(deps);
@@ -243,9 +225,6 @@ describe("ResultCondenser", () => {
     expect(result.result.taskComplete).toBe(true);
   });
 
-  // -------------------------------------------------------------------------
-  // Test 7: Level 3 when no model available
-  // -------------------------------------------------------------------------
   it("Level 3: no model available skips LLM and uses truncation", async () => {
     const deps = createTestDeps({ maxResultTokens: 100 });
     const condenser = createResultCondenser(deps);
@@ -259,9 +238,6 @@ describe("ResultCondenser", () => {
     expect(generateSummary).not.toHaveBeenCalled();
   });
 
-  // -------------------------------------------------------------------------
-  // Test 8: Disk offload -- full result always persisted
-  // -------------------------------------------------------------------------
   describe("Disk offload", () => {
     it("persists for Level 1", async () => {
       const deps = createTestDeps({ maxResultTokens: 1000 });
@@ -315,9 +291,6 @@ describe("ResultCondenser", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Test 9: Session key sanitization
-  // -------------------------------------------------------------------------
   it("uses simplified tenantId-based directory naming in disk path", async () => {
     const deps = createTestDeps({ maxResultTokens: 1000 });
     const condenser = createResultCondenser(deps);
@@ -332,9 +305,6 @@ describe("ResultCondenser", () => {
     expect(result.diskPath).not.toContain("default_user_channel");
   });
 
-  // -------------------------------------------------------------------------
-  // Test 10: Post-condensation validation merges missing paths
-  // -------------------------------------------------------------------------
   it("merges missing file paths from original into condensed result", async () => {
     const deps = createTestDeps({ maxResultTokens: 100 });
     const condenser = createResultCondenser(deps);
@@ -362,9 +332,6 @@ describe("ResultCondenser", () => {
     expect(result.result.filePaths).toContain("/src/bar.ts");
   });
 
-  // -------------------------------------------------------------------------
-  // Test 11: Hard cap on disk write for huge results
-  // -------------------------------------------------------------------------
   it("caps disk write to 500K chars for huge results", async () => {
     const deps = createTestDeps({ maxResultTokens: 1000 });
     const condenser = createResultCondenser(deps);
@@ -379,9 +346,6 @@ describe("ResultCondenser", () => {
     expect(diskJson.fullResult.length).toBeLessThanOrEqual(500_000);
   });
 
-  // -------------------------------------------------------------------------
-  // Test 12: wrapAsSubagentResult strips <think> tags from summary
-  // -------------------------------------------------------------------------
   it("Level 1: strips <think> tags from summary in passthrough", async () => {
     const deps = createTestDeps({ maxResultTokens: 1000 });
     const condenser = createResultCondenser(deps);
@@ -396,9 +360,6 @@ describe("ResultCondenser", () => {
     expect(result.result.summary).toContain("visible text");
   });
 
-  // -------------------------------------------------------------------------
-  // Test 13: wrapAsSubagentResult unwraps <final> tags in summary
-  // -------------------------------------------------------------------------
   it("Level 1: unwraps <final> tags keeping inner text in passthrough", async () => {
     const deps = createTestDeps({ maxResultTokens: 1000 });
     const condenser = createResultCondenser(deps);

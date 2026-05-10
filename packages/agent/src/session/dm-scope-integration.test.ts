@@ -41,7 +41,6 @@ function makeGroupMessage(overrides?: Partial<NormalizedMessage>): NormalizedMes
 // ---------------------------------------------------------------------------
 
 describe("DM Scope Integration", () => {
-  // Test 1: Default parameters
   it("default params produce standard session key format", () => {
     const msg = makeDmMessage();
     const key = buildScopedSessionKey({
@@ -53,7 +52,6 @@ describe("DM Scope Integration", () => {
     expect(formatted).toBe("default:user-123:chat-456:peer:user-123");
   });
 
-  // Test 2: main mode
   it("main mode: single shared session for all DMs", () => {
     const msg = makeDmMessage();
     const key = buildScopedSessionKey({
@@ -66,7 +64,6 @@ describe("DM Scope Integration", () => {
     expect(formatted).toBe("default:main:dm");
   });
 
-  // Test 3: per-peer mode
   it("per-peer mode: per-peer sessions across all channels", () => {
     const msg = makeDmMessage();
     const key = buildScopedSessionKey({
@@ -79,7 +76,6 @@ describe("DM Scope Integration", () => {
     expect(formatted).toBe("default:user-123:dm:peer:user-123");
   });
 
-  // Test 4: per-channel-peer mode
   it("per-channel-peer mode: per-channel per-peer sessions", () => {
     const msg = makeDmMessage();
     const key = buildScopedSessionKey({
@@ -92,7 +88,6 @@ describe("DM Scope Integration", () => {
     expect(formatted).toBe("default:user-123:chat-456:peer:user-123");
   });
 
-  // Test 5: per-account-channel-peer mode
   it("per-account-channel-peer mode: includes adapter channel ID", () => {
     const msg = makeDmMessage();
     const key = buildScopedSessionKey({
@@ -105,7 +100,6 @@ describe("DM Scope Integration", () => {
     expect(formatted).toBe("default:user-123:bot-1:chat-456:peer:user-123");
   });
 
-  // Test 6: Group bypass
   it("group messages always use per-channel-peer regardless of scope mode", () => {
     const msg = makeGroupMessage();
     const key = buildScopedSessionKey({
@@ -118,7 +112,6 @@ describe("DM Scope Integration", () => {
     expect(formatted).toBe("default:user-123:channel-789:peer:user-123:guild:guild-abc");
   });
 
-  // Test 7: Agent prefix roundtrip
   it("agent prefix roundtrip: format and parse recovers agentId", () => {
     const msg = makeDmMessage();
     const key = buildScopedSessionKey({
@@ -137,7 +130,6 @@ describe("DM Scope Integration", () => {
     expect(parsed!.userId).toBe("user-123");
   });
 
-  // Test 8: Thread isolation roundtrip
   it("thread isolation roundtrip: format and parse recovers threadId", () => {
     const msg = makeDmMessage();
     const key = buildScopedSessionKey({
@@ -154,7 +146,6 @@ describe("DM Scope Integration", () => {
     expect(parsed!.threadId).toBe("thread-789");
   });
 
-  // Test 9: Full roundtrip (agent prefix + peer + guild + thread)
   it("full roundtrip: agent prefix + guild + thread all recovered", () => {
     const msg = makeGroupMessage();
     const key = buildScopedSessionKey({
@@ -177,7 +168,6 @@ describe("DM Scope Integration", () => {
     expect(parsed!.threadId).toBe("thread-999");
   });
 
-  // Test 10: extractThreadId - Discord
   it("extractThreadId returns channelId for Discord threads (parentChannelId set)", () => {
     const msg = makeDmMessage({
       channelType: "discord",
@@ -187,7 +177,6 @@ describe("DM Scope Integration", () => {
     expect(extractThreadId(msg)).toBe("thread-channel-123");
   });
 
-  // Test 11: extractThreadId - Slack
   it("extractThreadId returns slackThreadTs as string", () => {
     const msg = makeDmMessage({
       channelType: "slack",
@@ -196,7 +185,6 @@ describe("DM Scope Integration", () => {
     expect(extractThreadId(msg)).toBe("1706789012.123456");
   });
 
-  // Test 12: extractThreadId - Telegram
   it("extractThreadId returns telegramThreadId as string", () => {
     const msg = makeDmMessage({
       channelType: "telegram",
@@ -205,13 +193,11 @@ describe("DM Scope Integration", () => {
     expect(extractThreadId(msg)).toBe("42");
   });
 
-  // Test 13: extractThreadId - no thread
   it("extractThreadId returns undefined when no thread metadata present", () => {
     const msg = makeDmMessage({ metadata: {} });
     expect(extractThreadId(msg)).toBeUndefined();
   });
 
-  // Test 14: Identity linking simulation
   it("identity linking: canonical ID used as userId in session key", () => {
     // Simulate what channel-manager does: replace senderId with canonical ID
     const msg = makeDmMessage({ senderId: "canonical-uuid-abc" });

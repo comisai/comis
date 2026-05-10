@@ -866,7 +866,7 @@ describe("config rollback RPC error exits 1", () => {
 });
 
 // =============================================================================
-// Phase 25 — config sync-tooling sub-subcommand
+// config sync-tooling sub-subcommand
 // In-process Commander tests covering registration + inspect/write/overwrite
 // modes. Boundary fns (isDaemonRunning, writeBackup, atomicWriteFile) and
 // discovery (readMcpServers, discoverSkills) are mocked at the sync-tooling
@@ -942,7 +942,7 @@ function resetSyncToolingMocks(opts: {
   mockDiscoverSkills.mockReturnValue(opts.skills ?? []);
 }
 
-// -- Test 1 (SPEC-1 / registration) ------------------------------------------
+// -- registration ------------------------------------------------------------
 
 describe("config sync-tooling is registered with the right options", () => {
   it("registers as the 7th sub-subcommand with --write/--overwrite/--format/--config", () => {
@@ -963,7 +963,7 @@ describe("config sync-tooling is registered with the right options", () => {
   });
 });
 
-// -- Test 2 (SPEC-2 / inspect happy path) ------------------------------------
+// -- inspect happy path ------------------------------------------------------
 
 describe("config sync-tooling inspect mode prints diff and exits 0", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1019,7 +1019,7 @@ describe("config sync-tooling inspect mode prints diff and exits 0", () => {
     expect(mockWriteBackup).not.toHaveBeenCalled();
     expect(mockAtomicWriteFile).not.toHaveBeenCalled();
 
-    // mtime unchanged → file not touched (REQ-2 acceptance).
+    // mtime unchanged → file not touched.
     const mtimeAfter = fsRaw.statSync(FIXTURE_NO_TOOLING).mtimeMs;
     expect(mtimeAfter).toBe(mtimeBefore);
 
@@ -1028,7 +1028,7 @@ describe("config sync-tooling inspect mode prints diff and exits 0", () => {
   });
 });
 
-// -- Test 3 (SPEC-2 / --format json) -----------------------------------------
+// -- --format json -----------------------------------------------------------
 
 describe("config sync-tooling --format json emits a parseable JSON payload", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1088,7 +1088,7 @@ describe("config sync-tooling --format json emits a parseable JSON payload", () 
   });
 });
 
-// -- Test 4 (SPEC-3 / --write happy path) ------------------------------------
+// -- --write happy path ------------------------------------------------------
 
 describe("config sync-tooling --write writes backup BEFORE atomic write", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1136,7 +1136,7 @@ describe("config sync-tooling --write writes backup BEFORE atomic write", () => 
   });
 });
 
-// -- Test 5 (SPEC-8 / daemon-running guard) ----------------------------------
+// -- daemon-running guard ----------------------------------------------------
 
 describe("config sync-tooling --write exits 1 when daemon is running", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1186,7 +1186,7 @@ describe("config sync-tooling --write exits 1 when daemon is running", () => {
   });
 });
 
-// -- Test 6 (D-12 / backup-fail-fast) ----------------------------------------
+// -- backup-fail-fast --------------------------------------------------------
 
 describe("config sync-tooling --write aborts when writeBackup fails", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1234,7 +1234,7 @@ describe("config sync-tooling --write aborts when writeBackup fails", () => {
   });
 });
 
-// -- Test 7 (D-03 / usage error: --overwrite without --write) ----------------
+// -- usage error: --overwrite without --write -------------------------------
 
 describe("config sync-tooling --overwrite without --write is a usage error", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1282,7 +1282,7 @@ describe("config sync-tooling --overwrite without --write is a usage error", () 
   });
 });
 
-// -- Test 8 (D-25 / parse error → exit 3) ------------------------------------
+// -- parse error → exit 3 ----------------------------------------------------
 
 describe("config sync-tooling exits 3 on malformed YAML", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1350,7 +1350,7 @@ describe("config sync-tooling exits 3 on malformed YAML", () => {
   });
 });
 
-// -- Test 9 (RESEARCH Open Question 2 / nothing to sync) ---------------------
+// -- nothing to sync ---------------------------------------------------------
 
 describe("config sync-tooling exits 0 with 'nothing to sync' on empty discovery", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1398,7 +1398,7 @@ describe("config sync-tooling exits 0 with 'nothing to sync' on empty discovery"
   });
 });
 
-// -- Test 9c (inspect mode always renders, even on no-op) -------------------
+// -- inspect mode always renders, even on no-op -----------------------------
 
 describe("config sync-tooling inspect mode always renders the diff", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1480,7 +1480,7 @@ describe("config sync-tooling inspect mode always renders the diff", () => {
   });
 });
 
-// -- Test 9b (SPEC-4 / empty discovery still prunes stale hints) -------------
+// -- empty discovery still prunes stale hints -------------------------------
 
 describe("config sync-tooling --write prunes stale hints when discovery is empty", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1491,8 +1491,8 @@ describe("config sync-tooling --write prunes stale hints when discovery is empty
     exitSpy = createProcessExitSpy();
     // Fixture has tooling.mcp.capabilityHints.yfinance from a prior sync;
     // operator has now removed yfinance from integrations.mcp.servers, so
-    // discovery returns empty. SPEC-4 requires the stale yfinance hint to
-    // be pruned even though no MCPs/skills were discovered.
+    // discovery returns empty. The stale yfinance hint must be pruned even
+    // though no MCPs/skills were discovered.
     resetSyncToolingMocks({
       configJs: readFixtureAsJs(FIXTURE_WITH_TOOLING),
       mcps: [],
@@ -1505,7 +1505,7 @@ describe("config sync-tooling --write prunes stale hints when discovery is empty
     exitSpy.restore();
   });
 
-  it("--write writes backup + atomic file when stale hints exist (SPEC-4)", async () => {
+  it("--write writes backup + atomic file when stale hints exist", async () => {
     const program = createTestProgram();
     registerConfigCommand(program);
 
@@ -1532,7 +1532,7 @@ describe("config sync-tooling --write prunes stale hints when discovery is empty
   });
 });
 
-// -- Test 10 (SPEC-6 / overwrite mode) ---------------------------------------
+// -- overwrite mode ----------------------------------------------------------
 
 describe("config sync-tooling --write --overwrite emits the destructive warning", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1591,7 +1591,7 @@ describe("config sync-tooling --write --overwrite emits the destructive warning"
 });
 
 // =============================================================================
-// Phase 26 — config tooling-fill sub-subcommand
+// config tooling-fill sub-subcommand
 // In-process Commander.parseAsync tests covering registration + flag
 // plumbing. Spies on `runToolingFill` so the action callback is exercised
 // without the orchestrator actually running (no LLM calls, no supervisor
@@ -1599,7 +1599,7 @@ describe("config sync-tooling --write --overwrite emits the destructive warning"
 // callback builds matches the operator's argv.
 // =============================================================================
 
-// -- Test A: tooling-fill registration ---------------------------------------
+// -- tooling-fill registration -----------------------------------------------
 
 describe("config tooling-fill is registered with the right options", () => {
   it("registers as the 8th sub-subcommand with all 12 flag definitions", () => {
@@ -1615,7 +1615,7 @@ describe("config tooling-fill is registered with the right options", () => {
     expect(fillCmd).toBeDefined();
 
     const optionFlags = fillCmd!.options.map((o) => o.long);
-    // TOOLFILL-1 / AC-2: documented flags
+    // documented flags
     expect(optionFlags).toContain("--all");
     expect(optionFlags).toContain("--force");
     expect(optionFlags).toContain("--dry-run");
@@ -1644,7 +1644,7 @@ describe("config tooling-fill is registered with the right options", () => {
 
     const configCmd = program.commands.find((c) => c.name() === "config");
     const subNames = configCmd!.commands.map((c) => c.name());
-    // The 7 pre-Phase-26 sub-subcommands plus tooling-fill plus help.
+    // The 7 prior sub-subcommands plus tooling-fill plus help.
     expect(subNames).toContain("validate");
     expect(subNames).toContain("show");
     expect(subNames).toContain("set");
@@ -1656,7 +1656,7 @@ describe("config tooling-fill is registered with the right options", () => {
   });
 });
 
-// -- Test B: --all without hint-name plumbs through --------------------------
+// -- --all without hint-name plumbs through ---------------------------------
 
 describe("config tooling-fill --all plumbs all=true through to runToolingFill", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1708,7 +1708,7 @@ describe("config tooling-fill --all plumbs all=true through to runToolingFill", 
   });
 });
 
-// -- Test C: bare hint-name + --dry-run plumbs through -----------------------
+// -- bare hint-name + --dry-run plumbs through ------------------------------
 
 describe("config tooling-fill <hint> --dry-run plumbs hintName + dryRun", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1754,7 +1754,7 @@ describe("config tooling-fill <hint> --dry-run plumbs hintName + dryRun", () => 
   });
 });
 
-// -- Test D: --restart-cmd plumbs through ------------------------------------
+// -- --restart-cmd plumbs through -------------------------------------------
 
 describe("config tooling-fill --restart-cmd plumbs restartCmd through", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1800,7 +1800,7 @@ describe("config tooling-fill --restart-cmd plumbs restartCmd through", () => {
   });
 });
 
-// -- Test E: --kind plumbs through -------------------------------------------
+// -- --kind plumbs through ---------------------------------------------------
 
 describe("config tooling-fill --kind plumbs kindHint through", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1847,7 +1847,7 @@ describe("config tooling-fill --kind plumbs kindHint through", () => {
   });
 });
 
-// -- Test F: exit code propagation -------------------------------------------
+// -- exit code propagation ---------------------------------------------------
 
 describe("config tooling-fill exit code propagates from runToolingFill", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1890,7 +1890,7 @@ describe("config tooling-fill exit code propagates from runToolingFill", () => {
   });
 });
 
-// -- Test G: --no-restart resolves to restart:false --------------------------
+// -- --no-restart resolves to restart:false ---------------------------------
 
 describe("config tooling-fill --no-restart plumbs restart=false", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
@@ -1934,7 +1934,7 @@ describe("config tooling-fill --no-restart plumbs restart=false", () => {
   });
 });
 
-// -- Test H: --allow-restart alias resolves to restart:true ------------------
+// -- --allow-restart alias resolves to restart:true -------------------------
 
 describe("config tooling-fill --allow-restart aliases --restart", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;

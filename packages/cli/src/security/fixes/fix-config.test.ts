@@ -47,7 +47,7 @@ describe("createConfigFixes", () => {
     }
   });
 
-  it("creates advisory action for SEC-GW-003 finding", async () => {
+  it("creates advisory action for missing gateway token finding", async () => {
     const findings: SecurityFinding[] = [
       {
         category: "gateway-exposure",

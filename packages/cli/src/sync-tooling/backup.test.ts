@@ -3,14 +3,14 @@
  * Tests for buildBackupFilename + writeBackup.
  *
  * Covers:
- *   - Test 1: Exact filename for fixed Date + fixed rng (D-10 regex sanity)
- *   - Test 2: Default-args filename matches the D-10 regex
- *   - Test 3: writeBackup happy path — backup file under ~/.comis/, ok({ backupPath })
- *   - Test 4: Backup contents are byte-equal to source
- *   - Test 5: Backup file mode is 0o600
- *   - Test 6: Source-read failure surfaces as SOURCE_READ_FAILED
- *   - Test 7: Backup-write failure surfaces as BACKUP_WRITE_FAILED (source untouched)
- *   - Test 8: Backup is written under safePath(homeDir, ".comis", filename)
+ *   - Exact filename for fixed Date + fixed rng (regex sanity)
+ *   - Default-args filename matches the backup-name regex
+ *   - writeBackup happy path — backup file under ~/.comis/, ok({ backupPath })
+ *   - Backup contents are byte-equal to source
+ *   - Backup file mode is 0o600
+ *   - Source-read failure surfaces as SOURCE_READ_FAILED
+ *   - Backup-write failure surfaces as BACKUP_WRITE_FAILED (source untouched)
+ *   - Backup is written under safePath(homeDir, ".comis", filename)
  *
  * Same ESM mocking pattern as atomic-write.test.ts: replace node:fs with
  * a wrapper that defaults to the real impl and override per-test.
@@ -43,7 +43,6 @@ const D10_REGEX =
   /^config\.pre-sync-tooling-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}-[0-9a-f]{6}\.yaml$/;
 
 describe("buildBackupFilename", () => {
-  // Test 1 — Exact filename
   it("returns the exact filename for a fixed Date + fixed rng", () => {
     const filename = buildBackupFilename(
       new Date("2026-05-10T12:34:56.789Z"),
@@ -54,8 +53,7 @@ describe("buildBackupFilename", () => {
     );
   });
 
-  // Test 2 — Default args match the D-10 regex
-  it("returns a filename matching the D-10 regex with default args", () => {
+  it("returns a filename matching the regex with default args", () => {
     const filename = buildBackupFilename();
     expect(filename).toMatch(D10_REGEX);
   });
@@ -92,7 +90,6 @@ describe("writeBackup", () => {
     vi.clearAllMocks();
   });
 
-  // Test 3 — Happy path
   it("writes the backup under homeDir/.comis/ and returns ok({ backupPath })", () => {
     const result = writeBackup(configPath, homeDir);
 
@@ -103,7 +100,6 @@ describe("writeBackup", () => {
     }
   });
 
-  // Test 4 — Backup is byte-equal to source
   it("writes a backup that is byte-equal to the source file", () => {
     const source = fs.readFileSync(configPath);
 
@@ -115,7 +111,6 @@ describe("writeBackup", () => {
     }
   });
 
-  // Test 5 — Backup mode is 0o600
   it("creates the backup with mode 0o600", () => {
     const result = writeBackup(configPath, homeDir);
     expect(result.ok).toBe(true);
@@ -125,7 +120,6 @@ describe("writeBackup", () => {
     }
   });
 
-  // Test 6 — SOURCE_READ_FAILED
   it("returns err({ code: 'SOURCE_READ_FAILED' }) when configPath does not exist", () => {
     // eslint-disable-next-line no-restricted-syntax -- test code: path.join inside test, not src
     const missing = join(configDir, "does-not-exist.yaml");
@@ -142,7 +136,6 @@ describe("writeBackup", () => {
     }
   });
 
-  // Test 7 — BACKUP_WRITE_FAILED leaves the source untouched
   it("returns err({ code: 'BACKUP_WRITE_FAILED' }) on ENOSPC; source unchanged", () => {
     const sourceMtimeBefore = fs.statSync(configPath).mtimeMs;
     const sourceBytesBefore = fs.readFileSync(configPath);
@@ -171,20 +164,18 @@ describe("writeBackup", () => {
     expect(fs.statSync(configPath).mtimeMs).toBe(sourceMtimeBefore);
   });
 
-  // Test 8 — Backup path lives under safePath(homeDir, ".comis", filename)
   it("writes the backup under homeDir/.comis/ (safePath-resolved)", () => {
     const result = writeBackup(configPath, homeDir);
     expect(result.ok).toBe(true);
     if (result.ok) {
       // The backup path must start with homeDir/.comis/ (which is configDir).
       expect(result.value.backupPath.startsWith(configDir + "/")).toBe(true);
-      // And the filename portion must match the D-10 regex.
+      // And the filename portion must match the backup-name regex.
       const filename = result.value.backupPath.slice(configDir.length + 1);
       expect(filename).toMatch(D10_REGEX);
     }
   });
 
-  // Test 9 — buildBackupFilename with custom prefix (Phase 26 / TOOLFILL-9)
   it("buildBackupFilename with custom prefix uses tooling-fill literal", () => {
     const filename = buildBackupFilename(
       new Date("2026-05-10T12:34:56.789Z"),
@@ -196,9 +187,8 @@ describe("writeBackup", () => {
     );
   });
 
-  // Test 10 — writeBackup with prefix='tooling-fill' writes the renamed file
   // Regression-fence: the literal "config.pre-tooling-fill-" prefix below
-  // must appear in the basename — anchors the Phase 26 backup-naming D-10
+  // must appear in the basename — anchors the tooling-fill backup-naming
   // contract. Both the regex and the literal startsWith check guard against
   // accidental drift back to "config.pre-sync-tooling-".
   it("writeBackup with prefix='tooling-fill' writes the renamed file", () => {

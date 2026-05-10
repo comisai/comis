@@ -111,14 +111,14 @@ afterEach(async () => {
 
 describe("createComisNotebookEditTool", () => {
   // V1 - Extension check
-  it("Test 1: rejects non-.ipynb file with [not_notebook]", async () => {
+  it("rejects non-.ipynb file with [not_notebook]", async () => {
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
     await expect(
       tool.execute("t1", { path: "test.py", edit_mode: "replace", cell_id: "cell-0", new_source: "x" }),
     ).rejects.toThrow(/\[not_notebook\]/);
   });
 
-  it("Test 2: .ipynb file passes extension check", async () => {
+  it(".ipynb file passes extension check", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([{ id: "abc", cell_type: "code", source: "x" }]),
@@ -134,14 +134,14 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // V2 - Edit mode validation
-  it("Test 3: invalid edit_mode throws [invalid_edit_mode]", async () => {
+  it("invalid edit_mode throws [invalid_edit_mode]", async () => {
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
     await expect(
       tool.execute("t3", { path: "test.ipynb", edit_mode: "patch", cell_id: "c", new_source: "x" }),
     ).rejects.toThrow(/\[invalid_edit_mode\]/);
   });
 
-  it("Test 4: missing edit_mode defaults to replace", async () => {
+  it("missing edit_mode defaults to replace", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([{ id: "abc", cell_type: "code", source: "old" }]),
@@ -156,7 +156,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // V3 - Cell type required for insert
-  it("Test 5: insert without cell_type throws [missing_cell_type]", async () => {
+  it("insert without cell_type throws [missing_cell_type]", async () => {
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
     await expect(
       tool.execute("t5", { path: "test.ipynb", edit_mode: "insert", new_source: "x" }),
@@ -164,14 +164,14 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // V3b - Cell ID required for replace/delete
-  it("Test 6: replace without cell_id throws [missing_cell_id]", async () => {
+  it("replace without cell_id throws [missing_cell_id]", async () => {
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
     await expect(
       tool.execute("t6", { path: "test.ipynb", edit_mode: "replace", new_source: "x" }),
     ).rejects.toThrow(/\[missing_cell_id\]/);
   });
 
-  it("Test 7: delete without cell_id throws [missing_cell_id]", async () => {
+  it("delete without cell_id throws [missing_cell_id]", async () => {
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
     await expect(
       tool.execute("t7", { path: "test.ipynb", edit_mode: "delete" }),
@@ -179,14 +179,14 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // V3c - Source required for replace/insert
-  it("Test 8: replace without new_source throws [missing_source]", async () => {
+  it("replace without new_source throws [missing_source]", async () => {
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
     await expect(
       tool.execute("t8", { path: "test.ipynb", edit_mode: "replace", cell_id: "c" }),
     ).rejects.toThrow(/\[missing_source\]/);
   });
 
-  it("Test 9: insert without new_source throws [missing_source]", async () => {
+  it("insert without new_source throws [missing_source]", async () => {
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
     await expect(
       tool.execute("t9", { path: "test.ipynb", edit_mode: "insert", cell_type: "code" }),
@@ -194,7 +194,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // V4 - Path traversal
-  it("Test 10: path traversal throws [path_traversal]", async () => {
+  it("path traversal throws [path_traversal]", async () => {
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
     await expect(
       tool.execute("t10", {
@@ -207,7 +207,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // V5 - File not found
-  it("Test 11: nonexistent file throws [file_not_found]", async () => {
+  it("nonexistent file throws [file_not_found]", async () => {
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
     await expect(
       tool.execute("t11", {
@@ -220,7 +220,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // V8 - Read-before-edit
-  it("Test 12: file not read throws [not_read]", async () => {
+  it("file not read throws [not_read]", async () => {
     const filePath = path.join(workspaceDir, "unread.ipynb");
     await fs.writeFile(filePath, makeNotebook([{ id: "a", cell_type: "code", source: "x" }]), "utf-8");
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
@@ -235,7 +235,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // V9 - Staleness
-  it("Test 13: stale file throws [stale_file]", async () => {
+  it("stale file throws [stale_file]", async () => {
     const filePath = await writeAndRead(
       "stale.ipynb",
       makeNotebook([{ id: "a", cell_type: "code", source: "x" }]),
@@ -259,7 +259,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // V10 - Invalid JSON
-  it("Test 14: invalid JSON throws [invalid_json]", async () => {
+  it("invalid JSON throws [invalid_json]", async () => {
     await writeAndRead("bad.ipynb", "not json at all");
     const tool = createComisNotebookEditTool(workspaceDir, undefined, tracker);
     await expect(
@@ -273,7 +273,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // V11 - Cell not found
-  it("Test 15: nonexistent cell throws [cell_not_found]", async () => {
+  it("nonexistent cell throws [cell_not_found]", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([{ id: "abc", cell_type: "code", source: "x" }]),
@@ -290,7 +290,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // Replace operations
-  it("Test 16: replace cell by ID updates source on disk", async () => {
+  it("replace cell by ID updates source on disk", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([{ id: "abc", cell_type: "code", source: "old code" }]),
@@ -308,7 +308,7 @@ describe("createComisNotebookEditTool", () => {
     expect(nb.cells[0].source).toBe("new code");
   });
 
-  it("Test 17: replace code cell clears outputs", async () => {
+  it("replace code cell clears outputs", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([
@@ -333,7 +333,7 @@ describe("createComisNotebookEditTool", () => {
     expect(nb.cells[0].execution_count).toBeNull();
   });
 
-  it("Test 18: replace with cell_type change", async () => {
+  it("replace with cell_type change", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([{ id: "abc", cell_type: "code", source: "code" }]),
@@ -352,7 +352,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // Insert operations
-  it("Test 19: insert cell after cell_id", async () => {
+  it("insert cell after cell_id", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([{ id: "abc", cell_type: "code", source: "first" }]),
@@ -371,7 +371,7 @@ describe("createComisNotebookEditTool", () => {
     expect(nb.cells[1].source).toBe("second");
   });
 
-  it("Test 20: insert at beginning (no cell_id)", async () => {
+  it("insert at beginning (no cell_id)", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([{ id: "abc", cell_type: "code", source: "existing" }]),
@@ -389,7 +389,7 @@ describe("createComisNotebookEditTool", () => {
     expect(nb.cells[0].cell_type).toBe("markdown");
   });
 
-  it("Test 21: inserted cell in nbformat 4.5 has id field", async () => {
+  it("inserted cell in nbformat 4.5 has id field", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([{ id: "abc", cell_type: "code", source: "x" }], 4, 5),
@@ -406,7 +406,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // Delete operation
-  it("Test 22: delete cell by ID", async () => {
+  it("delete cell by ID", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([
@@ -427,7 +427,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // Post-edit mtime
-  it("Test 23: after edit, tracker allows immediate re-edit", async () => {
+  it("after edit, tracker allows immediate re-edit", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([{ id: "abc", cell_type: "code", source: "old" }]),
@@ -446,7 +446,7 @@ describe("createComisNotebookEditTool", () => {
   });
 
   // Result format
-  it("Test 24: result has content and details", async () => {
+  it("result has content and details", async () => {
     await writeAndRead(
       "test.ipynb",
       makeNotebook([{ id: "abc", cell_type: "code", source: "old" }]),

@@ -6,8 +6,6 @@
  *
  * Uses :memory: SQLite databases with createContextStore() for real store
  * operations. Follows the same pattern as dag-compaction.test.ts.
- *
- * DAG Assembly & Annotation.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -400,7 +398,7 @@ describe("createDagAssemblerLayer", () => {
     expect(hasMessage).toBe(true);
   });
 
-  it("accounts for XML wrapper overhead in budget (pitfall prevention)", async () => {
+  it("accounts for XML wrapper overhead in budget", async () => {
     const convId = createConv();
 
     // Create summaries where token count is close to budget

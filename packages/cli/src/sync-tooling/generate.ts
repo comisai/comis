@@ -7,20 +7,20 @@
  *   - write the four-section skeleton when `tooling:` is absent, OR
  *   - append-only diff against an existing block (preserving operator edits).
  *
- * Wire boundary: the caller (Wave 3 `commands/config.ts` action) wraps
+ * Wire boundary: the caller (`commands/config.ts` action) wraps
  * `parseDocument` + this module + `doc.toString()` in a `Result` shell;
  * AST-shape errors (e.g. `tooling:` is a scalar instead of a map) bubble
  * up as thrown and the action emits exit-code-3.
  *
  * Key invariants:
- *   - D-17: only manage `capabilityClusters`, `mcp.capabilityHints`,
+ *   - Only manage `capabilityClusters`, `mcp.capabilityHints`,
  *     `skills.capabilityHints`, `installDetours`, `capabilityIndex`.
- *   - D-19: `capabilityClusters.clusters` is operator territory after init.
- *   - D-22: never overwrite an existing entry's description / replacesPackages.
- *   - Pitfall 4: pruning a Pair drops its commentBefore atomically.
- *   - Pitfall 5: commentBefore on `replacesPackages` requires a Scalar key.
- *   - Pitfall 6: MCP description is ALWAYS the literal "TODO" stub.
- *   - Pitfall 9: guard `doc.contents === null` before any setIn.
+ *   - `capabilityClusters.clusters` is operator territory after init.
+ *   - Never overwrite an existing entry's description / replacesPackages.
+ *   - Pruning a Pair drops its commentBefore atomically.
+ *   - commentBefore on `replacesPackages` requires a Scalar key.
+ *   - MCP description is ALWAYS the literal "TODO" stub.
+ *   - Guard `doc.contents === null` before any setIn.
  *
  * @module
  */
@@ -55,7 +55,7 @@ export interface MutationCounts {
 }
 
 // ---------------------------------------------------------------------------
-// Constants — D-07 default cluster IDs
+// Constants — default cluster IDs
 // ---------------------------------------------------------------------------
 
 const MCP_DEFAULT_CLUSTER = "external-integrations";
@@ -67,7 +67,7 @@ const REPLACES_PACKAGES_COMMENT = " TODO: list npm/pip packages this MCP replace
 // ---------------------------------------------------------------------------
 
 /**
- * Build the four-section skeleton (D-18, D-19) on a Document with no tooling: key.
+ * Build the four-section skeleton on a Document with no tooling: key.
  *
  * Sections written:
  *   - tooling.capabilityClusters.clusters: {}
@@ -79,10 +79,10 @@ const REPLACES_PACKAGES_COMMENT = " TODO: list npm/pip packages this MCP replace
 export function buildSkeleton(doc: Document, artifacts: DiscoveredArtifacts): void {
   ensureRootMap(doc);
 
-  // capabilityClusters always written empty (D-19) — operator's territory.
+  // capabilityClusters always written empty — operator's territory.
   doc.setIn(["tooling", "capabilityClusters", "clusters"], doc.createNode({}));
 
-  // Always create both capabilityHints maps as empty objects FIRST (D-18 — empty
+  // Always create both capabilityHints maps as empty objects FIRST (empty
   // map, not missing key). Then add each discovered hint via setIn so its key
   // is wrapped in a Scalar we can attach commentBefore to.
   doc.setIn(["tooling", "mcp", "capabilityHints"], doc.createNode({}));
@@ -95,7 +95,7 @@ export function buildSkeleton(doc: Document, artifacts: DiscoveredArtifacts): vo
     addSkillHint(doc, s);
   }
 
-  // installDetours + capabilityIndex defaults (D-18).
+  // installDetours + capabilityIndex defaults.
   doc.setIn(["tooling", "installDetours", "mode"], "advise");
   doc.setIn(["tooling", "capabilityIndex", "enabled"], true);
 }
@@ -146,7 +146,7 @@ export function computeMutationPlan(
  *
  * Three branches:
  *   - `overwrite: true` — delete + rebuild managed sections except
- *     `capabilityClusters` (D-19 operator-only territory).
+ *     `capabilityClusters` (operator-only territory).
  *   - `tooling:` is absent — `buildSkeleton`.
  *   - else (incremental) — diff via `computeMutationPlan` and apply.
  */
@@ -183,7 +183,7 @@ function applyOverwrite(
 ): MutationCounts {
   ensureRootMap(doc);
 
-  // PRESERVE tooling.capabilityClusters byte-for-byte (D-19) by NOT touching it.
+  // PRESERVE tooling.capabilityClusters byte-for-byte by NOT touching it.
   // DELETE the four other managed sections (guarded — yaml@2.8.4 deleteIn
   // throws when an intermediate path doesn't exist), then re-emit them.
   if (doc.hasIn(["tooling", "mcp", "capabilityHints"])) {
@@ -199,7 +199,7 @@ function applyOverwrite(
     doc.deleteIn(["tooling", "capabilityIndex"]);
   }
 
-  // Re-create empty capabilityHints maps (D-18 — present, empty), then add hints.
+  // Re-create empty capabilityHints maps (present, empty), then add hints.
   doc.setIn(["tooling", "mcp", "capabilityHints"], doc.createNode({}));
   doc.setIn(["tooling", "skills", "capabilityHints"], doc.createNode({}));
   for (const m of artifacts.mcps) addMcpHint(doc, m);
@@ -217,7 +217,7 @@ function applyOverwrite(
 }
 
 // ---------------------------------------------------------------------------
-// Internal — incremental branch (D-22 preserves operator edits on existing entries)
+// Internal — incremental branch (preserves operator edits on existing entries)
 // ---------------------------------------------------------------------------
 
 function applyIncremental(
@@ -226,15 +226,15 @@ function applyIncremental(
   plan: MutationPlan,
 ): MutationCounts {
   // Adds: only for keys NOT already present. For these, write a fresh skeleton
-  // entry. Existing entries are NEVER touched (D-22).
+  // entry. Existing entries are NEVER touched.
   const mcpByName = new Map(artifacts.mcps.map((m) => [m.name, m] as const));
   const skillByName = new Map(artifacts.skills.map((s) => [s.name, s] as const));
 
   // Only ensure the parent map exists when we actually have something to add
   // — otherwise we'd splat an empty `tooling.skills.capabilityHints: {}` into
-  // a config that has no `tooling.skills` block, breaking REQ-7 byte-identity
-  // for unchanged configs. Use createNode so the value is a YAMLMap, not a
-  // bare JS object (yaml's setIn can't traverse into a non-Collection value).
+  // a config that has no `tooling.skills` block, breaking byte-identity for
+  // unchanged configs. Use createNode so the value is a YAMLMap, not a bare
+  // JS object (yaml's setIn can't traverse into a non-Collection value).
   if (plan.mcpAdds.length > 0 && !doc.hasIn(["tooling", "mcp", "capabilityHints"])) {
     doc.setIn(["tooling", "mcp", "capabilityHints"], doc.createNode({}));
   }
@@ -251,7 +251,7 @@ function applyIncremental(
     if (s) addSkillHint(doc, s);
   }
 
-  // Removes: deleteIn drops the Pair AND its commentBefore (Pitfall 4 — semantic).
+  // Removes: deleteIn drops the Pair AND its commentBefore atomically.
   for (const name of plan.mcpRemoves) {
     doc.deleteIn(["tooling", "mcp", "capabilityHints", name]);
   }
@@ -273,7 +273,7 @@ function applyIncremental(
 
 function addMcpHint(doc: Document, mcp: DiscoveredMcp): void {
   const basePath = ["tooling", "mcp", "capabilityHints", mcp.name];
-  // D-07 default cluster + Pitfall 6 stub description + D-08 empty replacesPackages.
+  // Default cluster + stub description + empty replacesPackages.
   doc.setIn([...basePath, "cluster"], MCP_DEFAULT_CLUSTER);
   doc.setIn([...basePath, "description"], "TODO");
   doc.setIn([...basePath, "replacesPackages"], []);
@@ -282,8 +282,8 @@ function addMcpHint(doc: Document, mcp: DiscoveredMcp): void {
 
 function addSkillHint(doc: Document, skill: DiscoveredSkill): void {
   const basePath = ["tooling", "skills", "capabilityHints", skill.name];
-  // D-07 / D-09: explicit cluster wins; otherwise the prompt-skills default.
-  // Pitfall 7: description fallback to TODO when discover yielded undefined.
+  // Explicit cluster wins; otherwise the prompt-skills default.
+  // Description falls back to TODO when discover yielded undefined.
   const cluster = skill.cluster ?? SKILL_DEFAULT_CLUSTER;
   const description = skill.description ?? "TODO";
   doc.setIn([...basePath, "cluster"], cluster);
@@ -294,8 +294,8 @@ function addSkillHint(doc: Document, skill: DiscoveredSkill): void {
 
 /**
  * Attach the `# TODO: list npm/pip packages this MCP replaces` comment to the
- * `replacesPackages` key Pair (Pitfall 5). Requires the key to be a Scalar
- * node — yaml@2.8.4 represents map keys as raw strings by default after
+ * `replacesPackages` key Pair. Requires the key to be a Scalar node —
+ * yaml@2.8.4 represents map keys as raw strings by default after
  * `setIn(..., [])`, so we replace the raw string key with `new Scalar(name)`
  * before assigning `commentBefore`.
  */
@@ -336,7 +336,7 @@ function readHintKeys(doc: Document, hintMapPath: string[]): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Internal — Pitfall 9 guard
+// Internal — root-map guard
 // ---------------------------------------------------------------------------
 
 function ensureRootMap(doc: Document): void {

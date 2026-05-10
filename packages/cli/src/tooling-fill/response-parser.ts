@@ -7,14 +7,14 @@
  *   DESCRIPTION: <one-line text>
  *   REPLACES_PACKAGES: <json array>
  *
- * Defense-in-depth (TOOLFILL-6 / AC-9): any other lines — `CLUSTER: …`,
- * `INSTALL_DETOURS: …`, prose, code fences, shell-injection — are silently
- * ignored. The parser scans line-by-line for the FIRST match of each pattern;
- * everything that doesn't match either pattern is dropped.
+ * Defense-in-depth: any other lines — `CLUSTER: …`, `INSTALL_DETOURS: …`,
+ * prose, code fences, shell-injection — are silently ignored. The parser
+ * scans line-by-line for the FIRST match of each pattern; everything that
+ * doesn't match either pattern is dropped.
  *
- * Package-name validation lives in validators.ts (TOOLFILL-7); this parser
- * only enforces grammar. Shell-shaped strings INSIDE the JSON array pass
- * through here and are filtered downstream by validatePackageNames.
+ * Package-name validation lives in validators.ts; this parser only enforces
+ * grammar. Shell-shaped strings INSIDE the JSON array pass through here and
+ * are filtered downstream by validatePackageNames.
  *
  * No I/O, no logger. Returns Result per AGENTS.md §2.1; errorKind is the
  * closed union "validation" with a discriminated `reason` for each failure.
@@ -61,10 +61,10 @@ const REPLACES_RE = /^REPLACES_PACKAGES:\s*(\[.*\])\s*$/;
  * Parse the agent's response, extracting ONLY the two contracted fields.
  *
  * Strategy: line-scan for the FIRST match of each pattern. Anything else is
- * dropped (TOOLFILL-6 strict scope). The agent cannot inject extra fields,
- * change `cluster`, alter sibling keys, or escape the contract — even if the
- * prompt forbid is bypassed (e.g. via prompt-injection attack carried inside
- * an MCP description), the parser is the structural gate.
+ * dropped (strict scope). The agent cannot inject extra fields, change
+ * `cluster`, alter sibling keys, or escape the contract — even if the
+ * prompt forbid is bypassed (e.g. via prompt-injection attack carried
+ * inside an MCP description), the parser is the structural gate.
  */
 export function parseFillResponse(
   raw: string,

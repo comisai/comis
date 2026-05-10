@@ -124,7 +124,6 @@ afterEach(() => {
 });
 
 describe("callAgent", () => {
-  // Test 1 — happy path 200
   it("returns ok({ response }) on 200 with a parseable {response} body", async () => {
     scriptResponse({
       statusCode: 200,
@@ -149,7 +148,6 @@ describe("callAgent", () => {
     }
   });
 
-  // Test 2 — request body shape (message + agentId)
   it("posts {message, agentId} when agentId is supplied", async () => {
     const { capturedBody } = scriptResponse({
       statusCode: 200,
@@ -167,7 +165,6 @@ describe("callAgent", () => {
     expect(body).toEqual({ message: "do stuff", agentId: "default" });
   });
 
-  // Test 3 — request headers (Authorization + Content-Type)
   it("sets Authorization: Bearer <token> and Content-Type: application/json", async () => {
     const { capturedOpts } = scriptResponse({
       statusCode: 200,
@@ -190,7 +187,6 @@ describe("callAgent", () => {
     expect(capturedOpts.current?.path).toBe("/api/chat");
   });
 
-  // Test 4 — status 401 → auth
   it("returns err({kind:'auth'}) on 401", async () => {
     scriptResponse({
       statusCode: 401,
@@ -213,7 +209,6 @@ describe("callAgent", () => {
     }
   });
 
-  // Test 5 — status 500 with parseable body
   it("returns err({kind:'dependency'}) on 500 surfacing the server error message", async () => {
     scriptResponse({
       statusCode: 500,
@@ -230,7 +225,6 @@ describe("callAgent", () => {
     }
   });
 
-  // Test 6 — status 500 with non-JSON body
   it("returns err({kind:'dependency'}) with 'Invalid response body' on non-JSON", async () => {
     scriptResponse({ statusCode: 500, body: "<html>upstream</html>" });
 
@@ -243,8 +237,7 @@ describe("callAgent", () => {
     }
   });
 
-  // Test 7 — ECONNREFUSED → network with literal SPEC string
-  it("emits the literal TOOLFILL-2 SPEC string on ECONNREFUSED", async () => {
+  it("emits the literal gateway-unreachable SPEC string on ECONNREFUSED", async () => {
     const errno = Object.assign(new Error("connect ECONNREFUSED"), {
       code: "ECONNREFUSED",
     }) as NodeJS.ErrnoException;
@@ -266,7 +259,6 @@ describe("callAgent", () => {
     }
   });
 
-  // Test 8 — timeout
   it("returns err({kind:'timeout'}) when the request emits 'timeout'", async () => {
     scriptTimeout();
 
@@ -283,7 +275,6 @@ describe("callAgent", () => {
     }
   });
 
-  // Test 9 — 200 with missing response field → validation
   it("returns err({kind:'validation'}) on 200 with missing 'response' field", async () => {
     scriptResponse({
       statusCode: 200,
@@ -305,7 +296,6 @@ describe("callAgent", () => {
     }
   });
 
-  // Test 10 — host override defaults to 127.0.0.1
   it("defaults host to 127.0.0.1 when not supplied", async () => {
     const { capturedOpts } = scriptResponse({
       statusCode: 200,

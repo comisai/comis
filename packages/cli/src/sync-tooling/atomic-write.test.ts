@@ -3,13 +3,13 @@
  * Tests for atomicWriteFile — temp + fsync + rename + parent-dir-fsync pattern.
  *
  * Covers:
- *   - Test 1: Happy path (file written, mode 0o600, byte-equal contents)
- *   - Test 2: Temp file is removed on successful rename
- *   - Test 3: Parent directory fsync is called (>= 2 fsyncSync calls total)
- *   - Test 4: Pre-existing file is overwritten atomically
- *   - Test 5: Mode is 0o600
- *   - Test 6: Write failure surfaces as Result.err({ code: "WRITE_FAILED" })
- *   - Test 7: Rename failure surfaces as Result.err({ code: "RENAME_FAILED", tempPath, targetPath })
+ *   - Happy path (file written, mode 0o600, byte-equal contents)
+ *   - Temp file is removed on successful rename
+ *   - Parent directory fsync is called (>= 2 fsyncSync calls total)
+ *   - Pre-existing file is overwritten atomically
+ *   - Mode is 0o600
+ *   - Write failure surfaces as Result.err({ code: "WRITE_FAILED" })
+ *   - Rename failure surfaces as Result.err({ code: "RENAME_FAILED", tempPath, targetPath })
  *
  * ESM does not allow `vi.spyOn` on namespace exports of `node:fs`, so we
  * mock the module at module-load time with the real implementation and
@@ -81,7 +81,7 @@ describe("atomicWriteFile (real fs, per-test temp dir)", () => {
     vi.clearAllMocks();
   });
 
-  // Test 1 — Happy path
+  // Happy path
   it("writes the file and returns ok(undefined)", () => {
     const content = "key: value\n";
     const result = atomicWriteFile(configPath, content);
@@ -91,7 +91,7 @@ describe("atomicWriteFile (real fs, per-test temp dir)", () => {
     expect(fs.readFileSync(configPath, "utf-8")).toBe(content);
   });
 
-  // Test 2 — Temp file removed on successful rename
+  // Temp file removed on successful rename
   it("removes the .sync-tooling.tmp temp file on success", () => {
     const result = atomicWriteFile(configPath, "x: 1\n");
 
@@ -99,7 +99,7 @@ describe("atomicWriteFile (real fs, per-test temp dir)", () => {
     expect(fs.existsSync(configPath + ".sync-tooling.tmp")).toBe(false);
   });
 
-  // Test 3 — Parent dir fsync is called (>= 2 fsyncSync, parent dir openSync)
+  // Parent dir fsync is called (>= 2 fsyncSync, parent dir openSync)
   it("calls fsyncSync at least twice (file fd + parent dir fd)", () => {
     const result = atomicWriteFile(configPath, "a: 1\n");
 
@@ -115,7 +115,7 @@ describe("atomicWriteFile (real fs, per-test temp dir)", () => {
     expect(dirOpenCalls.length).toBeGreaterThanOrEqual(1);
   });
 
-  // Test 4 — Pre-existing file is overwritten atomically
+  // Pre-existing file is overwritten atomically
   it("overwrites a pre-existing file with the new content", () => {
     fs.writeFileSync(configPath, "old: A\n", { mode: 0o600 });
     expect(fs.readFileSync(configPath, "utf-8")).toBe("old: A\n");
@@ -127,7 +127,7 @@ describe("atomicWriteFile (real fs, per-test temp dir)", () => {
     expect(fs.existsSync(configPath + ".sync-tooling.tmp")).toBe(false);
   });
 
-  // Test 5 — Mode is 0o600
+  // Mode is 0o600
   it("creates the file with mode 0o600", () => {
     const result = atomicWriteFile(configPath, "k: v\n");
 
@@ -170,7 +170,7 @@ describe("atomicWriteFile (failure injection via mocked fs)", () => {
     vi.clearAllMocks();
   });
 
-  // Test 6 — Write failure surfaces as Result.err({ code: "WRITE_FAILED" })
+  // Write failure surfaces as Result.err({ code: "WRITE_FAILED" })
   it("returns err({ code: 'WRITE_FAILED' }) when fs.writeSync throws", () => {
     vi.mocked(fs.writeSync).mockImplementationOnce(() => {
       const e = new Error("EDQUOT") as Error & { code?: string };
@@ -192,7 +192,7 @@ describe("atomicWriteFile (failure injection via mocked fs)", () => {
     expect(fs.existsSync(configPath)).toBe(false);
   });
 
-  // Test 7 — Rename failure surfaces as RENAME_FAILED with tempPath + targetPath
+  // Rename failure surfaces as RENAME_FAILED with tempPath + targetPath
   it("returns err({ code: 'RENAME_FAILED', tempPath, targetPath }) on EXDEV", () => {
     vi.mocked(fs.renameSync).mockImplementationOnce(() => {
       const e = new Error("EXDEV") as Error & { code?: string };
@@ -213,9 +213,9 @@ describe("atomicWriteFile (failure injection via mocked fs)", () => {
     }
   });
 
-  // -- Phase 26.1 — ownership preservation across the rename --------------
+  // -- Ownership preservation across the rename --------------------------
 
-  // Test 8 — When the original file's uid:gid differs from what the rename
+  // When the original file's uid:gid differs from what the rename
   // produces, chownSync is called with the captured uid:gid to restore the
   // original ownership. Mocks statSync to return a fake "original" uid, then
   // verifies chownSync was invoked with that uid.
@@ -251,7 +251,7 @@ describe("atomicWriteFile (failure injection via mocked fs)", () => {
     expect(fs.chownSync).toHaveBeenCalledWith(configPath, 9999, 9998);
   });
 
-  // Test 9 — When the original file did not exist (first-time write),
+  // When the original file did not exist (first-time write),
   // statSync throws ENOENT and chownSync is NOT called. The caller's
   // uid:gid is the new file's owner, which is the correct behavior.
   it("does NOT chown when the target file did not exist before the write", () => {
@@ -265,13 +265,13 @@ describe("atomicWriteFile (failure injection via mocked fs)", () => {
     expect(fs.chownSync).not.toHaveBeenCalled();
   });
 
-  // Test 10 — When chown fails (caller lacks CAP_CHOWN, or original
+  // When chown fails (caller lacks CAP_CHOWN, or original
   // owner doesn't exist on the system), the write returns CHOWN_FAILED
   // with the captured uid:gid and the cause. The new content IS on disk
   // (the rename already succeeded) but ownership is wrong — caller is
   // responsible for surfacing this.
   it("returns err({ code: 'CHOWN_FAILED' }) when chownSync throws (e.g. EPERM)", () => {
-    // Same setup as Test 8 — fake original ownership.
+    // Same setup as the chown-preservation test — fake original ownership.
     fs.writeFileSync(configPath, "old: content\n");
     const realUid = fs.statSync(configPath).uid;
     const realGid = fs.statSync(configPath).gid;

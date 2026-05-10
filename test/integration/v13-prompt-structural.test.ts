@@ -5,10 +5,10 @@
  * Validates v13.0 Agent Intelligence daemon bootstrap, config propagation,
  * and log cleanliness WITHOUT requiring LLM API keys. Tests cover:
  *
- *   1. Daemon boots cleanly with v13.0 config (health + gateway.status)
- *   2. config.get returns reactionLevel for default agent
- *   3. Agent config has expected v13.0 shape (name, model, provider, budgets)
- *   4. Daemon logs contain no unexpected errors or warnings
+ *   - Daemon boots cleanly with v13.0 config (health + gateway.status)
+ *   - config.get returns reactionLevel for default agent
+ *   - Agent config has expected v13.0 shape (name, model, provider, budgets)
+ *   - Daemon logs contain no unexpected errors or warnings
  *
  * Uses port 8550 with a dedicated memory database for isolation.
  *
@@ -81,7 +81,7 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Test 1: Daemon boots cleanly with v13.0 config
+  // Daemon boots cleanly with v13.0 config
   // -------------------------------------------------------------------------
 
   it("daemon boots cleanly with v13.0 config", async () => {
@@ -113,7 +113,7 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 2: config.get returns reactionLevel for default agent
+  // config.get returns reactionLevel for default agent
   // -------------------------------------------------------------------------
 
   it("config.get returns reactionLevel for default agent", async () => {
@@ -138,7 +138,7 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 3: Agent config has expected v13.0 shape
+  // Agent config has expected v13.0 shape
   // -------------------------------------------------------------------------
 
   it("agent config has expected v13.0 shape", async () => {
@@ -168,7 +168,7 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 4: Daemon logs contain no unexpected errors or warnings
+  // Daemon logs contain no unexpected errors or warnings
   // -------------------------------------------------------------------------
 
   it("daemon logs contain no unexpected errors or warnings", async () => {
