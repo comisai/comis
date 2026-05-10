@@ -21,12 +21,18 @@
 # without a getSecret callback) and the daemon's bootstrap (which does) see an
 # identical absolute path. Mirrors Phase 25-04's fixture pattern.
 #
-# Skill discovery target: `packages/agent/src/__tests__/fixtures/phase-8-skill-variants`
-# — three SKILL.md fixtures with distinct cluster behaviours. After tooling-fill
-# materializes hints, the daemon's preamble assembly bucketizes them into 2+
-# clusters (`data-fetching-financial` from the manifest skill + `prompt-skills`
-# for the other two), satisfying SPEC AC-13's `clusterCount >= 2` assertion
-# without requiring a connected MCP.
+# Skill discovery target: `packages/cli/src/sync-tooling/__tests__/fixtures/skills`
+# — uses the canonical `<name>/SKILL.md` subdirectory layout the CLI's
+# `discoverSkills` expects (Phase 25 D-04). Single skill `stub-skill` so the
+# round-trip diff between tooling-fill output and sync-tooling discovery is
+# trivially empty (no extra discovered skills means no add entries; no extra
+# hints means no remove entries — append-only invariant verified end-to-end).
+#
+# The Phase 8 `phase-8-skill-variants` fixture (used by Phase 25-04's daemon
+# preamble assembly test) is NOT used here because its SKILL files live at
+# the directory root rather than in subdirectories — the daemon loads them
+# fine but the CLI's `discoverSkills` (designed for `<dir>/<name>/SKILL.md`)
+# would silently report zero skills, breaking the AC-11 round-trip diff.
 
 tenantId: "test"
 logLevel: "debug"
@@ -54,7 +60,7 @@ agents:
         enabled: false
     skills:
       discoveryPaths:
-        - "${COMIS_REPO_ROOT}/packages/agent/src/__tests__/fixtures/phase-8-skill-variants"
+        - "${COMIS_REPO_ROOT}/packages/cli/src/sync-tooling/__tests__/fixtures/skills"
 
 gateway:
   enabled: true
@@ -129,7 +135,7 @@ tooling:
         replacesPackages: []
   skills:
     capabilityHints:
-      comis-capability-skill:
+      stub-skill:
         cluster: prompt-skills
         # Stub-valued — tooling-fill replaces this with the LLM-suggested one-liner.
         description: TODO
