@@ -26,6 +26,10 @@ tooling:
         preferOverInstalls: true
   mcp:
     capabilityHints:
+      placeholder-mcp:
+        cluster: external-integrations
+        description: "Placeholder so the operator-note attaches to yfinance"
+        replacesPackages: []
       # operator note: curated package list below
       yfinance:
         cluster: data-fetching-financial

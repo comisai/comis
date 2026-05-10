@@ -104,7 +104,7 @@ describe("computeMutationPlan", () => {
   it("Test 5: against config-with-tooling.yaml + a NEW MCP `slack-mcp` returns mcpAdds=[slack-mcp], no removes", () => {
     const doc = parseDocument(readFixture("config-with-tooling.yaml"));
     const artifacts: DiscoveredArtifacts = {
-      mcps: [mcp("yfinance"), mcp("slack-mcp")],
+      mcps: [mcp("placeholder-mcp"), mcp("yfinance"), mcp("slack-mcp")],
       skills: [],
     };
     const plan = computeMutationPlan(doc, artifacts);
@@ -122,7 +122,7 @@ describe("applyToDocument — append-only preservation", () => {
     const doc = parseDocument(raw);
     applyToDocument(
       doc,
-      { mcps: [mcp("yfinance"), mcp("slack-mcp")], skills: [] },
+      { mcps: [mcp("placeholder-mcp"), mcp("yfinance"), mcp("slack-mcp")], skills: [] },
       { overwrite: false },
     );
     const out = doc.toString();
@@ -133,14 +133,20 @@ describe("applyToDocument — append-only preservation", () => {
     expect(out).toContain("- yahoo-finance2");
     // And slack-mcp was added.
     expect(out).toContain("slack-mcp:");
-    expect(out).toContain("description: TODO");
+    // slack-mcp's stub description (yfinance's was operator-edited and stays untouched).
+    expect(out).toMatch(/slack-mcp:[\s\S]*?description: TODO/);
   });
 });
 
 describe("applyToDocument — pruning", () => {
   it("Test 7: applyToDocument with no yfinance in discovered set prunes tooling.mcp.capabilityHints.yfinance entirely", () => {
     const doc = parseDocument(readFixture("config-with-tooling.yaml"));
-    applyToDocument(doc, emptyArtifacts(), { overwrite: false });
+    // placeholder-mcp stays (it's still in the discovered set), yfinance is pruned.
+    applyToDocument(
+      doc,
+      { mcps: [mcp("placeholder-mcp")], skills: [] },
+      { overwrite: false },
+    );
     const out = doc.toString();
     expect(out).not.toContain("yfinance:");
     // commentBefore on the pruned key dies with the Pair (Pitfall 4).
@@ -187,16 +193,16 @@ describe("applyToDocument — operator-customized fields are never overwritten o
     // yfinance IS in the discovered set — the entry already exists and is operator-edited.
     applyToDocument(
       doc,
-      { mcps: [mcp("yfinance")], skills: [] },
+      { mcps: [mcp("placeholder-mcp"), mcp("yfinance")], skills: [] },
       { overwrite: false },
     );
     const out = doc.toString();
-    // Description must NOT be reset to "TODO".
+    // yfinance description must NOT be reset to "TODO".
     expect(out).toContain('description: "Yahoo Finance market prices, history, fundamentals"');
-    expect(out).not.toContain('description: "TODO"');
-    expect(out).not.toContain("description: TODO");
     // The custom replacesPackages list survives.
     expect(out).toContain("- yahoo-finance2");
+    // placeholder-mcp's existing description also untouched (no double-write of "TODO").
+    expect(out).toContain('"Placeholder so the operator-note attaches to yfinance"');
   });
 });
 
@@ -206,7 +212,7 @@ describe("applyToDocument — comment + key-order preservation", () => {
     const doc = parseDocument(raw);
     applyToDocument(
       doc,
-      { mcps: [mcp("yfinance")], skills: [] },
+      { mcps: [mcp("placeholder-mcp"), mcp("yfinance")], skills: [] },
       { overwrite: false },
     );
     const out = doc.toString();
