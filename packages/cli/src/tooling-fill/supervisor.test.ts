@@ -220,15 +220,20 @@ describe("stopDaemon", () => {
     ]);
   });
 
-  // Test 9 (stop/start manual)
-  it("runs the supplied cmd verbatim for {kind:'manual'}", async () => {
+  // Test 9 (stop manual is a no-op — CR-03 fix)
+  // The operator's --restart-cmd is a single command that does both stop+start.
+  // If we ran it at stopDaemon AND startDaemon it would (a) execute twice and
+  // (b) leave the daemon UP during the file edit. Treat manual mode as
+  // start-only: stopDaemon is a no-op; the operator's cmd runs once at
+  // startDaemon, after the file edit lands.
+  it("is a no-op for {kind:'manual'} (operator's cmd runs at startDaemon only — CR-03)", async () => {
     const { capturedArgs } = scriptExecFile({ stdout: "" });
     const r = await stopDaemon({
       kind: "manual",
       cmd: "echo restarting",
     });
     expect(r.ok).toBe(true);
-    expect(capturedArgs[0].args).toEqual(["-c", "echo restarting"]);
+    expect(capturedArgs).toHaveLength(0);
   });
 
   // Test 10 (stop none)

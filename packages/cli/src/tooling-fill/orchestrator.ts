@@ -307,9 +307,10 @@ export async function runToolingFill(
     supervisor = await detectSupervisor();
   }
   // For dry-run, supervisor.kind === "none" is OK — we don't need to stop
-  // the daemon. For everything else (including --no-restart, since we
-  // still need to know what we're not restarting), surface MANUAL_RECIPE_HINT.
-  if (supervisor.kind === "none" && !opts.dryRun) {
+  // the daemon. With --no-restart the operator explicitly declines the
+  // restart leg, so a missing supervisor is also fine (WR-01 fix).
+  // Otherwise surface MANUAL_RECIPE_HINT.
+  if (supervisor.kind === "none" && !opts.dryRun && opts.restart !== false) {
     return {
       exitCode: 1,
       summary: MANUAL_RECIPE_HINT,
@@ -336,16 +337,25 @@ export async function runToolingFill(
   let agentFailureFatal = false;
   let agentFailureMessage = "";
 
-  // Test-only fault injector: when the test-fixture env var is set, use its
-  // value as the literal agent response instead of POSTing to /api/chat. Lets
-  // daemon-bound integration tests exercise the full state machine
-  // deterministically without booting an LLM provider. AGENTS.md §2.2
-  // explicitly lists "test fault injectors" as an exception to the
-  // no-runtime-env rule. Undocumented in user-facing CLI help; production
-  // operators have no documented reason to set it (T-26-21 — theoretical
-  // threat, mitigated by the grep-detectable env-var name on the line below).
+  // Test-only fault injector: when set, use the env value as the literal
+  // agent response instead of POSTing to /api/chat. Gated on a test-runtime
+  // signal (NODE_ENV or VITEST) — fails LOUD if set in a production
+  // environment so a poisoned ~/.comis/.env cannot silently substitute
+  // attacker-controlled description/replacesPackages values into config
+  // (CR-04 fix). AGENTS.md §2.2 lists "test fault injectors" as an exception
+  // to the no-runtime-env rule.
   // eslint-disable-next-line no-restricted-syntax -- test fault injector (AGENTS.md §2.2 exception)
-  const testAgentResponse = process.env["COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE"];
+  const testAgentResponseRaw = process.env["COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE"];
+  // eslint-disable-next-line no-restricted-syntax -- test runtime detection
+  const isTestRuntime = process.env["NODE_ENV"] === "test" || process.env["VITEST"] === "true";
+  if (testAgentResponseRaw !== undefined && !isTestRuntime) {
+    return {
+      exitCode: 1,
+      summary:
+        "COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE is a test-only fault injector and must not be set in production. Unset it and retry.",
+    };
+  }
+  const testAgentResponse = testAgentResponseRaw;
 
   for (const entry of entries) {
     const prompt = buildFillPrompt({
@@ -471,7 +481,10 @@ export async function runToolingFill(
     }
     const okRestart = await opts.prompts.confirmRestart(supervisor);
     if (!okRestart) {
-      return { exitCode: 1, summary: "operator declined daemon restart" };
+      // WR-03 fix: operator-driven aborts exit 0 (matches values-decline).
+      // Shell scripts that distinguish "user said no" from "command failed"
+      // expect a clean exit on either prompt.
+      return { exitCode: 0, summary: "operator declined daemon restart" };
     }
     willRestart = true;
   }
@@ -510,10 +523,10 @@ export async function runToolingFill(
     });
     if (!applyRes.ok) {
       // Restore from backup + restart.
-      await rollback(opts.configPath, rawYaml, willRestart, supervisor);
+      const rb = await rollback(opts.configPath, rawYaml, willRestart, supervisor);
       return {
-        exitCode: 1,
-        summary: `setHintFields failed for ${entry.name}: ${applyRes.error.kind} (${applyRes.error.path})`,
+        exitCode: rb.writeOk && rb.startOk ? 1 : 2,
+        summary: `setHintFields failed for ${entry.name}: ${applyRes.error.kind} (${applyRes.error.path}). ${rolledBackSuffix(backupPath, opts.configPath, rb)}`,
       };
     }
   }
@@ -521,28 +534,39 @@ export async function runToolingFill(
   // 9d. atomicWriteFile
   const writeRes = atomicWriteFile(opts.configPath, doc.toString());
   if (!writeRes.ok) {
-    await rollback(opts.configPath, rawYaml, willRestart, supervisor);
+    const rb = await rollback(opts.configPath, rawYaml, willRestart, supervisor);
     return {
       exitCode: 2,
-      summary: `Atomic write failed (${writeRes.error.code}): ${writeRes.error.cause}`,
+      summary: `Atomic write failed (${writeRes.error.code}): ${writeRes.error.cause}. ${rolledBackSuffix(backupPath, opts.configPath, rb)}`,
     };
   }
 
   // 9e. validateConfig — re-load + validate the freshly written file.
+  // CR-01 fix: env-substitute `${VAR}` references before validation, mirroring
+  // `comis config validate` (commands/config.ts:131-133). Without this, any
+  // config using the documented `${COMIS_GATEWAY_TOKEN}` pattern would fail
+  // Zod's `z.string().min(32)` on the literal `${...}` (22 chars) and trigger
+  // a false-positive rollback on every successful run.
   const reloaded = loadConfigFile(opts.configPath);
   if (!reloaded.ok) {
-    await rollback(opts.configPath, rawYaml, willRestart, supervisor);
+    const rb = await rollback(opts.configPath, rawYaml, willRestart, supervisor);
     return {
-      exitCode: 1,
-      summary: `${TOOLFILL_9_VALIDATION_FAILED_PREFIX} to ${backupPath}. Original daemon state restored. Reload error: ${reloaded.error.message}`,
+      exitCode: rb.writeOk && rb.startOk ? 1 : 2,
+      summary: rolledBackSummary(
+        backupPath,
+        opts.configPath,
+        rb,
+        `Reload error: ${reloaded.error.message}`,
+      ),
     };
   }
+  resolveEnvRefs(reloaded.value);
   const validation = validateConfig(reloaded.value);
   if (!validation.ok) {
-    await rollback(opts.configPath, rawYaml, willRestart, supervisor);
+    const rb = await rollback(opts.configPath, rawYaml, willRestart, supervisor);
     return {
-      exitCode: 1,
-      summary: `${TOOLFILL_9_VALIDATION_FAILED_PREFIX} to ${backupPath}. Original daemon state restored.`,
+      exitCode: rb.writeOk && rb.startOk ? 1 : 2,
+      summary: rolledBackSummary(backupPath, opts.configPath, rb, undefined),
     };
   }
 
@@ -913,21 +937,101 @@ function renderSkippedReport(skipped: SkippedEntry[]): string {
   return ` Skipped: ${report}.`;
 }
 
+/** Outcome of a rollback attempt — both legs reported separately so the
+ * orchestrator can compose accurate operator-facing summaries (CR-02). */
+interface RollbackOutcome {
+  writeOk: boolean;
+  startOk: boolean;
+  writeError?: string;
+  startError?: string;
+}
+
 /**
  * Restore the backup (atomically write the original raw YAML back) and
- * restart the daemon best-effort. Used on any failure inside the
- * protected mutation window after stopDaemon has succeeded.
+ * restart the daemon best-effort. Returns separate flags for write + start
+ * so the caller can warn about partial-rollback states.
  */
 async function rollback(
   configPath: string,
   originalRawYaml: string,
   willRestart: boolean,
   supervisor: Supervisor,
-): Promise<void> {
-  // Use atomicWriteFile to maintain the same write contract — partial
-  // file states are not allowed even during rollback.
-  atomicWriteFile(configPath, originalRawYaml);
+): Promise<RollbackOutcome> {
+  const writeRes = atomicWriteFile(configPath, originalRawYaml);
+  let startOk = true;
+  let startError: string | undefined;
   if (willRestart) {
-    await startDaemon(supervisor);
+    const startRes = await startDaemon(supervisor);
+    startOk = startRes.ok;
+    if (!startRes.ok) startError = startRes.error.message;
+  }
+  return {
+    writeOk: writeRes.ok,
+    startOk,
+    writeError: writeRes.ok ? undefined : writeRes.error.cause,
+    startError,
+  };
+}
+
+/** Compose the standard `Validation failed; rolled back …` summary, honestly
+ * reflecting any partial-rollback failure (CR-02). */
+function rolledBackSummary(
+  backupPath: string,
+  configPath: string,
+  rb: RollbackOutcome,
+  extra: string | undefined,
+): string {
+  if (!rb.writeOk) {
+    return `${TOOLFILL_9_VALIDATION_FAILED_PREFIX} to ${backupPath}. ROLLBACK FAILED: could not restore (${rb.writeError ?? "unknown"}). Manual recovery required: cp ${backupPath} ${configPath}.${extra ? ` ${extra}` : ""}`;
+  }
+  if (!rb.startOk) {
+    return `${TOOLFILL_9_VALIDATION_FAILED_PREFIX} to ${backupPath}. File restored but daemon FAILED TO RESTART (${rb.startError ?? "unknown"}). Restart manually.${extra ? ` ${extra}` : ""}`;
+  }
+  return `${TOOLFILL_9_VALIDATION_FAILED_PREFIX} to ${backupPath}. Original daemon state restored.${extra ? ` ${extra}` : ""}`;
+}
+
+/** Compact rollback-state suffix appended to non-validation error summaries. */
+function rolledBackSuffix(
+  backupPath: string,
+  configPath: string,
+  rb: RollbackOutcome,
+): string {
+  if (!rb.writeOk) {
+    return `ROLLBACK FAILED — manual recovery: cp ${backupPath} ${configPath}.`;
+  }
+  if (!rb.startOk) {
+    return `Rolled back to ${backupPath} but daemon FAILED TO RESTART (${rb.startError ?? "unknown"}). Restart manually.`;
+  }
+  return `Rolled back to ${backupPath}. Original daemon state restored.`;
+}
+
+/** Pattern matching `${VAR_NAME}` env var references — mirrors the same
+ * pattern in commands/config.ts:resolveEnvRefs. */
+const ENV_REF_RE = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
+
+/**
+ * Deep-walk an object and resolve `${VAR}` references using process.env.
+ * Mutates in place. Mirrors `commands/config.ts:resolveEnvRefs` so the
+ * post-write `validateConfig` call sees the same substituted shape that
+ * `comis config validate` would. Without this, configs using the documented
+ * `${COMIS_GATEWAY_TOKEN}` pattern fail Zod's min(32) check on the literal
+ * `${...}` (22 chars) and trigger a false-positive rollback (CR-01).
+ */
+function resolveEnvRefs(obj: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value === "string" && value.includes("${")) {
+      obj[key] = value.replace(ENV_REF_RE, (match, varName: string) => {
+        // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
+        return process.env[varName] ?? match;
+      });
+    } else if (value && typeof value === "object" && !Array.isArray(value)) {
+      resolveEnvRefs(value as Record<string, unknown>);
+    } else if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item && typeof item === "object") {
+          resolveEnvRefs(item as Record<string, unknown>);
+        }
+      }
+    }
   }
 }

@@ -697,6 +697,13 @@ export function registerConfigCommand(program: Command): void {
         //   --no-restart    → options.restart === false
         //   neither         → options.restart === undefined
         // --allow-restart is an alias: if either is set, treat as true.
+        // WR-02 fix: explicit --no-restart + --allow-restart is a contradiction;
+        // refuse rather than silently letting the alias win.
+        if (options.allowRestart === true && options.restart === false) {
+          error("--allow-restart and --no-restart are mutually exclusive");
+          process.exit(1);
+          return;
+        }
         const restartFlag: boolean | undefined =
           options.allowRestart === true
             ? true

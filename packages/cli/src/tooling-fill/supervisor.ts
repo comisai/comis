@@ -179,7 +179,20 @@ export async function stopDaemon(
     case "bare-process":
       return runShell("pkill -f 'node.*daemon\\.js'", timeoutMs);
     case "manual":
-      return runShell(s.cmd, timeoutMs);
+      // CR-03 fix: --restart-cmd is documented as the operator's full
+      // stop+start command. Running it BOTH at stopDaemon and startDaemon
+      // would (a) effectively run "stop && start && stop && start" and
+      // (b) leave the daemon UP during the file edit, violating the
+      // TOOLFILL-9 protected window. Treat manual mode as start-only:
+      // stopDaemon is a no-op; the operator's cmd runs once at startDaemon
+      // time, after the file edit is complete. The "protected window"
+      // guarantee weakens under --restart-cmd because we cannot invert
+      // an arbitrary command — but the operator chose this path explicitly,
+      // and the daemon does not watch config.yaml for changes (Phase 25
+      // design), so a write during a still-running daemon is benign:
+      // it just doesn't take effect until the operator's restart command
+      // lands.
+      return ok(undefined);
     case "none":
       return err({
         kind: "detection-failed",
