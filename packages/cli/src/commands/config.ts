@@ -487,18 +487,30 @@ export function registerConfigCommand(program: Command): void {
         const skills = discoverSkills(configJs, { homeDir });
         const artifacts = { mcps, skills };
 
-        // RESEARCH Open Question 2: empty discovery → "nothing to sync".
-        // Even in --write mode this is a no-op: no backup, no mutation,
-        // exit 0. Operator-friendly for CI scripts.
-        const nothingToDo = mcps.length === 0 && skills.length === 0;
+        // Compute the read-only mutation plan against the current AST.
+        const plan = computeMutationPlan(doc, artifacts);
+
+        // "Nothing to sync" cases:
+        //  (a) Fresh config — operator has installed no MCPs/skills AND no tooling
+        //      block exists yet. Writing an empty skeleton would be churn.
+        //  (b) Plan is a no-op against an existing tooling block (no adds, no
+        //      removes, no skeleton needed).
+        // SPEC-4: when discovery is empty BUT a tooling block exists with stale
+        // hints, the plan will report removes — that path must NOT short-circuit.
+        const isFreshAndEmpty =
+          mcps.length === 0 && skills.length === 0 && plan.needsSkeleton;
+        const planIsNoop =
+          plan.mcpAdds.length === 0 &&
+          plan.mcpRemoves.length === 0 &&
+          plan.skillAdds.length === 0 &&
+          plan.skillRemoves.length === 0 &&
+          !plan.needsSkeleton;
+        const nothingToDo = isFreshAndEmpty || planIsNoop;
         if (nothingToDo && !isOverwrite) {
           info("(nothing to sync — no MCPs or skills discovered)");
           process.exit(0);
           return;
         }
-
-        // Compute the read-only mutation plan against the current AST.
-        const plan = computeMutationPlan(doc, artifacts);
 
         // Build a "would-write" preview by cloning + applying without writing.
         // Re-parse from rawYaml so we don't mutate the doc we may write later.

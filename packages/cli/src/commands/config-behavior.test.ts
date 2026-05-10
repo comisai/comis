@@ -1381,6 +1381,58 @@ describe("config sync-tooling exits 0 with 'nothing to sync' on empty discovery"
   });
 });
 
+// -- Test 9b (SPEC-4 / empty discovery still prunes stale hints) -------------
+
+describe("config sync-tooling --write prunes stale hints when discovery is empty", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    // Fixture has tooling.mcp.capabilityHints.yfinance from a prior sync;
+    // operator has now removed yfinance from integrations.mcp.servers, so
+    // discovery returns empty. SPEC-4 requires the stale yfinance hint to
+    // be pruned even though no MCPs/skills were discovered.
+    resetSyncToolingMocks({
+      configJs: readFixtureAsJs(FIXTURE_WITH_TOOLING),
+      mcps: [],
+      skills: [],
+    });
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("--write writes backup + atomic file when stale hints exist (SPEC-4)", async () => {
+    const program = createTestProgram();
+    registerConfigCommand(program);
+
+    try {
+      await program.parseAsync([
+        "node",
+        "test",
+        "config",
+        "sync-tooling",
+        "--write",
+        "--config",
+        FIXTURE_WITH_TOOLING,
+      ]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+
+    expect(exitSpy.spy).toHaveBeenCalledWith(0);
+    expect(mockWriteBackup).toHaveBeenCalledTimes(1);
+    expect(mockAtomicWriteFile).toHaveBeenCalledTimes(1);
+
+    const out = getSpyOutput(consoleSpy.log);
+    expect(out.toLowerCase()).not.toContain("nothing to sync");
+  });
+});
+
 // -- Test 10 (SPEC-6 / overwrite mode) ---------------------------------------
 
 describe("config sync-tooling --write --overwrite emits the destructive warning", () => {
