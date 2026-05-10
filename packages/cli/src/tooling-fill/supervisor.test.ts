@@ -21,12 +21,66 @@ import {
   type Mock,
 } from "vitest";
 
+// We deliberately strip util.promisify.custom from the mocked execFile so
+// that supervisor.ts's `promisify(execFile)` falls back to the default
+// callback-based promisify. We then teach our scripted callbacks to call
+// back with a {stdout, stderr} object — promisify-default uses argument 2
+// of the callback as the resolved value when it's a single non-error arg
+// (per node:util docs). To match Node's child_process.execFile contract
+// (which resolves to {stdout, stderr}), we set the custom symbol on our
+// mock so promisify routes through the original-style resolver.
+import { promisify } from "node:util";
+
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
+  // Build a vi.fn() that carries util.promisify.custom — when promisify
+  // sees the custom symbol it uses that custom impl (which resolves
+  // {stdout, stderr}), but we control THAT impl so test stubs script the
+  // resolved value directly.
+  const mockExecFile = vi.fn() as unknown as typeof actual.execFile & {
+    [k: symbol]: unknown;
+  };
+  // Lift the actual util.promisify.custom impl shape: it's
+  //   (...args) => Promise<{stdout, stderr}>
+  // We re-implement it to invoke the underlying mock with a callback
+  // adapter, so test stubs configured via mockImplementationOnce see the
+  // (file, args, opts, cb) shape and can fire cb(err, stdout, stderr).
+  (mockExecFile as { [k: symbol]: unknown })[promisify.custom] = (
+    ...callArgs: unknown[]
+  ) =>
+    new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      const cb = (
+        err: (Error & { code?: string | number; signal?: string }) | null,
+        stdout: string,
+        stderr: string,
+      ): void => {
+        if (err) {
+          // Match Node's behavior: attach stdout/stderr so callers can
+          // inspect on rejection (we don't rely on this in supervisor.ts
+          // — only `code`/`signal`/`message` are read).
+          (
+            err as Error & { stdout?: string; stderr?: string }
+          ).stdout = stdout;
+          (
+            err as Error & { stdout?: string; stderr?: string }
+          ).stderr = stderr;
+          reject(err);
+        } else {
+          resolve({ stdout, stderr });
+        }
+      };
+      // Forward to the underlying vi.fn() with the (..., cb) shape so
+      // mockImplementationOnce stubs receive what they expect.
+      (mockExecFile as unknown as (...a: unknown[]) => unknown)(
+        ...callArgs,
+        cb,
+      );
+    });
+
   return {
     ...actual,
-    default: { ...actual, execFile: vi.fn() },
-    execFile: vi.fn(),
+    default: { ...actual, execFile: mockExecFile },
+    execFile: mockExecFile,
   };
 });
 
@@ -54,6 +108,12 @@ interface ScriptedCall {
 /**
  * Push N scripted invocations onto the execFile mock, in order.
  * Each call pulls the next ScriptedCall and fires its callback async.
+ *
+ * The underlying mock is invoked by our util.promisify.custom shim with
+ * (...origArgs, cb) — the cb is always the final positional argument.
+ * Our scriptExecFile pulls cb from the args list rather than relying on
+ * a fixed (file, args, opts, cb) shape, so callers like detectSupervisor
+ * which use the (file, args, opts) form work too.
  */
 function scriptExecFile(...calls: ScriptedCall[]): {
   capturedArgs: Array<{ file: string; args: readonly string[] }>;
@@ -61,27 +121,20 @@ function scriptExecFile(...calls: ScriptedCall[]): {
   const capturedArgs: Array<{ file: string; args: readonly string[] }> = [];
   const mock = cp.execFile as unknown as Mock;
   for (const c of calls) {
-    mock.mockImplementationOnce(
-      (
-        file: string,
-        args: readonly string[],
-        _opts: unknown,
-        cb?: ExecFileCallback,
-      ) => {
-        // promisify(execFile) always invokes the (file, args, opts, cb) form.
-        const callback = (cb ??
-          (typeof _opts === "function" ? (_opts as ExecFileCallback) : null))!;
-        capturedArgs.push({ file, args });
-        setImmediate(() => {
-          if (c.error) {
-            callback(c.error, c.stdout ?? "", c.stderr ?? "");
-          } else {
-            callback(null, c.stdout ?? "", c.stderr ?? "");
-          }
-        });
-        return {} as ReturnType<typeof cp.execFile>;
-      },
-    );
+    mock.mockImplementationOnce((...callArgs: unknown[]) => {
+      const file = callArgs[0] as string;
+      const args = callArgs[1] as readonly string[];
+      const cb = callArgs[callArgs.length - 1] as ExecFileCallback;
+      capturedArgs.push({ file, args });
+      setImmediate(() => {
+        if (c.error) {
+          cb(c.error, c.stdout ?? "", c.stderr ?? "");
+        } else {
+          cb(null, c.stdout ?? "", c.stderr ?? "");
+        }
+      });
+      return {} as ReturnType<typeof cp.execFile>;
+    });
   }
   return { capturedArgs };
 }
