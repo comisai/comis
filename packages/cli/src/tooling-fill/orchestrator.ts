@@ -788,6 +788,21 @@ function readSkillDescriptions(doc: Document): Map<string, string> {
  * the token via the runtime environment (the same precedence chain as
  * the daemon).
  *
+ * Two supported token shapes (in precedence order):
+ *  1. `gateway.token: <string>`         — convenience shape used by the
+ *                                         orchestrator's unit-test fixtures
+ *                                         (one-line YAML; no scopes).
+ *  2. `gateway.tokens[0].secret: <string>` — the canonical production schema
+ *                                            (`packages/core/src/config/schema-gateway.ts`):
+ *                                            `tokens` is an array of
+ *                                            `{id, secret, scopes}`. The first
+ *                                            entry's secret is used so the
+ *                                            CLI hits /api/chat with a
+ *                                            valid bearer.
+ *
+ * Both shapes accept `${VAR}` env-substitution; the same expansion rule
+ * applies to whichever shape resolves to a non-empty string first.
+ *
  * Per AGENTS.md §2.2 the runtime env read is the documented exception:
  * CLI bootstrap before SecretManager is loaded.
  */
@@ -806,12 +821,37 @@ function resolveGatewayConn(
       `gateway.port not configured — cannot reach the daemon's /api/chat (got: ${String(port)})`,
     );
   }
-  const tokenRaw = gateway["token"];
-  if (typeof tokenRaw !== "string" || tokenRaw.length === 0) {
+
+  // Shape 1: convenience `gateway.token: <string>`.
+  let tokenRaw: string | undefined;
+  const directToken = gateway["token"];
+  if (typeof directToken === "string" && directToken.length > 0) {
+    tokenRaw = directToken;
+  } else {
+    // Shape 2: canonical `gateway.tokens[0].secret: <string>` (production
+    // schema). The CLI uses the FIRST entry — it is the daemon's primary
+    // bearer per the schema's documented convention. Operators with
+    // multi-token deployments who want the CLI to use a non-first token
+    // should override via COMIS_GATEWAY_TOKEN-style env-substitution
+    // inside the first entry's `secret` field, NOT by reordering the array.
+    const tokensArr = gateway["tokens"];
+    if (Array.isArray(tokensArr) && tokensArr.length > 0) {
+      const first = tokensArr[0] as { secret?: unknown } | null | undefined;
+      if (first && typeof first === "object") {
+        const secret = first.secret;
+        if (typeof secret === "string" && secret.length > 0) {
+          tokenRaw = secret;
+        }
+      }
+    }
+  }
+
+  if (tokenRaw === undefined) {
     return err(
       "gateway.token not configured — set COMIS_GATEWAY_TOKEN in ~/.comis/.env",
     );
   }
+
   // Expand `${VAR}` if the value is a single-var reference.
   const m = tokenRaw.match(/^\$\{([A-Z_][A-Z0-9_]*)\}$/);
   let resolvedToken: string;
