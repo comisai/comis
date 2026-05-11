@@ -38,8 +38,8 @@ importers:
         specifier: 10.0.1
         version: 10.0.1(eslint@10.2.1(jiti@2.6.1))
       '@types/node':
-        specifier: 22.19.17
-        version: 22.19.17
+        specifier: 22.19.18
+        version: 22.19.18
       eslint:
         specifier: 10.2.1
         version: 10.2.1(jiti@2.6.1)
@@ -63,7 +63,7 @@ importers:
         version: 8.59.1(eslint@10.2.1(jiti@2.6.1))(typescript@5.9.3)
       vitest:
         specifier: 4.1.5
-        version: 4.1.5(@types/node@22.19.17)(happy-dom@20.9.0)(vite@8.0.10(@types/node@22.19.17)(jiti@2.6.1)(yaml@2.8.4))
+        version: 4.1.5(@types/node@22.19.18)(happy-dom@20.9.0)(vite@8.0.10(@types/node@22.19.18)(jiti@2.6.1)(yaml@2.8.4))
       yaml:
         specifier: 2.8.4
         version: 2.8.4
@@ -647,14 +647,14 @@ importers:
         version: 4.4.3
     devDependencies:
       '@types/node':
-        specifier: 22.19.17
-        version: 22.19.17
+        specifier: 22.19.18
+        version: 22.19.18
       typescript:
         specifier: 5.9.3
         version: 5.9.3
       vitest:
         specifier: 4.1.5
-        version: 4.1.5(@types/node@22.19.17)(happy-dom@20.9.0)(vite@8.0.10(@types/node@22.19.17)(jiti@2.6.1)(yaml@2.8.4))
+        version: 4.1.5(@types/node@22.19.18)(happy-dom@20.9.0)(vite@8.0.10(@types/node@22.19.18)(jiti@2.6.1)(yaml@2.8.4))
 
   packages/infra:
     dependencies:
@@ -2282,8 +2282,8 @@ packages:
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
 
-  '@types/node@22.19.17':
-    resolution: {integrity: sha512-wGdMcf+vPYM6jikpS/qhg6WiqSV/OhG+jeeHT/KlVqxYfD40iYJf9/AE1uQxVWFvU7MipKRkRv8NSHiCGgPr8Q==}
+  '@types/node@22.19.18':
+    resolution: {integrity: sha512-9v00a+dn2yWVsYDEunWC4g/TcRKVq3r8N5FuZp7u0SGrPvdN9c2yXI9bBuf5Fl0hNCb+QTIePTn5pJs2pwBOQQ==}
 
   '@types/node@24.12.2':
     resolution: {integrity: sha512-A1sre26ke7HDIuY/M23nd9gfB+nrmhtYyMINbjI1zHJxYteKR6qSMX56FsmjMcDb3SMcjJg5BiRRgOCC/yBD0g==}
@@ -6095,14 +6095,14 @@ snapshots:
 
   '@slack/logger@4.0.1':
     dependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
 
   '@slack/oauth@3.0.5':
     dependencies:
       '@slack/logger': 4.0.1
       '@slack/web-api': 7.15.1
       '@types/jsonwebtoken': 9.0.10
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
       jsonwebtoken: 9.0.3
     transitivePeerDependencies:
       - debug
@@ -6111,7 +6111,7 @@ snapshots:
     dependencies:
       '@slack/logger': 4.0.1
       '@slack/web-api': 7.15.1
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
       '@types/ws': 8.18.1
       eventemitter3: 5.0.4
       ws: 8.20.0
@@ -6126,7 +6126,7 @@ snapshots:
     dependencies:
       '@slack/logger': 4.0.1
       '@slack/types': 2.20.1
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
       '@types/retry': 0.12.0
       axios: 1.15.2
       eventemitter3: 5.0.4
@@ -6529,12 +6529,12 @@ snapshots:
 
   '@types/better-sqlite3@7.6.13':
     dependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
 
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
 
   '@types/chai@5.2.3':
     dependencies:
@@ -6543,7 +6543,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
 
   '@types/dagre@0.7.54': {}
 
@@ -6555,7 +6555,7 @@ snapshots:
 
   '@types/express-serve-static-core@5.1.1':
     dependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
       '@types/qs': 6.15.0
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -6573,18 +6573,18 @@ snapshots:
   '@types/jsonwebtoken@9.0.10':
     dependencies:
       '@types/ms': 2.1.0
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
 
   '@types/mailparser@3.4.6':
     dependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
       iconv-lite: 0.6.3
 
   '@types/mime-types@2.1.4': {}
 
   '@types/ms@2.1.0': {}
 
-  '@types/node@22.19.17':
+  '@types/node@22.19.18':
     dependencies:
       undici-types: 6.21.0
 
@@ -6599,7 +6599,7 @@ snapshots:
 
   '@types/nodemailer@6.4.23':
     dependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
 
   '@types/proper-lockfile@4.1.4':
     dependencies:
@@ -6615,12 +6615,12 @@ snapshots:
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
 
   '@types/serve-static@2.2.0':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
 
   '@types/trusted-types@2.0.7': {}
 
@@ -6628,11 +6628,11 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
 
   '@types/yauzl@2.10.3':
     dependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
     optional: true
 
   '@typescript-eslint/eslint-plugin@8.59.1(@typescript-eslint/parser@8.59.1(eslint@10.2.1(jiti@2.6.1))(typescript@5.9.3))(eslint@10.2.1(jiti@2.6.1))(typescript@5.9.3)':
@@ -6735,13 +6735,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.5(vite@8.0.10(@types/node@22.19.17)(jiti@2.6.1)(yaml@2.8.4))':
+  '@vitest/mocker@4.1.5(vite@8.0.10(@types/node@22.19.18)(jiti@2.6.1)(yaml@2.8.4))':
     dependencies:
       '@vitest/spy': 4.1.5
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.0.10(@types/node@22.19.17)(jiti@2.6.1)(yaml@2.8.4)
+      vite: 8.0.10(@types/node@22.19.18)(jiti@2.6.1)(yaml@2.8.4)
 
   '@vitest/mocker@4.1.5(vite@8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4))':
     dependencies:
@@ -7664,7 +7664,7 @@ snapshots:
 
   happy-dom@20.9.0:
     dependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
       '@types/whatwg-mimetype': 3.0.2
       '@types/ws': 8.18.1
       entities: 7.0.1
@@ -8605,7 +8605,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.0
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
       long: 5.3.2
 
   proxy-addr@2.0.7:
@@ -9174,7 +9174,7 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite@8.0.10(@types/node@22.19.17)(jiti@2.6.1)(yaml@2.8.4):
+  vite@8.0.10(@types/node@22.19.18)(jiti@2.6.1)(yaml@2.8.4):
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.4
@@ -9182,7 +9182,7 @@ snapshots:
       rolldown: 1.0.0-rc.17
       tinyglobby: 0.2.16
     optionalDependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
       fsevents: 2.3.3
       jiti: 2.6.1
       yaml: 2.8.4
@@ -9200,10 +9200,10 @@ snapshots:
       jiti: 2.6.1
       yaml: 2.8.4
 
-  vitest@4.1.5(@types/node@22.19.17)(happy-dom@20.9.0)(vite@8.0.10(@types/node@22.19.17)(jiti@2.6.1)(yaml@2.8.4)):
+  vitest@4.1.5(@types/node@22.19.18)(happy-dom@20.9.0)(vite@8.0.10(@types/node@22.19.18)(jiti@2.6.1)(yaml@2.8.4)):
     dependencies:
       '@vitest/expect': 4.1.5
-      '@vitest/mocker': 4.1.5(vite@8.0.10(@types/node@22.19.17)(jiti@2.6.1)(yaml@2.8.4))
+      '@vitest/mocker': 4.1.5(vite@8.0.10(@types/node@22.19.18)(jiti@2.6.1)(yaml@2.8.4))
       '@vitest/pretty-format': 4.1.5
       '@vitest/runner': 4.1.5
       '@vitest/snapshot': 4.1.5
@@ -9220,10 +9220,10 @@ snapshots:
       tinyexec: 1.1.1
       tinyglobby: 0.2.16
       tinyrainbow: 3.1.0
-      vite: 8.0.10(@types/node@22.19.17)(jiti@2.6.1)(yaml@2.8.4)
+      vite: 8.0.10(@types/node@22.19.18)(jiti@2.6.1)(yaml@2.8.4)
       why-is-node-running: 2.3.0
     optionalDependencies:
-      '@types/node': 22.19.17
+      '@types/node': 22.19.18
       happy-dom: 20.9.0
     transitivePeerDependencies:
       - msw
