@@ -33,7 +33,7 @@ importers:
     devDependencies:
       '@agentclientprotocol/sdk':
         specifier: 0.21.0
-        version: 0.21.0(zod@4.4.2)
+        version: 0.21.0(zod@4.4.3)
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.2.1(jiti@2.6.1))
@@ -68,8 +68,8 @@ importers:
         specifier: 2.8.4
         version: 2.8.4
       zod:
-        specifier: 4.4.2
-        version: 4.4.2
+        specifier: 4.4.3
+        version: 4.4.3
 
   packages/agent:
     dependencies:
@@ -90,16 +90,16 @@ importers:
         version: link:../shared
       '@google/genai':
         specifier: 1.50.1
-        version: 1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))
+        version: 1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
       '@mariozechner/pi-agent-core':
         specifier: 0.72.1
-        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       '@mariozechner/pi-ai':
         specifier: 0.72.1
-        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       '@mariozechner/pi-coding-agent':
         specifier: 0.72.1
-        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       chokidar:
         specifier: 5.0.0
         version: 5.0.0
@@ -119,8 +119,8 @@ importers:
         specifier: 0.34.5
         version: 0.34.5
       zod:
-        specifier: 4.4.2
-        version: 4.4.2
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/better-sqlite3':
         specifier: 7.6.13
@@ -236,7 +236,7 @@ importers:
         version: link:../shared
       '@mariozechner/pi-ai':
         specifier: 0.72.1
-        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       chalk:
         specifier: 5.6.2
         version: 5.6.2
@@ -273,7 +273,7 @@ importers:
     dependencies:
       '@agentclientprotocol/sdk':
         specifier: 0.21.0
-        version: 0.21.0(zod@4.4.2)
+        version: 0.21.0(zod@4.4.3)
       '@clack/core':
         specifier: 1.2.0
         version: 1.2.0
@@ -324,7 +324,7 @@ importers:
         version: 1.9.6
       '@google/genai':
         specifier: 1.50.1
-        version: 1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))
+        version: 1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
       '@grammyjs/auto-retry':
         specifier: 2.0.2
         version: 2.0.2(grammy@1.42.0)
@@ -351,16 +351,16 @@ importers:
         version: 10.8.0
       '@mariozechner/pi-agent-core':
         specifier: 0.72.1
-        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       '@mariozechner/pi-ai':
         specifier: 0.72.1
-        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       '@mariozechner/pi-coding-agent':
         specifier: 0.72.1
-        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
-        version: 1.29.0(zod@4.4.2)
+        version: 1.29.0(zod@4.4.3)
       '@mozilla/readability':
         specifier: 0.6.0
         version: 0.6.0
@@ -468,7 +468,7 @@ importers:
         version: 10.1.2
       openai:
         specifier: 6.34.0
-        version: 6.34.0(ws@8.20.0)(zod@4.4.2)
+        version: 6.34.0(ws@8.20.0)(zod@4.4.3)
       ora:
         specifier: 9.4.0
         version: 9.4.0
@@ -509,8 +509,8 @@ importers:
         specifier: 2.8.4
         version: 2.8.4
       zod:
-        specifier: 4.4.2
-        version: 4.4.2
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       typescript:
         specifier: 5.9.3
@@ -532,8 +532,8 @@ importers:
         specifier: 2.8.4
         version: 2.8.4
       zod:
-        specifier: 4.4.2
-        version: 4.4.2
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       safe-regex2:
         specifier: 5.1.1
@@ -576,7 +576,7 @@ importers:
         version: link:../skills
       '@mariozechner/pi-ai':
         specifier: 0.72.1
-        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       better-sqlite3:
         specifier: 12.9.0
         version: 12.9.0
@@ -593,8 +593,8 @@ importers:
         specifier: 2.8.4
         version: 2.8.4
       zod:
-        specifier: 4.4.2
-        version: 4.4.2
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/better-sqlite3':
         specifier: 7.6.13
@@ -614,7 +614,7 @@ importers:
     dependencies:
       '@agentclientprotocol/sdk':
         specifier: 0.21.0
-        version: 0.21.0(zod@4.4.2)
+        version: 0.21.0(zod@4.4.3)
       '@comis/agent':
         specifier: workspace:*
         version: link:../agent
@@ -643,8 +643,8 @@ importers:
         specifier: 1.7.1
         version: 1.7.1
       zod:
-        specifier: 4.4.2
-        version: 4.4.2
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/node':
         specifier: 22.19.17
@@ -697,7 +697,7 @@ importers:
         version: 3.18.1(typescript@5.9.3)
       openai:
         specifier: 6.34.0
-        version: 6.34.0(ws@8.20.0)(zod@4.4.2)
+        version: 6.34.0(ws@8.20.0)(zod@4.4.3)
       p-queue:
         specifier: 9.2.0
         version: 9.2.0
@@ -705,8 +705,8 @@ importers:
         specifier: 0.1.9
         version: 0.1.9
       zod:
-        specifier: 4.4.2
-        version: 4.4.2
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/better-sqlite3':
         specifier: 7.6.13
@@ -733,8 +733,8 @@ importers:
         specifier: 4.1.2
         version: 4.1.2
       zod:
-        specifier: 4.4.2
-        version: 4.4.2
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@types/proper-lockfile':
         specifier: 4.1.4
@@ -774,13 +774,13 @@ importers:
         version: 1.9.6
       '@mariozechner/pi-agent-core':
         specifier: 0.72.1
-        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       '@mariozechner/pi-coding-agent':
         specifier: 0.72.1
-        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+        version: 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
-        version: 1.29.0(zod@4.4.2)
+        version: 1.29.0(zod@4.4.3)
       '@mozilla/readability':
         specifier: 0.6.0
         version: 0.6.0
@@ -816,7 +816,7 @@ importers:
         version: 11.12.3
       openai:
         specifier: 6.34.0
-        version: 6.34.0(ws@8.20.0)(zod@4.4.2)
+        version: 6.34.0(ws@8.20.0)(zod@4.4.3)
       p-queue:
         specifier: 9.2.0
         version: 9.2.0
@@ -839,8 +839,8 @@ importers:
         specifier: 2.8.4
         version: 2.8.4
       zod:
-        specifier: 4.4.2
-        version: 4.4.2
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       typescript:
         specifier: 5.9.3
@@ -1500,20 +1500,24 @@ packages:
   '@mariozechner/pi-agent-core@0.72.1':
     resolution: {integrity: sha512-Z5XH9mUDsBymh7Prtk5Eun4Cs+s9C3uzynug+oWAjzQESjjnCuy7KU6Ek8E9Eg+b9yroCwVw2ItLDxp2E3vYjA==}
     engines: {node: '>=20.0.0'}
+    deprecated: please use @earendil-works/pi-agent-core instead going forward
 
   '@mariozechner/pi-ai@0.72.1':
     resolution: {integrity: sha512-mOq71Pjnu72xxzwrh52VIiNwt+/a+Wpa11k5segi01/zTZJt8eMDc5Q2z6GhczYMr5+6EpZ8T+BaeHqq0jk5ag==}
     engines: {node: '>=20.0.0'}
+    deprecated: please use @earendil-works/pi-ai instead going forward
     hasBin: true
 
   '@mariozechner/pi-coding-agent@0.72.1':
     resolution: {integrity: sha512-gKApiLfAYpvPnWThvwXrLjZIhsziSSUKBph7DHCy/1IomuIGN1MTxS/9ZtcuFqPy3/+VfEUOKegGlY6m+CRNlA==}
     engines: {node: '>=20.6.0'}
+    deprecated: please use @earendil-works/pi-coding-agent instead going forward
     hasBin: true
 
   '@mariozechner/pi-tui@0.72.1':
     resolution: {integrity: sha512-KjeqzMQp4vafomfkvI8HKv5/52PqRP5BmlowGC8WKyOaB+u0UkkTdfM5U1Ui3ty2gA7FOfglVRiyvcitiWwvMQ==}
     engines: {node: '>=20.0.0'}
+    deprecated: please use @earendil-works/pi-tui instead going forward
 
   '@mistralai/mistralai@2.2.1':
     resolution: {integrity: sha512-uKU8CZmL2RzYKmplsU01hii4p3pe4HqJefpWNRWXm1Tcm0Sm4xXfwSLIy4k7ZCPlbETCGcp69E7hZs+WOJ5itQ==}
@@ -4845,20 +4849,20 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@4.4.2:
-    resolution: {integrity: sha512-IynmDyxsEsb9RKzO3J9+4SxXnl2FTFSzNBaKKaMV6tsSk0rw9gYw9gs+JFCq/qk2LCZ78KDwyj+Z289TijSkUw==}
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
 
-  '@agentclientprotocol/sdk@0.21.0(zod@4.4.2)':
+  '@agentclientprotocol/sdk@0.21.0(zod@4.4.3)':
     dependencies:
-      zod: 4.4.2
+      zod: 4.4.3
 
-  '@anthropic-ai/sdk@0.91.1(zod@4.4.2)':
+  '@anthropic-ai/sdk@0.91.1(zod@4.4.3)':
     dependencies:
       json-schema-to-ts: 3.1.1
     optionalDependencies:
-      zod: 4.4.2
+      zod: 4.4.3
 
   '@aws-crypto/crc32@5.2.0':
     dependencies:
@@ -5438,14 +5442,14 @@ snapshots:
       eventsource-parser: 1.1.2
       robot3: 0.4.1
 
-  '@google/genai@1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))':
+  '@google/genai@1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
     dependencies:
       google-auth-library: 10.6.2
       p-retry: 4.6.2
       protobufjs: 8.0.1
       ws: 8.20.0
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.2)
+      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -5719,9 +5723,9 @@ snapshots:
       std-env: 3.10.0
       yoctocolors: 2.1.2
 
-  '@mariozechner/pi-agent-core@0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)':
+  '@mariozechner/pi-agent-core@0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)':
     dependencies:
-      '@mariozechner/pi-ai': 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+      '@mariozechner/pi-ai': 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       typebox: 1.1.37
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
@@ -5732,19 +5736,19 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-ai@0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)':
+  '@mariozechner/pi-ai@0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)':
     dependencies:
-      '@anthropic-ai/sdk': 0.91.1(zod@4.4.2)
+      '@anthropic-ai/sdk': 0.91.1(zod@4.4.3)
       '@aws-sdk/client-bedrock-runtime': 3.1037.0
-      '@google/genai': 1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))
+      '@google/genai': 1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
       '@mistralai/mistralai': 2.2.1
       chalk: 5.6.2
-      openai: 6.26.0(ws@8.20.0)(zod@4.4.2)
+      openai: 6.26.0(ws@8.20.0)(zod@4.4.3)
       partial-json: 0.1.7
       proxy-agent: 6.5.0
       typebox: 1.1.37
       undici: 8.1.0
-      zod-to-json-schema: 3.25.2(zod@4.4.2)
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - aws-crt
@@ -5754,11 +5758,11 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-coding-agent@0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)':
+  '@mariozechner/pi-coding-agent@0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)':
     dependencies:
       '@mariozechner/jiti': 2.6.5
-      '@mariozechner/pi-agent-core': 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
-      '@mariozechner/pi-ai': 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.2))(ws@8.20.0)(zod@4.4.2)
+      '@mariozechner/pi-agent-core': 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
+      '@mariozechner/pi-ai': 0.72.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.20.0)(zod@4.4.3)
       '@mariozechner/pi-tui': 0.72.1
       '@silvia-odwyer/photon-node': 0.3.4
       chalk: 5.6.2
@@ -5801,13 +5805,13 @@ snapshots:
   '@mistralai/mistralai@2.2.1':
     dependencies:
       ws: 8.20.0
-      zod: 4.4.2
-      zod-to-json-schema: 3.25.2(zod@4.4.2)
+      zod: 4.4.3
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@modelcontextprotocol/sdk@1.29.0(zod@4.4.2)':
+  '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
       '@hono/node-server': 1.19.14(hono@4.12.18)
       ajv: 8.20.0
@@ -5824,8 +5828,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.4.2
-      zod-to-json-schema: 3.25.2(zod@4.4.2)
+      zod: 4.4.3
+      zod-to-json-schema: 3.25.2(zod@4.4.3)
     transitivePeerDependencies:
       - supports-color
 
@@ -8349,15 +8353,15 @@ snapshots:
       is-inside-container: 1.0.0
       is-wsl: 3.1.1
 
-  openai@6.26.0(ws@8.20.0)(zod@4.4.2):
+  openai@6.26.0(ws@8.20.0)(zod@4.4.3):
     optionalDependencies:
       ws: 8.20.0
-      zod: 4.4.2
+      zod: 4.4.3
 
-  openai@6.34.0(ws@8.20.0)(zod@4.4.2):
+  openai@6.34.0(ws@8.20.0)(zod@4.4.3):
     optionalDependencies:
       ws: 8.20.0
-      zod: 4.4.2
+      zod: 4.4.3
 
   optionator@0.9.4:
     dependencies:
@@ -9343,8 +9347,8 @@ snapshots:
 
   yoctocolors@2.1.2: {}
 
-  zod-to-json-schema@3.25.2(zod@4.4.2):
+  zod-to-json-schema@3.25.2(zod@4.4.3):
     dependencies:
-      zod: 4.4.2
+      zod: 4.4.3
 
-  zod@4.4.2: {}
+  zod@4.4.3: {}

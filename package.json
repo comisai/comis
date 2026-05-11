@@ -38,7 +38,7 @@
     "typescript-eslint": "8.59.1",
     "vitest": "4.1.5",
     "yaml": "2.8.4",
-    "zod": "4.4.2"
+    "zod": "4.4.3"
   },
   "pnpm": {
     "overrides": {
