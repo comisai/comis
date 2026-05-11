@@ -52,7 +52,7 @@
     "pino": "10.3.1",
     "pino-roll": "4.0.0",
     "yaml": "2.8.4",
-    "zod": "4.4.2"
+    "zod": "4.4.3"
   },
   "optionalDependencies": {
     "sd-notify": "2.8.0"
