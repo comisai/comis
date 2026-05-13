@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { recoverEmptyFinalResponse } from "./executor-response-filter.js";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 
 /** Minimal mock logger satisfying ComisLogger for recovery tests. */
 function mockLogger(): ComisLogger {

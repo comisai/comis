@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { ModelCatalog } from "./model-catalog.js";
+import type { ModelCatalog } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types

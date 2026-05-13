@@ -28,7 +28,7 @@ import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import type { TypedEventBus } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";
 import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js";
 import type { LastKnownModelTracker } from "../model/last-known-model.js";

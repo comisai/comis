@@ -24,15 +24,15 @@
  * @module
  */
 
-import { withClient } from "./rpc-client.js";
-import { createModelCatalog } from "@comis/agent";
+import { callTyped, withClient } from "./rpc-client.js";
+import { createModelCatalog, ModelsListProvidersContract } from "@comis/core";
 
 /**
  * Defensive shape narrowing for the daemon RPC response.
  *
  * The daemon's `models.list_providers` handler is expected to return
  * `{ providers: string[]; count: number }` (verified in
- * `packages/daemon/src/rpc/model-handlers.ts:99-106`). We narrow at the
+ * `packages/daemon/src/api/model-handlers.ts:99-106`). We narrow at the
  * call site so a malformed response (e.g., daemon version skew, future
  * shape change) cannot crash the wizard.
  */
@@ -61,8 +61,13 @@ function isValidProvidersResponse(value: unknown): value is { providers: string[
 export async function loadProvidersWithFallback(): Promise<string[]> {
   // RPC-first: daemon may have a richer/scanned catalog.
   try {
+    // Phase 35 Wave C closure (Plan 35-19): retargeted from raw
+    // `client.call("models.list_providers", {})` to callTyped via
+    // ModelsListProvidersContract. The defensive shape-narrowing below
+    // remains in place — daemon version skew or future shape changes
+    // would surface here, not as a crash.
     const result = await withClient(async (client) =>
-      client.call("models.list_providers", {}),
+      callTyped(client, ModelsListProvidersContract, {}),
     );
     if (isValidProvidersResponse(result)) {
       return result.providers;

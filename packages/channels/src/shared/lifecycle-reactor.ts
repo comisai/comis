@@ -16,7 +16,7 @@ import type {
   SessionKey,
   LifecycleReactionsConfig,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import { suppressError } from "@comis/shared";
 
 import {

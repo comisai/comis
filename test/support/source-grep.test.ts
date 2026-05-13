@@ -7,6 +7,7 @@ import { findInSourceFiles } from "./source-grep.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
+const FIXTURES_ROOT = resolve(here, "__fixtures__/source-grep");
 
 describe("findInSourceFiles", () => {
   it("finds existing tokens in the live codebase", () => {
@@ -106,6 +107,68 @@ describe("findInSourceFiles", () => {
       needle: /createCapabilityPort(Stub|NoOp)/,
     });
     expect(result.matches.length).toBeGreaterThan(0);
+  });
+});
+
+describe("findInSourceFiles -- Phase 27 hardening (ARCH-BASE-04)", () => {
+  it("clones caller-supplied global regex per file scan (no lastIndex leak)", () => {
+    const re = /needle/g;
+    const result = findInSourceFiles({
+      rootDir: resolve(FIXTURES_ROOT, "two-matching-files"),
+      needle: re,
+    });
+    expect(
+      result.matches.length,
+      "regex /g must clone per file -- both files must match",
+    ).toBe(2);
+  });
+
+  it("clones caller-supplied sticky regex per file scan", () => {
+    const re = /^import/y;
+    const result = findInSourceFiles({
+      rootDir: resolve(FIXTURES_ROOT, "two-files-with-leading-import"),
+      needle: re,
+    });
+    expect(
+      result.matches.length,
+      "regex /y must clone per file -- both files must match",
+    ).toBe(2);
+  });
+
+  it("merges caller-supplied excludeDirs with defaults instead of replacing", () => {
+    const result = findInSourceFiles({
+      rootDir: resolve(FIXTURES_ROOT, "with-tests-and-legacy"),
+      needle: "the-needle",
+      excludeDirs: ["legacy"],
+    });
+    expect(
+      result.matches.find((p) => p.includes("/__tests__/")),
+      "default __tests__ exclusion must persist",
+    ).toBeUndefined();
+    expect(
+      result.matches.find((p) => p.includes("/legacy/")),
+      "caller-supplied legacy/ exclusion must apply",
+    ).toBeUndefined();
+    expect(
+      result.matches.find((p) => p.endsWith("/c.ts")),
+      "non-excluded c.ts must be found",
+    ).toBeDefined();
+  });
+
+  it("empty caller excludeDirs uses default exclusions only", () => {
+    const result = findInSourceFiles({
+      rootDir: resolve(FIXTURES_ROOT, "with-tests-and-legacy"),
+      needle: "the-needle",
+      excludeDirs: [],
+    });
+    expect(
+      result.matches.find((p) => p.includes("/__tests__/")),
+      "defaults must still apply when caller passes []",
+    ).toBeUndefined();
+    expect(
+      result.matches.find((p) => p.includes("/legacy/")),
+      "legacy NOT in defaults -- must be scanned",
+    ).toBeDefined();
   });
 });
 

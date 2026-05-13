@@ -5,7 +5,7 @@
  * Probes the local daemon via the `system.ping` JSON-RPC method
  * (NOT the older "health" namespace — the daemon registers
  * `system.ping` at scope "rpc" in
- * `packages/daemon/src/wiring/setup-gateway-rpc.ts`).
+ * `packages/daemon/src/wiring/setup-gateway-api.ts`).
  *
  * Wraps `withClient` in `Promise.race` with a 1-second `setTimeout`
  * because `withClient`'s underlying `CONNECTION_TIMEOUT_MS` is hardcoded
@@ -19,7 +19,8 @@
  * @module
  */
 
-import { withClient } from "../client/rpc-client.js";
+import { SystemPingContract } from "@comis/core";
+import { withClient, callTyped } from "../client/rpc-client.js";
 
 /**
  * Probe the daemon and return whether it is reachable.
@@ -31,10 +32,12 @@ import { withClient } from "../client/rpc-client.js";
  */
 export async function isDaemonRunning(timeoutMs = 1000): Promise<boolean> {
   const probe = withClient(async (client) => {
-    // The daemon registers `system.ping` at scope "rpc" — see
-    // packages/daemon/src/wiring/setup-gateway-rpc.ts:78. The
-    // codebase is the source of truth for the method name.
-    await client.call("system.ping");
+    // Phase 35 Wave C (35-06): retargeted from raw
+    // `client.call("system.ping")` to `callTyped(SystemPingContract)`.
+    // The contract registry is the single source of truth for the
+    // method name; D-10 LOCKED gates request/response Zod parses in
+    // dev mode and trusts the wire shape in production.
+    await callTyped(client, SystemPingContract, {});
   });
 
   // withClient's underlying CONNECTION_TIMEOUT_MS is hardcoded to

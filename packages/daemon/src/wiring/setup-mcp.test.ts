@@ -493,7 +493,7 @@ describe("setupMcp", () => {
       expect(logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
           serverName: "locked-srv",
-          errorKind: "io",
+          errorKind: "internal",
           hint: expect.stringContaining("Falling back"),
         }),
         expect.stringContaining("Failed to create MCP server output dir"),

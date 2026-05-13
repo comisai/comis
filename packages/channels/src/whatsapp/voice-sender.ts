@@ -92,7 +92,7 @@ export function createWhatsAppVoiceSender(deps: WhatsAppVoiceSenderDeps): WhatsA
             chatId: jid,
             err: sendErr,
             hint: "Check WhatsApp connection and file accessibility",
-            errorKind: "platform",
+            errorKind: "platform" as const,
           },
           "Voice send failed",
         );

@@ -18,7 +18,7 @@
 
 import { stripReasoningTagsFromText } from "../../response-filter/reasoning-tags.js";
 import { findCodeRegions, isInsideCode } from "../../response-filter/code-regions.js";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Inlined strip functions (previously in separate files)
@@ -152,7 +152,7 @@ export function sanitizeAssistantResponse(
     // Sanitization failure must not crash the delivery pipeline.
     // Return trimmed input as best-effort fallback.
     logger?.warn(
-      { err: cause, hint: "Sanitization failed -- returning trimmed raw text as fallback", errorKind: "internal" },
+      { err: cause, hint: "Sanitization failed -- returning trimmed raw text as fallback", errorKind: "internal" as const },
       "Response sanitization pipeline error",
     );
     return text.trim();

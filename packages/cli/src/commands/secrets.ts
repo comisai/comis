@@ -3,14 +3,20 @@
  * Secret management commands: init, set, get, list, delete, import, audit.
  *
  * Provides `comis secrets [init|set|get|list|delete|import|audit]` subcommands
- * for managing encrypted secrets without a running daemon.
+ * for managing encrypted secrets.
  *
- * All secret storage uses AES-256-GCM encryption via the SecretStorePort
- * adapter backed by SQLite (secrets.db in the data directory).
+ * Per Phase 31 (MEM-CTX-PORTS-09, design §8.2.7) the store-backed subcommands
+ * (set, get, list, delete, import) route through daemon RPC -- the CLI no
+ * longer opens the encrypted SQLite store directly. Each store-backed
+ * subcommand gates on a 200ms `requireDaemonOrExit()` probe and exits with
+ * code 4 (DaemonRequired) on failure (see util/daemon-required.ts).
  *
- * The `audit` subcommand scans config YAML and .env files for plaintext
- * secrets and reports findings with severity levels, supporting CI gating
- * via --check and machine-readable output via --json.
+ * `secrets init` is daemon-free -- it calls the `writeMasterKeyIfAbsent`
+ * core helper to generate/persist `SECRETS_MASTER_KEY` in `~/.comis/.env`.
+ *
+ * The `audit` subcommand is daemon-free -- it scans config YAML and .env
+ * files for plaintext secrets and reports findings with severity levels,
+ * supporting CI gating via --check and machine-readable output via --json.
  *
  * @module
  */
@@ -19,16 +25,20 @@ import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { randomBytes } from "node:crypto";
 import {
-  parseMasterKey,
-  createSecretsCrypto,
   loadEnvFile,
   safePath,
   auditSecrets,
+  writeMasterKeyIfAbsent,
+  generateMasterKey,
+  SecretsSetContract,
+  SecretsGetContract,
+  SecretsListContract,
+  SecretsDeleteContract,
 } from "@comis/core";
-import type { SecretStorePort, AuditFinding } from "@comis/core";
-import { createSqliteSecretStore } from "@comis/memory";
+import type { AuditFinding } from "@comis/core";
+import { withClient, callTyped } from "../client/rpc-client.js";
+import { requireDaemonOrExit } from "../util/daemon-required.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { renderTable } from "../output/table.js";
 import { formatRelativeTime } from "./sessions.js";
@@ -98,56 +108,6 @@ function shouldImport(key: string): boolean {
     if (key.startsWith(prefix)) return false;
   }
   return true;
-}
-
-/**
- * Open the secret store using the master key from env or ~/.comis/.env.
- *
- * Resolution order:
- * 1. SECRETS_MASTER_KEY from process.env (ESLint disable: CLI entry point)
- * 2. SECRETS_MASTER_KEY from ~/.comis/.env loaded into a separate record
- *
- * @param dataDir - Data directory (default: ~/.comis)
- * @returns SecretStorePort instance (caller must close in finally block)
- * @throws Error if master key not found or canary validation fails
- */
-function openSecretStore(dataDir?: string): SecretStorePort {
-  const dir = dataDir ?? os.homedir() + "/.comis";
-
-  // 1. Try process.env first (CLI is a top-level entry point, like daemon.ts)
-  // eslint-disable-next-line no-restricted-syntax -- CLI entry point: master key resolution matches daemon.ts pattern
-  let raw = process.env["SECRETS_MASTER_KEY"];
-
-  // 2. Fall back to ~/.comis/.env
-  if (!raw) {
-    const envRecord: Record<string, string | undefined> = {};
-    const envPath = safePath(dir, ".env");
-    loadEnvFile(envPath, envRecord);
-    raw = envRecord["SECRETS_MASTER_KEY"];
-  }
-
-  if (!raw) {
-    throw new Error(
-      "SECRETS_MASTER_KEY not set. Run 'comis secrets init --write' first, or set SECRETS_MASTER_KEY in your environment.",
-    );
-  }
-
-  const masterKey = parseMasterKey(raw);
-  const crypto = createSecretsCrypto(masterKey);
-  const dbPath = safePath(dir, "secrets.db");
-
-  try {
-    return createSqliteSecretStore(dbPath, crypto);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("DECRYPTION_FAILED") || msg.includes("Unsupported state") || msg.includes("auth tag")) {
-      throw new Error(
-        "Master key does not match the existing secrets database. Either use the original key or delete secrets.db to start fresh.",
-        { cause: e },
-      );
-    }
-    throw e;
-  }
 }
 
 /**
@@ -224,43 +184,29 @@ export function registerSecretsCommand(program: Command): void {
     .description("Generate a new master encryption key")
     .option("--write", "Append key to ~/.comis/.env")
     .action(async (options: { write?: boolean }) => {
-      const keyHex = randomBytes(32).toString("hex");
-
       if (options.write) {
-        const dir = os.homedir() + "/.comis";
-        const envPath = safePath(dir, ".env");
-
-        // Check if key already exists
-        try {
-          const existing = fs.readFileSync(envPath, "utf-8");
-          if (/^SECRETS_MASTER_KEY=/m.test(existing)) {
-            error(
-              "SECRETS_MASTER_KEY already exists in ~/.comis/.env. Remove it first or use a different file.",
-            );
-            return;
-          }
-        } catch {
-          // File does not exist -- proceed to create
+        const dataDir = safePath(os.homedir(), ".comis");
+        const result = writeMasterKeyIfAbsent(dataDir);
+        if (result.written) {
+          success(`Master key written to ${result.path} (permissions: 0600)`);
+        } else {
+          error(
+            `SECRETS_MASTER_KEY already exists in ${result.path}. Remove it first or use a different file.`,
+          );
+          return;
         }
-
-        // Ensure directory exists with restricted permissions
-        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-
-        // Append master key
-        fs.appendFileSync(envPath, `\nSECRETS_MASTER_KEY=${keyHex}\n`);
-        fs.chmodSync(envPath, 0o600);
-
-        success("Master key written to ~/.comis/.env (permissions: 0600)");
       } else {
         // Only print key to stdout when NOT writing to file
-        console.log(keyHex);
+        console.log(generateMasterKey());
       }
     });
 
   // secrets set <name>
   secrets
     .command("set <name>")
-    .description("Encrypt and store a secret")
+    .description(
+      "Encrypt and store a secret. Requires the comis daemon to be running.",
+    )
     .option("--value <value>", "Secret value (alternative to interactive prompt)")
     .option("--stdin", "Read value from stdin pipe")
     .option("--provider <provider>", "Provider tag (auto-detected if omitted)")
@@ -269,20 +215,20 @@ export function registerSecretsCommand(program: Command): void {
         name: string,
         options: { value?: string; stdin?: boolean; provider?: string },
       ) => {
-        let store: SecretStorePort | undefined;
+        await requireDaemonOrExit();
         try {
           const value = await resolveSecretValue(options);
           const provider = options.provider ?? detectProvider(name);
 
-          store = openSecretStore();
-          const result = store.set(name, value, { provider });
+          await withClient(async (client) => {
+            return await callTyped(client, SecretsSetContract, {
+              name,
+              value,
+              ...(provider !== undefined ? { provider } : {}),
+            });
+          });
 
-          if (result.ok) {
-            success(`Secret '${name}' stored successfully`);
-          } else {
-            error(result.error.message);
-            process.exit(1);
-          }
+          success(`Secret '${name}' stored successfully`);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           if (msg === "Cancelled") {
@@ -291,8 +237,6 @@ export function registerSecretsCommand(program: Command): void {
           }
           error(msg);
           process.exit(1);
-        } finally {
-          store?.close();
         }
       },
     );
@@ -300,7 +244,9 @@ export function registerSecretsCommand(program: Command): void {
   // secrets get <name>
   secrets
     .command("get <name>")
-    .description("Decrypt and display a secret")
+    .description(
+      "Decrypt and display a secret. Requires the comis daemon to be running.",
+    )
     .option("--yes", "Skip confirmation prompt")
     .action(async (name: string, options: { yes?: boolean }) => {
       // Confirmation guard
@@ -316,17 +262,13 @@ export function registerSecretsCommand(program: Command): void {
         }
       }
 
-      let store: SecretStorePort | undefined;
+      await requireDaemonOrExit();
       try {
-        store = openSecretStore();
-        const result = store.getDecrypted(name);
+        const result = await withClient(async (client) => {
+          return await callTyped(client, SecretsGetContract, { name });
+        });
 
-        if (!result.ok) {
-          error(result.error.message);
-          process.exit(1);
-        }
-
-        if (result.value === undefined) {
+        if (!result.exists || result.value === undefined) {
           error(`Secret '${name}' not found`);
           process.exit(1);
         }
@@ -336,40 +278,38 @@ export function registerSecretsCommand(program: Command): void {
       } catch (e) {
         error(e instanceof Error ? e.message : String(e));
         process.exit(1);
-      } finally {
-        store?.close();
       }
     });
 
   // secrets list
   secrets
     .command("list")
-    .description("List stored secrets (metadata only, no values)")
+    .description(
+      "List stored secrets (metadata only, no values). Requires the comis daemon to be running.",
+    )
     .option("--format <format>", "Output format (table|json)", "table")
     .action(async (options: { format: string }) => {
-      let store: SecretStorePort | undefined;
+      await requireDaemonOrExit();
       try {
-        store = openSecretStore();
-        const result = store.list();
+        const result = await withClient(async (client) => {
+          return await callTyped(client, SecretsListContract, {});
+        });
 
-        if (!result.ok) {
-          error(result.error.message);
-          process.exit(1);
-        }
+        const rows = result.secrets;
 
         if (options.format === "json") {
-          json(result.value);
+          json(rows);
           return;
         }
 
-        if (result.value.length === 0) {
+        if (rows.length === 0) {
           info("No secrets stored");
           return;
         }
 
         renderTable(
           ["Name", "Provider", "Created", "Last Used", "Usage Count"],
-          result.value.map((s) => [
+          rows.map((s) => [
             s.name,
             s.provider ?? "-",
             formatRelativeTime(s.createdAt),
@@ -380,15 +320,15 @@ export function registerSecretsCommand(program: Command): void {
       } catch (e) {
         error(e instanceof Error ? e.message : String(e));
         process.exit(1);
-      } finally {
-        store?.close();
       }
     });
 
   // secrets delete <name>
   secrets
     .command("delete <name>")
-    .description("Delete a secret from the store")
+    .description(
+      "Delete a secret from the store. Requires the comis daemon to be running.",
+    )
     .option("--yes", "Skip confirmation prompt")
     .action(async (name: string, options: { yes?: boolean }) => {
       if (!options.yes) {
@@ -402,17 +342,13 @@ export function registerSecretsCommand(program: Command): void {
         }
       }
 
-      let store: SecretStorePort | undefined;
+      await requireDaemonOrExit();
       try {
-        store = openSecretStore();
-        const result = store.delete(name);
+        const result = await withClient(async (client) => {
+          return await callTyped(client, SecretsDeleteContract, { name });
+        });
 
-        if (!result.ok) {
-          error(result.error.message);
-          process.exit(1);
-        }
-
-        if (!result.value) {
+        if (!result.deleted) {
           warn(`Secret '${name}' not found`);
         } else {
           success(`Secret '${name}' deleted`);
@@ -420,24 +356,22 @@ export function registerSecretsCommand(program: Command): void {
       } catch (e) {
         error(e instanceof Error ? e.message : String(e));
         process.exit(1);
-      } finally {
-        store?.close();
       }
     });
 
   // secrets import
   secrets
     .command("import")
-    .description("Import secrets from a .env file")
+    .description(
+      "Import secrets from a .env file. Requires the comis daemon to be running.",
+    )
     .option("--file <path>", "Source .env file path (default: ~/.comis/.env)")
     .action(async (options: { file?: string }) => {
       const sourcePath =
         options.file ?? safePath(os.homedir() + "/.comis", ".env");
 
-      let store: SecretStorePort | undefined;
+      await requireDaemonOrExit();
       try {
-        store = openSecretStore();
-
         // Load source file into a fresh record
         const envRecord: Record<string, string | undefined> = {};
         const loadResult = loadEnvFile(sourcePath, envRecord);
@@ -461,14 +395,20 @@ export function registerSecretsCommand(program: Command): void {
           }
 
           const provider = detectProvider(key);
-          const result = store.set(key, value, { provider });
-
-          if (result.ok) {
+          try {
+            await withClient(async (client) => {
+              return await callTyped(client, SecretsSetContract, {
+                name: key,
+                value,
+                ...(provider !== undefined ? { provider } : {}),
+              });
+            });
             imported++;
             success(`Imported: ${key}`);
-          } else {
+          } catch (e) {
             failed++;
-            error(`Failed: ${key} -- ${result.error.message}`);
+            const msg = e instanceof Error ? e.message : String(e);
+            error(`Failed: ${key} -- ${msg}`);
           }
         }
 
@@ -478,8 +418,6 @@ export function registerSecretsCommand(program: Command): void {
       } catch (e) {
         error(e instanceof Error ? e.message : String(e));
         process.exit(1);
-      } finally {
-        store?.close();
       }
     });
 

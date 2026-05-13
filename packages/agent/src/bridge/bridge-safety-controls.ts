@@ -15,7 +15,7 @@
  */
 
 import type { SessionKey, TypedEventBus } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { BudgetGuard } from "../budget/budget-guard.js";
 import type { StepCounter } from "../executor/step-counter.js";
 import type { CircuitBreaker } from "../safety/circuit-breaker.js";

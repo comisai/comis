@@ -1,0 +1,4 @@
+# Generated artifacts — flagged for GitHub's linguist so they don't count in
+# language statistics and PR review filters can skip them by default.
+# Phase 35 Wave D Plan 35-20 (OQ-3 marker).
+packages/web/src/api/contracts.generated.* linguist-generated=true

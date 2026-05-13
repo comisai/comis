@@ -11,7 +11,7 @@
  * by directly invoking `createExecTool` against the live daemon container's
  * eventBus and secretManager.
  *
- * exec is NOT an RPC method (packages/daemon/src/wiring/setup-gateway-rpc.ts
+ * exec is NOT an RPC method (packages/daemon/src/wiring/setup-gateway-api.ts
  * has no exec.* in the allowlist). It is an AgentTool registered at
  * exec-tool.ts:600. Driving the install-detour code path requires
  * constructing the tool inline and calling tool.execute() directly.
@@ -36,7 +36,10 @@ import {
 import { DAEMON_STARTUP_MS } from "../support/timeouts.js";
 import { createEventAwaiter } from "../support/event-awaiter.js";
 import type { TypedEventBus } from "@comis/core";
-import { createExecTool, createProcessRegistry } from "@comis/skills";
+// Phase 33 SKILLS-SPLIT-08: exec / process registry moved to the `./tools`
+// subpath after Plan 03 (the `.` subpath barrel no longer re-exports them
+// because daemon imports them from `@comis/skills/tools` directly).
+import { createExecTool, createProcessRegistry } from "@comis/skills/tools";
 // Test-only stub. Allowed import from test/integration/ — the architecture-grep
 // (packages/skills/src/__tests__/architecture.test.ts) scopes only
 // packages/<pkg>/src/**/*.ts, NOT test/integration/.

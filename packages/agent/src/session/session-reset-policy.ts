@@ -16,12 +16,12 @@
  * @module
  */
 
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { TypedEventBus } from "@comis/core";
 import { parseFormattedSessionKey } from "@comis/core";
 import type { SessionResetPolicyConfig, ResetPolicyOverride } from "@comis/core";
-import type { SessionStore, SessionDetailedEntry } from "@comis/memory";
-import { computeNextRunAtMs } from "@comis/scheduler";
+import type { SessionStorePort, SessionDetailedEntry } from "@comis/core";
+import type { ComputeDailyResetNextRun } from "@comis/core";
 import type { SessionLifecycle } from "./session-lifecycle.js";
 
 // ---------------------------------------------------------------------------
@@ -49,12 +49,20 @@ export interface EffectiveResetPolicy {
  * always reads the latest config at call time.
  */
 export interface SessionResetSchedulerDeps {
-  sessionStore: SessionStore;
+  sessionStore: SessionStorePort;
   sessionManager: SessionLifecycle;
   eventBus: TypedEventBus;
   logger: ComisLogger;
   /** Callback to read current config (reads current config on each call). */
   getConfig: () => SessionResetPolicyConfig | undefined;
+  /**
+   * Daily-reset cron computation, injected by daemon composition. The canonical
+   * implementation in `@comis/scheduler` (`computeNextRunAtMs` over a
+   * `0 H * * *` cron schedule) is wired in `setup-schedulers.ts`. Phase 32
+   * commit 12 (ORCH-EXT-15) introduced this dep so agent no longer imports
+   * `@comis/scheduler` directly.
+   */
+  computeDailyResetNextRun: ComputeDailyResetNextRun;
   /** Injectable clock for testing. Defaults to Date.now. */
   nowMs?: () => number;
 }
@@ -117,24 +125,23 @@ export function resolvePolicy(
 /**
  * Check whether a daily reset is due for a session.
  *
- * Uses croner (via computeNextRunAtMs) to determine if the daily reset
- * hour has passed since the session was last updated. If the next
- * occurrence of "0 {hour} * * *" after updatedAt is <= nowMs, the
- * session should be reset.
+ * Delegates the cron-shape "next 0 H * * * (in tz) at or after updatedAt"
+ * calculation to the injected `computeDailyResetNextRun` callback (canonical
+ * implementation: `computeNextRunAtMs` from `@comis/scheduler`). If the next
+ * occurrence after updatedAt is `<= nowMs`, the session should be reset.
+ *
+ * Phase 32 commit 12 (ORCH-EXT-15) flipped this from a direct
+ * `@comis/scheduler` import to a deps callback so agent no longer reaches
+ * into scheduler at the import boundary.
  */
 export function isDailyResetDue(
   updatedAt: number,
   hour: number,
   timezone: string,
   nowMs: number,
+  computeDailyResetNextRun: ComputeDailyResetNextRun,
 ): boolean {
-  const cronExpr = `0 ${hour} * * *`;
-  const schedule = {
-    kind: "cron" as const,
-    expr: cronExpr,
-    tz: timezone || undefined,
-  };
-  const nextRun = computeNextRunAtMs(schedule, updatedAt);
+  const nextRun = computeDailyResetNextRun(updatedAt, hour, timezone);
   if (nextRun === undefined) return false;
   return nextRun <= nowMs;
 }
@@ -157,11 +164,16 @@ export function isIdleResetDue(
  *
  * Returns { reset, reason } where reason describes what triggered the reset.
  * For hybrid mode, the first matching condition determines the reason.
+ *
+ * `computeDailyResetNextRun` is forwarded into `isDailyResetDue`; the daily
+ * + hybrid branches consult it, the idle branch ignores it. Tests inject a
+ * deterministic stub; daemon composition wires the scheduler-backed callback.
  */
 export function checkReset(
   policy: EffectiveResetPolicy,
   session: SessionDetailedEntry,
   nowMs: number,
+  computeDailyResetNextRun: ComputeDailyResetNextRun,
 ): { reset: boolean; reason: string } {
   switch (policy.mode) {
     case "none":
@@ -173,6 +185,7 @@ export function checkReset(
         policy.dailyResetHour,
         policy.dailyResetTimezone,
         nowMs,
+        computeDailyResetNextRun,
       );
       return { reset: due, reason: due ? "daily" : "not-due" };
     }
@@ -188,6 +201,7 @@ export function checkReset(
         policy.dailyResetHour,
         policy.dailyResetTimezone,
         nowMs,
+        computeDailyResetNextRun,
       );
       const idleDue = isIdleResetDue(session.updatedAt, policy.idleTimeoutMs, nowMs);
 
@@ -248,7 +262,7 @@ export function createSessionResetScheduler(
       if (policy.mode === "none") continue;
 
       const now = getNow();
-      const result = checkReset(policy, session, now);
+      const result = checkReset(policy, session, now, deps.computeDailyResetNextRun);
 
       if (result.reset) {
         const parsed = parseFormattedSessionKey(session.sessionKey);

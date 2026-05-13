@@ -11,8 +11,6 @@
     "dist"
   ],
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
     "url": "https://github.com/comisai/comis.git",
@@ -24,8 +22,16 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/skills/index.d.ts",
+      "import": "./dist/skills/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
+    "./platform-tools": {
+      "types": "./dist/platform-tools/index.d.ts",
+      "import": "./dist/platform-tools/index.js"
     }
   },
   "scripts": {
@@ -34,7 +40,6 @@
   },
   "dependencies": {
     "@comis/core": "workspace:*",
-    "@comis/infra": "workspace:*",
     "@comis/shared": "workspace:*",
     "@elevenlabs/elevenlabs-js": "2.45.0",
     "@fal-ai/client": "1.9.6",

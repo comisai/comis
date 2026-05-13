@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import pino from "pino";
 import type { TransportMultiOptions, TransportSingleOptions } from "pino";
+import type { ComisLogger as CoreComisLogger } from "@comis/core";
 
 /**
  * Default paths to redact from all log output.
@@ -107,6 +108,18 @@ export interface LoggerOptions {
   mixin?: () => Record<string, unknown>;
   /** Multi-target transport config. Takes precedence over isDev pino-pretty. */
   transport?: TransportMultiOptions | TransportSingleOptions;
+  /**
+   * Disable Pino redaction entirely. ONLY for residency tests where the
+   * test must observe that secret values truly do not appear in logs;
+   * production must NEVER set this. An architecture test in
+   * `test/architecture/source-rules.test.ts` enforces this contract by
+   * source-grep on `packages/*\/src/**\/*.ts` (RES-PIT-31-4 /
+   * MEM-CTX-PORTS-14).
+   *
+   * Consumer: only `test/integration/secret-rpc-residency.test.ts` sets
+   * this to `true` via the test daemon harness.
+   */
+  disableRedaction?: boolean;
 }
 
 /**
@@ -117,9 +130,18 @@ export interface LoggerOptions {
 const AUDIT_LEVEL_VALUE = 35;
 
 /**
- * Comis logger type: standard Pino logger with an additional `audit` method.
+ * Comis logger type.
+ *
+ * Phase 28 commit 2 (CORE-PORTS-05): retyped to alias the Pino-free
+ * structural contract in @comis/core. The Pino-backed runtime impl
+ * returned by `createLogger()` (`pino.Logger<"audit"> & { audit: pino.LogFn }`)
+ * remains assignable to this contract; the proof lives at
+ * `packages/infra/src/logging/__tests__/logger-contract.type-check.ts` via
+ * `expectTypeOf<PinoComisLogger>().toExtend<CoreComisLogger>()` (matcher
+ * call uses `.toExtend(...)` per RES-STK-2 — `toMatchTypeOf` deprecated
+ * since expect-type@1.2.0; expect-type@1.3.0 ships with Vitest 4.1.5).
  */
-export type ComisLogger = pino.Logger<"audit"> & { audit: pino.LogFn };
+export type ComisLogger = CoreComisLogger;
 
 /**
  * Create an Comis logger with credential redaction and audit level.
@@ -149,10 +171,16 @@ export function createLogger(options: LoggerOptions): ComisLogger {
     customLevels: {
       audit: AUDIT_LEVEL_VALUE,
     },
-    redact: {
-      paths: allRedactPaths,
-      censor: "[REDACTED]",
-    },
+    // RES-PIT-31-4 / MEM-CTX-PORTS-14: when the residency-test harness
+    // sets `options.disableRedaction` (see LoggerOptions JSDoc above),
+    // emit `redact: undefined` so Pino emits raw payloads and the test
+    // can observe that secrets truly do not appear. Production must
+    // NEVER enable this flag; an architecture invariant in
+    // `test/architecture/source-rules.test.ts` source-greps the literal
+    // assignment form and fails the build on any production-source match.
+    redact: options.disableRedaction
+      ? undefined
+      : { paths: allRedactPaths, censor: "[REDACTED]" },
     timestamp: pino.stdTimeFunctions.isoTime,
     ...(isMultiTransport
       ? {}
@@ -180,5 +208,14 @@ export function createLogger(options: LoggerOptions): ComisLogger {
     };
   }
 
-  return pino<"audit">(pinoOptions) as ComisLogger;
+  // Cast via unknown: Pino's `Logger<"audit">.child()` return type does
+  // not statically project the `audit` method (Pino's TS types are
+  // permissive about custom-level methods on child loggers), so direct
+  // assignment to the structural CoreComisLogger contract trips
+  // ts2352. The runtime behavior is correct (the `audit` method IS
+  // present on every child logger because `customLevels: { audit: 35 }`
+  // is inherited), and the assignability proof in
+  // `__tests__/logger-contract.test.ts` guards the contract — but the
+  // cast here must route through `unknown` to satisfy tsc.
+  return pino<"audit">(pinoOptions) as unknown as ComisLogger;
 }

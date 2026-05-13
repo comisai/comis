@@ -42,11 +42,40 @@ export type BackupError =
   | { code: "BACKUP_WRITE_FAILED"; path: string; cause: string };
 
 /**
+ * Allowed character set for the backup-filename `prefix` argument.
+ *
+ * Restricting `prefix` to `[a-z0-9-]+` accomplishes two things:
+ *  - Prevents filesystem-unsafe characters (slash, colon, null byte,
+ *    backslash, etc.) from being embedded into the backup filename
+ *    (WR-02 — the cross-platform filename hazard).
+ *  - Makes the prefix safe to interpolate into a RegExp literal in
+ *    `pruneOldBackups` without escape — none of the allowed characters
+ *    have regex semantics (WR-01 — the ReDoS / unintended-match hazard).
+ *
+ * Production callers pass the literals "sync-tooling" or "tooling-fill",
+ * both of which satisfy this allowlist. The check is defensive: it
+ * guards against a future caller threading an environment-derived
+ * value through this API.
+ */
+const PREFIX_ALLOWLIST = /^[a-z0-9-]+$/;
+
+function validatePrefix(prefix: string): void {
+  if (!PREFIX_ALLOWLIST.test(prefix)) {
+    throw new Error(
+      `Invalid backup prefix ${JSON.stringify(prefix)}; must match /^[a-z0-9-]+$/`,
+    );
+  }
+}
+
+/**
  * Build a backup filename with a customizable command prefix.
  *
  * The optional parameters exist for testability — production callers
  * pass no args (sync-tooling) or only `prefix` (tooling-fill) and get
  * a fresh `Date` + `randomBytes` each call.
+ *
+ * `prefix` is validated against `/^[a-z0-9-]+$/`; non-conforming
+ * prefixes throw synchronously.
  *
  * @param now - Override the timestamp (default: `new Date()`).
  * @param rng - Override the 6-char hex suffix generator (default: `randomBytes(3).toString('hex')`).
@@ -57,6 +86,7 @@ export function buildBackupFilename(
   rng: () => string = () => randomBytes(3).toString("hex"),
   prefix: string = "sync-tooling",
 ): string {
+  validatePrefix(prefix);
   // toISOString() → "2026-05-10T12:34:56.789Z"
   // Replace ':' → '-' (not filesystem-safe on all platforms) and drop trailing 'Z'.
   const iso = now.toISOString();
@@ -148,6 +178,14 @@ export function pruneOldBackups(
   prefix: string,
   keep: number = 5,
 ): { deleted: number } {
+  // Validate prefix against the same allowlist used by buildBackupFilename.
+  // pruneOldBackups is best-effort, so a malformed prefix returns
+  // { deleted: 0 } rather than throwing — pruning a wider regex than
+  // intended is far worse than skipping retention this call.
+  if (!PREFIX_ALLOWLIST.test(prefix)) {
+    return { deleted: 0 };
+  }
+
   const dirPathRes = tryCatch(() => safePath(homeDir, ".comis"));
   if (!dirPathRes.ok) return { deleted: 0 };
   const dirPath = dirPathRes.value;
@@ -161,20 +199,20 @@ export function pruneOldBackups(
 
   // Match the backup pattern with a prefix-specific anchor. Anchor on the
   // literal prefix to avoid pruning sync-tooling backups when called for
-  // tooling-fill (and vice versa).
+  // tooling-fill (and vice versa). The prefix is guaranteed by
+  // PREFIX_ALLOWLIST above to contain no regex metacharacters, so direct
+  // interpolation is safe (no ReDoS / unintended-match surface).
   const re = new RegExp(`^config\\.pre-${prefix}-.+\\.yaml$`);
   const candidates = entries
     .filter((e) => e.isFile() && re.test(e.name))
     .map((e) => {
       const fullPathRes = tryCatch(() => safePath(homeDir, ".comis", e.name));
       if (!fullPathRes.ok) return null;
-      let mtimeMs = 0;
       try {
-        mtimeMs = fs.statSync(fullPathRes.value).mtimeMs;
+        return { path: fullPathRes.value, mtimeMs: fs.statSync(fullPathRes.value).mtimeMs };
       } catch {
         return null;
       }
-      return { path: fullPathRes.value, mtimeMs };
     })
     .filter((x): x is { path: string; mtimeMs: number } => x !== null);
 

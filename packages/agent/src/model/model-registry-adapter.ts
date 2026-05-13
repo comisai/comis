@@ -290,7 +290,7 @@ export function registerCustomProviders(
           providerName,
           apiKeyName: entry.apiKeyName,
           hint: "Set the named secret in ~/.comis/.env, omit apiKeyName for type='ollama', or remove the provider entry from config.yaml",
-          errorKind: "config",
+          errorKind: "config" as const,
         },
         "Custom provider has models but no API key -- skipping registration",
       );
@@ -353,7 +353,7 @@ export function registerCustomProviders(
           providerName,
           err: error instanceof Error ? error.message : String(error),
           hint: "Check providers.entries config: baseUrl required when defining models; apiKey required unless oauth configured",
-          errorKind: "config",
+          errorKind: "config" as const,
         },
         "Custom provider registration failed",
       );

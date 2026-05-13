@@ -11,7 +11,14 @@
  */
 
 import type Database from "better-sqlite3";
-import { formatSessionKey, type SessionKey } from "@comis/core";
+import {
+  formatSessionKey,
+  type SessionKey,
+  type SessionStorePort,
+  type SessionData,
+  type SessionListEntry,
+  type SessionDetailedEntry,
+} from "@comis/core";
 import { z } from "zod";
 import type { SessionRow } from "./types.js";
 
@@ -41,95 +48,18 @@ function parseMetadata(raw: string): Record<string, unknown> {
   }
 }
 
-/**
- * Data returned when loading a session.
- */
-export interface SessionData {
-  messages: unknown[];
-  metadata: Record<string, unknown>;
-  createdAt: number;
-  updatedAt: number;
-}
+// SessionData, SessionListEntry, SessionDetailedEntry, SessionStorePort —
+// canonical home is `@comis/core/src/ports/session-store-types.ts` (Phase 31
+// commit 1 / MEM-CTX-PORTS-03). Imported above for use in the factory body's
+// internal type narrowing.
 
 /**
- * Session listing entry.
- */
-export interface SessionListEntry {
-  sessionKey: string;
-  updatedAt: number;
-}
-
-/**
- * Detailed session listing entry with all fields needed for kind derivation.
- */
-export interface SessionDetailedEntry {
-  sessionKey: string;
-  tenantId: string;
-  userId: string;
-  channelId: string;
-  metadata: Record<string, unknown>;
-  createdAt: number;
-  updatedAt: number;
-  messageCount: number;
-}
-
-/**
- * SessionStore provides CRUD operations for conversation sessions.
- *
- * All operations are synchronous (better-sqlite3 is synchronous).
- * Sessions are keyed by formatted SessionKey strings.
- */
-export interface SessionStore {
-  /**
-   * Save (upsert) a session. On conflict, updates messages/metadata/updatedAt
-   * while preserving the original createdAt.
-   */
-  save(key: SessionKey, messages: unknown[], metadata?: Record<string, unknown>): void;
-
-  /**
-   * Load a session by its key. Returns undefined if not found.
-   */
-  load(key: SessionKey): SessionData | undefined;
-
-  /**
-   * List sessions ordered by updatedAt DESC.
-   * Optionally filter by tenantId.
-   */
-  list(tenantId?: string): SessionListEntry[];
-
-  /**
-   * Delete a session by its key.
-   * @returns true if a row was deleted, false if not found.
-   */
-  delete(key: SessionKey): boolean;
-
-  /**
-   * Delete sessions that have not been updated within maxAgeMs milliseconds.
-   * @returns The number of sessions deleted.
-   */
-  deleteStale(maxAgeMs: number): number;
-
-  /**
-   * Load a session by its formatted key string (as returned by list()).
-   * Avoids the need to parse the key back into a SessionKey object.
-   */
-  loadByFormattedKey(sessionKey: string): SessionData | undefined;
-
-  /**
-   * List sessions with full detail for filtering by kind.
-   * Returns all columns needed to derive session kind (dm, group, sub-agent).
-   * Optionally filter by tenantId.
-   */
-  listDetailed(tenantId?: string): SessionDetailedEntry[];
-}
-
-/**
- * Create a SessionStore bound to the given database.
+ * Create a SessionStorePort bound to the given database.
  *
  * Assumes `initSchema()` has already been called on the database
  * to create the `sessions` table.
  */
-export function createSessionStore(db: Database.Database): SessionStore {
+export function createSessionStore(db: Database.Database): SessionStorePort {
   // Prepare statements once for performance
   const upsertStmt = db.prepare(`
     INSERT INTO sessions (session_key, tenant_id, user_id, channel_id, messages, created_at, updated_at, metadata)

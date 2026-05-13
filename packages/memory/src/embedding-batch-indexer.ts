@@ -102,7 +102,7 @@ export function createBatchIndexer(
                 failed++;
                 markFailed.run(rows[i].id);
                 logger?.warn(
-                  { memoryId: rows[i].id, contentLength: rows[i].content.length, errorKind: "dependency" },
+                  { memoryId: rows[i].id, contentLength: rows[i].content.length, errorKind: "dependency" as const },
                   "Embedding failed for individual memory, skipping",
                 );
                 continue;
@@ -122,7 +122,7 @@ export function createBatchIndexer(
             {
               err: result.error.message,
               batchSize: rows.length,
-              errorKind: "dependency",
+              errorKind: "dependency" as const,
               hint: "Check embedding provider connectivity and API key validity",
             },
             "Embedding batch failed entirely",

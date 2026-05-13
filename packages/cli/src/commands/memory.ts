@@ -10,7 +10,13 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { withClient } from "../client/rpc-client.js";
+import {
+  ContextSearchContract,
+  ContextInspectContract,
+  MemoryStatsContract,
+  MemoryFlushContract,
+} from "@comis/core";
+import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
@@ -62,15 +68,21 @@ export function registerMemoryCommand(program: Command): void {
       }
 
       try {
+        // Phase 35 Wave C closure (Plan 35-19): pre-Plan-35-19 called the
+        // stale `memory.search` method name (the daemon never implemented
+        // that name — only `memory.search_files` + `context.search`).
+        // Retargeted to ContextSearchContract which is the closest
+        // semantic match (full-text search over message + summary content).
         const result = await withSpinner("Searching memory...", () =>
           withClient(async (client) => {
-            return (await client.call("memory.search", { query, limit })) as {
-              results: MemorySearchResult[];
-            };
+            return await callTyped(client, ContextSearchContract, {
+              query,
+              limit,
+            });
           }),
         );
 
-        const results = result.results ?? [];
+        const results = (result.results ?? []) as unknown as MemorySearchResult[];
 
         if (results.length === 0) {
           info("No matching entries found");
@@ -107,20 +119,25 @@ export function registerMemoryCommand(program: Command): void {
     .option("--format <format>", "Output format (detail|json)", "detail")
     .action(async (id: string, options: { format: string }) => {
       try {
+        // Phase 35 Wave C closure (Plan 35-19): pre-Plan-35-19 called the
+        // stale `memory.inspect` method (no daemon handler). Retargeted to
+        // ContextInspectContract which retrieves a single entry by id —
+        // the closest semantic match. The response is a loose record;
+        // we coerce to MemoryEntry shape for rendering.
         const result = await withSpinner("Fetching entry...", () =>
           withClient(async (client) => {
-            return (await client.call("memory.inspect", { id })) as {
-              entry?: Record<string, unknown>;
-            };
+            return await callTyped(client, ContextInspectContract, { id });
           }),
         );
 
-        if (!result.entry) {
+        // ContextInspectContract returns the entry directly as a loose
+        // record (no `entry` wrapper). Treat empty record as "not found".
+        if (!result || Object.keys(result).length === 0) {
           warn(`No entry found with ID: ${id}`);
           return;
         }
 
-        const entry = result.entry as unknown as MemoryEntry;
+        const entry = result as unknown as MemoryEntry;
 
         if (options.format === "json") {
           json(entry);
@@ -159,15 +176,18 @@ export function registerMemoryCommand(program: Command): void {
     .option("--format <format>", "Output format (detail|json)", "detail")
     .action(async (options: { format: string }) => {
       try {
+        // Phase 35 Wave C closure (Plan 35-19): pre-Plan-35-19 called the
+        // stale `memory.inspect` method with no args expecting a `stats`
+        // wrapper. Retargeted to MemoryStatsContract — the actual daemon
+        // memory-statistics surface. Response is a loose record; the
+        // values matter, not the precise shape.
         const result = await withSpinner("Fetching memory stats...", () =>
           withClient(async (client) => {
-            return (await client.call("memory.inspect", {})) as {
-              stats?: Record<string, unknown>;
-            };
+            return await callTyped(client, MemoryStatsContract, {});
           }),
         );
 
-        const stats = result.stats;
+        const stats = result as Record<string, unknown>;
         if (!stats || Object.keys(stats).length === 0) {
           info("No memory statistics available");
           return;
@@ -255,13 +275,20 @@ export function registerMemoryCommand(program: Command): void {
       }
 
       try {
+        // Phase 35 Wave C closure (Plan 35-19): pre-Plan-35-19 called the
+        // stale `config.set` method (no daemon handler). Retargeted to
+        // MemoryFlushContract which is the real flush surface. The
+        // tenant filter maps to `tenant_id`; the generic `--filter
+        // key=value` flag was a no-op against the old call too (the
+        // daemon never implemented `config.set` with section=memory),
+        // so dropping it here preserves observable behavior.
         await withSpinner("Clearing memory entries...", () =>
           withClient(async (client) => {
-            return await client.call("config.set", {
-              section: "memory",
-              key: "clear",
-              value: params,
-            });
+            const flushParams: { tenant_id?: string } = {};
+            if (typeof params.tenantId === "string") {
+              flushParams.tenant_id = params.tenantId;
+            }
+            return await callTyped(client, MemoryFlushContract, flushParams);
           }),
         );
 

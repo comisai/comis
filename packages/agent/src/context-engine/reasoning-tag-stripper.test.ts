@@ -260,7 +260,7 @@ describe("validateRoleAttribution", () => {
         expectedRole: "assistant",
         actualRole: "user",
         hint: "Session role attribution anomaly detected; repairOrphanedMessages may not have run",
-        errorKind: "state",
+        errorKind: "internal",
       }),
       "Post-load role validation anomaly",
     );

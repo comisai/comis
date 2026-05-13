@@ -12,8 +12,7 @@
 
 import { writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { createPatch } from "diff";
-import { safePath } from "@comis/core";
-import { resolveModelPricing, ZERO_COST } from "../model/model-catalog.js";
+import { safePath, resolveModelPricing, ZERO_COST } from "@comis/core";
 
 const MAX_DIFF_FILES = 50;
 

@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, type Mock } from "vitest";
 import { runPostBatchContinuation } from "./post-batch-continuation.js";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Test helpers

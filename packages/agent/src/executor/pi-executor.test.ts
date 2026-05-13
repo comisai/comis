@@ -1846,7 +1846,7 @@ describe("PiExecutor", () => {
       expect(result.response).toBe("test response");
       // RAG failure logged as warn
       expect(deps.logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ hint: expect.any(String), errorKind: "retrieval_failure" }),
+        expect.objectContaining({ hint: expect.any(String), errorKind: "dependency" }),
         "RAG retrieval failed (non-fatal)",
       );
     });
@@ -6241,7 +6241,7 @@ describe("skip guard for lookback_window_exceeded cache breaks", () => {
             tokenDrop: event.tokenDrop,
             conversationBlockCount: event.conversationBlockCount,
             hint: "Long conversation exceeded lookback window. Multi-zone breakpoints mitigate this. No action needed.",
-            errorKind: "performance" as const,
+            errorKind: "internal" as const,
           },
           "Cache miss from lookback window exceeded (not server eviction)",
         );
@@ -6283,7 +6283,7 @@ describe("skip guard for lookback_window_exceeded cache breaks", () => {
     // WARN log should be emitted for observability
     expect(logWarn).toHaveBeenCalledOnce();
     expect(logWarn.mock.calls[0][1]).toContain("lookback window exceeded");
-    expect(logWarn.mock.calls[0][0].errorKind).toBe("performance");
+    expect(logWarn.mock.calls[0][0].errorKind).toBe("internal");
     expect(logWarn.mock.calls[0][0].hint).toContain("lookback window");
 
     // INFO log (coordinated reset) should NOT be emitted

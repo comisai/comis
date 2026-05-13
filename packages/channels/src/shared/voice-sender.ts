@@ -115,7 +115,7 @@ export async function prepareVoicePayload(
       {
         err: waveformResult.error.message,
         hint: "Waveform extraction failed; voice will be sent without waveform preview",
-        errorKind: "dependency",
+        errorKind: "dependency" as const,
       },
       "Waveform extraction failed",
     );

@@ -25,7 +25,7 @@ import { join } from "node:path";
 import {
   createSubAgentRunner,
   type SubAgentRunnerDeps,
-} from "@comis/daemon";
+} from "@comis/agent";
 
 import { TypedEventBus } from "@comis/core";
 
@@ -194,7 +194,7 @@ describe("resilience E2E: subagent watchdog timeout and ghost sweep", () => {
 
     // Use very large maxRunTimeoutMs so watchdog never fires within test window.
     // Then backdate startedAt so the ghost sweep sees the run as ancient.
-    // This is the established technique from sub-agent-runner.test.ts (472-02).
+    // This is the established technique from packages/agent/src/spawn/sub-agent-runner.test.ts (472-02).
     const LARGE_TIMEOUT_MS = 10_000_000;
 
     const deps = buildIntegrationDeps({

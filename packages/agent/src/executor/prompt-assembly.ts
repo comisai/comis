@@ -29,7 +29,7 @@ import type {
 } from "@comis/core";
 import { wrapExternalContent, safePath, formatSessionKey, generateCanaryToken } from "@comis/core";
 import { suppressError } from "@comis/shared";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { PromptMode, RuntimeInfo, InboundMetadata, BootstrapContextFile } from "../bootstrap/types.js";
 import {
@@ -627,7 +627,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         logger.debug({ agentId, resultCount: 0, durationMs: Date.now() - ragStart }, "RAG search complete");
       }
     } catch (err) {
-      logger.warn({ agentId, err, durationMs: Date.now() - ragStart, hint: "RAG search failed — agent will proceed without memory context", errorKind: "retrieval_failure" as const }, "RAG retrieval failed (non-fatal)");
+      logger.warn({ agentId, err, durationMs: Date.now() - ragStart, hint: "RAG search failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG retrieval failed (non-fatal)");
     }
   }
 
@@ -866,7 +866,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           bootstrapPercent,
           threshold: BOOTSTRAP_BUDGET_WARN_PERCENT,
           hint: `Bootstrap files consume ${bootstrapPercent}% of system prompt; consider trimming AGENTS.md or reducing maxChars`,
-          errorKind: "performance" as const,
+          errorKind: "resource" as const,
         },
         "Bootstrap content exceeds budget threshold",
       );

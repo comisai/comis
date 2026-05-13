@@ -9,10 +9,12 @@
 
 import type { NormalizedMessage, SessionKey, MemoryEntry, AppContainer, AppConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { CommandHandlerDeps, CommandDirectives, AgentExecutor, CostTracker } from "@comis/agent";
+import type { AgentExecutor, CostTracker } from "@comis/agent";
+// Phase 32 commit 6: CommandHandlerDeps + CommandDirectives moved to @comis/orchestrator (ORCH-EXT-08).
+import type { CommandHandlerDeps, CommandDirectives } from "@comis/orchestrator";
 import type { MemoryApi, SqliteMemoryAdapter, createEmbeddingQueue, createSessionStore } from "@comis/memory";
 import type { RpcCall } from "@comis/skills";
-import { registerRpcMethods } from "./setup-gateway-rpc.js";
+import { registerRpcMethods } from "./setup-gateway-api.js";
 import { mountGatewayRoutes } from "./setup-gateway-routes.js";
 
 import {
@@ -24,11 +26,11 @@ import {
 import { suppressError } from "@comis/shared";
 import { readFileSync, existsSync } from "node:fs";
 import {
-  parseSlashCommand,
-  createCommandHandler,
   createGreetingGenerator,
   type GreetingGenerator,
 } from "@comis/agent";
+// Phase 32 commit 6: parseSlashCommand + createCommandHandler moved to @comis/orchestrator (ORCH-EXT-08).
+import { parseSlashCommand, createCommandHandler } from "@comis/orchestrator";
 import {
   createGatewayServer,
   createDynamicMethodRouter,
@@ -39,10 +41,10 @@ import {
   type RpcAdapterDeps,
 } from "@comis/gateway";
 import { createHash, randomUUID } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { RpcDispatchDeps } from "../rpc/rpc-dispatch.js";
-import { createRpcDispatch, classifyRpcError } from "../rpc/rpc-dispatch.js";
+import type { ApiDispatchDeps } from "../api/rpc-dispatch.js";
+import { createRpcDispatch, classifyRpcError } from "../api/rpc-dispatch.js";
 
 // ===========================================================================
 // Execution-request log redaction helper
@@ -98,14 +100,14 @@ export interface RpcBridgeResult {
   /** The rpcCall function usable immediately (delegates to inner dispatch once wired). */
   rpcCall: RpcCall;
   /** Call after setupMonitoring to wire the real dispatch with all deps including heartbeatRunner. */
-  wireDispatch: (deps: RpcDispatchDeps) => void;
+  wireDispatch: (deps: ApiDispatchDeps) => void;
 }
 
 /**
  * Create the rpcCall wrapper and deferred dispatch mechanism.
  * The returned rpcCall can be passed to setupTools immediately. After
  * setupMonitoring resolves the heartbeatRunner TDZ, call wireDispatch()
- * with the full RpcDispatchDeps to wire the real dispatch function.
+ * with the full ApiDispatchDeps to wire the real dispatch function.
  * @param deps.gatewayLogger - Logger for RPC call tracing
  * @returns rpcCall function and wireDispatch callback
  */
@@ -135,7 +137,7 @@ export function setupRpcBridge(deps: {
     }
   };
 
-  const wireDispatch = (dispatchDeps: RpcDispatchDeps): void => {
+  const wireDispatch = (dispatchDeps: ApiDispatchDeps): void => {
     rpcCallInner = createRpcDispatch(dispatchDeps);
   };
 
@@ -163,7 +165,7 @@ function extractAttachmentMarkers(
   logger: { debug(obj: Record<string, unknown>, msg: string): void },
 ): AttachmentMarker[] {
   if (!workspaceDir) return [];
-  const jsonlPath = join(workspaceDir, "sessions", agentId, channelId, "default.jsonl");
+  const jsonlPath = safePath(workspaceDir, "sessions", agentId, channelId, "default.jsonl");
   if (!existsSync(jsonlPath)) return [];
 
   try {
@@ -879,7 +881,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
   const dynamicRouter = createDynamicMethodRouter(createRpcAdapters(rpcAdapterDeps), gatewayLogger);
 
   // Register all RPC methods as gateway-to-rpcCall passthroughs.
-  // All business logic is in domain handler modules (rpc/*.ts) via rpc-dispatch.
+  // All business logic is in domain handler modules (api/*.ts) via rpc-dispatch.
   // skill/audio/config/ping handlers extracted to domain modules.
   registerRpcMethods({
     dynamicRouter,

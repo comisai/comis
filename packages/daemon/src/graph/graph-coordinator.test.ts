@@ -2967,7 +2967,7 @@ describe("createGraphCoordinator", () => {
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy.mock.calls[0][0]).toMatchObject({
         hint: expect.stringContaining("no announce channel"),
-        errorKind: "configuration",
+        errorKind: "config",
       });
       expect(warnSpy.mock.calls[0][1]).toBe("Graph created without announce channel");
 

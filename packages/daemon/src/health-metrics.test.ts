@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createAnnouncementDeadLetterQueue } from "./announcement-dead-letter.js";
+import { createAnnouncementDeadLetterQueue } from "@comis/orchestrator";
 import { createProviderHealthMonitor, type ProviderHealthMonitor } from "@comis/agent";
 import type { TypedEventBus } from "@comis/core";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";

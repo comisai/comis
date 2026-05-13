@@ -10,9 +10,8 @@
  * inspection, search, and management operations.
  */
 
-import type { MemoryEntry, MemorySearchResult, MemoryConfig, SessionKey } from "@comis/core";
+import type { MemoryEntry, MemorySearchResult, MemoryConfig, SessionKey, SessionStorePort } from "@comis/core";
 import type Database from "better-sqlite3";
-import type { SessionStore } from "./session-store.js";
 import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 import type { MemoryRow } from "./types.js";
 import { rowToEntry, buildFilterClause, countRows, groupCountRows } from "./row-mapper.js";
@@ -104,7 +103,7 @@ export interface MemoryApi {
 export function createMemoryApi(
   db: Database.Database,
   adapter: SqliteMemoryAdapter,
-  sessionStore: SessionStore,
+  sessionStore: SessionStorePort,
   config: MemoryConfig,
 ): MemoryApi {
   return {

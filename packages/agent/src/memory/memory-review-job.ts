@@ -29,7 +29,7 @@ import { randomUUID } from "node:crypto";
 // Public types
 // ---------------------------------------------------------------------------
 
-/** Session detail entry shape (matches SessionStore.listDetailed output). */
+/** Session detail entry shape (matches SessionStorePort.listDetailed output). */
 export interface SessionDetailedEntry {
   sessionKey: string;
   tenantId: string;

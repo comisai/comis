@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@comis/shared":    ["../../packages/shared/src/index.ts"],
+      "@comis/core":      ["../../packages/core/src/index.ts"],
+      "@comis/infra":     ["../../packages/infra/src/index.ts"],
+      "@comis/memory":    ["../../packages/memory/src/index.ts"],
+      "@comis/scheduler": ["../../packages/scheduler/src/index.ts"],
+      "@comis/skills":                ["../../packages/skills/src/skills/index.ts"],
+      "@comis/skills/tools":          ["../../packages/skills/src/tools/index.ts"],
+      "@comis/skills/platform-tools": ["../../packages/skills/src/platform-tools/index.ts"],
+      "@comis/agent":     ["../../packages/agent/src/index.ts"],
+      "@comis/channels":  ["../../packages/channels/src/index.ts"],
+      "@comis/orchestrator": ["../../packages/orchestrator/src/index.ts"],
+      "@comis/gateway":   ["../../packages/gateway/src/index.ts"],
+      "@comis/cli":       ["../../packages/cli/src/index.ts"],
+      "@comis/daemon":    ["../../packages/daemon/src/index.ts"]
+    }
+  }
+}

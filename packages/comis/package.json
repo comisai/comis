@@ -96,6 +96,10 @@
     "./daemon": {
       "types": "./dist/daemon.d.ts",
       "import": "./dist/daemon.js"
+    },
+    "./orchestrator": {
+      "types": "./dist/orchestrator.d.ts",
+      "import": "./dist/orchestrator.js"
     }
   },
   "scripts": {
@@ -115,6 +119,7 @@
     "@comis/channels",
     "@comis/cli",
     "@comis/daemon",
+    "@comis/orchestrator",
     "@comis/web",
     "bindings",
     "file-uri-to-path"
@@ -131,6 +136,7 @@
     "@comis/channels": "workspace:*",
     "@comis/cli": "workspace:*",
     "@comis/daemon": "workspace:*",
+    "@comis/orchestrator": "workspace:*",
     "@comis/web": "workspace:*",
     "@agentclientprotocol/sdk": "0.21.0",
     "@clack/core": "1.2.0",

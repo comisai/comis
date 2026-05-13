@@ -92,7 +92,7 @@ export function startWatchdog(deps: WatchdogDeps): WatchdogHandle {
     if (process.env["NOTIFY_SOCKET"]) {
       deps.logger.warn(
         {
-          errorKind: "config",
+          errorKind: "config" as const,
           hint: "Reinstall comisai with libsystemd-dev + pkg-config available so the sd-notify native addon builds. Without it, systemd receives no READY/WATCHDOG signals and the unit will hang in 'activating' until TimeoutStartSec, then enter a respawn loop.",
           loadError: sdNotifyLoadError ?? "unknown",
         },

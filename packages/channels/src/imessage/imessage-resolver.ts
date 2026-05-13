@@ -8,7 +8,7 @@
  *
  * Pre-read size check using fs.stat().
  * Emits a DEBUG log with platform, filePath, sizeBytes, and durationMs.
- * CRITICAL SECURITY: safePath() validation, NOT path.join().
+ * CRITICAL SECURITY: safePath() validation, NOT raw path.join.
  *
  * @module
  */

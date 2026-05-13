@@ -8,17 +8,20 @@
  * @module
  */
 
-import type { NormalizedMessage, SessionKey, SpawnPacket } from "@comis/core";
+import type { NormalizedMessage, SessionKey, SpawnPacket, DeliveryService, DeliverToChannelOptions } from "@comis/core";
 import type { AppContainer } from "@comis/core";
 import { tryGetContext, runWithContext, formatSessionKey, safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { deliverToChannel, createTypingController } from "@comis/channels";
-import type { DeliverToChannelOptions, TypingController } from "@comis/channels";
-import { createStepCounter, createSpawnPacketBuilder, generateParentSummary, resolveWorkspaceDir, createResultCondenser, createNarrativeCaster, createLifecycleHooks, createEphemeralComisSessionManager, createComisSessionManager, getCacheSafeParams, resolveOperationModel, resolveProviderFamily } from "@comis/agent";
-import { createCrossSessionSender } from "../cross-session-sender.js";
-import { createSubAgentRunner } from "../sub-agent-runner.js";
-import { createAnnouncementBatcher } from "../announcement-batcher.js";
-import { createAnnouncementDeadLetterQueue } from "../announcement-dead-letter.js";
+import { createTypingController } from "@comis/channels";
+import type { TypingController } from "@comis/channels";
+import { createStepCounter, createSpawnPacketBuilder, generateParentSummary, createResultCondenser, createNarrativeCaster, createLifecycleHooks, createEphemeralComisSessionManager, createComisSessionManager, getCacheSafeParams, resolveOperationModel, resolveProviderFamily, createSubAgentRunner } from "@comis/agent";
+// Phase 35 Plan 35-04 (D-01 #5): resolveWorkspaceDir relocated to @comis/core.
+import { resolveWorkspaceDir } from "@comis/core";
+import {
+  createCrossSessionSender,
+  createAnnouncementBatcher,
+  createAnnouncementDeadLetterQueue,
+} from "@comis/orchestrator";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -145,6 +148,19 @@ export function setupCrossSession(deps: {
   };
   /** Delivery queue for crash-safe persistence */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
+  /** DeliveryService instance constructed at daemon composition root (setup-channels.ts).
+   *  Captures hookRunner + deliveryQueue + eventBus in closure; sendToChannel uses
+   *  the method form `deliveryService.deliverToChannel(...)` instead of the
+   *  free-standing standalone export. Phase 30 plan 04 (CONFIG-DELIV-05). */
+  deliveryService: DeliveryService;
+  /**
+   * Canonical FileLockPort adapter, threaded into the ephemeral
+   * `createComisSessionManager` call below (reuse + sub-agent persistence
+   * branch). Daemon constructs once in `setup-agents.ts` and threads it
+   * through here so the same proper-lockfile adapter is reused for every
+   * lock-protected session-write path. Phase 32 commit 12 (ORCH-EXT-15).
+   */
+  fileLock: import("@comis/core").FileLockPort;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
 
@@ -198,10 +214,9 @@ export function setupCrossSession(deps: {
       deps.logger?.debug({ channelType, channelId, success: false, gateway: false }, "sendToChannel delivery outcome: no adapter");
       return false;
     }
-    // Delegate to deliverToChannel for format + chunk + retry + events
-    const result = await deliverToChannel(adapter, channelId, text, options, deps.deliveryQueue
-      ? { eventBus: container.eventBus, deliveryQueue: deps.deliveryQueue }
-      : undefined);
+    // Delegate to the DeliveryService method form for format + chunk + retry + events.
+    // The optional 5th-arg deps record is now captured in closure at composition root.
+    const result = await deps.deliveryService.deliverToChannel(adapter, channelId, text, options);
     const success = result.ok && result.value.ok;
     deps.logger?.debug({ channelType, channelId, success, gateway: false }, "sendToChannel delivery outcome");
     if (!result.ok) return false;
@@ -339,7 +354,7 @@ export function setupCrossSession(deps: {
           parentToolCount: parentToolNames.size,
           ceilingToolCount: ceilingCount,
           hint: "All sub-agent tools dropped by parent intersection; sub-agent will have no tools. Check parent agent tool policy and subAgentToolGroups config",
-          errorKind: "config",
+          errorKind: "config" as const,
         }, "Sub-agent tool inheritance: all tools dropped");
       }
     }
@@ -445,7 +460,7 @@ export function setupCrossSession(deps: {
           } else {
             deps.logger?.warn({
               hint: "Cannot generate parent summary: no API key resolved for provider",
-              errorKind: "config",
+              errorKind: "config" as const,
               providerId,
             }, "Parent summary generation skipped: missing API key");
           }
@@ -571,6 +586,7 @@ export function setupCrossSession(deps: {
         sessionBaseDir: safePath(sessionCwd, "sessions"),
         lockDir: safePath(sessionCwd, ".locks"),
         cwd: sessionCwd,
+        fileLock: deps.fileLock,
       });
     } else {
       // Ephemeral: in-memory only, no disk writes

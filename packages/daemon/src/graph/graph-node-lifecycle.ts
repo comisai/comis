@@ -16,7 +16,6 @@ import {
 import { tryCatch } from "@comis/shared";
 import { sanitizeAssistantResponse } from "@comis/agent";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { interpolateTaskText, buildContextEnvelope } from "./template-interpolation.js";
 import { gatedSpawn } from "./graph-concurrency.js";
 import type {
@@ -42,7 +41,7 @@ export function resolveFileReferenceOutput(output: string, sharedDir: string): s
   // Skip the auto-persisted nodeId-output.md files (those are written BY the coordinator)
   if (fileRef[0].endsWith("-output.md")) return output;
   try {
-    const candidatePath = join(sharedDir, fileRef[0]);
+    const candidatePath = safePath(sharedDir, fileRef[0]);
     if (!existsSync(candidatePath)) return output;
     const fileContent = readFileSync(candidatePath, "utf8");
     return fileContent.length > output.length ? fileContent : output;
@@ -209,7 +208,7 @@ export function spawnNode(
   // Find the node definition
   const node = gs.graph.graph.nodes.find((n) => n.nodeId === nodeId);
   if (!node) {
-    deps.logger?.error({ graphId: gs.graphId, nodeId, hint: "Graph node ID mismatch; check graph definition", errorKind: "internal" }, "Graph node definition not found");
+    deps.logger?.error({ graphId: gs.graphId, nodeId, hint: "Graph node ID mismatch; check graph definition", errorKind: "internal" as const }, "Graph node definition not found");
     return;
   }
 
@@ -316,7 +315,7 @@ export function spawnNode(
     const runResult = gs.stateMachine.markNodeRunning(nodeId, runId);
     if (!runResult.ok) {
       deps.logger?.warn(
-        { graphId: gs.graphId, nodeId, error: runResult.error, hint: "Node may have been concurrently updated", errorKind: "internal" },
+        { graphId: gs.graphId, nodeId, error: runResult.error, hint: "Node may have been concurrently updated", errorKind: "internal" as const },
         "Graph node state transition to running failed",
       );
     } else {
@@ -453,7 +452,7 @@ export function startDriverNode(
   if (!configResult.success) {
     const errorMsg = `Invalid typeConfig for ${driver.typeId}: ${configResult.error.message}`;
     deps.logger?.warn(
-      { graphId: gs.graphId, nodeId, typeId: driver.typeId, hint: "typeConfig validation failed", errorKind: "validation" },
+      { graphId: gs.graphId, nodeId, typeId: driver.typeId, hint: "typeConfig validation failed", errorKind: "validation" as const },
       errorMsg,
     );
     callbacks.markNodeFailed(gs, nodeId, errorMsg);
@@ -487,7 +486,7 @@ export function startDriverNode(
   const runResult = gs.stateMachine.markNodeRunning(nodeId, `driver:${nodeId}`);
   if (!runResult.ok) {
     deps.logger?.warn(
-      { graphId: gs.graphId, nodeId, error: runResult.error, hint: "Driver node state transition to running failed", errorKind: "internal" },
+      { graphId: gs.graphId, nodeId, error: runResult.error, hint: "Driver node state transition to running failed", errorKind: "internal" as const },
       "Driver node state transition to running failed",
     );
   } else {
@@ -600,7 +599,7 @@ export function handleSubAgentCompleted(
   // 5c. Auto-persist full output to shared folder for file-reference overflow
   if (gs.sharedDir && output) {
     try {
-      writeFileSync(join(gs.sharedDir, `${nodeId}-output.md`), output, "utf8");
+      writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), output, "utf8");
     } catch { /* best-effort, don't block graph progress */ }
   }
 
@@ -609,7 +608,7 @@ export function handleSubAgentCompleted(
     const result = gs.stateMachine.markNodeCompleted(nodeId, output);
     if (!result.ok) {
       deps.logger?.warn(
-        { graphId: gs.graphId, nodeId, error: result.error, hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" },
+        { graphId: gs.graphId, nodeId, error: result.error, hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" as const },
         "Graph node state transition to completed failed",
       );
     }
@@ -635,7 +634,7 @@ export function handleSubAgentCompleted(
     const result = gs.stateMachine.markNodeFailed(nodeId, errorText, run?.sessionKey);
     if (!result.ok) {
       deps.logger?.warn(
-        { graphId: gs.graphId, nodeId, error: result.error, hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" },
+        { graphId: gs.graphId, nodeId, error: result.error, hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" as const },
         "Graph node state transition to failed failed",
       );
     }
@@ -770,7 +769,7 @@ export function persistArtifacts(
     const safeResult = tryCatch(() => safePath(gs.sharedDir, a.filename));
     if (!safeResult.ok) {
       deps.logger?.warn(
-        { graphId: gs.graphId, nodeId, filename: a.filename, hint: "Artifact filename rejected by safePath", errorKind: "security" },
+        { graphId: gs.graphId, nodeId, filename: a.filename, hint: "Artifact filename rejected by safePath", errorKind: "validation" as const },
         "Artifact filename rejected",
       );
       continue;

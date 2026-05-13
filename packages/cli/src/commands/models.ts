@@ -14,9 +14,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import chalk from "chalk";
 import { Document, parseDocument } from "yaml";
-import { createModelCatalog } from "@comis/agent";
-import type { CatalogEntry } from "@comis/agent";
-import { withClient } from "../client/rpc-client.js";
+import { createModelCatalog, ModelsListContract } from "@comis/core";
+import type { CatalogEntry } from "@comis/core";
+import { withClient, callTyped } from "../client/rpc-client.js";
 import { success, error, info, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable } from "../output/table.js";
@@ -63,7 +63,7 @@ async function loadModels(provider?: string): Promise<CatalogEntry[]> {
   // Try RPC first
   try {
     const result = await withClient(async (client) => {
-      return (await client.call("models.list", { provider })) as CatalogEntry[];
+      return (await callTyped(client, ModelsListContract, provider ? { provider } : {})) as unknown as CatalogEntry[];
     });
     if (Array.isArray(result)) {
       return result;

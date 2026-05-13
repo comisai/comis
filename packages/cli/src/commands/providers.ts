@@ -16,10 +16,10 @@
 
 import type { Command } from "commander";
 import { getEnvApiKey } from "@mariozechner/pi-ai";
-import { withClient } from "../client/rpc-client.js";
+import { withClient, callTyped } from "../client/rpc-client.js";
 import { loadProvidersWithFallback } from "../client/provider-list.js";
-import { createModelCatalog } from "@comis/agent";
-import type { CatalogEntry } from "@comis/agent";
+import { createModelCatalog, ModelsListContract } from "@comis/core";
+import type { CatalogEntry } from "@comis/core";
 import { error, info, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable } from "../output/table.js";
@@ -44,7 +44,7 @@ const KEYLESS_PROVIDERS = new Set<string>(["ollama", "lm-studio"]);
 async function getModelCount(provider: string): Promise<number> {
   try {
     const result = await withClient(async (client) => {
-      return (await client.call("models.list", { provider })) as CatalogEntry[];
+      return (await callTyped(client, ModelsListContract, { provider })) as unknown as CatalogEntry[];
     });
     if (Array.isArray(result)) return result.length;
   } catch {

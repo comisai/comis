@@ -68,7 +68,7 @@ export function setupDeliveryQueueLogging(deps: {
         attemptCount: data.attemptCount,
         nextRetryAt: data.nextRetryAt,
         hint: "Message will be retried on next drain cycle",
-        errorKind: "transient" as const,
+        errorKind: "network" as const,
       },
       "Message delivery failed, scheduled for retry",
     );
@@ -84,7 +84,7 @@ export function setupDeliveryQueueLogging(deps: {
         err: data.error,
         reason: data.reason,
         hint: "Message permanently failed -- check channel configuration or error patterns",
-        errorKind: "permanent" as const,
+        errorKind: "platform" as const,
       },
       "Message delivery permanently failed",
     );

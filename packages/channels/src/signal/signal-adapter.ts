@@ -23,7 +23,7 @@ import type {
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import {
@@ -34,7 +34,7 @@ import {
 } from "./signal-client.js";
 import { mapSignalToNormalized } from "./message-mapper.js";
 import { convertIrToSignalTextStyles } from "./signal-format.js";
-import type { MarkdownIR } from "../shared/markdown-ir.js";
+import type { MarkdownIR } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types

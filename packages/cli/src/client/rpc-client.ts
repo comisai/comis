@@ -6,13 +6,29 @@
  * responses via a pending request map. Handles connection timeouts, ECONNREFUSED
  * with descriptive error, and message parse errors.
  *
+ * **Typed RPC wrapper** (Phase 35 Wave C — Plan 35-06):
+ * `callTyped(client, contract, params)` is the typed entry point. It runs
+ * `contract.request.parse(...)` + `contract.response.parse(...)` under the
+ * `VALIDATE` gate (D-10 LOCKED — gate location is THIS file specifically,
+ * not a sibling `typed-rpc.ts`). VALIDATE is on when `NODE_ENV ===
+ * "development"` OR `COMIS_CLI_VALIDATE === "1"`; production builds skip
+ * the parse hop for cold-start budget compliance (WEB-CONTRACTS-17). The
+ * daemon side ALWAYS parses — the trust boundary lives there.
+ *
+ * `test/architecture/cli-uses-typed-rpc.test.ts` (WEB-CONTRACTS-09)
+ * allowlists this file as the sole CLI source that may invoke
+ * `client.call(...)` directly; every other CLI call site must go
+ * through `callTyped(...)`. Wave C Plan 35-19 closes the gate by
+ * unskipping the violation-detection assertion.
+ *
  * @module
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import WebSocket from "ws";
-import { loadEnvFile } from "@comis/core";
+import type { z, ZodTypeAny } from "zod";
+import { loadEnvFile, type ApiContract } from "@comis/core";
 
 /**
  * JSON-RPC client interface for making RPC calls to the daemon.
@@ -24,6 +40,66 @@ export interface RpcClient {
   close(): void;
   /** Register a handler for server-pushed JSON-RPC notifications. */
   onNotification(handler: (method: string, params: unknown) => void): void;
+}
+
+// ---------------------------------------------------------------------------
+// VALIDATE gate + typed-RPC wrapper (D-10 LOCKED — Plan 35-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `callTyped` runs `contract.request/response.parse(...)`.
+ *
+ * D-10 LOCKED (35-CONTEXT.md): production builds skip Zod parse to keep
+ * the CLI cold-start budget (WEB-CONTRACTS-17: <= 50ms median regression).
+ * Development AND opt-in `COMIS_CLI_VALIDATE=1` runs always validate. The
+ * daemon side always parses regardless of this flag (trust boundary —
+ * gate does not apply server-side).
+ *
+ * BLOCKER 10 enforcement: this gate (and the `callTyped` wrapper below)
+ * lives in `packages/cli/src/client/rpc-client.ts` SPECIFICALLY. The
+ * sibling `typed-rpc.ts` file mentioned in 35-RESEARCH.md §"Pattern 3"
+ * is NOT created — `test/architecture/cli-uses-typed-rpc.test.ts`
+ * allowlists both paths so a future split is still architecturally
+ * permitted, but the canonical location for Wave C is this file.
+ *
+ * Empirical perf baseline (Plan 35-22; pre-state `28abe6b` → post-state
+ * `3b6291d4`): post-Phase-35 CLI cold-start is **~226–235 ms faster** than
+ * pre-Phase-35 across all 6 cells (3 commands × {daemon-up, daemon-down}).
+ * Phase 35's dep-cut (D-01 widened: `@comis/agent` + `@comis/infra` removed
+ * from cli/package.json) dominates the budget; the contract-parse cost is
+ * sub-ms per call at the 190-contract scale. The 50 ms budget is satisfied
+ * with a large negative margin — see
+ * `.planning/phases/35-gateway-cli-web-contracts/35-PERF-BASELINE.md` for
+ * the full 6-cell matrix + raw samples + gate-verification smoke results.
+ * The gate is NOT load-bearing for the budget today; it remains in place
+ * as defense-in-depth for any future expansion of the registry.
+ */
+// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED gate; CLI top-level entry-point read; daemon always parses regardless.
+const VALIDATE_DEV = process.env.NODE_ENV === "development";
+// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED gate; CLI top-level entry-point read; daemon always parses regardless.
+const VALIDATE_OPT_IN = process.env.COMIS_CLI_VALIDATE === "1";
+const VALIDATE = VALIDATE_DEV || VALIDATE_OPT_IN;
+
+/**
+ * Typed RPC wrapper. Send a contract-defined RPC call and parse the
+ * response under the `VALIDATE` gate (D-10).
+ *
+ * Wave C consumers replace `client.call("<method>", <params>)` with
+ * `callTyped(client, <DomainContract>, params)`. The `cli-uses-typed-rpc`
+ * architecture test prevents regressions by forbidding raw `client.call(`
+ * anywhere in `packages/cli/src/` outside this file.
+ */
+export async function callTyped<Req extends ZodTypeAny, Res extends ZodTypeAny>(
+  client: RpcClient,
+  contract: ApiContract<Req, Res>,
+  params: z.input<Req>,
+): Promise<z.output<Res>> {
+  const validatedReq = VALIDATE ? contract.request.parse(params) : params;
+  const raw = await client.call(
+    contract.method,
+    validatedReq as Record<string, unknown>,
+  );
+  return VALIDATE ? contract.response.parse(raw) : (raw as z.output<Res>);
 }
 
 /** Default connection timeout in milliseconds. */

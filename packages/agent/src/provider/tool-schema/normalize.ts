@@ -17,7 +17,7 @@
  */
 
 import type { ModelCompatConfig } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import {
   normalizeToolSchema as stripProviderKeywords,

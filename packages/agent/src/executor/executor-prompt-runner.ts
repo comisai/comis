@@ -26,10 +26,13 @@ import {
   type TypedEventBus,
   type OutputGuardPort,
 } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import { fromPromise } from "@comis/shared";
-import type { CommandDirectives } from "../commands/types.js";
-import { parseUserTokenBudget } from "../commands/budget-command.js";
+// Phase 32 commit 6 (ORCH-EXT-08): see ./command-directive-types.ts for rationale.
+// parseUserTokenBudget now lives at agent/src/budget/budget-parser.ts (moved
+// alongside other agent-internal budget logic — see file docstring there).
+import type { CommandDirectives } from "./command-directive-types.js";
+import { parseUserTokenBudget } from "../budget/budget-parser.js";
 import { createTurnBudgetTracker } from "../budget/turn-budget-tracker.js";
 import type { TurnBudgetTracker } from "../budget/turn-budget-tracker.js";
 import type { BudgetGuard } from "../budget/budget-guard.js";
@@ -50,7 +53,7 @@ import {
 import { runPostBatchContinuation } from "./post-batch-continuation.js";
 import { getVisibleAssistantText } from "./phase-filter.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
-import { resolveModelPricing } from "../model/model-catalog.js";
+import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
 import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";

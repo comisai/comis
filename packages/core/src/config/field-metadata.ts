@@ -10,55 +10,28 @@
  * @module
  */
 
+import { z } from "zod";
 import { AppConfigSchema } from "./schema.js";
 import { isImmutableConfigPath } from "./immutable-keys.js";
+import { SECTION_REGISTRY } from "./section-registry.js";
 
 // ---------------------------------------------------------------------------
-// Section schema lookup (mirrors schema-serializer.ts)
+// Section schema lookup (derived from SECTION_REGISTRY)
 // ---------------------------------------------------------------------------
-
-import { z } from "zod";
-import { PerAgentConfigSchema, RoutingConfigSchema } from "./schema-agent.js";
-import { AutoReplyEngineConfigSchema } from "./schema-auto-reply-engine.js";
-import { ChannelConfigSchema } from "./schema-channel.js";
-import { DaemonConfigSchema } from "./schema-daemon.js";
-import { EmbeddingConfigSchema } from "./schema-embedding.js";
-import { EnvelopeConfigSchema } from "./schema-envelope.js";
-import { GatewayConfigSchema } from "./schema-gateway.js";
-import { IntegrationsConfigSchema } from "./schema-integrations.js";
-import { MemoryConfigSchema } from "./schema-memory.js";
-import { MonitoringConfigSchema } from "./schema-observability.js";
-import { PluginsConfigSchema } from "./schema-plugins.js";
-import { QueueConfigSchema } from "./schema-queue.js";
-import { SchedulerConfigSchema } from "./schema-scheduler.js";
-import { SecurityConfigSchema } from "./schema-security.js";
-import { SendPolicyConfigSchema } from "./schema-send-policy.js";
-import { StreamingConfigSchema } from "./schema-streaming.js";
-import { ToolingConfigSchema } from "./schema-tooling.js";
 
 /**
  * Maps config section names to their Zod schema objects.
+ *
+ * Derived from SECTION_REGISTRY (Phase 30, CONFIG-DELIV-02). The legacy
+ * standalone SECTION_SCHEMAS literal previously held its own 18-entry list
+ * and drifted from schema-serializer.ts and managed-sections.ts. Now there
+ * is a single source of truth.
  */
-const SECTION_SCHEMAS: Record<string, z.ZodType> = {
-  agents: PerAgentConfigSchema,
-  channels: ChannelConfigSchema,
-  memory: MemoryConfigSchema,
-  security: SecurityConfigSchema,
-  routing: RoutingConfigSchema,
-  daemon: DaemonConfigSchema,
-  scheduler: SchedulerConfigSchema,
-  gateway: GatewayConfigSchema,
-  integrations: IntegrationsConfigSchema,
-  monitoring: MonitoringConfigSchema,
-  plugins: PluginsConfigSchema,
-  queue: QueueConfigSchema,
-  streaming: StreamingConfigSchema,
-  autoReplyEngine: AutoReplyEngineConfigSchema,
-  sendPolicy: SendPolicyConfigSchema,
-  embedding: EmbeddingConfigSchema,
-  envelope: EnvelopeConfigSchema,
-  tooling: ToolingConfigSchema,
-};
+const SECTION_SCHEMAS: Record<string, z.ZodType> = Object.fromEntries(
+  Object.entries(SECTION_REGISTRY)
+    .filter(([, entry]) => entry.fieldMetadataVisible)
+    .map(([name, entry]) => [name, entry.schema]),
+);
 
 // ---------------------------------------------------------------------------
 // Types

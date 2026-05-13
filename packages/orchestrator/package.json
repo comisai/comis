@@ -1,0 +1,44 @@
+{
+  "name": "@comis/orchestrator",
+  "private": true,
+  "version": "1.0.37",
+  "author": "Moshe Anconina",
+  "license": "Apache-2.0",
+  "description": "Inbound orchestration: channel-manager lifecycle, inbound pipeline, execute-and-deliver coordination, command queue, message routing",
+  "keywords": ["comis", "ai", "agent", "orchestrator", "inbound", "channel-manager"],
+  "engines": { "node": ">=22" },
+  "files": ["dist"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/comisai/comis.git",
+    "directory": "packages/orchestrator"
+  },
+  "homepage": "https://github.com/comisai/comis#readme",
+  "bugs": {
+    "url": "https://github.com/comisai/comis/issues"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@comis/agent": "workspace:*",
+    "@comis/channels": "workspace:*",
+    "@comis/core": "workspace:*",
+    "@comis/shared": "workspace:*",
+    "p-queue": "9.2.0"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vitest": "4.1.5"
+  }
+}

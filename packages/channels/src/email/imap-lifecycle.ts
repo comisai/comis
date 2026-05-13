@@ -12,7 +12,7 @@
 
 import { ImapFlow } from "imapflow";
 import { ok, err, fromPromise, type Result } from "@comis/shared";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -120,7 +120,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       }
     } catch (e) {
       opts.logger.warn(
-        { err: e, channelType: "email", submodule: "imap", hint: "Fetch failed, will retry on next event", errorKind: "network" },
+        { err: e, channelType: "email", submodule: "imap", hint: "Fetch failed, will retry on next event", errorKind: "network" as const },
         "Failed to fetch new messages",
       );
     }
@@ -172,7 +172,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       // Check if this is an IDLE-related error for polling fallback
       if (e.message && /idle/i.test(e.message)) {
         opts.logger.warn(
-          { channelType: "email", submodule: "imap", hint: "Falling back to polling", errorKind: "capability" },
+          { channelType: "email", submodule: "imap", hint: "Falling back to polling", errorKind: "platform" as const },
           "IDLE not supported, switching to polling fallback",
         );
         startPolling();
@@ -182,7 +182,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
     const connectResult = await fromPromise(client.connect());
     if (!connectResult.ok) {
       opts.logger.error(
-        { err: connectResult.error, channelType: "email", submodule: "imap", hint: "Check IMAP credentials and host", errorKind: "network" },
+        { err: connectResult.error, channelType: "email", submodule: "imap", hint: "Check IMAP credentials and host", errorKind: "network" as const },
         "IMAP connection failed",
       );
       scheduleReconnect();
@@ -201,7 +201,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
     const lockResult = await fromPromise(client.getMailboxLock("INBOX"));
     if (!lockResult.ok) {
       opts.logger.error(
-        { err: lockResult.error, channelType: "email", submodule: "imap", hint: "Could not lock INBOX", errorKind: "network" },
+        { err: lockResult.error, channelType: "email", submodule: "imap", hint: "Could not lock INBOX", errorKind: "network" as const },
         "Failed to get INBOX lock",
       );
       return err(lockResult.error instanceof Error ? lockResult.error : new Error(String(lockResult.error)));

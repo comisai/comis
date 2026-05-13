@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Spawn module: SpawnPacketBuilder factory, parent summary generation,
- * and result condensation pipeline.
+ * result condensation pipeline, and sub-agent spawn lifecycle.
  *
  * @module
  */
@@ -22,3 +22,8 @@ export { createLifecycleHooks, deriveSubagentContextEngineConfig } from "./lifec
 export type { LifecycleHooksDeps } from "./lifecycle-hooks.js";
 
 export { createEphemeralComisSessionManager } from "./pi-mono-adapters.js";
+
+export { createSubAgentRunner, ANNOUNCE_PARENT_TIMEOUT_MS } from "./sub-agent-runner.js";
+export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger } from "./sub-agent-runner.js";
+
+export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./sub-agent-result-processor.js";

@@ -150,7 +150,7 @@ export function createResultCondenser(deps: ResultCondenserDeps) {
         // Emergency fallback: if the entire pipeline somehow throws,
         // produce a minimal Level 3 result so the caller never crashes.
         deps.logger.warn(
-          { runId: params.runId, agentId: params.agentId, fallbackLevel: 3, err: emergencyErr, hint: "Emergency fallback triggered; result may be incomplete", errorKind: "internal" },
+          { runId: params.runId, agentId: params.agentId, fallbackLevel: 3, err: emergencyErr, hint: "Emergency fallback triggered; result may be incomplete", errorKind: "internal" as const },
           "ResultCondenser emergency fallback",
         );
         const originalTokens = estimateTokens(params.fullResult);
@@ -242,7 +242,7 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
   } else {
     // No model/apiKey available, go straight to Level 3
     deps.logger.warn(
-      { runId, agentId, fallbackLevel: 3, hint: "No condensation model available; falling through to truncation", errorKind: "config" },
+      { runId, agentId, fallbackLevel: 3, hint: "No condensation model available; falling through to truncation", errorKind: "config" as const },
       "Result condenser: skipping Level 2 (no model/apiKey)",
     );
     const truncResult = headTailTruncate(fullResult, deps.maxResultTokens, task);

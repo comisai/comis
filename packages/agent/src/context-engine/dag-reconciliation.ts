@@ -20,8 +20,7 @@
  */
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { ContextStore } from "@comis/memory";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger, ContextStorePort } from "@comis/core";
 import type { ContextEngineConfig } from "@comis/core";
 import type {
   ContextEngine,
@@ -133,7 +132,7 @@ export function mapMessageRole(message: AgentMessage): string {
  */
 export function reconcileJsonlToDag(
   messages: AgentMessage[],
-  store: ContextStore,
+  store: ContextStorePort,
   db: unknown,
   conversationId: string,
   estimateTokens: (text: string) => number,
@@ -234,7 +233,7 @@ export function reconcileJsonlToDag(
           conversationId,
           lastDagHash: lastDagRow.content_hash,
           hint: "JSONL-DAG anchor not found; gap too large or hash collision. Reconciliation skipped.",
-          errorKind: "data" as const,
+          errorKind: "internal" as const,
         },
         "DAG reconciliation anchor not found",
       );
@@ -325,7 +324,7 @@ export function reconcileJsonlToDag(
  */
 export function installDagIngestionHook(
   sm: unknown,
-  store: ContextStore,
+  store: ContextStorePort,
   conversationId: string,
   logger: ComisLogger,
   estimateTokens: (text: string) => number,

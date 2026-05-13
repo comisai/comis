@@ -27,7 +27,7 @@
 
 import { getToolGuideWithSchema, SYSTEM_PROMPT_GUIDES } from "../bootstrap/sections/tool-descriptions.js";
 import { PRIVILEGED_TOOL_NAMES } from "../bootstrap/sections/tooling-sections.js";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { ToolDefinition, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 

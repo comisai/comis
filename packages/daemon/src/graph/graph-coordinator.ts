@@ -7,10 +7,9 @@
  */
 
 import { createGraphStateMachine, type GraphExecutionSnapshot } from "./graph-state-machine.js";
-import type { GraphStatus } from "@comis/core";
+import { safePath, type GraphStatus } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { ok, err, type Result } from "@comis/shared";
 import { computeGraphToolSuperset } from "./graph-tool-superset.js";
 import { preWarmGraphCache, type PreWarmSdk } from "./graph-prewarm.js";
@@ -175,7 +174,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     const graphId = randomUUID();
     const graphTraceId = randomUUID();
 
-    const sharedDir = join(deps.dataDir, "graph-runs", graphId);
+    const sharedDir = safePath(deps.dataDir, "graph-runs", graphId);
     mkdirSync(sharedDir, { recursive: true, mode: 0o700 });
 
     if (state.graphs.size >= config.maxGraphs) {
@@ -254,7 +253,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         graphId,
         callerSessionKey: params.callerSessionKey,
         hint: "Graph has no announce channel — completion results will not be delivered to user",
-        errorKind: "configuration",
+        errorKind: "config" as const,
       }, "Graph created without announce channel");
     }
 

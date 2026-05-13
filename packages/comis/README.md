@@ -138,19 +138,21 @@ comis sessions           # List and manage conversations
 
 ## Architecture
 
-Hexagonal (ports and adapters). Core defines port interfaces -- adapters implement them. Swap Discord for Matrix, SQLite for Postgres, or OpenAI for Ollama without touching core logic. **19 ports, 30+ adapters, 13 packages.** Every function returns `Result<T, E>` -- zero thrown exceptions.
+Hexagonal (ports and adapters). Core defines port interfaces -- adapters implement them. Swap Discord for Matrix, SQLite for Postgres, or OpenAI for Ollama without touching core logic. **25 ports, 30+ adapters, 14 packages.** Every function returns `Result<T, E>` -- zero thrown exceptions.
 
 ```
 shared (Result type, utilities)
  └── core (domain types, ports, event bus, security, config)
+      ├── infra (Pino structured logging runtime)
       ├── memory (SQLite + FTS5 + vector search)
       ├── gateway (HTTP, JSON-RPC, WebSocket, mTLS)
       ├── skills (tools, MCP, media processing)
       ├── scheduler (cron, heartbeats)
       ├── agent (executor, budget, RAG, sessions)
       ├── channels (9 platform adapters)
+      ├── orchestrator (inbound pipeline, channel manager, routing)
       ├── cli (commands, RPC client)
-      └── daemon (orchestrator, observability)
+      └── daemon (process orchestrator, observability)
 ```
 
 ---

@@ -17,6 +17,7 @@ import type { createSessionStore } from "@comis/memory";
 import type { createSessionLifecycle, SessionResetScheduler } from "@comis/agent";
 import { createSessionResetScheduler } from "@comis/agent";
 import {
+  computeNextRunAtMs,
   createCronScheduler,
   createCronStore,
   createExecutionTracker,
@@ -28,6 +29,7 @@ import {
   type SystemEventQueue,
   type TaskExtractor,
 } from "@comis/scheduler";
+import type { ComputeDailyResetNextRun } from "@comis/core";
 import { createBrowserService, type BrowserService } from "@comis/skills";
 import * as fs from "node:fs/promises";
 
@@ -328,6 +330,22 @@ export async function setupSchedulers(deps: {
   // 6.6.5.7. Initialize per-agent SessionResetSchedulers
   const resetSchedulers = new Map<string, SessionResetScheduler>();
 
+  // Daily-reset cron callback. Phase 32 commit 12 (ORCH-EXT-15) flipped
+  // session-reset-policy.ts from a direct `@comis/scheduler` import to a deps
+  // callback so agent's production source no longer reaches into scheduler.
+  // The closure wraps `computeNextRunAtMs` over a `0 H * * *` cron schedule —
+  // identical behavior to the pre-injection inline call.
+  const computeDailyResetNextRun: ComputeDailyResetNextRun = (
+    updatedAt: number,
+    hour: number,
+    timezone: string,
+  ): number | undefined => {
+    return computeNextRunAtMs(
+      { kind: "cron", expr: `0 ${hour} * * *`, tz: timezone || undefined },
+      updatedAt,
+    );
+  };
+
   for (const [agentId, agentConfig] of Object.entries(agents)) {
     const resetConfig = agentConfig.session?.resetPolicy;
     if (!resetConfig || resetConfig.mode === "none") continue;
@@ -342,6 +360,7 @@ export async function setupSchedulers(deps: {
         const currentAgents = container.config.agents;
         return currentAgents[agentId]?.session?.resetPolicy;
       },
+      computeDailyResetNextRun,
       nowMs: undefined, // Use real clock in production
     });
 

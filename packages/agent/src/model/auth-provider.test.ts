@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
 import { ok } from "@comis/shared";
-import type { SecretManager, OAuthCredentialStorePort, OAuthProfile } from "@comis/core";
+import type {
+  SecretManager,
+  OAuthCredentialStorePort,
+  OAuthProfile,
+  FileLockPort,
+} from "@comis/core";
 import { createAuthProvider, type AuthProvider } from "./auth-provider.js";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +44,24 @@ function makeMockCredentialStore(): OAuthCredentialStorePort {
     delete: vi.fn(async (_id: string) => ok(false)),
     list: vi.fn(async (_filter?: { provider?: string }) => ok([] as OAuthProfile[])),
     has: vi.fn(async (_id: string) => ok(false)),
+  };
+}
+
+/**
+ * Mock FileLockPort — Phase 32 commit 12 (ORCH-EXT-15) added `fileLock` to
+ * the `oauth` block of AuthProviderConfig. The mock `withLock` invokes the
+ * supplied callback inline so refresh-path tests behave identically to the
+ * pre-injection (proper-lockfile-direct) path.
+ */
+function makeMockFileLock(): FileLockPort {
+  return {
+    acquire: vi.fn(async () => ok(async () => {})),
+    release: vi.fn(async () => ok(undefined)),
+    withLock: vi.fn(
+      async (_path: string, fn: () => Promise<unknown>) => ok(await fn()),
+    ) as FileLockPort["withLock"],
+    isLocked: vi.fn(async () => false),
+    cleanupStaleLocks: vi.fn(async () => 0),
   };
 }
 
@@ -225,6 +248,7 @@ describe("createAuthProvider", () => {
         credentialStore: makeMockCredentialStore(),
         logger: makeMockLogger() as any,  // eslint-disable-line @typescript-eslint/no-explicit-any
         dataDir: "/tmp/comis-auth-provider-test",
+        fileLock: makeMockFileLock(),
       },
     });
 
@@ -311,6 +335,7 @@ describe("createAuthProvider", () => {
         logger: makeMockLogger() as any,  // eslint-disable-line @typescript-eslint/no-explicit-any
         dataDir: "/tmp/comis-auth-provider-test",
         keyPrefix: "OAUTH_",
+        fileLock: makeMockFileLock(),
       },
     });
 

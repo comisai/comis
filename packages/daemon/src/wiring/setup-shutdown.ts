@@ -12,7 +12,7 @@ import type { GatewayServerHandle } from "@comis/gateway";
 import type { HeartbeatRunner, CronScheduler, WakeCoalescer, PerAgentHeartbeatRunner } from "@comis/scheduler";
 import type { BrowserService, MediaTempManager } from "@comis/skills";
 import type { SessionResetScheduler } from "@comis/agent";
-import { join } from "node:path";
+import { safePath } from "@comis/core";
 import { writeFileSync } from "node:fs";
 import type { ProcessMonitor } from "../process/process-monitor.js";
 import { registerGracefulShutdown, type ShutdownHandle } from "../process/graceful-shutdown.js";
@@ -274,7 +274,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
             const serialized = approvalGate.serializePending();
             if (serialized.length > 0) {
               writeFileSync(
-                join(dataDir, "restart-approvals.json"),
+                safePath(dataDir, "restart-approvals.json"),
                 JSON.stringify(serialized, null, 2),
                 "utf-8",
               );
@@ -289,7 +289,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
             const cachedApprovals = approvalGate.serializeApprovalCache();
             if (cachedApprovals.length > 0) {
               writeFileSync(
-                join(dataDir, "restart-approval-cache.json"),
+                safePath(dataDir, "restart-approval-cache.json"),
                 JSON.stringify(cachedApprovals, null, 2),
                 "utf-8",
               );
@@ -343,7 +343,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         const stopMs = Date.now();
         await withStepTimeout(() => {
           const captured = continuationTracker.capture(
-            join(dataDir, "restart-continuations.json"),
+            safePath(dataDir, "restart-continuations.json"),
             5 * 60_000, // sessions active in last 5 minutes
           );
           if (captured > 0) {

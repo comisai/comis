@@ -16,7 +16,7 @@ import type {
   WrapExternalContentOptions,
 } from "@comis/core";
 import { wrapExternalContent } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import { sanitizeToolOutput } from "../safety/tool-output-safety.js";
 
 /**

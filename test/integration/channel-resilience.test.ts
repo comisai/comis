@@ -35,7 +35,8 @@ import {
   type ChannelManagerDeps,
 } from "@comis/channels";
 import { createRetryEngine } from "../../packages/channels/dist/shared/retry-engine.js";
-import { applyOverflowPolicy } from "@comis/agent";
+// Phase 32 commit 8: applyOverflowPolicy moved to @comis/orchestrator (ORCH-EXT-08, Wave A close).
+import { applyOverflowPolicy } from "@comis/orchestrator";
 import {
   RetryConfigSchema,
   OverflowConfigSchema,

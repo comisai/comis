@@ -15,7 +15,7 @@
  * @module
  */
 
-import type { MarkdownIR, MarkdownBlock, MarkdownSpan } from "../shared/markdown-ir.js";
+import type { MarkdownIR, MarkdownBlock, MarkdownSpan } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types

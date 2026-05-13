@@ -56,7 +56,7 @@ function makeLogger() {
     warn: vi.fn(),
     debug: vi.fn(),
     child: vi.fn(() => child),
-  } as unknown as import("@comis/infra").ComisLogger;
+  } as unknown as import("@comis/core").ComisLogger;
 }
 
 describe("createBackgroundCompletionRunner", () => {

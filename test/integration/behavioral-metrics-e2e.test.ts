@@ -157,10 +157,10 @@ describe.skipIf(PROVIDERS.length === 0)(
 
         // -------------------------------------------------------------------
         // PINNED ADMIN TRUST-LEVEL PATH:
-        // packages/daemon/src/rpc/agent-handlers.ts:96-98 enforces
+        // packages/daemon/src/api/agent-handlers.ts:96-98 enforces
         // _trustLevel === "admin". The internal rpcCall closure does NOT
         // pass _trustLevel by default. Routing via the WebSocket gateway
-        // is the idiomatic surface -- setup-gateway-rpc.ts:51-53 auto-
+        // is the idiomatic surface -- setup-gateway-api.ts:51-53 auto-
         // injects `_trustLevel: "admin"` for every method registered under
         // the "admin" scope (agents.create is in that batch at line 190).
         //

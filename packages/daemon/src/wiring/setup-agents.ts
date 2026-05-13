@@ -16,13 +16,18 @@
  * @module
  */
 
-import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, PerAgentConfigSchema, type AppContainer, type InjectionRateLimiter, type OAuthCredentialStorePort, type SecretsCrypto, type PerAgentConfig, type ToolCapabilityPort } from "@comis/core";
+import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, PerAgentConfigSchema, type AppContainer, type FileLockPort, type InjectionRateLimiter, type OAuthCredentialStorePort, type SecretsCrypto, type PerAgentConfig, type ToolCapabilityPort } from "@comis/core";
 import { createToolCapabilityAdapter } from "./tool-capability-adapter.js";
 import { suppressError } from "@comis/shared";
 import { createHmac } from "node:crypto";
 import type { ComisLogger } from "@comis/infra";
 import type Database from "better-sqlite3";
 import type { SqliteMemoryAdapter, createSessionStore } from "@comis/memory";
+// Phase 31 commit 4 (MEM-CTX-PORTS-07): the encrypted-store factory value-import
+// moved from packages/agent/src/model/oauth-credential-store-selector.ts to here.
+// Daemon already owns secretsDb + secretsCrypto, so constructing the store at
+// this composition site removes agent's last production @comis/memory import.
+import { createOAuthProfileStoreEncrypted } from "@comis/memory";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
@@ -33,14 +38,11 @@ import {
   createCostTracker,
   createStepCounter,
   createSessionLifecycle,
-  ensureWorkspace,
-  resolveWorkspaceDir,
   createPiExecutor,
   createComisSessionManager,
   cleanupStaleLocks,
   createAuthStorageAdapter,
   createAuthProvider,
-  selectOAuthCredentialStore,
   createModelRegistryAdapter,
   registerCustomProviders,
   createProviderHealthMonitor,
@@ -59,6 +61,18 @@ import {
   type LastKnownModelTracker,
   type ToolDescriptionContext,
 } from "@comis/agent";
+// Phase 35 Plan 35-04 (D-01): symbols relocated from @comis/agent to
+// @comis/core. The daemon composition root now imports them directly via
+// @comis/core; agent re-exports are deleted in the same plan.
+import {
+  ensureWorkspace,
+  resolveWorkspaceDir,
+  selectOAuthCredentialStore,
+  // Canonical FileLockPort adapter. Relocated from @comis/scheduler in Plan
+  // 35-02; consumed here as the production createFileLock() target so the
+  // daemon no longer reaches into @comis/scheduler for it (D-01 #1).
+  createFileLock,
+} from "@comis/core";
 import {
   agentToolsToToolDefinitions,
   createSkillRegistry,
@@ -102,7 +116,7 @@ export interface SingleAgentDeps {
   canaryFallbackSecret?: string;
   injectionRateLimiter?: InjectionRateLimiter;
   embeddingQueue?: { enqueue(entryId: string, content: string): void };
-  contextStore?: import("@comis/memory").ContextStore;
+  contextStore?: import("@comis/core").ContextStorePort;
   db?: unknown;
   /** Global provider health monitor shared across all agents */
   providerHealth?: ProviderHealthMonitor;
@@ -155,6 +169,15 @@ export interface SingleAgentDeps {
    * Threaded from daemon.ts; setupMcp runs before setupAgents.
    */
   mcpClientManager: McpClientManager;
+  /**
+   * Canonical FileLockPort adapter (proper-lockfile-backed `createFileLock()`
+   * from `@comis/scheduler`). Phase 32 commit 12 (ORCH-EXT-15) moved
+   * construction here so agent/session/oauth modules no longer import
+   * `@comis/scheduler` directly. The port is stateless — one instance
+   * shared across every per-agent OAuth store, OAuth token manager, and
+   * session-write-lock call site is safe.
+   */
+  fileLock: FileLockPort;
 }
 
 /** Per-agent outputs from setupSingleAgent(), matching the Maps in AgentsResult. */
@@ -372,6 +395,10 @@ export async function setupSingleAgent(
       credentialStore: oauthCredentialStore,
       logger: agentLogger.child({ submodule: "oauth-token-manager" }),
       dataDir: dataDirAbs,
+      // Same canonical FileLockPort instance the OAuth credential store
+      // was constructed with — both the file adapter and the token manager
+      // need cross-process serialization on the same .locks/ directory.
+      fileLock: deps.fileLock,
       keyPrefix: "OAUTH_",
       // Pass auth-profiles.json path when file adapter active so
       // OAuthTokenManager can register the chokidar watcher and pick up
@@ -446,11 +473,19 @@ export async function setupSingleAgent(
     sessionBaseDir: safePath(dir, "sessions"),
     lockDir,
     cwd: dir,
+    // Same FileLockPort instance the OAuth path uses — single proper-lockfile
+    // adapter per daemon process per Phase 32 commit 12 (ORCH-EXT-15).
+    fileLock: deps.fileLock,
+    // WR-07: thread the agent-scoped logger so withSessionLock can emit a
+    // structured-cause line before collapsing the FileLockPort error
+    // union to the legacy 'locked' | 'error' string. Enables operator
+    // triage of EACCES / disk-full vs lock contention.
+    logger: agentLogger,
   });
 
   // Clean up stale lock sentinel files from previous daemon runs
   suppressError(
-    cleanupStaleLocks(lockDir).then((removed) => {
+    cleanupStaleLocks(deps.fileLock, lockDir).then((removed) => {
       if (removed > 0) {
         agentLogger.info({ agentId, removed, lockDir }, "Cleaned up stale lock sentinels");
       }
@@ -719,7 +754,7 @@ export async function setupAgents(deps: {
   /** Embedding queue for async vector generation. Wired into executor for conversation persistence. */
   embeddingQueue?: { enqueue(entryId: string, content: string): void };
   /** Context store for DAG mode context engine */
-  contextStore?: import("@comis/memory").ContextStore;
+  contextStore?: import("@comis/core").ContextStorePort;
   /** Raw better-sqlite3 database handle for DAG transactions */
   db?: unknown;
   /** Optional embedding port for discover_tools semantic search. */
@@ -774,7 +809,7 @@ export async function setupAgents(deps: {
     agentLogger.warn(
       {
         hint: "CLI auth login changes require daemon restart in encrypted mode (file-watch unsupported on encrypted SQLite WAL)",
-        errorKind: "limitation_known",
+        errorKind: "config" as const,
         submodule: "setup-agents",
       },
       "OAuth hot-reload disabled in encrypted-store mode",
@@ -857,11 +892,41 @@ export async function setupAgents(deps: {
     container.config.dataDir && container.config.dataDir.length > 0
       ? container.config.dataDir
       : safePath(homedir(), ".comis");
+
+  // Phase 31 commit 4 (MEM-CTX-PORTS-07): construct the encrypted-mode store
+  // HERE (daemon already owns secretsDb + secretsCrypto). The agent selector
+  // no longer reaches into @comis/memory.
+  //
+  // EXPLICIT GUARDS (NOT non-null assertions): if storage is "encrypted" but
+  // either secretsDb or secretsCrypto is unset, throw a clear bootstrap error
+  // pointing operators at SECRETS_MASTER_KEY. Non-null assertions (!) would
+  // produce a `TypeError: Cannot read properties of undefined` at runtime —
+  // exactly the failure mode the old in-selector pre-check avoided.
+  let encryptedStore: OAuthCredentialStorePort | undefined;
+  if (container.config.oauth.storage === "encrypted") {
+    if (!deps.secretsDb || !deps.secretsCrypto) {
+      throw new Error(
+        "OAuth storage mode is 'encrypted' but secretsDb/secretsCrypto were not initialized. " +
+          "Hint: set SECRETS_MASTER_KEY env var (and restart the daemon) so the encrypted " +
+          "secrets store boots, or change appConfig.oauth.storage to 'file' to use the " +
+          "plaintext file backend.",
+      );
+    }
+    encryptedStore = createOAuthProfileStoreEncrypted(deps.secretsDb, deps.secretsCrypto);
+  }
+
+  // Phase 32 commit 12 (ORCH-EXT-15): construct the canonical FileLockPort
+  // adapter ONCE here. Reused for OAuth store/manager locking AND session-
+  // write-lock + stale-lock cleanup across every per-agent setup. The port
+  // is stateless (per `createFileLock` semantics in @comis/scheduler), so a
+  // single shared instance is correct.
+  const fileLock = createFileLock();
+
   const oauthCredentialStore = selectOAuthCredentialStore({
     storage: container.config.oauth.storage,
     dataDir: dataDirAbsForOauth,
-    secretsCrypto: deps.secretsCrypto,
-    secretsDb: deps.secretsDb,
+    fileLock,
+    encryptedStore,
   });
 
   // Construct shared deps struct once before the loop (for hot-add reuse)
@@ -901,6 +966,8 @@ export async function setupAgents(deps: {
     // setupSingleAgent invocation can construct a per-agent
     // ToolCapabilityPort adapter that closes over the live MCP state.
     mcpClientManager: deps.mcpClientManager,
+    // Canonical FileLockPort adapter — see comment at construction site.
+    fileLock,
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
@@ -936,7 +1003,7 @@ export async function setupAgents(deps: {
     for (const [agentId, dir] of workspaceDirs) {
       const lockDir = safePath(dir, ".locks");
       suppressError(
-        cleanupStaleLocks(lockDir).then((removed) => {
+        cleanupStaleLocks(fileLock, lockDir).then((removed) => {
           if (removed > 0) {
             agentLogger.info({ agentId, removed, lockDir }, "Periodic stale lock cleanup");
           }

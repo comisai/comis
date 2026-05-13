@@ -8,11 +8,16 @@ import {
   resolveAgentModel,
   setupSingleAgent,
 } from "./setup-agents.js";
-// selectOAuthCredentialStore lives in @comis/agent (CLI cannot import from
-// @comis/daemon).
-import { selectOAuthCredentialStore } from "@comis/agent";
-import type { OAuthCredentialStorePort, SecretsCrypto } from "@comis/core";
-import type Database from "better-sqlite3";
+// selectOAuthCredentialStore relocated from @comis/agent to @comis/core in
+// Phase 35 Plan 35-04 per D-01 #2.
+import {
+  selectOAuthCredentialStore,
+  type OAuthCredentialStorePort,
+} from "@comis/core";
+// Phase 31 commit 4 (MEM-CTX-PORTS-07): the selector signature no longer
+// accepts secretsCrypto/secretsDb directly — daemon constructs the encrypted
+// store and injects the port. The corresponding type imports
+// (`SecretsCrypto`, `better-sqlite3`'s `Database`) were dropped here.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -241,28 +246,40 @@ describe("setupSingleAgent OAuth wiring", () => {
   });
 
   it("selects encrypted-mode adapter via selectOAuthCredentialStore branch", () => {
-    // Daemon side: only the call site lives here now (the helper definition
-    // moved to @comis/agent so the CLI can import it without depending on
-    // @comis/daemon).
+    // Daemon side after Phase 31 commit 4 (MEM-CTX-PORTS-07): the daemon
+    // constructs the encrypted store inline (it owns secretsDb + secretsCrypto)
+    // and injects it into the selector via `encryptedStore`. The selector
+    // body itself no longer imports @comis/memory; it just returns the
+    // injected port for encrypted mode.
     expect(source).toContain("selectOAuthCredentialStore({");
-    // Encrypted branch lives inside selectOAuthCredentialStore (helper) — pulls
-    // both secretsCrypto + secretsDb through deps. Read the helper from its
-    // new home in @comis/agent.
+    // Daemon's setup-agents.ts now owns the createOAuthProfileStoreEncrypted
+    // value-import + call site (the memory value-import moved out of agent).
+    expect(source).toContain('import { createOAuthProfileStoreEncrypted } from "@comis/memory"');
+    expect(source).toContain("createOAuthProfileStoreEncrypted(deps.secretsDb, deps.secretsCrypto)");
+    // The call site passes the constructed (or undefined) port via encryptedStore.
+    expect(source).toMatch(/selectOAuthCredentialStore\(\{[\s\S]*?encryptedStore[\s\S]*?\}\)/);
+    // Selector body lives in @comis/core (Phase 35 Plan 35-03 / D-01 #2)
+    // and now returns the injected port without touching any memory factory.
     const selectorSource = readFileSync(
-      join(__dirname, "..", "..", "..", "agent", "src", "model", "oauth-credential-store-selector.ts"),
+      join(__dirname, "..", "..", "..", "core", "src", "oauth", "oauth-credential-store-selector.ts"),
       "utf-8",
     );
     const helperBody = selectorSource.slice(
       selectorSource.indexOf("export function selectOAuthCredentialStore"),
     );
     expect(helperBody).toContain('storage === "encrypted"');
-    expect(helperBody).toContain("encryptedFactory(secretsDb, secretsCrypto)");
-    expect(helperBody).toContain("fileFactory({ dataDir })");
+    expect(helperBody).toContain("return encryptedStore");
+    // Phase 32 commit 12 (ORCH-EXT-15): file factory now consumes the
+    // daemon-injected FileLockPort alongside dataDir.
+    expect(helperBody).toContain("fileFactory({ dataDir, fileLock })");
+    // Negative assertion: the selector source must NOT import @comis/memory
+    // (Phase 31 commit 4 cut MEM-CTX-PORTS-01's last value-import).
+    expect(selectorSource).not.toContain('from "@comis/memory"');
   });
 });
 
 describe("selectOAuthCredentialStore", () => {
-  /** Mock OAuthCredentialStorePort returned by injected factories. */
+  /** Mock OAuthCredentialStorePort returned by the file factory or injected directly. */
   function makeMockPort(): OAuthCredentialStorePort {
     return {
       get: vi.fn(),
@@ -273,68 +290,85 @@ describe("selectOAuthCredentialStore", () => {
     } as unknown as OAuthCredentialStorePort;
   }
 
-  it("file mode: invokes createOAuthCredentialStoreFile with { dataDir }", () => {
+  /**
+   * Minimal FileLockPort stub. Phase 32 commit 12 (ORCH-EXT-15) added
+   * `fileLock` to SelectOAuthCredentialStoreInput. The file branch forwards
+   * it into the file factory; the encrypted branch ignores it.
+   */
+  function makeFileLockStub(): import("@comis/core").FileLockPort {
+    return {
+      acquire: vi.fn(),
+      release: vi.fn(),
+      withLock: vi.fn(),
+      isLocked: vi.fn(async () => false),
+      cleanupStaleLocks: vi.fn(async () => 0),
+    };
+  }
+
+  it("file mode: invokes createOAuthCredentialStoreFile with { dataDir, fileLock }; ignores encryptedStore", () => {
     const fileMock = vi.fn(() => makeMockPort());
-    const encryptedMock = vi.fn(() => makeMockPort());
+    const sentinelEncrypted = makeMockPort();
+    const fileLock = makeFileLockStub();
     const port = selectOAuthCredentialStore({
       storage: "file",
       dataDir: "/tmp/comis-test-w3",
+      fileLock,
+      // Even when an encryptedStore is supplied, file mode must NOT use it —
+      // the file branch unconditionally delegates to the file factory.
+      encryptedStore: sentinelEncrypted,
       factories: {
-        file: fileMock as unknown as typeof import("@comis/agent").createOAuthCredentialStoreFile,
-        encrypted: encryptedMock as unknown as typeof import("@comis/memory").createOAuthProfileStoreEncrypted,
+        file: fileMock as unknown as typeof import("@comis/core").createOAuthCredentialStoreFile,
       },
     });
     expect(port).toBeDefined();
+    expect(port).not.toBe(sentinelEncrypted);
     expect(fileMock).toHaveBeenCalledTimes(1);
-    expect(fileMock).toHaveBeenCalledWith({ dataDir: "/tmp/comis-test-w3" });
-    expect(encryptedMock).not.toHaveBeenCalled();
+    expect(fileMock).toHaveBeenCalledWith({ dataDir: "/tmp/comis-test-w3", fileLock });
   });
 
-  it("encrypted mode: passes the SAME db handle (W6 — no dual-handle) and shares secretsCrypto", () => {
+  it("encrypted mode: returns the injected encryptedStore by reference (no internal factory call)", () => {
     const fileMock = vi.fn(() => makeMockPort());
-    const encryptedMock = vi.fn(() => makeMockPort());
-    // Use sentinel object identities so we can assert reference-equality.
-    const sentinelDb = { __sentinel: "shared-db" } as unknown as Database.Database;
-    const sentinelCrypto = { __sentinel: "crypto" } as unknown as SecretsCrypto;
+    // Sentinel identity proves the selector returns the EXACT injected port
+    // (daemon owns construction; selector is a pass-through for encrypted mode).
+    const sentinelEncrypted = makeMockPort();
     const port = selectOAuthCredentialStore({
       storage: "encrypted",
       dataDir: "/tmp/comis-test-w6",
-      secretsCrypto: sentinelCrypto,
-      secretsDb: sentinelDb,
+      fileLock: makeFileLockStub(),
+      encryptedStore: sentinelEncrypted,
       factories: {
-        file: fileMock as unknown as typeof import("@comis/agent").createOAuthCredentialStoreFile,
-        encrypted: encryptedMock as unknown as typeof import("@comis/memory").createOAuthProfileStoreEncrypted,
+        file: fileMock as unknown as typeof import("@comis/core").createOAuthCredentialStoreFile,
       },
     });
-    expect(port).toBeDefined();
-    expect(encryptedMock).toHaveBeenCalledTimes(1);
-    // CRITICAL W6 assertion: the EXACT db reference passed in is the EXACT
-    // db reference handed to the encrypted factory — proves shared-handle,
-    // not a freshly-opened one.
-    expect(encryptedMock).toHaveBeenCalledWith(sentinelDb, sentinelCrypto);
+    expect(port).toBe(sentinelEncrypted);
     expect(fileMock).not.toHaveBeenCalled();
   });
 
-  it("encrypted mode + missing secretsCrypto: throws Error mentioning SECRETS_MASTER_KEY", () => {
+  it("encrypted mode + missing encryptedStore: throws Error pointing daemon composition at the inject point", () => {
     expect(() =>
       selectOAuthCredentialStore({
         storage: "encrypted",
-        dataDir: "/tmp/comis-test-encrypted-no-crypto",
-        secretsCrypto: undefined,
-        secretsDb: { __sentinel: "db" } as unknown as Database.Database,
+        dataDir: "/tmp/comis-test-encrypted-no-port",
+        fileLock: makeFileLockStub(),
+        encryptedStore: undefined,
       }),
-    ).toThrow(/SECRETS_MASTER_KEY/);
-  });
-
-  it("encrypted mode + missing secretsDb: throws Error mentioning SECRETS_MASTER_KEY (BOTH fields are required together)", () => {
+    ).toThrow(/no encrypted store was injected/);
+    // The error message must name setup-agents.ts (the daemon-side construction
+    // site) AND createOAuthProfileStoreEncrypted (the factory the daemon calls).
     expect(() =>
       selectOAuthCredentialStore({
         storage: "encrypted",
-        dataDir: "/tmp/comis-test-encrypted-no-db",
-        secretsCrypto: { __sentinel: "crypto" } as unknown as SecretsCrypto,
-        secretsDb: undefined,
+        dataDir: "/tmp/comis-test-encrypted-no-port",
+        fileLock: makeFileLockStub(),
       }),
-    ).toThrow(/SECRETS_MASTER_KEY/);
+    ).toThrow(/setup-agents\.ts/);
+    expect(() =>
+      selectOAuthCredentialStore({
+        storage: "encrypted",
+        dataDir: "/tmp/comis-test-encrypted-no-port",
+        fileLock: makeFileLockStub(),
+      }),
+    ).toThrow(/createOAuthProfileStoreEncrypted/);
   });
 });
 

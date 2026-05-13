@@ -14,8 +14,8 @@
 
 import type { AuthStorage } from "@mariozechner/pi-coding-agent";
 import type { SecretManager } from "@comis/core";
-import type { TypedEventBus, OAuthCredentialStorePort } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { TypedEventBus, OAuthCredentialStorePort, FileLockPort } from "@comis/core";
+import type { ComisLogger } from "@comis/core";
 import { createAuthStorageAdapter, type AuthStorageAdapterOptions } from "./auth-storage-adapter.js";
 import { createAuthProfileManager, type AuthProfileManager, type AuthProfileManagerConfig, type AuthProfile, type OrderingStrategy } from "./auth-profile.js";
 import { createAuthRotationAdapter, type AuthRotationAdapter } from "./auth-rotation-adapter.js";
@@ -59,6 +59,14 @@ export interface AuthProviderConfig {
     logger: ComisLogger;
     /** Data directory for lock-file path resolution — REQUIRED. */
     dataDir: string;
+    /**
+     * Cross-process filesystem mutex for the OAuth refresh path. Threaded
+     * straight into OAuthTokenManagerDeps. Daemon composition supplies
+     * `createFileLock()` from `@comis/core` (relocated from `@comis/scheduler`
+     * in Phase 35 Plan 35-04 D-01 #1). Required so the token manager can run
+     * inside `@comis/agent` without importing scheduler.
+     */
+    fileLock: FileLockPort;
     /** Prefix for SecretManager key names (default: "OAUTH_"). */
     keyPrefix?: string;
     /**
@@ -169,6 +177,7 @@ export function createAuthProvider(config: AuthProviderConfig): AuthProvider {
       credentialStore: oauth.credentialStore,
       logger: oauth.logger,
       dataDir: oauth.dataDir,
+      fileLock: oauth.fileLock,
       keyPrefix: oauth.keyPrefix,
       watchPath: oauth.watchPath,
       // Thread the agent oauthProfiles getter through.

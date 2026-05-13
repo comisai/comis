@@ -273,7 +273,7 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
         logger?.warn(
           {
             hint: "Config git repo was corrupted or missing, re-initialized",
-            errorKind: "internal",
+            errorKind: "internal" as const,
           },
           "Auto-reinitializing config git repo",
         );

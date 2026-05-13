@@ -15,7 +15,7 @@
 
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { CacheRetention, Message } from "@mariozechner/pi-ai";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 
 import type { StreamFnWrapper } from "./types.js";
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, resolveBreakpointStrategy } from "./config-resolver.js";
@@ -1434,7 +1434,7 @@ export function createRequestBodyInjector(
                         sessionKey: config.sessionKey,
                         consecutiveChanges: changes,
                         hint: "Cache prefix changing every turn — microcompaction or content modification destabilizing the prefix. Cache writes are wasted.",
-                        errorKind: "performance" as const,
+                        errorKind: "internal" as const,
                       },
                       "Unstable prefix detected",
                     );
@@ -1451,7 +1451,7 @@ export function createRequestBodyInjector(
                         sessionKey: config.sessionKey,
                         consecutiveChanges: changes,
                         hint: "Cache prefix changing every turn — microcompaction or content modification destabilizing the prefix. Cache writes are wasted.",
-                        errorKind: "performance" as const,
+                        errorKind: "internal" as const,
                       },
                       "Unstable prefix detected",
                     );
@@ -1772,7 +1772,7 @@ export function createRequestBodyInjector(
                     messageCount: (result.messages as unknown[]).length,
                     modelId: model.id,
                     hint: "No cache breakpoint found on any message in mature conversation. Cache fence is unset -- thinking block cleaner has no protection boundary.",
-                    errorKind: "performance" as const,
+                    errorKind: "internal" as const,
                   },
                   "Cache fence unset in mature session",
                 );
@@ -1787,7 +1787,7 @@ export function createRequestBodyInjector(
                   messageCount: (result.messages as unknown[]).length,
                   modelId: model.id,
                   hint: "Breakpoint budget exhausted before message breakpoints. System prompt may need consolidation or tool breakpoint reduction.",
-                  errorKind: "performance" as const,
+                  errorKind: "resource" as const,
                 },
                 "W7: Cache breakpoint budget exhausted -- no message breakpoints placed on mature conversation",
               );

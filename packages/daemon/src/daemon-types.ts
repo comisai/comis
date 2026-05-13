@@ -7,9 +7,9 @@
  */
 
 import type { DeviceIdentity } from "@comis/core";
-import type { AppContainer, ChannelPort, DeliveryQueuePort } from "@comis/core";
+import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
 import type { ApprovalGate } from "@comis/core";
-import type { ChannelHealthMonitor, DeliveryAdapter } from "@comis/channels";
+import type { ChannelHealthMonitor } from "@comis/channels";
 import type { ComisLogger } from "@comis/infra";
 import type { SessionResetScheduler, BackgroundTaskManager } from "@comis/agent";
 import type { GatewayServerHandle } from "@comis/gateway";

@@ -353,10 +353,13 @@ describe("ComisSessionManager.destroySession", () => {
     const baseDir = await mkdtemp(join(tmpdir(), "csm-destroy-"));
     const lockDir = await mkdtemp(join(tmpdir(), "csm-lock-"));
 
+    // FileLockPort injection — Phase 32 commit 12 (ORCH-EXT-15).
+    const { createFileLock } = await import("@comis/core");
     const mgr = createComisSessionManager({
       sessionBaseDir: baseDir,
       lockDir,
       cwd: baseDir,
+      fileLock: createFileLock(),
     });
 
     const sessionKey: SessionKey = { tenantId: "t1", userId: "u1", channelId: "test-ch" };
@@ -388,10 +391,13 @@ describe("ComisSessionManager.destroySession", () => {
     const baseDir = await mkdtemp(join(tmpdir(), "csm-destroy-idem-"));
     const lockDir = await mkdtemp(join(tmpdir(), "csm-lock-idem-"));
 
+    // FileLockPort injection — Phase 32 commit 12 (ORCH-EXT-15).
+    const { createFileLock } = await import("@comis/core");
     const mgr = createComisSessionManager({
       sessionBaseDir: baseDir,
       lockDir,
       cwd: baseDir,
+      fileLock: createFileLock(),
     });
 
     const sessionKey: SessionKey = { tenantId: "t1", userId: "u1", channelId: "no-exist" };

@@ -22,13 +22,10 @@ import { join } from "node:path";
 
 import {
   createSubAgentRunner,
-  type SubAgentRunnerDeps,
-} from "@comis/daemon";
-
-import {
   createResultCondenser,
   createNarrativeCaster,
   createLifecycleHooks,
+  type SubAgentRunnerDeps,
 } from "@comis/agent";
 
 import { TypedEventBus } from "@comis/core";

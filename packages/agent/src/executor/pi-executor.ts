@@ -52,10 +52,11 @@ import {
   type SenderTrustDisplayConfig,
   type ToolCapabilityPort,
 } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { CommandDirectives } from "../commands/types.js";
+// Phase 32 commit 6 (ORCH-EXT-08): see ./command-directive-types.ts for rationale.
+import type { CommandDirectives } from "./command-directive-types.js";
 import type { BudgetGuard } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
 import type { StepCounter } from "../executor/step-counter.js";
@@ -353,7 +354,7 @@ export interface PiExecutorDeps {
   /** Documentation config from AppConfig. */
   documentationConfig?: import("@comis/core").DocumentationConfig;
   /** Context store for DAG mode. Optional -- only present when DAG tables exist. */
-  contextStore?: import("@comis/memory").ContextStore;
+  contextStore?: import("@comis/core").ContextStorePort;
   /** Raw database handle for DAG transactions. */
   db?: unknown;
   /** Tenant ID for conversation creation. */
@@ -1336,7 +1337,7 @@ export function createPiExecutor(
                         tokenDrop: event.tokenDrop,
                         conversationBlockCount: event.conversationBlockCount,
                         hint: "Long conversation exceeded lookback window. Multi-zone breakpoints mitigate this. No action needed.",
-                        errorKind: "performance" as const,
+                        errorKind: "internal" as const,
                       },
                       "Cache miss from lookback window exceeded (not server eviction)",
                     );

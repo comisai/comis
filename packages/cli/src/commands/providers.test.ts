@@ -19,9 +19,15 @@ import { Command } from "commander";
 
 // ---------- Mocks (hoisted) ----------
 
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// importOriginal-based so callTyped (Plan 35-16 Wave C retarget) resolves
+// to the real wrapper while withClient is mocked.
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 vi.mock("../client/provider-list.js", () => ({
   loadProvidersWithFallback: vi.fn(),
@@ -47,16 +53,21 @@ vi.mock("@mariozechner/pi-ai", () => ({
   getEnvApiKey: vi.fn(),
 }));
 
-vi.mock("@comis/agent", () => ({
-  createModelCatalog: vi.fn(() => ({
-    loadStatic: vi.fn(),
-    getByProvider: vi.fn(() => []),
-    getAll: vi.fn(() => []),
-    get: vi.fn(),
-    mergeScanned: vi.fn(),
-    getProviders: vi.fn(),
-  })),
-}));
+// createModelCatalog relocated to @comis/core in Phase 35 Plan 35-04 per D-01 #4.
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    createModelCatalog: vi.fn(() => ({
+      loadStatic: vi.fn(),
+      getByProvider: vi.fn(() => []),
+      getAll: vi.fn(() => []),
+      get: vi.fn(),
+      mergeScanned: vi.fn(),
+      getProviders: vi.fn(),
+    })),
+  };
+});
 
 // Dynamic imports after mocks (vitest hoists `vi.mock`, but explicit
 // dynamic-import keeps the test file's intent crystal clear).

@@ -7,7 +7,6 @@ export { initSchema, isVecAvailable } from "./schema.js";
 
 // Session store
 export { createSessionStore } from "./session-store.js";
-export type { SessionStore, SessionData, SessionListEntry, SessionDetailedEntry } from "./session-store.js";
 
 // SQLite memory adapter (MemoryPort implementation)
 export { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
@@ -99,17 +98,3 @@ export { initContextSchema } from "./context-schema.js";
 
 // Context store (DAG mode CRUD)
 export { createContextStore } from "./context-store.js";
-export type { ContextStore } from "./context-store.js";
-
-// Context store row types
-export type {
-  CtxConversationRow,
-  CtxMessageRow,
-  CtxMessagePartRow,
-  CtxSummaryRow,
-  CtxSummaryMessageRow,
-  CtxSummaryParentRow,
-  CtxContextItemRow,
-  CtxLargeFileRow,
-  CtxExpansionGrantRow,
-} from "./types.js";

@@ -19,11 +19,6 @@ The daemon's `main()` function calls 30+ `setupXxx()` factory functions in seque
 9. **Monitoring** -- Health checks, observability, latency tracking
 10. **Shutdown** -- Graceful shutdown coordination
 
-### Sub-agent Runner
-
-- **`createSubAgentRunner()`** -- Manages sub-agent spawn lifecycle: enforces concurrency limits, tracks active runs, sweeps result files from disk
-- **Dead-letter queue** -- Captures failed announcement deliveries for retry
-
 ### RPC Handlers
 
 55+ RPC handler implementations for context management, agent operations, session queries, config updates, and system administration.

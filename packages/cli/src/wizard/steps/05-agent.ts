@@ -16,7 +16,7 @@ import {
   sectionSeparator,
   validateAgentName,
 } from "../index.js";
-import { createModelCatalog } from "@comis/agent";
+import { createModelCatalog } from "@comis/core";
 
 // ---------- Helpers ----------
 

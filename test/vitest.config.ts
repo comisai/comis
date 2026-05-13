@@ -16,7 +16,17 @@ export default defineConfig({
       "@comis/gateway": resolve(packages, "gateway/dist/index.js"),
       "@comis/memory": resolve(packages, "memory/dist/index.js"),
       "@comis/scheduler": resolve(packages, "scheduler/dist/index.js"),
-      "@comis/skills": resolve(packages, "skills/dist/index.js"),
+      // Three skills subpath entries (per SKILLS-SPLIT-03; Phase 33).
+      // ORDER MATTERS: Vite alias matching is prefix-based with `/` separator
+      // semantics, so the most-specific subpaths MUST come BEFORE the bare
+      // `@comis/skills` alias -- otherwise `@comis/skills/tools` would be
+      // matched as bare-prefix + `/tools` and routed to the `.` subpath
+      // target. Surfaced in Phase 33 Plan 03 when daemon's setup-tools.ts
+      // started importing from `@comis/skills/tools` (Rule 3 fix).
+      "@comis/skills/platform-tools": resolve(packages, "skills/dist/platform-tools/index.js"),
+      "@comis/skills/tools": resolve(packages, "skills/dist/tools/index.js"),
+      "@comis/skills": resolve(packages, "skills/dist/skills/index.js"),
+      "@comis/orchestrator": resolve(packages, "orchestrator/dist/index.js"),
       "@comis/cli": resolve(packages, "cli/dist/index.js"),
     },
   },

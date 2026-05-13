@@ -17,4 +17,3 @@ export {
   mergeBeforeCompaction,
   mergeBeforeDelivery,
 } from "./hook-strategies.js";
-export { setGlobalHookRunner, getGlobalHookRunner, clearGlobalHookRunner } from "./hook-runner-global.js";

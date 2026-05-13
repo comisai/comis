@@ -29,7 +29,13 @@ import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.j
 import { RPC_FAST_MS } from "../support/timeouts.js";
 import type { ApprovalGate } from "@comis/core";
 import { runWithContext } from "@comis/core";
-import { createAgentsManageTool } from "@comis/skills";
+// Phase 33 SKILLS-SPLIT-06: platform-tool factories now live on the
+// `./platform-tools` subpath; daemon consumes them via the registry.
+// Integration tests that exercise individual factories must import from
+// the new subpath (the `.` subpath barrel dropped these re-exports in
+// Plan 03 -- transitional kitchen-sink was narrowed when daemon stopped
+// directly importing the factory names).
+import { createAgentsManageTool } from "@comis/skills/platform-tools";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------

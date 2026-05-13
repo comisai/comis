@@ -9,9 +9,7 @@
  * @module
  */
 
-import { resolveModelPricing } from "../model/model-catalog.js";
-import { createModelCatalog } from "../model/model-catalog.js";
-import type { ModelCatalog } from "../model/model-catalog.js";
+import { resolveModelPricing, createModelCatalog, type ModelCatalog } from "@comis/core";
 
 /** Cache support info for a provider. */
 export interface CacheProviderInfo {

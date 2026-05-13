@@ -156,21 +156,32 @@ describe("malformed YAML config handling", () => {
 // Session key parsing edge cases
 // ============================================================
 
-// Mock RPC layer at module level for ESM hoisting
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// Mock RPC layer at module level for ESM hoisting.
+// Plan 35-19 Wave C closure: importOriginal-based mock so callTyped
+// resolves to the real wrapper while withClient is mocked.
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 // Mock spinner to pass-through
 vi.mock("../output/spinner.js", () => ({
   withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
 }));
 
-// Mock @comis/agent for ensureWorkspace/resolveWorkspaceDir used in agent create
-vi.mock("@comis/agent", () => ({
-  ensureWorkspace: vi.fn(async () => ({ dir: "/tmp/test", configFile: "", memoryDir: "" })),
-  resolveWorkspaceDir: vi.fn((_config: unknown, name: string) => `/tmp/test-workspace/${name}`),
-}));
+// Mock @comis/core for ensureWorkspace/resolveWorkspaceDir used in agent create
+// (relocated from @comis/agent in Phase 35 Plan 35-04 per D-01 #5).
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    ensureWorkspace: vi.fn(async () => ({ dir: "/tmp/test", configFile: "", memoryDir: "" })),
+    resolveWorkspaceDir: vi.fn((_config: unknown, name: string) => `/tmp/test-workspace/${name}`),
+  };
+});
 
 // Dynamic imports after mocks
 const { registerSessionsCommand } = await import("./sessions.js");
@@ -196,7 +207,13 @@ describe("session key parsing edge cases", () => {
   it("inspect handles empty string key", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("session.status", { session: { key: "" } })
+        .onCall("session.status", {
+          model: "x",
+          agentName: "default",
+          tokensUsed: { totalTokens: 0, totalCost: 0 },
+          stepsExecuted: 0,
+          maxSteps: 25,
+        })
         .build();
       return fn(mockClient);
     });
@@ -217,7 +234,11 @@ describe("session key parsing edge cases", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("session.status", {
-          session: { key: "simplekey", channel: "discord", user: "alice" },
+          model: "x",
+          agentName: "default",
+          tokensUsed: { totalTokens: 0, totalCost: 0 },
+          stepsExecuted: 0,
+          maxSteps: 25,
         })
         .build();
       return fn(mockClient);
@@ -237,7 +258,11 @@ describe("session key parsing edge cases", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("session.status", {
-          session: { key: "tenant:user" },
+          model: "x",
+          agentName: "default",
+          tokensUsed: { totalTokens: 0, totalCost: 0 },
+          stepsExecuted: 0,
+          maxSteps: 25,
         })
         .build();
       return fn(mockClient);
@@ -257,7 +282,11 @@ describe("session key parsing edge cases", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("session.status", {
-          session: { key: "t:u:c:extra:parts" },
+          model: "x",
+          agentName: "default",
+          tokensUsed: { totalTokens: 0, totalCost: 0 },
+          stepsExecuted: 0,
+          maxSteps: 25,
         })
         .build();
       return fn(mockClient);
@@ -279,7 +308,11 @@ describe("session key parsing edge cases", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("session.status", {
-          session: { key: "tenant-1:user@email:channel#room" },
+          model: "x",
+          agentName: "default",
+          tokensUsed: { totalTokens: 0, totalCost: 0 },
+          stepsExecuted: 0,
+          maxSteps: 25,
         })
         .build();
       return fn(mockClient);
@@ -328,7 +361,7 @@ describe("agent list field normalization edge cases", () => {
   it("handles agent entry with no provider or model fields", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", {
+        .onCall("config.read", {
           agents: {
             "bare-agent": { bindings: ["ch:1"] },
           },
@@ -360,7 +393,7 @@ describe("agent list field normalization edge cases", () => {
   it("handles agent entry that is a string instead of object", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", {
+        .onCall("config.read", {
           agents: {
             broken: "not-an-object",
           },
@@ -384,7 +417,7 @@ describe("agent list field normalization edge cases", () => {
   it("handles agent entry with null provider and model", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", {
+        .onCall("config.read", {
           agents: {
             "null-agent": { provider: null, model: null },
           },
@@ -410,7 +443,7 @@ describe("agent list field normalization edge cases", () => {
   it("handles mixed agents where some have provider and some have defaultProvider", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", {
+        .onCall("config.read", {
           agents: {
             "new-style": {
               provider: "anthropic",
@@ -527,7 +560,7 @@ describe("memory clear no-filter rejection", () => {
     // Mock withClient to succeed for valid clear operation
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.set", {})
+        .onCall("memory.flush", {})
         .build();
       return fn(mockClient);
     });

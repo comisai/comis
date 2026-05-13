@@ -4,7 +4,13 @@ import * as path from "node:path";
 import { z } from "zod";
 import type { CronJob } from "./cron-types.js";
 import { CronJobSchema } from "./cron-types.js";
-import { withExecutionLock } from "../execution/execution-lock.js";
+// Phase 35 Plan 35-04 (D-01 #1): createFileLock relocated from
+// scheduler/execution/execution-lock.ts to @comis/core. Scheduler internals
+// now consume the canonical FileLockPort.withLock() API directly via
+// @comis/core. The old withExecutionLock helper (Result<T, "locked" | "error">
+// shape) is gone — the FileLockPort returns Result<T, LockError> where
+// LockError = { kind: "locked" | "error", message: string }.
+import { createFileLock } from "@comis/core";
 import type { SchedulerLogger } from "../shared-types.js";
 
 /**
@@ -46,6 +52,10 @@ const LOCK_OPTIONS = { staleMs: 30_000, updateMs: 5_000 };
 export function createCronStore(filePath: string, logger?: SchedulerLogger): CronStore {
   const lockPath = `${filePath}.lock`;
   const mutex = createMutex();
+  // Phase 35 Plan 35-04 (D-01 #1): use the canonical FileLockPort.withLock()
+  // adapter from @comis/core instead of the deleted scheduler-internal
+  // withExecutionLock helper. Stateless factory — one instance per CronStore.
+  const fileLock = createFileLock();
 
   /** Internal load: reads and parses the store file. */
   async function loadFromFile(): Promise<CronJob[]> {
@@ -117,20 +127,20 @@ export function createCronStore(filePath: string, logger?: SchedulerLogger): Cro
 
     async addJob(job: CronJob): Promise<void> {
       await mutex.serialize(async () => {
-        const result = await withExecutionLock(lockPath, async () => {
+        const result = await fileLock.withLock(lockPath, async () => {
           const jobs = await loadFromFile();
           jobs.push(job);
           await saveToFile(jobs);
         }, LOCK_OPTIONS);
         if (!result.ok) {
-          throw new Error(`CronStore addJob failed: lock ${result.error}`);
+          throw new Error(`CronStore addJob failed: lock ${result.error.kind}`);
         }
       });
     },
 
     async removeJob(jobId: string): Promise<boolean> {
       return mutex.serialize(async () => {
-        const result = await withExecutionLock(lockPath, async () => {
+        const result = await fileLock.withLock(lockPath, async () => {
           const jobs = await loadFromFile();
           const idx = jobs.findIndex((j) => j.id === jobId);
           if (idx === -1) return false;
@@ -139,7 +149,7 @@ export function createCronStore(filePath: string, logger?: SchedulerLogger): Cro
           return true;
         }, LOCK_OPTIONS);
         if (!result.ok) {
-          throw new Error(`CronStore removeJob failed: lock ${result.error}`);
+          throw new Error(`CronStore removeJob failed: lock ${result.error.kind}`);
         }
         return result.value;
       });
@@ -147,7 +157,7 @@ export function createCronStore(filePath: string, logger?: SchedulerLogger): Cro
 
     async updateJob(jobId: string, update: Partial<CronJob>): Promise<boolean> {
       return mutex.serialize(async () => {
-        const result = await withExecutionLock(lockPath, async () => {
+        const result = await fileLock.withLock(lockPath, async () => {
           const jobs = await loadFromFile();
           const idx = jobs.findIndex((j) => j.id === jobId);
           if (idx === -1) return false;
@@ -159,7 +169,7 @@ export function createCronStore(filePath: string, logger?: SchedulerLogger): Cro
           return true;
         }, LOCK_OPTIONS);
         if (!result.ok) {
-          throw new Error(`CronStore updateJob failed: lock ${result.error}`);
+          throw new Error(`CronStore updateJob failed: lock ${result.error.kind}`);
         }
         return result.value;
       });

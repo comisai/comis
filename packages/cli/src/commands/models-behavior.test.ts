@@ -19,24 +19,33 @@ import {
   getSpyOutput,
 } from "../test-helpers.js";
 
-// Mock withClient from rpc-client at module level for ESM hoisting
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// Mock withClient from rpc-client at module level for ESM hoisting.
+// importOriginal-based so callTyped (Plan 35-16 Wave C retarget) resolves
+// to the real wrapper while withClient is mocked.
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 // Mock withSpinner to pass-through (no actual ora spinner in tests)
 vi.mock("../output/spinner.js", () => ({
   withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
 }));
 
-// Mock @comis/agent for createModelCatalog used in list fallback and set validation
-vi.mock("@comis/agent", () => {
+// Mock @comis/core for createModelCatalog used in list fallback and set validation
+// (relocated from @comis/agent in Phase 35 Plan 35-04 per D-01 #4).
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
   const mockCatalog = {
     loadStatic: vi.fn(),
     getAll: vi.fn(() => []),
     getByProvider: vi.fn(() => []),
   };
   return {
+    ...actual,
     createModelCatalog: vi.fn(() => mockCatalog),
   };
 });
@@ -53,7 +62,7 @@ vi.mock("node:fs", () => ({
 // Dynamic imports after mocks
 const { registerModelsCommand } = await import("./models.js");
 const { withClient } = await import("../client/rpc-client.js");
-const { createModelCatalog } = await import("@comis/agent");
+const { createModelCatalog } = await import("@comis/core");
 const fs = await import("node:fs");
 
 /** Sample model data reused across tests. */

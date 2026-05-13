@@ -44,16 +44,23 @@ import {
   loginOpenAICodexOAuth,
   isRemoteEnvironment,
   selectOAuthCredentialStore,
-  redactEmailForLog,
-} from "@comis/agent";
+  // Phase 35 Plan 35-04 (D-01 #1/#2/#3): all four D-01 symbol groups now
+  // live in @comis/core; the CLI no longer routes through @comis/agent for
+  // these symbols. createFileLock relocated from @comis/scheduler via core.
+  createFileLock,
+} from "@comis/core";
 import {
   loadConfigFile,
   validateConfig,
   safePath,
+  redactEmailForLog,
+  // Phase 35 Plan 35-05 (WEB-CONTRACTS-03 / L12 closure): createConsoleLogger
+  // is the Pino-free replacement for @comis/infra's createLogger (Plan 35-02
+  // shipped the relocation). CLI no longer imports from @comis/infra.
+  createConsoleLogger,
   type OAuthCredentialStorePort,
   type OAuthProfile,
 } from "@comis/core";
-import { createLogger } from "@comis/infra";
 
 // ---------- Provider Help URLs ----------
 
@@ -439,7 +446,7 @@ async function handleStandardProvider(
 
 // ---------- Branch D: openai-codex OAuth ----------
 
-const wizardLogger = createLogger({ name: "wizard-oauth" });
+const wizardLogger = createConsoleLogger("info", { name: "wizard-oauth" });
 
 /**
  * Open the OAuth credential store from the current config (mirrors the
@@ -451,17 +458,18 @@ const wizardLogger = createLogger({ name: "wizard-oauth" });
  */
 async function openWizardOAuthStore(): Promise<OAuthCredentialStorePort> {
   const dataDir = safePath(homedir(), ".comis");
+  const fileLock = createFileLock();
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager (matches doctor.ts:45 / health.ts:43 precedent)
   const envPaths = process.env["COMIS_CONFIG_PATHS"];
   const configPath = envPaths?.split(":")[0] ??
     safePath(homedir(), ".comis", "config.yaml");
   const loadResult = loadConfigFile(configPath);
   if (!loadResult.ok) {
-    return selectOAuthCredentialStore({ storage: "file", dataDir });
+    return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
   }
   const validated = validateConfig(loadResult.value);
   if (!validated.ok) {
-    return selectOAuthCredentialStore({ storage: "file", dataDir });
+    return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
   }
   const storage = validated.value.oauth?.storage ?? "file";
   if (storage === "encrypted") {
@@ -471,7 +479,7 @@ async function openWizardOAuthStore(): Promise<OAuthCredentialStorePort> {
         "`comis auth login --provider openai-codex` from a shell where SECRETS_MASTER_KEY is exported.",
     );
   }
-  return selectOAuthCredentialStore({ storage: "file", dataDir });
+  return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
 }
 
 /**

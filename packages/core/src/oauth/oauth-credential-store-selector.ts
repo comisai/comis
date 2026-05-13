@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * OAuth credential store selector.
+ *
+ * Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #2.
+ * The agent-side source remains in place (Wave A additive); Plan 35-04
+ * deletes the agent re-export after CLI Plan 35-05 retargets.
+ *
+ * Decides between file-backed and encrypted (daemon-supplied) OAuth credential
+ * stores based on configuration. Phase 31 commit 4 cut the memory value-import
+ * (`createOAuthProfileStoreEncrypted`) from this file; the encrypted-mode
+ * branch now consumes a daemon-injected `OAuthCredentialStorePort` instead
+ * of constructing one via memory's factory.
+ *
+ * Daemon composition (`packages/daemon/src/wiring/setup-agents.ts`) is now
+ * the sole site that imports `createOAuthProfileStoreEncrypted` — it owns
+ * `secretsDb` + `secretsCrypto` and constructs the encrypted store at the
+ * call site, then passes it into this selector via `encryptedStore`.
+ *
+ * Throws (NOT a Result — daemon bootstrap is a synchronous trust boundary
+ * where fail-fast is the right policy) when:
+ *  - storage === "encrypted" AND `encryptedStore` is undefined
+ *    (operator forgot to set SECRETS_MASTER_KEY but selected encrypted mode,
+ *    or daemon composition did not pass the injected port)
+ *
+ * @module
+ */
+
+import type { OAuthCredentialStorePort } from "../ports/oauth-credential-store.js";
+import type { FileLockPort } from "../ports/file-lock.js";
+import { createOAuthCredentialStoreFile } from "./oauth-credential-store-file.js";
+
+/** Storage backend selector from `appConfig.oauth.storage`. */
+export type OAuthStorageMode = "file" | "encrypted";
+
+/**
+ * Inputs for selectOAuthCredentialStore. Extracted to a typed shape so the
+ * helper can be unit-tested without spinning up a full setupSingleAgent path.
+ */
+export interface SelectOAuthCredentialStoreInput {
+  /** Storage backend selector from `appConfig.oauth.storage`. */
+  storage: OAuthStorageMode;
+  /** Absolute data directory (e.g. ~/.comis). Constructed via `safePath` upstream. */
+  dataDir: string;
+  /**
+   * Cross-process filesystem mutex used by the file-backed adapter for
+   * per-profile-ID locking. REQUIRED when `storage === "file"`. Phase 32
+   * commit 12 (ORCH-EXT-15) introduced this dep so the file adapter no
+   * longer imports `@comis/scheduler` directly. Daemon + CLI composition
+   * roots construct the port via `createFileLock()` from `@comis/core`
+   * (Phase 35 Plan 35-02 relocated the canonical adapter from scheduler).
+   *
+   * Ignored when `storage === "encrypted"` (the encrypted store has its
+   * own SQLite-backed serialization and does not use proper-lockfile).
+   */
+  fileLock: FileLockPort;
+  /**
+   * Daemon-supplied encrypted store. REQUIRED when `storage === "encrypted"`.
+   * Constructed inline by `daemon/src/wiring/setup-agents.ts` using
+   * `createOAuthProfileStoreEncrypted` (the memory value-import lives there
+   * now — not here).
+   *
+   * Undefined when `storage === "file"` (the file factory is used instead).
+   */
+  encryptedStore?: OAuthCredentialStorePort;
+  /** Optional injection point for unit tests (defaults to the real file factory). */
+  factories?: {
+    file?: typeof createOAuthCredentialStoreFile;
+  };
+}
+
+/**
+ * Select and instantiate the right OAuthCredentialStorePort adapter from
+ * `appConfig.oauth.storage`. Used by both the daemon (setup-agents.ts) and
+ * the CLI commands (`comis auth login/list/logout/status`).
+ *
+ * The encrypted-mode store is constructed by the daemon composition root
+ * (which owns `secretsDb` + `secretsCrypto`) and injected via `encryptedStore`.
+ * CLI consumers can only pass `storage: "file"` in Phase 31 — see design
+ * §8.2.7 "auth login encrypted fail-fast".
+ */
+export function selectOAuthCredentialStore(
+  input: SelectOAuthCredentialStoreInput,
+): OAuthCredentialStorePort {
+  const { storage, dataDir, fileLock, encryptedStore, factories } = input;
+  const fileFactory = factories?.file ?? createOAuthCredentialStoreFile;
+
+  if (storage === "encrypted") {
+    // Bootstrap precondition: encrypted-mode requires the daemon-injected
+    // encryptedStore. No silent fallback to file mode — fail fast with
+    // operator hint pointing at the daemon-side construction site.
+    if (!encryptedStore) {
+      throw new Error(
+        "OAuth storage mode is 'encrypted' but no encrypted store was injected. " +
+          "Daemon composition (setup-agents.ts) must construct the encrypted store " +
+          "via createOAuthProfileStoreEncrypted(secretsDb, secretsCrypto) and pass " +
+          "it via deps.encryptedStore. CLI commands cannot supply this in Phase 31 — " +
+          "see design §8.2.7 'auth login encrypted fail-fast'.",
+      );
+    }
+    return encryptedStore;
+  }
+
+  // Default: plaintext file-backed adapter at ${dataDir}/auth-profiles.json.
+  return fileFactory({ dataDir, fileLock });
+}

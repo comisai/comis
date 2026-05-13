@@ -12,10 +12,10 @@ import {
   type SessionKey,
   type NormalizedMessage,
   parseFormattedSessionKey,
+  safePath,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { gatedSpawn } from "./graph-concurrency.js";
 import { resolveFileReferenceOutput, persistArtifacts } from "./graph-node-lifecycle.js";
 import type {
@@ -137,7 +137,7 @@ export function handleDriverTurnCompleted(
       // Persist partial output to shared dir
       if (gs.sharedDir) {
         try {
-          writeFileSync(join(gs.sharedDir, `${nodeId}-output.md`), partialOutput, "utf8");
+          writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), partialOutput, "utf8");
         } catch { /* best-effort */ }
       }
 
@@ -323,7 +323,7 @@ export function handleDriverTimeout(
     // Persist partial output to shared dir
     if (gs.sharedDir) {
       try {
-        writeFileSync(join(gs.sharedDir, `${nodeId}-output.md`), partialOutput, "utf8");
+        writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), partialOutput, "utf8");
       } catch { /* best-effort */ }
     }
 
@@ -489,7 +489,7 @@ export function handleWaitForInput(
   // 2. Send the prompt to the channel
   deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, action.message).catch((sendErr: unknown) => {
     deps.logger?.warn(
-      { graphId: gs.graphId, nodeId, err: sendErr, hint: "Failed to send wait_for_input prompt", errorKind: "network" },
+      { graphId: gs.graphId, nodeId, err: sendErr, hint: "Failed to send wait_for_input prompt", errorKind: "network" as const },
       "wait_for_input prompt delivery failed",
     );
   });
@@ -641,7 +641,7 @@ export function executeDriverAction(
       let spawns = action.spawns;
       if (spawns.length > config.maxParallelSpawns) {
         deps.logger?.warn(
-          { graphId: gs.graphId, nodeId, requested: spawns.length, max: config.maxParallelSpawns, hint: "spawn_all array truncated to maxParallelSpawns", errorKind: "limit" },
+          { graphId: gs.graphId, nodeId, requested: spawns.length, max: config.maxParallelSpawns, hint: "spawn_all array truncated to maxParallelSpawns", errorKind: "resource" as const },
           "spawn_all exceeded maxParallelSpawns, truncating",
         );
         spawns = spawns.slice(0, config.maxParallelSpawns);
@@ -688,7 +688,7 @@ export function executeDriverAction(
       // Persist output to shared dir
       if (gs.sharedDir && output) {
         try {
-          writeFileSync(join(gs.sharedDir, `${nodeId}-output.md`), output, "utf8");
+          writeFileSync(safePath(gs.sharedDir, `${nodeId}-output.md`), output, "utf8");
         } catch { /* best-effort */ }
       }
 
@@ -773,7 +773,7 @@ export function executeDriverAction(
       if (gs.announceChannelType && gs.announceChannelId) {
         deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, progressMsg).catch((sendErr: unknown) => {
           deps.logger?.warn(
-            { graphId: gs.graphId, nodeId, err: sendErr, hint: "Progress message delivery failed", errorKind: "network" },
+            { graphId: gs.graphId, nodeId, err: sendErr, hint: "Progress message delivery failed", errorKind: "network" as const },
             "Driver progress delivery failed",
           );
         });

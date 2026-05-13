@@ -18,26 +18,37 @@ import {
   getSpyOutput,
 } from "../test-helpers.js";
 
-// Mock withClient from rpc-client at module level for ESM hoisting
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// Mock withClient from rpc-client at module level for ESM hoisting.
+// importOriginal-based so callTyped (Plan 35-16 Wave C retarget) resolves
+// to the real wrapper while withClient is mocked.
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 // Mock withSpinner to pass-through (no actual ora spinner in tests)
 vi.mock("../output/spinner.js", () => ({
   withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
 }));
 
-// Mock @comis/agent for ensureWorkspace/resolveWorkspaceDir used in create
-vi.mock("@comis/agent", () => ({
-  ensureWorkspace: vi.fn(async () => ({ dir: "/tmp/test", configFile: "", memoryDir: "" })),
-  resolveWorkspaceDir: vi.fn((_config: unknown, name: string) => `/tmp/test-workspace/${name}`),
-}));
+// Mock @comis/core for ensureWorkspace/resolveWorkspaceDir used in create
+// (relocated from @comis/agent in Phase 35 Plan 35-04 per D-01 #5).
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    ensureWorkspace: vi.fn(async () => ({ dir: "/tmp/test", configFile: "", memoryDir: "" })),
+    resolveWorkspaceDir: vi.fn((_config: unknown, name: string) => `/tmp/test-workspace/${name}`),
+  };
+});
 
 // Dynamic imports after mocks
 const { registerAgentCommand } = await import("./agent.js");
 const { withClient } = await import("../client/rpc-client.js");
-const { ensureWorkspace, resolveWorkspaceDir } = await import("@comis/agent");
+const { ensureWorkspace, resolveWorkspaceDir } = await import("@comis/core");
 
 /**
  * Agent data matching what config.get returns for the agents section.
@@ -69,7 +80,7 @@ describe("agent list table output", () => {
     // Inside, it calls config.get for "agents" then "routing" and merges results.
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", AGENTS_DATA)
+        .onCall("config.read", AGENTS_DATA)
         .build();
       return fn(mockClient);
     });
@@ -114,7 +125,7 @@ describe("agent list JSON output", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", AGENTS_DATA)
+        .onCall("config.read", AGENTS_DATA)
         .build();
       return fn(mockClient);
     });
@@ -156,7 +167,7 @@ describe("agent list empty", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", { agents: {} })
+        .onCall("config.read", { agents: {} })
         .build();
       return fn(mockClient);
     });
@@ -518,7 +529,7 @@ describe("extractAgents field normalization", () => {
     // Use provider/model (not defaultProvider/defaultModel) to test normalization
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
-        .onCall("config.get", {
+        .onCall("config.read", {
           agents: {
             "alt-agent": {
               provider: "google",

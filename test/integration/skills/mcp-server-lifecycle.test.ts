@@ -48,11 +48,10 @@ import {
   parseQualifiedName,
   mcpToolsToAgentTools,
   sanitizeMcpToolName,
-  extractMcpServerName,
   classifyMcpErrorType,
   type McpToolDefinition,
 } from "@comis/skills";
-import { ok, err, type Result } from "@comis/shared";
+import { ok, err, extractMcpServerName, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Round-trip helpers

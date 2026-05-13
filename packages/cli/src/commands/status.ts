@@ -11,7 +11,8 @@
 
 import type { Command } from "commander";
 import chalk from "chalk";
-import { withClient } from "../client/rpc-client.js";
+import { GatewayStatusContract, ConfigReadContract } from "@comis/core";
+import { callTyped, withClient } from "../client/rpc-client.js";
 import { json } from "../output/format.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
 
@@ -102,22 +103,24 @@ async function fetchSystemStatus(): Promise<SystemStatus> {
 
   try {
     await withClient(async (client) => {
-      // Fetch daemon/process status via gateway.status RPC
+      // Fetch daemon/process status via gateway.status RPC (Plan 35-11
+      // retarget — callTyped enforces GatewayStatusContract request/response
+      // under the D-10 gate).
       try {
-        const gwStatusResult = (await client.call("gateway.status")) as Record<string, unknown> | null;
-        if (gwStatusResult) {
-          status.daemon.status = "online";
-          status.daemon.details = gwStatusResult;
-        }
+        const gwStatusResult = await callTyped(client, GatewayStatusContract, {});
+        status.daemon.status = "online";
+        status.daemon.details = gwStatusResult as Record<string, unknown>;
       } catch {
         status.daemon.status = "offline";
       }
 
-      // Fetch gateway config for listening address info
+      // Fetch gateway config for listening address info. Phase 35 Wave C
+      // closure (Plan 35-19): retargeted from stale `config.get` method name
+      // (which the daemon doesn't implement) to ConfigReadContract.
       try {
-        const gwConfig = (await client.call("config.get", {
+        const gwConfig = await callTyped(client, ConfigReadContract, {
           section: "gateway",
-        })) as Record<string, unknown> | null;
+        }) as Record<string, unknown> | null;
         if (gwConfig && typeof gwConfig === "object") {
           const gw = (gwConfig["gateway"] as Record<string, unknown> | undefined) ?? gwConfig;
           const enabled = gw["enabled"] !== false;
@@ -132,11 +135,12 @@ async function fetchSystemStatus(): Promise<SystemStatus> {
         status.gateway.status = "unknown";
       }
 
-      // Fetch channel config
+      // Fetch channel config (Plan 35-19 retarget — same rationale as
+      // the gateway fetch above).
       try {
-        const chResult = (await client.call("config.get", {
+        const chResult = await callTyped(client, ConfigReadContract, {
           section: "channels",
-        })) as Record<string, unknown> | null;
+        }) as Record<string, unknown> | null;
         if (chResult && typeof chResult === "object") {
           // config.get may return { channels: { ... } } or { telegram: {...}, ... }
           const channels = (chResult["channels"] as Record<string, unknown> | undefined) ?? chResult;
@@ -157,11 +161,12 @@ async function fetchSystemStatus(): Promise<SystemStatus> {
         // No channel data available
       }
 
-      // Fetch agent config (agents are at top-level "agents" section)
+      // Fetch agent config (agents are at top-level "agents" section).
+      // Plan 35-19 retarget — same rationale as above.
       try {
-        const agentResult = (await client.call("config.get", {
+        const agentResult = await callTyped(client, ConfigReadContract, {
           section: "agents",
-        })) as Record<string, unknown> | null;
+        }) as Record<string, unknown> | null;
         if (agentResult && typeof agentResult === "object") {
           // config.get may return { agents: { ... } } or { default: {...}, ... }
           const agents = (agentResult["agents"] as Record<string, unknown> | undefined) ?? agentResult;

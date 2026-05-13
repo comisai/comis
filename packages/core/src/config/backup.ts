@@ -67,7 +67,7 @@ function formatTimestamp(date: Date): string {
 /**
  * Extract the directory portion of a file path.
  *
- * Uses simple string manipulation to avoid path.join() per security rules.
+ * Uses simple string manipulation to avoid raw path.join per security rules.
  */
 function dirname(filePath: string): string {
   const lastSlash = filePath.lastIndexOf("/");

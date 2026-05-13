@@ -107,7 +107,7 @@ export async function preWarmGraphCache(
   } catch (modelErr) {
     const errorMsg = `Model resolution failed: ${modelErr instanceof Error ? modelErr.message : String(modelErr)}`;
     deps.logger?.warn(
-      { provider: deps.provider, modelId: deps.modelId, hint: "Pre-warm will be skipped; graph proceeds with event-driven stagger", errorKind: "configuration" },
+      { provider: deps.provider, modelId: deps.modelId, hint: "Pre-warm will be skipped; graph proceeds with event-driven stagger", errorKind: "config" as const },
       `Pre-warm model resolution failed: ${errorMsg}`,
     );
     return { success: false, cacheWriteTokens: 0, tokensUsed: 0, cost: 0, error: errorMsg };
@@ -149,7 +149,7 @@ export async function preWarmGraphCache(
   if (!callResult.ok) {
     const errorMsg = callResult.error instanceof Error ? callResult.error.message : String(callResult.error);
     deps.logger?.warn(
-      { provider: deps.provider, modelId: deps.modelId, err: callResult.error, hint: "Pre-warm failed; graph proceeds with event-driven stagger", errorKind: "network" },
+      { provider: deps.provider, modelId: deps.modelId, err: callResult.error, hint: "Pre-warm failed; graph proceeds with event-driven stagger", errorKind: "network" as const },
       `Pre-warm API call failed: ${errorMsg}`,
     );
     return { success: false, cacheWriteTokens: 0, tokensUsed: 0, cost: 0, error: errorMsg };

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { SessionKey } from "../domain/session-key.js";
-import type { ChannelCapability } from "../ports/channel-plugin.js";
+import type { ChannelCapability } from "../domain/channel-capability.js";
 
 /**
  * ChannelEvents: Channel, queue, streaming, typing, autoreply, sendpolicy,

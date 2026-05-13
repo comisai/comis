@@ -212,7 +212,7 @@ export function validateProviderOverrides(
         {
           provider: key,
           hint: "Provider override exists for unknown pi-ai provider; remove from PROVIDER_OVERRIDES on next bump",
-          errorKind: "config",
+          errorKind: "config" as const,
           submodule: "capabilities",
         },
         "Capability override has no matching pi-ai provider",

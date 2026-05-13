@@ -13,7 +13,8 @@ import type { Command } from "commander";
 import * as p from "@clack/prompts";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { withClient } from "../client/rpc-client.js";
+import { SessionListContract, SessionDeleteContract } from "@comis/core";
+import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, warn } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 
@@ -96,13 +97,15 @@ async function resetSessions(dataDir: string): Promise<void> {
   try {
     await withSpinner("Clearing sessions via daemon...", () =>
       withClient(async (client) => {
-        const result = await client.call("session.list") as {
-          sessions: Array<{ sessionKey: string }>;
-          total: number;
-        };
+        // Phase 35 Wave C (35-19) — typed RPC. The contract response is
+        // { sessions: SessionInfo[], total }; we iterate the typed array
+        // and delete each by sessionKey.
+        const result = await callTyped(client, SessionListContract, {});
         if (result.total === 0) return;
         for (const session of result.sessions) {
-          await client.call("session.delete", { session_key: session.sessionKey });
+          await callTyped(client, SessionDeleteContract, {
+            session_key: session.sessionKey,
+          });
         }
       }),
     );

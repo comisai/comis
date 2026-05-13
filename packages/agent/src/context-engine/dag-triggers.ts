@@ -16,7 +16,7 @@
  * @module
  */
 
-import type { ContextStore } from "@comis/memory";
+import type { ContextStorePort } from "@comis/core";
 import type {
   TokenBudget,
   DagCompactionConfig,
@@ -50,7 +50,7 @@ const MAX_TRAVERSAL_DEPTH = 10;
  * @returns Whether the conversation should be compacted
  */
 export function shouldCompact(
-  store: ContextStore,
+  store: ContextStorePort,
   conversationId: string,
   config: { contextThreshold: number },
   budget: TokenBudget,
@@ -83,7 +83,7 @@ export function shouldCompact(
  * @param depth - Current recursion depth (default 0, internal use)
  */
 export function markAncestorsDirty(
-  store: ContextStore,
+  store: ContextStorePort,
   summaryId: string,
   depth = 0,
 ): void {
@@ -120,7 +120,7 @@ export function markAncestorsDirty(
  * @returns Aggregated message and summary counts for this subtree
  */
 export function recomputeDescendantCounts(
-  store: ContextStore,
+  store: ContextStorePort,
   summaryId: string,
   depth = 0,
 ): { messageCount: number; summaryCount: number } {

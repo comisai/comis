@@ -19,13 +19,18 @@ vi.mock("./rpc-client.js", () => ({
   withClient: vi.fn(),
 }));
 
-// Mock @comis/agent for the local-fallback path
-vi.mock("@comis/agent", () => ({
-  createModelCatalog: vi.fn(),
-}));
+// Mock @comis/core for the local-fallback path (createModelCatalog relocated
+// from @comis/agent in Phase 35 Plan 35-04 per D-01 #4).
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    createModelCatalog: vi.fn(),
+  };
+});
 
 const { withClient } = await import("./rpc-client.js");
-const { createModelCatalog } = await import("@comis/agent");
+const { createModelCatalog } = await import("@comis/core");
 const { loadProvidersWithFallback } = await import("./provider-list.js");
 
 describe("loadProvidersWithFallback", () => {

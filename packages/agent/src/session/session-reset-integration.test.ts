@@ -16,12 +16,27 @@ import Database from "better-sqlite3";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { initSchema, createSessionStore, type SessionStore } from "@comis/memory";
 import { formatSessionKey, type SessionKey, type TypedEventBus } from "@comis/core";
-import type { SessionResetPolicyConfig } from "@comis/core";
+import type { SessionResetPolicyConfig, ComputeDailyResetNextRun } from "@comis/core";
+// Test-only @comis/scheduler import — see session-reset-policy.test.ts for
+// rationale. Production agent source no longer imports scheduler after Phase 32
+// commit 12.
+import { computeNextRunAtMs } from "@comis/scheduler";
 import { createSessionLifecycle, type SessionLifecycle } from "./session-lifecycle.js";
 import {
   createSessionResetScheduler,
   type SessionResetScheduler,
 } from "./session-reset-policy.js";
+
+const computeDailyResetNextRun: ComputeDailyResetNextRun = (
+  updatedAt: number,
+  hour: number,
+  timezone: string,
+): number | undefined => {
+  return computeNextRunAtMs(
+    { kind: "cron", expr: `0 ${hour} * * *`, tz: timezone || undefined },
+    updatedAt,
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -70,6 +85,7 @@ function createTestHarness(config: Partial<SessionResetPolicyConfig> = {}): Test
     eventBus,
     logger: createMockLogger(),
     getConfig: () => currentConfig,
+    computeDailyResetNextRun,
     nowMs: () => currentNowMs,
   });
 

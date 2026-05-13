@@ -32,7 +32,7 @@ import {
   type SessionKey,
   type PerAgentConfig,
 } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import type { CacheRetention } from "@mariozechner/pi-ai";
 import type { StreamFnWrapper } from "./stream-wrappers/index.js";
 import {

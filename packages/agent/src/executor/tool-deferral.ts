@@ -16,7 +16,7 @@
  */
 
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { EmbeddingPort } from "@comis/core";
 import { getToolMetadata } from "@comis/core";
 import type { DiscoveryTracker } from "./discovery-tracker.js";

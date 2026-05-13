@@ -48,6 +48,7 @@ import {
   type OAuthProfile,
 } from "@comis/core";
 import {
+  createFileLock,
   createOAuthCredentialStoreFile,
   createOAuthTokenManager,
   rewriteOAuthError,
@@ -58,6 +59,8 @@ import {
   type MockOAuthServer,
 } from "../support/mock-oauth-server.js";
 import { makeMockLogger, type MockLogger } from "../support/mock-logger.js";
+
+const fileLock = createFileLock();
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -176,6 +179,7 @@ async function buildManagerWithSeededExpiredProfile(
   const tmpDir = mkdtempSync(`${os.tmpdir()}/comis-rt-reused-`);
   const store: OAuthCredentialStorePort = createOAuthCredentialStoreFile({
     dataDir: tmpDir,
+    fileLock,
   });
   const seedResult = await store.set(
     TEST_PROFILE_ID,
@@ -192,6 +196,8 @@ async function buildManagerWithSeededExpiredProfile(
     secretManager: createSecretManager({}),
     eventBus: bus,
     credentialStore: store,
+
+    fileLock,
     logger,
     dataDir: tmpDir,
     keyPrefix: "OAUTH_",

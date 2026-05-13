@@ -183,10 +183,9 @@ export { createApprovalNotifier } from "./shared/approval-notifier.js";
 export type { ApprovalNotifier, ApprovalNotifierDeps } from "./shared/approval-notifier.js";
 
 // Shared infrastructure
-export { createChannelManager } from "./shared/channel-manager.js";
-export type { ChannelManager, ChannelManagerDeps } from "./shared/channel-manager.js";
-export { createRetryEngine } from "./shared/retry-engine.js";
-export type { RetryEngine } from "./shared/retry-engine.js";
+// Phase 32 commit 4: channel-manager.ts (factory + types) moved to
+// @comis/orchestrator. Daemon composition root (setup-channels.ts) imports
+// them from @comis/orchestrator now. Removed from channels public surface.
 export { createTypingController } from "./shared/typing-controller.js";
 export type {
   TypingController,
@@ -195,14 +194,23 @@ export type {
 } from "./shared/typing-controller.js";
 export { createTypingLifecycleController } from "./shared/typing-lifecycle-controller.js";
 export type { TypingLifecycleController, TypingLifecycleOptions } from "./shared/typing-lifecycle-controller.js";
-export { formatForChannel } from "./shared/format-for-channel.js";
-export { deliverToChannel, resolveChunkLimit, computeQueueBackoff, QUEUE_BACKOFF_SCHEDULE_MS } from "./shared/deliver-to-channel.js";
-export type { DeliverToChannelOptions, DeliverToChannelDeps, DeliveryResult, ChunkDeliveryResult, DeliveryAdapter } from "./shared/deliver-to-channel.js";
-export { chunkForDelivery } from "./shared/chunk-for-delivery.js";
-export type { ChunkForDeliveryOptions } from "./shared/chunk-for-delivery.js";
 
-// Permanent error classification
-export { isPermanentError, PERMANENT_ERROR_PATTERNS } from "./shared/permanent-errors.js";
+// Phase 30 plan 02 (CONFIG-DELIV-04, -05): the channel-platform-agnostic
+// delivery helpers — formatForChannel, chunkForDelivery (+ ChunkForDeliveryOptions),
+// createRetryEngine (+ RetryEngine), isPermanentError (+ PERMANENT_ERROR_PATTERNS),
+// and the underlying Markdown IR pipeline (markdown-ir, ir-renderer, ir-chunker,
+// markdown-tables, sanitize-for-plain-text, table-converter, telegram-file-ref-guard)
+// moved to `@comis/core` (export point: core/src/exports/delivery.ts). Imports
+// must retarget; per AGENTS.md §2.3 (KISS/YAGNI + no back-compat shims), no
+// re-exports stay here.
+//
+// Phase 30 plan 06: the standalone `deliverToChannel` function +
+// `DeliverToChannelDeps` interface + queue-backoff helpers
+// (QUEUE_BACKOFF_SCHEDULE_MS, computeQueueBackoff, resolveChunkLimit) +
+// delivery-type re-exports (DeliverToChannelOptions, DeliveryResult,
+// ChunkDeliveryResult, DeliveryAdapter) were deleted from `@comis/channels`.
+// Consumers retarget to `@comis/core` (which now owns the types and the
+// `createDeliveryService(deps)` factory replacing the standalone function).
 
 // Voice response pipeline
 export { executeVoiceResponse } from "./shared/voice-response-pipeline.js";
@@ -243,14 +251,11 @@ export { reactWithFallback, TELEGRAM_SAFE_EMOJI } from "./telegram/emoji-fallbac
 export { tokenizeTemplate, resolveTokens, applyPrefix, FORMATTERS } from "./shared/prefix-template.js";
 export type { TemplateToken } from "./shared/prefix-template.js";
 
-// Telegram file-ref guard
-export {
-  guardTelegramFileRefs,
-  initTelegramFileGuardConfig,
-  isTelegramFileGuardEnabled,
-  ALWAYS_GUARD_EXTENSIONS,
-  AMBIGUOUS_EXTENSIONS,
-} from "./shared/telegram-file-ref-guard.js";
+// Telegram file-ref guard — moved to `@comis/core` (Phase 30 plan 02
+// scope expansion: ir-renderer.ts depends on the guard, and ir-renderer
+// moved to core alongside the format/chunk helpers; the guard followed).
+// Imports must retarget to `@comis/core`; no re-export here per
+// AGENTS.md §2.3 (no back-compat shims).
 
 // Channel health monitor
 export { createChannelHealthMonitor } from "./shared/channel-health-monitor.js";
@@ -260,3 +265,59 @@ export type {
   ChannelHealthState,
   ChannelHealthEntry,
 } from "./shared/channel-health-monitor.js";
+
+// ---------------------------------------------------------------------------
+// Phase 32 commit 3 — channels-side surface required by moved A-files
+//
+// These symbols stay in channels/src/shared/ at commit 3 because either:
+//   (a) they are commit-4 movers (block-pacer, block-coalescer, abort-summary,
+//       send-policy, group-history-buffer — bucket-A internals consumed by
+//       channel-manager.ts which moves at commit 4), or
+//   (b) they are channels-internal helpers (regex-guard, media-compressor —
+//       bucket-B/C per Wave 2 inventory) consumed by orchestrator-side
+//       moved A-files via @comis/channels public surface.
+//
+// Once channel-manager.ts moves to orchestrator (commit 4), the bucket-A
+// internals in group (a) also move and these re-exports are removed.
+// See packages/orchestrator/HELPER-OWNERSHIP-INVENTORY.md.
+//
+// SCOPE GUARD: only the symbols actually consumed by the moved orchestrator
+// A-files (inbound-* + execution-*) are exported here. Speculative full-
+// surface re-exports are rejected by test/architecture/public-export-
+// consumers.test.ts (L9/L10/L11 — dead exports forbidden).
+// ---------------------------------------------------------------------------
+
+// Regex safety guard (consumed by orchestrator inbound-pipeline.ts)
+export { isRegexSafe } from "./shared/regex-guard.js";
+
+// Media attachment compressor (consumed by orchestrator inbound-preprocess.ts)
+export { compressAttachments } from "./shared/media-compressor.js";
+
+// Block streaming primitives (consumed by orchestrator execution-deliver/
+// execution-pipeline / inbound-pipeline / inbound-route / execution-pipeline.test)
+export { createBlockPacer } from "./shared/block-pacer.js";
+export type { BlockPacer, PacerConfig } from "./shared/block-pacer.js";
+export { coalesceBlocks } from "./shared/block-coalescer.js";
+
+// Abort summary builder (consumed by orchestrator execution-filter.ts)
+export { buildAbortSummary } from "./shared/abort-summary.js";
+
+// Send policy primitives (consumed by orchestrator execution-policy.ts +
+// type-only by execution-pipeline / inbound-pipeline / inbound-gate / inbound-route +
+// commit 4: createSendOverrideStore needed by orchestrator channel-manager.ts)
+export {
+  evaluateSendPolicy,
+  applySessionOverride,
+  createSendOverrideStore,
+} from "./shared/send-policy.js";
+export type {
+  SendOverrideStore,
+  SendPolicyContext,
+} from "./shared/send-policy.js";
+
+// Group history buffer (consumed type-only by orchestrator inbound-pipeline.ts)
+export type { GroupHistoryBuffer } from "./shared/group-history-buffer.js";
+
+// Telegram thread propagation metadata keys (consumed by orchestrator
+// execution-pipeline.test.ts for cross-set equivalence assertion)
+export { TELEGRAM_THREAD_META_KEYS } from "./telegram/thread-context.js";

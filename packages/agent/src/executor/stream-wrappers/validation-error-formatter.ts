@@ -10,7 +10,7 @@
 
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 
 import type { StreamFnWrapper } from "./types.js";
 import { formatValidationError } from "../../safety/validation-error-formatter.js";

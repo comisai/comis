@@ -160,7 +160,7 @@ export function createBudgetGuard(
             actual: tokens,
             ratio: (tokens / lastEstimate).toFixed(2),
             hint: "Token estimate diverged significantly from actual API usage; budget may over/under-protect",
-            errorKind: "validation",
+            errorKind: "validation" as const,
           },
           "Token estimate vs actual discrepancy",
         );

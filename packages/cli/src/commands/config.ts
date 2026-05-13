@@ -14,8 +14,18 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import chalk from "chalk";
 import { isMap, isPair, isScalar, parseDocument } from "yaml";
-import { loadConfigFile, validateConfig, deepMerge, loadEnvFile } from "@comis/core";
-import { withClient } from "../client/rpc-client.js";
+import {
+  loadConfigFile,
+  validateConfig,
+  deepMerge,
+  loadEnvFile,
+  ConfigReadContract,
+  ConfigPatchContract,
+  ConfigHistoryContract,
+  ConfigDiffContract,
+  ConfigRollbackContract,
+} from "@comis/core";
+import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
@@ -169,7 +179,7 @@ export function registerConfigCommand(program: Command): void {
       try {
         const result = await withSpinner("Reading config...", () =>
           withClient(async (client) => {
-            return await client.call("config.read", { section });
+            return await callTyped(client, ConfigReadContract, section ? { section } : {});
           }),
         );
 
@@ -231,7 +241,18 @@ export function registerConfigCommand(program: Command): void {
 
       try {
         await withClient(async (client) => {
-          return await client.call("config.patch", { section, key, value });
+          // ConfigPatchContract.request.value accepts the wire-observable
+          // primitive | record | array-of-record union (D-05 loose record).
+          // The `value` here is JSON-parsed from the CLI arg (or raw string
+          // fallback) — already in the allowed shape. callTyped's contract
+          // input type widens to z.input, which for the union is
+          // `string | number | boolean | Record<string, unknown> | Array<Record<string, unknown>>`
+          // — cast through unknown to satisfy TS narrowing.
+          return await callTyped(client, ConfigPatchContract, {
+            section,
+            key,
+            value: value as string,
+          });
         });
 
         success(`Set ${dotPath} = ${JSON.stringify(value)}`);
@@ -255,10 +276,7 @@ export function registerConfigCommand(program: Command): void {
         const limit = parseInt(options.limit, 10);
         const result = await withSpinner("Fetching config history...", () =>
           withClient(async (client) => {
-            return (await client.call("config.history", { limit })) as {
-              entries: Array<{ sha: string; date: string; message: string; author?: string }>;
-              error?: string;
-            };
+            return await callTyped(client, ConfigHistoryContract, { limit });
           }),
         );
 
@@ -302,10 +320,7 @@ export function registerConfigCommand(program: Command): void {
       try {
         const result = await withSpinner("Computing diff...", () =>
           withClient(async (client) => {
-            return (await client.call("config.diff", { sha })) as {
-              diff: string;
-              error?: string;
-            };
+            return await callTyped(client, ConfigDiffContract, sha ? { sha } : {});
           }),
         );
 
@@ -373,7 +388,7 @@ export function registerConfigCommand(program: Command): void {
 
       try {
         await withClient(async (client) => {
-          return await client.call("config.rollback", { sha });
+          return await callTyped(client, ConfigRollbackContract, { sha });
         });
 
         success(`Config rolled back to ${sha.slice(0, 7)}`);

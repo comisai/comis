@@ -2,23 +2,27 @@
 /**
  * Per-session filesystem write lock.
  *
- * Provides `withSessionLock(lockDir, sessionKey, fn)` that serializes
- * concurrent access to the same session transcript via proper-lockfile.
- * Different sessions use different lock files (per-session, not global)
- * so they do not block each other.
+ * Provides `withSessionLock(fileLock, lockDir, sessionKey, fn)` that serializes
+ * concurrent access to the same session transcript via an injected
+ * `FileLockPort`. Different sessions use different lock files (per-session,
+ * not global) so they do not block each other.
  *
- * Pattern follows `withExecutionLock` from @comis/scheduler but is
- * keyed by session key hash rather than a fixed sentinel path.
+ * Phase 32 commit 12 (ORCH-EXT-15) flipped the implementation from a direct
+ * `proper-lockfile` import to the `FileLockPort` contract — daemon
+ * composition supplies `createFileLock()` from `@comis/core` (the single
+ * proper-lockfile adapter in the workspace, relocated from `@comis/scheduler`
+ * to `@comis/core` in Phase 35 Plan 35-04 D-01 #1). The same port instance
+ * is reused by oauth-credential-store-file and oauth-token-manager so all
+ * three agent lock surfaces converge on one adapter.
  *
  * @module
  */
 
 import { createHash } from "node:crypto";
-import * as fs from "node:fs/promises";
-import * as nodePath from "node:path";
+import { safePath } from "@comis/core";
+import type { ComisLogger, FileLockPort } from "@comis/core";
 import type { Result } from "@comis/shared";
-import { ok, err } from "@comis/shared";
-import lockfile from "proper-lockfile";
+import { err } from "@comis/shared";
 
 /** Default max age for stale sentinel cleanup (1 hour). */
 const DEFAULT_CLEANUP_MAX_AGE_MS = 3_600_000;
@@ -35,6 +39,19 @@ export interface LockedSessionStoreOptions {
   retries?: number;
   /** Retry delay base in ms (default: 500). */
   retryMinTimeout?: number;
+  /**
+   * Optional logger. When provided, WR-07 structured-cause logging fires
+   * before the FileLockPort's discriminated error union is collapsed to
+   * the legacy "locked" | "error" string. Without it, observability is
+   * limited to the collapsed return value — callers cannot distinguish
+   * "ELOCKED after N retries" from "EACCES on the lock directory".
+   *
+   * The public Result API is unchanged either way; the logger is purely
+   * an observability hook for operator triage.
+   */
+  logger?: ComisLogger;
+  /** Optional sessionKey to include in the log line (correlatable to traceId). */
+  sessionKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -56,15 +73,7 @@ const DEFAULT_RETRY_MIN_TIMEOUT = 500;
  */
 function deriveLockPath(lockDir: string, sessionKey: string): string {
   const hash = createHash("sha256").update(sessionKey).digest("hex").slice(0, 12);
-  return nodePath.join(lockDir, `${hash}.lock`);
-}
-
-/** Detect proper-lockfile ELOCKED error. */
-function isElockedError(error: unknown): boolean {
-  if (error instanceof Error && "code" in error) {
-    return (error as Error & { code: string }).code === "ELOCKED";
-  }
-  return false;
+  return safePath(lockDir, `${hash}.lock`);
 }
 
 // ---------------------------------------------------------------------------
@@ -80,8 +89,15 @@ function isElockedError(error: unknown): boolean {
  *
  * The lock file is derived from `sha256(sessionKey).slice(0,12)` so
  * different sessions use separate locks (no cross-session blocking).
+ *
+ * `fileLock` is injected by the caller — daemon composition passes the
+ * `createFileLock()` instance built once at startup. The port handles
+ * sentinel-file creation, stale-lock recovery, retry backoff, and the
+ * ELOCKED → "locked" mapping that the legacy direct-proper-lockfile path
+ * used to implement inline.
  */
 export async function withSessionLock<T>(
+  fileLock: FileLockPort,
   lockDir: string,
   sessionKey: string,
   fn: () => T | Promise<T>,
@@ -93,93 +109,69 @@ export async function withSessionLock<T>(
 
   const sentinelPath = deriveLockPath(lockDir, sessionKey);
 
-  // Ensure lock directory and sentinel file exist
-  await fs.mkdir(lockDir, { recursive: true });
-  try {
-    await fs.access(sentinelPath);
-  } catch {
-    await fs.writeFile(sentinelPath, "");
+  // `fileLock.withLock` ensures the lockDir + sentinel file exist (the
+  // createFileLock adapter mkdir+writeFile-as-needed sequence preserves the
+  // pre-injection behavior here). It also catches thrown errors from `fn`
+  // and surfaces them as `err({ kind: "error" })` — we collapse the port's
+  // discriminated error union back to the legacy "locked" | "error" string
+  // so the public API of withSessionLock is unchanged.
+  const lockResult = await fileLock.withLock(
+    sentinelPath,
+    async () => await fn(),
+    {
+      staleMs,
+      retries: { retries, minTimeout: retryMinTimeout },
+    },
+  );
+
+  if (lockResult.ok) {
+    return lockResult;
   }
-
-  let release: (() => Promise<void>) | undefined;
-
-  try {
-    release = await lockfile.lock(sentinelPath, {
-      stale: staleMs,
-      retries: {
-        retries,
-        minTimeout: retryMinTimeout,
+  if (lockResult.error.kind === "locked") {
+    return err("locked" as const);
+  }
+  // WR-07: the FileLockPort returns a discriminated error union with
+  // structured fields (kind, cause). We collapse it to a string for the
+  // public API, but the underlying cause (ELOCKED chain vs EACCES on the
+  // lock directory vs disk-full) is useful for operator triage. If a
+  // logger is provided, emit a structured warn line BEFORE the collapse
+  // so the cause survives in the log stream.
+  if (options?.logger) {
+    options.logger.warn(
+      {
+        submodule: "session-write-lock",
+        hint: "lock_error_collapsed",
+        errorKind: "internal" as const,
+        sentinelPath,
+        sessionKey: options.sessionKey,
+        err: lockResult.error,
       },
-      onCompromised: () => {},
-    });
-  } catch (lockErr: unknown) {
-    if (isElockedError(lockErr)) {
-      return err("locked");
-    }
-    return err("error");
+      "withSessionLock collapsing FileLockPort error to err('error')",
+    );
   }
-
-  try {
-    const result = await fn();
-    return ok(result);
-  } finally {
-    if (release) {
-      try {
-        await release();
-      } catch {
-        // Lock may have been compromised; ignore release error
-      }
-    }
-  }
+  return err("error" as const);
 }
 
 /**
  * Remove stale sentinel `.lock` files from the lock directory.
  *
  * Sentinel files are created by `withSessionLock` but never deleted.
- * This function scans the lock directory and removes sentinel files
- * that are not currently locked and older than `maxAgeMs`.
+ * This function delegates to `fileLock.cleanupStaleLocks`, which scans the
+ * directory for `*.lock` regular files older than `maxAgeMs` and removes any
+ * that are not currently held.
  *
- * Safe to call while the daemon is running — locked sentinels are skipped.
+ * Safe to call while the daemon is running — locked sentinels are skipped
+ * by the underlying port.
  *
- * @param lockDir - Directory containing sentinel `.lock` files
- * @param maxAgeMs - Only remove sentinels older than this (default: 1 hour)
- * @returns Number of sentinel files removed
+ * @param fileLock - Injected FileLockPort (created once at daemon composition root).
+ * @param lockDir - Directory containing sentinel `.lock` files.
+ * @param maxAgeMs - Only remove sentinels older than this (default: 1 hour).
+ * @returns Number of sentinel files removed.
  */
 export async function cleanupStaleLocks(
+  fileLock: FileLockPort,
   lockDir: string,
   maxAgeMs: number = DEFAULT_CLEANUP_MAX_AGE_MS,
 ): Promise<number> {
-  let entries: string[];
-  try {
-    entries = await fs.readdir(lockDir);
-  } catch {
-    return 0; // Directory doesn't exist yet — nothing to clean
-  }
-
-  const now = Date.now();
-  let removed = 0;
-
-  for (const entry of entries) {
-    // Only process sentinel files (12-hex-char hash + .lock extension, regular files)
-    if (!entry.endsWith(".lock")) continue;
-    const fullPath = nodePath.join(lockDir, entry);
-
-    try {
-      const stat = await fs.stat(fullPath);
-      if (!stat.isFile()) continue;
-      if (now - stat.mtimeMs < maxAgeMs) continue;
-
-      // Skip if currently locked (proper-lockfile creates a .lock.lock directory)
-      const isActive = await lockfile.check(fullPath).catch(() => false);
-      if (isActive) continue;
-
-      await fs.unlink(fullPath);
-      removed++;
-    } catch {
-      // File may have been removed concurrently — ignore
-    }
-  }
-
-  return removed;
+  return fileLock.cleanupStaleLocks(lockDir, maxAgeMs);
 }

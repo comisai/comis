@@ -25,9 +25,16 @@ vi.mock("@clack/prompts", () => ({
   cancel: vi.fn(),
 }));
 
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// importOriginal-based so callTyped (Plan 35-19 Wave C closure) resolves
+// to the real wrapper while withClient is mocked. Same pattern as Plan
+// 35-16's agent-behavior.test.ts.
+vi.mock("../client/rpc-client.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 vi.mock("../output/spinner.js", () => ({
   withSpinner: vi.fn(async (_text: string, fn: () => Promise<unknown>) => fn()),
@@ -90,7 +97,7 @@ describe("reset sessions via RPC", () => {
     await parseReset(["node", "test", "reset", "sessions", "--yes"]);
 
     expect(withClient).toHaveBeenCalled();
-    expect(mockCall).toHaveBeenCalledWith("session.list");
+    expect(mockCall).toHaveBeenCalledWith("session.list", {});
     expect(mockCall).toHaveBeenCalledWith("session.delete", { session_key: "s1" });
     expect(mockCall).toHaveBeenCalledWith("session.delete", { session_key: "s2" });
 
@@ -107,7 +114,7 @@ describe("reset sessions via RPC", () => {
 
     await parseReset(["node", "test", "reset", "sessions", "--yes"]);
 
-    expect(mockCall).toHaveBeenCalledWith("session.list");
+    expect(mockCall).toHaveBeenCalledWith("session.list", {});
     expect(mockCall).toHaveBeenCalledTimes(1);
 
     const output = getSpyOutput(consoleSpy.log);

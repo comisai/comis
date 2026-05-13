@@ -1,0 +1,607 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Phase 30 — DeliveryService factory.
+ *
+ * Replaces the standalone `deliverToChannel(adapter, ..., deps?)` export in
+ * channels/src/shared/deliver-to-channel.ts. Closes:
+ *  - L14 prep (global hook-runner singleton → deps.hookRunner closure)
+ *  - L26 prep (optional deps parameter → required deps parameter)
+ *
+ * Body is lifted verbatim from packages/channels/src/shared/deliver-to-channel.ts
+ * (lines 253-693 at plan-authoring time) with two surgical changes:
+ *  1. The global hook-runner lookup is replaced by `deps.hookRunner` (the
+ *     `if (hookRunner)` null-guard is dropped — deps.hookRunner is REQUIRED).
+ *  2. Function parameters lose the trailing optional `DeliverToChannelDeps`
+ *     argument; deps is captured in closure. All `deps?.X` references become `deps.X`
+ *     (`deps.deliveryQueue` is REQUIRED; eventBus / retryEngine / abortSignal /
+ *     inFlightSends / maxCharsOverride / replyMode remain optional, so the
+ *     INNER `?.` on those fields stays).
+ *
+ * Hook execution order, traceId propagation, suppressError wrap on
+ * after_delivery, and all `delivery:*` event emissions are byte-identical to
+ * current behavior (CONFIG-DELIV-09).
+ *
+ * @module
+ */
+
+import type { Result } from "@comis/shared";
+import { ok, err, suppressError, checkAborted } from "@comis/shared";
+
+import type { HookRunner } from "../hooks/hook-runner.js";
+import type { TypedEventBus } from "../event-bus/bus.js";
+import type {
+  DeliveryQueuePort,
+} from "../ports/delivery-queue.js";
+import type { SendMessageOptions } from "../ports/channel.js";
+import { tryGetContext } from "../context/context.js";
+
+import { formatForChannel } from "./format-for-channel.js";
+import { chunkForDelivery } from "./chunk-for-delivery.js";
+import { chunkBlocks } from "./block-chunker.js";
+import type { RetryEngine } from "./retry-engine.js";
+import { isPermanentError } from "./permanent-errors.js";
+import { computeQueueBackoff, resolveChunkLimit } from "./queue-backoff.js";
+
+import type {
+  DeliveryAdapter,
+  DeliverToChannelOptions,
+  DeliveryStrategy,
+  ChunkDeliveryResult,
+  DeliveryResult,
+} from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Constants — platform sets local to the delivery pipeline. The chunk-limit
+// default and queue-backoff schedule live in `./queue-backoff.js` (Phase 30
+// plan 06: relocated from channels along with the standalone deliverToChannel
+// deletion).
+// ---------------------------------------------------------------------------
+
+const PLATFORMS_NEEDING_FORMAT = new Set([
+  "telegram",
+  "signal",
+  "whatsapp",
+  "imessage",
+  "line",
+  "irc",
+  "slack",
+  "email",
+]);
+
+const PASSTHROUGH_PLATFORMS = new Set(["discord", "gateway", "echo"]);
+
+// ---------------------------------------------------------------------------
+// Public interfaces
+// ---------------------------------------------------------------------------
+
+/**
+ * Dependencies for createDeliveryService.
+ *
+ * `hookRunner` + `deliveryQueue` are REQUIRED — the closures that replace the
+ * L14 global hook-runner singleton and L26 optional-deps
+ * shape (was an optional `DeliverToChannelDeps` argument). `eventBus`, `retryEngine`,
+ * `maxCharsOverride`, `replyMode`, `abortSignal`, and `inFlightSends` are
+ * optional — they preserve the per-call/per-instance optional knobs the
+ * standalone function already accepts.
+ *
+ * @see packages/channels/src/shared/deliver-to-channel.ts:DeliverToChannelDeps
+ */
+export interface DeliveryServiceDeps {
+  /** Hook runner. REQUIRED — closes L14 (was global state). */
+  hookRunner: HookRunner;
+
+  /**
+   * Delivery queue for crash-safe persistence. REQUIRED — closes part of L26
+   * (was optional in the standalone function's deps record). Use
+   * `createNoOpDeliveryQueue()` from `@comis/core` when the queue feature is
+   * disabled.
+   */
+  deliveryQueue: DeliveryQueuePort;
+
+  /** Event bus. OPTIONAL — observability only; emits delivery:* events. */
+  eventBus?: TypedEventBus;
+
+  /** Retry engine. OPTIONAL — no retry without it. */
+  retryEngine?: RetryEngine;
+
+  /** Per-caller chunk-size override. OPTIONAL — defaults to DEFAULT_CHUNK_LIMIT (4000). */
+  maxCharsOverride?: number;
+
+  /** Reply mode for this delivery (off/first/all). OPTIONAL — default: "first". */
+  replyMode?: "off" | "first" | "all";
+
+  /**
+   * Per-instance set of in-flight outbound sendMessage promises. OPTIONAL —
+   * when provided, each chunk send is added to the set BEFORE the await so a
+   * throwing send is still tracked, and removed via .finally() on settle.
+   * Drained in channel-manager.stopAll() with a 5s deadline so SIGUSR2 cannot
+   * tear down adapters mid-send. Created by the channel-manager factory; do
+   * not pass externally.
+   */
+  inFlightSends?: Set<Promise<unknown>>;
+}
+
+/**
+ * Single-method delivery service per design §7.2 + AGENTS.md §2.3 (no
+ * speculative methods — add ops only when call sites exist). The `abortSignal`
+ * still rides on a per-call options channel (consistent with the standalone
+ * function's `deps.abortSignal`).
+ */
+export interface DeliveryService {
+  deliverToChannel(
+    adapter: DeliveryAdapter,
+    channelId: string,
+    text: string,
+    options?: DeliverToChannelOptions & { abortSignal?: AbortSignal },
+  ): Promise<Result<DeliveryResult, Error>>;
+}
+
+/**
+ * Construct a DeliveryService bound to the provided dependencies.
+ *
+ * Dependencies are captured in closure; subsequent calls all observe the same
+ * hookRunner / deliveryQueue / eventBus / retryEngine references.
+ *
+ * IMPORTANT: This factory MUST NOT call `tryGetContext()` or any
+ * AsyncLocalStorage helpers at construction time — those are per-request
+ * concerns. The closure captures `deps`; per-request context (traceId,
+ * sessionKey) is resolved INSIDE the method body (research Pitfall 5).
+ */
+export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryService {
+  return {
+    async deliverToChannel(
+      adapter: DeliveryAdapter,
+      channelId: string,
+      text: string,
+      options?: DeliverToChannelOptions & { abortSignal?: AbortSignal },
+    ): Promise<Result<DeliveryResult, Error>> {
+      const startTime = Date.now();
+
+      try {
+        // --- 1. EARLY RETURN: empty text ---
+        if (!text || !text.trim()) {
+          return ok({
+            ok: true,
+            totalChunks: 0,
+            deliveredChunks: 0,
+            failedChunks: 0,
+            chunks: [],
+            totalChars: 0,
+          });
+        }
+
+        // --- 1b. HOOKS: before_delivery ---
+        // L14 surgical change: was a global hook-runner lookup followed by
+        // `if (hookRunner) { ... }`. deps.hookRunner is REQUIRED here, so the
+        // variable is always present and the if-guard is dropped. An empty
+        // plugin registry still causes runBeforeDelivery to return undefined
+        // (preserved behavior — see hooks/hook-runner.ts:runModifyingHook
+        // empty-registry short-circuit).
+        let deliveryText = text;
+        const hookRunner = deps.hookRunner;
+        {
+          const hookCtx = tryGetContext();
+          const hookResult = await hookRunner.runBeforeDelivery(
+            {
+              text: deliveryText,
+              channelType: adapter.channelType,
+              channelId,
+              options: (options ?? {}) as Record<string, unknown>,
+              origin: options?.origin ?? "unknown",
+            },
+            {
+              sessionKey: hookCtx?.sessionKey,
+              agentId: undefined,
+              traceId: hookCtx?.traceId,
+            },
+          );
+
+          if (hookResult?.cancel) {
+            // Log cancellation at INFO via event
+            deps.eventBus?.emit("delivery:hook_cancelled", {
+              channelId,
+              channelType: adapter.channelType,
+              reason: hookResult.cancelReason ?? "unknown",
+              origin: options?.origin ?? "unknown",
+              timestamp: Date.now(),
+            });
+            return ok({
+              ok: false,
+              totalChunks: 0,
+              deliveredChunks: 0,
+              failedChunks: 0,
+              chunks: [],
+              totalChars: 0,
+            });
+          }
+
+          if (hookResult?.text !== undefined) {
+            deliveryText = hookResult.text;
+          }
+        }
+
+        // --- 2. FORMAT: unless skipFormat ---
+        let formatted = deliveryText;
+        if (!options?.skipFormat) {
+          formatted = formatForChannel(deliveryText, adapter.channelType);
+        }
+
+        // Post-format whitespace guard -- reject if formatting reduced text to whitespace
+        if (!formatted.trim()) {
+          return ok({
+            ok: true,
+            totalChunks: 0,
+            deliveredChunks: 0,
+            failedChunks: 0,
+            chunks: [],
+            totalChars: 0,
+          });
+        }
+
+        // --- 3. CHUNK: unless skipChunking ---
+        let chunks: string[];
+        const maxChars = resolveChunkLimit(deps.maxCharsOverride);
+
+        if (options?.skipChunking) {
+          // Caller guarantees text fits -- send as-is
+          chunks = [formatted];
+        } else if (formatted.length <= maxChars) {
+          // Short text -- skip chunking overhead
+          chunks = [formatted];
+        } else if (adapter.channelType === "gateway") {
+          // Gateway: no chunking (web client renders markdown, no length limit)
+          chunks = [formatted];
+        } else if (PLATFORMS_NEEDING_FORMAT.has(adapter.channelType) && !options?.skipFormat) {
+          // Platforms that went through formatForChannel: text is already rendered
+          // (HTML for telegram, plain text for signal/whatsapp/etc.)
+          // Use chunkBlocks on the rendered output to avoid double-parsing
+          chunks = chunkBlocks(formatted, { mode: "paragraph", maxChars });
+        } else if (PASSTHROUGH_PLATFORMS.has(adapter.channelType)) {
+          // Passthrough platforms (discord, slack): raw markdown, use IR chunker
+          chunks = chunkForDelivery(formatted, adapter.channelType, {
+            maxChars,
+            useMarkdownIR: true,
+          });
+        } else {
+          // Unknown platform: fall back to paragraph-based chunking
+          chunks = chunkBlocks(formatted, { mode: "paragraph", maxChars });
+        }
+
+        // Safety: never return empty chunk array
+        if (chunks.length === 0) {
+          chunks = [formatted];
+        }
+
+        // Resolve context for queue integration (non-throwing)
+        const ctx = tryGetContext();
+        const tenantId = ctx?.tenantId ?? "default";
+        const traceId = ctx?.traceId ?? null;
+
+        // Resolve delivery strategy
+        const strategy: DeliveryStrategy = options?.strategy ?? "all-or-abort";
+
+        // --- 4. SEND: each chunk ---
+        const chunkResults: ChunkDeliveryResult[] = [];
+        let aborted = false;
+
+        for (let i = 0; i < chunks.length; i++) {
+          // --- Abort check ---
+          if (options?.abortSignal) {
+            const abortCheck = checkAborted(options.abortSignal);
+            if (!abortCheck.ok) {
+              aborted = true;
+              const reason = abortCheck.error.message;
+              // Emit delivery:aborted event
+              deps.eventBus?.emit("delivery:aborted", {
+                channelId,
+                channelType: adapter.channelType,
+                reason,
+                chunksDelivered: chunkResults.filter(r => r.ok).length,
+                totalChunks: chunks.length,
+                durationMs: Date.now() - startTime,
+                origin: options?.origin ?? "unknown",
+                timestamp: Date.now(),
+              });
+              break;
+            }
+          }
+
+          const chunk = chunks[i];
+
+          // Build SendMessageOptions
+          const sendOpts: SendMessageOptions = {};
+
+          // replyTo: respects replyMode. Per-call options.replyMode (Phase 30
+          // plan 04) supersedes the closure-captured deps.replyMode so callers
+          // that resolve per-channel/per-chat-type variance (execution-deliver
+          // reading streamingConfig.replyModeByChatType) can still override the
+          // service-wide default without constructing a new DeliveryService.
+          if (options?.replyTo) {
+            const replyMode = options?.replyMode ?? deps.replyMode ?? "first";
+            if (options.isSystemMessage) {
+              // System messages (compaction, system) always thread without consuming first slot
+              sendOpts.replyTo = options.replyTo;
+            } else if (replyMode === "all") {
+              sendOpts.replyTo = options.replyTo;
+            } else if (replyMode === "first" && i === 0) {
+              sendOpts.replyTo = options.replyTo;
+            }
+            // replyMode === "off" -> never set replyTo for non-system messages
+          }
+
+          // threadId: all chunks
+          if (options?.threadId) {
+            sendOpts.threadId = options.threadId;
+          }
+
+          // extra: dual-purpose pass-through for both platform-specific metadata
+          // (telegramThreadScope) and rich SendMessageOptions (buttons, cards, effects).
+          // Spread known top-level SendMessageOptions keys, preserve remainder as extra.
+          if (options?.extra) {
+            const { buttons, cards, effects, threadReply, ...rest } = options.extra as Record<string, unknown>;
+            if (buttons !== undefined) (sendOpts as Record<string, unknown>).buttons = buttons;
+            if (cards !== undefined) (sendOpts as Record<string, unknown>).cards = cards;
+            if (effects !== undefined) (sendOpts as Record<string, unknown>).effects = effects;
+            if (threadReply !== undefined) (sendOpts as Record<string, unknown>).threadReply = threadReply;
+            if (Object.keys(rest).length > 0) sendOpts.extra = rest;
+          }
+
+          // --- Queue: enqueue (in_flight lease) before send ---
+          // We insert with status='in_flight' so the recurring drainer's
+          // `WHERE status='pending'` filter does NOT race-pick this row mid-send.
+          // On successful send, ack flips
+          // 'in_flight' -> 'delivered'; on permanent failure, fail flips
+          // 'in_flight' -> 'failed'; on transient failure, nack flips
+          // 'in_flight' -> 'pending' for the drainer to retry. All ack/nack/fail
+          // statements are status-agnostic UPDATE-by-id, so no SQL change is needed.
+          let entryId: string | null = null;
+          // deps.deliveryQueue is REQUIRED in DeliveryServiceDeps (closure
+          // mechanism — was optional in the standalone DeliverToChannelDeps).
+          {
+            const enqueueResult = await deps.deliveryQueue.enqueueInFlight({
+              text: chunk,
+              channelType: adapter.channelType,
+              channelId,
+              tenantId,
+              optionsJson: JSON.stringify(sendOpts),
+              origin: options?.origin ?? "unknown",
+              formatApplied: true,
+              chunkingApplied: true,
+              maxAttempts: 5,
+              createdAt: Date.now(),
+              scheduledAt: Date.now(),
+              expireAt: Date.now() + 3_600_000, // 1 hour
+              traceId,
+            });
+
+            if (enqueueResult.ok) {
+              entryId = enqueueResult.value;
+              // delivery:enqueued is now emitted by the adapter (SqliteDeliveryQueueAdapter
+              // emits inside enqueueInFlight after the INSERT succeeds -- single source of
+              // truth). No-op here.
+            }
+            // If enqueue fails, log and continue -- queue failure should not block delivery
+          }
+
+          // Send with or without retry
+          const retried = Boolean(deps.retryEngine);
+          const chunkSendStart = Date.now();
+
+          // Build the send promise WITHOUT awaiting yet, so we can register it
+          // in deps.inFlightSends synchronously before the underlying HTTPS POST
+          // is observable as in-flight. This guarantees that a SIGUSR2 hitting
+          // mid-send will see the promise in the Set and drain it before tearing
+          // down adapters (avoids orphaned SQLite delivery-queue acks and the
+          // resulting duplicate-message retry on the next instance).
+          const sendPromise: Promise<Result<string, Error>> = deps.retryEngine
+            ? deps.retryEngine.sendWithRetry(
+                // RetryEngine expects a ChannelPort-like adapter -- our
+                // DeliveryAdapter has the same sendMessage signature, so cast
+                // through unknown
+                adapter as unknown as Parameters<RetryEngine["sendWithRetry"]>[0],
+                channelId,
+                chunk,
+                sendOpts,
+              )
+            : adapter.sendMessage(channelId, chunk, sendOpts);
+
+          if (deps.inFlightSends) {
+            const inFlightSet = deps.inFlightSends;
+            const tracked: Promise<unknown> = sendPromise;
+            inFlightSet.add(tracked);
+            // .finally fires on both fulfillment and rejection -- guarantees
+            // Set cleanup even if sendPromise rejects. We intentionally do
+            // not await this side-effect; the void keeps no-floating-promise
+            // lint quiet without altering the awaited value below.
+            void sendPromise.finally(() => {
+              inFlightSet.delete(tracked);
+            });
+          }
+
+          const result: Result<string, Error> = await sendPromise;
+
+          const chunkResult: ChunkDeliveryResult = {
+            ok: result.ok,
+            charCount: chunk.length,
+            retried,
+          };
+
+          if (result.ok) {
+            chunkResult.messageId = result.value;
+
+            // --- Queue: ack on success ---
+            if (entryId) {
+              // ack failure is non-fatal -- log and continue
+              await deps.deliveryQueue.ack(entryId, result.value);
+              deps.eventBus?.emit("delivery:acked", {
+                entryId,
+                channelId,
+                channelType: adapter.channelType,
+                messageId: result.value,
+                durationMs: Date.now() - chunkSendStart,
+                timestamp: Date.now(),
+              });
+            }
+          } else {
+            chunkResult.error = result.error;
+
+            // --- Queue: nack or fail on error ---
+            if (entryId) {
+              const errorMsg = result.error.message;
+
+              if (strategy === "best-effort") {
+                // Best-effort: fail the queue entry (terminal -- no drain re-delivery of stale chunks)
+                await deps.deliveryQueue.fail(entryId, errorMsg);
+                deps.eventBus?.emit("delivery:failed", {
+                  entryId,
+                  channelId,
+                  channelType: adapter.channelType,
+                  error: errorMsg,
+                  reason: "permanent_error",
+                  timestamp: Date.now(),
+                });
+              } else if (isPermanentError(errorMsg)) {
+                // Permanent error -- fail immediately, no retries
+                await deps.deliveryQueue.fail(entryId, errorMsg);
+                deps.eventBus?.emit("delivery:failed", {
+                  entryId,
+                  channelId,
+                  channelType: adapter.channelType,
+                  error: errorMsg,
+                  reason: "permanent_error",
+                  timestamp: Date.now(),
+                });
+              } else if (deps.retryEngine) {
+                // Retry engine was used and exhausted its retries -- fail
+                await deps.deliveryQueue.fail(entryId, errorMsg);
+                deps.eventBus?.emit("delivery:failed", {
+                  entryId,
+                  channelId,
+                  channelType: adapter.channelType,
+                  error: errorMsg,
+                  reason: "retries_exhausted",
+                  timestamp: Date.now(),
+                });
+              } else {
+                // No retry engine -- nack for queue-level retry
+                const nextRetryAt = Date.now() + computeQueueBackoff(0);
+                await deps.deliveryQueue.nack(entryId, errorMsg, nextRetryAt);
+                deps.eventBus?.emit("delivery:nacked", {
+                  entryId,
+                  channelId,
+                  channelType: adapter.channelType,
+                  error: errorMsg,
+                  attemptCount: 1,
+                  nextRetryAt,
+                  timestamp: Date.now(),
+                });
+              }
+            }
+
+            // --- Strategy branching after failure ---
+            chunkResults.push(chunkResult);
+
+            // Emit per-chunk event before potential break
+            if (deps.eventBus) {
+              deps.eventBus.emit("delivery:chunk_sent", {
+                channelId,
+                channelType: adapter.channelType,
+                chunkIndex: i,
+                totalChunks: chunks.length,
+                charCount: chunk.length,
+                ok: false,
+                retried,
+                timestamp: Date.now(),
+              });
+            }
+
+            if (strategy === "best-effort") {
+              // Best-effort: call onChunkError and continue to next chunk
+              options?.onChunkError?.(result.error, i, chunks.length);
+              continue;
+            } else {
+              // all-or-abort: stop sending remaining chunks
+              break;
+            }
+          }
+
+          chunkResults.push(chunkResult);
+
+          // Emit per-chunk event
+          if (deps.eventBus) {
+            deps.eventBus.emit("delivery:chunk_sent", {
+              channelId,
+              channelType: adapter.channelType,
+              chunkIndex: i,
+              totalChunks: chunks.length,
+              charCount: chunk.length,
+              ok: result.ok,
+              retried,
+              timestamp: Date.now(),
+            });
+          }
+        }
+
+        // --- 5. AGGREGATE ---
+        const deliveredChunks = chunkResults.filter((r) => r.ok).length;
+        const failedChunks = chunkResults.filter((r) => !r.ok).length;
+        const totalChars = chunkResults.reduce((sum, r) => sum + r.charCount, 0);
+
+        const deliveryResult: DeliveryResult = {
+          ok: failedChunks === 0,
+          totalChunks: chunkResults.length,
+          deliveredChunks,
+          failedChunks,
+          chunks: chunkResults,
+          totalChars,
+        };
+
+        // Emit delivery:complete event (only if NOT aborted -- delivery:aborted was emitted in the loop)
+        if (deps.eventBus && !aborted) {
+          deps.eventBus.emit("delivery:complete", {
+            channelId,
+            channelType: adapter.channelType,
+            totalChunks: deliveryResult.totalChunks,
+            deliveredChunks: deliveryResult.deliveredChunks,
+            failedChunks: deliveryResult.failedChunks,
+            totalChars: deliveryResult.totalChars,
+            durationMs: Date.now() - startTime,
+            origin: options?.origin ?? "unknown",
+            strategy,
+            timestamp: Date.now(),
+          });
+        }
+
+        // --- 6. HOOKS: after_delivery -- skip for aborted deliveries ---
+        // L14: hookRunner is always present (deps.hookRunner is REQUIRED).
+        if (!aborted) {
+          const afterCtx = tryGetContext();
+          suppressError(
+            hookRunner.runAfterDelivery(
+              {
+                text: deliveryText,
+                channelType: adapter.channelType,
+                channelId,
+                result: deliveryResult,
+                durationMs: Date.now() - startTime,
+                origin: options?.origin ?? "unknown",
+              },
+              {
+                sessionKey: afterCtx?.sessionKey,
+                agentId: undefined,
+                traceId: afterCtx?.traceId,
+              },
+            ),
+            "after_delivery hook failed",
+          );
+        }
+
+        return ok(deliveryResult);
+      } catch (error) {
+        // Unexpected error -- wrap in Result
+        const wrapped = error instanceof Error ? error : new Error(String(error));
+        return err(wrapped);
+      }
+    },
+  };
+}

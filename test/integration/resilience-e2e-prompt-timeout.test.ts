@@ -24,10 +24,9 @@ import { join } from "node:path";
 
 import {
   createSubAgentRunner,
+  PromptTimeoutError,
   type SubAgentRunnerDeps,
-} from "@comis/daemon";
-
-import { PromptTimeoutError } from "@comis/agent";
+} from "@comis/agent";
 import { TypedEventBus } from "@comis/core";
 
 // ---------------------------------------------------------------------------

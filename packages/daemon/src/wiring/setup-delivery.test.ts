@@ -7,9 +7,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ok, err } from "@comis/shared";
-import type { DeliveryQueuePort, DeliveryQueueEntry } from "@comis/core";
+import type { DeliveryQueuePort, DeliveryQueueEntry, DeliveryAdapter } from "@comis/core";
 import type { DeliveryMirrorPort, DeliveryMirrorEntry, PluginPort, PluginRegistryApi } from "@comis/core";
-import type { DeliveryAdapter } from "@comis/channels";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 

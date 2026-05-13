@@ -29,7 +29,7 @@ import { randomUUID } from "node:crypto";
 import { suppressError } from "@comis/shared";
 import type { NormalizedMessage, TypedEventBus, BackgroundTaskOrigin } from "@comis/core";
 import { parseFormattedSessionKey } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { AgentExecutor } from "../executor/types.js";
 import { formatCompletionAnnouncement } from "./completion-formatter.js";
 import type { BackgroundTaskManager, NotifyFn } from "./background-task-manager.js";

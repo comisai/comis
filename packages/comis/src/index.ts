@@ -11,6 +11,7 @@ import * as skills from "@comis/skills";
 import * as scheduler from "@comis/scheduler";
 import * as agent from "@comis/agent";
 import * as channels from "@comis/channels";
+import * as orchestrator from "@comis/orchestrator";
 import * as cli from "@comis/cli";
 import * as daemon from "@comis/daemon";
 
@@ -24,6 +25,7 @@ export {
   scheduler,
   agent,
   channels,
+  orchestrator,
   cli,
   daemon,
 };

@@ -50,6 +50,7 @@ import {
 } from "@comis/core";
 import { createSecretManager } from "@comis/core";
 import {
+  createFileLock,
   createOAuthCredentialStoreFile,
   createOAuthTokenManager,
 } from "@comis/agent";
@@ -59,6 +60,8 @@ import {
 } from "@comis/memory";
 import { createMockOAuthServer, type MockOAuthServer } from "../support/mock-oauth-server.js";
 import { makeMockLogger, type MockLogger } from "../support/mock-logger.js";
+
+const fileLock = createFileLock();
 
 const PROVIDER_ID = "openai-codex";
 const SCHEMA_VERSION = 1 as const;
@@ -186,6 +189,8 @@ function buildManager(opts: {
     secretManager,
     eventBus: bus,
     credentialStore: opts.store,
+
+    fileLock,
     logger,
     dataDir: opts.dataDir,
     keyPrefix: "OAUTH_",
@@ -202,7 +207,7 @@ describe("OAuth persistence (integration)", () => {
     it("restart-survives-refresh: refresh once → recreate manager → reuses persisted refreshed token (mock count = 1)", async () => {
       const tmpDir = freshTmpDataDir();
       try {
-        const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+        const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
 
         // Pre-seed the store with an expired profile.
         const seedRefresh = "rt_initial_seed";
@@ -233,7 +238,7 @@ describe("OAuth persistence (integration)", () => {
     it("concurrent-refresh: two parallel manager instances → exactly 1 refresh request → both return SAME access token", async () => {
       const tmpDir = freshTmpDataDir();
       try {
-        const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+        const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
 
         const seedRefresh = "rt_concurrent_seed";
         const seed = makeExpiredProfile(seedRefresh);
@@ -268,7 +273,7 @@ describe("OAuth persistence (integration)", () => {
     it("empty store + valid OAUTH_OPENAI_CODEX env → profile bootstrapped, store now has openai-codex:<identity>, auth:profile_bootstrapped fires once", async () => {
       const tmpDir = freshTmpDataDir();
       try {
-        const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+        const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
 
         // Build env-var seed with a NOT-yet-expired access (no refresh
         // needed — bootstrap path only). The JWT email is user_a@example.com
@@ -311,7 +316,7 @@ describe("OAuth persistence (integration)", () => {
     it("stored profile + UNCHANGED env-var refresh-token → ZERO env-override-ignored WARNs (env matches stored)", async () => {
       const tmpDir = freshTmpDataDir();
       try {
-        const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+        const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
         const sharedRefresh = "rt_shared_matching";
         // Pre-seed a NOT-expired stored profile with refresh = sharedRefresh.
         const stored = makeFreshProfile(sharedRefresh);
@@ -346,7 +351,7 @@ describe("OAuth persistence (integration)", () => {
     it("stored profile + DIFFERENT env-var refresh-token → EXACTLY ONE env-override-ignored WARN across TWO getApiKey calls (once-per-process)", async () => {
       const tmpDir = freshTmpDataDir();
       try {
-        const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+        const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
         const storedRefresh = "rt_stored";
         // Pre-seed a NOT-expired stored profile with refresh = storedRefresh.
         const stored = makeFreshProfile(storedRefresh);

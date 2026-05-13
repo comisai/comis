@@ -24,7 +24,7 @@ import type {
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err, fromPromise } from "@comis/shared";
 import nodemailer from "nodemailer";
@@ -172,7 +172,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
       }
     } catch (e) {
       deps.logger.warn(
-        { err: e, channelType, submodule: "email", hint: "Failed to process inbound email", errorKind: "parse" },
+        { err: e, channelType, submodule: "email", hint: "Failed to process inbound email", errorKind: "validation" as const },
         "Inbound email processing failed",
       );
     }
@@ -264,7 +264,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
         ? mailResult.error
         : new Error(String(mailResult.error));
       deps.logger.error(
-        { err: error, channelType, submodule: "email", hint: "Check SMTP credentials and host", errorKind: "network" },
+        { err: error, channelType, submodule: "email", hint: "Check SMTP credentials and host", errorKind: "network" as const },
         "Failed to send email",
       );
       return err(error);

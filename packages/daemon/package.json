@@ -43,6 +43,7 @@
     "@comis/gateway": "workspace:*",
     "@comis/infra": "workspace:*",
     "@comis/memory": "workspace:*",
+    "@comis/orchestrator": "workspace:*",
     "@comis/scheduler": "workspace:*",
     "@comis/shared": "workspace:*",
     "@comis/skills": "workspace:*",

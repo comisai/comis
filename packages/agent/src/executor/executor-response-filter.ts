@@ -18,7 +18,7 @@ import {
   type TypedEventBus,
   type OutputGuardPort,
 } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import type { ExecutionPlan } from "../planner/types.js";
 import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { stripReasoningTagsFromText } from "../response-filter/reasoning-tags.js";

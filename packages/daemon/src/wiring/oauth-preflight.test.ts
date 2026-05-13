@@ -14,8 +14,7 @@
  * @module
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { PerAgentConfig } from "@comis/core";
-import type { TlsPreflightResult } from "@comis/agent";
+import type { PerAgentConfig, TlsPreflightResult } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Hoisted module mocks — must be defined before the import-under-test so the
@@ -36,8 +35,10 @@ vi.mock("node:fs/promises", () => ({
   readFile: mockReadFile,
 }));
 
-vi.mock("@comis/agent", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@comis/agent")>();
+// Phase 35 Plan 35-04 (drift recovery): runOAuthTlsPreflight relocated from
+// @comis/agent to @comis/core.
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
     runOAuthTlsPreflight: mockRunOAuthTlsPreflight,
@@ -151,7 +152,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
 
     expect(warns[0]!.payload).toMatchObject({
       submodule: "oauth-tls-preflight",
-      errorKind: "oauth_tls_cert",
+      errorKind: "network",
       hint: "apk add ca-certificates && update-ca-certificates",
       code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
       message: "unable to get local issuer certificate",

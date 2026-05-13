@@ -34,6 +34,7 @@ const WORKSPACE_PACKAGES = [
   "channels",
   "cli",
   "daemon",
+  "orchestrator",
   "web",
 ];
 

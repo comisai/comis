@@ -97,7 +97,7 @@ export function isReadOnlyTool(name: string, logger?: ParallelismLogger): boolea
   const legacyResult = READ_ONLY_TOOLS.has(name);
   if (logger && legacyResult) {
     logger.warn(
-      { toolName: name, hint: "Register isReadOnly metadata for this tool", errorKind: "config" },
+      { toolName: name, hint: "Register isReadOnly metadata for this tool", errorKind: "config" as const },
       "isReadOnlyTool() fell back to legacy READ_ONLY_TOOLS set",
     );
   }

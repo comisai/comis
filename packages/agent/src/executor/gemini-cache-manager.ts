@@ -341,7 +341,7 @@ export function createGeminiCacheManager(config: GeminiCacheManagerConfig): Gemi
         const result = await fromPromise(ai.caches.delete({ name: entry.name }));
         if (!result.ok) {
           config.logger.warn(
-            { sessionKey, name: entry.name, err: result.error, hint: "Cache entry may persist until API-side TTL expires", errorKind: "network" },
+            { sessionKey, name: entry.name, err: result.error, hint: "Cache entry may persist until API-side TTL expires", errorKind: "network" as const },
             "Gemini cache: failed to delete cache entry",
           );
         }
@@ -412,7 +412,7 @@ export function createGeminiCacheManager(config: GeminiCacheManagerConfig): Gemi
             deleted++;
           } else {
             config.logger.warn(
-              { name: cache.name, displayName: cache.displayName, err: result.error, hint: "Orphaned cache will expire via API-side TTL", errorKind: "network" },
+              { name: cache.name, displayName: cache.displayName, err: result.error, hint: "Orphaned cache will expire via API-side TTL", errorKind: "network" as const },
               "Gemini cache: failed to delete orphaned cache entry",
             );
             skipped++;

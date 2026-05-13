@@ -167,31 +167,6 @@ export function normalizeToolSchema(
   return { schema: cloned, strippedKeywords: [...stripped].sort() };
 }
 
-/**
- * Normalize all tool definition schemas for a provider.
- *
- * @deprecated Use `normalizeToolSchemasForProvider()` from `provider/tool-schema/normalize.ts` instead.
- * This function only applies Layer 1 (keyword stripping). The new pipeline applies all 4 layers
- * (keyword stripping, Gemini cleaning, xAI stripping, OpenAI type forcing).
- *
- * @param tools - Array of tool definitions with optional inputSchema
- * @param provider - Target LLM provider name
- * @returns Normalized tool definitions with per-tool stripped keyword lists
- */
-export function normalizeToolSchemas(
-  tools: Array<{ name: string; inputSchema?: Record<string, unknown> }>,
-  provider: ProviderName,
-): Array<{ name: string; inputSchema?: Record<string, unknown>; strippedKeywords: string[] }> {
-  return tools.map((tool) => {
-    if (!tool.inputSchema) {
-      return { name: tool.name, inputSchema: undefined, strippedKeywords: [] };
-    }
-
-    const { schema, strippedKeywords } = normalizeToolSchema(tool.inputSchema, provider);
-    return { name: tool.name, inputSchema: schema, strippedKeywords };
-  });
-}
-
 // --- Schema pruning (formerly schema-pruning.ts) ---
 
 // ---------------------------------------------------------------------------

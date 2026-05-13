@@ -34,7 +34,9 @@
  * @module
  */
 import { readFile } from "node:fs/promises";
-import { runOAuthTlsPreflight } from "@comis/agent";
+// Phase 35 Plan 35-04 (drift recovery): runOAuthTlsPreflight relocated from
+// @comis/agent to @comis/core.
+import { runOAuthTlsPreflight } from "@comis/core";
 import { getOAuthProvider } from "@mariozechner/pi-ai/oauth";
 import type { ComisLogger } from "@comis/infra";
 import type { PerAgentConfig } from "@comis/core";
@@ -126,7 +128,7 @@ export async function emitOAuthTlsPreflightWarn(logger: ComisLogger): Promise<vo
     logger.warn(
       {
         submodule: MODULE_NAME,
-        errorKind: "oauth_tls_cert",
+        errorKind: "network" as const,
         hint,
         code: result.code,
         message: result.message,

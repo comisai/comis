@@ -1,0 +1,3517 @@
+[
+  {
+    "name": "agents_manage",
+    "category": "agent",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "create",
+              "type": "string"
+            },
+            {
+              "const": "get",
+              "type": "string"
+            },
+            {
+              "const": "update",
+              "type": "string"
+            },
+            {
+              "const": "delete",
+              "type": "string"
+            },
+            {
+              "const": "suspend",
+              "type": "string"
+            },
+            {
+              "const": "resume",
+              "type": "string"
+            },
+            {
+              "const": "list",
+              "type": "string"
+            }
+          ],
+          "description": "Agent management action. Valid values: create (new agent), get (read config/status), update (modify config), delete (remove agent), suspend (pause execution), resume (restart execution), list (all agent IDs)"
+        },
+        "agent_id": {
+          "description": "The agent identifier (required for all actions except list)",
+          "type": "string"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "description": "Agent configuration for create/update actions",
+              "properties": {
+                "maxSteps": {
+                  "description": "Maximum execution steps per turn",
+                  "type": "integer"
+                },
+                "model": {
+                  "description": "LLM model identifier",
+                  "type": "string"
+                },
+                "name": {
+                  "description": "Human-readable agent name",
+                  "type": "string"
+                },
+                "oauthProfiles": {
+                  "description": "OAuth profile preferences per provider (e.g., openai-codex). Each value must match an existing stored profile ID — the daemon rejects nonexistent IDs with a 'not found in store' error.",
+                  "patternProperties": {
+                    "^.*$": {
+                      "description": "<provider>:<identity> profile ID. Run `comis auth list` first to discover stored profiles.",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "provider": {
+                  "description": "LLM provider name",
+                  "type": "string"
+                },
+                "skills": {
+                  "description": "Skills and tool configuration",
+                  "properties": {
+                    "builtinTools": {
+                      "description": "Built-in tool toggles (true=enabled, false=disabled)",
+                      "properties": {
+                        "browser": {
+                          "description": "Enable headless browser control",
+                          "type": "boolean"
+                        },
+                        "edit": {
+                          "description": "Enable file editing",
+                          "type": "boolean"
+                        },
+                        "exec": {
+                          "description": "Enable shell command execution",
+                          "type": "boolean"
+                        },
+                        "find": {
+                          "description": "Enable file search by glob pattern",
+                          "type": "boolean"
+                        },
+                        "grep": {
+                          "description": "Enable regex search across files",
+                          "type": "boolean"
+                        },
+                        "ls": {
+                          "description": "Enable directory listing",
+                          "type": "boolean"
+                        },
+                        "process": {
+                          "description": "Enable background process management",
+                          "type": "boolean"
+                        },
+                        "read": {
+                          "description": "Enable file reading",
+                          "type": "boolean"
+                        },
+                        "webFetch": {
+                          "description": "Enable URL content fetching",
+                          "type": "boolean"
+                        },
+                        "webSearch": {
+                          "description": "Enable web search",
+                          "type": "boolean"
+                        },
+                        "write": {
+                          "description": "Enable file writing",
+                          "type": "boolean"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "workspace": {
+                  "additionalProperties": false,
+                  "description": "Nested workspace configuration. Use this OR the flat workspace_profile field, not both. Optionally inline ROLE.md / IDENTITY.md via role/identity for single-call creation (PREFERRED for batch fleet creation).",
+                  "properties": {
+                    "identity": {
+                      "description": "Inline IDENTITY.md content. Written to <workspaceDir>/IDENTITY.md immediately on create. Should set name/creature/vibe/emoji/avatar/ethos for the agent. Max 4096 chars. When omitted, IDENTITY.md is the unmodified seed template.",
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "profile": {
+                      "anyOf": [
+                        {
+                          "const": "full",
+                          "type": "string"
+                        },
+                        {
+                          "const": "specialist",
+                          "type": "string"
+                        }
+                      ],
+                      "description": "Workspace profile (alternative to flat workspace_profile). Valid: full | specialist ONLY. NO other values accepted."
+                    },
+                    "role": {
+                      "description": "Inline ROLE.md content. Written to <workspaceDir>/ROLE.md immediately on create. Should describe the agent's purpose, behavioral guidelines, domain conventions. Max 16384 chars. When omitted, ROLE.md is the unmodified seed template — call write() afterward to customize.",
+                      "maxLength": 16384,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "profile"
+                  ],
+                  "type": "object"
+                },
+                "workspace_profile": {
+                  "anyOf": [
+                    {
+                      "const": "full",
+                      "type": "string"
+                    },
+                    {
+                      "const": "specialist",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Workspace profile controlling platform instruction verbosity. Valid values: full (~9K tokens, user-facing agents on channels), specialist (~800 tokens, task workers and fleet sub-agents) ONLY. NO other values accepted. Default: full. Can be changed later via update action. Alternative shape: nested workspace.profile (see `workspace` field)."
+                }
+              },
+              "type": "object"
+            },
+            {
+              "description": "Agent configuration as a JSON string (fallback when the LLM stringifies the object). Will be parsed at execution time. Prefer the object form.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "pipeline",
+    "category": "agent",
+    "schema": {
+      "properties": {
+        "_confirmed": {
+          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true.",
+          "type": "boolean"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "define",
+              "type": "string"
+            },
+            {
+              "const": "execute",
+              "type": "string"
+            },
+            {
+              "const": "status",
+              "type": "string"
+            },
+            {
+              "const": "cancel",
+              "type": "string"
+            },
+            {
+              "const": "save",
+              "type": "string"
+            },
+            {
+              "const": "load",
+              "type": "string"
+            },
+            {
+              "const": "list",
+              "type": "string"
+            },
+            {
+              "const": "delete",
+              "type": "string"
+            },
+            {
+              "const": "outputs",
+              "type": "string"
+            }
+          ],
+          "description": "Pipeline action (default: execute). Valid values: define (validate graph structure), execute (run pipeline), status (check graph state), cancel (terminate running graph), save (persist named graph), load (retrieve saved graph), list (enumerate saved graphs), delete (soft-delete saved graph), outputs (retrieve node results)"
+        },
+        "budget": {
+          "description": "Resource budget limits for the graph",
+          "properties": {
+            "max_cost": {
+              "description": "Maximum total cost across all nodes",
+              "type": "number"
+            },
+            "max_tokens": {
+              "description": "Maximum total tokens across all nodes",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "edges": {
+          "description": "Edge definitions for the graph",
+          "items": {
+            "properties": {
+              "from": {
+                "description": "Alias for source (normalized automatically)",
+                "type": "string"
+              },
+              "id": {
+                "description": "Edge identifier (auto-generated as 'source->target' if omitted)",
+                "type": "string"
+              },
+              "source": {
+                "description": "Source node ID",
+                "type": "string"
+              },
+              "target": {
+                "description": "Target node ID",
+                "type": "string"
+              },
+              "to": {
+                "description": "Alias for target (normalized automatically)",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "graph_id": {
+          "description": "Graph ID for status/cancel queries",
+          "type": "string"
+        },
+        "id": {
+          "description": "Named graph ID for save/load/delete",
+          "type": "string"
+        },
+        "label": {
+          "description": "Human-readable label for the graph",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max entries to return (for list)",
+          "type": "integer"
+        },
+        "nodes": {
+          "description": "Array of node definitions for the execution graph",
+          "items": {
+            "properties": {
+              "agent": {
+                "description": "Agent ID to run this node (default: caller's agent)",
+                "type": "string"
+              },
+              "barrier_mode": {
+                "anyOf": [
+                  {
+                    "const": "all",
+                    "type": "string"
+                  },
+                  {
+                    "const": "majority",
+                    "type": "string"
+                  },
+                  {
+                    "const": "best-effort",
+                    "type": "string"
+                  }
+                ],
+                "description": "Barrier mode for fan-in nodes. Valid values: all (wait for every dependency, default), majority (proceed when >50% deps complete), best-effort (proceed when any dep completes)"
+              },
+              "context_mode": {
+                "anyOf": [
+                  {
+                    "const": "full",
+                    "type": "string"
+                  },
+                  {
+                    "const": "summary",
+                    "type": "string"
+                  },
+                  {
+                    "const": "none",
+                    "type": "string"
+                  }
+                ],
+                "description": "Context verbosity mode. Valid values: full (complete upstream outputs, default), summary (500 chars + shared dir reference), none (no upstream outputs, use {{nodeId.result}} for explicit data)"
+              },
+              "depends_on": {
+                "description": "Node IDs this node depends on",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "max_steps": {
+                "description": "Maximum execution steps for this node",
+                "type": "integer"
+              },
+              "mcp_servers": {
+                "description": "MCP server names whose tools should be pre-discovered for this node. Example: [\"yfinance\"] pre-seeds all yfinance tools so the sub-agent skips discover_tools calls.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "model": {
+                "description": "Model override for this node",
+                "type": "string"
+              },
+              "node_id": {
+                "description": "Unique node identifier within the graph",
+                "type": "string"
+              },
+              "retries": {
+                "description": "Number of automatic retries on failure with exponential backoff (0-3, default: 0). Retry delays: 1s, 2s, 4s.",
+                "maximum": 3,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "task": {
+                "description": "Task description for this node. Use {{nodeId.result}} to inline upstream node output (nodeId must be in depends_on). Use ${VARIABLE_NAME} for user-provided inputs.",
+                "type": "string"
+              },
+              "timeout_ms": {
+                "description": "Per-node timeout in milliseconds (default: 300000 — 5 minutes). Nodes with tool calls (web search, MCP, etc.) typically need 2-4 minutes. Debate and collaborate nodes need longer (5-8 minutes per round). Prefer the default unless you have a specific reason to change it.",
+                "type": "integer"
+              },
+              "type_config": {
+                "description": "Configuration for the node type. Required when type_id is set. Examples:\n  agent:         { \"agent\": \"ta-analyst\" }\n  debate:        { \"agents\": [\"ta-bull\", \"ta-bear\"], \"rounds\": 2, \"synthesizer\": \"ta-judge\" }\n  vote:          { \"voters\": [\"analyst-1\", \"analyst-2\", \"analyst-3\"] }\n  refine:        { \"reviewers\": [\"drafter\", \"editor\", \"pm\"] }\n  collaborate:   { \"agents\": [\"team-1\", \"team-2\"], \"rounds\": 1 }\n  approval-gate: { \"message\": \"Approve the trade?\", \"timeout_minutes\": 60 }\n  map-reduce:    { \"mappers\": [{\"agent\": \"a1\"}, {\"agent\": \"a2\"}], \"reducer\": \"pm\" }",
+                "patternProperties": {
+                  "^.*$": {}
+                },
+                "type": "object"
+              },
+              "type_id": {
+                "anyOf": [
+                  {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  {
+                    "const": "debate",
+                    "type": "string"
+                  },
+                  {
+                    "const": "vote",
+                    "type": "string"
+                  },
+                  {
+                    "const": "refine",
+                    "type": "string"
+                  },
+                  {
+                    "const": "collaborate",
+                    "type": "string"
+                  },
+                  {
+                    "const": "approval-gate",
+                    "type": "string"
+                  },
+                  {
+                    "const": "map-reduce",
+                    "type": "string"
+                  }
+                ],
+                "description": "Built-in node type. If omitted, runs as regular single-agent task. Valid values: agent (single sub-agent, ~1 LLM call), debate (multi-round adversarial, ~N*R calls), vote (parallel independent voting, ~N calls), refine (sequential review chain, ~N calls), collaborate (sequential building, ~N*R calls), approval-gate (pause for human approval, 0 calls), map-reduce (parallel map then reduce, ~N+1 calls)"
+              }
+            },
+            "required": [
+              "node_id",
+              "task"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "offset": {
+          "description": "Pagination offset (for list)",
+          "type": "integer"
+        },
+        "on_failure": {
+          "anyOf": [
+            {
+              "const": "fail-fast",
+              "type": "string"
+            },
+            {
+              "const": "continue",
+              "type": "string"
+            }
+          ],
+          "description": "Failure strategy (default: fail-fast). Valid values: fail-fast (abort pipeline on first error), continue (skip failed node, proceed)"
+        },
+        "recent_minutes": {
+          "description": "Include graphs from last N minutes (for status listing)",
+          "type": "integer"
+        },
+        "settings": {
+          "description": "Graph settings object"
+        },
+        "timeout_ms": {
+          "description": "Overall graph timeout in milliseconds (default: 1500000 — 25 minutes). Heuristic: estimate ~3 minutes per node, double for debate/collaborate rounds. Multi-phase pipelines with debate rounds typically need 25-30 minutes. Do NOT lower below the default unless the graph is trivially small (2-3 simple nodes).",
+          "type": "integer"
+        },
+        "variables": {
+          "description": "Key-value map of ${VAR} substitutions to apply before execution",
+          "patternProperties": {
+            "^.*$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "subagents",
+    "category": "agent",
+    "schema": {
+      "properties": {
+        "_confirmed": {
+          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true.",
+          "type": "boolean"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "list",
+              "type": "string"
+            },
+            {
+              "const": "kill",
+              "type": "string"
+            },
+            {
+              "const": "steer",
+              "type": "string"
+            }
+          ],
+          "description": "Subagent action (default: list). Valid values: list (show active runs), kill (terminate sub-agent), steer (redirect task with new message)"
+        },
+        "message": {
+          "description": "New task description for the subagent (for steer)",
+          "type": "string"
+        },
+        "recent_minutes": {
+          "description": "Include runs from last N minutes (default: 30, for list)",
+          "type": "integer"
+        },
+        "target": {
+          "description": "Run ID of the target subagent (for kill/steer)",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "background_tasks",
+    "category": "background",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "list",
+              "type": "string"
+            },
+            {
+              "const": "get",
+              "type": "string"
+            },
+            {
+              "const": "cancel",
+              "type": "string"
+            },
+            {
+              "const": "read_output",
+              "type": "string"
+            }
+          ],
+          "description": "Task management action. list: show all tasks for this agent. get: get task details by ID. cancel: cancel a running task. read_output: read the output of a completed task."
+        },
+        "taskId": {
+          "description": "Task ID. Required for get, cancel, and read_output actions.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
+    "name": "browser",
+    "category": "browser",
+    "schema": {
+      "properties": {
+        "accept": {
+          "type": "boolean"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "status",
+              "type": "string"
+            },
+            {
+              "const": "start",
+              "type": "string"
+            },
+            {
+              "const": "stop",
+              "type": "string"
+            },
+            {
+              "const": "profiles",
+              "type": "string"
+            },
+            {
+              "const": "tabs",
+              "type": "string"
+            },
+            {
+              "const": "open",
+              "type": "string"
+            },
+            {
+              "const": "focus",
+              "type": "string"
+            },
+            {
+              "const": "close",
+              "type": "string"
+            },
+            {
+              "const": "snapshot",
+              "type": "string"
+            },
+            {
+              "const": "screenshot",
+              "type": "string"
+            },
+            {
+              "const": "navigate",
+              "type": "string"
+            },
+            {
+              "const": "console",
+              "type": "string"
+            },
+            {
+              "const": "pdf",
+              "type": "string"
+            },
+            {
+              "const": "upload",
+              "type": "string"
+            },
+            {
+              "const": "dialog",
+              "type": "string"
+            },
+            {
+              "const": "act",
+              "type": "string"
+            }
+          ],
+          "description": "Browser control action. Valid values: status (check browser state), start (launch browser), stop (close browser), profiles (list browser profiles), tabs (list open tabs), open (new tab with URL), focus (switch to tab), close (close tab), snapshot (get page accessibility tree), screenshot (capture page image), navigate (go to URL), console (read console logs), pdf (export page as PDF), upload (upload file to input), dialog (handle browser dialog), act (perform page interaction)"
+        },
+        "compact": {
+          "type": "boolean"
+        },
+        "depth": {
+          "type": "number"
+        },
+        "element": {
+          "type": "string"
+        },
+        "frame": {
+          "type": "string"
+        },
+        "fullPage": {
+          "type": "boolean"
+        },
+        "inputRef": {
+          "type": "string"
+        },
+        "interactive": {
+          "type": "boolean"
+        },
+        "labels": {
+          "type": "boolean"
+        },
+        "level": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "maxChars": {
+          "type": "number"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "const": "efficient",
+              "type": "string"
+            }
+          ],
+          "description": "Snapshot mode. Valid values: efficient (compact output for LLM)"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "promptText": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "refs": {
+          "anyOf": [
+            {
+              "const": "role",
+              "type": "string"
+            },
+            {
+              "const": "aria",
+              "type": "string"
+            }
+          ],
+          "description": "Element reference type. Valid values: role (ARIA role references), aria (ARIA label references)"
+        },
+        "request": {
+          "properties": {
+            "button": {
+              "type": "string"
+            },
+            "doubleClick": {
+              "type": "boolean"
+            },
+            "endRef": {
+              "type": "string"
+            },
+            "fields": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {},
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "fn": {
+              "type": "string"
+            },
+            "height": {
+              "type": "number"
+            },
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "const": "click",
+                  "type": "string"
+                },
+                {
+                  "const": "type",
+                  "type": "string"
+                },
+                {
+                  "const": "press",
+                  "type": "string"
+                },
+                {
+                  "const": "hover",
+                  "type": "string"
+                },
+                {
+                  "const": "drag",
+                  "type": "string"
+                },
+                {
+                  "const": "select",
+                  "type": "string"
+                },
+                {
+                  "const": "fill",
+                  "type": "string"
+                },
+                {
+                  "const": "resize",
+                  "type": "string"
+                },
+                {
+                  "const": "wait",
+                  "type": "string"
+                },
+                {
+                  "const": "evaluate",
+                  "type": "string"
+                },
+                {
+                  "const": "close",
+                  "type": "string"
+                }
+              ],
+              "description": "Interaction kind. Valid values: click (click element), type (enter text), press (press key), hover (mouse over), drag (drag between elements), select (choose dropdown option), fill (fill form fields), resize (change viewport size), wait (pause or wait for condition), evaluate (run JavaScript), close (close current tab)"
+            },
+            "modifiers": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "slowly": {
+              "type": "boolean"
+            },
+            "startRef": {
+              "type": "string"
+            },
+            "submit": {
+              "type": "boolean"
+            },
+            "targetId": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "textGone": {
+              "type": "string"
+            },
+            "timeMs": {
+              "type": "number"
+            },
+            "values": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "width": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "selector": {
+          "type": "string"
+        },
+        "snapshotFormat": {
+          "anyOf": [
+            {
+              "const": "aria",
+              "type": "string"
+            },
+            {
+              "const": "ai",
+              "type": "string"
+            }
+          ],
+          "description": "Snapshot format. Valid values: aria (ARIA accessibility tree), ai (LLM-optimized format)"
+        },
+        "targetId": {
+          "type": "string"
+        },
+        "targetUrl": {
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "number"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "const": "png",
+              "type": "string"
+            },
+            {
+              "const": "jpeg",
+              "type": "string"
+            }
+          ],
+          "description": "Screenshot image format. Valid values: png (lossless), jpeg (compressed)"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
+    "name": "ctx_expand",
+    "category": "context",
+    "schema": {
+      "properties": {
+        "grant_id": {
+          "description": "The expansion grant ID (provided in domain knowledge)",
+          "type": "string"
+        },
+        "summary_id": {
+          "description": "The summary to expand",
+          "type": "string"
+        }
+      },
+      "required": [
+        "grant_id",
+        "summary_id"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "ctx_inspect",
+    "category": "context",
+    "schema": {
+      "properties": {
+        "id": {
+          "description": "ID of the summary (sum_xxx) or file (file_xxx) to inspect",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "ctx_recall",
+    "category": "context",
+    "schema": {
+      "properties": {
+        "max_tokens": {
+          "description": "Maximum answer length (default: 2000, max: 10000)",
+          "maximum": 10000,
+          "minimum": 100,
+          "type": "integer"
+        },
+        "prompt": {
+          "description": "What to find or answer from earlier history",
+          "type": "string"
+        },
+        "query": {
+          "description": "Text search to find relevant summaries (if summary_ids not provided)",
+          "type": "string"
+        },
+        "summary_ids": {
+          "description": "Explicit summary IDs to expand",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "prompt"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "ctx_search",
+    "category": "context",
+    "schema": {
+      "properties": {
+        "limit": {
+          "description": "Maximum results to return (default: 20, max: 100)",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "mode": {
+          "description": "Search mode: 'fts' (default) or 'regex'",
+          "type": "string"
+        },
+        "query": {
+          "description": "Search pattern (FTS query or regex)",
+          "type": "string"
+        },
+        "scope": {
+          "description": "Search scope: 'both' (default), 'messages', or 'summaries'",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "unified_context",
+    "category": "context",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "search",
+              "type": "string"
+            },
+            {
+              "const": "recall",
+              "type": "string"
+            },
+            {
+              "const": "inspect",
+              "type": "string"
+            },
+            {
+              "const": "expand",
+              "type": "string"
+            }
+          ],
+          "description": "Context action to perform. Valid values: search (FTS5 search over DAG history), recall (deep recall via bounded sub-agent spawning), inspect (view full content of a DAG summary or file by ID), expand (walk deeper into the context DAG)"
+        },
+        "grant_id": {
+          "description": "The expansion grant ID (provided in domain knowledge) (action: expand)",
+          "type": "string"
+        },
+        "id": {
+          "description": "ID of the summary (sum_xxx) or file (file_xxx) to inspect (action: inspect)",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum results to return (action: search default 20 max 100)",
+          "type": "integer"
+        },
+        "max_tokens": {
+          "description": "Maximum answer length (default: 2000, max: 10000) (action: recall)",
+          "type": "integer"
+        },
+        "mode": {
+          "description": "Search mode: 'fts' (default) or 'regex' (action: search)",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "What to find or answer from earlier history (action: recall)",
+          "type": "string"
+        },
+        "query": {
+          "description": "Search pattern (FTS query or regex) (action: search), or text search for summaries (action: recall)",
+          "type": "string"
+        },
+        "scope": {
+          "description": "Search scope: 'both' (default), 'messages', or 'summaries' (action: search)",
+          "type": "string"
+        },
+        "summary_id": {
+          "description": "The summary to expand (action: expand)",
+          "type": "string"
+        },
+        "summary_ids": {
+          "description": "Explicit summary IDs to expand (action: recall)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
+    "name": "gateway",
+    "category": "gateway",
+    "schema": {
+      "properties": {
+        "_confirmed": {
+          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true.",
+          "type": "boolean"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "read",
+              "type": "string"
+            },
+            {
+              "const": "patch",
+              "type": "string"
+            },
+            {
+              "const": "apply",
+              "type": "string"
+            },
+            {
+              "const": "restart",
+              "type": "string"
+            },
+            {
+              "const": "schema",
+              "type": "string"
+            },
+            {
+              "const": "status",
+              "type": "string"
+            },
+            {
+              "const": "history",
+              "type": "string"
+            },
+            {
+              "const": "diff",
+              "type": "string"
+            },
+            {
+              "const": "rollback",
+              "type": "string"
+            },
+            {
+              "const": "env_set",
+              "type": "string"
+            },
+            {
+              "const": "env_list",
+              "type": "string"
+            }
+          ],
+          "description": "Gateway control action. Valid values: read (view config section), patch (update single config key), apply (replace entire section), restart (restart gateway), schema (get JSON schema), status (server uptime/connections), history (config change log), diff (compare config versions), rollback (restore previous config), env_set (store secret), env_list (list configured secret names -- read-only, never returns values)"
+        },
+        "env_key": {
+          "description": "Environment variable / secret name (uppercase, e.g., OPENAI_API_KEY). Required for env_set. After storing a secret via env_set, reference it in config YAML as ${VAR_NAME} (e.g., GEMINI_API_KEY: ${GEMINI_API_KEY}). Never write raw API keys into config.",
+          "type": "string"
+        },
+        "env_value": {
+          "description": "Secret value to store. Required for env_set. Write-only: cannot be read back.",
+          "type": "string"
+        },
+        "filter": {
+          "description": "Glob filter for env_list (e.g., 'GEMINI*', '*_API_KEY'). Case-insensitive, supports '*' wildcard. Matches only secret NAMES -- values are never returned.",
+          "type": "string"
+        },
+        "key": {
+          "description": "Dot-notation key within section for patch. For agents section, prefix with the agent ID (e.g., default.model, default.provider, default.maxSteps). Use 'read' action first to see current keys and agent IDs.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum results. For history: default 10. For env_list: default 100, max 500 (clamped).",
+          "type": "number"
+        },
+        "section": {
+          "description": "Config section name. Required for patch/apply/schema, optional for read. Valid sections: agents, channels, memory, security, routing, daemon, scheduler, gateway, integrations, monitoring, browser, models, providers, messages, approvals. Note: MCP server settings are under 'integrations', not 'mcp'.",
+          "type": "string"
+        },
+        "sha": {
+          "description": "Git commit SHA for diff comparison or rollback target",
+          "type": "string"
+        },
+        "value": {
+          "description": "New value for patch (string, number, boolean, object, or array)"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "obs_query",
+    "category": "observability",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "diagnostics",
+              "type": "string"
+            },
+            {
+              "const": "billing",
+              "type": "string"
+            },
+            {
+              "const": "delivery",
+              "type": "string"
+            },
+            {
+              "const": "channels",
+              "type": "string"
+            }
+          ],
+          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness)"
+        },
+        "agent_id": {
+          "description": "Agent identifier (for billing.byAgent)",
+          "type": "string"
+        },
+        "category": {
+          "description": "Diagnostic category filter (for diagnostics)",
+          "type": "string"
+        },
+        "channel_id": {
+          "description": "Channel identifier (for channels.get, delivery.recent)",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum number of results to return",
+          "type": "integer"
+        },
+        "session_key": {
+          "description": "Session key (for billing.bySession)",
+          "type": "string"
+        },
+        "since_ms": {
+          "description": "Time filter: only include data since this epoch timestamp (ms)",
+          "type": "integer"
+        },
+        "sub_action": {
+          "description": "Sub-action within the category. billing: byProvider | byAgent | bySession | total. delivery: recent | stats. channels: all | stale | get.",
+          "type": "string"
+        },
+        "threshold_ms": {
+          "description": "Staleness threshold in ms (for channels.stale, default 300000)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "heartbeat_manage",
+    "category": "heartbeat",
+    "schema": {
+      "properties": {
+        "ack_max_chars": {
+          "description": "Max chars for soft acknowledgment (default 300)",
+          "type": "integer"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "get",
+              "type": "string"
+            },
+            {
+              "const": "update",
+              "type": "string"
+            },
+            {
+              "const": "status",
+              "type": "string"
+            },
+            {
+              "const": "trigger",
+              "type": "string"
+            }
+          ],
+          "description": "Heartbeat management action. Valid values: get (view config), update (modify config fields), status (runtime state for all agents), trigger (run heartbeat now)"
+        },
+        "agent_id": {
+          "description": "Agent ID to manage (defaults to calling agent)",
+          "type": "string"
+        },
+        "alert_cooldown_ms": {
+          "description": "Minimum ms between alerts",
+          "type": "integer"
+        },
+        "alert_threshold": {
+          "description": "Consecutive failures before alerting",
+          "type": "integer"
+        },
+        "allow_dm": {
+          "description": "Allow DM delivery of heartbeat alerts",
+          "type": "boolean"
+        },
+        "enabled": {
+          "description": "Enable/disable heartbeat for this agent",
+          "type": "boolean"
+        },
+        "interval_ms": {
+          "description": "Heartbeat interval in milliseconds (e.g. 300000 for 5 min)",
+          "type": "integer"
+        },
+        "light_context": {
+          "description": "Use lightweight bootstrap context (HEARTBEAT.md only)",
+          "type": "boolean"
+        },
+        "model": {
+          "description": "Model override for heartbeat LLM calls",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "Custom heartbeat prompt text",
+          "type": "string"
+        },
+        "response_prefix": {
+          "description": "Prefix to strip from LLM responses before delivery",
+          "type": "string"
+        },
+        "session": {
+          "description": "Session key for heartbeat conversation isolation",
+          "type": "string"
+        },
+        "show_alerts": {
+          "description": "Show alert notifications",
+          "type": "boolean"
+        },
+        "show_ok": {
+          "description": "Show OK status notifications",
+          "type": "boolean"
+        },
+        "skip_heartbeat_only_delivery": {
+          "description": "Suppress HEARTBEAT_OK-only delivery from cron triggers",
+          "type": "boolean"
+        },
+        "stale_ms": {
+          "description": "Max ms before stuck detection triggers",
+          "type": "integer"
+        },
+        "target_channel_id": {
+          "description": "Delivery target channel identifier",
+          "type": "string"
+        },
+        "target_channel_type": {
+          "description": "Delivery target channel type (e.g. telegram, discord)",
+          "type": "string"
+        },
+        "target_chat_id": {
+          "description": "Delivery target chat/conversation ID",
+          "type": "string"
+        },
+        "target_is_dm": {
+          "description": "Whether delivery target is a DM conversation",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "mcp_manage",
+    "category": "mcp",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "list",
+              "type": "string"
+            },
+            {
+              "const": "status",
+              "type": "string"
+            },
+            {
+              "const": "connect",
+              "type": "string"
+            },
+            {
+              "const": "disconnect",
+              "type": "string"
+            },
+            {
+              "const": "reconnect",
+              "type": "string"
+            }
+          ],
+          "description": "MCP server management action. Valid values: list (all servers with status), status (detailed single server info), connect (add new server), disconnect (remove server), reconnect (restart server connection)"
+        },
+        "args": {
+          "description": "Arguments for the stdio command (e.g. [\"-y\", \"@upstash/context7-mcp\"]).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command": {
+          "description": "Command to execute for stdio transport (e.g. npx). Required for stdio connect.",
+          "type": "string"
+        },
+        "headers": {
+          "description": "Custom HTTP headers for remote transports (e.g. Authorization). Keys are header names, values are header values.",
+          "patternProperties": {
+            "^.*$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "server_name": {
+          "description": "MCP server name. Required for status/connect/disconnect/reconnect.",
+          "type": "string"
+        },
+        "transport": {
+          "description": "Transport type: \"stdio\", \"sse\", or \"http\". Required for connect. Use \"http\" for Streamable HTTP servers, \"sse\" for legacy SSE servers.",
+          "type": "string"
+        },
+        "url": {
+          "description": "Server URL for remote transport (sse or http). Required for sse/http connect.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "describe_video",
+    "category": "media",
+    "schema": {
+      "properties": {
+        "attachment_url": {
+          "description": "The attachment URL from the message hint (e.g. tg-file://..., discord://...)",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "Custom analysis prompt to guide the video description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attachment_url"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "extract_document",
+    "category": "media",
+    "schema": {
+      "properties": {
+        "attachment_url": {
+          "description": "The attachment URL from the message hint (e.g. tg-file://..., discord://...)",
+          "type": "string"
+        },
+        "max_chars": {
+          "description": "Maximum number of characters to extract from the document",
+          "type": "number"
+        }
+      },
+      "required": [
+        "attachment_url"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "image",
+    "category": "media",
+    "schema": {
+      "properties": {
+        "action": {
+          "const": "analyze",
+          "description": "The image action to perform",
+          "type": "string"
+        },
+        "attachment_url": {
+          "description": "Platform attachment URL from a message hint (tg-file://, discord://, etc.). When provided, overrides source_type/source for attachment-based images.",
+          "type": "string"
+        },
+        "mime_type": {
+          "description": "MIME type for base64 input (auto-detected if omitted)",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "Analysis prompt (default: describe the image)",
+          "type": "string"
+        },
+        "source": {
+          "description": "File path, URL, or base64-encoded image data (required unless attachment_url is used)",
+          "type": "string"
+        },
+        "source_type": {
+          "anyOf": [
+            {
+              "const": "file",
+              "type": "string"
+            },
+            {
+              "const": "url",
+              "type": "string"
+            },
+            {
+              "const": "base64",
+              "type": "string"
+            }
+          ],
+          "description": "How the image source is provided (required unless attachment_url is used)"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "image_generate",
+    "category": "media",
+    "schema": {
+      "properties": {
+        "prompt": {
+          "description": "Text description of the image to generate.",
+          "type": "string"
+        },
+        "size": {
+          "description": "Image size. Provider-specific: fal.ai uses presets (square_hd, landscape_16_9), OpenAI uses pixel dims (1024x1024, 1792x1024). Omit for default.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
+    "name": "transcribe_audio",
+    "category": "media",
+    "schema": {
+      "properties": {
+        "attachment_url": {
+          "description": "The attachment URL from the message hint (e.g. tg-file://..., discord://...)",
+          "type": "string"
+        },
+        "language": {
+          "description": "BCP-47 language hint to improve transcription accuracy (e.g. 'en', 'he', 'es')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attachment_url"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "tts",
+    "category": "media",
+    "schema": {
+      "properties": {
+        "action": {
+          "const": "synthesize",
+          "description": "The TTS action to perform",
+          "type": "string"
+        },
+        "format": {
+          "description": "Audio format: mp3, opus, wav (default: from config)",
+          "type": "string"
+        },
+        "text": {
+          "description": "Text to convert to speech",
+          "type": "string"
+        },
+        "voice": {
+          "description": "Voice identifier (provider-specific)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "text"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "memory_get",
+    "category": "memory",
+    "schema": {
+      "properties": {
+        "end_line": {
+          "description": "End line (1-based)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "File path relative to workspace",
+          "type": "string"
+        },
+        "start_line": {
+          "description": "Start line (1-based)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "memory_manage",
+    "category": "memory",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "stats",
+              "type": "string"
+            },
+            {
+              "const": "browse",
+              "type": "string"
+            },
+            {
+              "const": "delete",
+              "type": "string"
+            },
+            {
+              "const": "flush",
+              "type": "string"
+            },
+            {
+              "const": "export",
+              "type": "string"
+            }
+          ],
+          "description": "Memory management action. Valid values: stats (DB size and entry counts), browse (paginated entry listing), delete (remove entries by ID), flush (clear all entries for scope), export (full JSON export)"
+        },
+        "agent_id": {
+          "description": "Agent ID scope for filtering",
+          "type": "string"
+        },
+        "ids": {
+          "description": "Array of memory entry IDs to delete (required for delete action)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "limit": {
+          "description": "Pagination limit (default: 20 for browse, 1000 for export)",
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "memory_type": {
+          "description": "Filter by memory type (working, episodic, semantic, procedural)",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Pagination offset (default: 0)",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sort": {
+          "anyOf": [
+            {
+              "const": "newest",
+              "type": "string"
+            },
+            {
+              "const": "oldest",
+              "type": "string"
+            }
+          ],
+          "description": "Sort order for browse (default: newest). Valid values: newest (most recent first), oldest (earliest first)"
+        },
+        "tags": {
+          "description": "Filter by tags (entries must have all specified tags)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tenant_id": {
+          "description": "Tenant ID scope (defaults to current tenant)",
+          "type": "string"
+        },
+        "trust_level": {
+          "description": "Filter by trust level (system, learned, external)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "memory_search",
+    "category": "memory",
+    "schema": {
+      "properties": {
+        "limit": {
+          "default": 10,
+          "description": "Max results (default 10)",
+          "type": "integer"
+        },
+        "query": {
+          "description": "Semantic search query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "memory_store",
+    "category": "memory",
+    "schema": {
+      "properties": {
+        "content": {
+          "description": "The text content to store in memory",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Optional tags for categorisation (e.g. ['preference', 'fact'])",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "unified_memory",
+    "category": "memory",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "get",
+              "type": "string"
+            },
+            {
+              "const": "search",
+              "type": "string"
+            },
+            {
+              "const": "store",
+              "type": "string"
+            },
+            {
+              "const": "manage",
+              "type": "string"
+            }
+          ],
+          "description": "Memory action to perform. Valid values: get (read memory file sections by path), search (semantic search over agent memory), store (persist information for future recall), manage (admin CRUD: stats, browse, delete, flush, export)"
+        },
+        "agent_id": {
+          "description": "Agent ID scope for filtering (action: manage)",
+          "type": "string"
+        },
+        "content": {
+          "description": "The text content to store in memory (action: store)",
+          "type": "string"
+        },
+        "end_line": {
+          "description": "End line (1-based) (action: get)",
+          "type": "integer"
+        },
+        "ids": {
+          "description": "Array of memory entry IDs to delete (action: manage, manage_action: delete)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "limit": {
+          "description": "Max results (action: search default 10, action: manage varies)",
+          "type": "integer"
+        },
+        "manage_action": {
+          "anyOf": [
+            {
+              "const": "stats",
+              "type": "string"
+            },
+            {
+              "const": "browse",
+              "type": "string"
+            },
+            {
+              "const": "delete",
+              "type": "string"
+            },
+            {
+              "const": "flush",
+              "type": "string"
+            },
+            {
+              "const": "export",
+              "type": "string"
+            }
+          ],
+          "description": "Sub-action for manage. Valid values: stats, browse, delete, flush, export (action: manage)"
+        },
+        "memory_type": {
+          "description": "Filter by memory type (action: manage)",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Pagination offset (default: 0) (action: manage)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "File path relative to workspace (action: get)",
+          "type": "string"
+        },
+        "query": {
+          "description": "Semantic search query (action: search)",
+          "type": "string"
+        },
+        "sort": {
+          "anyOf": [
+            {
+              "const": "newest",
+              "type": "string"
+            },
+            {
+              "const": "oldest",
+              "type": "string"
+            }
+          ],
+          "description": "Sort order for browse (default: newest) (action: manage, manage_action: browse)"
+        },
+        "start_line": {
+          "description": "Start line (1-based) (action: get)",
+          "type": "integer"
+        },
+        "tags": {
+          "description": "Optional tags for categorisation (action: store, manage)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tenant_id": {
+          "description": "Tenant ID scope (action: manage)",
+          "type": "string"
+        },
+        "trust_level": {
+          "description": "Filter by trust level (action: manage)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "discord_action",
+    "category": "messaging",
+    "schema": {
+      "properties": {
+        "_confirmed": {
+          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true.",
+          "type": "boolean"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "pin",
+              "type": "string"
+            },
+            {
+              "const": "unpin",
+              "type": "string"
+            },
+            {
+              "const": "kick",
+              "type": "string"
+            },
+            {
+              "const": "ban",
+              "type": "string"
+            },
+            {
+              "const": "unban",
+              "type": "string"
+            },
+            {
+              "const": "role_add",
+              "type": "string"
+            },
+            {
+              "const": "role_remove",
+              "type": "string"
+            },
+            {
+              "const": "set_topic",
+              "type": "string"
+            },
+            {
+              "const": "set_slowmode",
+              "type": "string"
+            },
+            {
+              "const": "guild_info",
+              "type": "string"
+            },
+            {
+              "const": "channel_info",
+              "type": "string"
+            },
+            {
+              "const": "threadCreate",
+              "type": "string"
+            },
+            {
+              "const": "threadList",
+              "type": "string"
+            },
+            {
+              "const": "threadReply",
+              "type": "string"
+            },
+            {
+              "const": "channelCreate",
+              "type": "string"
+            },
+            {
+              "const": "channelEdit",
+              "type": "string"
+            },
+            {
+              "const": "channelDelete",
+              "type": "string"
+            },
+            {
+              "const": "channelMove",
+              "type": "string"
+            },
+            {
+              "const": "setPresence",
+              "type": "string"
+            }
+          ],
+          "description": "Discord-specific action. Valid values: pin (pin message), unpin (unpin message), kick (remove member), ban (ban member), unban (unban member), role_add (assign role), role_remove (revoke role), set_topic (change channel topic), set_slowmode (set rate limit), guild_info (get server details), channel_info (get channel details), threadCreate (create thread), threadList (list threads), threadReply (reply in thread), channelCreate (new channel), channelEdit (modify channel), channelDelete (delete channel), channelMove (reorder channel), setPresence (update bot status)"
+        },
+        "activity_type": {
+          "description": "Bot activity type: playing, watching, listening, competing (for setPresence)",
+          "type": "string"
+        },
+        "auto_archive_duration": {
+          "description": "Thread auto-archive duration in minutes: 60, 1440, 4320, 10080 (for threadCreate)",
+          "type": "integer"
+        },
+        "channel_id": {
+          "description": "Channel ID (for pin/unpin/set_topic/set_slowmode/channel_info/threadCreate/channelEdit/channelDelete/channelMove)",
+          "type": "string"
+        },
+        "delete_message_days": {
+          "description": "Days of messages to delete, 0-7 (for ban)",
+          "type": "integer"
+        },
+        "guild_id": {
+          "description": "Guild/server ID (for kick/ban/unban/role_add/role_remove/guild_info/channelCreate/threadList)",
+          "type": "string"
+        },
+        "message_id": {
+          "description": "Message ID (for pin/unpin/threadCreate)",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name for thread or channel (for threadCreate/channelCreate)",
+          "type": "string"
+        },
+        "parent_id": {
+          "description": "Parent category ID (for channelCreate)",
+          "type": "string"
+        },
+        "position": {
+          "description": "Channel position in the list (for channelMove/channelEdit)",
+          "type": "integer"
+        },
+        "reason": {
+          "description": "Moderation reason (for kick/ban)",
+          "type": "string"
+        },
+        "role_id": {
+          "description": "Role ID (for role_add/role_remove)",
+          "type": "string"
+        },
+        "seconds": {
+          "description": "Slowmode delay in seconds, 0-21600 (for set_slowmode)",
+          "type": "integer"
+        },
+        "status_text": {
+          "description": "Bot status text (for setPresence)",
+          "type": "string"
+        },
+        "thread_id": {
+          "description": "Thread ID (for threadReply)",
+          "type": "string"
+        },
+        "topic": {
+          "description": "Channel topic text (for set_topic)",
+          "type": "string"
+        },
+        "type": {
+          "description": "Channel type: text, voice, category, announcement, forum, stage (for channelCreate)",
+          "type": "string"
+        },
+        "user_id": {
+          "description": "Target user ID (for kick/ban/unban/role_add/role_remove)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "message",
+    "category": "messaging",
+    "schema": {
+      "properties": {
+        "_confirmed": {
+          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true.",
+          "type": "boolean"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "send",
+              "type": "string"
+            },
+            {
+              "const": "reply",
+              "type": "string"
+            },
+            {
+              "const": "react",
+              "type": "string"
+            },
+            {
+              "const": "edit",
+              "type": "string"
+            },
+            {
+              "const": "delete",
+              "type": "string"
+            },
+            {
+              "const": "fetch",
+              "type": "string"
+            },
+            {
+              "const": "attach",
+              "type": "string"
+            }
+          ],
+          "description": "Message action. Valid values: send (new message), reply (respond to message), react (add emoji reaction), edit (modify sent message), delete (remove message), fetch (retrieve message history), attach (send file/media)"
+        },
+        "attachment_type": {
+          "anyOf": [
+            {
+              "const": "image",
+              "type": "string"
+            },
+            {
+              "const": "file",
+              "type": "string"
+            },
+            {
+              "const": "audio",
+              "type": "string"
+            },
+            {
+              "const": "video",
+              "type": "string"
+            }
+          ],
+          "description": "Attachment media type (for attach, default: file). Valid values: image (photo/picture), file (generic document), audio (sound/voice), video (video clip)"
+        },
+        "attachment_url": {
+          "description": "URL or workspace path of file to send: http(s)://, file://, or absolute path (for attach)",
+          "type": "string"
+        },
+        "before": {
+          "description": "Fetch messages before this message ID (for fetch)",
+          "type": "string"
+        },
+        "buttons": {
+          "description": "Button rows for interactive messages (for send/reply). Each inner array is one row of buttons.",
+          "items": {
+            "items": {
+              "properties": {
+                "callback_data": {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                "style": {
+                  "anyOf": [
+                    {
+                      "const": "primary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "secondary",
+                      "type": "string"
+                    },
+                    {
+                      "const": "danger",
+                      "type": "string"
+                    },
+                    {
+                      "const": "link",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Button style. Valid values: primary (prominent/blue), secondary (subtle/gray), danger (destructive/red), link (URL button)"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "url": {
+                  "format": "uri",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "caption": {
+          "description": "Caption text for attachment (for attach)",
+          "type": "string"
+        },
+        "cards": {
+          "description": "Rich card embeds (for send/reply). Renders as embeds on Discord, blocks on Slack, HTML on Telegram.",
+          "items": {
+            "properties": {
+              "color": {
+                "type": "integer"
+              },
+              "description": {
+                "type": "string"
+              },
+              "fields": {
+                "items": {
+                  "properties": {
+                    "inline": {
+                      "type": "boolean"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "image_url": {
+                "format": "uri",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "channel_id": {
+          "description": "Target channel/chat identifier",
+          "type": "string"
+        },
+        "channel_type": {
+          "description": "Channel type: telegram, discord, slack, whatsapp",
+          "type": "string"
+        },
+        "effects": {
+          "description": "Message delivery effects (for send/reply). Valid values: spoiler (wraps text in spoiler), silent (suppresses notification)",
+          "items": {
+            "anyOf": [
+              {
+                "const": "spoiler",
+                "type": "string"
+              },
+              {
+                "const": "silent",
+                "type": "string"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "emoji": {
+          "description": "Emoji to react with, Unicode format (for react)",
+          "type": "string"
+        },
+        "file_name": {
+          "description": "Display filename (for attach)",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Max messages to fetch, default 20 (for fetch)",
+          "type": "integer"
+        },
+        "message_id": {
+          "description": "Target message ID (for reply/react/edit/delete)",
+          "type": "string"
+        },
+        "mime_type": {
+          "description": "MIME type of attachment (for attach)",
+          "type": "string"
+        },
+        "text": {
+          "description": "Message text (for send/reply/edit)",
+          "type": "string"
+        },
+        "thread_reply": {
+          "description": "Create or continue a thread from this message (for send/reply). Discord creates thread, Slack uses thread_ts.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action",
+        "channel_type",
+        "channel_id"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "notify",
+    "category": "messaging",
+    "schema": {
+      "properties": {
+        "channel_id": {
+          "description": "Target channel/chat ID. Required when channel_type is specified.",
+          "type": "string"
+        },
+        "channel_type": {
+          "description": "Target channel type (e.g., 'telegram', 'discord'). Omit for auto-resolution.",
+          "type": "string"
+        },
+        "message": {
+          "description": "Notification text to send to the user.",
+          "type": "string"
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "const": "low",
+              "type": "string"
+            },
+            {
+              "const": "normal",
+              "type": "string"
+            },
+            {
+              "const": "high",
+              "type": "string"
+            },
+            {
+              "const": "critical",
+              "type": "string"
+            }
+          ],
+          "description": "Notification priority. 'critical' bypasses quiet hours. Default: 'normal'."
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "slack_action",
+    "category": "messaging",
+    "schema": {
+      "properties": {
+        "_confirmed": {
+          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true.",
+          "type": "boolean"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "pin",
+              "type": "string"
+            },
+            {
+              "const": "unpin",
+              "type": "string"
+            },
+            {
+              "const": "set_topic",
+              "type": "string"
+            },
+            {
+              "const": "set_purpose",
+              "type": "string"
+            },
+            {
+              "const": "archive",
+              "type": "string"
+            },
+            {
+              "const": "unarchive",
+              "type": "string"
+            },
+            {
+              "const": "create_channel",
+              "type": "string"
+            },
+            {
+              "const": "invite",
+              "type": "string"
+            },
+            {
+              "const": "kick",
+              "type": "string"
+            },
+            {
+              "const": "channel_info",
+              "type": "string"
+            },
+            {
+              "const": "members_list",
+              "type": "string"
+            },
+            {
+              "const": "bookmark_add",
+              "type": "string"
+            }
+          ],
+          "description": "Slack-specific action. Valid values: pin (pin message), unpin (unpin message), set_topic (change channel topic), set_purpose (change channel purpose), archive (archive channel), unarchive (restore channel), create_channel (new channel), invite (add users), kick (remove user), channel_info (get channel details), members_list (list members), bookmark_add (add bookmark)"
+        },
+        "channel_id": {
+          "description": "Channel ID (for most actions)",
+          "type": "string"
+        },
+        "is_private": {
+          "description": "Whether channel is private (for create_channel)",
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "Max members to return (for members_list)",
+          "type": "integer"
+        },
+        "link": {
+          "description": "Bookmark URL (for bookmark_add)",
+          "type": "string"
+        },
+        "message_id": {
+          "description": "Message timestamp (for pin/unpin)",
+          "type": "string"
+        },
+        "name": {
+          "description": "Channel name (for create_channel)",
+          "type": "string"
+        },
+        "purpose": {
+          "description": "Channel purpose text (for set_purpose)",
+          "type": "string"
+        },
+        "title": {
+          "description": "Bookmark title (for bookmark_add)",
+          "type": "string"
+        },
+        "topic": {
+          "description": "Channel topic text (for set_topic)",
+          "type": "string"
+        },
+        "user_id": {
+          "description": "Target user ID (for kick)",
+          "type": "string"
+        },
+        "user_ids": {
+          "description": "User IDs to invite (for invite)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "telegram_action",
+    "category": "messaging",
+    "schema": {
+      "properties": {
+        "_confirmed": {
+          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true.",
+          "type": "boolean"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "pin",
+              "type": "string"
+            },
+            {
+              "const": "unpin",
+              "type": "string"
+            },
+            {
+              "const": "poll",
+              "type": "string"
+            },
+            {
+              "const": "sticker",
+              "type": "string"
+            },
+            {
+              "const": "chat_info",
+              "type": "string"
+            },
+            {
+              "const": "member_count",
+              "type": "string"
+            },
+            {
+              "const": "get_admins",
+              "type": "string"
+            },
+            {
+              "const": "set_title",
+              "type": "string"
+            },
+            {
+              "const": "set_description",
+              "type": "string"
+            },
+            {
+              "const": "ban",
+              "type": "string"
+            },
+            {
+              "const": "unban",
+              "type": "string"
+            },
+            {
+              "const": "promote",
+              "type": "string"
+            }
+          ],
+          "description": "Telegram-specific action. Valid values: pin (pin message), unpin (unpin message), poll (send poll), sticker (send sticker), chat_info (get chat details), member_count (get member total), get_admins (list admins), set_title (change chat title), set_description (change chat description), ban (ban user), unban (unban user), promote (grant admin rights)"
+        },
+        "chat_id": {
+          "description": "Chat/group ID (for all actions)",
+          "type": "string"
+        },
+        "description": {
+          "description": "New chat description (for set_description)",
+          "type": "string"
+        },
+        "message_id": {
+          "description": "Message ID (for pin/unpin)",
+          "type": "string"
+        },
+        "options": {
+          "description": "Poll answer options (for poll)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "question": {
+          "description": "Poll question text (for poll)",
+          "type": "string"
+        },
+        "rights": {
+          "description": "Admin rights object (for promote)",
+          "properties": {},
+          "type": "object"
+        },
+        "sticker_id": {
+          "description": "Sticker file_id (for sticker)",
+          "type": "string"
+        },
+        "title": {
+          "description": "New chat title (for set_title)",
+          "type": "string"
+        },
+        "user_id": {
+          "description": "Target user ID (for ban/unban/promote)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "whatsapp_action",
+    "category": "messaging",
+    "schema": {
+      "properties": {
+        "_confirmed": {
+          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true.",
+          "type": "boolean"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "group_info",
+              "type": "string"
+            },
+            {
+              "const": "group_update_subject",
+              "type": "string"
+            },
+            {
+              "const": "group_update_description",
+              "type": "string"
+            },
+            {
+              "const": "group_participants_add",
+              "type": "string"
+            },
+            {
+              "const": "group_participants_remove",
+              "type": "string"
+            },
+            {
+              "const": "group_promote",
+              "type": "string"
+            },
+            {
+              "const": "group_demote",
+              "type": "string"
+            },
+            {
+              "const": "group_settings",
+              "type": "string"
+            },
+            {
+              "const": "group_invite_code",
+              "type": "string"
+            },
+            {
+              "const": "profile_status",
+              "type": "string"
+            },
+            {
+              "const": "group_leave",
+              "type": "string"
+            }
+          ],
+          "description": "WhatsApp-specific action. Valid values: group_info (get group details), group_update_subject (change group name), group_update_description (change group description), group_participants_add (add members), group_participants_remove (remove members), group_promote (grant admin), group_demote (revoke admin), group_settings (change group setting), group_invite_code (get invite link), profile_status (update status text), group_leave (leave group)"
+        },
+        "description": {
+          "description": "New group description (for group_update_description)",
+          "type": "string"
+        },
+        "group_jid": {
+          "description": "Group JID with @g.us suffix (for all group actions)",
+          "type": "string"
+        },
+        "participant_jids": {
+          "description": "Participant JIDs with @s.whatsapp.net suffix (for add/remove/promote/demote)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "setting": {
+          "anyOf": [
+            {
+              "const": "announcement",
+              "type": "string"
+            },
+            {
+              "const": "not_announcement",
+              "type": "string"
+            },
+            {
+              "const": "locked",
+              "type": "string"
+            },
+            {
+              "const": "unlocked",
+              "type": "string"
+            }
+          ],
+          "description": "Group setting to change (for group_settings). Valid values: announcement (only admins send), not_announcement (all members send), locked (only admins edit info), unlocked (all members edit info)"
+        },
+        "status_text": {
+          "description": "Profile status text (for profile_status)",
+          "type": "string"
+        },
+        "subject": {
+          "description": "New group subject/name (for group_update_subject)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "channels_manage",
+    "category": "platform-admin",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "list",
+              "type": "string"
+            },
+            {
+              "const": "get",
+              "type": "string"
+            },
+            {
+              "const": "enable",
+              "type": "string"
+            },
+            {
+              "const": "disable",
+              "type": "string"
+            },
+            {
+              "const": "restart",
+              "type": "string"
+            },
+            {
+              "const": "configure",
+              "type": "string"
+            }
+          ],
+          "description": "Channel management action. Valid values: list (all adapters), get (single adapter details), enable (start adapter), disable (stop adapter), restart (stop then start), configure (toggle media setting)"
+        },
+        "channel_type": {
+          "description": "The channel type (e.g. telegram, discord, slack). Required for get/enable/disable/restart/configure.",
+          "type": "string"
+        },
+        "enabled": {
+          "description": "Whether to enable (true) or disable (false) the setting. Required for configure action.",
+          "type": "boolean"
+        },
+        "setting": {
+          "description": "Media processing setting to toggle: transcribeAudio, analyzeImages, describeVideos, extractDocuments, understandLinks. Required for configure action.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "models_manage",
+    "category": "platform-admin",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "list",
+              "type": "string"
+            },
+            {
+              "const": "test",
+              "type": "string"
+            },
+            {
+              "const": "list_providers",
+              "type": "string"
+            }
+          ],
+          "description": "Model management action. Valid values: list (query model catalog), test (check provider availability), list_providers (live native pi-ai catalog provider list for self-discovery)"
+        },
+        "provider": {
+          "description": "Provider name to filter results (optional for list, required for test, ignored for list_providers). Examples: anthropic, openai, google, groq.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "providers_manage",
+    "category": "platform-admin",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "list",
+              "type": "string"
+            },
+            {
+              "const": "get",
+              "type": "string"
+            },
+            {
+              "const": "create",
+              "type": "string"
+            },
+            {
+              "const": "update",
+              "type": "string"
+            },
+            {
+              "const": "delete",
+              "type": "string"
+            },
+            {
+              "const": "enable",
+              "type": "string"
+            },
+            {
+              "const": "disable",
+              "type": "string"
+            }
+          ],
+          "description": "Provider management action. Valid values: list (view all providers), get (read config), create (register new provider), update (modify config), delete (remove provider), enable/disable (toggle availability)"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "description": "Provider configuration for create/update",
+              "properties": {
+                "apiKeyName": {
+                  "description": "SecretManager key name for the API key (NOT the key itself). Store the key first via gateway env_set. Required for cloud providers; may be omitted for type='ollama' once keyless registration lands (until then, all entries with models[] need a resolvable apiKeyName).",
+                  "type": "string"
+                },
+                "baseUrl": {
+                  "description": "API base URL (e.g., https://integrate.api.nvidia.com/v1)",
+                  "type": "string"
+                },
+                "enabled": {
+                  "description": "Whether provider is active (default: true)",
+                  "type": "boolean"
+                },
+                "headers": {
+                  "description": "Custom headers for API requests",
+                  "patternProperties": {
+                    "^.*$": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "maxRetries": {
+                  "description": "Max retries for transient errors (default: 2)",
+                  "type": "integer"
+                },
+                "models": {
+                  "description": "User-defined model entries for this provider",
+                  "items": {
+                    "properties": {
+                      "contextWindow": {
+                        "description": "Max context tokens",
+                        "type": "integer"
+                      },
+                      "id": {
+                        "description": "Model ID at provider (e.g., moonshotai/kimi-k2.5)",
+                        "type": "string"
+                      },
+                      "input": {
+                        "items": {
+                          "anyOf": [
+                            {
+                              "const": "text",
+                              "type": "string"
+                            },
+                            {
+                              "const": "image",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "type": "array"
+                      },
+                      "maxTokens": {
+                        "description": "Max output tokens",
+                        "type": "integer"
+                      },
+                      "name": {
+                        "description": "Display name",
+                        "type": "string"
+                      },
+                      "reasoning": {
+                        "description": "Supports extended thinking",
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "id"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "name": {
+                  "description": "Human-readable display name",
+                  "type": "string"
+                },
+                "timeoutMs": {
+                  "description": "Request timeout in ms (default: 120000)",
+                  "type": "integer"
+                },
+                "type": {
+                  "description": "Provider SDK type -- determines the API protocol. Common values: openai (any OpenAI-compatible endpoint), anthropic, google, ollama, groq, mistral, together, deepseek, cerebras, xai, openrouter. Use 'openai' for custom/self-hosted endpoints that speak the OpenAI API format (NVIDIA NIM, vLLM, LM Studio, llama.cpp, Fireworks, Perplexity, etc.)",
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            {
+              "description": "Provider config as JSON string (fallback). Prefer object form.",
+              "type": "string"
+            }
+          ]
+        },
+        "provider_id": {
+          "description": "The provider identifier (required for all actions except list) -- any user-chosen name (e.g., 'nvidia', 'deepseek', 'ollama-local', 'groq', 'my-vllm', 'company-internal')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "skills_manage",
+    "category": "platform-admin",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "list",
+              "type": "string"
+            },
+            {
+              "const": "import",
+              "type": "string"
+            },
+            {
+              "const": "delete",
+              "type": "string"
+            },
+            {
+              "const": "create",
+              "type": "string"
+            },
+            {
+              "const": "update",
+              "type": "string"
+            }
+          ],
+          "description": "Skill management action. Valid values: list (show installed skills), import (install from GitHub URL), delete (remove skill by name), create (create new skill from content), update (modify existing skill content)"
+        },
+        "content": {
+          "description": "Full SKILL.md content including frontmatter. Required for create and update actions. The agent should generate complete SKILL.md content with --- frontmatter --- and body.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Skill description for frontmatter. Optional for create (overrides frontmatter description if provided).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Skill name. Required for delete, create, and update actions.",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "const": "local",
+              "type": "string"
+            },
+            {
+              "const": "shared",
+              "type": "string"
+            }
+          ],
+          "default": "local",
+          "description": "Skill scope (default: local). Valid values: local (calling agent's workspace), shared (global skills visible to all agents)."
+        },
+        "url": {
+          "description": "GitHub directory URL to import skills from. Required for import action.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "tokens_manage",
+    "category": "platform-admin",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "list",
+              "type": "string"
+            },
+            {
+              "const": "create",
+              "type": "string"
+            },
+            {
+              "const": "revoke",
+              "type": "string"
+            },
+            {
+              "const": "rotate",
+              "type": "string"
+            }
+          ],
+          "description": "Token management action. Valid values: list (show active tokens), create (new token with scopes), revoke (invalidate token), rotate (atomic revoke and recreate)"
+        },
+        "scopes": {
+          "description": "Token scopes (required for create, e.g. [\"rpc\", \"ws\", \"admin\"])",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "token_id": {
+          "description": "Token identifier (required for revoke/rotate, optional for create -- auto-generated if omitted)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "cron",
+    "category": "scheduling",
+    "schema": {
+      "properties": {
+        "_confirmed": {
+          "description": "Set to true when re-calling a destructive action after user approval. When a gated action returns requiresConfirmation, present the action to the user, and after they approve, call the same action again with _confirmed: true.",
+          "type": "boolean"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "add",
+              "type": "string"
+            },
+            {
+              "const": "list",
+              "type": "string"
+            },
+            {
+              "const": "update",
+              "type": "string"
+            },
+            {
+              "const": "remove",
+              "type": "string"
+            },
+            {
+              "const": "status",
+              "type": "string"
+            },
+            {
+              "const": "runs",
+              "type": "string"
+            },
+            {
+              "const": "run",
+              "type": "string"
+            },
+            {
+              "const": "wake",
+              "type": "string"
+            }
+          ],
+          "description": "Cron scheduling action. Valid values: add (create new job), list (show all jobs), update (modify job config), remove (delete a job), status (scheduler health), runs (job execution history), run (trigger job now), wake (wake scheduler loop)"
+        },
+        "enabled": {
+          "description": "Enable or disable a job (for update)",
+          "type": "boolean"
+        },
+        "job_name": {
+          "description": "Job name (required for update, remove, runs, run)",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum number of run history entries (default 20)",
+          "type": "integer"
+        },
+        "max_history_turns": {
+          "description": "Number of recent turns to keep for rolling strategy (default 3)",
+          "type": "integer"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "const": "force",
+              "type": "string"
+            },
+            {
+              "const": "due",
+              "type": "string"
+            }
+          ],
+          "description": "Run mode (default: force). Valid values: force (ignore schedule, run now), due (run only if overdue)"
+        },
+        "model": {
+          "description": "Model to use when this cron job fires (e.g. gemini-2.5-flash). Only applies to agent_turn payload kind.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Human-readable job name (for add/update)",
+          "type": "string"
+        },
+        "payload_kind": {
+          "anyOf": [
+            {
+              "const": "system_event",
+              "type": "string"
+            },
+            {
+              "const": "agent_turn",
+              "type": "string"
+            }
+          ],
+          "description": "Payload type. Valid values: system_event (cron/system triggers), agent_turn (agent-initiated runs)"
+        },
+        "payload_text": {
+          "description": "Payload text or message content",
+          "type": "string"
+        },
+        "schedule_at": {
+          "description": "ISO 8601 datetime string (for schedule_kind=at)",
+          "type": "string"
+        },
+        "schedule_every_ms": {
+          "description": "Interval in milliseconds (for schedule_kind=every)",
+          "type": "integer"
+        },
+        "schedule_expr": {
+          "description": "Cron expression (for schedule_kind=cron)",
+          "type": "string"
+        },
+        "schedule_kind": {
+          "anyOf": [
+            {
+              "const": "cron",
+              "type": "string"
+            },
+            {
+              "const": "every",
+              "type": "string"
+            },
+            {
+              "const": "at",
+              "type": "string"
+            }
+          ],
+          "description": "Schedule type. Valid values: cron (recurring cron expression), every (repeat at fixed interval), at (one-shot at specific datetime)"
+        },
+        "session_strategy": {
+          "anyOf": [
+            {
+              "const": "fresh",
+              "type": "string"
+            },
+            {
+              "const": "rolling",
+              "type": "string"
+            },
+            {
+              "const": "accumulate",
+              "type": "string"
+            }
+          ],
+          "description": "Session history strategy for recurring jobs. Valid values: fresh (new session each run; default and STRONGLY PREFERRED for cadences ≥ 10 minutes), rolling (keep last N turns; ONLY use when cadence < 5 minutes), accumulate (keep all history; rarely correct, leaks across runs). Rationale: cron uses a 5-minute prompt cache TTL, so any cadence longer than that wastes cache-write spend on rolling/accumulate — the cache is always cold by the next tick. Pick fresh unless cross-tick session memory is essential and cadence is < 5 minutes. Default: fresh"
+        },
+        "source": {
+          "description": "Audit trail source identifier for wake action (default: agent)",
+          "type": "string"
+        },
+        "timezone": {
+          "description": "IANA timezone (e.g. America/New_York)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "session_search",
+    "category": "session",
+    "schema": {
+      "properties": {
+        "limit": {
+          "description": "Maximum results to return (default: 10, max: 30)",
+          "maximum": 30,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "query": {
+          "description": "Search query -- keywords, phrases, or boolean expressions. Omit for recent sessions metadata.",
+          "type": "string"
+        },
+        "scope": {
+          "description": "Filter by message role: 'all' (default), 'user', 'assistant', 'tool'",
+          "type": "string"
+        },
+        "summarize": {
+          "description": "Summarize matched sessions using LLM (default: true when query provided)",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "session_status",
+    "category": "session",
+    "schema": {
+      "properties": {
+        "model": {
+          "description": "Optional model override for this session",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "sessions_history",
+    "category": "session",
+    "schema": {
+      "properties": {
+        "limit": {
+          "description": "Max messages to return (default: 20)",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "Pagination offset (default: 0)",
+          "type": "integer"
+        },
+        "session_key": {
+          "description": "Target session key to retrieve history for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_key"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "sessions_list",
+    "category": "session",
+    "schema": {
+      "properties": {
+        "kind": {
+          "anyOf": [
+            {
+              "const": "all",
+              "type": "string"
+            },
+            {
+              "const": "dm",
+              "type": "string"
+            },
+            {
+              "const": "group",
+              "type": "string"
+            },
+            {
+              "const": "sub-agent",
+              "type": "string"
+            }
+          ],
+          "description": "Filter by session kind (default: all). Valid values: all (every session), dm (direct messages), group (group chats), sub-agent (sub-agent sessions)"
+        },
+        "since_minutes": {
+          "description": "Only sessions active within N minutes",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "sessions_manage",
+    "category": "session",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "delete",
+              "type": "string"
+            },
+            {
+              "const": "reset",
+              "type": "string"
+            },
+            {
+              "const": "export",
+              "type": "string"
+            },
+            {
+              "const": "compact",
+              "type": "string"
+            }
+          ],
+          "description": "Session management action. Valid values: delete (archive and remove session), reset (clear messages, keep identity), export (download transcript as JSON), compact (reduce token usage)"
+        },
+        "instructions": {
+          "description": "Optional instructions for compaction guidance (only used with compact action)",
+          "type": "string"
+        },
+        "session_key": {
+          "description": "The formatted session key (e.g., tenant:user:channel)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "session_key"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "sessions_send",
+    "category": "session",
+    "schema": {
+      "properties": {
+        "max_turns": {
+          "description": "Max ping-pong turns 0-5 (for ping-pong mode)",
+          "type": "integer"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "const": "fire-and-forget",
+              "type": "string"
+            },
+            {
+              "const": "wait",
+              "type": "string"
+            },
+            {
+              "const": "ping-pong",
+              "type": "string"
+            }
+          ],
+          "description": "Send mode (default: fire-and-forget). Valid values: fire-and-forget (send without waiting), wait (block for response), ping-pong (multi-turn exchange)"
+        },
+        "session_key": {
+          "description": "Target session key to send the message to",
+          "type": "string"
+        },
+        "text": {
+          "description": "Message text to inject into target session",
+          "type": "string"
+        },
+        "timeout_ms": {
+          "description": "Wait timeout in ms (for wait/ping-pong modes)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_key",
+        "text"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "sessions_spawn",
+    "category": "session",
+    "schema": {
+      "properties": {
+        "agent": {
+          "description": "Target agent ID for cross-agent spawning",
+          "type": "string"
+        },
+        "announce_channel_id": {
+          "description": "Channel ID for result announcement",
+          "type": "string"
+        },
+        "announce_channel_type": {
+          "description": "Channel type for result announcement",
+          "type": "string"
+        },
+        "artifact_refs": {
+          "description": "File paths for the sub-agent to reference (not inline content)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "async": {
+          "description": "Spawn asynchronously, returns runId immediately (default: false)",
+          "type": "boolean"
+        },
+        "domain_knowledge": {
+          "description": "Domain knowledge entries for the sub-agent",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "expected_outputs": {
+          "description": "File paths to validate after sub-agent execution completes",
+          "items": {
+            "description": "Expected output file path",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "include_parent_history": {
+          "description": "Parent context inclusion: 'none' (default) or 'summary'",
+          "type": "string"
+        },
+        "max_steps": {
+          "description": "Maximum execution steps for this spawn. Floor of 30 (boot sequence needs ~10-15 steps). Typical values: 30 for quick lookups, 50 (default) for standard tasks, 80-100 for complex multi-step work. Capped at config default.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "model": {
+          "description": "Optional model override for the sub-agent",
+          "type": "string"
+        },
+        "objective": {
+          "description": "Objective statement that survives context compaction",
+          "type": "string"
+        },
+        "task": {
+          "description": "Task description for the sub-agent",
+          "type": "string"
+        },
+        "tool_groups": {
+          "description": "Tool group names for sub-agent tool filtering (e.g., 'coding', 'web')",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "unified_session",
+    "category": "session",
+    "schema": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "const": "search",
+              "type": "string"
+            },
+            {
+              "const": "status",
+              "type": "string"
+            },
+            {
+              "const": "history",
+              "type": "string"
+            },
+            {
+              "const": "list",
+              "type": "string"
+            }
+          ],
+          "description": "Session action to perform. Valid values: search (search/browse session history), status (view current session info), history (view conversation history for a session), list (list active sessions)"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "const": "all",
+              "type": "string"
+            },
+            {
+              "const": "dm",
+              "type": "string"
+            },
+            {
+              "const": "group",
+              "type": "string"
+            },
+            {
+              "const": "sub-agent",
+              "type": "string"
+            }
+          ],
+          "description": "Filter by session kind (default: all). (action: list)"
+        },
+        "limit": {
+          "description": "Maximum results to return (action: search default 10 max 30, action: history default 20)",
+          "type": "integer"
+        },
+        "offset": {
+          "description": "Pagination offset (default: 0) (action: history)",
+          "type": "integer"
+        },
+        "query": {
+          "description": "Search query -- keywords, phrases, or boolean expressions. Omit for recent sessions metadata. (action: search)",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "const": "all",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "type": "string"
+            },
+            {
+              "const": "assistant",
+              "type": "string"
+            },
+            {
+              "const": "tool",
+              "type": "string"
+            }
+          ],
+          "description": "Filter by message role: 'all' (default), 'user', 'assistant', 'tool' (action: search)"
+        },
+        "session_key": {
+          "description": "Session key for action: history. Use action 'list' first to discover available keys. Format: {tenantId}:{filename}, e.g. 'default:678314278~peer~678314278'",
+          "type": "string"
+        },
+        "since_minutes": {
+          "description": "Only sessions active within N minutes (action: list)",
+          "type": "integer"
+        },
+        "summarize": {
+          "description": "Summarize matched sessions using LLM (default: true when query provided) (action: search)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  }
+]

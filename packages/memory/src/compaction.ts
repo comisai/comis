@@ -21,8 +21,7 @@
  */
 
 import type Database from "better-sqlite3";
-import type { HookRunner, SessionKey } from "@comis/core";
-import type { SessionStore } from "./session-store.js";
+import type { HookRunner, SessionKey, SessionStorePort } from "@comis/core";
 import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -93,7 +92,7 @@ const DEFAULT_OPTIONS: CompactionOptions = {
  * memory adapter, and summarizer function.
  *
  * @param db - An open better-sqlite3 Database with initialized schema (including archives table)
- * @param sessionStore - SessionStore for listing/deleting sessions
+ * @param sessionStore - SessionStorePort for listing/deleting sessions
  * @param adapter - SqliteMemoryAdapter for storing episodic/semantic memories
  * @param summarizer - Pluggable function to summarize messages and extract facts
  * @param hookRunner - Optional hook runner for lifecycle hooks (no-op when absent)
@@ -101,7 +100,7 @@ const DEFAULT_OPTIONS: CompactionOptions = {
  */
 export function createCompactionService(
   db: Database.Database,
-  sessionStore: SessionStore,
+  sessionStore: SessionStorePort,
   adapter: SqliteMemoryAdapter,
   summarizer: Summarizer,
   hookRunner?: HookRunner,

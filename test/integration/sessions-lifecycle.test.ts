@@ -292,7 +292,13 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
       expect(hasResult || hasError).toBe(true);
     });
 
-    it("session.run_status via WS RPC returns method-not-found", async () => {
+    it("session.run_status via WS RPC returns a valid JSON-RPC response (Plan 35-20 collapse)", async () => {
+      // Phase 35 Wave D Plan 35-20 BLOCKER 8 closure: setup-gateway-api.ts
+      // collapsed to a registry loop over API_CONTRACTS_ORDERED, which now
+      // registers ALL 190 contracts on the dynamic router (vs. the
+      // pre-Plan-35-20 165 hand-enumerated methods). session.run_status is
+      // a registered method now — invoking it with an unknown run_id
+      // returns a structured RPC error (not method-not-found / -32601).
       const response = (await sendJsonRpc(
         ws,
         "session.run_status",
@@ -301,9 +307,18 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
         { timeoutMs: RPC_FAST_MS },
       )) as Record<string, unknown>;
 
-      expect(response).toHaveProperty("error");
-      const error = response.error as Record<string, unknown>;
-      expect(error.code).toBe(-32601);
+      expect(response).toHaveProperty("jsonrpc", "2.0");
+      const hasResult = "result" in response;
+      const hasError = "error" in response;
+      expect(hasResult || hasError).toBe(true);
+      // If we got an error, it MUST NOT be method-not-found (-32601) —
+      // session.run_status is now first-class on the dynamic router.
+      if (hasError) {
+        const error = response.error as Record<string, unknown>;
+        expect(error.code, "session.run_status should not return method-not-found").not.toBe(
+          -32601,
+        );
+      }
     });
   });
 

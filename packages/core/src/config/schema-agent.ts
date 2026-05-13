@@ -8,7 +8,7 @@ import { NotificationConfigSchema } from "./schema-notification.js";
 import { VerbosityConfigSchema } from "./schema-verbosity.js";
 import { BackgroundTasksConfigSchema } from "./schema-background-tasks.js";
 import { MemoryReviewConfigSchema } from "./schema-memory-review.js";
-import { validateProfileId } from "../ports/oauth-credential-store.js";
+import { validateProfileId } from "../security/profile-id.js";
 
 // ── Model Selection Schemas ─────────────────────────────────────────────
 

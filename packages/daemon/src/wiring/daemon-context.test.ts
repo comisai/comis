@@ -124,7 +124,10 @@ describe("DaemonContext", () => {
       "@comis/scheduler",
       "@comis/gateway",
       "@comis/skills",
-      "@comis/channels",
+      // Phase 32 commit 4: ChannelManager type moved with channel-manager.ts
+      // from @comis/channels to @comis/orchestrator. daemon-context.ts no
+      // longer imports anything from @comis/channels.
+      "@comis/orchestrator",
     ];
 
     for (const pkg of expectedImports) {

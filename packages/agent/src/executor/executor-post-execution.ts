@@ -24,7 +24,7 @@ import {
   type MemoryPort,
   tryGetContext,
 } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError, isSilentResponse } from "@comis/shared";
 import {
   drainAt,

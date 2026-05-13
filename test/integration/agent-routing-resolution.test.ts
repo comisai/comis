@@ -14,7 +14,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { resolveAgent, createMessageRouter } from "@comis/agent";
+// Phase 32 commit 7 (ORCH-EXT-08): resolveAgent + createMessageRouter moved
+// from @comis/agent to @comis/orchestrator.
+import { resolveAgent, createMessageRouter } from "@comis/orchestrator";
 import type { RoutingConfig } from "@comis/core";
 
 // ---------------------------------------------------------------------------

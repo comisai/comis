@@ -37,15 +37,26 @@ import {
   vi,
 } from "vitest";
 import type { OAuthProfile } from "@comis/core";
+// Phase 35 Plan 35-07 (Rule 1 fix — pre-existing import bug, not a Plan 35-07
+// regression): createFileLock + OAuth helpers were relocated to @comis/core
+// in Plan 35-02 / Plan 35-03 / Plan 35-04 (D-01 #1/#2). The agent re-exports
+// were removed alongside Plan 35-05's CLI retarget, but this integration
+// test was never retargeted — the failure surfaces as
+// `createFileLock is not a function` at import time. Retarget to the
+// canonical @comis/core barrel (mirrors the existing CLI consumer in
+// packages/cli/src/commands/auth.ts).
 import {
+  createFileLock,
   createOAuthCredentialStoreFile,
   loginOpenAICodexOAuth,
   type RunnerPrompter,
-} from "@comis/agent";
+} from "@comis/core";
 import {
   createMockOAuthServer,
   type MockOAuthServer,
 } from "../support/mock-oauth-server.js";
+
+const fileLock = createFileLock();
 
 const PROVIDER_ID = "openai-codex";
 
@@ -204,7 +215,7 @@ describe("comis auth login (end-to-end against mock OAuth server)", () => {
   it("local mode: writes profile, exits with success, profile is on disk", async () => {
     const tmpDir = freshTmpDataDir();
     try {
-      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
 
       // Queue mock-server response with a known email so we can assert profileId.
       mockServer.setNextResponse({
@@ -265,7 +276,7 @@ describe("comis auth login (end-to-end against mock OAuth server)", () => {
   it("remote mode: openUrl is NOT called; manual paste resolves the flow", async () => {
     const tmpDir = freshTmpDataDir();
     try {
-      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
 
       mockServer.setNextResponse({
         status: 200,
@@ -409,7 +420,7 @@ describe("comis auth list / logout / status", () => {
     try {
       // Seed profiles directly into <fakeComis>/auth-profiles.json so the
       // CLI subprocess (HOME=tmpHome) reads them via its file adapter.
-      const store = createOAuthCredentialStoreFile({ dataDir: fakeComis });
+      const store = createOAuthCredentialStoreFile({ dataDir: fakeComis, fileLock });
       // Active profile (1h in future).
       await store.set("openai-codex:a@example.com", {
         provider: PROVIDER_ID,
@@ -464,7 +475,7 @@ describe("comis auth list / logout / status", () => {
     const fakeComis = path.join(tmpHome, ".comis");
     fs.mkdirSync(fakeComis, { recursive: true });
     try {
-      const store = createOAuthCredentialStoreFile({ dataDir: fakeComis });
+      const store = createOAuthCredentialStoreFile({ dataDir: fakeComis, fileLock });
       await store.set("openai-codex:a@example.com", {
         provider: PROVIDER_ID,
         profileId: "openai-codex:a@example.com",
@@ -518,7 +529,7 @@ describe("comis auth list / logout / status", () => {
     const fakeComis = path.join(tmpHome, ".comis");
     fs.mkdirSync(fakeComis, { recursive: true });
     try {
-      const store = createOAuthCredentialStoreFile({ dataDir: fakeComis });
+      const store = createOAuthCredentialStoreFile({ dataDir: fakeComis, fileLock });
       await store.set("openai-codex:a@example.com", {
         provider: PROVIDER_ID,
         profileId: "openai-codex:a@example.com",

@@ -43,8 +43,6 @@
   },
   "dependencies": {
     "@comis/core": "workspace:*",
-    "@comis/infra": "workspace:*",
-    "@comis/memory": "workspace:*",
     "@comis/scheduler": "workspace:*",
     "@comis/shared": "workspace:*",
     "@google/genai": "1.50.1",
@@ -54,15 +52,15 @@
     "chokidar": "5.0.0",
     "diff": "8.0.4",
     "open": "10.1.2",
-    "p-queue": "9.2.0",
-    "proper-lockfile": "4.1.2",
     "sharp": "0.34.5",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@comis/memory": "workspace:*",
     "@types/better-sqlite3": "7.6.13",
     "@types/proper-lockfile": "4.1.4",
     "better-sqlite3": "12.9.0",
+    "proper-lockfile": "4.1.2",
     "typescript": "5.9.3",
     "vitest": "4.1.5"
   }

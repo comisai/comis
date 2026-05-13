@@ -23,11 +23,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createAnnouncementDeadLetterQueue } from "@comis/daemon";
+
 import {
-  createAnnouncementDeadLetterQueue,
   createSubAgentRunner,
   type SubAgentRunnerDeps,
-} from "@comis/daemon";
+} from "@comis/agent";
 
 import { TypedEventBus } from "@comis/core";
 

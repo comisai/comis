@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { TypedEventBus } from "@comis/core";
+import type { ErrorKind, TypedEventBus } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 export interface ChannelHealthLoggerDeps {
@@ -33,10 +33,10 @@ const HINT_MAP: Record<string, string> = {
   unknown: "getStatus() unavailable or failing. Adapter may not implement health reporting",
 };
 
-/** Error classification per problematic state. */
-const ERROR_KIND_MAP: Record<string, string> = {
-  disconnected: "connection",
-  errored: "adapter",
+/** Error classification per problematic state (closed 9-member ErrorKind union). */
+const ERROR_KIND_MAP: Record<string, ErrorKind> = {
+  disconnected: "network",
+  errored: "platform",
   stale: "timeout",
   stuck: "timeout",
   unknown: "internal",
@@ -62,6 +62,7 @@ export function setupChannelHealthLogging(deps: ChannelHealthLoggerDeps): void {
       const hint = currentState === "errored" && error
         ? `${baseHint}: ${error}`
         : baseHint;
+      const errorKind: ErrorKind = ERROR_KIND_MAP[currentState] ?? "internal";
 
       logger.warn(
         {
@@ -72,7 +73,7 @@ export function setupChannelHealthLogging(deps: ChannelHealthLoggerDeps): void {
           err: error ? { message: error } : undefined,
           lastMessageAt,
           hint,
-          errorKind: ERROR_KIND_MAP[currentState] ?? "internal",
+          errorKind,
           submodule: MODULE,
         },
         "Channel health degraded: %s -> %s",

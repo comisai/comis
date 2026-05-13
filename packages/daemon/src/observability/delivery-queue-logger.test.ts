@@ -168,7 +168,7 @@ describe("setupDeliveryQueueLogging", () => {
         attemptCount: 2,
         nextRetryAt: nextRetry,
         hint: "Message will be retried on next drain cycle",
-        errorKind: "transient",
+        errorKind: "network",
       });
     });
   });
@@ -198,7 +198,7 @@ describe("setupDeliveryQueueLogging", () => {
         err: "chat not found",
         reason: "permanent_error",
         hint: "Message permanently failed -- check channel configuration or error patterns",
-        errorKind: "permanent",
+        errorKind: "platform",
       });
     });
 

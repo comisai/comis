@@ -198,7 +198,7 @@ Setup takes about 2 minutes. Message your agent. That's it.
 
 Comis uses **hexagonal architecture** (ports and adapters). Core defines port interfaces - adapters implement them. Swap Discord for Matrix, SQLite for Postgres, or OpenAI for Ollama without touching core logic. Adding a channel, tool, or provider means writing an adapter, not modifying the core.
 
-**19 ports, 30+ adapters, 13 packages.** Driving adapters (channels, CLI, API) call into the core. Driven adapters (memory, LLM providers, media processors) are called by the core through ports. Every function returns `Result<T, E>` - zero thrown exceptions. Fully testable in isolation.
+**25 ports, 30+ adapters, 14 packages.** Driving adapters (channels, CLI, API) call into the core. Driven adapters (memory, LLM providers, media processors) are called by the core through ports. Every function returns `Result<T, E>` - zero thrown exceptions. Fully testable in isolation.
 
 [Deep dive: Architecture &rarr;](https://comis.ai/architecture)
 

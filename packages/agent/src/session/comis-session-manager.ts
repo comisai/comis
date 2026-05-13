@@ -18,6 +18,7 @@
 
 import { SessionManager as SdkSessionManager } from "@mariozechner/pi-coding-agent";
 import { formatSessionKey, safePath, type SessionKey } from "@comis/core";
+import type { ComisLogger, FileLockPort } from "@comis/core";
 import { suppressError, type Result } from "@comis/shared";
 import { mkdir, unlink, rm, rmdir } from "node:fs/promises";
 import { existsSync, writeFileSync, readFileSync } from "node:fs";
@@ -38,6 +39,24 @@ export interface ComisSessionManagerDeps {
   lockDir: string;
   /** Workspace directory for SessionManager (stored in session header cwd field) */
   cwd: string;
+  /**
+   * Per-session filesystem mutex. Injected by daemon composition
+   * (setup-agents.ts wires a single `createFileLock()` from `@comis/core`,
+   * relocated from `@comis/scheduler` in Phase 35 Plan 35-04 D-01 #1).
+   * Phase 32 commit 12 (ORCH-EXT-15) moved this from a module-level direct
+   * proper-lockfile import inside session-write-lock.ts to a deps field so
+   * agent's production source no longer reaches into scheduler or the
+   * proper-lockfile package directly.
+   */
+  fileLock: FileLockPort;
+  /**
+   * Optional logger. When provided, structured-cause logging fires before
+   * withSessionLock collapses the FileLockPort's discriminated error union
+   * to the legacy 'locked' | 'error' string (WR-07). Without it, operator
+   * triage cannot distinguish 'ELOCKED after N retries' from 'EACCES on
+   * the lock directory'. The public Result API is unchanged either way.
+   */
+  logger?: ComisLogger;
 }
 
 /**
@@ -166,7 +185,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       const sessionPath = sessionKeyToPath(sessionKey, deps.sessionBaseDir);
       const sessionKeyStr = formatSessionKey(sessionKey);
 
-      return withSessionLock(deps.lockDir, sessionKeyStr, async () => {
+      return withSessionLock(deps.fileLock, deps.lockDir, sessionKeyStr, async () => {
         // Ensure the directory tree exists for new sessions
         await mkdir(dirname(sessionPath), { recursive: true });
 
@@ -176,21 +195,32 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
         //   file write until first assistant message (SDK's _persist guard)
         const sm = SdkSessionManager.open(sessionPath, dirname(sessionPath));
 
-        const result = await fn(sm);
-
-        // Post-execution: redact sensitive tool parameters (e.g., env_value)
-        // from the JSONL file while we still hold the write lock.
-        sanitizeSessionSecrets(sessionPath);
-
-        return result;
-      }, { retries: 10, retryMinTimeout: 1000 });
+        try {
+          const result = await fn(sm);
+          return result;
+        } finally {
+          // ALWAYS sanitize, even on throw — the SDK flushes entries to the
+          // JSONL file before / during fn execution, so a mid-execution
+          // exception can leave unredacted tool parameters (env_value, etc.)
+          // on disk. Running in finally ensures the next reader of the file
+          // (getSessionStats, replay, sessions.inspect RPC) sees the
+          // redacted form even on the error path. Sanitization runs while
+          // we still hold the write lock.
+          sanitizeSessionSecrets(sessionPath);
+        }
+      }, {
+        retries: 10,
+        retryMinTimeout: 1000,
+        logger: deps.logger,
+        sessionKey: sessionKeyStr,
+      });
     },
 
     async destroySession(sessionKey: SessionKey): Promise<void> {
       const sessionPath = sessionKeyToPath(sessionKey, deps.sessionBaseDir);
       const sessionKeyStr = formatSessionKey(sessionKey);
 
-      await withSessionLock(deps.lockDir, sessionKeyStr, async () => {
+      await withSessionLock(deps.fileLock, deps.lockDir, sessionKeyStr, async () => {
         try { await unlink(sessionPath); } catch { /* ENOENT ok */ }
         const sessionDir = dirname(sessionPath);
         const toolResultsDir = safePath(sessionDir, "tool-results");
@@ -199,7 +229,12 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           "tool-results dir may not exist",
         );
         try { await rmdir(sessionDir); } catch { /* non-empty or already gone */ }
-      }, { retries: 10, retryMinTimeout: 500 });
+      }, {
+        retries: 10,
+        retryMinTimeout: 500,
+        logger: deps.logger,
+        sessionKey: sessionKeyStr,
+      });
     },
 
     getSessionPath(sessionKey: SessionKey): string {
@@ -210,6 +245,16 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
 
     writeSessionMetadata(sessionKey: SessionKey, metadata: SessionMetadata): void {
       const sessionPath = sessionKeyToPath(sessionKey, deps.sessionBaseDir);
+      // Defensive: sessionKeyToPath has always returned paths ending in
+      // ".jsonl" at HEAD. If that invariant ever regresses (e.g., a future
+      // refactor switches the suffix or returns a directory), the
+      // `replace(/\.jsonl$/, ...)` below would be a no-op and
+      // metadataPath would equal sessionPath -- the subsequent
+      // writeFileSync would clobber the JSONL transcript with a JSON
+      // metadata object. Refuse to write rather than risk data loss.
+      if (!sessionPath.endsWith(".jsonl")) {
+        return;
+      }
       const metadataPath = sessionPath.replace(/\.jsonl$/, "_session-metadata.json");
       try {
         // Merge with existing metadata if present (accumulates across executions)
@@ -289,10 +334,22 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
                   totalCost += cost.total ?? 0;
                 }
               }
-              // Count tool_use content blocks within assistant messages
+              // Count tool_use content blocks within assistant messages.
+              // The content array is typed `unknown`, so individual blocks
+              // can legitimately be null, undefined, or a primitive (string
+              // content blocks exist in some pi-coding-agent versions).
+              // Guard with object check before reading `.type` to prevent
+              // a TypeError that would be swallowed by the outer catch
+              // (turning a parse hiccup into a silent "no session" result).
               if (Array.isArray(msg.message.content)) {
-                for (const block of msg.message.content as Array<{ type?: string }>) {
-                  if (block.type === "tool_use") toolCalls++;
+                for (const block of msg.message.content) {
+                  if (
+                    block !== null &&
+                    typeof block === "object" &&
+                    (block as { type?: string }).type === "tool_use"
+                  ) {
+                    toolCalls++;
+                  }
                 }
               }
             }

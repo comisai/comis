@@ -69,6 +69,7 @@ import {
   type PerAgentConfig,
 } from "@comis/core";
 import {
+  createFileLock,
   createOAuthCredentialStoreFile,
   createOAuthTokenManager,
   createAuthStorageAdapter,
@@ -83,6 +84,8 @@ import {
   createMockOAuthServer,
   type MockOAuthServer,
 } from "../support/mock-oauth-server.js";
+
+const fileLock = createFileLock();
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -116,7 +119,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   tmpDir = mkdtempSync(path.join(os.tmpdir(), "comis-multi-account-"));
-  store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+  store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
   vi.spyOn(globalThis, "fetch").mockImplementation(
     async (input: string | URL | Request, init?: RequestInit) => {
       const url =
@@ -184,6 +187,8 @@ function makeJwt(payload: Record<string, unknown>): string {
  */
 async function seedProfile(
   credentialStore: OAuthCredentialStorePort,
+
+  fileLock,
   profileId: string,
   email: string,
   accountId: string,
@@ -221,6 +226,8 @@ async function seedProfile(
  */
 function buildOAuthManager(
   credentialStore: OAuthCredentialStorePort,
+
+  fileLock,
   agents: Record<string, PerAgentConfig>,
   agentId: string,
 ): OAuthTokenManager {

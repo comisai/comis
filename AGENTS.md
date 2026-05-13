@@ -21,15 +21,20 @@ Extension points in `packages/core/src/`:
 
 ```
 shared        Result type, utilities — zero runtime deps
-core          domain, ports, event bus, security, config, hooks, bootstrap
-infra         Pino structured logging
-memory        SQLite + FTS5 + vector search (MemoryPort, SecretStorePort, CredentialMappingPort,
-              DeliveryQueuePort, DeliveryMirrorPort adapters)
+core          domain, ports, event bus, security, config, hooks, bootstrap, ComisLogger structural contract, FileLockPort, ContextStorePort + SessionStorePort + row DTOs (CtxConversationRow..CtxExpansionGrantRow, SessionData, SessionListEntry, SessionDetailedEntry), OAuth helpers, master-key helpers
+infra         Pino structured logging implementation (assignable to core's ComisLogger contract)
+memory        SQLite-backed ContextStorePort + SessionStorePort impls (return types
+              from core) + MemoryApi + FTS5 + vector search (MemoryPort, SecretStorePort,
+              CredentialMappingPort, DeliveryQueuePort, DeliveryMirrorPort, OAuth-store,
+              observability/embedding adapters). Row DTOs re-exported from core (single
+              source of truth after Phase 31). Daemon consumes; agent + cli now consume
+              port types from @comis/core.
 gateway       Hono HTTP, JSON-RPC, WebSocket, mTLS
 skills        manifest, prompt skills, MCP, built-in tools, media, STT/TTS/vision/image-gen integrations
-scheduler     cron, heartbeat, task extraction
-agent         orchestration: executor, planner, RAG, sessions, model, safety, response-filter
-channels      platform adapters (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email, Echo)
+scheduler     cron, heartbeat, task extraction; createFileLock(): FileLockPort factory backed by proper-lockfile
+agent         orchestration: executor, planner, RAG, sessions, model, safety, response-filter (no longer references @comis/infra; OAuth helpers moved to @comis/core)
+channels      platform adapters (Discord, Telegram, Slack, WhatsApp, iMessage, Signal, IRC, LINE, Email, Echo) (no longer references @comis/infra)
+orchestrator  inbound pipeline, execution coordination, channel-manager, command queue, routing, cross-session messaging (carved out from agent + channels in Phase 32)
 cli           Commander.js, JSON-RPC client
 daemon        orchestrator, observability, systemd (DeviceIdentityPort adapter)
 comis         umbrella package — namespace re-exports
@@ -45,7 +50,7 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 - Chain by early-return: `if (!result.ok) return result;`. No `Result.map`/`flatMap` helpers exist. Use `tryCatch`/`fromPromise` only at boundaries with throwing APIs (Node fs, `new URL()`, third-party SDKs).
 - `err()` for unsupported/unsafe states — never silently succeed, never silently broaden permissions.
 - ERROR/WARN logs require `hint` (operator-actionable next step) and `errorKind`.
-- `errorKind` is the closed union from `LogFields.ErrorKind` in `@comis/infra`: `config | network | auth | validation | timeout | resource | dependency | internal | platform`. Write literals as `"validation" as const`. Heuristic: bad input → `validation`; external API → `dependency`; chat platform → `platform`; bad config → `config`; assertion → `internal`.
+- `errorKind` is the closed union from `LogFields.ErrorKind` in `@comis/core`: `config | network | auth | validation | timeout | resource | dependency | internal | platform`. Write literals as `"validation" as const`. Heuristic: bad input → `validation`; external API → `dependency`; chat platform → `platform`; bad config → `config`; assertion → `internal`.
 
 ### 2.2 Security (ESLint-enforced — violations fail CI; rules apply to `packages/*/src/**` only)
 - No `path.join()` — use `safePath(base, ...segments)` from `@comis/core/security`. `base` must be absolute; every dynamic segment (including filenames) goes through `safePath`. Compose: `safePath(safePath(dataDir, agentId), file)`.
@@ -95,6 +100,8 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 - Once-per-request → INFO. N-per-request → DEBUG (aggregate count in the INFO summary).
 - Pipeline stages tag log lines with `step: "<stage-name>"` (canonical examples in `packages/channels/src/shared/`) — per-step analogue of `submodule:`.
 - Events vs logs: emit on `eventBus` for state transitions, lifecycle outcomes, observability snapshots, and safety/health signals (e.g., `tool:executed`, `execution:aborted`, `provider:degraded`). Logs describe; events announce. Logging supplements events — it does not replace them.
+
+**Contract vs implementation.** `ComisLogger`, `LogFields`, and `ErrorKind` are **structural type contracts** that live in `@comis/core/src/logging/log-fields.ts`. The Pino-backed runtime implementation lives in `@comis/infra` and is assignable to the contract (`expectTypeOf<PinoComisLogger>().toExtend<ComisLogger>()` proves this in `packages/infra/src/logging/__tests__/logger-contract.test.ts`). Type-only consumers (agent, channels, gateway, skills, scheduler) import the contract from `@comis/core`. Only the daemon (composition root) and infra itself import the Pino runtime. Pino's auto-redaction (`apiKey`, `token`, `password`, etc., 3 levels deep) is a runtime feature of the Pino implementation; the structural contract does not (and cannot) enforce redaction.
 
 ## 3) Naming Contract
 
@@ -146,7 +153,7 @@ Define interface in `core/src/ports/` → export from core index → add to `App
 `z.strictObject({...})` schema in `core/src/domain/` (domain layer is strict — loosening is a compat break) → infer type with `z.infer<typeof Schema>` → export schema, type, and a paired `parseX(raw): Result<T, z.ZodError>` helper wrapping `safeParse()`. Call sites use `parseX()` — never `.parse()` (throws) or raw `.safeParse()`.
 
 ### 6.4 Add a Config Schema
-`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`. New top-level sections also need entries in the `SECTION_SCHEMAS` maps in `schema-serializer.ts` and `field-metadata.ts` (mirrored — used for agent introspection and CLI/UI editors), plus `managed-sections.ts` if a tool manages the section.
+`schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`. New top-level sections register a single entry in the `SECTION_REGISTRY` in `core/src/config/section-registry.ts` (the consolidated source of truth post-Phase-30 CONFIG-DELIV-01/-02). Per-view derivations (`SECTION_SCHEMAS` in `schema-serializer.ts`, the metadata map in `field-metadata.ts`, the managed-section redirect map in `managed-sections.ts`) are derived from the registry — no per-file edit needed beyond the registry entry.
 
 ### 6.5 Add a Skill
 Skills are Markdown files with manifest frontmatter. Add to `packages/skills/`, validate frontmatter against manifest Zod schema, test loading + manifest validation.

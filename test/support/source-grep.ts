@@ -51,6 +51,7 @@ export interface SourceGrepResult {
   readonly checkedFiles: number;
 }
 
+// MERGED with any caller-supplied excludeDirs (Phase 27 ARCH-BASE-04 -- never replaced).
 const DEFAULT_EXCLUDE_DIRS: readonly string[] = [
   "__tests__",
   "__snapshots__",
@@ -66,6 +67,13 @@ const DEFAULT_EXTENSIONS: readonly string[] = [".ts"];
  * symlinks via `isSymbolicLink()` and they are skipped here), so symlink
  * loops cannot hang the walk.
  *
+ * Caller-supplied `excludeDirs` are MERGED with `DEFAULT_EXCLUDE_DIRS`
+ * (never replaced) so passing extras like `"fixtures"` cannot accidentally
+ * re-enable scanning of `__tests__`/`dist`. Caller-supplied RegExp needles
+ * are cloned per file scan via `new RegExp(source, flags)` so `/g` or `/y`
+ * flags do not retain `lastIndex` state across files (Phase 27
+ * ARCH-BASE-04, research RES-PIT-8).
+ *
  * @example
  * const result = findInSourceFiles({
  *   rootDir: "/abs/path/packages/core/src",
@@ -76,7 +84,10 @@ const DEFAULT_EXTENSIONS: readonly string[] = [".ts"];
  * expect(result.checkedFiles).toBeGreaterThan(0);
  */
 export function findInSourceFiles(opts: SourceGrepOptions): SourceGrepResult {
-  const exclude = new Set(opts.excludeDirs ?? DEFAULT_EXCLUDE_DIRS);
+  const exclude = new Set([
+    ...DEFAULT_EXCLUDE_DIRS,
+    ...(opts.excludeDirs ?? []),
+  ]);
   const extensions = opts.extensions ?? DEFAULT_EXTENSIONS;
   const excludeSuffixes = opts.excludeFileSuffixes ?? [];
   const matches: string[] = [];
@@ -107,7 +118,14 @@ export function findInSourceFiles(opts: SourceGrepOptions): SourceGrepResult {
         const isMatch =
           typeof opts.needle === "string"
             ? content.includes(opts.needle)
-            : opts.needle.test(content);
+            : (() => {
+                // Clone the regex per call so caller-supplied /g or /y flags
+                // don't carry lastIndex state across files. Cloning preserves
+                // the source pattern + flags but resets internal state.
+                // Phase 27 ARCH-BASE-04 -- research RES-PIT-8.
+                const re = new RegExp(opts.needle.source, opts.needle.flags);
+                return re.test(content);
+              })();
         if (isMatch) matches.push(full);
       }
     }

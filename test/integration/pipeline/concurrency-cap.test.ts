@@ -26,8 +26,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { TypedEventBus } from "@comis/core";
 import type { PriorityLaneConfig } from "@comis/core";
-import { createPriorityScheduler } from "@comis/agent";
-import type { PriorityScheduler } from "@comis/agent";
+// Phase 32 commit 8: createPriorityScheduler + PriorityScheduler moved to @comis/orchestrator (ORCH-EXT-08, Wave A close).
+import { createPriorityScheduler } from "@comis/orchestrator";
+import type { PriorityScheduler } from "@comis/orchestrator";
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -9,7 +9,7 @@
  */
 
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import { suppressError } from "@comis/shared";
 
 import type { StreamFnWrapper } from "./types.js";

@@ -17,7 +17,7 @@
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { safePath } from "@comis/core";
-import { createModelCatalog } from "@comis/agent";
+import { createModelCatalog } from "@comis/core";
 import type {
   WizardState,
   WizardStepId,

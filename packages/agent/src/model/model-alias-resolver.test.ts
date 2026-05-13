@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { createModelAliasResolver } from "./model-alias-resolver.js";
-import { createModelCatalog } from "./model-catalog.js";
+import { createModelCatalog } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // createModelAliasResolver

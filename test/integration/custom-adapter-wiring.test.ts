@@ -27,13 +27,18 @@ import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  createChannelManager,
   createChannelRegistry,
   createEchoPlugin,
   EchoChannelAdapter,
-  type ChannelManagerDeps,
   type ChannelRegistry,
 } from "@comis/channels";
+// Phase 32 commit 4: createChannelManager + ChannelManagerDeps moved with
+// channel-manager.ts to @comis/orchestrator.
+import {
+  createChannelManager,
+  processInboundMessage,
+  type ChannelManagerDeps,
+} from "@comis/orchestrator";
 import {
   TypedEventBus,
   createPluginRegistry,
@@ -154,8 +159,9 @@ function makeEventBus() {
 }
 
 function makeMinimalDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManagerDeps {
+  const eventBus = makeEventBus();
   return {
-    eventBus: makeEventBus(),
+    eventBus,
     messageRouter: { resolve: vi.fn(() => "agent-default"), updateConfig: vi.fn() } as any,
     sessionManager: {
       loadOrCreate: vi.fn(() => []),
@@ -175,6 +181,18 @@ function makeMinimalDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManage
       })),
     })),
     logger: makeLogger(),
+    // Phase 30 plan 04: DeliveryService is required on ChannelManagerDeps. The
+    // CWIRE suite only exercises startAll() / stopAll() lifecycle, never the
+    // inbound pipeline, so the service is fine as a noop stub.
+    deliveryService: {
+      deliverToChannel: vi.fn(async () => ({ ok: true, value: { ok: true } })) as any,
+    } as any,
+    // Phase 32 commit 4: processInboundMessage is dep-injected on
+    // ChannelManagerDeps (added at commit 3 when channels could not back-edge
+    // import orchestrator). The CWIRE tests do not invoke it directly — they
+    // only assert combined-adapter-list lifecycle — so the real function is a
+    // safe choice; nothing observable depends on its return path here.
+    processInboundMessage: processInboundMessage as unknown as ChannelManagerDeps["processInboundMessage"],
     ...overrides,
   };
 }

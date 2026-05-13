@@ -39,7 +39,7 @@ import {
   type SenderTrustDisplayConfig,
   type ToolCapabilityPort,
 } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 import { applyToolDeferral, buildDeferredToolsContext, createDiscoverTool, createAutoDiscoveryStubs, extractRecentlyUsedToolNames, resolveModelTier, CORE_TOOLS } from "./tool-deferral.js";
 import type { DeferralContext, ExcludeDeferralResult } from "./tool-deferral.js";
 import { buildCapabilityIndexContext } from "./capability-index-context.js";

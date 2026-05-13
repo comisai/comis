@@ -10,7 +10,7 @@
 
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { CacheRetention } from "@mariozechner/pi-ai";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 
 import { isAnthropicFamily } from "../../provider/capabilities.js";
 import type { StreamFnWrapper } from "./types.js";

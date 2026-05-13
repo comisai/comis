@@ -47,20 +47,40 @@ const mockStepCounterInstance = vi.hoisted(() => ({
 }));
 const mockCreateStepCounter = vi.hoisted(() => vi.fn(() => ({ ...mockStepCounterInstance })));
 
-vi.mock("../cross-session-sender.js", () => ({
-  createCrossSessionSender: mockCreateCrossSessionSender,
-}));
+// Phase 32 commit 11 (ORCH-EXT-11): cross-session-sender, announcement-batcher,
+// and announcement-dead-letter moved from packages/daemon/src/ to
+// packages/orchestrator/src/cross-session/. setup-cross-session.ts now imports
+// all three from "@comis/orchestrator". The test mocks createCrossSessionSender
+// (call-arg assertions below depend on the spy) but spreads the real module so
+// createAnnouncementBatcher + createAnnouncementDeadLetterQueue keep running
+// with their real implementations (matching pre-move test behavior).
+vi.mock("@comis/orchestrator", async () => {
+  const actual = await vi.importActual<typeof import("@comis/orchestrator")>(
+    "@comis/orchestrator",
+  );
+  return {
+    ...actual,
+    createCrossSessionSender: mockCreateCrossSessionSender,
+  };
+});
 
-vi.mock("../sub-agent-runner.js", () => ({
-  createSubAgentRunner: mockCreateSubAgentRunner,
-}));
+// Phase 34 commit 1 (DAEMON-API-01): sub-agent-runner moved to
+// packages/agent/src/spawn/. createSubAgentRunner is now imported from
+// "@comis/agent" — the mock entry is added to the @comis/agent vi.mock
+// block below.
 
 vi.mock("node:crypto", () => ({
   randomUUID: mockRandomUUID,
 }));
 
+// Phase 30 plan 04: production setup-cross-session no longer imports
+// deliverToChannel from @comis/channels — sendToChannel now uses
+// deps.deliveryService.deliverToChannel(...). The mock entry is preserved on
+// the @comis/channels mock surface only because mockDeliverToChannel is still
+// referenced by the test assertion harness below as a fallback adapter call
+// observer; the new `mockDeliveryService.deliverToChannel` (injected via
+// createMinimalDeps) is the actual call target.
 vi.mock("@comis/channels", () => ({
-  deliverToChannel: mockDeliverToChannel,
   createTypingController: mockCreateTypingController,
 }));
 
@@ -117,12 +137,24 @@ vi.mock("@comis/agent", () => ({
   createResultCondenser: mockCreateResultCondenser,
   createNarrativeCaster: mockCreateNarrativeCaster,
   createLifecycleHooks: mockCreateLifecycleHooks,
-  resolveWorkspaceDir: mockResolveWorkspaceDir,
   createEphemeralComisSessionManager: mockCreateEphemeralComisSessionManager,
   createComisSessionManager: mockCreateComisSessionManager,
   resolveOperationModel: mockResolveOperationModel,
   resolveProviderFamily: mockResolveProviderFamily,
+  // Phase 34 commit 1: createSubAgentRunner relocated from
+  // packages/daemon/src/sub-agent-runner.js (the prior dedicated vi.mock
+  // block has been removed; the mock factory remains the same).
+  createSubAgentRunner: mockCreateSubAgentRunner,
 }));
+
+// Phase 35 Plan 35-04 (D-01 #5): resolveWorkspaceDir relocated to @comis/core.
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    resolveWorkspaceDir: mockResolveWorkspaceDir,
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -187,6 +219,21 @@ function createMinimalDeps(overrides: Record<string, any> = {}) {
       ["telegram", { channelType: "telegram", sendMessage: vi.fn(async () => ({ ok: true, value: "mock-msg-id" })), platformAction: vi.fn(async () => ({ ok: true, value: undefined })) }],
     ]),
     logger: createMockLogger() as any,
+    // Phase 30 plan 04: DeliveryService is required on the setupCrossSession
+    // deps shape. Wired here as a wrapper around the pre-existing
+    // mockDeliverToChannel spy so all existing assertions on
+    // mockDeliverToChannel (call counts, argument shape) keep working.
+    deliveryService: { deliverToChannel: mockDeliverToChannel },
+    // Phase 32 commit 12 (ORCH-EXT-15): minimal FileLockPort stub for the
+    // ephemeral session adapter dep. Never invoked by the tests below
+    // (reuse + sub-agent-persistence branches are not exercised here).
+    fileLock: {
+      acquire: vi.fn(),
+      release: vi.fn(),
+      withLock: vi.fn(),
+      isLocked: vi.fn(async () => false),
+      cleanupStaleLocks: vi.fn(async () => 0),
+    },
     ...overrides,
   } as any;
 }
@@ -246,7 +293,7 @@ describe("setupCrossSession", () => {
   // 3. sendToChannel looks up adapter and sends message
   // -------------------------------------------------------------------------
 
-  it("builds sendToChannel that delegates to deliverToChannel", async () => {
+  it("builds sendToChannel that delegates to deliveryService.deliverToChannel", async () => {
     const setupCrossSession = await getSetupCrossSession();
     const deps = createMinimalDeps();
     setupCrossSession(deps);
@@ -257,9 +304,10 @@ describe("setupCrossSession", () => {
     const result = await sendToChannel("telegram", "chat-123", "Hello channel");
 
     const adapter = deps.adaptersByType.get("telegram");
+    // Phase 30 plan 04: the optional 5th-arg deps record is gone — DeliveryService
+    // captured deliveryQueue + eventBus + hookRunner in closure at composition.
     expect(mockDeliverToChannel).toHaveBeenCalledWith(
       adapter, "chat-123", "Hello channel", undefined,
-      undefined,
     );
     expect(result).toBe(true);
   });
@@ -276,7 +324,7 @@ describe("setupCrossSession", () => {
     expect(result).toBe(false);
   });
 
-  it("sendToChannel passes options to deliverToChannel for thread context", async () => {
+  it("sendToChannel passes options to deliveryService.deliverToChannel for thread context", async () => {
     const setupCrossSession = await getSetupCrossSession();
     const deps = createMinimalDeps();
     setupCrossSession(deps);
@@ -287,9 +335,9 @@ describe("setupCrossSession", () => {
     const result = await sendToChannel("telegram", "chat-123", "# Hello", { threadId: "thread-42" });
 
     const adapter = deps.adaptersByType.get("telegram");
+    // Phase 30 plan 04: per-call options still ride, 5th-arg deps record is gone.
     expect(mockDeliverToChannel).toHaveBeenCalledWith(
       adapter, "chat-123", "# Hello", { threadId: "thread-42" },
-      undefined,
     );
     expect(result).toBe(true);
   });
@@ -416,11 +464,12 @@ describe("setupCrossSession", () => {
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
     await announceToParent("agent-1", sessionKey, "Sub-agent done", "telegram", "chat-123");
 
-    // Should have called deliverToChannel (via sendToChannel delegation) with the response
+    // Should have called deliveryService.deliverToChannel (via sendToChannel
+    // delegation) with the response. Phase 30 plan 04: the optional 5th-arg
+    // deps record is gone — captured in closure at composition.
     const adapter = deps.adaptersByType.get("telegram");
     expect(mockDeliverToChannel).toHaveBeenCalledWith(
       adapter, "chat-123", "Agent response", undefined,
-      undefined,
     );
 
     // Verify proxy typing events emitted around announcement

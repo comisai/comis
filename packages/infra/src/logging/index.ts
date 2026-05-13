@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-// @comis/infra/logging — Pino logger factory with credential redaction
+// @comis/infra/logging — Pino logger factory with credential redaction.
+//
+// Phase 28 commit 2 (CORE-PORTS-05): canonical home of ComisLogger /
+// LogFields / ErrorKind / VALID_LOG_LEVELS / isValidLogLevel is
+// @comis/core (Pino-free structural contract). Re-exported here so
+// daemon/skills/cli (which keep importing `from "@comis/infra"` for the
+// runtime path) see no public-surface drift.
 
 export { createLogger } from "./logger.js";
 export type { LoggerOptions, ComisLogger } from "./logger.js";
-export type { LogFields, ErrorKind } from "./log-fields.js";
-export { isValidLogLevel, VALID_LOG_LEVELS } from "./log-fields.js";
+export type { LogFields, ErrorKind } from "@comis/core";
+export { isValidLogLevel, VALID_LOG_LEVELS } from "@comis/core";

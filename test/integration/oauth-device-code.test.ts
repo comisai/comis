@@ -29,6 +29,7 @@ import {
 } from "vitest";
 import type { OAuthProfile } from "@comis/core";
 import {
+  createFileLock,
   createOAuthCredentialStoreFile,
   loginOpenAICodexDeviceCode,
   resolveCodexAuthIdentity,
@@ -37,6 +38,8 @@ import {
   createMockOAuthServer,
   type MockOAuthServer,
 } from "../support/mock-oauth-server.js";
+
+const fileLock = createFileLock();
 
 let mockServer: MockOAuthServer;
 let mockBaseUrl: string;
@@ -141,7 +144,7 @@ describe("device-code flow end-to-end (mock OAuth server)", () => {
       const identityKey = identity.email ?? identity.profileName ?? "env-bootstrap";
       const profileId = `openai-codex:${identityKey}`;
 
-      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
       const profile: OAuthProfile = {
         provider: "openai-codex",
         profileId,

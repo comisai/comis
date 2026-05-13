@@ -2,7 +2,6 @@
 import { describe, it, expect } from "vitest";
 import {
   normalizeToolSchema,
-  normalizeToolSchemas,
   PROVIDER_UNSUPPORTED_KEYWORDS,
   pruneSchemaDescriptions,
   pruneToolSchemas,
@@ -178,37 +177,6 @@ describe("tool-schema-safety", () => {
       });
     });
 
-    describe("normalizeToolSchemas", () => {
-      it("normalizes all tools in array", () => {
-        const tools = [
-          { name: "tool_a", inputSchema: { type: "object", properties: { x: { type: "string", minLength: 1 } } } },
-          { name: "tool_b", inputSchema: { type: "object", properties: { y: { type: "number", minimum: 0 } } } },
-        ];
-        const result = normalizeToolSchemas(tools, "anthropic");
-
-        expect(result).toHaveLength(2);
-        expect(result[0].name).toBe("tool_a");
-        expect(result[0].strippedKeywords).toContain("minLength");
-        expect(result[1].name).toBe("tool_b");
-        expect(result[1].strippedKeywords).toContain("minimum");
-      });
-
-      it("handles tools without inputSchema", () => {
-        const tools = [{ name: "simple_tool" }];
-        const result = normalizeToolSchemas(tools, "anthropic");
-
-        expect(result[0].inputSchema).toBeUndefined();
-        expect(result[0].strippedKeywords).toEqual([]);
-      });
-
-      it("preserves tool names", () => {
-        const tools = [
-          { name: "my_tool", inputSchema: { type: "object" } },
-        ];
-        const result = normalizeToolSchemas(tools, "anthropic");
-        expect(result[0].name).toBe("my_tool");
-      });
-    });
   });
 
   // ---------------------------------------------------------------------------

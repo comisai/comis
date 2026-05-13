@@ -5,9 +5,16 @@
  * Architecture:
  * - Reads + writes credentials through OAuthCredentialStorePort (no in-memory map
  *   as source of truth; refreshed credentials persist to disk and survive restart).
- * - Per-profile-ID file lock via withExecutionLock from @comis/scheduler — concurrent
- *   refresh attempts from multiple processes serialize; different profiles refresh
- *   in parallel.
+ * - Per-profile-ID file lock via injected FileLockPort.withLock (the daemon
+ *   composition root wires the canonical `createFileLock()` adapter from
+ *   `@comis/core`) — concurrent refresh attempts from multiple processes
+ *   serialize; different profiles refresh in parallel. Phase 32 commit 12
+ *   (ORCH-EXT-15) flipped this from a module-level direct scheduler import
+ *   to a deps field so agent's production source no longer depends on
+ *   `@comis/core` at the value-import level. The `createFileLock()` factory
+ *   itself relocated from `@comis/scheduler` to `@comis/core` in Phase 35
+ *   Plan 35-04 D-01 #1 (the single proper-lockfile adapter now lives in core
+ *   alongside the `FileLockPort` interface it satisfies).
  * - 30s timeout wrapper around pi-ai's getOAuthApiKey to prevent indefinite hang
  *   when auth.openai.com is unreachable.
  * - Real-refresh detection via newCredentials.refresh !== profile.refresh — the
@@ -43,9 +50,9 @@ import {
   safePath,
   type OAuthCredentialStorePort,
   type OAuthProfile,
+  type FileLockPort,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
-import { withExecutionLock } from "@comis/scheduler";
+import type { ComisLogger } from "@comis/core";
 import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import {
   getOAuthProvider,
@@ -56,8 +63,8 @@ import { watch, type FSWatcher } from "chokidar";
 import {
   resolveCodexAuthIdentity,
   redactEmailForLog,
-} from "./oauth-identity.js";
-import { rewriteOAuthError } from "./oauth-errors.js";
+  rewriteOAuthError,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -100,6 +107,15 @@ export interface OAuthTokenManagerDeps {
   logger: ComisLogger;
   /** Data directory for lock-file path resolution — REQUIRED. */
   dataDir: string;
+  /**
+   * Cross-process filesystem mutex for per-profile refresh serialization.
+   * Injected by the composition root (`@comis/core`'s `createFileLock()`
+   * in production; relocated from `@comis/scheduler` in Phase 35 Plan 35-04
+   * D-01 #1). Phase 32 commit 12 (ORCH-EXT-15) moved this from a
+   * module-level direct scheduler import to a deps field. Stateless port
+   * — sharing one instance across token managers is safe.
+   */
+  fileLock: FileLockPort;
   /** Prefix for SecretManager key names (default: "OAUTH_"). */
   keyPrefix?: string;
   /**
@@ -477,6 +493,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     credentialStore,
     logger,
     dataDir,
+    fileLock,
     keyPrefix = "OAUTH_",
   } = deps;
 
@@ -509,14 +526,37 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   const { watchPath } = deps;
   let watcher: FSWatcher | undefined;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // In-flight reload promise. The debounce callback dispatched by setTimeout
+  // can already be executing inside `await credentialStore.list()` when
+  // dispose() is called — clearing the timer does nothing for an
+  // already-fired callback. Track the promise so dispose() can await it
+  // and avoid emitting events / clearing cache against a disposed manager
+  // (WR-04).
+  let inflightReload: Promise<void> | undefined;
   // Snapshot of profileIds the manager has seen — used to diff against
   // store.list() after a watcher fire to emit auth:profile_added for new
   // profiles only.
   const seenProfileIds = new Set<string>();
+  // First-fire guard: seed seenProfileIds from the store on the first
+  // watcher fire, and SKIP emission for that fire. Without this, the
+  // first fire treats every existing profile as "new" and floods
+  // subscribers with N spurious auth:profile_added events (CR-02).
+  let profileIdsSeeded = false;
 
   async function emitProfileAddedEventsAfterReload(): Promise<void> {
     const listResult = await credentialStore.list();
     if (!listResult.ok) return;
+    // First fire: seed only, do NOT emit. The pre-existing profiles were
+    // present at construction time and are not "added" by this watcher
+    // event; they were already there.
+    if (!profileIdsSeeded) {
+      profileIdsSeeded = true;
+      seenProfileIds.clear();
+      for (const profile of listResult.value) {
+        seenProfileIds.add(profile.profileId);
+      }
+      return;
+    }
     const before = new Set(seenProfileIds);
     seenProfileIds.clear();
     for (const profile of listResult.value) {
@@ -555,17 +595,22 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       // Emit auth:profile_added for newly-discovered profiles.
       // Best-effort — failure is logged inside the helper but not surfaced
       // (the next getApiKey call will repopulate cache from store anyway).
-      void emitProfileAddedEventsAfterReload().catch((emitErr: unknown) => {
-        logger.warn(
-          {
-            submodule: "oauth-store-watcher",
-            hint: "profile_added_emit_failed",
-            errorKind: "event_emit",
-            err: emitErr,
-          },
-          "Failed to emit auth:profile_added after watcher fire",
-        );
-      });
+      // Track the promise on inflightReload so dispose() can await it.
+      inflightReload = emitProfileAddedEventsAfterReload()
+        .catch((emitErr: unknown) => {
+          logger.warn(
+            {
+              submodule: "oauth-store-watcher",
+              hint: "profile_added_emit_failed",
+              errorKind: "internal" as const,
+              err: emitErr,
+            },
+            "Failed to emit auth:profile_added after watcher fire",
+          );
+        })
+        .finally(() => {
+          inflightReload = undefined;
+        });
     }, 100);
   }
 
@@ -587,7 +632,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         {
           submodule: "oauth-store-watcher",
           hint: "watcher_failed",
-          errorKind: "fs_watch",
+          errorKind: "internal" as const,
           err: watchErr,
         },
         "OAuth profile watcher errored",
@@ -657,7 +702,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         profileId: storedProfile.profileId,
         submodule: "oauth-token-manager",
         hint: "env-override-ignored",
-        errorKind: "config_drift",
+        errorKind: "auth" as const,
       },
       "OAuth env var refresh token differs from stored profile; stored profile is canonical",
     );
@@ -685,7 +730,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           profileId,
           submodule: "oauth-token-manager",
           hint: "store_write_failed",
-          errorKind: "store_failed",
+          errorKind: "auth" as const,
           err: writeResult.error,
         },
         "OAuth bootstrap failed: credentialStore.set rejected",
@@ -736,7 +781,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     const lockPath = lockSentinelPath(dataDir, initialProfile.profileId);
     const lockStart = Date.now();
 
-    const lockResult = await withExecutionLock(
+    const lockResult = await fileLock.withLock(
       lockPath,
       async (): Promise<Result<string, OAuthError>> => {
         const acquireMs = Date.now() - lockStart;
@@ -828,7 +873,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
                   hint: "auth_endpoint_unreachable",
-                  errorKind: "timeout",
+                  errorKind: "timeout" as const,
                 },
                 "OAuth refresh timed out after 30s",
               );
@@ -867,7 +912,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
                   hint: rewritten.hint,
-                  errorKind: rewritten.errorKind,
+                  errorKind: "auth" as const,
                   err: classifyInput,
                   status: localResult.error.status,
                 },
@@ -876,7 +921,14 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               eventBus.emit("auth:refresh_failed", {
                 provider: providerId,
                 profileId: profile.profileId,
-                errorKind: rewritten.errorKind,
+                // Carry the OAuth domain discriminator (refresh_token_reused |
+                // invalid_grant | …) into the event payload. The
+                // auth:refresh_failed event's `errorKind` field documents
+                // coarse classification — NOT the closed Pino ErrorKind union.
+                // Phase 28 commit 6C renamed RewrittenOAuthError.errorKind →
+                // logErrorKind ("auth"); the discriminator now flows via
+                // `rewritten.code`.
+                errorKind: rewritten.code,
                 hint: rewritten.hint,
                 timestamp: Date.now(),
               });
@@ -884,7 +936,11 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 code: "REFRESH_FAILED",
                 message: rewritten.userMessage,
                 providerId,
-                errorKind: rewritten.errorKind,
+                // OAuthError.errorKind carries the discriminator for CLI
+                // pattern-matching (`err.errorKind === "refresh_token_reused"`
+                // in cli/src/commands/auth.ts). Read from `rewritten.code`
+                // post-6C.
+                errorKind: rewritten.code,
                 profileId: profile.profileId,
                 hint: rewritten.hint,
               });
@@ -919,7 +975,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
                   hint: "auth_endpoint_unreachable",
-                  errorKind: "timeout",
+                  errorKind: "timeout" as const,
                 },
                 "OAuth refresh timed out after 30s",
               );
@@ -952,7 +1008,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
                   hint: rewritten.hint,
-                  errorKind: rewritten.errorKind,
+                  errorKind: "auth" as const,
                   err: apiKeyResult.error,
                 },
                 "OAuth refresh failed",
@@ -960,7 +1016,11 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               eventBus.emit("auth:refresh_failed", {
                 provider: providerId,
                 profileId: profile.profileId,
-                errorKind: rewritten.errorKind,
+                // See comment at the codex bypass branch above (line ~885):
+                // event payload `errorKind` carries the OAuth domain
+                // discriminator, not the closed Pino ErrorKind union. Post-6C,
+                // the discriminator flows via `rewritten.code`.
+                errorKind: rewritten.code,
                 hint: rewritten.hint,
                 timestamp: Date.now(),
               });
@@ -968,7 +1028,9 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 code: "REFRESH_FAILED",
                 message: rewritten.userMessage,
                 providerId,
-                errorKind: rewritten.errorKind,
+                // OAuthError.errorKind carries the discriminator for CLI
+                // pattern-matching; read from `rewritten.code` post-6C.
+                errorKind: rewritten.code,
                 profileId: profile.profileId,
                 hint: rewritten.hint,
               });
@@ -1000,7 +1062,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
                   hint: "store_write_failed",
-                  errorKind: "store_failed",
+                  errorKind: "auth" as const,
                   err: writeResult.error,
                 },
                 "OAuth refresh persisted-write failed",
@@ -1073,9 +1135,8 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     );
 
     if (!lockResult.ok) {
-      const lockKind = lockResult.error;
+      const lockKind = lockResult.error.kind;
       const hint = lockKind === "locked" ? "lock_contention" : "lock_error";
-      const errorKind = lockKind === "locked" ? "lock_contention" : "lock_error";
       logger.warn(
         {
           provider: providerId,
@@ -1083,7 +1144,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           submodule: "oauth-token-manager",
           retries: 0,
           hint,
-          errorKind,
+          errorKind: "auth" as const,
         },
         lockKind === "locked"
           ? "OAuth refresh lock contention"
@@ -1092,7 +1153,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       eventBus.emit("auth:refresh_failed", {
         provider: providerId,
         profileId: initialProfile.profileId,
-        errorKind,
+        errorKind: "auth",
         hint,
         timestamp: Date.now(),
       });
@@ -1147,7 +1208,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               provider: providerId,
               configuredProfileId: configured,
               hint: "configured-profile-missing",
-              errorKind: "profile_not_found",
+              errorKind: "auth" as const,
               submodule: "oauth-resolver",
             },
             "Configured OAuth profile not found in store",
@@ -1365,6 +1426,12 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       if (watcher) {
         await watcher.close();
         watcher = undefined;
+      }
+      // Wait for any debounce callback that fired between clearTimeout
+      // and now to finish — otherwise cache.clear() / eventBus.emit()
+      // races against a disposed manager (WR-04).
+      if (inflightReload) {
+        await inflightReload;
       }
     },
   };

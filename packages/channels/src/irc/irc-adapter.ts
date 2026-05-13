@@ -23,7 +23,7 @@ import type {
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err, fromPromise } from "@comis/shared";
 import { Client } from "irc-framework";

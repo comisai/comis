@@ -17,10 +17,20 @@ import {
   getSpyOutput,
 } from "../test-helpers.js";
 
-// Mock withClient from rpc-client at module level for ESM hoisting
-vi.mock("../client/rpc-client.js", () => ({
-  withClient: vi.fn(),
-}));
+// Mock withClient from rpc-client at module level for ESM hoisting.
+// Use vi.importActual to keep `callTyped` WIRED — Plan 35-11 retargeted
+// status.ts's `gateway.status` call to callTyped, so the wrapper needs to
+// pass through to the mocked `client.call`. Pattern mirrors
+// `config-behavior.test.ts` (vi.importActual hybrid mock).
+vi.mock("../client/rpc-client.js", async () => {
+  const actual = await vi.importActual<typeof import("../client/rpc-client.js")>(
+    "../client/rpc-client.js",
+  );
+  return {
+    ...actual,
+    withClient: vi.fn(),
+  };
+});
 
 // Dynamic imports after mocks
 const { registerStatusCommand } = await import("./status.js");
@@ -60,7 +70,9 @@ function setupSpyClient(overrides: Record<string, unknown> = {}): ReturnType<typ
   const callSpy = vi.fn();
   callSpy.mockImplementation(async (method: string, params?: unknown) => {
     if (method === "gateway.status") return responses["gateway.status"];
-    if (method === "config.get") {
+    // Plan 35-19 Wave C closure: status.ts retargeted from stale
+    // `config.get` method name to `config.read` (the actual daemon method).
+    if (method === "config.read") {
       const p = params as { section: string } | undefined;
       if (p?.section === "gateway") return responses["gateway-config"];
       if (p?.section === "channels") return responses["channels"];

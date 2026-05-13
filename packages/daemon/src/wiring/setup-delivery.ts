@@ -14,10 +14,9 @@
  * @module setup-delivery — Delivery subsystem wiring (queue + mirror)
  */
 
-import type { AppConfig, TypedEventBus, DeliveryQueuePort, DeliveryMirrorPort } from "@comis/core";
-import { createNoOpDeliveryQueue, createNoOpDeliveryMirror } from "@comis/core";
+import type { AppConfig, TypedEventBus, DeliveryQueuePort, DeliveryMirrorPort, DeliveryAdapter } from "@comis/core";
+import { createNoOpDeliveryQueue, createNoOpDeliveryMirror, isPermanentError, computeQueueBackoff } from "@comis/core";
 import { createSqliteDeliveryQueue, createSqliteDeliveryMirror } from "@comis/memory";
-import { isPermanentError, computeQueueBackoff, type DeliveryAdapter } from "@comis/channels";
 import type { ComisLogger } from "@comis/infra";
 import { ok, suppressError } from "@comis/shared";
 import { createHash } from "node:crypto";

@@ -18,7 +18,8 @@ import type { SqliteMemoryAdapter, createSessionStore, createEmbeddingQueue, Mem
 import type { HeartbeatRunner, CronScheduler, createExecutionTracker } from "@comis/scheduler";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { BrowserService, RpcCall, LinkRunner } from "@comis/skills";
-import type { ChannelManager } from "@comis/channels";
+// Phase 32 commit 4: ChannelManager type moved with channel-manager.ts to @comis/orchestrator.
+import type { ChannelManager } from "@comis/orchestrator";
 import type { DeviceIdentity } from "@comis/core";
 
 import type { LogLevelManager } from "../observability/log-infra.js";
@@ -31,8 +32,8 @@ import type { DeliveryTracer } from "../observability/delivery-tracer.js";
 import type { ProcessMonitor } from "../process/process-monitor.js";
 import type { WatchdogHandle } from "../health/watchdog.js";
 import type { ShutdownHandle } from "../process/graceful-shutdown.js";
-import type { createCrossSessionSender } from "../cross-session-sender.js";
-import type { createSubAgentRunner } from "../sub-agent-runner.js";
+import type { createCrossSessionSender } from "@comis/orchestrator";
+import type { createSubAgentRunner } from "@comis/agent";
 
 /**
  * The full container of wired daemon services, passed between

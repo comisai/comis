@@ -12,23 +12,30 @@
 
 import { readdir, readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin, safePath } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService } from "@comis/core";
+import { formatSessionKey, runWithContext, createDeliveryOrigin, safePath, createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver, CommandHandlerDeps } from "@comis/agent";
+import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { createSessionStore } from "@comis/memory";
-import { createMessageRouter, createCommandQueue, createCommandHandler, parseSlashCommand, sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError, type CommandQueue } from "@comis/agent";
+import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
+// Phase 32 commit 6: command symbols moved to @comis/orchestrator (ORCH-EXT-08).
+// Phase 32 commit 7: createMessageRouter moved to @comis/orchestrator (ORCH-EXT-08).
+// Phase 32 commit 8: createCommandQueue + type CommandQueue moved to @comis/orchestrator (Wave A close).
+import { createCommandHandler, parseSlashCommand, createMessageRouter, createCommandQueue, type CommandHandlerDeps, type CommandQueue } from "@comis/orchestrator";
 import {
-  createChannelManager,
-  createRetryEngine,
   createApprovalNotifier,
-  deliverToChannel,
   filterResponse,
-  type ChannelManager,
   type VoiceResponsePipelineDeps,
   type ApprovalNotifier,
 } from "@comis/channels";
-import { RetryConfigSchema } from "@comis/core";
+// Phase 32 commit 3: inbound-pipeline.ts moved to @comis/orchestrator.
+// Phase 32 commit 4: channel-manager.ts itself moved to @comis/orchestrator;
+// createChannelManager + ChannelManager + ChannelManagerDeps now live there.
+// The daemon still passes processInboundMessage explicitly via ChannelManagerDeps
+// (the dep-inject indirection from commit 3 is preserved through commit 4 — it
+// will collapse only when orchestrator stops requiring it in the deps shape).
+import { createChannelManager, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
+import { RetryConfigSchema, createRetryEngine, initTelegramFileGuardConfig } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import {
   shouldAutoTts,
@@ -43,7 +50,7 @@ import type { ExecutionLogEntry } from "@comis/scheduler";
 import { bootstrapAdapters } from "./setup-channels-adapters.js";
 import { buildMediaPipeline } from "./setup-channels-media.js";
 import type { LifecycleReactor } from "@comis/channels";
-import { createLifecycleReactor, reactWithFallback, initTelegramFileGuardConfig } from "@comis/channels";
+import { createLifecycleReactor, reactWithFallback } from "@comis/channels";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -72,6 +79,10 @@ export interface ChannelsResult {
   channelCapabilities: Map<string, import("./setup-channels-adapters.js").ChannelCapabilityInfo>;
   /** The command queue instance for parent session TTL extension during graph execution. */
   commandQueue?: CommandQueue;
+  /** DeliveryService constructed once at the daemon composition root. Threaded
+   *  through setupCrossSession + createMessageHandlers so all production callers
+   *  share a single closure-captured deps record (Phase 30 plan 04). */
+  deliveryService: DeliveryService;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +218,23 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   // Initialize Telegram file-ref guard config
   initTelegramFileGuardConfig(container.config.telegramFileRefGuard);
 
+  // Phase 30 plan 04: Construct DeliveryService ONCE at the daemon composition
+  // root. The closure captures hookRunner + deliveryQueue + eventBus, so all
+  // production callers below use the method form `deliveryService.deliverToChannel(...)`
+  // instead of threading the optional 5th-arg `deps?: DeliverToChannelDeps`.
+  // The reference is also threaded through ChannelManagerDeps, ApprovalNotifierDeps,
+  // MessageHandlerDeps, and the cross-session-sender deps so every callsite
+  // sees the same closure-captured deps record. `deps.deliveryQueue` is
+  // always defined in production (real SQLite queue when enabled,
+  // createNoOpDeliveryQueue when disabled — see setup-delivery.ts), but the
+  // defensive `?? createNoOpDeliveryQueue()` preserves Phase-29 compatibility
+  // in case a downstream caller passes undefined.
+  const deliveryService: DeliveryService = createDeliveryService({
+    hookRunner: container.hookRunner,
+    deliveryQueue: deps.deliveryQueue ?? createNoOpDeliveryQueue(),
+    eventBus: container.eventBus,
+  });
+
   // Bootstrap enabled channel adapters from config
   const { adaptersByType, tgPlugin, linePlugin, channelCapabilities, channelPlugins } = await bootstrapAdapters({ container, channelsLogger });
 
@@ -331,8 +359,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
           "No executor found for cron agentTurn",
         );
         // Fallback: send raw text so the user at least gets something
-        await deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined,
-          deps.deliveryQueue ? { deliveryQueue: deps.deliveryQueue } : undefined);
+        await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined);
         payload.onComplete?.({ status: "error", error: "No executor found for agent" });
         return;
       }
@@ -567,8 +594,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
           return;
         }
 
-        const sendResult = await deliverToChannel(adapter, deliveryTarget.channelId, filtered.cleanedText, undefined,
-          deps.deliveryQueue ? { deliveryQueue: deps.deliveryQueue } : undefined);
+        const sendResult = await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, filtered.cleanedText, undefined);
         if (!sendResult.ok || !sendResult.value.ok) {
           logger.error(
             { err: sendResult.ok ? undefined : sendResult.error, jobName, hint: "Verify channel adapter is running and channel ID is valid", errorKind: "platform" as const },
@@ -591,16 +617,14 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
             error: err instanceof Error ? err.message : String(err),
           });
         }
-        await deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined,
-          deps.deliveryQueue ? { deliveryQueue: deps.deliveryQueue } : undefined);
+        await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined);
         payload.onComplete?.({ status: "error", error: err instanceof Error ? err.message : String(err) });
       }
       return;
     }
 
     // --- systemEvent (or undefined): send raw text (existing behavior) ---
-    const sendResult = await deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined,
-      deps.deliveryQueue ? { deliveryQueue: deps.deliveryQueue } : undefined);
+    const sendResult = await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined);
     if (!sendResult.ok || !sendResult.value.ok) {
       logger.error(
         { err: sendResult.ok ? undefined : sendResult.error, target: deliveryTarget, jobName, hint: "Verify channel adapter is running and channel ID is valid", errorKind: "platform" as const },
@@ -638,8 +662,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     ].join("\n");
 
     try {
-      await deliverToChannel(adapter, deliveryTarget.channelId, message, undefined,
-        deps.deliveryQueue ? { deliveryQueue: deps.deliveryQueue } : undefined);
+      await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, message, undefined);
       logger.info({ jobName, jobId, channelType: deliveryTarget.channelType }, "Job suspension notification delivered");
     } catch (err: unknown) {
       logger.error(
@@ -720,6 +743,11 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       sessionManager,
       retryEngine,
       deliveryQueue: deps.deliveryQueue,
+      deliveryService,
+      // Phase 32 commit 3: required dep — orchestrator-side inbound pipeline
+      // entrypoint. Routed through ChannelManagerDeps so channels does not
+      // create a back-edge import of @comis/orchestrator.
+      processInboundMessage,
       createExecutor: (agentId: string) => executors.get(agentId) ?? executors.get(defaultAgentId),
       adapters: Array.from(adaptersByType.values()),
       logger: channelsLogger,
@@ -1063,6 +1091,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       eventBus: container.eventBus,
       getAdapter: (channelType) => adaptersByType.get(channelType),
       logger: channelsLogger,
+      deliveryService,
     });
     approvalNotifier.start();
     channelsLogger.debug("Approval notifier started");
@@ -1078,5 +1107,5 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     return resolveAttachment({ url, type: "file" } as Attachment);
   };
 
-  return { adaptersByType, channelManager, compositeResolver, resolveAttachment: resolveAttachmentByUrl, lifecycleReactors, approvalNotifier, channelPlugins, channelCapabilities, commandQueue };
+  return { adaptersByType, channelManager, compositeResolver, resolveAttachment: resolveAttachmentByUrl, lifecycleReactors, approvalNotifier, channelPlugins, channelCapabilities, commandQueue, deliveryService };
 }

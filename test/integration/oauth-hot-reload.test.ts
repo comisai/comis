@@ -36,6 +36,7 @@ import {
 } from "vitest";
 import { TypedEventBus, createSecretManager, type OAuthProfile } from "@comis/core";
 import {
+  createFileLock,
   createOAuthCredentialStoreFile,
   createOAuthTokenManager,
 } from "@comis/agent";
@@ -45,6 +46,7 @@ import {
 } from "../support/mock-oauth-server.js";
 import { makeMockLogger } from "../support/mock-logger.js";
 
+const fileLock = createFileLock();
 const PROVIDER_ID = "openai-codex";
 
 // Mock-server lifecycle.
@@ -171,7 +173,7 @@ describe("OAuth file hot-reload (change event)", () => {
     const tmpDir = freshTmpDataDir();
     try {
       const watchPath = path.join(tmpDir, "auth-profiles.json");
-      const store1 = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+      const store1 = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
 
       // Seed profile X with token T1 via store1.
       const seedT1 = makeFreshProfile("rt_T1", "T1");
@@ -185,6 +187,8 @@ describe("OAuth file hot-reload (change event)", () => {
         secretManager: createSecretManager({}),
         eventBus,
         credentialStore: store1,
+
+        fileLock,
         logger,
         dataDir: tmpDir,
         watchPath,
@@ -200,7 +204,7 @@ describe("OAuth file hot-reload (change event)", () => {
         const refreshCountBefore = mockServer.getRequestCount("refresh_token");
 
         // Externally rewrite via a SECOND adapter instance (simulates the CLI process).
-        const store2 = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+        const store2 = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
         const updated: OAuthProfile = {
           ...seedT1,
           access: makeRealisticJwt({ access_marker: "T2" }),
@@ -238,7 +242,7 @@ describe("OAuth file hot-reload (change event)", () => {
     const tmpDir = freshTmpDataDir();
     try {
       const watchPath = path.join(tmpDir, "auth-profiles.json");
-      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
 
       const seedT1 = makeFreshProfile("rt_T1", "T1");
       await store.set(seedT1.profileId, seedT1);
@@ -249,6 +253,8 @@ describe("OAuth file hot-reload (change event)", () => {
         secretManager: createSecretManager({}),
         eventBus,
         credentialStore: store,
+
+        fileLock,
         logger,
         dataDir: tmpDir,
         watchPath,
@@ -287,7 +293,7 @@ describe("OAuth encrypted-mode limitation (documented)", () => {
       // Use the FILE adapter for the test (not the encrypted one — encrypted
       // requires SECRETS_MASTER_KEY + secretsDb). The watchPath: undefined
       // is what reproduces the encrypted-mode behavior — no watcher is registered.
-      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+      const store = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
 
       const seedT1 = makeFreshProfile("rt_T1", "T1");
       await store.set(seedT1.profileId, seedT1);
@@ -298,6 +304,8 @@ describe("OAuth encrypted-mode limitation (documented)", () => {
         secretManager: createSecretManager({}),
         eventBus,
         credentialStore: store,
+
+        fileLock,
         logger,
         dataDir: tmpDir,
         // watchPath: undefined  ← intentionally omitted (simulates encrypted-mode wiring)
@@ -308,7 +316,7 @@ describe("OAuth encrypted-mode limitation (documented)", () => {
         expect(r1.ok).toBe(true);
 
         // Externally rewrite — but no watcher → no cache invalidation.
-        const store2 = createOAuthCredentialStoreFile({ dataDir: tmpDir });
+        const store2 = createOAuthCredentialStoreFile({ dataDir: tmpDir, fileLock });
         const updated: OAuthProfile = {
           ...seedT1,
           access: makeRealisticJwt({ access_marker: "T2" }),

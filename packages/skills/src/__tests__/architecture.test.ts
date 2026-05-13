@@ -56,7 +56,9 @@ describe("@comis/skills -- architecture invariants", () => {
     // span ~3 lines between the two stems. Post-migration the only place
     // this shape exists is `packages/shared/src/mcp-tool-name.ts`.
     const result = findInSourceFiles({
-      rootDir: resolve(SRC_ROOT, "bridge"),
+      // Phase 33: bridge/ moved from src/bridge/ to src/skills/bridge/
+      // (SKILLS-SPLIT-02 source restructure).
+      rootDir: resolve(SRC_ROOT, "skills/bridge"),
       needle: /\.slice\(5\)[\s\S]{0,200}\.indexOf\(["']--["']\)/,
       excludeFileSuffixes: [".test.ts"],
     });
@@ -106,5 +108,50 @@ describe("@comis/skills -- architecture invariants", () => {
         "If this test fails, remove the offending key from the emit call site — " +
         "or, if you truly need command-derived metadata, use the existing `commandDigest` field.",
     ).toEqual([]);
+  });
+
+  it("skills/src/skills/* never imports from tools/ or platform-tools/ (SKILLS-SPLIT-02 / RES-ARCH-5)", () => {
+    // One-way invariant: the `.` subpath (skill registry, manifest, prompt,
+    // policy, bridge) must not depend on the tool layer at the per-file
+    // PEER-LEVEL. Per RES-ARCH-5 in 33-RESEARCH.md, the invariant is
+    // ONE-WAY only — `tools/` and `platform-tools/` may depend on each
+    // other (e.g., shared tool-helpers.ts).
+    //
+    // The regex matches `from "../tools/..."` or `from "../platform-tools/..."`
+    // (single `../`). For files at depth 1 inside skills/ (e.g.
+    // skills/X.ts where X is a peer of tools/), `../tools/` is the
+    // canonical peer-subpath crossing. The regex deliberately does NOT
+    // match `../../tools/...` (depth-2 relative reach across subpaths) —
+    // per the plan's notes, that level of cross-subpath dependency is
+    // tolerated transitionally and narrowed by Plan 04.
+    //
+    // The skills/src/skills/index.ts barrel is excluded from the walk
+    // (it intentionally re-exports from `../tools/index.js` and
+    // `../platform-tools/index.js` to keep consumer imports of
+    // `@comis/skills` resolving). The walk targets the SUBDIRECTORIES
+    // (registry, manifest, prompt, audit, policy, bridge, integrations)
+    // where the actual skill-concern logic lives — those files SHOULD
+    // never reach across subpaths at peer level. Bare-package imports
+    // (`from "@comis/skills/tools"`) are intentionally out of scope per
+    // the plan's note (self-imports through node_modules are a different
+    // anti-pattern, not the architectural boundary this test locks).
+    const SKILLS_SUBDIRS = ["registry", "manifest", "prompt", "audit", "policy", "bridge", "integrations"] as const;
+    const allMatches: string[] = [];
+    let totalChecked = 0;
+    for (const sub of SKILLS_SUBDIRS) {
+      const result = findInSourceFiles({
+        rootDir: resolve(SRC_ROOT, "skills", sub),
+        needle: /from\s+["']\.\.\/(?:tools|platform-tools)\//,
+        excludeDirs: ["__tests__", "__snapshots__", "dist", "node_modules"],
+        excludeFileSuffixes: [".test.ts"],
+      });
+      allMatches.push(...result.matches);
+      totalChecked += result.checkedFiles;
+    }
+    expect(
+      allMatches,
+      "skills/src/skills/* must not depend on tools/ or platform-tools/ (SKILLS-SPLIT-02)",
+    ).toEqual([]);
+    expect(totalChecked).toBeGreaterThan(0);
   });
 });

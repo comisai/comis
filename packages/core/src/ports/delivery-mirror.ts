@@ -8,12 +8,13 @@
  *
  * Session Mirroring.
  *
+ * The createNoOpDeliveryMirror() factory lives at ../delivery/no-op-delivery-mirror.ts
+ * as of Phase 28 commit 1 (closes L15 per CORE-PORTS-01); this file is now type-only.
+ *
  * @module
  */
 
-import { randomUUID } from "node:crypto";
 import type { Result } from "@comis/shared";
-import { ok } from "@comis/shared";
 
 /**
  * A delivery mirror entry representing a single delivered message recorded
@@ -56,7 +57,8 @@ export interface DeliveryMirrorRecordInput {
  * Records delivered messages and retrieves pending (unacknowledged) entries
  * for prompt injection into agent context on subsequent turns.
  *
- * Adapters: SqliteDeliveryMirrorAdapter (@comis/memory), NoOpDeliveryMirror (below).
+ * Adapters: SqliteDeliveryMirrorAdapter (@comis/memory),
+ *           NoOpDeliveryMirror (createNoOpDeliveryMirror in ../delivery/no-op-delivery-mirror.ts).
  */
 export interface DeliveryMirrorPort {
   /**
@@ -86,20 +88,4 @@ export interface DeliveryMirrorPort {
    * @returns The number of entries pruned.
    */
   pruneOld(maxAgeMs: number): Promise<Result<number, Error>>;
-}
-
-/**
- * No-op delivery mirror for when the mirror feature is disabled.
- *
- * All operations succeed immediately with no persistence.
- * record returns a random UUID, pending returns [], acknowledge returns void,
- * pruneOld returns 0.
- */
-export function createNoOpDeliveryMirror(): DeliveryMirrorPort {
-  return Object.freeze({
-    record: () => Promise.resolve(ok(randomUUID())),
-    pending: () => Promise.resolve(ok([] as DeliveryMirrorEntry[])),
-    acknowledge: () => Promise.resolve(ok(undefined)),
-    pruneOld: () => Promise.resolve(ok(0)),
-  });
 }

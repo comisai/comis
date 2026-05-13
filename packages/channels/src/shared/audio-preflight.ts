@@ -76,7 +76,7 @@ export async function audioPreflight(
     buffer = await deps.resolveAttachment(audioAtt);
   } catch (e) {
     deps.logger.warn(
-      { url: audioAtt.url, err: String(e), hint: "Audio preflight check failed; voice processing will be skipped", errorKind: "network" },
+      { url: audioAtt.url, err: String(e), hint: "Audio preflight check failed; voice processing will be skipped", errorKind: "network" as const },
       "Preflight resolve failed",
     );
     return { message: msg, transcribed: false };
@@ -89,7 +89,7 @@ export async function audioPreflight(
   });
   if (!result.ok) {
     deps.logger.warn(
-      { url: audioAtt.url, err: result.error.message, hint: "Audio preflight resolution failed; voice processing will be skipped", errorKind: "dependency" },
+      { url: audioAtt.url, err: result.error.message, hint: "Audio preflight resolution failed; voice processing will be skipped", errorKind: "dependency" as const },
       "Preflight transcription failed",
     );
     return { message: msg, transcribed: false };

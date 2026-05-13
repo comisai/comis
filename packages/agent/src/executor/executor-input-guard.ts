@@ -21,7 +21,7 @@ import {
   type InputSecurityGuard,
   type InjectionRateLimiter,
 } from "@comis/core";
-import type { ComisLogger, ErrorKind } from "@comis/infra";
+import type { ComisLogger, ErrorKind } from "@comis/core";
 
 /** Result of input validation: either validation passed (ok) or rejected with a response. */
 export interface InputGuardResult {

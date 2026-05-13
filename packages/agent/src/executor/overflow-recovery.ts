@@ -15,7 +15,7 @@
 
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { Context, Message } from "@mariozechner/pi-ai";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 
 import { estimateMessageChars, estimateContextChars } from "../safety/token-estimator.js";
 import { createToolResultSizeGuard, type ContentBlock } from "../safety/tool-result-size-guard.js";

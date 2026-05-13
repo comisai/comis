@@ -18,7 +18,7 @@
  */
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { ContextLayer, TokenBudget } from "./types.js";
 import { stripReasoningTagsFromText } from "../response-filter/reasoning-tags.js";
 
@@ -147,7 +147,7 @@ export function validateRoleAttribution(messages: AgentMessage[], logger: ComisL
           expectedRole: prevRole === "user" ? "assistant" : "user",
           actualRole: currRole,
           hint: "Session role attribution anomaly detected; repairOrphanedMessages may not have run",
-          errorKind: "state" as const,
+          errorKind: "internal" as const,
         },
         "Post-load role validation anomaly",
       );

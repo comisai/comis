@@ -31,12 +31,16 @@
  */
 
 import { stat, readFile } from "node:fs/promises";
+// Phase 35 Plan 35-04 (D-01 + drift recovery): all OAuth helpers + file-lock
+// adapter consumed from @comis/core. runOAuthTlsPreflight relocated in this
+// plan to close the last CLI → @comis/agent import edge (truth #11 / L17).
 import {
   selectOAuthCredentialStore,
-  redactEmailForLog,
   runOAuthTlsPreflight,
+  createFileLock,
+  redactEmailForLog,
   rewriteOAuthError,
-} from "@comis/agent";
+} from "@comis/core";
 import type {
   OAuthProfile,
   OAuthCredentialStorePort,
@@ -128,6 +132,7 @@ async function checkProfiles(
     store = selectOAuthCredentialStore({
       storage: "file",
       dataDir: context.dataDir,
+      fileLock: createFileLock(),
     });
   } catch (e) {
     return [
@@ -278,7 +283,11 @@ async function refreshTestFinding(
         category: CATEGORY,
         check: `Profile ${profile.profileId} refresh test`,
         status: "fail",
-        message: `Refresh test for ${identityLabel} failed (${rewritten.errorKind}): ${rewritten.userMessage}`,
+        // `code` is the OAuth domain discriminator (refresh_token_reused |
+        // invalid_grant | …) — the CLI message surfaces it for the operator.
+        // Phase 28 commit 6C renamed RewrittenOAuthError.errorKind →
+        // logErrorKind ("auth"); the discriminator now flows via `code`.
+        message: `Refresh test for ${identityLabel} failed (${rewritten.code}): ${rewritten.userMessage}`,
         suggestion: rewritten.hint,
         repairable: false,
       };

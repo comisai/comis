@@ -18,7 +18,7 @@ import {
   safePath,
   type PerAgentConfig,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import { createContextEngine, type ContextEngine } from "../context-engine/index.js";
 import type { TokenAnchor } from "../context-engine/types.js";
 import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
@@ -33,7 +33,7 @@ import {
   getSessionLatches,
 } from "./executor-session-state.js";
 import { shouldDropSignedFields, type DriftCheck } from "./replay-drift-detector.js";
-import type { ErrorKind } from "@comis/infra";
+import type { ErrorKind } from "@comis/core";
 import { readFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ export interface ContextEngineSetupDeps {
   authStorage: import("@mariozechner/pi-coding-agent").AuthStorage;
   modelRegistry: import("@mariozechner/pi-coding-agent").ModelRegistry;
   getPromptSkillsXml?: () => string;
-  contextStore?: import("@comis/memory").ContextStore;
+  contextStore?: import("@comis/core").ContextStorePort;
   db?: unknown;
   /**
    * Optional OAuth token manager. When provided, compaction LLM

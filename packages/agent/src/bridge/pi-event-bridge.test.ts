@@ -361,7 +361,7 @@ describe("createPiEventBridge", () => {
       );
       expect(endEmit).toBeDefined();
       expect(endEmit![1].success).toBe(false);
-      expect(endEmit![1].errorKind).toBe("nonzero-exit");
+      expect(endEmit![1].errorKind).toBe("dependency");
     });
 
     it("emits tool:executed with success=true when result has exitCode 0", () => {

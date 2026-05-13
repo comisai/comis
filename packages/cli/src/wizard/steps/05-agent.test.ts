@@ -20,9 +20,10 @@ import { INITIAL_STATE } from "../types.js";
 // Mock @clack/prompts to prevent import errors (loaded transitively via barrel)
 vi.mock("@clack/prompts", () => ({}));
 
-// Mock @comis/agent for createModelCatalog
-vi.mock("@comis/agent", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@comis/agent")>();
+// Mock @comis/core for createModelCatalog (relocated from @comis/agent in
+// Phase 35 Plan 35-04 per D-01 #4).
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
     createModelCatalog: vi.fn(() => ({
@@ -33,7 +34,7 @@ vi.mock("@comis/agent", async (importOriginal) => {
 });
 
 import { agentStep } from "./05-agent.js";
-import { createModelCatalog } from "@comis/agent";
+import { createModelCatalog } from "@comis/core";
 
 // ---------- Mock Prompter Factory ----------
 

@@ -1941,7 +1941,7 @@ describe("breakpoint cap increase", () => {
         existingCount: 4,
         messageCount: 22,
         hint: expect.stringContaining("Breakpoint budget exhausted"),
-        errorKind: "performance",
+        errorKind: "resource",
       }),
       expect.stringContaining("W7: Cache breakpoint budget exhausted"),
     );
@@ -6875,7 +6875,7 @@ describe("fence-aware microcompaction", () => {
     const warnPayload = fenceWarn![0] as Record<string, unknown>;
     expect(warnPayload).toHaveProperty("messageCount");
     expect(warnPayload).toHaveProperty("hint");
-    expect(warnPayload).toHaveProperty("errorKind", "performance");
+    expect(warnPayload).toHaveProperty("errorKind", "internal");
     expect(warnPayload.messageCount).toBe(12);
   });
 

@@ -23,7 +23,7 @@ import type {
   MessageHandler,
   SendMessageOptions,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { createImsgClient, type ImsgClient } from "./imessage-client.js";

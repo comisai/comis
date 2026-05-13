@@ -12,6 +12,7 @@
     { "path": "../infra" },
     { "path": "../agent" },
     { "path": "../channels" },
+    { "path": "../orchestrator" },
     { "path": "../gateway" },
     { "path": "../memory" },
     { "path": "../scheduler" },

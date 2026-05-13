@@ -127,7 +127,7 @@ const mockClassifyRpcError = vi.hoisted(() => vi.fn(() => ({
   errorKind: "internal" as const,
 })));
 
-vi.mock("../rpc/rpc-dispatch.js", () => ({
+vi.mock("../api/rpc-dispatch.js", () => ({
   createRpcDispatch: mockCreateRpcDispatch,
   classifyRpcError: mockClassifyRpcError,
 }));

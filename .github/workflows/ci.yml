@@ -30,6 +30,20 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Architecture (dist-mode madge cycle check)
+        id: arch-madge-dist
+        run: npx madge --circular --extensions ts packages/*/dist
+
+      - name: Architecture (project-reference cycle check)
+        id: arch-tsc-b-dry
+        # Walks the full project-references graph from the umbrella package,
+        # which transitively references all 13 @comis/* packages — surfaces
+        # TS6202 (project-reference cycle) without requiring a root tsconfig.json.
+        run: pnpm tsc -b --dry packages/comis
+
+      - name: Architecture tests (explicit visibility — GUARDRAILS-11)
+        run: pnpm test:architecture
+
       - name: Lint (security)
         run: pnpm lint:security
 
@@ -43,6 +57,9 @@ jobs:
             test/integration/install-detour-soft-stop-e2e.test.ts \
             test/integration/install-detour-advise-e2e.test.ts \
             test/integration/tooling-fixture-render.test.ts
+
+      - name: Tarball smoke (GUARDRAILS-12)
+        run: pnpm smoke:tarball
 
       - name: Audit dependencies
         run: pnpm audit --prod

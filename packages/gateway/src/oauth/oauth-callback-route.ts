@@ -28,7 +28,7 @@ import {
   resolveCodexAuthIdentity,
   rewriteOAuthError,
   redactEmailForLog,
-} from "@comis/agent";
+} from "@comis/core";
 import type { GatewayLogger } from "../server/hono-server.js";
 
 // ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ export function createOAuthCallbackRoute(deps: OAuthCallbackDeps): Hono {
       deps.logger.warn(
         {
           provider,
-          errorKind: rewritten.errorKind,
+          errorKind: "auth" as const,
           hint: rewritten.hint,
           submodule: "oauth-callback",
         },

@@ -5,7 +5,14 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { SessionKey } from "@comis/core";
+// Test-only core import — production session-write-lock no longer depends
+// on scheduler/proper-lockfile after Phase 32 commit 12; the FileLockPort
+// adapter is constructed by the test harness instead. createFileLock relocated
+// from @comis/scheduler to @comis/core in Phase 35 Plan 35-04 per D-01 #1.
+import { createFileLock } from "@comis/core";
 import { createComisSessionManager } from "./comis-session-manager.js";
+
+const fileLock = createFileLock();
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), "comis-session-mgr-test-"));
@@ -29,7 +36,7 @@ describe("destroySession", () => {
     const lockDir = makeTmpDir();
     dirs.push(baseDir, lockDir);
 
-    const mgr = createComisSessionManager({ sessionBaseDir: baseDir, lockDir, workspaceDir: baseDir });
+    const mgr = createComisSessionManager({ sessionBaseDir: baseDir, lockDir, cwd: baseDir, fileLock });
     const key = makeKey();
 
     // Simulate a session file
@@ -48,7 +55,7 @@ describe("destroySession", () => {
     const lockDir = makeTmpDir();
     dirs.push(baseDir, lockDir);
 
-    const mgr = createComisSessionManager({ sessionBaseDir: baseDir, lockDir, workspaceDir: baseDir });
+    const mgr = createComisSessionManager({ sessionBaseDir: baseDir, lockDir, cwd: baseDir, fileLock });
     const key = makeKey();
 
     const channelDir = join(baseDir, "default", "cron@3atest-job");
@@ -68,7 +75,7 @@ describe("destroySession", () => {
     const lockDir = makeTmpDir();
     dirs.push(baseDir, lockDir);
 
-    const mgr = createComisSessionManager({ sessionBaseDir: baseDir, lockDir, workspaceDir: baseDir });
+    const mgr = createComisSessionManager({ sessionBaseDir: baseDir, lockDir, cwd: baseDir, fileLock });
     const key = makeKey();
 
     await expect(mgr.destroySession(key)).resolves.not.toThrow();

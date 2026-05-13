@@ -21,11 +21,12 @@ import {
   type MemoryPort,
   type MemoryEntry,
   type ModelOperationType,
+  type ErrorKind,
 } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { randomUUID } from "node:crypto";
-import { resolveModelPricing } from "../model/model-catalog.js";
+import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
 import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-break-detection.js";
 import { classifyError } from "../executor/error-classifier.js";
@@ -326,7 +327,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // Tools like exec never throw — they return { details: { exitCode: N } }.
           // The SDK only sets isError on thrown exceptions, so we also inspect the result.
           let toolSuccess = !endEvent.isError;
-          let toolErrorKind: string | undefined;
+          let toolErrorKind: ErrorKind | undefined;
           if (toolSuccess && endEvent.result != null) {
             const details = (endEvent.result as Record<string, unknown>)?.details;
             if (
@@ -335,7 +336,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               (details as Record<string, unknown>).exitCode !== 0
             ) {
               toolSuccess = false;
-              toolErrorKind = "nonzero-exit";
+              toolErrorKind = "dependency";
             }
           }
 

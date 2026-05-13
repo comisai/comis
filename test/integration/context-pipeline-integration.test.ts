@@ -28,7 +28,10 @@ import {
 
 import { createContextEngine } from "@comis/agent";
 
-import { createSessionSearchTool } from "@comis/skills";
+// Phase 33 SKILLS-SPLIT-06: platform-tool factories live on the
+// `./platform-tools` subpath after Plan 03 (the `.` subpath barrel no
+// longer re-exports them).
+import { createSessionSearchTool } from "@comis/skills/platform-tools";
 
 // ---------------------------------------------------------------------------
 // Shared test helpers

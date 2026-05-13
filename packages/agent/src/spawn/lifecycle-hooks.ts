@@ -93,7 +93,7 @@ export function createLifecycleHooks(deps: LifecycleHooksDeps) {
             runId: params.runId,
             err: hookErr,
             hint: "prepareSubagentSpawn hook internal error",
-            errorKind: "internal",
+            errorKind: "internal" as const,
           },
           "Lifecycle hook: prepareSpawn internal error",
         );
@@ -143,7 +143,7 @@ export function createLifecycleHooks(deps: LifecycleHooksDeps) {
             runId: params.runId,
             err: hookErr,
             hint: "onSubagentEnded hook internal error",
-            errorKind: "internal",
+            errorKind: "internal" as const,
           },
           "Lifecycle hook: onEnded internal error",
         );

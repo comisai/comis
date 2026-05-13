@@ -58,7 +58,7 @@ function makeLogger() {
     warn: vi.fn(),
     debug: vi.fn(),
     child: vi.fn().mockReturnThis(),
-  } as unknown as import("@comis/infra").ComisLogger;
+  } as unknown as import("@comis/core").ComisLogger;
 }
 
 // Dynamic loader for the dispatcher factory. If the import returns
@@ -69,7 +69,7 @@ async function loadDispatcher(): Promise<
         eventBus: import("@comis/core").TypedEventBus;
         taskManager: { getTask: (id: string) => unknown };
         notifyFn: (...args: unknown[]) => void | Promise<unknown>;
-        logger: import("@comis/infra").ComisLogger;
+        logger: import("@comis/core").ComisLogger;
       }) => { shutdown: () => Promise<void> };
     }
   | undefined
@@ -82,7 +82,7 @@ async function loadDispatcher(): Promise<
         eventBus: import("@comis/core").TypedEventBus;
         taskManager: { getTask: (id: string) => unknown };
         notifyFn: (...args: unknown[]) => void | Promise<unknown>;
-        logger: import("@comis/infra").ComisLogger;
+        logger: import("@comis/core").ComisLogger;
       }) => { shutdown: () => Promise<void> };
     };
   } catch {
