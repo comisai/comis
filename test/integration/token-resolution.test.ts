@@ -14,7 +14,7 @@
  *   - Config token with explicit secret does NOT trigger WARN log
  *   - Authenticated RPC succeeds with config-provided token
  *
- * Uses port 8561 (config.test-token-resolution.yaml).
+ * Uses port 8564 (config.test-token-resolution.yaml).
  */
 
 import { resolve, dirname } from "node:path";

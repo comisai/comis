@@ -26,8 +26,11 @@ import {
   afterEach,
   vi,
 } from "vitest";
-import type { TypedEventBus } from "@comis/core";
-import { createFileLock, createOAuthCredentialStoreFile } from "@comis/agent";
+import {
+  type TypedEventBus,
+  createFileLock,
+  createOAuthCredentialStoreFile,
+} from "@comis/core";
 import {
   createOAuthCallbackRoute,
   insertPendingFlow,

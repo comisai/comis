@@ -46,14 +46,12 @@ import {
   createSecretManager,
   type OAuthCredentialStorePort,
   type OAuthProfile,
-} from "@comis/core";
-import {
   createFileLock,
   createOAuthCredentialStoreFile,
-  createOAuthTokenManager,
   rewriteOAuthError,
   type OAuthTokenManager,
-} from "@comis/agent";
+} from "@comis/core";
+import { createOAuthTokenManager } from "@comis/agent";
 import {
   createMockOAuthServer,
   type MockOAuthServer,
@@ -235,14 +233,17 @@ describe("refresh-failure error classification", () => {
       });
       expect(events[0]!.hint).toContain("re-login required");
 
-      // (b) WARN log captured with module=oauth-token-manager + the same
-      //     errorKind / hint.
+      // (b) WARN log captured with module=oauth-token-manager. Per
+      //     AGENTS.md §2.7, Pino `errorKind` is a closed union, so the WARN
+      //     payload's `errorKind` is the literal `"auth"` (Phase 28 commit
+      //     6B). The OAuth domain discriminator now flows via the event
+      //     payload and OAuthError instead.
       const warnCalls = logger._calls("warn");
       const refreshWarn = warnCalls.find(
         (c) => c.payload?.submodule === "oauth-token-manager",
       );
       expect(refreshWarn).toBeDefined();
-      expect(refreshWarn!.payload.errorKind).toBe("refresh_token_reused");
+      expect(refreshWarn!.payload.errorKind).toBe("auth");
       expect(refreshWarn!.payload.hint).toContain("re-login required");
       expect(refreshWarn!.payload.profileId).toBe(TEST_PROFILE_ID);
 
@@ -279,12 +280,13 @@ describe("refresh-failure error classification", () => {
       expect(events[0]!.errorKind).toBe("unsupported_region");
       expect(events[0]!.hint).toContain("HTTPS_PROXY");
 
-      // WARN log fields agree with the event.
+      // WARN log carries the closed-union "auth" errorKind; the domain
+      // discriminator (unsupported_region) flows via the event payload.
       const refreshWarn = logger
         ._calls("warn")
         .find((c) => c.payload?.submodule === "oauth-token-manager");
       expect(refreshWarn).toBeDefined();
-      expect(refreshWarn!.payload.errorKind).toBe("unsupported_region");
+      expect(refreshWarn!.payload.errorKind).toBe("auth");
       expect(refreshWarn!.payload.hint).toContain("HTTPS_PROXY");
 
       // Returned OAuthError carries the matching classification + hint.
@@ -307,7 +309,7 @@ describe("refresh-failure error classification", () => {
     // input rewriteOAuthError sees from pi-ai's login runner.
     const result = rewriteOAuthError(new Error("state mismatch"));
     expect(result.code).toBe("callback_validation_failed");
-    expect(result.errorKind).toBe("callback_validation_failed");
+    expect(result.logErrorKind).toBe("auth");
     expect(result.userMessage).toMatch(/Browser callback validation failed/i);
     expect(result.hint).toMatch(/retry/i);
 
@@ -335,12 +337,13 @@ describe("refresh-failure error classification", () => {
       expect(events[0]!.errorKind).toBe("invalid_grant");
       expect(events[0]!.hint).toContain("re-login required");
 
-      // WARN log agrees.
+      // WARN log carries the closed-union "auth" errorKind; the domain
+      // discriminator (invalid_grant) flows via the event payload.
       const refreshWarn = logger
         ._calls("warn")
         .find((c) => c.payload?.submodule === "oauth-token-manager");
       expect(refreshWarn).toBeDefined();
-      expect(refreshWarn!.payload.errorKind).toBe("invalid_grant");
+      expect(refreshWarn!.payload.errorKind).toBe("auth");
 
       // Returned OAuthError carries the same classification.
       expect(result.ok).toBe(false);

@@ -175,16 +175,22 @@ const ConfigValueSchema = z.union([
 ]);
 
 /**
- * Git commit log entry shape returned by `config.history`. Mirrors
- * the projection at `config-handlers.ts:1054` (delegated to
- * `configGitManager.history(...)` whose ports return
- * `{ sha, date, message, author? }` rows).
+ * Git commit log entry shape returned by `config.history`. Mirrors the
+ * `HistoryEntry` shape produced by `configGitManager.history(...)` —
+ * see `packages/core/src/config/git-manager.ts` (`HistoryEntry`).
  */
 const ConfigHistoryEntrySchema = z.object({
   sha: z.string(),
-  date: z.string(),
+  timestamp: z.string(),
   message: z.string(),
-  author: z.string().optional(),
+  metadata: z.object({
+    section: z.string(),
+    key: z.string().optional(),
+    agent: z.string().optional(),
+    user: z.string().optional(),
+    traceId: z.string().optional(),
+    summary: z.string(),
+  }),
 });
 
 /**

@@ -8,7 +8,7 @@
 # The first token (auth-token) has an explicit secret for daemon harness auth.
 # The second token (auto-gen-token) has NO secret field, triggering auto-generation.
 #
-# Uses port 8561 to avoid conflicts when running in parallel via vitest pool: "forks".
+# Uses port 8564 (8561 collides with config.test-secret-residency.yaml).
 
 tenantId: "test"
 logLevel: "debug"
@@ -40,7 +40,7 @@ agents:
 gateway:
   enabled: true
   host: "127.0.0.1"
-  port: 8561
+  port: 8564
   tokens:
     # Token 1: explicit secret (auth-token MUST be first for daemon harness authToken extraction)
     - id: "auth-token"

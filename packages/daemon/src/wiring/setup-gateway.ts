@@ -333,7 +333,7 @@ export async function handleConfigChatCommand(
     }
 
     if (subcommand === "history") {
-      const result = await rpcCall("config.history", { limit: 5 }) as { entries: Array<{ sha: string; date: string; message: string }>; error?: string };
+      const result = await rpcCall("config.history", { limit: 5 }) as { entries: Array<{ sha: string; timestamp: string; message: string }>; error?: string };
       if (result.error) {
         return { handled: true, response: result.error };
       }
@@ -343,7 +343,7 @@ export async function handleConfigChatCommand(
       const lines = ["**Config History**", ""];
       for (const entry of result.entries) {
         const sha = entry.sha.slice(0, 7);
-        const date = new Date(entry.date).toLocaleString();
+        const date = new Date(entry.timestamp).toLocaleString();
         lines.push(`${sha} | ${date} | ${entry.message}`);
       }
       return { handled: true, response: lines.join("\n") };

@@ -27,13 +27,13 @@ import {
   afterEach,
   vi,
 } from "vitest";
-import type { OAuthProfile } from "@comis/core";
 import {
+  type OAuthProfile,
   createFileLock,
   createOAuthCredentialStoreFile,
   loginOpenAICodexDeviceCode,
   resolveCodexAuthIdentity,
-} from "@comis/agent";
+} from "@comis/core";
 import {
   createMockOAuthServer,
   type MockOAuthServer,

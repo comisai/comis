@@ -29,11 +29,11 @@ import {
   type TestDaemonHandle,
 } from "../support/daemon-harness.js";
 import { DAEMON_STARTUP_MS, DAEMON_CLEANUP_MS } from "../support/timeouts.js";
+import { EchoChannelAdapter } from "@comis/channels";
 import {
-  EchoChannelAdapter,
   createChannelManager,
   type ChannelManagerDeps,
-} from "@comis/channels";
+} from "@comis/orchestrator";
 import { createRetryEngine } from "../../packages/channels/dist/shared/retry-engine.js";
 // Phase 32 commit 8: applyOverflowPolicy moved to @comis/orchestrator (ORCH-EXT-08, Wave A close).
 import { applyOverflowPolicy } from "@comis/orchestrator";
@@ -160,6 +160,26 @@ function makeMinimalDeps(
     })),
   };
 
+  // Minimal pipeline stub: drive the executor for each inbound message and
+  // forward the response back through the adapter. CHAN-05 tests concurrency
+  // of the manager's per-adapter dispatch, not the full inbound pipeline.
+  const processInboundMessage = (async (deps, adapter, msg) => {
+    const exec = deps.createExecutor("default");
+    if (!exec) return;
+    const result = (await exec.execute(msg)) as { response: string };
+    await adapter.sendMessage(msg.channelId, result.response);
+  }) as ChannelManagerDeps["processInboundMessage"];
+
+  // Minimal delivery service stub: directly hand off to adapter.sendMessage.
+  // The CHAN-05 tests don't exercise retry/queue/hook paths.
+  const deliveryService = {
+    deliverToChannel: (async (adapter, channelId, text) => {
+      const sendResult = await adapter.sendMessage(channelId, text);
+      if (!sendResult.ok) return err(sendResult.error);
+      return ok({ ok: true, messageId: sendResult.value });
+    }) as ChannelManagerDeps["deliveryService"]["deliverToChannel"],
+  } as ChannelManagerDeps["deliveryService"];
+
   return {
     eventBus: makeEventBus(),
     messageRouter: {
@@ -173,6 +193,8 @@ function makeMinimalDeps(
     createExecutor: vi.fn(() => executor) as any,
     adapters,
     logger: makeLogger(),
+    processInboundMessage,
+    deliveryService,
   };
 }
 

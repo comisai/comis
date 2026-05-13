@@ -67,14 +67,14 @@ import {
   type OAuthCredentialStorePort,
   type OAuthProfile,
   type PerAgentConfig,
-} from "@comis/core";
-import {
   createFileLock,
   createOAuthCredentialStoreFile,
+  type OAuthTokenManager,
+} from "@comis/core";
+import {
   createOAuthTokenManager,
   createAuthStorageAdapter,
   resolveProviderApiKey,
-  type OAuthTokenManager,
 } from "@comis/agent";
 import {
   createAgentHandlers,
@@ -187,8 +187,6 @@ function makeJwt(payload: Record<string, unknown>): string {
  */
 async function seedProfile(
   credentialStore: OAuthCredentialStorePort,
-
-  fileLock,
   profileId: string,
   email: string,
   accountId: string,
@@ -226,8 +224,6 @@ async function seedProfile(
  */
 function buildOAuthManager(
   credentialStore: OAuthCredentialStorePort,
-
-  fileLock,
   agents: Record<string, PerAgentConfig>,
   agentId: string,
 ): OAuthTokenManager {
@@ -235,6 +231,7 @@ function buildOAuthManager(
     secretManager: createSecretManager({}),
     eventBus: new TypedEventBus(),
     credentialStore,
+    fileLock,
     logger: makeSilentLogger(),
     dataDir: tmpDir,
     keyPrefix: "OAUTH_",

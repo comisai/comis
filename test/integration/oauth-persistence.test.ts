@@ -47,13 +47,11 @@ import {
   createSecretsCrypto,
   type OAuthCredentialStorePort,
   type OAuthProfile,
-} from "@comis/core";
-import { createSecretManager } from "@comis/core";
-import {
+  createSecretManager,
   createFileLock,
   createOAuthCredentialStoreFile,
-  createOAuthTokenManager,
-} from "@comis/agent";
+} from "@comis/core";
+import { createOAuthTokenManager } from "@comis/agent";
 import {
   createSqliteSecretStore,
   createOAuthProfileStoreEncrypted,
@@ -382,8 +380,10 @@ describe("OAuth persistence (integration)", () => {
           ._calls("warn")
           .filter((c) => c.payload?.hint === "env-override-ignored");
         expect(warnsWithDriftHint).toHaveLength(1);
-        // errorKind = config_drift.
-        expect(warnsWithDriftHint[0]!.payload.errorKind).toBe("config_drift");
+        // Per AGENTS.md §2.7, Pino `errorKind` is a closed union, so the
+        // WARN payload carries the literal "auth" (Phase 28 commit 6B).
+        // The semantic discriminator flows via `hint: "env-override-ignored"`.
+        expect(warnsWithDriftHint[0]!.payload.errorKind).toBe("auth");
 
         // Stored profile is canonical — refresh was NOT updated to the
         // env-var's value. (Profile was not expired, so no refresh fired.)

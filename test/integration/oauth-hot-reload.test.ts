@@ -34,12 +34,14 @@ import {
   afterEach,
   vi,
 } from "vitest";
-import { TypedEventBus, createSecretManager, type OAuthProfile } from "@comis/core";
 import {
+  TypedEventBus,
+  createSecretManager,
+  type OAuthProfile,
   createFileLock,
   createOAuthCredentialStoreFile,
-  createOAuthTokenManager,
-} from "@comis/agent";
+} from "@comis/core";
+import { createOAuthTokenManager } from "@comis/agent";
 import {
   createMockOAuthServer,
   type MockOAuthServer,

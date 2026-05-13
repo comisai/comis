@@ -300,7 +300,7 @@ export function registerConfigCommand(program: Command): void {
           ["SHA", "Date", "Message"],
           result.entries.map((entry) => [
             entry.sha.slice(0, 7),
-            formatDate(entry.date),
+            formatDate(entry.timestamp),
             truncate(entry.message, 60),
           ]),
         );

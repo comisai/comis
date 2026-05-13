@@ -20,7 +20,7 @@ import {
 } from "../support/daemon-harness.js";
 import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.js";
 import { RPC_FAST_MS } from "../support/timeouts.js";
-import { resolveWorkspaceDir } from "@comis/agent";
+import { resolveWorkspaceDir } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Path resolution
