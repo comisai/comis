@@ -1,23 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Allowlist shrink-only gate (D-04 / ORCH-EXT-24).
+ * Unified allowlist shrink-only gate (D-04 + D-SHRINK-01..03).
  *
- * Reads the base ref's `test/support/architecture-allowlist.ts` via
- * `git show origin/main:test/support/architecture-allowlist.ts`, parses
- * both base and head allowlist arrays via static AST extraction (NOT
- * dynamic import — robust to schema drift between commits), and asserts
- * every L-ID present in HEAD is either present in BASE or has been
- * explicitly removed (no new L-IDs in head).
+ * Reads `test/support/architecture-allowlist.ts` at base ref via
+ * `git show origin/main:test/support/architecture-allowlist.ts`,
+ * parses both base and head via static AST extraction (NOT dynamic
+ * import — robust to schema drift between commits), and for each of
+ * the 8 allowlists asserts no NEW entries vs base per the key-shape
+ * appropriate to that array (D-SHRINK-02 / PATTERNS.md key shape table).
  *
- * This catches the "remove L1 + add L99 in the same PR" failure mode
- * that pure length-monotonicity would miss. The test is part of Phase 27's
- * deliverable but its load-bearing role is from Phase 32 onwards (per
- * design §15.5 + ORCH-EXT-24).
+ * Key shapes:
+ *   - `ALLOWLIST`                 — L-ID set (Phase 27 D-04 preserved)
+ *   - `fileSizeAllowlist`         — {file} set
+ *   - `rawThrowAllowlist`         — {file, lineRanges[0][0]} set
+ *   - `untypedSqliteAllowlist`    — {file, symbol} set
+ *   - `optionalFieldAllowlist`    — {file, typeName} set
+ *   - `globalsAllowlist`          — {file, line, global} set
+ *   - `noBackwardCompatAllowlist` — {file, line} set
+ *   - `coverageWaiver`            — length only (head.length <= base.length)
  *
- * Local-fallback: if `origin/main` is not fetched (running locally without
- * `git fetch`), the test SKIPS with a console.warn — auto-fetching from a
- * test would surprise developers and require network access during
- * `pnpm test`. CI always has the base ref via standard checkout actions.
+ * Local-fallback: if `origin/main` is not fetched (running locally
+ * without `git fetch`), the test SKIPS with a console.warn (Phase 27
+ * pattern preserved — auto-fetching from a test would surprise
+ * developers and require network access during `pnpm test`).
  *
  * @module
  */
@@ -32,45 +37,85 @@ import { formatViolations } from "../support/architecture-helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "..", "..");
-const ALLOWLIST_PATH = resolve(REPO_ROOT, "test/support/architecture-allowlist.ts");
+const ALLOWLIST_PATH = resolve(
+  REPO_ROOT,
+  "test/support/architecture-allowlist.ts",
+);
 const BASE_REF = process.env.COMIS_ALLOWLIST_BASE_REF ?? "origin/main";
 
 function readBaseAllowlist(): string | null {
   try {
-    return execSync(`git show ${BASE_REF}:test/support/architecture-allowlist.ts`, {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    return execSync(
+      `git show ${BASE_REF}:test/support/architecture-allowlist.ts`,
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
   } catch {
     return null;
   }
 }
 
 /**
- * Static AST extraction of ALLOWLIST entries' `id` properties from source text.
+ * Static AST extraction of an arbitrary array's entries' raw properties.
  *
- * Why static extraction over `import("file:///abs/path/...")`: the file at
- * the BASE ref may have a different schema (imports moved between commits),
- * causing dynamic import to fail. Static parsing is robust to that drift.
+ * Returns a flat array of `Record<string, string | number>` where each
+ * record contains the entry's PropertyAssignment values (StringLiteral
+ * + NumericLiteral only — composite values like `lineRanges:
+ * [[12, 12]]` are extracted as their first inner numeric for shrink-key
+ * stability per PATTERNS.md).
  */
-function extractAllowlistIds(sourceText: string): Set<string> {
-  const sf = ts.createSourceFile("allowlist.ts", sourceText, ts.ScriptTarget.ES2023, true);
-  const ids = new Set<string>();
+function extractArrayEntries(
+  sourceText: string,
+  arrayName: string,
+): Array<Record<string, string | number>> {
+  const sf = ts.createSourceFile(
+    "allowlist.ts",
+    sourceText,
+    ts.ScriptTarget.ES2023,
+    /*setParentNodes*/ true,
+  );
+  const out: Array<Record<string, string | number>> = [];
+
+  function extractFromObject(obj: ts.ObjectLiteralExpression): void {
+    const record: Record<string, string | number> = {};
+    for (const prop of obj.properties) {
+      if (!ts.isPropertyAssignment(prop) || !ts.isIdentifier(prop.name)) {
+        continue;
+      }
+      const key = prop.name.text;
+      const init = prop.initializer;
+      if (ts.isStringLiteral(init)) {
+        record[key] = init.text;
+      } else if (ts.isNumericLiteral(init)) {
+        record[key] = Number(init.text);
+      } else if (ts.isArrayLiteralExpression(init)) {
+        // For lineRanges: [[12, 12], ...] — extract first numeric of
+        // first nested array for shrink-key stability.
+        const first = init.elements[0];
+        if (first && ts.isArrayLiteralExpression(first)) {
+          const inner = first.elements[0];
+          if (inner && ts.isNumericLiteral(inner)) {
+            record[key] = Number(inner.text);
+          }
+        }
+      }
+    }
+    out.push(record);
+  }
 
   function visit(node: ts.Node): void {
-    // Find: `export const ALLOWLIST: ... = [ ... ] as const;`
     if (
       ts.isVariableStatement(node) &&
       node.declarationList.declarations.some(
-        (d) => ts.isIdentifier(d.name) && d.name.text === "ALLOWLIST",
+        (d) => ts.isIdentifier(d.name) && d.name.text === arrayName,
       )
     ) {
       const decl = node.declarationList.declarations.find(
-        (d) => ts.isIdentifier(d.name) && d.name.text === "ALLOWLIST",
+        (d) => ts.isIdentifier(d.name) && d.name.text === arrayName,
       );
-      // The initializer may be `[...] as const` (AsExpression wrapping ArrayLiteralExpression)
-      // OR a bare `[...]` (ArrayLiteralExpression directly). Handle both.
       let arrayExpr: ts.ArrayLiteralExpression | undefined;
       if (decl?.initializer) {
         if (
@@ -85,16 +130,7 @@ function extractAllowlistIds(sourceText: string): Set<string> {
       if (arrayExpr) {
         for (const el of arrayExpr.elements) {
           if (ts.isObjectLiteralExpression(el)) {
-            for (const prop of el.properties) {
-              if (
-                ts.isPropertyAssignment(prop) &&
-                ts.isIdentifier(prop.name) &&
-                prop.name.text === "id" &&
-                ts.isStringLiteral(prop.initializer)
-              ) {
-                ids.add(prop.initializer.text);
-              }
-            }
+            extractFromObject(el);
           }
         }
       }
@@ -102,59 +138,154 @@ function extractAllowlistIds(sourceText: string): Set<string> {
     ts.forEachChild(node, visit);
   }
   ts.forEachChild(sf, visit);
-  return ids;
+  return out;
 }
 
-describe("allowlist-shrink (D-04)", () => {
-  it("every L-ID present in head is either present in base OR head shrinks the set", () => {
-    const baseText = readBaseAllowlist();
-    if (baseText === null) {
-      console.warn(
-        `[allowlist-shrink] Could not retrieve ${BASE_REF}:test/support/architecture-allowlist.ts. ` +
-          `Skipping. This is expected when running locally without 'git fetch'. ` +
-          `CI runs always have the base ref available.`,
-      );
-      return;
-    }
-    const headText = readFileSync(ALLOWLIST_PATH, "utf8");
-    const baseIds = extractAllowlistIds(baseText);
-    const headIds = extractAllowlistIds(headText);
-    const added = [...headIds].filter((id) => !baseIds.has(id));
-    expect(
-      added,
-      formatViolations({
-        description:
-          "Allowlist is shrink-only (D-04 / design §15.5). The following L-IDs were ADDED in this PR:",
-        violations: added.map((id) => ({
-          file: `architecture-allowlist.ts (id: ${id})`,
-          line: 0,
-        })),
-        suggestedFix:
-          "If a new violation must be allowlisted, it requires an explicit phase commit (not a feature PR). Either (a) close the underlying violation in this PR (preferred), or (b) escalate to a design-doc amendment + phase commit.",
-        designRef:
-          'design §15.5 ("Feature PRs target the *current* allowlist") + Phase 32 ORCH-EXT-24',
-      }),
-    ).toEqual([]);
-  });
+type KeyKind = "l-id" | "tuple" | "length";
 
-  it("self-test: extractAllowlistIds parses the head ALLOWLIST and agrees with regex", () => {
-    // Sanity check: the static AST extractor must work on the head allowlist.
-    // The shrink-only test could pass vacuously (empty ⊆ empty), so we
-    // cross-check the AST extractor against an independent regex count.
-    // Both sides may legitimately be 0 once the allowlist closes (Phase 36
-    // GUARDRAILS-01 closed the last entry — vacuous-pass is now correct
-    // because the array IS the closed empty set, and the regex also reads 0).
-    // The load-bearing assertion is the AST-vs-regex agreement below.
+interface ShrinkArrayConfig {
+  readonly name: string;
+  readonly keyKind: KeyKind;
+  readonly extractKey?: (p: Record<string, string | number>) => string;
+}
+
+/**
+ * Configuration for all 8 allowlists. The order matches RESEARCH.md
+ * §"Shrink-Test Unification" SHRINK_ARRAYS table.
+ */
+const SHRINK_ARRAYS: readonly ShrinkArrayConfig[] = [
+  { name: "ALLOWLIST", keyKind: "l-id" },
+  {
+    name: "fileSizeAllowlist",
+    keyKind: "tuple",
+    extractKey: (p) => String(p.file ?? ""),
+  },
+  {
+    name: "rawThrowAllowlist",
+    keyKind: "tuple",
+    extractKey: (p) => `${p.file ?? ""}:${p.lineRanges ?? "<none>"}`,
+  },
+  {
+    name: "untypedSqliteAllowlist",
+    keyKind: "tuple",
+    extractKey: (p) => `${p.file ?? ""}:${p.symbol ?? ""}`,
+  },
+  {
+    name: "optionalFieldAllowlist",
+    keyKind: "tuple",
+    extractKey: (p) => `${p.file ?? ""}:${p.typeName ?? ""}`,
+  },
+  {
+    name: "globalsAllowlist",
+    keyKind: "tuple",
+    extractKey: (p) =>
+      `${p.file ?? ""}:${p.line ?? 0}:${p.global ?? ""}`,
+  },
+  {
+    name: "noBackwardCompatAllowlist",
+    keyKind: "tuple",
+    extractKey: (p) => `${p.file ?? ""}:${p.line ?? 0}`,
+  },
+  { name: "coverageWaiver", keyKind: "length" },
+];
+
+describe.each(SHRINK_ARRAYS)(
+  "allowlist-shrink — $name (D-SHRINK-01..03)",
+  ({ name, keyKind, extractKey }) => {
+    it(`${name} is shrink-only between ${BASE_REF}..HEAD`, () => {
+      const baseText = readBaseAllowlist();
+      if (baseText === null) {
+        console.warn(
+          `[allowlist-shrink:${name}] Could not retrieve ${BASE_REF}:test/support/architecture-allowlist.ts. ` +
+            `Skipping. This is expected when running locally without 'git fetch'. CI runs always have the base ref available.`,
+        );
+        return;
+      }
+      const headText = readFileSync(ALLOWLIST_PATH, "utf8");
+      const baseEntries = extractArrayEntries(baseText, name);
+      const headEntries = extractArrayEntries(headText, name);
+
+      // Length-only shrink-rule for coverageWaiver.
+      if (keyKind === "length") {
+        expect(
+          headEntries.length,
+          formatViolations({
+            description: `${name} grew (length-only ratchet).`,
+            violations: [
+              {
+                file: name,
+                line: headEntries.length,
+                snippet: `base length: ${baseEntries.length}, head length: ${headEntries.length}`,
+              },
+            ],
+            suggestedFix:
+              "Remove entries from the head allowlist OR escalate via the out-of-band exception process (D-SHRINK-02 deferred).",
+            designRef:
+              "design §15.5 + code-quality-plan §4.5 (D-SHRINK-01) + Phase 27 D-04",
+          }),
+        ).toBeLessThanOrEqual(baseEntries.length);
+        return;
+      }
+
+      // Set-based shrink-rule for L-ID and tuple keys.
+      const keyFn: (p: Record<string, string | number>) => string =
+        keyKind === "l-id"
+          ? (p) => String(p.id ?? "")
+          : extractKey!;
+      const baseKeys = new Set(baseEntries.map(keyFn));
+      const headKeys = new Set(headEntries.map(keyFn));
+      const added = [...headKeys].filter((k) => !baseKeys.has(k));
+
+      expect(
+        added,
+        formatViolations({
+          description: `${name} is shrink-only (D-SHRINK-01). The following entries were ADDED in this PR:`,
+          violations: added.map((key) => ({
+            file: `${name} (key: ${key})`,
+            line: 0,
+          })),
+          suggestedFix:
+            "If a new violation must be allowlisted, it requires an explicit phase commit (not a feature PR). Either (a) close the underlying violation in this PR (preferred), or (b) escalate to a design-doc amendment + phase commit.",
+          designRef:
+            "design §15.5 + code-quality-plan §4.5 (D-SHRINK-01) + Phase 27 D-04",
+          allowlistRef: name,
+        }),
+      ).toEqual([]);
+    });
+  },
+);
+
+// Preserve the self-test invariant from Phase 27: AST extractor count
+// must agree with a regex-based sanity count for each array.
+describe("allowlist-shrink — AST extractor self-test (D-04)", () => {
+  it("extractArrayEntries(ALLOWLIST) agrees with regex L-ID count (Phase 27 invariant)", () => {
     const headText = readFileSync(ALLOWLIST_PATH, "utf8");
-    const headIds = extractAllowlistIds(headText);
+    const headEntries = extractArrayEntries(headText, "ALLOWLIST");
     const regexCount = (headText.match(/^\s*id:\s*"L\d+"/gm) ?? []).length;
     expect(
-      headIds.size,
-      "extractAllowlistIds parse-self-test: must agree with regex regardless of allowlist size (Phase 36 GUARDRAILS-01 closed the last entry — vacuous-pass is now legitimate because the array is the closed empty set).",
+      headEntries.length,
+      "extractArrayEntries parse-self-test: count must agree with regex regardless of allowlist size (Phase 36 GUARDRAILS-01 closed the last entry — vacuous-pass is now legitimate because the array is the closed empty set).",
     ).toBeGreaterThanOrEqual(0);
     expect(
-      headIds.size,
-      "AST extractor must agree with regex-counted L-IDs in the file",
+      headEntries.length,
+      "AST extractor must agree with regex-counted L-IDs in the ALLOWLIST array",
     ).toBe(regexCount);
+  });
+
+  it.each(
+    SHRINK_ARRAYS.filter((c) => c.name !== "ALLOWLIST").map((c) => c.name),
+  )("extractArrayEntries(%s) returns ≥0 entries (parse smoke test)", (name) => {
+    const headText = readFileSync(ALLOWLIST_PATH, "utf8");
+    const entries = extractArrayEntries(headText, name);
+    // Smoke: the extractor parses without throwing; each entry has at
+    // least one extracted key (file or id — universal across all 7
+    // new arrays per PATTERNS.md schema).
+    expect(entries.length).toBeGreaterThanOrEqual(0);
+    for (const e of entries) {
+      expect(
+        Object.keys(e).length,
+        `${name} entry has at least one extracted key`,
+      ).toBeGreaterThan(0);
+    }
   });
 });
