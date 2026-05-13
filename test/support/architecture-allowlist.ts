@@ -300,7 +300,368 @@ export interface CoverageWaiverEntry {
  * in Plan 06 to cover all 8 arrays) compares base..head and rejects any
  * entry addition.
  */
-export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [] as const;
+export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
+  // ============================================================================
+  // Phase G — Web view + component decomposition (26 files) — closes Phase 44 (WEB-DECOMP)
+  // ============================================================================
+  {
+    file: "packages/web/src/views/setup-wizard.ts",
+    lines: 1887,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/skills.ts",
+    lines: 1854,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/chat-console.ts",
+    lines: 1786,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/message-center.ts",
+    lines: 1772,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/config-editor.ts",
+    lines: 1697,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/agents/agent-editor.ts",
+    lines: 1629,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/scheduler.ts",
+    lines: 1594,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/memory-inspector.ts",
+    lines: 1577,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/observe-view.ts",
+    lines: 1553,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/models.ts",
+    lines: 1431,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/components/graph/ic-node-editor.ts",
+    lines: 1392,
+    reason: "Graph component; decomposed in Phase G via <component>-controller.ts extraction (WEB-DECOMP-04)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/agents/workspace-manager.ts",
+    lines: 1345,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/channel-detail.ts",
+    lines: 1247,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/components/graph/ic-graph-canvas.ts",
+    lines: 1197,
+    reason: "Graph component; decomposed in Phase G via <component>-controller.ts extraction (WEB-DECOMP-04)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/dashboard.ts",
+    lines: 1140,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/mcp-management.ts",
+    lines: 1133,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/session-detail.ts",
+    lines: 1089,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/agents/agent-list.ts",
+    lines: 1081,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/pipelines/pipeline-list.ts",
+    lines: 1064,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/pipelines/pipeline-builder.ts",
+    lines: 1028,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/agents/agent-detail.ts",
+    lines: 1003,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/media-test.ts",
+    lines: 948,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/components/scheduler/ic-cron-editor.ts",
+    lines: 865,
+    reason: "Graph component; decomposed in Phase G via <component>-controller.ts extraction (WEB-DECOMP-04)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/pipelines/pipeline-monitor.ts",
+    lines: 859,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/app.ts",
+    lines: 813,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+  {
+    file: "packages/web/src/views/security.ts",
+    lines: 808,
+    reason: "Lit web view; decomposed in Phase G via <view>-controller.ts extraction (WEB-DECOMP-01)",
+    removedIn: "phase-G",
+  },
+
+  // ============================================================================
+  // Phase E — Executor splits (4 primary + 6 adjacent = 10 files) — closes Phase 42 (EXEC-SPLIT)
+  // ============================================================================
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
+    lines: 2120,
+    reason: "Executor stream-wrapper; split in Phase E into request-body/ subdirectory per EXEC-SPLIT-02",
+    removedIn: "phase-E",
+  },
+  {
+    file: "packages/agent/src/executor/pi-executor.ts",
+    lines: 1641,
+    reason: "Core executor; split in Phase E into pi-executor/ subdirectory per EXEC-SPLIT-05",
+    removedIn: "phase-E",
+  },
+  {
+    file: "packages/agent/src/executor/executor-prompt-runner.ts",
+    lines: 1370,
+    reason: "Prompt runner; split in Phase E into prompt-runner/ subdirectory per EXEC-SPLIT-07",
+    removedIn: "phase-E",
+  },
+  {
+    file: "packages/agent/src/executor/cache-break-detection.ts",
+    lines: 970,
+    reason: "Cache-break detection; split in Phase E into cache-detection/ subdirectory per EXEC-SPLIT-09",
+    removedIn: "phase-E",
+  },
+  // Phase E adjacent (6 agent files; reason cites the generic EXEC-SPLIT-15 group)
+  {
+    file: "packages/agent/src/bridge/pi-event-bridge.ts",
+    lines: 1498,
+    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
+    removedIn: "phase-E",
+  },
+  {
+    file: "packages/agent/src/model/oauth-token-manager.ts",
+    lines: 1438,
+    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
+    removedIn: "phase-E",
+  },
+  {
+    file: "packages/agent/src/spawn/sub-agent-runner.ts",
+    lines: 1708,
+    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
+    removedIn: "phase-E",
+  },
+  {
+    file: "packages/agent/src/executor/prompt-assembly.ts",
+    lines: 1105,
+    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
+    removedIn: "phase-E",
+  },
+  {
+    file: "packages/agent/src/executor/tool-deferral.ts",
+    lines: 1033,
+    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
+    removedIn: "phase-E",
+  },
+  {
+    file: "packages/agent/src/executor/executor-post-execution.ts",
+    lines: 806,
+    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
+    removedIn: "phase-E",
+  },
+
+  // ============================================================================
+  // Phase F — Long-file splits outside agent/executor/ (21 files) — closes Phase 43 (FILE-SPLIT)
+  // ============================================================================
+  // daemon (8 files: daemon.ts + 4 wiring/setup-*.ts + 3 api/*-handlers.ts)
+  {
+    file: "packages/daemon/src/daemon.ts",
+    lines: 2600,
+    reason: "Daemon entrypoint; split in Phase F per FILE-SPLIT-01",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/daemon/src/api/config-handlers.ts",
+    lines: 1328,
+    reason: "Daemon RPC handler group; split in Phase F per FILE-SPLIT-02",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-agents.ts",
+    lines: 1149,
+    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-03",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-channels.ts",
+    lines: 1111,
+    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-04",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/daemon/src/api/session-handlers.ts",
+    lines: 1085,
+    reason: "Daemon RPC handler group; split in Phase F per FILE-SPLIT-05",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/daemon/src/api/graph-handlers.ts",
+    lines: 1062,
+    reason: "Daemon RPC handler group; split in Phase F per FILE-SPLIT-06",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-gateway.ts",
+    lines: 973,
+    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-07",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-cross-session.ts",
+    lines: 931,
+    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-08",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/daemon/src/api/obs-handlers.ts",
+    lines: 881,
+    reason: "Daemon RPC handler group; split in Phase F per FILE-SPLIT-09",
+    removedIn: "phase-F",
+  },
+  // skills (5 files)
+  {
+    file: "packages/skills/src/tools/builtin/exec-tool.ts",
+    lines: 1625,
+    reason: "Built-in tool; split in Phase F per FILE-SPLIT-10",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/exec-security.ts",
+    lines: 1153,
+    reason: "Built-in tool security layer; split in Phase F per FILE-SPLIT-11",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/skills/src/skills/integrations/mcp-client.ts",
+    lines: 1041,
+    reason: "MCP integration client; split in Phase F per FILE-SPLIT-12",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-tool.ts",
+    lines: 957,
+    reason: "Built-in web-search tool; split in Phase F per FILE-SPLIT-13",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/skills/src/skills/registry/skill-registry.ts",
+    lines: 812,
+    reason: "Skill registry; split in Phase F per FILE-SPLIT-14",
+    removedIn: "phase-F",
+  },
+  // core (3 files)
+  {
+    file: "packages/core/src/api-contracts/workspace.ts",
+    lines: 1152,
+    reason: "API contract module; split in Phase F per FILE-SPLIT-15",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/core/src/api-contracts/orchestrator.ts",
+    lines: 1129,
+    reason: "API contract module; split in Phase F per FILE-SPLIT-16",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/core/src/config/schema-agent.ts",
+    lines: 936,
+    reason: "Config schema module; split in Phase F per FILE-SPLIT-17",
+    removedIn: "phase-F",
+  },
+  // cli (2 files)
+  {
+    file: "packages/cli/src/tooling-fill/orchestrator.ts",
+    lines: 1064,
+    reason: "CLI tooling-fill orchestrator; split in Phase F per FILE-SPLIT-18",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/cli/src/commands/config.ts",
+    lines: 807,
+    reason: "CLI command module; split in Phase F per FILE-SPLIT-19",
+    removedIn: "phase-F",
+  },
+  // channels (1 file)
+  {
+    file: "packages/channels/src/telegram/telegram-adapter.ts",
+    lines: 852,
+    reason: "Channel adapter; split in Phase F per FILE-SPLIT-20",
+    removedIn: "phase-F",
+  },
+  // memory (1 file)
+  {
+    file: "packages/memory/src/observability-store.ts",
+    lines: 802,
+    reason: "Memory observability store; split in Phase F per FILE-SPLIT-21",
+    removedIn: "phase-F",
+  },
+] as const;
 export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [] as const;
 export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [] as const;
 export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [] as const;
