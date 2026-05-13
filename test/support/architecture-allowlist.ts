@@ -662,7 +662,872 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "phase-F",
   },
 ] as const;
-export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [] as const;
+export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
+  // ============================================================================
+  // Phase D — TypeScript hygiene (TS-HYG-07/08 retrofits to Result.err /
+  // @allow-throw / assertNever)
+  // ============================================================================
+  // NOTE: files under packages/{shared,core}/src/security/, packages/*/src/safety/,
+  // or ending with /error-mapper.ts are NOT in this list — the rule excludes them
+  // structurally via isInExceptionZone(). Files containing the literal
+  // `@allow-throw:` substring are also excluded (forward-looking — none today).
+  //
+  // Seeded from live regex scan of packages/*/src/ at Plan 05 close. One entry
+  // per file (file-level allowlist key per PATTERNS.md key shape table). The
+  // lineRanges array records the THROW line numbers at seed time; informational —
+  // the rule filters on `{file}` only (consolidated entries are forward-looking
+  // for Plan 06's shrink-test which keys on {file, lineRanges[0][0]}).
+  //
+  // Live-inventory drift (Plan 05): RESEARCH.md anticipated 110-130 files; the
+  // live tree has 139 files / 613 raw-throw hits outside exception zones. Per
+  // RESEARCH.md Pitfall §1 / plan pre-authorized procedure: report drift in
+  // SUMMARY and proceed with the live count.
+  // ----- agent package (8 files) -----
+  {
+    file: "packages/agent/src/background/background-task-persistence.ts",
+    lineRanges: [[147, 147]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/background/session-resolver.ts",
+    lineRanges: [[112, 112]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/bootstrap/sections/tool-descriptions.ts",
+    lineRanges: [[774, 774], [780, 780]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/bootstrap/workspace-loader.ts",
+    lineRanges: [[149, 149]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/identity/identity-loader.ts",
+    lineRanges: [[52, 52]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/model/resolve-provider-api-key.ts",
+    lineRanges: [[83, 83]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/spawn/sub-agent-runner.ts",
+    lineRanges: [[645, 645], [679, 679], [709, 709], [777, 777]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/workspace/workspace-manager.ts",
+    lineRanges: [[101, 101]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  // ----- channels package (9 files) -----
+  {
+    file: "packages/channels/src/discord/discord-resolver.ts",
+    lineRanges: [[62, 62]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/channels/src/imessage/imessage-resolver.ts",
+    lineRanges: [[59, 59], [75, 75], [83, 83]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/channels/src/line/line-resolver.ts",
+    lineRanges: [[55, 55], [77, 77], [83, 83]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/channels/src/signal/signal-client.ts",
+    lineRanges: [[95, 95], [261, 261]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/channels/src/signal/signal-resolver.ts",
+    lineRanges: [[62, 62]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/channels/src/slack/media-handler.ts",
+    lineRanges: [[86, 86], [89, 89], [92, 92], [146, 146]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/channels/src/slack/slack-resolver.ts",
+    lineRanges: [[72, 72], [86, 86], [91, 91], [96, 96], [102, 102], [113, 113]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/channels/src/telegram/telegram-adapter.ts",
+    lineRanges: [[125, 125], [503, 503], [551, 551]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/channels/src/whatsapp/whatsapp-resolver.ts",
+    lineRanges: [[94, 94], [100, 100], [106, 106], [126, 126]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  // ----- cli package (17 files) -----
+  {
+    file: "packages/cli/src/client/rpc-client.ts",
+    lineRanges: [[295, 295]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/commands/daemon.ts",
+    lineRanges: [[688, 688]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/commands/init.ts",
+    lineRanges: [[298, 298]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/commands/reset.ts",
+    lineRanges: [[75, 75], [130, 130]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/commands/secrets.ts",
+    lineRanges: [[148, 148], [162, 162]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/commands/uninstall.ts",
+    lineRanges: [[76, 76]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/output/spinner.ts",
+    lineRanges: [[31, 31]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/sync-tooling/backup.ts",
+    lineRanges: [[64, 64]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/test-helpers.ts",
+    lineRanges: [[66, 66]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/wizard/clack-adapter.ts",
+    lineRanges: [[40, 40]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/wizard/non-interactive.ts",
+    lineRanges: [[120, 120], [128, 128], [141, 141], [174, 174], [185, 185], [194, 194], [202, 202], [214, 214], [222, 222], [230, 230], [236, 236], [244, 244], [250, 250], [458, 458], [478, 478], [487, 487]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/wizard/state.ts",
+    lineRanges: [[61, 61], [443, 443], [526, 526]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/wizard/steps/00-welcome.ts",
+    lineRanges: [[49, 49]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/wizard/steps/01-detect-existing.ts",
+    lineRanges: [[302, 302], [401, 401]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/wizard/steps/04-credentials.ts",
+    lineRanges: [[476, 476]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/wizard/steps/09-review.ts",
+    lineRanges: [[170, 170]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/wizard/steps/10-write-config.ts",
+    lineRanges: [[309, 309], [317, 317], [404, 404]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  // ----- core package (8 files) -----
+  {
+    file: "packages/core/src/config/schema-serializer.ts",
+    lineRanges: [[63, 63]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/core/src/context/context.ts",
+    lineRanges: [[64, 64]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/core/src/hooks/plugin-registry.ts",
+    lineRanges: [[109, 109], [116, 116], [123, 123]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/core/src/load-env.ts",
+    lineRanges: [[34, 34]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/core/src/oauth/oauth-credential-store-file.ts",
+    lineRanges: [[182, 182], [186, 186], [195, 195], [211, 211]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/core/src/oauth/oauth-credential-store-selector.ts",
+    lineRanges: [[93, 93]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/core/src/oauth/oauth-device-code.ts",
+    lineRanges: [[230, 230], [234, 234], [247, 247], [283, 283], [298, 298], [307, 307], [329, 329], [342, 342]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/core/src/workspace/workspace-manager.ts",
+    lineRanges: [[102, 102]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  // ----- daemon package (35 files) -----
+  {
+    file: "packages/daemon/src/api/agent-handlers.ts",
+    lineRanges: [[87, 87], [95, 95], [98, 98], [167, 167], [265, 265], [273, 273], [290, 290], [295, 295], [300, 300], [365, 365], [416, 416], [429, 429], [466, 466], [471, 471], [475, 475], [479, 479], [530, 530], [535, 535], [542, 542], [546, 546], [559, 559], [564, 564], [571, 571], [575, 575]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/approval-handlers.ts",
+    lineRanges: [[98, 98], [110, 110], [129, 129]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/auth-handlers.ts",
+    lineRanges: [[151, 151], [197, 197], [239, 239], [249, 249], [253, 253], [290, 290]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/channel-handlers.ts",
+    lineRanges: [[171, 171], [199, 199], [207, 207], [212, 212], [220, 220], [225, 225], [263, 263], [268, 268], [276, 276], [281, 281], [319, 319], [324, 324], [332, 332], [337, 337], [342, 342]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/config-handlers.ts",
+    lineRanges: [[164, 164], [487, 487], [495, 495], [525, 525], [535, 535], [550, 550], [579, 579], [658, 658], [692, 692], [727, 727], [767, 767], [875, 875], [883, 883], [893, 893], [915, 915], [926, 926], [941, 941], [948, 948], [1071, 1071], [1078, 1078], [1100, 1100], [1134, 1134], [1175, 1175], [1213, 1213], [1216, 1216], [1224, 1224], [1230, 1230], [1257, 1257], [1260, 1260], [1268, 1268], [1277, 1277], [1302, 1302]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/context-handlers.ts",
+    lineRanges: [[88, 88], [217, 217], [228, 228], [234, 234], [464, 464], [469, 469], [481, 481]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/cron-handlers.ts",
+    lineRanges: [[84, 84], [163, 163]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/daemon-handlers.ts",
+    lineRanges: [[73, 73], [83, 83], [90, 90]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/env-handlers.ts",
+    lineRanges: [[125, 125], [135, 135], [151, 151], [154, 154], [157, 157], [165, 165], [168, 168], [171, 171], [182, 182], [199, 199], [263, 263], [276, 276], [286, 286]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/graph-handlers.ts",
+    lineRanges: [[160, 160], [176, 176], [181, 181], [425, 425], [448, 448], [474, 474], [519, 519], [536, 536], [567, 567], [638, 638], [643, 643], [651, 651], [671, 671], [676, 676], [708, 708], [713, 713], [722, 722], [742, 742], [762, 762], [767, 767], [776, 776], [792, 792], [828, 828], [842, 842], [871, 871], [943, 943], [947, 947], [955, 955], [1039, 1039], [1043, 1043], [1051, 1051]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/heartbeat-handlers.ts",
+    lineRanges: [[122, 122], [126, 126], [161, 161], [166, 166], [170, 170], [263, 263], [268, 268], [272, 272]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/mcp-handlers.ts",
+    lineRanges: [[123, 123], [191, 191], [197, 197], [230, 230], [341, 341], [355, 355], [370, 370]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/media-handlers.ts",
+    lineRanges: [[89, 89], [143, 143], [147, 147], [153, 153], [168, 168], [172, 172], [179, 179], [185, 185], [192, 192], [214, 214], [374, 374], [377, 377], [386, 386], [412, 412], [415, 415], [424, 424], [431, 431], [451, 451], [454, 454], [462, 462], [493, 493], [523, 523], [555, 555], [572, 572], [592, 592], [628, 628], [645, 645], [667, 667]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/memory-handlers.ts",
+    lineRanges: [[163, 163], [220, 220], [303, 303], [312, 312], [343, 343]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/message-handlers.ts",
+    lineRanges: [[126, 126], [302, 302], [304, 304], [315, 315], [325, 325]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/model-handlers.ts",
+    lineRanges: [[122, 122], [140, 140]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/obs-handlers.ts",
+    lineRanges: [[138, 138], [477, 477], [517, 517], [535, 535], [558, 558], [619, 619], [845, 845]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/provider-handlers.ts",
+    lineRanges: [[199, 199], [225, 225], [230, 230], [235, 235], [273, 273], [278, 278], [286, 286], [294, 294], [305, 305], [324, 324], [363, 363], [368, 368], [373, 373], [438, 438], [443, 443], [451, 451], [457, 457], [492, 492], [497, 497], [505, 505], [536, 536], [541, 541], [549, 549]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/rpc-dispatch.ts",
+    lineRanges: [[304, 304], [320, 320]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/secrets-handlers.ts",
+    lineRanges: [[147, 147], [161, 161], [172, 172], [175, 175], [180, 180], [195, 195], [224, 224], [275, 275], [289, 289], [301, 301], [304, 304], [309, 309], [315, 315], [318, 318], [321, 321], [333, 333], [351, 351], [389, 389], [428, 428], [463, 463], [503, 503], [517, 517], [525, 525], [528, 528], [533, 533], [545, 545], [573, 573]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/session-handlers.ts",
+    lineRanges: [[612, 612], [790, 790], [819, 819], [937, 937]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/skill-handlers.ts",
+    lineRanges: [[103, 103], [207, 207], [217, 217], [222, 222], [233, 233], [243, 243], [253, 253], [262, 262], [305, 305], [310, 310], [317, 317], [323, 323], [330, 330], [336, 336], [342, 342], [355, 355], [364, 364], [401, 401], [406, 406], [411, 411], [420, 420], [427, 427], [446, 446], [451, 451], [487, 487], [494, 494], [498, 498], [509, 509], [515, 515], [533, 533], [564, 564], [570, 570], [574, 574], [587, 587], [598, 598], [605, 605]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/subagent-handlers.ts",
+    lineRanges: [[89, 89], [109, 109], [125, 125], [131, 131]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/token-handlers.ts",
+    lineRanges: [[156, 156], [195, 195], [204, 204], [268, 268], [277, 277], [289, 289], [331, 331], [337, 337], [349, 349]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/api/workspace-handlers.ts",
+    lineRanges: [[106, 106], [109, 109], [115, 115], [137, 137], [223, 223], [235, 235], [249, 249], [257, 257], [265, 265], [284, 284], [336, 336], [373, 373], [377, 377], [465, 465], [560, 560], [562, 562], [597, 597], [614, 614], [616, 616]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/daemon.ts",
+    lineRanges: [[438, 438], [452, 452], [558, 558], [567, 567], [1435, 1435], [1801, 1801]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/monitoring/security-update-source.ts",
+    lineRanges: [[99, 99]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/monitoring/system-resources-source.ts",
+    lineRanges: [[131, 131]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/monitoring/systemd-service-source.ts",
+    lineRanges: [[60, 60]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/wiring/daemon-utils.ts",
+    lineRanges: [[14, 14], [36, 36], [60, 60]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-agents.ts",
+    lineRanges: [[908, 908], [1085, 1085], [1109, 1109]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-gateway-routes.ts",
+    lineRanges: [[135, 135], [175, 175]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-gateway.ts",
+    lineRanges: [[136, 136]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-heartbeat.ts",
+    lineRanges: [[191, 191]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-schedulers.ts",
+    lineRanges: [[295, 295], [322, 322]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  // ----- gateway package (4 files) -----
+  {
+    file: "packages/gateway/src/acp/acp-server.ts",
+    lineRanges: [[132, 132]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/gateway/src/oauth/oauth-callback-route.ts",
+    lineRanges: [[154, 154], [250, 250], [269, 269]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/gateway/src/rpc/method-router.ts",
+    lineRanges: [[72, 72], [204, 204], [222, 222], [235, 235], [240, 240], [248, 248]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/gateway/src/web/media-routes.ts",
+    lineRanges: [[109, 109], [169, 169]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  // ----- memory package (7 files) -----
+  {
+    file: "packages/memory/src/credential-mapping-store.ts",
+    lineRanges: [[91, 91]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/memory-api.ts",
+    lineRanges: [[188, 188]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/observability-store.ts",
+    lineRanges: [[795, 795]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/row-mapper.ts",
+    lineRanges: [[193, 193], [218, 218], [223, 223]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/schema.ts",
+    lineRanges: [[43, 43]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/secret-store-schema.ts",
+    lineRanges: [[81, 81], [114, 114], [120, 120]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/session-store.ts",
+    lineRanges: [[106, 106]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  // ----- orchestrator package (5 files) -----
+  {
+    file: "packages/orchestrator/src/cross-session/announcement-dead-letter.ts",
+    lineRanges: [[108, 108], [316, 316]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/orchestrator/src/cross-session/cross-session-sender.ts",
+    lineRanges: [[95, 95], [101, 101], [129, 129]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/orchestrator/src/execution/execution-execute.ts",
+    lineRanges: [[215, 215]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/orchestrator/src/queue/coalescer.ts",
+    lineRanges: [[32, 32]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/orchestrator/src/queue/priority-scheduler.ts",
+    lineRanges: [[177, 177]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  // ----- scheduler package (5 files) -----
+  {
+    file: "packages/scheduler/src/cron/cron-scheduler.ts",
+    lineRanges: [[208, 208]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/scheduler/src/cron/cron-store.ts",
+    lineRanges: [[96, 96], [136, 136], [152, 152], [172, 172]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/scheduler/src/execution/execution-tracker.ts",
+    lineRanges: [[149, 149]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/scheduler/src/heartbeat/quiet-hours.ts",
+    lineRanges: [[30, 30], [35, 35]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/scheduler/src/tasks/task-store.ts",
+    lineRanges: [[49, 49]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  // ----- skills package (40 files) -----
+  {
+    file: "packages/skills/src/platform-tools/tool-helpers.ts",
+    lineRanges: [[70, 70], [175, 175], [180, 180], [202, 202], [207, 207], [229, 229], [234, 234]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/platform-tools/tools/obs-query-tool.ts",
+    lineRanges: [[224, 224]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/platform-tools/tools/pipeline-tool.ts",
+    lineRanges: [[592, 592]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/platform-tools/tools/subagents-tool.ts",
+    lineRanges: [[143, 143]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/skills/bridge/credential-injector.ts",
+    lineRanges: [[115, 115], [124, 124], [258, 258]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/skills/bridge/tool-audit.ts",
+    lineRanges: [[71, 71]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/skills/bridge/tool-metadata-enforcement.ts",
+    lineRanges: [[87, 87], [97, 97]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/skills/integrations/mcp-client.ts",
+    lineRanges: [[293, 293], [305, 305], [314, 314], [322, 322]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/browser/browser-service.ts",
+    lineRanges: [[220, 220], [223, 223]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/browser/cdp.ts",
+    lineRanges: [[61, 61]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/browser/chrome-detection.ts",
+    lineRanges: [[191, 191], [265, 265]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/browser/playwright-session.ts",
+    lineRanges: [[357, 357], [451, 451]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/browser/profiles.ts",
+    lineRanges: [[70, 70]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/browser/screenshots.ts",
+    lineRanges: [[68, 68], [78, 78]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/exec-tool.ts",
+    lineRanges: [[166, 166]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/file-tools/edit-tool.ts",
+    lineRanges: [[150, 150], [211, 211], [220, 220], [231, 231], [248, 248], [261, 261], [269, 269], [276, 276], [283, 283], [300, 300], [336, 336], [340, 340], [344, 344], [348, 348], [352, 352], [354, 354]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/file-tools/find-tool.ts",
+    lineRanges: [[105, 105]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/file-tools/grep-tool.ts",
+    lineRanges: [[158, 158], [279, 279], [287, 287], [435, 435], [486, 486]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/file-tools/ls-tool.ts",
+    lineRanges: [[92, 92], [158, 158]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/file-tools/notebook-edit-tool.ts",
+    lineRanges: [[137, 137], [145, 145], [160, 160], [166, 166], [175, 175], [186, 186], [195, 195], [201, 201], [206, 206], [213, 213], [223, 223], [233, 233], [248, 248]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/file-tools/read-tool.ts",
+    lineRanges: [[326, 326], [389, 389], [402, 402], [408, 408], [422, 422], [424, 424], [475, 475]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/file-tools/shared/edit-diff.ts",
+    lineRanges: [[228, 228], [230, 230], [270, 270], [306, 306], [310, 310], [318, 318], [322, 322], [354, 354], [372, 372], [376, 376]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/file-tools/write-tool.ts",
+    lineRanges: [[133, 133], [187, 187], [195, 195], [204, 204], [211, 211], [229, 229], [282, 282], [292, 292], [316, 316], [327, 327]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/file/apply-patch-tool.ts",
+    lineRanges: [[336, 336]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/file/path-suggest.ts",
+    lineRanges: [[42, 42]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/process-registry.ts",
+    lineRanges: [[236, 236], [239, 239]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/tool-provisioner.ts",
+    lineRanges: [[180, 180], [190, 190], [215, 215], [245, 245]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-brave.ts",
+    lineRanges: [[146, 146]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-duckduckgo.ts",
+    lineRanges: [[190, 190]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-exa.ts",
+    lineRanges: [[76, 76]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-grok.ts",
+    lineRanges: [[101, 101]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-jina.ts",
+    lineRanges: [[67, 67], [92, 92]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-perplexity.ts",
+    lineRanges: [[125, 125]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-searxng.ts",
+    lineRanges: [[41, 41], [44, 44], [92, 92]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-tavily.ts",
+    lineRanges: [[76, 76], [82, 82]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-tool.ts",
+    lineRanges: [[631, 631], [650, 650]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/integrations/image-gen/fal-adapter.ts",
+    lineRanges: [[39, 39], [44, 44]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/integrations/image-gen/openai-adapter.ts",
+    lineRanges: [[36, 36]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/media/media-temp.ts",
+    lineRanges: [[94, 94], [123, 123]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/media/ssrf-fetcher.ts",
+    lineRanges: [[226, 226], [236, 236], [255, 255], [278, 278], [282, 282], [297, 297]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+  // ----- web package (1 files) -----
+  {
+    file: "packages/web/src/api/api-client.ts",
+    lineRanges: [[171, 171], [175, 175], [212, 212], [231, 231]],
+    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
+    removedIn: "phase-D",
+  },
+] as const;
 export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [
   // ============================================================================
   // Phase D — TypeScript hygiene (TS-HYG-01..04 closes via RowMapper<TRow>)
