@@ -1,6 +1,6 @@
 {
-  "totalMinified": 102820,
-  "totalGzipped": 9379,
+  "totalMinified": 103046,
+  "totalGzipped": 9423,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -46,7 +46,7 @@
     "config.apply": 712,
     "config.diff": 331,
     "config.gc": 381,
-    "config.history": 576,
+    "config.history": 835,
     "config.patch": 1039,
     "config.read": 280,
     "config.rollback": 500,

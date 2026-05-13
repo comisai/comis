@@ -1856,20 +1856,46 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "sha": {
                 "type": "string"
               },
-              "date": {
+              "timestamp": {
                 "type": "string"
               },
               "message": {
                 "type": "string"
               },
-              "author": {
-                "type": "string"
+              "metadata": {
+                "type": "object",
+                "properties": {
+                  "section": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "agent": {
+                    "type": "string"
+                  },
+                  "user": {
+                    "type": "string"
+                  },
+                  "traceId": {
+                    "type": "string"
+                  },
+                  "summary": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "section",
+                  "summary"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
               "sha",
-              "date",
-              "message"
+              "timestamp",
+              "message",
+              "metadata"
             ],
             "additionalProperties": false
           }
