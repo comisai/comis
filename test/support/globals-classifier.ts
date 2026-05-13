@@ -269,6 +269,21 @@ function classifyNode(
 }
 
 /**
+ * Optional knobs for `classifyGlobals`.
+ *
+ * `respectBootstrapPaths` (default `true`) — apply the
+ * `BOOTSTRAP_PATH_PATTERNS` exemption (skip files under
+ * `test/`, `packages/(core|infra)/src/runtime/`, etc.). Fixture
+ * validation passes `false` so the classifier processes the
+ * fixture file (which physically lives under `test/`) without the
+ * skip. Production scans use the default `true`.
+ */
+export interface ClassifyGlobalsOptions {
+  readonly compilerOptions?: ts.CompilerOptions;
+  readonly respectBootstrapPaths?: boolean;
+}
+
+/**
  * Classify callable-global expressions in every file from `rootFiles`.
  *
  * Builds a single `ts.createProgram` so the TypeChecker can resolve
@@ -276,12 +291,15 @@ function classifyNode(
  * @types/node). Uses persistent mtime+sha256 cache keyed on file
  * content; cache hit re-renders snippets from live source.
  *
- * Bootstrap-path-matching files are skipped BEFORE classification.
+ * Bootstrap-path-matching files are skipped BEFORE classification
+ * (controlled by `options.respectBootstrapPaths`, default `true`).
  */
 export function classifyGlobals(
   rootFiles: readonly string[],
-  compilerOptions: ts.CompilerOptions = {},
+  options: ClassifyGlobalsOptions = {},
 ): readonly GlobalsViolation[] {
+  const respectBootstrapPaths = options.respectBootstrapPaths ?? true;
+  const compilerOptions = options.compilerOptions ?? {};
   const c = loadCache();
   const program = ts.createProgram({
     rootNames: [...rootFiles],
@@ -310,7 +328,10 @@ export function classifyGlobals(
     if (!rootFilesSet.has(resolve(fp))) continue;
 
     // Bootstrap-path exemption: skip the whole file before classification.
-    if (isBootstrapPath(fp)) continue;
+    // Disabled when fixture validation explicitly opts out so test/
+    // fixtures (which physically live under test/) classify as
+    // production-shaped source.
+    if (respectBootstrapPaths && isBootstrapPath(fp)) continue;
 
     const { mtimeMs, sha256 } = fileHash(fp);
     const cached = c.entries[fp];
