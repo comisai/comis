@@ -248,22 +248,25 @@ function classifyNode(
   ) {
     return "new Date";
   }
-  // PropertyAccess / ElementAccess on process.env (both reads + writes).
+  // PropertyAccess on `process.env` itself (the 2-level shape).
+  // This catches:
+  //   - bare `process.env`                  (e.g. `options.env ?? process.env`)
+  //   - `process.env.NODE_ENV`              (the outer PropAccess wraps this one)
+  //   - `process.env["HOME"]`               (the outer ElemAccess wraps this one)
+  //   - `process.env.X = "..."`             (LHS of assignment — same inner PropAccess)
   // Per RESEARCH.md edge case 8: process.env mutation IS flagged because
   // AGENTS.md §2.2 forbids both directions outside sanctioned paths.
+  // Flagging at the inner `process.env` node dedupes naturally — the outer
+  // PropAccess / ElemAccess / AssignmentExpression isn't itself flagged
+  // because its `node.expression` is the inner `process.env` PropAccess,
+  // not a `process` Identifier.
   if (
-    ts.isPropertyAccessExpression(node) ||
-    ts.isElementAccessExpression(node)
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "process" &&
+    node.name.text === "env"
   ) {
-    const obj = node.expression;
-    if (
-      ts.isPropertyAccessExpression(obj) &&
-      ts.isIdentifier(obj.expression) &&
-      obj.expression.text === "process" &&
-      obj.name.text === "env"
-    ) {
-      return "process.env";
-    }
+    return "process.env";
   }
   return null;
 }
