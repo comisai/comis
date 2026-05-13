@@ -6,10 +6,10 @@
  * live log sanitization, CORS header behavior, and security section readability
  * via JSON-RPC. Starts a real daemon with security-specific config on port 8520.
  *
- *   SECD-01: Security Config Bootstrap Propagation
- *   SECD-02: Live Log Sanitization
- *   SECD-03: Gateway CORS Headers
- *   SECD-04: Daemon Health with Security Config
+ *   - Security Config Bootstrap Propagation
+ *   - Live Log Sanitization
+ *   - Gateway CORS Headers
+ *   - Daemon Health with Security Config
  *
  * Uses the daemon harness for programmatic daemon startup/teardown.
  */
@@ -65,10 +65,10 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // SECD-01 -- Security Config Bootstrap Propagation
+  // Security Config Bootstrap Propagation
   // ---------------------------------------------------------------------------
 
-  describe("SECD-01: Security Config Bootstrap Propagation", () => {
+  describe("Security Config Bootstrap Propagation", () => {
     it("config.get({section: 'security'}) returns logRedaction: true and auditLog: true", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "security" }, 100, {
         timeoutMs: RPC_FAST_MS,
@@ -132,10 +132,10 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SECD-02 -- Live Log Sanitization
+  // Live Log Sanitization
   // ---------------------------------------------------------------------------
 
-  describe("SECD-02: Live Log Sanitization", () => {
+  describe("Live Log Sanitization", () => {
     it("sanitizeLogString processes all daemon log msg fields without finding real credentials", () => {
       const entries = logCapture.getEntries();
 
@@ -176,10 +176,10 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SECD-03 -- Gateway CORS Headers
+  // Gateway CORS Headers
   // ---------------------------------------------------------------------------
 
-  describe("SECD-03: Gateway CORS Headers", () => {
+  describe("Gateway CORS Headers", () => {
     it("HTTP request with Origin header receives Access-Control-Allow-Origin in response", async () => {
       const response = await fetch(`${handle.gatewayUrl}/api/health`, {
         headers: {
@@ -232,10 +232,10 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SECD-04 -- Daemon Health with Security Config
+  // Daemon Health with Security Config
   // ---------------------------------------------------------------------------
 
-  describe("SECD-04: Daemon Health with Security Config", () => {
+  describe("Daemon Health with Security Config", () => {
     it("daemon started successfully (authToken is truthy, gatewayUrl is reachable)", async () => {
       expect(handle.authToken).toBeTruthy();
       expect(handle.gatewayUrl).toContain("8520");

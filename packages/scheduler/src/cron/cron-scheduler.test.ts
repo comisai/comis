@@ -446,7 +446,7 @@ describe("CronScheduler", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Auto-suspend after maxConsecutiveErrors (CRON-CIRCUIT)
+  // Auto-suspend after maxConsecutiveErrors
   // -----------------------------------------------------------------------
 
   it("auto-suspends job after maxConsecutiveErrors (default 5)", async () => {

@@ -402,11 +402,10 @@ describe("getVisibleAssistantText — cross-turn walk-back bound", () => {
   it("production-repro: pre-restart claude scaffolding does NOT leak across synthetic-user boundary", () => {
     // Mirrors the production session JSONL shape from
     // /Users/.../678314278~peer~678314278.jsonl (2026-05-01 08:54 UTC).
-    // Before FIX 1 the find() walk skipped synthetic + 2 toolResults +
-    // empty-error and returned the 91-char Claude scaffolding "Great! The API
-    // key is stored. Now let me switch your agent to use the Qwen 2.5 Coder
-    // model:". After FIX 1 the user-message at index 5 (synthetic-user
-    // continuation-replay) bounds the walk and the function returns "".
+    // The user-message at index 5 (synthetic-user continuation-replay) bounds
+    // the walk so the function returns "" rather than leaking the prior-turn
+    // Claude scaffolding "Great! The API key is stored. Now let me switch
+    // your agent to use the Qwen 2.5 Coder model:".
     const session = {
       getLastAssistantText: vi.fn(),
       messages: [

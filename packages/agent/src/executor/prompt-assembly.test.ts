@@ -1158,9 +1158,9 @@ describe("assembleExecutionPrompt", () => {
       expect(call.excludeBootstrapFromContext).toBe(true);
     });
 
-    // F3 (2026-04-19): specialist-profile agents are task workers and must never
-    // receive the "greet the user, ask who I am" onboarding script, even when
-    // their workspace is freshly seeded and detectOnboardingState returns true.
+    // Specialist-profile agents are task workers and must never receive the
+    // "greet the user, ask who I am" onboarding script, even when their
+    // workspace is freshly seeded and detectOnboardingState returns true.
     it("does NOT inject onboarding for workspace.profile='specialist' even when isOnboarding=true", async () => {
       mockDetectOnboardingState.mockResolvedValue(true);
       mockReadFile.mockResolvedValue("Bootstrap content that must not leak");
@@ -2013,7 +2013,7 @@ describe("assembleExecutionPrompt", () => {
   // Defense in depth: the architecture-grep catches static violations
   // (an import line in prompt-assembly.ts); these regression tests catch
   // dynamic violations (a transitive code path that pulls live-runtime
-  // data into assemblerParams). Both must pass for the phase to ship.
+  // data into assemblerParams).
   // -----------------------------------------------------------------
 
   it("skill-registry reload between turns does NOT invalidate the cached system-prompt prefix", async () => {

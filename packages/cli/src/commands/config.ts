@@ -10,13 +10,33 @@
  */
 
 import type { Command } from "commander";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import chalk from "chalk";
+import { isMap, isPair, isScalar, parseDocument } from "yaml";
 import { loadConfigFile, validateConfig, deepMerge, loadEnvFile } from "@comis/core";
 import { withClient } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { renderTable, renderKeyValue } from "../output/table.js";
+import {
+  applyToDocument,
+  atomicWriteFile,
+  computeMutationPlan,
+  discoverSkills,
+  isDaemonRunning,
+  readMcpServers,
+  renderInspectHuman,
+  renderInspectJson,
+  writeBackup,
+  pruneOldBackups,
+  type InspectPayload,
+} from "../sync-tooling/index.js";
+import {
+  runToolingFill,
+  type PromptIO,
+} from "../tooling-fill/index.js";
+import * as readline from "node:readline/promises";
 
 /** Default config paths to check (matching daemon defaults). */
 const DEFAULT_CONFIG_PATHS = [
@@ -25,6 +45,15 @@ const DEFAULT_CONFIG_PATHS = [
   "/etc/comis/config.yaml",
   "/etc/comis/config.local.yaml",
 ];
+
+/**
+ * Default config path for `sync-tooling` — single path, not the merged
+ * 4-path list used by `validate`. Hardcoded to `~/.comis/config.yaml` so
+ * the no-flag invocation is safe by construction — operator-supplied
+ * `--config` is operator-trusted; the default is not operator-derived
+ * and therefore not subject to traversal concerns.
+ */
+const SYNC_TOOLING_DEFAULT_CONFIG = os.homedir() + "/.comis/config.yaml";
 
 /** Pattern matching `${VAR_NAME}` env var references. */
 const ENV_REF_RE = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
@@ -355,6 +384,389 @@ export function registerConfigCommand(program: Command): void {
         process.exit(1);
       }
     });
+
+  // --- config sync-tooling --------------------------------------------------
+  // Operator UX for materializing the `tooling:` block from discovered MCPs
+  // and skills. Three modes:
+  //   1. inspect (default)   — print diff, exit 0, never touch the file
+  //   2. --write             — backup + append-only mutation + atomic write
+  //   3. --write --overwrite — backup + regenerate the entire managed block
+  //
+  // Wiring boundary: this callback is the orchestrator. All discovery,
+  // AST mutation, fs I/O, and daemon probing live in
+  // `packages/cli/src/sync-tooling/*`.
+  config
+    .command("sync-tooling")
+    .description("Discover MCPs/skills and sync the tooling: config block")
+    .option("--write", "Apply changes to config.yaml (default: inspect-only)")
+    .option("--overwrite", "Regenerate the entire tooling block (requires --write)")
+    .option("--format <format>", "Inspect-mode output format (human|json)", "human")
+    // --config is operator-supplied and operator-trusted. The default is
+    // hardcoded so the no-flag invocation is safe by construction.
+    .option("-c, --config <path>", "Config file path", SYNC_TOOLING_DEFAULT_CONFIG)
+    .action(
+      async (options: {
+        write?: boolean;
+        overwrite?: boolean;
+        format?: string;
+        config?: string;
+      }) => {
+        const configPath = options.config ?? SYNC_TOOLING_DEFAULT_CONFIG;
+        const homeDir = os.homedir();
+        const isWrite = options.write === true;
+        const isOverwrite = options.overwrite === true;
+        const fmt = options.format ?? "human";
+
+        // --overwrite requires --write — usage error before any I/O.
+        if (isOverwrite && !isWrite) {
+          error("--overwrite requires --write");
+          process.exit(1);
+          return;
+        }
+        if (fmt !== "human" && fmt !== "json") {
+          error(`--format must be 'human' or 'json' (got: ${fmt})`);
+          process.exit(1);
+          return;
+        }
+
+        // Daemon-active guard fires for write paths only. Inspect mode is
+        // read-only so the daemon's restart-required `tooling.*`
+        // configuration is unaffected.
+        if (isWrite) {
+          const running = await isDaemonRunning();
+          if (running) {
+            error(
+              "daemon is running — stop it before running sync-tooling --write (tooling.* is restart-required)",
+            );
+            process.exit(1);
+            return;
+          }
+        }
+
+        // Two views of the source file:
+        //   (1) loadConfigFile → JS shape for discover.ts (validates structure,
+        //       returns ok({}) on missing/empty file).
+        //   (2) parseDocument  → AST for generate.ts (preserves comments and
+        //       key order across mutations).
+        const loaded = loadConfigFile(configPath);
+        if (!loaded.ok) {
+          // FILE_NOT_FOUND is recoverable — init-when-absent path. Anything
+          // else (parse error, permission denied) → exit 3.
+          if (loaded.error.code !== "FILE_NOT_FOUND") {
+            error(`Failed to load ${configPath}: ${loaded.error.message}`);
+            process.exit(3);
+            return;
+          }
+        }
+        const configJs = loaded.ok ? loaded.value : {};
+
+        let rawYaml: string;
+        try {
+          rawYaml = fs.readFileSync(configPath, "utf-8");
+        } catch {
+          // Init-when-absent: file does not exist on disk → start with empty
+          // content; parseDocument tolerates an empty string.
+          rawYaml = "";
+        }
+
+        let doc;
+        try {
+          doc = parseDocument(rawYaml);
+          if (doc.errors.length > 0) {
+            error(
+              `Invalid YAML in ${configPath}: ${doc.errors.map((er) => er.message).join("; ")}`,
+            );
+            process.exit(3);
+            return;
+          }
+        } catch (e) {
+          error(`Failed to parse ${configPath}: ${String(e)}`);
+          process.exit(3);
+          return;
+        }
+
+        // Discovery — both helpers are pure (no Result wrapper; they silent-skip
+        // malformed entries, see discover.ts JSDoc).
+        const mcps = readMcpServers(configJs);
+        const skills = discoverSkills(configJs, { homeDir });
+        const artifacts = { mcps, skills };
+
+        // Compute the read-only mutation plan against the current AST.
+        const plan = computeMutationPlan(doc, artifacts);
+
+        // "Nothing to sync" cases (write-path only — inspect mode always renders):
+        //  (a) Fresh config — operator has installed no MCPs/skills AND no tooling
+        //      block exists yet. Writing an empty skeleton would be churn.
+        //  (b) Plan is a no-op against an existing tooling block (no adds, no
+        //      removes, no skeleton needed).
+        // When discovery is empty BUT a tooling block exists with stale hints,
+        // the plan will report removes — that path must NOT short-circuit.
+        const isFreshAndEmpty =
+          mcps.length === 0 && skills.length === 0 && plan.needsSkeleton;
+        const planIsNoop =
+          plan.mcpAdds.length === 0 &&
+          plan.mcpRemoves.length === 0 &&
+          plan.skillAdds.length === 0 &&
+          plan.skillRemoves.length === 0 &&
+          !plan.needsSkeleton;
+        const nothingToDo = isFreshAndEmpty || planIsNoop;
+        if (nothingToDo && isWrite && !isOverwrite) {
+          info(
+            isFreshAndEmpty
+              ? "(nothing to sync — no MCPs or skills discovered)"
+              : "(nothing to sync — config is already in sync)",
+          );
+          process.exit(0);
+          return;
+        }
+
+        // Build a "would-write" preview by cloning + applying without writing.
+        // Re-parse from rawYaml so we don't mutate the doc we may write later.
+        const previewDoc = parseDocument(rawYaml);
+        if (previewDoc.errors.length === 0) {
+          applyToDocument(previewDoc, artifacts, { overwrite: isOverwrite });
+        }
+        const wouldWrite = previewDoc.toString();
+
+        const inspectPayload: InspectPayload = {
+          discovered: artifacts,
+          existing: {
+            tooling: doc.hasIn(["tooling"]) ? "present" : "absent",
+            mcpHintNames: readHintKeysForInspect(doc, [
+              "tooling",
+              "mcp",
+              "capabilityHints",
+            ]),
+            skillHintNames: readHintKeysForInspect(doc, [
+              "tooling",
+              "skills",
+              "capabilityHints",
+            ]),
+          },
+          diff: {
+            add: { mcps: plan.mcpAdds, skills: plan.skillAdds },
+            remove: { mcps: plan.mcpRemoves, skills: plan.skillRemoves },
+          },
+          wouldWrite,
+        };
+
+        // Inspect mode (no --write): render and exit 0 — config.yaml untouched.
+        if (!isWrite) {
+          if (fmt === "json") {
+            json(JSON.parse(renderInspectJson(inspectPayload)) as Record<string, unknown>);
+          } else {
+            // Use process.stdout.write so chalk-coded output renders without
+            // the format.ts indentation prefix (which is for one-liners).
+            process.stdout.write(renderInspectHuman(inspectPayload) + "\n");
+          }
+          process.exit(0);
+          return;
+        }
+
+        // --write path: backup-fail-fast → atomic write → summary lines.
+        const backup = writeBackup(configPath, homeDir);
+        if (!backup.ok) {
+          error(
+            `Backup failed (${backup.error.code}): ${backup.error.path} — ${backup.error.cause}`,
+          );
+          process.exit(2);
+          return;
+        }
+
+        const counts = applyToDocument(doc, artifacts, { overwrite: isOverwrite });
+        const written = atomicWriteFile(configPath, doc.toString());
+        if (!written.ok) {
+          error(`Atomic write failed (${written.error.code}): ${written.error.cause}`);
+          process.exit(2);
+          return;
+        }
+
+        // Terse one-line summary so operators see the backup path.
+        const totalAdded = counts.mcpAdded + counts.skillAdded;
+        const totalRemoved = counts.mcpRemoved + counts.skillRemoved;
+        success(
+          `tooling: +${totalAdded} hints, -${totalRemoved} hints (backup: ${backup.value.backupPath})`,
+        );
+
+        // Extra warning for overwrite (destructive of operator intent).
+        if (isOverwrite) {
+          warn(
+            `⚠ overwrote ${configPath} — entire tooling: block regenerated. Backup: ${backup.value.backupPath}`,
+          );
+        }
+
+        // Housekeeping: keep the 5 most recent sync-tooling backups under
+        // ~/.comis/, drop older. Best-effort — backup pruning is never
+        // load-bearing, and the freshly-written backup counts toward the
+        // keep set.
+        const pruneRes = pruneOldBackups(homeDir, "sync-tooling", 5);
+        if (pruneRes.deleted > 0) {
+          info(`(pruned ${pruneRes.deleted} older sync-tooling backup(s))`);
+        }
+
+        process.exit(0);
+      },
+    );
+
+  // --- config tooling-fill --------------------------------------------------
+  // Operator UX for materializing the description + replacesPackages fields
+  // on tooling capability hints via the live Comis daemon. The orchestrator
+  // owns the full state machine; this callback is the composition root
+  // (AGENTS.md §2.4) — it builds the OrchestratorOpts bag, instantiates the
+  // readline-backed PromptIO, and routes the result's exitCode into
+  // process.exit.
+  //
+  // Wiring boundary: ALL discovery, AST mutation, fs I/O, daemon probing,
+  // supervisor calls, and LLM round-trips live in
+  // `packages/cli/src/tooling-fill/*`.
+  config
+    .command("tooling-fill [hint-name]")
+    .description(
+      "Fill description + replacesPackages on a tooling capability hint via the live agent",
+    )
+    .option("--all", "Fill every stub-valued hint")
+    .option("--force", "Overwrite operator-filled hints")
+    .option(
+      "--dry-run",
+      "Print agent suggestion + diff; never stop daemon, never write file",
+    )
+    .option("--yes", "Skip values-confirmation prompt")
+    .option("--restart", "Authorize daemon-stop+start window")
+    .option("--allow-restart", "Alias for --restart")
+    .option("--no-restart", "Write file but skip daemon stop+start")
+    .option(
+      "--restart-cmd <cmd>",
+      "Override supervisor with full stop+start command",
+    )
+    .option(
+      "--force-no-validate",
+      "Skip package-name shape validation (escape hatch — loud warning)",
+    )
+    .option(
+      "-c, --config <path>",
+      "Config file path",
+      SYNC_TOOLING_DEFAULT_CONFIG,
+    )
+    .option(
+      "--agent <id>",
+      "Agent ID for the LLM call (default: daemon's first agent)",
+    )
+    .option(
+      "--kind <kind>",
+      "Disambiguate hint kind: mcp or skills (when both maps contain the same key)",
+    )
+    .action(
+      async (
+        hintName: string | undefined,
+        options: {
+          all?: boolean;
+          force?: boolean;
+          dryRun?: boolean;
+          yes?: boolean;
+          restart?: boolean;
+          allowRestart?: boolean;
+          restartCmd?: string;
+          forceNoValidate?: boolean;
+          config?: string;
+          agent?: string;
+          kind?: string;
+        },
+      ) => {
+        // Build readline-backed PromptIO. Even when not used (--yes
+        // --restart on a TTY), we still need to construct it so the
+        // orchestrator's PromptIO contract is satisfied. The interface
+        // is closed at action-callback exit via rl.close().
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        const prompts: PromptIO = {
+          confirmValues: async (diff: string): Promise<boolean> => {
+            process.stdout.write(diff + "\n");
+            const ans = await rl.question("Apply these values? [y/N] ");
+            const norm = ans.trim().toLowerCase();
+            return norm === "y" || norm === "yes";
+          },
+          confirmRestart: async (s): Promise<boolean> => {
+            const ans = await rl.question(
+              `Stop and restart daemon (${s.kind})? [y/N] `,
+            );
+            const norm = ans.trim().toLowerCase();
+            return norm === "y" || norm === "yes";
+          },
+        };
+
+        // --restart vs --no-restart vs unset — Commander convention:
+        //   --restart       → options.restart === true
+        //   --no-restart    → options.restart === false
+        //   neither         → options.restart === undefined
+        // --allow-restart is an alias: if either is set, treat as true.
+        // Explicit --no-restart + --allow-restart is a contradiction;
+        // refuse rather than silently letting the alias win.
+        if (options.allowRestart === true && options.restart === false) {
+          error("--allow-restart and --no-restart are mutually exclusive");
+          process.exit(1);
+          return;
+        }
+        const restartFlag: boolean | undefined =
+          options.allowRestart === true
+            ? true
+            : options.restart === undefined
+              ? undefined
+              : options.restart;
+
+        const result = await runToolingFill({
+          hintName,
+          all: options.all === true,
+          force: options.force === true,
+          forceNoValidate: options.forceNoValidate === true,
+          dryRun: options.dryRun === true,
+          yes: options.yes === true,
+          restart: restartFlag,
+          restartCmd: options.restartCmd,
+          configPath: options.config ?? SYNC_TOOLING_DEFAULT_CONFIG,
+          homeDir: os.homedir(),
+          kindHint:
+            options.kind === "mcp" || options.kind === "skills"
+              ? options.kind
+              : undefined,
+          agentId: options.agent,
+          isTty: process.stdout.isTTY === true,
+          prompts,
+          clock: () => new Date(),
+        });
+        rl.close();
+
+        if (result.exitCode === 0) {
+          success(result.summary);
+        } else {
+          error(result.summary);
+        }
+        process.exit(result.exitCode);
+      },
+    );
+}
+
+/**
+ * Read the keys of an existing `tooling.*.capabilityHints` map from a
+ * yaml@2.8.4 Document. Returns an empty array if the path is absent or
+ * the value at the path is not a YAMLMap. Local helper (avoids exposing
+ * a mutation-AST utility from the sync-tooling barrel).
+ */
+function readHintKeysForInspect(
+  doc: ReturnType<typeof parseDocument>,
+  hintMapPath: string[],
+): string[] {
+  if (!doc.hasIn(hintMapPath)) return [];
+  const node = doc.getIn(hintMapPath, true);
+  if (!isMap(node)) return [];
+  const keys: string[] = [];
+  for (const p of node.items) {
+    if (!isPair(p)) continue;
+    const k = isScalar(p.key) ? p.key.value : p.key;
+    if (typeof k === "string") keys.push(k);
+  }
+  return keys;
 }
 
 /**

@@ -103,14 +103,14 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("path validation", () => {
-  it("Test 1: rejects path traversal with [path_traversal]", async () => {
+  it("rejects path traversal with [path_traversal]", async () => {
     const tool = createTool();
     await expect(
       tool.execute("id", { path: "../../etc/passwd", content: "bad" }),
     ).rejects.toThrow("[path_traversal]");
   });
 
-  it("Test 2: allows sharedPaths -- path outside workspace resolves", async () => {
+  it("allows sharedPaths -- path outside workspace resolves", async () => {
     const sharedDir = await createWorkspace();
     try {
       const sharedFile = path.join(sharedDir, "shared.txt");
@@ -138,7 +138,7 @@ describe("path validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("device file blocking", () => {
-  it("Test 3: rejects device file with [device_file]", async () => {
+  it("rejects device file with [device_file]", async () => {
     const tool = createTool({ sharedPaths: ["/dev"] });
     await expect(
       tool.execute("id", { path: "/dev/zero", content: "data" }),
@@ -151,7 +151,7 @@ describe("device file blocking", () => {
 // ---------------------------------------------------------------------------
 
 describe("read-before-write enforcement", () => {
-  it("Test 4: cold-registers existing file when tracker is empty and appends audit notice", async () => {
+  it("cold-registers existing file when tracker is empty and appends audit notice", async () => {
     // Create file but do NOT call tracker.recordRead -- simulates the session-
     // start "seeded workspace template" case where the LLM has the file in
     // its system prompt but never read it via the read tool.
@@ -187,7 +187,7 @@ describe("read-before-write enforcement", () => {
     expect(tracker.hasBeenRead(absPath)).toBe(true);
   });
 
-  it("Test 4b: [stale_file] still fires when on-disk state changes between cold-register and staleness re-read", async () => {
+  it("[stale_file] still fires when on-disk state changes between cold-register and staleness re-read", async () => {
     // Setup: file exists on disk with content v1, tracker is empty.
     // Execution sequence the tool follows on the cold-register path:
     //   V5 (initial stat, mtime=A)
@@ -246,7 +246,7 @@ describe("read-before-write enforcement", () => {
     }
   });
 
-  it("Test 4c: new file write does not cold-register (no audit notice, coldRead=false)", async () => {
+  it("new file write does not cold-register (no audit notice, coldRead=false)", async () => {
     const tool = createTool();
     const result = await tool.execute("id", {
       path: "brand-new.txt",
@@ -261,7 +261,7 @@ describe("read-before-write enforcement", () => {
     expect(result.content[0].text).toContain('"created":true');
   });
 
-  it("Test 4d: audit notice preview caps at 500 bytes with truncation suffix", async () => {
+  it("audit notice preview caps at 500 bytes with truncation suffix", async () => {
     // Write a 2000-byte file so the preview must truncate to 500.
     const absPath = path.join(workspaceDir, "big-unread.txt");
     const bigContent = "x".repeat(2000);
@@ -284,7 +284,7 @@ describe("read-before-write enforcement", () => {
     expect(match![1].length).toBe(500);
   });
 
-  it("Test 5: allows overwrite on existing file IN tracker (fast path, no cold-register)", async () => {
+  it("allows overwrite on existing file IN tracker (fast path, no cold-register)", async () => {
     await writeAndRead("tracked.txt", "original");
     const tool = createTool();
     const result = await tool.execute("id", {
@@ -308,7 +308,7 @@ describe("read-before-write enforcement", () => {
 // ---------------------------------------------------------------------------
 
 describe("staleness detection", () => {
-  it("Test 6: rejects overwrite on stale file with [stale_file]", async () => {
+  it("rejects overwrite on stale file with [stale_file]", async () => {
     const absPath = await writeAndRead("stale.txt", "original");
     const realStat = await fs.stat(absPath);
     // Simulate mtime change via stat override
@@ -334,7 +334,7 @@ describe("staleness detection", () => {
 // ---------------------------------------------------------------------------
 
 describe("new file creation", () => {
-  it("Test 7: creates file at non-existent path with given content", async () => {
+  it("creates file at non-existent path with given content", async () => {
     const tool = createTool();
     const result = await tool.execute("id", {
       path: "newfile.txt",
@@ -346,7 +346,7 @@ describe("new file creation", () => {
     expect(result.content[0].text).toContain('"created":true');
   });
 
-  it("Test 8: created file content matches input (read back and compare)", async () => {
+  it("created file content matches input (read back and compare)", async () => {
     const tool = createTool();
     const testContent = "line1\nline2\nline3\n";
     await tool.execute("id", {
@@ -364,7 +364,7 @@ describe("new file creation", () => {
 // ---------------------------------------------------------------------------
 
 describe("directory creation", () => {
-  it("Test 9: creates parent directories for deep nested path", async () => {
+  it("creates parent directories for deep nested path", async () => {
     const tool = createTool();
     await tool.execute("id", {
       path: "deep/nested/dir/file.txt",
@@ -375,7 +375,7 @@ describe("directory creation", () => {
     expect(content).toBe("deep content");
   });
 
-  it("Test 10: rejects when createDirectories=false and parent does not exist", async () => {
+  it("rejects when createDirectories=false and parent does not exist", async () => {
     const tool = createTool();
     await expect(
       tool.execute("id", {
@@ -392,7 +392,7 @@ describe("directory creation", () => {
 // ---------------------------------------------------------------------------
 
 describe("tracker update", () => {
-  it("Test 11: after creating a new file, tracker.hasBeenRead returns true", async () => {
+  it("after creating a new file, tracker.hasBeenRead returns true", async () => {
     const tool = createTool();
     await tool.execute("id", {
       path: "tracked-new.txt",
@@ -402,7 +402,7 @@ describe("tracker update", () => {
     expect(tracker.hasBeenRead(absPath)).toBe(true);
   });
 
-  it("Test 12: after overwriting a file, tracker mtime matches new stat", async () => {
+  it("after overwriting a file, tracker mtime matches new stat", async () => {
     await writeAndRead("tracked-overwrite.txt", "original");
     const tool = createTool();
     await tool.execute("id", {
@@ -422,7 +422,7 @@ describe("tracker update", () => {
 // ---------------------------------------------------------------------------
 
 describe("overwrite existing", () => {
-  it("Test 13: overwrite updates file content", async () => {
+  it("overwrite updates file content", async () => {
     await writeAndRead("existing.txt", "old content");
     const tool = createTool();
     await tool.execute("id", {
@@ -434,7 +434,7 @@ describe("overwrite existing", () => {
     expect(content).toBe("new content");
   });
 
-  it("Test 14: successive writes do not fail staleness (post-write tracker update)", async () => {
+  it("successive writes do not fail staleness (post-write tracker update)", async () => {
     await writeAndRead("multi.txt", "first");
     const tool = createTool();
     // First overwrite
@@ -452,7 +452,7 @@ describe("overwrite existing", () => {
 // ---------------------------------------------------------------------------
 
 describe("protected workspace file blocking", () => {
-  it("Test 16: rejects write to AGENTS.md with [protected_file]", async () => {
+  it("rejects write to AGENTS.md with [protected_file]", async () => {
     await writeAndRead("AGENTS.md", "# Agent instructions");
     const tool = createTool();
     await expect(
@@ -460,7 +460,7 @@ describe("protected workspace file blocking", () => {
     ).rejects.toThrow("[protected_file]");
   });
 
-  it("Test 17: rejects write to SOUL.md with [protected_file]", async () => {
+  it("rejects write to SOUL.md with [protected_file]", async () => {
     await writeAndRead("SOUL.md", "# Soul file");
     const tool = createTool();
     await expect(
@@ -468,7 +468,7 @@ describe("protected workspace file blocking", () => {
     ).rejects.toThrow("[protected_file]");
   });
 
-  it("Test 18: protected_file error message suggests ROLE.md", async () => {
+  it("protected_file error message suggests ROLE.md", async () => {
     await writeAndRead("AGENTS.md", "# Agent instructions");
     const tool = createTool();
     await expect(
@@ -476,7 +476,7 @@ describe("protected workspace file blocking", () => {
     ).rejects.toThrow("Use ROLE.md instead");
   });
 
-  it("Test 19: rejects write to nested AGENTS.md with [protected_file]", async () => {
+  it("rejects write to nested AGENTS.md with [protected_file]", async () => {
     await writeAndRead("subdir/AGENTS.md", "# nested");
     const tool = createTool();
     await expect(
@@ -490,7 +490,7 @@ describe("protected workspace file blocking", () => {
 // ---------------------------------------------------------------------------
 
 describe("jupyter notebook rejection", () => {
-  it("Test 20: rejects write to .ipynb with [jupyter_rejected]", async () => {
+  it("rejects write to .ipynb with [jupyter_rejected]", async () => {
     await writeAndRead("notebook.ipynb", '{"cells":[]}');
     const tool = createTool();
     await expect(
@@ -498,7 +498,7 @@ describe("jupyter notebook rejection", () => {
     ).rejects.toThrow("[jupyter_rejected]");
   });
 
-  it("Test 21: rejects write to .IPYNB (case-insensitive)", async () => {
+  it("rejects write to .IPYNB (case-insensitive)", async () => {
     await writeAndRead("NOTEBOOK.IPYNB", '{"cells":[]}');
     const tool = createTool();
     await expect(
@@ -506,7 +506,7 @@ describe("jupyter notebook rejection", () => {
     ).rejects.toThrow("[jupyter_rejected]");
   });
 
-  it("Test 22: rejects creating NEW .ipynb file", async () => {
+  it("rejects creating NEW .ipynb file", async () => {
     const tool = createTool();
     await expect(
       tool.execute("id", { path: "new.ipynb", content: '{"cells":[]}' }),
@@ -519,7 +519,7 @@ describe("jupyter notebook rejection", () => {
 // ---------------------------------------------------------------------------
 
 describe("config validation on overwrite", () => {
-  it("Test 23: rejects overwriting .json with invalid JSON", async () => {
+  it("rejects overwriting .json with invalid JSON", async () => {
     await writeAndRead("config.json", '{"valid": true}');
     const tool = createTool();
     await expect(
@@ -527,7 +527,7 @@ describe("config validation on overwrite", () => {
     ).rejects.toThrow("[invalid_config]");
   });
 
-  it("Test 24: rejects overwriting .yaml with invalid YAML", async () => {
+  it("rejects overwriting .yaml with invalid YAML", async () => {
     await writeAndRead("config.yaml", "key: value");
     const tool = createTool();
     await expect(
@@ -535,7 +535,7 @@ describe("config validation on overwrite", () => {
     ).rejects.toThrow("[invalid_config]");
   });
 
-  it("Test 25: rejects overwriting .jsonc with invalid JSONC", async () => {
+  it("rejects overwriting .jsonc with invalid JSONC", async () => {
     await writeAndRead("settings.jsonc", '// comment\n{"valid": true}');
     const tool = createTool();
     await expect(
@@ -543,7 +543,7 @@ describe("config validation on overwrite", () => {
     ).rejects.toThrow("[invalid_config]");
   });
 
-  it("Test 26: allows overwriting .json with valid JSON", async () => {
+  it("allows overwriting .json with valid JSON", async () => {
     await writeAndRead("valid.json", '{"old": true}');
     const tool = createTool();
     const result = await tool.execute("id", {
@@ -553,7 +553,7 @@ describe("config validation on overwrite", () => {
     expect(result.content[0].text).toContain('"created":false');
   });
 
-  it("Test 27: allows creating NEW .json with invalid JSON (no validation on new files)", async () => {
+  it("allows creating NEW .json with invalid JSON (no validation on new files)", async () => {
     const tool = createTool();
     const result = await tool.execute("id", {
       path: "new-config.json",
@@ -568,7 +568,7 @@ describe("config validation on overwrite", () => {
 // ---------------------------------------------------------------------------
 
 describe("encoding preservation", () => {
-  it("Test 28: overwrite Latin-1 file preserves Latin-1 encoding", async () => {
+  it("overwrite Latin-1 file preserves Latin-1 encoding", async () => {
     // Create a Latin-1 file with realistic French text (chardet detects as ISO-8859-1)
     const latin1Text = "Les op\xe9rations de p\xeache dans la r\xe9gion fran\xe7aise sont tr\xe8s importantes.\n";
     const absPath = path.join(workspaceDir, "french.txt");
@@ -590,7 +590,7 @@ describe("encoding preservation", () => {
     expect(rawBuf.indexOf(0xc3)).toBe(-1);
   });
 
-  it("Test 29: overwrite CRLF file preserves CRLF line endings", async () => {
+  it("overwrite CRLF file preserves CRLF line endings", async () => {
     // Create a CRLF file
     const absPath = path.join(workspaceDir, "crlf.txt");
     await fs.writeFile(absPath, "line1\r\nline2\r\n", "utf-8");
@@ -615,7 +615,7 @@ describe("encoding preservation", () => {
 // ---------------------------------------------------------------------------
 
 describe("error code format", () => {
-  it("Test 15: all error messages use [code] format", async () => {
+  it("all error messages use [code] format", async () => {
     const tool = createTool();
     const errors: string[] = [];
 

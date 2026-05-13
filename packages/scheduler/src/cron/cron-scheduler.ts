@@ -48,7 +48,7 @@ export interface CronScheduler {
  * Create a CronScheduler with timer loop, job lifecycle, and error backoff.
  *
  * - Single timer via armTimer(): earliest nextRunAtMs, clamped to MAX_TIMER_DELAY_MS
- * - Timer uses .unref() to avoid keeping the process alive (decision [06-03])
+ * - Timer uses .unref() to avoid keeping the process alive
  * - Due jobs: emit scheduler:job_started, call executeJob, emit scheduler:job_completed
  * - Success: reset consecutiveErrors, compute nextRunAtMs
  * - Error: increment consecutiveErrors, apply backoff from ERROR_BACKOFF_SCHEDULE_MS
@@ -245,7 +245,7 @@ function errorBackoffMs(consecutiveErrors: number): number {
  * Check if job should be auto-suspended and apply if so.
  * Returns true if the job was suspended.
  *
- * CRON-CIRCUIT: Circuit breaker for cron jobs -- prevents permanently failing
+ * Circuit breaker for cron jobs -- prevents permanently failing
  * jobs from retrying forever, wasting API costs and compute.
  */
 function checkAutoSuspend(

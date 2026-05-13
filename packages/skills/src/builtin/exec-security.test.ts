@@ -29,12 +29,12 @@ import {
 
 describe("sanitizeCommandInput", () => {
   // Should BLOCK
-  it("Test 1: blocks null byte (U+0000)", () => {
+  it("blocks null byte (U+0000)", () => {
     const result = sanitizeCommandInput("rm\x00-rf /");
     expect(result).toMatch(/U\+0000/);
   });
 
-  it("Test 2: blocks raw newline (U+000A) with script-style stdin hint for non-file-write commands", () => {
+  it("blocks raw newline (U+000A) with script-style stdin hint for non-file-write commands", () => {
     // "python3 script.py" doesn't match the file-write heuristic (no cat/tee/echo/printf,
     // no `>` redirection), so the script-style hint should fire.
     const result = sanitizeCommandInput(
@@ -47,13 +47,13 @@ describe("sanitizeCommandInput", () => {
     expect(result).not.toMatch(/'write' tool/);
   });
 
-  it("Test 2b: newline hint not present for other invisible chars", () => {
+  it("newline hint not present for other invisible chars", () => {
     const result = sanitizeCommandInput("rm\x00-rf /");
     expect(result).not.toBeNull();
     expect(result).not.toMatch(/input/);
   });
 
-  it("Test 2c: redirects LLM to `write` tool when command looks like a file write (cat heredoc)", () => {
+  it("redirects LLM to `write` tool when command looks like a file write (cat heredoc)", () => {
     // `cat > path << 'EOF'\n...\nEOF` is the LLM's natural shell pattern for
     // writing multi-line files. Gate-0 blocks it for security, but the error
     // should point to the `write` tool, not `python3 -` (which was the wrong
@@ -67,7 +67,7 @@ describe("sanitizeCommandInput", () => {
     expect(result).not.toMatch(/python3 -/);
   });
 
-  it("Test 2d: also redirects to `write` for tee/echo/printf heredocs", () => {
+  it("also redirects to `write` for tee/echo/printf heredocs", () => {
     for (const prefix of ["tee foo.md << 'EOF'", "echo hi > foo.md", "printf 'x' > foo.md"]) {
       const result = sanitizeCommandInput(prefix + String.fromCharCode(0x0a) + "rest");
       expect(result).toMatch(/'write' tool/);
@@ -75,64 +75,64 @@ describe("sanitizeCommandInput", () => {
     }
   });
 
-  it("Test 3: blocks zero-width space (U+200B)", () => {
+  it("blocks zero-width space (U+200B)", () => {
     const result = sanitizeCommandInput("rm\u200B-rf /");
     expect(result).toMatch(/U\+200B/);
   });
 
-  it("Test 4: blocks NBSP (U+00A0)", () => {
+  it("blocks NBSP (U+00A0)", () => {
     const result = sanitizeCommandInput("rm\u00A0-rf /");
     expect(result).toMatch(/U\+00A0/);
   });
 
-  it("Test 5: blocks LTR mark (U+200E)", () => {
+  it("blocks LTR mark (U+200E)", () => {
     const result = sanitizeCommandInput("echo\u200Ehello");
     expect(result).toMatch(/U\+200E/);
   });
 
-  it("Test 6: blocks BOM (U+FEFF)", () => {
+  it("blocks BOM (U+FEFF)", () => {
     const result = sanitizeCommandInput("\uFEFFecho hello");
     expect(result).toMatch(/U\+FEFF/);
   });
 
-  it("Test 7: blocks soft hyphen (U+00AD)", () => {
+  it("blocks soft hyphen (U+00AD)", () => {
     const result = sanitizeCommandInput("rm\u00AD-rf /");
     expect(result).toMatch(/U\+00AD/);
   });
 
   // Should ALLOW
-  it("Test 8: allows plain ASCII", () => {
+  it("allows plain ASCII", () => {
     expect(sanitizeCommandInput("echo hello world")).toBeNull();
   });
 
-  it("Test 9: allows tab character", () => {
+  it("allows tab character", () => {
     expect(sanitizeCommandInput("echo\thello\tworld")).toBeNull();
   });
 
-  it("Test 10: allows escaped hex in quotes (literal text)", () => {
+  it("allows escaped hex in quotes (literal text)", () => {
     expect(sanitizeCommandInput("grep -P '\\x00' file")).toBeNull();
   });
 
-  it("Test 11: allows literal backslash-n", () => {
+  it("allows literal backslash-n", () => {
     expect(sanitizeCommandInput("echo $'\\n'")).toBeNull();
   });
 
-  it("Test 12: allows empty string", () => {
+  it("allows empty string", () => {
     expect(sanitizeCommandInput("")).toBeNull();
   });
 
   // Error message format
-  it("Test 13: error contains U+ followed by 4+ uppercase hex digits", () => {
+  it("error contains U+ followed by 4+ uppercase hex digits", () => {
     const result = sanitizeCommandInput("rm\u200B-rf /");
     expect(result).toMatch(/U\+[0-9A-F]{4,}/);
   });
 
-  it("Test 14: error contains position and a number", () => {
+  it("error contains position and a number", () => {
     const result = sanitizeCommandInput("rm\u200B-rf /");
     expect(result).toMatch(/position \d+/);
   });
 
-  it("Test 15: error contains invisible/ambiguous character phrase", () => {
+  it("error contains invisible/ambiguous character phrase", () => {
     const result = sanitizeCommandInput("rm\u200B-rf /");
     expect(result).toMatch(/invisible\/ambiguous character/);
   });
@@ -140,43 +140,43 @@ describe("sanitizeCommandInput", () => {
 
 describe("validateExecCommand", () => {
   // Pipeline order
-  it("Test 16: returns null when all gates pass", () => {
+  it("returns null when all gates pass", () => {
     expect(validateExecCommand("echo hello")).toBeNull();
   });
 
-  it("Test 17: sanitize gate fires first even when denylist would also match", () => {
+  it("sanitize gate fires first even when denylist would also match", () => {
     const result = validateExecCommand("rm\u200B-rf /");
     expect(result).not.toBeNull();
     expect(result!.blocker).toBe("sanitize");
   });
 
-  it("Test 18: denylist catches when sanitize passes", () => {
+  it("denylist catches when sanitize passes", () => {
     const result = validateExecCommand("rm -rf /");
     expect(result).not.toBeNull();
     expect(result!.blocker).toBe("denylist");
   });
 
-  it("Test 19: env catches when sanitize + denylist pass", () => {
+  it("env catches when sanitize + denylist pass", () => {
     const result = validateExecCommand("echo x", { LD_PRELOAD: "x" });
     expect(result).not.toBeNull();
     expect(result!.blocker).toBe("env");
   });
 
-  it("Test 20: safe env passes", () => {
+  it("safe env passes", () => {
     expect(
       validateExecCommand("echo hello", { HOME: "/home/user" }),
     ).toBeNull();
   });
 
   // Return type shape
-  it("Test 21: blocked result has both .message and .blocker", () => {
+  it("blocked result has both .message and .blocker", () => {
     const result = validateExecCommand("rm -rf /");
     expect(result).not.toBeNull();
     expect(typeof result!.message).toBe("string");
     expect(typeof result!.blocker).toBe("string");
   });
 
-  it("Test 22: passing result is null (not undefined, not empty object)", () => {
+  it("passing result is null (not undefined, not empty object)", () => {
     const result = validateExecCommand("echo hello");
     expect(result).toBeNull();
     expect(result).not.toBeUndefined();
@@ -184,23 +184,23 @@ describe("validateExecCommand", () => {
 });
 
 describe("moved functions", () => {
-  it("Test 23: validateCommand blocks rm -rf /", () => {
+  it("validateCommand blocks rm -rf /", () => {
     const result = validateCommand("rm -rf /");
     expect(result).not.toBeNull();
     expect(result).toMatch(/blocked/i);
   });
 
-  it("Test 24: validateCommand allows echo hello", () => {
+  it("validateCommand allows echo hello", () => {
     expect(validateCommand("echo hello")).toBeNull();
   });
 
-  it("Test 25: validateEnvVars blocks LD_PRELOAD", () => {
+  it("validateEnvVars blocks LD_PRELOAD", () => {
     const result = validateEnvVars({ LD_PRELOAD: "x" });
     expect(result).not.toBeNull();
     expect(result).toMatch(/not in the allowed list/i);
   });
 
-  it("Test 26: validateEnvVars allows safe vars", () => {
+  it("validateEnvVars allows safe vars", () => {
     expect(validateEnvVars({ NODE_ENV: "test" })).toBeNull();
   });
 });
@@ -1227,7 +1227,7 @@ describe("validateRedirectTargets pipeline integration", () => {
 });
 
 describe("exported constants", () => {
-  it("Test 27: DANGEROUS_COMMAND_PATTERNS is non-empty array with .pattern and .reason", () => {
+  it("DANGEROUS_COMMAND_PATTERNS is non-empty array with .pattern and .reason", () => {
     expect(Array.isArray(DANGEROUS_COMMAND_PATTERNS)).toBe(true);
     expect(DANGEROUS_COMMAND_PATTERNS.length).toBeGreaterThan(0);
     for (const entry of DANGEROUS_COMMAND_PATTERNS) {
@@ -1236,12 +1236,12 @@ describe("exported constants", () => {
     }
   });
 
-  it("Test 28: SAFE_ENV_VARS is a Set containing NODE_ENV", () => {
+  it("SAFE_ENV_VARS is a Set containing NODE_ENV", () => {
     expect(SAFE_ENV_VARS).toBeInstanceOf(Set);
     expect(SAFE_ENV_VARS.has("NODE_ENV")).toBe(true);
   });
 
-  it("Test 29: SAFE_ENV_PREFIXES is an array containing LC_", () => {
+  it("SAFE_ENV_PREFIXES is an array containing LC_", () => {
     expect(Array.isArray(SAFE_ENV_PREFIXES)).toBe(true);
     expect(SAFE_ENV_PREFIXES).toContain("LC_");
   });

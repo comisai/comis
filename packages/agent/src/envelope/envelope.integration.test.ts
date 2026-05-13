@@ -2,9 +2,8 @@
 /**
  * Envelope Integration Tests
  *
- * End-to-end tests for the envelope subsystem covering all four
- * requirements: envelope format, timezone modes,
- * elapsed time suffixes, and time format control.
+ * End-to-end tests for the envelope subsystem covering envelope format,
+ * timezone modes, elapsed time suffixes, and time format control.
  *
  * Also covers edge cases: session gaps,
  * showProvider/showElapsed toggles, empty text, emoji in names.
@@ -140,14 +139,9 @@ describe("Timezone modes", () => {
   it("invalid IANA timezone falls back gracefully", () => {
     const msg = makeMsg();
 
-    // The formatTimestamp function passes the timezone to Intl.DateTimeFormat.
-    // With an invalid zone, it will throw RangeError.
-    // wrapInEnvelope should either catch and default to UTC, or the test
-    // verifies that the function doesn't crash.
-    // Looking at the implementation: it does NOT catch the error.
-    // So this tests that invalid timezone throws (the implementation doesn't catch it).
-    // Per the plan: "wrapInEnvelope should catch and default to UTC" -- but the
-    // implementation doesn't have a try/catch. We should verify the behavior as-is.
+    // formatTimestamp passes the timezone to Intl.DateTimeFormat, which throws
+    // RangeError on an invalid zone. The current implementation does not catch
+    // this, so we assert the throw to lock the behavior in.
     const config = makeConfig({ timezoneMode: "Invalid/Zone" });
 
     // Intl.DateTimeFormat with invalid timezone throws RangeError

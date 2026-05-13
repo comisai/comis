@@ -78,7 +78,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 1: Spawn returns runId immediately
+  // Spawn returns runId immediately
   // -----------------------------------------------------------------------
   it("spawn returns runId immediately without awaiting executeAgent", () => {
     // Use a never-resolving promise to prove non-blocking
@@ -115,7 +115,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 2: Run completes and updates status
+  // Run completes and updates status
   // -----------------------------------------------------------------------
   it("run completes and updates status with result", async () => {
     const runner = createSubAgentRunner(deps);
@@ -139,7 +139,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 3: Run failure sets status to "failed"
+  // Run failure sets status to "failed"
   // -----------------------------------------------------------------------
   it("run failure sets status to failed with error message", async () => {
     vi.mocked(deps.executeAgent).mockRejectedValue(new Error("LLM quota exceeded"));
@@ -160,7 +160,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 4: Allowlist blocks unauthorized agent
+  // Allowlist blocks unauthorized agent
   // -----------------------------------------------------------------------
   it("allowlist blocks unauthorized agent", () => {
     deps.config.allowAgents = ["researcher"];
@@ -181,7 +181,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 5: Empty allowlist allows any agent
+  // Empty allowlist allows any agent
   // -----------------------------------------------------------------------
   it("empty allowlist allows any agent", () => {
     deps.config.allowAgents = [];
@@ -199,7 +199,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 6: Auto-archive removes old completed runs
+  // Auto-archive removes old completed runs
   // -----------------------------------------------------------------------
   it("auto-archive removes old completed runs after retention period", async () => {
     deps.config.subAgentRetentionMs = 60_000; // 1 minute for test
@@ -237,7 +237,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 7: ANNOUNCE_SKIP suppresses announcement
+  // ANNOUNCE_SKIP suppresses announcement
   // -----------------------------------------------------------------------
   it("ANNOUNCE_SKIP suppresses announcement", async () => {
     vi.mocked(deps.executeAgent).mockResolvedValue({
@@ -262,7 +262,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 8: Announce includes [System Message] format with stats
+  // Announce includes [System Message] format with stats
   // -----------------------------------------------------------------------
   it("announce includes [System Message] format with runtime, tokens, cost, session", async () => {
     const runner = createSubAgentRunner(deps);
@@ -291,7 +291,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 9: Events emitted on spawn and completion
+  // Events emitted on spawn and completion
   // -----------------------------------------------------------------------
   it("emits events on spawn and completion", async () => {
     const runner = createSubAgentRunner(deps);
@@ -328,7 +328,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 9b: Completion event has success:false for abnormal finishReason
+  // Completion event has success:false for abnormal finishReason
   // -----------------------------------------------------------------------
   it("emits success:false when finishReason is abnormal", async () => {
     vi.mocked(deps.executeAgent).mockResolvedValue({
@@ -361,7 +361,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 9c: Completion event has success:true for end_turn finishReason
+  // Completion event has success:true for end_turn finishReason
   // -----------------------------------------------------------------------
   it("emits success:true when finishReason is end_turn", async () => {
     vi.mocked(deps.executeAgent).mockResolvedValue({
@@ -392,7 +392,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 10: Shutdown waits for active runs
+  // Shutdown waits for active runs
   // -----------------------------------------------------------------------
   it("shutdown waits for active runs to complete", async () => {
     let resolveExec!: (v: unknown) => void;
@@ -430,7 +430,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 11: getRunStatus returns undefined for unknown runId
+  // getRunStatus returns undefined for unknown runId
   // -----------------------------------------------------------------------
   it("getRunStatus returns undefined for unknown runId", () => {
     const runner = createSubAgentRunner(deps);
@@ -438,7 +438,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 12: Lifecycle logs emitted when logger provided
+  // Lifecycle logs emitted when logger provided
   // -----------------------------------------------------------------------
   it("emits lifecycle logs when logger is provided", async () => {
     const logger = {
@@ -473,7 +473,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 13: Session store save called with correct metadata
+  // Session store save called with correct metadata
   // -----------------------------------------------------------------------
   it("saves sub-agent session with correct metadata", () => {
     const runner = createSubAgentRunner(deps);
@@ -496,7 +496,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 14: buildAnnouncementMessage formats success template
+  // buildAnnouncementMessage formats success template
   // -----------------------------------------------------------------------
   it("buildAnnouncementMessage formats success template with [System Message] prefix", () => {
     const result = buildAnnouncementMessage({
@@ -521,7 +521,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 15: buildAnnouncementMessage formats failure template
+  // buildAnnouncementMessage formats failure template
   // -----------------------------------------------------------------------
   it("buildAnnouncementMessage formats failure template", () => {
     const result = buildAnnouncementMessage({
@@ -541,7 +541,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 16: buildAnnouncementMessage formats halted (max_steps) template
+  // buildAnnouncementMessage formats halted (max_steps) template
   // -----------------------------------------------------------------------
   it("buildAnnouncementMessage formats halted (max_steps) template", () => {
     const result = buildAnnouncementMessage({
@@ -560,7 +560,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 17: Spawn uses announceToParent when available
+  // Spawn uses announceToParent when available
   // -----------------------------------------------------------------------
   it("spawn uses announceToParent when available and callerSessionKey present", async () => {
     const announceToParent = vi.fn().mockResolvedValue(undefined);
@@ -598,7 +598,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 18: Spawn falls back to sendToChannel when announceToParent absent
+  // Spawn falls back to sendToChannel when announceToParent absent
   // -----------------------------------------------------------------------
   it("spawn falls back to sendToChannel when announceToParent is not provided", async () => {
     // No announceToParent in deps (default mock)
@@ -620,7 +620,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 19: Spawn falls back to sendToChannel when announceToParent throws
+  // Spawn falls back to sendToChannel when announceToParent throws
   // -----------------------------------------------------------------------
   it("spawn falls back to sendToChannel when announceToParent throws", async () => {
     const announceToParent = vi.fn().mockRejectedValue(new Error("Parent session unavailable"));
@@ -647,7 +647,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 20: buildAnnouncementMessage formats context_exhausted template
+  // buildAnnouncementMessage formats context_exhausted template
   // -----------------------------------------------------------------------
   it("buildAnnouncementMessage formats context_exhausted template", () => {
     const result = buildAnnouncementMessage({
@@ -666,7 +666,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 21: buildAnnouncementMessage formats budget_exceeded template
+  // buildAnnouncementMessage formats budget_exceeded template
   // -----------------------------------------------------------------------
   it("buildAnnouncementMessage formats budget_exceeded template", () => {
     const result = buildAnnouncementMessage({
@@ -685,7 +685,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 22: buildAnnouncementMessage formats context_loop template
+  // buildAnnouncementMessage formats context_loop template
   // -----------------------------------------------------------------------
   it("buildAnnouncementMessage formats context_loop template", () => {
     const result = buildAnnouncementMessage({
@@ -704,7 +704,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 23: Empty response logs warning
+  // Empty response logs warning
   // -----------------------------------------------------------------------
   it("empty response logs warning with actionable hint", async () => {
     const logger = {
@@ -741,7 +741,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 24: Completion log includes responseLength
+  // Completion log includes responseLength
   // -----------------------------------------------------------------------
   it("completion log includes responseLength and agentId", async () => {
     const logger = {
@@ -861,7 +861,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 25: Kill log includes durationMs and task
+  // Kill log includes durationMs and task
   // -----------------------------------------------------------------------
   it("kill log includes durationMs and task excerpt", async () => {
     const logger = {
@@ -904,7 +904,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 25b: killRun calls sessionResolver.resolveActiveSession
+  // killRun calls sessionResolver.resolveActiveSession
   // -----------------------------------------------------------------------
   it("killRun calls sessionResolver.resolveActiveSession when resolver provided", () => {
     const abortMock = vi.fn().mockResolvedValue(undefined);
@@ -937,7 +937,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 25c: killRun works normally when sessionResolver is not provided
+  // killRun works normally when sessionResolver is not provided
   // -----------------------------------------------------------------------
   it("killRun works normally when sessionResolver is not provided", () => {
     // sessionResolver is not set (default from createMockDeps).
@@ -958,7 +958,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 25d: killRun handles abort rejection gracefully (best-effort)
+  // killRun handles abort rejection gracefully (best-effort)
   // -----------------------------------------------------------------------
   it("killRun handles abort rejection gracefully", () => {
     const abortMock = vi.fn().mockRejectedValue(new Error("Already terminated"));
@@ -985,7 +985,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 25e: killRun skips abort when resolver has no handle for session
+  // killRun skips abort when resolver has no handle for session
   // -----------------------------------------------------------------------
   it("killRun skips abort when resolver has no handle for session", () => {
     const resolverMock = {
@@ -1009,7 +1009,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 28: Spawn INFO log includes maxSteps and toolProfile
+  // Spawn INFO log includes maxSteps and toolProfile
   // -----------------------------------------------------------------------
   it("spawn INFO log includes maxSteps and toolProfile", () => {
     const logger = {
@@ -1039,7 +1039,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 29: buildAnnouncementMessage includes step count
+  // buildAnnouncementMessage includes step count
   // -----------------------------------------------------------------------
   it("buildAnnouncementMessage includes step count in stats line", () => {
     const result = buildAnnouncementMessage({
@@ -1058,7 +1058,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 30: buildAnnouncementMessage defaults step count to 0
+  // buildAnnouncementMessage defaults step count to 0
   // -----------------------------------------------------------------------
   it("buildAnnouncementMessage defaults step count to 0 when not provided", () => {
     const result = buildAnnouncementMessage({
@@ -1076,7 +1076,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 31: Completed run result includes stepsExecuted
+  // Completed run result includes stepsExecuted
   // -----------------------------------------------------------------------
   it("completed run result includes stepsExecuted", async () => {
     vi.mocked(deps.executeAgent).mockResolvedValue({
@@ -1102,7 +1102,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 32: max_steps is passed to executeAgent
+  // max_steps is passed to executeAgent
   // -----------------------------------------------------------------------
   it("max_steps is passed to executeAgent as 5th argument", async () => {
     const runner = createSubAgentRunner(deps);
@@ -1125,7 +1125,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 33: Spawn log shows per-spawn maxSteps when provided
+  // Spawn log shows per-spawn maxSteps when provided
   // -----------------------------------------------------------------------
   it("spawn INFO log shows per-spawn maxSteps when provided", () => {
     const logger = {
@@ -2596,7 +2596,7 @@ describe("abort wiring in spawn", () => {
 // ---------------------------------------------------------------------------
 
 describe("classifyAbortReason", () => {
-  // Test 1: max_steps -> step_limit
+  // max_steps -> step_limit
   it("maps max_steps to step_limit category", () => {
     const result = classifyAbortReason("max_steps");
     expect(result.category).toBe("step_limit");
@@ -2604,61 +2604,61 @@ describe("classifyAbortReason", () => {
     expect(result.hint).toContain("max_steps");
   });
 
-  // Test 2: budget_exceeded -> budget
+  // budget_exceeded -> budget
   it("maps budget_exceeded to budget category", () => {
     const result = classifyAbortReason("budget_exceeded");
     expect(result.category).toBe("budget");
     expect(result.severity).toBe("actionable");
   });
 
-  // Test 3: context_loop -> context_full
+  // context_loop -> context_full
   it("maps context_loop to context_full category", () => {
     const result = classifyAbortReason("context_loop");
     expect(result.category).toBe("context_full");
     expect(result.severity).toBe("actionable");
   });
 
-  // Test 4: context_exhausted -> context_full
+  // context_exhausted -> context_full
   it("maps context_exhausted to context_full category", () => {
     const result = classifyAbortReason("context_exhausted");
     expect(result.category).toBe("context_full");
     expect(result.severity).toBe("actionable");
   });
 
-  // Test 5: circuit_open -> external_timeout
+  // circuit_open -> external_timeout
   it("maps circuit_open to external_timeout category", () => {
     const result = classifyAbortReason("circuit_open");
     expect(result.category).toBe("external_timeout");
     expect(result.severity).toBe("investigate");
   });
 
-  // Test 6: error + "Request was aborted" -> external_timeout
+  // error + "Request was aborted" -> external_timeout
   it("maps error with 'Request was aborted' to external_timeout", () => {
     const result = classifyAbortReason("error", "Request was aborted");
     expect(result.category).toBe("external_timeout");
     expect(result.severity).toBe("investigate");
   });
 
-  // Test 7: error + timeout patterns -> external_timeout
+  // error + timeout patterns -> external_timeout
   it("maps error with timeout patterns to external_timeout", () => {
     const result = classifyAbortReason("error", "connect ETIMEDOUT 1.2.3.4");
     expect(result.category).toBe("external_timeout");
   });
 
-  // Test 8: generic error -> unknown
+  // generic error -> unknown
   it("maps generic error to unknown", () => {
     const result = classifyAbortReason("error", "something unexpected");
     expect(result.category).toBe("unknown");
     expect(result.severity).toBe("investigate");
   });
 
-  // Test 9: unknown finishReason -> unknown
+  // unknown finishReason -> unknown
   it("maps unknown finishReason to unknown", () => {
     const result = classifyAbortReason("some_new_reason");
     expect(result.category).toBe("unknown");
   });
 
-  // Test 10.5: provider_degraded -> provider_degraded
+  // provider_degraded -> provider_degraded
   it("maps provider_degraded to provider_degraded category", () => {
     const result = classifyAbortReason("provider_degraded");
     expect(result.category).toBe("provider_degraded");
@@ -2666,7 +2666,7 @@ describe("classifyAbortReason", () => {
     expect(result.hint).toContain("degraded");
   });
 
-  // Test 10: every classification includes a non-empty hint
+  // every classification includes a non-empty hint
   it("every classification includes a non-empty hint string", () => {
     const cases: Array<[string, string | undefined]> = [
       ["max_steps", undefined],

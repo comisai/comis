@@ -43,12 +43,12 @@ describe("createMockOAuthServer", () => {
     await mock.stop();
   });
 
-  it("Test 1: start() returns a valid kernel-allocated port and matching baseUrl", () => {
+  it("start() returns a valid kernel-allocated port and matching baseUrl", () => {
     expect(port).toBeGreaterThan(0);
     expect(baseUrl).toBe(`http://127.0.0.1:${port}`);
   });
 
-  it("Test 2: POST /oauth/token returns 200 with access_token, refresh_token, expires_in", async () => {
+  it("POST /oauth/token returns 200 with access_token, refresh_token, expires_in", async () => {
     const res = await postRefresh(baseUrl);
     expect(res.status).toBe(200);
     const json = (await res.json()) as Record<string, unknown>;
@@ -60,14 +60,14 @@ describe("createMockOAuthServer", () => {
     expect(json.expires_in).toBe(3600);
   });
 
-  it("Test 3: default access_token is a 3-segment JWT", async () => {
+  it("default access_token is a 3-segment JWT", async () => {
     const res = await postRefresh(baseUrl);
     const json = (await res.json()) as { access_token: string };
     const segments = json.access_token.split(".");
     expect(segments).toHaveLength(3);
   });
 
-  it("Test 4: getRequestCount('refresh_token') tracks per-grant-type counts", async () => {
+  it("getRequestCount('refresh_token') tracks per-grant-type counts", async () => {
     await postRefresh(baseUrl);
     expect(mock.getRequestCount("refresh_token")).toBe(1);
     await postRefresh(baseUrl);
@@ -76,13 +76,13 @@ describe("createMockOAuthServer", () => {
     expect(mock.getRequestCount()).toBe(3);
   });
 
-  it("Test 5: getRequestCount('authorization_code') is 0 when only refresh requests sent", async () => {
+  it("getRequestCount('authorization_code') is 0 when only refresh requests sent", async () => {
     await postRefresh(baseUrl);
     expect(mock.getRequestCount("authorization_code")).toBe(0);
     expect(mock.getRequestCount("refresh_token")).toBe(1);
   });
 
-  it("Test 6: setNextResponse is consumed once, then default resumes", async () => {
+  it("setNextResponse is consumed once, then default resumes", async () => {
     mock.setNextResponse({
       status: 400,
       body: { error: "invalid_grant", error_description: "refresh_token_reused" },
@@ -100,7 +100,7 @@ describe("createMockOAuthServer", () => {
     expect(nextBody).toHaveProperty("access_token");
   });
 
-  it("Test 7: reset() clears counters and any queued response", async () => {
+  it("reset() clears counters and any queued response", async () => {
     await postRefresh(baseUrl);
     await postRefresh(baseUrl);
     mock.setNextResponse({ status: 500, body: { error: "server_error" } });
@@ -115,7 +115,7 @@ describe("createMockOAuthServer", () => {
     expect(after.status).toBe(200);
   });
 
-  it("Test 8: stop() releases the port; subsequent start() succeeds", async () => {
+  it("stop() releases the port; subsequent start() succeeds", async () => {
     // beforeEach already started; stop, then start a second time on the SAME instance
     await mock.stop();
     const restarted = await mock.start();
@@ -147,7 +147,7 @@ describe("createMockOAuthServer", () => {
     });
   }
 
-  it("Test 9 (codex/responses): captures Authorization + chatgpt-account-id headers per request", async () => {
+  it("codex/responses: captures Authorization + chatgpt-account-id headers per request", async () => {
     await postCodexResponses(baseUrl, {
       authorization: "Bearer ABC123",
       "chatgpt-account-id": "ACC1",
@@ -161,7 +161,7 @@ describe("createMockOAuthServer", () => {
     expect(captured[0]?.body).toBe('{"model":"gpt-5"}');
   });
 
-  it("Test 10 (codex/responses): getLlmRequests() returns array in inbound order across multiple sequential calls", async () => {
+  it("codex/responses: getLlmRequests() returns array in inbound order across multiple sequential calls", async () => {
     await postCodexResponses(baseUrl, {
       authorization: "Bearer TOKEN_A",
       "chatgpt-account-id": "ACC_A",
@@ -183,7 +183,7 @@ describe("createMockOAuthServer", () => {
     expect(captured.map((c) => c.accountId)).toEqual(["ACC_A", "ACC_B", "ACC_C"]);
   });
 
-  it("Test 11 (codex/responses): returns 200 with text/event-stream and minimal SSE response.completed payload", async () => {
+  it("codex/responses: returns 200 with text/event-stream and minimal SSE response.completed payload", async () => {
     const res = await postCodexResponses(baseUrl, {
       authorization: "Bearer T",
       "chatgpt-account-id": "A",
@@ -197,7 +197,7 @@ describe("createMockOAuthServer", () => {
     expect(text.endsWith("\n\n")).toBe(true);
   });
 
-  it("Test 12 (codex/responses): existing /oauth/token route behavior unchanged — token-issue path still emits {access_token, refresh_token, expires_in}", async () => {
+  it("codex/responses: existing /oauth/token route behavior unchanged — token-issue path still emits {access_token, refresh_token, expires_in}", async () => {
     const res = await postRefresh(baseUrl);
     expect(res.status).toBe(200);
     const json = (await res.json()) as Record<string, unknown>;
@@ -211,7 +211,7 @@ describe("createMockOAuthServer", () => {
     expect(mock.getRequestCount()).toBe(1);
   });
 
-  it("Test 13 (codex/responses): reset() clears getLlmRequests() AND existing getRequestCount()", async () => {
+  it("codex/responses: reset() clears getLlmRequests() AND existing getRequestCount()", async () => {
     await postCodexResponses(baseUrl, { authorization: "Bearer X", "chatgpt-account-id": "Y" });
     await postRefresh(baseUrl);
     expect(mock.getLlmRequests()).toHaveLength(1);
@@ -223,7 +223,7 @@ describe("createMockOAuthServer", () => {
     expect(mock.getRequestCount("refresh_token")).toBe(0);
   });
 
-  it("Test 14 (codex/responses): missing Authorization header records empty string; missing chatgpt-account-id records empty string (no thrown error)", async () => {
+  it("codex/responses: missing Authorization header records empty string; missing chatgpt-account-id records empty string (no thrown error)", async () => {
     const res = await postCodexResponses(baseUrl, {
       "content-type": "application/json",
     });

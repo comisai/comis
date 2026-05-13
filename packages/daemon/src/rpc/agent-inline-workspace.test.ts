@@ -59,7 +59,7 @@ describe("writeInlineWorkspaceFiles", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 1: success — both files
+  // success — both files
   // -------------------------------------------------------------------------
   it("writes ROLE.md and IDENTITY.md when both contents provided", async () => {
     const deps = makeDeps();
@@ -97,7 +97,7 @@ describe("writeInlineWorkspaceFiles", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 2: success — role only
+  // success — role only
   // -------------------------------------------------------------------------
   it("writes only ROLE.md when identity omitted", async () => {
     const deps = makeDeps();
@@ -126,7 +126,7 @@ describe("writeInlineWorkspaceFiles", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 3: success — identity only
+  // success — identity only
   // -------------------------------------------------------------------------
   it("writes only IDENTITY.md when role omitted", async () => {
     const deps = makeDeps();
@@ -155,7 +155,7 @@ describe("writeInlineWorkspaceFiles", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 4: success — neither (no-op)
+  // success — neither (no-op)
   // -------------------------------------------------------------------------
   it("returns ok with zero bytes and writes nothing when both omitted", async () => {
     const deps = makeDeps();
@@ -179,7 +179,7 @@ describe("writeInlineWorkspaceFiles", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 5: oversize defense in depth
+  // oversize defense in depth
   // -------------------------------------------------------------------------
   it("returns oversize err when role exceeds 16384 chars", async () => {
     const deps = makeDeps();
@@ -226,7 +226,7 @@ describe("writeInlineWorkspaceFiles", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 6: path traversal — safePath throws PathTraversalError
+  // path traversal — safePath throws PathTraversalError
   // -------------------------------------------------------------------------
   it("returns path_traversal err when safePath throws PathTraversalError on ROLE.md", async () => {
     const deps = makeDeps();
@@ -250,7 +250,7 @@ describe("writeInlineWorkspaceFiles", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 7: fs.writeFile rejection
+  // fs.writeFile rejection
   // -------------------------------------------------------------------------
   it("returns io err and emits canonical WARN when writeFile rejects on ROLE.md", async () => {
     const deps = makeDeps();
@@ -282,7 +282,7 @@ describe("writeInlineWorkspaceFiles", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 8: canonical INFO log on full success
+  // canonical INFO log on full success
   // -------------------------------------------------------------------------
   it("emits canonical INFO log once when at least one file written", async () => {
     const deps = makeDeps();

@@ -3806,7 +3806,7 @@ describe("createPiEventBridge", () => {
 
     // ----- bridge counter increments -----
 
-    it("Test 6: pre-call assertion increments BridgeMetricsState counters across walks", () => {
+    it("pre-call assertion increments BridgeMetricsState counters across walks", () => {
       const origBlock = thinkingBlock("orig", "sig-1");
       const mutatedBlock = thinkingBlock("mutated-text", "sig-1");
 

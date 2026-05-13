@@ -743,9 +743,9 @@ describe("config.patch env var reference validation", () => {
     expect(result).toMatchObject({ patched: true });
   });
 
-  // Test B — the fix: enabled:true with the SAME missing ref is rejected with
-  // the structured [invalid_value] error containing all 3 recovery options.
-  it("Test B — rejects enabled:true MCP server with missing ${VAR}", async () => {
+  // enabled:true with a missing ref is rejected with the structured
+  // [invalid_value] error containing all 3 recovery options.
+  it("rejects enabled:true MCP server with missing ${VAR}", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -786,8 +786,8 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/secrets_manage.*Drop the env block.*Set enabled:false/s);
   });
 
-  // Test C — strict tightening: same payload, secret PRESENT → passes.
-  it("Test C — accepts enabled:true MCP server when ${VAR} resolves", async () => {
+  // Same payload as the rejection case, but with the secret present → passes.
+  it("accepts enabled:true MCP server when ${VAR} resolves", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, { FINNHUB_API_KEY: "abc123" });
     const handlers = createConfigHandlers(deps);
 
@@ -810,9 +810,9 @@ describe("config.patch env var reference validation", () => {
     expect(result).toMatchObject({ patched: true });
   });
 
-  // Test D — multi-server: 2nd enabled server has the unresolved ref. Error
-  // names the FAILING server (finnhub), not just the first server in the list.
-  it("Test D — first-fail semantics name the actually-failing server", async () => {
+  // Multi-server: 2nd enabled server has the unresolved ref. Error names the
+  // FAILING server (finnhub), not just the first server in the list.
+  it("first-fail semantics name the actually-failing server", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -842,9 +842,9 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/enabled MCP server "finnhub"/);
   });
 
-  // Test E — 3+ missing vars on a single server: error lists 3 alphabetically
-  // sorted names plus (+1 more) when there's a 4th.
-  it("Test E — caps display at 3 names with (+N more) overflow", async () => {
+  // 3+ missing vars on a single server: error lists 3 alphabetically sorted
+  // names plus (+1 more) when there's a 4th.
+  it("caps display at 3 names with (+N more) overflow", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -871,8 +871,8 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/references env vars A, B, C \(\+1 more\)/);
   });
 
-  // Test F — non-MCP patch: validator skipped entirely.
-  it("Test F — skips validator entirely for non-MCP patches", async () => {
+  // Non-MCP patch: validator skipped entirely.
+  it("skips validator entirely for non-MCP patches", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -887,12 +887,12 @@ describe("config.patch env var reference validation", () => {
     expect(result).toMatchObject({ patched: true });
   });
 
-  // Test G — empty servers array passes the validator (no entries to scan).
-  // The only mutable subpath under integrations.mcp is `servers` (per
+  // Empty servers array passes the validator (no entries to scan). The only
+  // mutable subpath under integrations.mcp is `servers` (per
   // MUTABLE_CONFIG_OVERRIDES); other keys are immutable and rejected before
   // reaching the env-ref validator. So the realistic "no-op" shape for the
   // gate is an empty servers list — the loop body never runs.
-  it("Test G — no-ops when servers array is empty", async () => {
+  it("no-ops when servers array is empty", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1142,10 +1142,10 @@ describe("config.gc", () => {
 });
 
 // ---------------------------------------------------------------------------
-// H-1: Trust-level enforcement on read handlers
+// Trust-level enforcement on read handlers
 // ---------------------------------------------------------------------------
 
-describe("config.read admin trust enforcement (H-1)", () => {
+describe("config.read admin trust enforcement", () => {
   let tempConfig: ReturnType<typeof createTempConfig>;
 
   beforeEach(() => {
@@ -1196,7 +1196,7 @@ describe("config.read admin trust enforcement (H-1)", () => {
   });
 });
 
-describe("config.schema admin trust enforcement (H-1)", () => {
+describe("config.schema admin trust enforcement", () => {
   let tempConfig: ReturnType<typeof createTempConfig>;
 
   beforeEach(() => {
@@ -1226,7 +1226,7 @@ describe("config.schema admin trust enforcement (H-1)", () => {
   });
 });
 
-describe("config.history admin trust enforcement (H-1)", () => {
+describe("config.history admin trust enforcement", () => {
   let tempConfig: ReturnType<typeof createTempConfig>;
 
   beforeEach(() => {
@@ -1258,7 +1258,7 @@ describe("config.history admin trust enforcement (H-1)", () => {
   });
 });
 
-describe("config.diff admin trust enforcement (H-1)", () => {
+describe("config.diff admin trust enforcement", () => {
   let tempConfig: ReturnType<typeof createTempConfig>;
 
   beforeEach(() => {
@@ -1492,7 +1492,7 @@ describe("config.patch type coercion", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test A — config.patch preserves z.record(string,string) env values on
+  // config.patch preserves z.record(string,string) env values on
   // integrations.mcp.servers (the MAX_REQUESTS_PER_HOUR="20" cascade bug).
   // -------------------------------------------------------------------------
   it("config.patch preserves z.record(string,string) env values on integrations.mcp.servers", async () => {
@@ -1543,7 +1543,7 @@ describe("config.patch type coercion", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test B — config.patch preserves z.record(string,string) headers values.
+  // config.patch preserves z.record(string,string) headers values.
   // -------------------------------------------------------------------------
   it("config.patch preserves z.record(string,string) headers values on integrations.mcp.servers", async () => {
     const deps = makeDeps(tempConfig.configPath);
@@ -1588,23 +1588,21 @@ describe("config.patch type coercion", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test C — config.apply-style coercion preserves z.record(string,string)
-  // env values on a section-level payload.
+  // config.apply-style coercion preserves z.record(string,string) env values
+  // on a section-level payload.
   //
-  // DEVIATION from plan (Rule 3, blocking issue): the plan's original test C
-  // called `handlers["config.apply"]({ section: "integrations", ... })` and
-  // asserted the coerced values on-disk. However, `integrations` is in
-  // IMMUTABLE_CONFIG_PREFIXES (core/src/config/immutable-keys.ts:88), so
-  // config.apply rejects the section-level replace BEFORE reaching the
-  // coercion pipeline — the test could never exercise the fix. There is no
+  // We can't drive this end-to-end through `handlers["config.apply"]` because
+  // `integrations` is in IMMUTABLE_CONFIG_PREFIXES
+  // (core/src/config/immutable-keys.ts:88), so config.apply rejects the
+  // section-level replace BEFORE reaching the coercion pipeline. There is no
   // other mutable section that contains z.record(z.string(), z.string()).
   //
   // Instead, we exercise the config.apply callsite's coercion path directly
   // via `resolveSchemaForPath(AppConfigSchema, "integrations", undefined)` +
   // `coerceConfigValue`, which is exactly what the handler does at line 512.
-  // This proves the second-callsite fix (signature change + undefined key at
-  // section level) without being gated by immutability policy. The Test A /
-  // Test B pair already cover end-to-end persistence via config.patch.
+  // This proves the section-level coercion path (signature + undefined key at
+  // section level) without being gated by immutability policy. The patch-based
+  // tests above already cover end-to-end persistence via config.patch.
   // -------------------------------------------------------------------------
   it("config.apply-style section coercion preserves z.record(string,string) env values", async () => {
     const { AppConfigSchema } = await import("@comis/core");
@@ -1652,8 +1650,8 @@ describe("config.patch type coercion", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test D — direct unit test of coerceConfigValue with a ZodUnion containing
-  // a ZodString branch: numeric-looking strings must pass through (bias toward
+  // Direct unit test of coerceConfigValue with a ZodUnion containing a
+  // ZodString branch: numeric-looking strings must pass through (bias toward
   // loud failure rather than silent coercion).
   // -------------------------------------------------------------------------
   it("passes strings through when target is ZodUnion containing a ZodString branch", () => {
@@ -1664,7 +1662,7 @@ describe("config.patch type coercion", () => {
   });
 });
 
-describe("gateway.status admin trust enforcement (H-1)", () => {
+describe("gateway.status admin trust enforcement", () => {
   let tempConfig: ReturnType<typeof createTempConfig>;
 
   beforeEach(() => {

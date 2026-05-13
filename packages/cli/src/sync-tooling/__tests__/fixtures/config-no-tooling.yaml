@@ -1,0 +1,18 @@
+# Fixture: config without a `tooling:` block.
+# Consumed by Wave 1 generate-skeleton tests + Wave 4 integration test.
+
+integrations:
+  mcp:
+    servers:
+      - name: yfinance
+        transport: stdio
+        command: npx
+        args:
+          - -y
+          - yfinance-mcp-ts
+
+agents:
+  default:
+    skills:
+      discoveryPaths:
+        - ./skills

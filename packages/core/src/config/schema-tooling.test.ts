@@ -20,7 +20,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 // ---------------------------------------------------------------------------
 
 describe("ToolingConfigSchema", () => {
-  it("Test 1: empty parse populates all defaults", () => {
+  it("empty parse populates all defaults", () => {
     const result = ToolingConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
@@ -33,12 +33,12 @@ describe("ToolingConfigSchema", () => {
     }
   });
 
-  it("Test 2: rejects unknown top-level key (z.strictObject)", () => {
+  it("rejects unknown top-level key (z.strictObject)", () => {
     const result = ToolingConfigSchema.safeParse({ unknownTopLevel: 1 });
     expect(result.success).toBe(false);
   });
 
-  it("Test 3: rejects unknown nested key inside cluster entry (z.strictObject)", () => {
+  it("rejects unknown nested key inside cluster entry (z.strictObject)", () => {
     const result = ToolingConfigSchema.safeParse({
       capabilityClusters: {
         clusters: { foo: { unknownKey: 1, label: "Foo" } },
@@ -47,7 +47,7 @@ describe("ToolingConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("Test 4: MCP capabilityHints requires both cluster AND description", () => {
+  it("MCP capabilityHints requires both cluster AND description", () => {
     // Missing description -- should fail
     const missingDesc = ToolingConfigSchema.safeParse({
       mcp: { capabilityHints: { srv: { cluster: "x" } } },
@@ -71,7 +71,7 @@ describe("ToolingConfigSchema", () => {
     expect(both.success).toBe(true);
   });
 
-  it("Test 5: skills capabilityHints requires only cluster (description optional)", () => {
+  it("skills capabilityHints requires only cluster (description optional)", () => {
     const result = ToolingConfigSchema.safeParse({
       skills: { capabilityHints: { foo: { cluster: "x" } } },
     });
@@ -82,7 +82,7 @@ describe("ToolingConfigSchema", () => {
     }
   });
 
-  it("Test 6: installDetours.mode enum accepts all three values; rejects others", () => {
+  it("installDetours.mode enum accepts all three values; rejects others", () => {
     for (const mode of ["observe", "advise", "soft-stop"] as const) {
       const result = ToolingConfigSchema.safeParse({ installDetours: { mode } });
       expect(result.success).toBe(true);
@@ -94,7 +94,7 @@ describe("ToolingConfigSchema", () => {
     expect(bad.success).toBe(false);
   });
 
-  it("Test 7: replacesPackages defaults to [] and rejects empty-string entries", () => {
+  it("replacesPackages defaults to [] and rejects empty-string entries", () => {
     // Default case -- skill hint with no replacesPackages
     const defaultCase = ToolingConfigSchema.safeParse({
       skills: { capabilityHints: { foo: { cluster: "x" } } },
@@ -113,7 +113,7 @@ describe("ToolingConfigSchema", () => {
     expect(emptyEntry.success).toBe(false);
   });
 
-  it("Test 8: DEFAULT_CLUSTER_CONFIG exposes the three reserved IDs with documented defaults", () => {
+  it("DEFAULT_CLUSTER_CONFIG exposes the three reserved IDs with documented defaults", () => {
     const ids = Object.keys(DEFAULT_CLUSTER_CONFIG).sort();
     expect(ids).toEqual(["external-integrations", "other-tools", "prompt-skills"]);
 
@@ -134,11 +134,11 @@ describe("ToolingConfigSchema", () => {
     });
   });
 
-  it("Test 9: DEFAULT_BUILTIN_ASSIGNMENTS is empty (operators populate via config)", () => {
+  it("DEFAULT_BUILTIN_ASSIGNMENTS is empty (operators populate via config)", () => {
     expect(DEFAULT_BUILTIN_ASSIGNMENTS).toEqual({});
   });
 
-  it("Test 10: DEFAULT_CLUSTER_CONFIG and inner objects are frozen", () => {
+  it("DEFAULT_CLUSTER_CONFIG and inner objects are frozen", () => {
     expect(Object.isFrozen(DEFAULT_CLUSTER_CONFIG)).toBe(true);
     for (const id of Object.keys(DEFAULT_CLUSTER_CONFIG)) {
       expect(Object.isFrozen(DEFAULT_CLUSTER_CONFIG[id])).toBe(true);
@@ -146,7 +146,7 @@ describe("ToolingConfigSchema", () => {
     expect(Object.isFrozen(DEFAULT_BUILTIN_ASSIGNMENTS)).toBe(true);
   });
 
-  it("Test 11: fixture YAML round-trip parses cleanly", () => {
+  it("fixture YAML round-trip parses cleanly", () => {
     // packages/core/src/config/ -> packages/agent/src/__tests__/fixtures/...
     // here = packages/core/src/config; ../../../agent/src/__tests__/fixtures/...
     const fixturePath = resolve(
@@ -169,7 +169,7 @@ describe("ToolingConfigSchema", () => {
     }
   });
 
-  it("Test 12: cross-module barrel re-exports resolve via @comis/core/config path", async () => {
+  it("cross-module barrel re-exports resolve via @comis/core/config path", async () => {
     // Re-export contract: ToolingConfigSchema, DEFAULT_CLUSTER_CONFIG,
     // DEFAULT_BUILTIN_ASSIGNMENTS, and the ToolingConfig type all flow through
     // the config index barrel. Importing from "./index.js" must resolve to the
@@ -180,7 +180,7 @@ describe("ToolingConfigSchema", () => {
     expect(barrel.DEFAULT_BUILTIN_ASSIGNMENTS).toBe(DEFAULT_BUILTIN_ASSIGNMENTS);
   });
 
-  it("Test 13: partial operator override of clusters does NOT key-merge with defaults at parse time", () => {
+  it("partial operator override of clusters does NOT key-merge with defaults at parse time", () => {
     // z.record(...).default({}) does NOT merge with DEFAULT_CLUSTER_CONFIG.
     // Operator-supplied clusters replace the empty default record entirely.
     // The defaults-merge contract is enforced at adapter-construction time, not parse-time.

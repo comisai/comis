@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SCHED: Cron CRUD Lifecycle Integration Tests
+ * Cron CRUD Lifecycle Integration Tests
  *
  * Validates the cron job lifecycle via the daemon's per-agent CronScheduler API:
- *   SCHED-01: cron.add creates a new scheduled job
- *   SCHED-02: cron.list returns all jobs including newly added ones
- *   SCHED-03: cron.update modifies job settings (enabled flag, name)
- *   SCHED-04: cron.remove deletes a job
- *   SCHED-06: cron.status reflects scheduler running state and job count
+ *   - cron.add creates a new scheduled job
+ *   - cron.list returns all jobs including newly added ones
+ *   - cron.update modifies job settings (enabled flag, name)
+ *   - cron.remove deletes a job
+ *   - cron.status reflects scheduler running state and job count
  *
  * Uses a dedicated config (port 8447, separate memory DB) to avoid conflicts.
  * Accesses CronScheduler directly from daemon instance (not via RPC).
@@ -53,7 +53,7 @@ function getDefaultScheduler(handle: TestDaemonHandle): CronScheduler {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("SCHED: Cron CRUD Lifecycle", () => {
+describe("Cron CRUD Lifecycle", () => {
   let handle: TestDaemonHandle;
 
   beforeAll(async () => {
@@ -75,7 +75,7 @@ describe("SCHED: Cron CRUD Lifecycle", () => {
   }, 30_000);
 
   it(
-    "cron scheduler is running for default agent (SCHED-06)",
+    "cron scheduler is running for default agent",
     () => {
       const scheduler = getDefaultScheduler(handle);
       expect(scheduler).toBeDefined();
@@ -87,7 +87,7 @@ describe("SCHED: Cron CRUD Lifecycle", () => {
   );
 
   it(
-    "cron.add creates a new job that appears in cron.list (SCHED-01, SCHED-02)",
+    "cron.add creates a new job that appears in cron.list",
     async () => {
       const scheduler = getDefaultScheduler(handle);
 
@@ -116,7 +116,7 @@ describe("SCHED: Cron CRUD Lifecycle", () => {
   );
 
   it(
-    "cron.update modifies job settings (SCHED-03)",
+    "cron.update modifies job settings",
     () => {
       const scheduler = getDefaultScheduler(handle);
 
@@ -141,7 +141,7 @@ describe("SCHED: Cron CRUD Lifecycle", () => {
   );
 
   it(
-    "cron.remove deletes a job (SCHED-04)",
+    "cron.remove deletes a job",
     async () => {
       const scheduler = getDefaultScheduler(handle);
 
@@ -156,7 +156,7 @@ describe("SCHED: Cron CRUD Lifecycle", () => {
   );
 
   it(
-    "cron.status reflects correct job count after operations (SCHED-06)",
+    "cron.status reflects correct job count after operations",
     async () => {
       const scheduler = getDefaultScheduler(handle);
 
@@ -165,7 +165,7 @@ describe("SCHED: Cron CRUD Lifecycle", () => {
       // scheduler-exec.test.ts which shares the same workspace directory).
       const baselineCount = scheduler.getJobs().length;
 
-      // Verify the test-added job from SCHED-01 was removed by SCHED-04
+      // Verify the previously-added test job was removed
       const staleTestJob = scheduler
         .getJobs()
         .find((j) => j.id === "test-crud-job-1");

@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { BackgroundTaskOriginSchema } from "./background-task-origin.js";
 
 describe("BackgroundTaskOriginSchema", () => {
-  it("Test 1: accepts valid input with all fields", () => {
+  it("accepts valid input with all fields", () => {
     const result = BackgroundTaskOriginSchema.parse({
       agentId: "default",
       sessionKey: "default:echo:test:user1",
@@ -22,7 +22,7 @@ describe("BackgroundTaskOriginSchema", () => {
     });
   });
 
-  it("Test 2: accepts traceId: null (optional/nullable)", () => {
+  it("accepts traceId: null (optional/nullable)", () => {
     const result = BackgroundTaskOriginSchema.parse({
       agentId: "default",
       sessionKey: "default:echo:test:user1",
@@ -34,7 +34,7 @@ describe("BackgroundTaskOriginSchema", () => {
     expect(result.traceId).toBeNull();
   });
 
-  it("Test 3: backgroundHopCount defaults to 0 when omitted", () => {
+  it("backgroundHopCount defaults to 0 when omitted", () => {
     const result = BackgroundTaskOriginSchema.parse({
       agentId: "default",
       sessionKey: "default:echo:test:user1",
@@ -45,7 +45,7 @@ describe("BackgroundTaskOriginSchema", () => {
     expect(result.backgroundHopCount).toBe(0);
   });
 
-  it("Test 4: accepts backgroundHopCount: 2 (positive integer)", () => {
+  it("accepts backgroundHopCount: 2 (positive integer)", () => {
     const result = BackgroundTaskOriginSchema.parse({
       agentId: "default",
       sessionKey: "default:echo:test:user1",
@@ -57,7 +57,7 @@ describe("BackgroundTaskOriginSchema", () => {
     expect(result.backgroundHopCount).toBe(2);
   });
 
-  it("Test 5: rejects backgroundHopCount: -1 (negative)", () => {
+  it("rejects backgroundHopCount: -1 (negative)", () => {
     expect(() =>
       BackgroundTaskOriginSchema.parse({
         agentId: "default",
@@ -70,7 +70,7 @@ describe("BackgroundTaskOriginSchema", () => {
     ).toThrow();
   });
 
-  it("Test 6: rejects backgroundHopCount: 1.5 (fraction)", () => {
+  it("rejects backgroundHopCount: 1.5 (fraction)", () => {
     expect(() =>
       BackgroundTaskOriginSchema.parse({
         agentId: "default",
@@ -83,13 +83,13 @@ describe("BackgroundTaskOriginSchema", () => {
     ).toThrow();
   });
 
-  it("Test 7: rejects missing required fields", () => {
+  it("rejects missing required fields", () => {
     expect(() =>
       BackgroundTaskOriginSchema.parse({ agentId: "default" }),
     ).toThrow();
   });
 
-  it("Test 8: rejects empty strings for required fields", () => {
+  it("rejects empty strings for required fields", () => {
     expect(() =>
       BackgroundTaskOriginSchema.parse({
         agentId: "",
@@ -131,7 +131,7 @@ describe("BackgroundTaskOriginSchema", () => {
     ).toThrow();
   });
 
-  it("Test 9: rejects unknown fields (z.strictObject)", () => {
+  it("rejects unknown fields (z.strictObject)", () => {
     expect(() =>
       BackgroundTaskOriginSchema.parse({
         agentId: "default",

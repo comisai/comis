@@ -1663,7 +1663,7 @@ describe("assembleRichSystemPrompt -- inbound metadata integration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildMediaFilesSection -- unit tests (206-01)
+// buildMediaFilesSection -- unit tests
 // ---------------------------------------------------------------------------
 
 describe("buildMediaFilesSection", () => {
@@ -1747,7 +1747,7 @@ describe("buildMediaFilesSection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// assembleRichSystemPrompt -- media files integration (206-01)
+// assembleRichSystemPrompt -- media files integration
 // ---------------------------------------------------------------------------
 
 describe("assembleRichSystemPrompt -- media files integration", () => {
@@ -1844,7 +1844,7 @@ describe("assembleRichSystemPrompt -- media files integration", () => {
 });
 
 // ---------------------------------------------------------------------------
-// assembleRichSystemPrompt -- Media Sharing MEDIA: clarification (206-01)
+// assembleRichSystemPrompt -- Media Sharing MEDIA: clarification
 // ---------------------------------------------------------------------------
 
 describe("assembleRichSystemPrompt -- Media Sharing MEDIA: clarification", () => {
@@ -1945,7 +1945,7 @@ describe("buildToolingSection -- privileged tool summaries", () => {
 });
 
 // ---------------------------------------------------------------------------
-// assembleRichSystemPrompt -- privileged tools integration (244-01)
+// assembleRichSystemPrompt -- privileged tools integration
 // ---------------------------------------------------------------------------
 
 describe("assembleRichSystemPrompt -- privileged tools integration", () => {
@@ -2263,7 +2263,7 @@ describe("assembleRichSystemPromptBlocks", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Operational PromptMode (design-doc §Testing #1-3, #6)
+// Operational PromptMode
 // ---------------------------------------------------------------------------
 
 /** Realistic params used across operational-mode tests to mirror a production cron run. */
@@ -2301,7 +2301,7 @@ function makeOperationalParams() {
   };
 }
 
-describe("SECTIONS descriptor contract (design-doc §Testing #3)", () => {
+describe("SECTIONS descriptor contract", () => {
   it("every SECTION descriptor declares a non-empty includeIn set", () => {
     for (const s of SECTIONS) {
       expect(s.includeIn.size).toBeGreaterThan(0);
@@ -2334,7 +2334,7 @@ describe("SECTIONS descriptor contract (design-doc §Testing #3)", () => {
   });
 });
 
-describe("PromptMode block invariant (design-doc §Testing #1)", () => {
+describe("PromptMode block invariant", () => {
   it.each(["full", "operational", "minimal"] as const)(
     "assembleRichSystemPromptBlocks identity holds for mode=%s",
     (mode) => {
@@ -2349,7 +2349,7 @@ describe("PromptMode block invariant (design-doc §Testing #1)", () => {
   );
 });
 
-describe("staticPrefix/attribution byte-identity full vs operational (design-doc §Testing #2)", () => {
+describe("staticPrefix/attribution byte-identity full vs operational", () => {
   it("staticPrefix and attribution cache blocks are byte-identical between 'full' and 'operational'", () => {
     const params = makeOperationalParams();
     const fullBlocks = assembleRichSystemPromptBlocks({ ...params, promptMode: "full" });
@@ -2388,7 +2388,7 @@ describe("staticPrefix/attribution byte-identity full vs operational (design-doc
   });
 });
 
-describe("Snapshot regression: operational prompt trim delta (design-doc §Testing #6)", () => {
+describe("Snapshot regression: operational prompt trim delta", () => {
   it("operational mode saves at least 4500 chars vs full mode for a representative prompt", () => {
     // Representative params mirror a real cron job: full tool list, real
     // bootstrap files, heartbeat prompt, skills, documentation, etc.
@@ -2399,7 +2399,6 @@ describe("Snapshot regression: operational prompt trim delta (design-doc §Testi
 
     const delta = fullPrompt.length - opPrompt.length;
 
-    // Design doc claims ~10,100 tokens ≈ ~30,000 chars saved per run.
     // Use a conservative 4500-char floor (~±10% of a 1500-token floor) to
     // tolerate section-content drift while catching accidental regressions
     // where an "operational"-excluded section slips back in.

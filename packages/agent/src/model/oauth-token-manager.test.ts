@@ -135,7 +135,6 @@ describe("createOAuthTokenManager", () => {
     eventBus = new TypedEventBus();
   });
 
-  // Test 1: getApiKey with no stored credentials
   it("getApiKey returns err NO_CREDENTIALS when no credentials stored", async () => {
     const secretManager = makeSecretManager({});
     mockGetOAuthProvider.mockReturnValue(makeFakeProvider("github-copilot"));
@@ -150,7 +149,6 @@ describe("createOAuthTokenManager", () => {
     }
   });
 
-  // Test 2: getApiKey with unknown provider (pi-ai returns undefined)
   it("getApiKey returns err NO_PROVIDER when pi-ai does not recognize provider", async () => {
     const secretManager = makeSecretManager({
       OAUTH_UNKNOWN_PROVIDER: JSON.stringify(FAKE_CREDS),
@@ -168,7 +166,6 @@ describe("createOAuthTokenManager", () => {
     }
   });
 
-  // Test 3: getApiKey with valid credentials, no refresh needed
   it("getApiKey returns ok(apiKey) when credentials are valid and no refresh needed", async () => {
     const secretManager = makeSecretManager({
       OAUTH_GITHUB_COPILOT: JSON.stringify(FAKE_CREDS),
@@ -194,7 +191,6 @@ describe("createOAuthTokenManager", () => {
     );
   });
 
-  // Test 4: getApiKey when refresh occurs -- stores updated creds and emits event
   it("getApiKey stores refreshed credentials and emits auth:token_rotated", async () => {
     const secretManager = makeSecretManager({
       OAUTH_GITHUB_COPILOT: JSON.stringify(FAKE_CREDS),
@@ -245,7 +241,6 @@ describe("createOAuthTokenManager", () => {
     );
   });
 
-  // Test 5: getApiKey when getOAuthApiKey throws
   it("getApiKey returns err REFRESH_FAILED when getOAuthApiKey throws", async () => {
     const secretManager = makeSecretManager({
       OAUTH_GITHUB_COPILOT: JSON.stringify(FAKE_CREDS),
@@ -264,7 +259,6 @@ describe("createOAuthTokenManager", () => {
     }
   });
 
-  // Test 6: getApiKey when getOAuthApiKey returns null
   it("getApiKey returns err NO_CREDENTIALS when getOAuthApiKey returns null", async () => {
     const secretManager = makeSecretManager({
       OAUTH_GITHUB_COPILOT: JSON.stringify(FAKE_CREDS),
@@ -282,7 +276,6 @@ describe("createOAuthTokenManager", () => {
     }
   });
 
-  // Test 7: hasCredentials returns true when creds exist
   it("hasCredentials returns true when SecretManager has stored creds", () => {
     const secretManager = makeSecretManager({
       OAUTH_GITHUB_COPILOT: JSON.stringify(FAKE_CREDS),
@@ -292,7 +285,6 @@ describe("createOAuthTokenManager", () => {
     expect(manager.hasCredentials("github-copilot")).toBe(true);
   });
 
-  // Test 8: hasCredentials returns false when no creds
   it("hasCredentials returns false when no credentials stored", () => {
     const secretManager = makeSecretManager({});
 
@@ -300,7 +292,6 @@ describe("createOAuthTokenManager", () => {
     expect(manager.hasCredentials("github-copilot")).toBe(false);
   });
 
-  // Test 9: storeCredentials serializes and caches
   it("storeCredentials stores credentials accessible by getApiKey", async () => {
     const secretManager = makeSecretManager({});
     mockGetOAuthProvider.mockReturnValue(makeFakeProvider("github-copilot"));
@@ -334,7 +325,6 @@ describe("createOAuthTokenManager", () => {
     );
   });
 
-  // Test 10: getSupportedProviders returns provider IDs from pi-ai
   it("getSupportedProviders returns provider IDs from pi-ai", () => {
     mockGetOAuthProviders.mockReturnValue([
       makeFakeProvider("anthropic"),
@@ -357,7 +347,6 @@ describe("createOAuthTokenManager", () => {
     ]);
   });
 
-  // Test 11: Key naming convention
   it("maps provider id to uppercase SecretManager key with OAUTH_ prefix", async () => {
     const secretManager = makeSecretManager({
       OAUTH_GITHUB_COPILOT: JSON.stringify(FAKE_CREDS),
@@ -1737,10 +1726,7 @@ describe("refresh_token_reused detection", () => {
     return { manager, logger };
   }
 
-  // ---------------------------------------------------------------------------
-  // Test 1: refresh_token_reused → errorKind + hint propagated everywhere
-  // ---------------------------------------------------------------------------
-  it("Test 1: classifies refresh_token_reused → emits auth:refresh_failed with errorKind, returns OAuthError with hint", async () => {
+  it("classifies refresh_token_reused → emits auth:refresh_failed with errorKind, returns OAuthError with hint", async () => {
     const profile = expiredCodexProfile();
     const credentialStore = makeMockCredentialStore();
     vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));
@@ -1803,10 +1789,7 @@ describe("refresh_token_reused detection", () => {
     expect(mockGetOAuthApiKey).not.toHaveBeenCalled();
   });
 
-  // ---------------------------------------------------------------------------
-  // Test 2: invalid_grant generic
-  // ---------------------------------------------------------------------------
-  it("Test 2: classifies generic invalid_grant when description does not mention reuse", async () => {
+  it("classifies generic invalid_grant when description does not mention reuse", async () => {
     const profile = expiredCodexProfile();
     const credentialStore = makeMockCredentialStore();
     vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));
@@ -1848,10 +1831,7 @@ describe("refresh_token_reused detection", () => {
     }
   });
 
-  // ---------------------------------------------------------------------------
-  // Test 3: unsupported_country_region_territory
-  // ---------------------------------------------------------------------------
-  it("Test 3: classifies unsupported_country_region_territory + hint mentions HTTPS_PROXY", async () => {
+  it("classifies unsupported_country_region_territory + hint mentions HTTPS_PROXY", async () => {
     const profile = expiredCodexProfile();
     const credentialStore = makeMockCredentialStore();
     vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));
@@ -1885,10 +1865,7 @@ describe("refresh_token_reused detection", () => {
     }
   });
 
-  // ---------------------------------------------------------------------------
-  // Test 4: happy path — bypass succeeds, success path unchanged
-  // ---------------------------------------------------------------------------
-  it("Test 4: bypass success path — cache.set, store.set called, auth:token_rotated emitted", async () => {
+  it("bypass success path — cache.set, store.set called, auth:token_rotated emitted", async () => {
     const profile = expiredCodexProfile();
     const credentialStore = makeMockCredentialStore();
     vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));
@@ -1937,10 +1914,7 @@ describe("refresh_token_reused detection", () => {
     expect(mockGetOAuthApiKey).not.toHaveBeenCalled();
   });
 
-  // ---------------------------------------------------------------------------
-  // Test 5: non-Codex providers fall through to pi-ai (bypass NOT called)
-  // ---------------------------------------------------------------------------
-  it("Test 5: non-Codex provider routes through pi-ai's getOAuthApiKey (bypass NOT called)", async () => {
+  it("non-Codex provider routes through pi-ai's getOAuthApiKey (bypass NOT called)", async () => {
     const anthropicProfile: OAuthProfile = {
       provider: "anthropic",
       profileId: "anthropic:user_a@example.com",
@@ -1973,10 +1947,7 @@ describe("refresh_token_reused detection", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  // ---------------------------------------------------------------------------
-  // Test 6: lock contract preserved — bypass runs INSIDE withExecutionLock
-  // ---------------------------------------------------------------------------
-  it("Test 6: bypass runs inside withExecutionLock — every refresh path acquires the per-profile lock", async () => {
+  it("bypass runs inside withExecutionLock — every refresh path acquires the per-profile lock", async () => {
     const profile = expiredCodexProfile();
     const credentialStore = makeMockCredentialStore();
     vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));
@@ -2022,10 +1993,7 @@ describe("refresh_token_reused detection", () => {
     expect(fetchSpy.mock.calls.length).toBeLessThanOrEqual(2);
   });
 
-  // ---------------------------------------------------------------------------
-  // Test 7: timeout still classifies as errorKind: timeout
-  // ---------------------------------------------------------------------------
-  it("Test 7: bypass timeout → errorKind: timeout, hint: auth_endpoint_unreachable", async () => {
+  it("bypass timeout → errorKind: timeout, hint: auth_endpoint_unreachable", async () => {
     const profile = expiredCodexProfile();
     const credentialStore = makeMockCredentialStore();
     vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));
@@ -2061,10 +2029,7 @@ describe("refresh_token_reused detection", () => {
     expect(events[0].hint).toBe("auth_endpoint_unreachable");
   });
 
-  // ---------------------------------------------------------------------------
-  // Test 8: malformed JSON 400 body — defense-in-depth
-  // ---------------------------------------------------------------------------
-  it("Test 8: malformed JSON in 400 response → falls through to default classification (no thrown error)", async () => {
+  it("malformed JSON in 400 response → falls through to default classification (no thrown error)", async () => {
     const profile = expiredCodexProfile();
     const credentialStore = makeMockCredentialStore();
     vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));

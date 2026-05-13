@@ -94,12 +94,12 @@ describe("hasAnyOAuthAgent", () => {
     vi.clearAllMocks();
   });
 
-  it("returns false for an empty agents map (Test 7)", () => {
+  it("returns false for an empty agents map", () => {
     expect(hasAnyOAuthAgent({})).toBe(false);
     expect(mockGetOAuthProvider).not.toHaveBeenCalled();
   });
 
-  it("returns false when no agent's provider is recognised by pi-ai (Test 8)", () => {
+  it("returns false when no agent's provider is recognised by pi-ai", () => {
     mockGetOAuthProvider.mockReturnValue(undefined);
     const agents: Record<string, PerAgentConfig> = {
       a: makeAgent("anthropic"),
@@ -110,7 +110,7 @@ describe("hasAnyOAuthAgent", () => {
     expect(mockGetOAuthProvider).toHaveBeenCalledWith("default");
   });
 
-  it("returns true when at least one agent uses an OAuth-recognised provider (Test 9)", () => {
+  it("returns true when at least one agent uses an OAuth-recognised provider", () => {
     mockGetOAuthProvider.mockImplementation((p: string) =>
       p === "openai-codex" ? { id: "openai-codex" } : undefined,
     );
@@ -131,7 +131,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     vi.clearAllMocks();
   });
 
-  it("Test 1: emits exactly one WARN with alpine hint on tls-cert failure", async () => {
+  it("emits exactly one WARN with alpine hint on tls-cert failure", async () => {
     const certResult: TlsPreflightResult = {
       ok: false,
       kind: "tls-cert",
@@ -158,7 +158,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     });
   });
 
-  it("Test 2: emits debian/ubuntu hint on tls-cert failure with ID=ubuntu", async () => {
+  it("emits debian/ubuntu hint on tls-cert failure with ID=ubuntu", async () => {
     mockRunOAuthTlsPreflight.mockResolvedValue({
       ok: false,
       kind: "tls-cert",
@@ -177,7 +177,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     );
   });
 
-  it("Test 3: falls back to generic hint for an unknown distro", async () => {
+  it("falls back to generic hint for an unknown distro", async () => {
     mockRunOAuthTlsPreflight.mockResolvedValue({
       ok: false,
       kind: "tls-cert",
@@ -196,7 +196,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     );
   });
 
-  it("Test 4: falls back to generic hint when /etc/os-release is missing", async () => {
+  it("falls back to generic hint when /etc/os-release is missing", async () => {
     mockRunOAuthTlsPreflight.mockResolvedValue({
       ok: false,
       kind: "tls-cert",
@@ -216,7 +216,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     );
   });
 
-  it("Test 5: emits exactly one DEBUG (no WARN) on network failure", async () => {
+  it("emits exactly one DEBUG (no WARN) on network failure", async () => {
     mockRunOAuthTlsPreflight.mockResolvedValue({
       ok: false,
       kind: "network",
@@ -238,7 +238,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     expect(mockReadFile).not.toHaveBeenCalled();
   });
 
-  it("Test 6: emits nothing when the preflight succeeds", async () => {
+  it("emits nothing when the preflight succeeds", async () => {
     mockRunOAuthTlsPreflight.mockResolvedValue({ ok: true } as TlsPreflightResult);
 
     const { logger, calls } = makeMockLogger();
@@ -248,7 +248,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     expect(mockReadFile).not.toHaveBeenCalled();
   });
 
-  it("Test 10: passes timeoutMs: 4000 (boot-tighter than the doctor's 5000)", async () => {
+  it("passes timeoutMs: 4000 (boot-tighter than the doctor's 5000)", async () => {
     mockRunOAuthTlsPreflight.mockResolvedValue({ ok: true } as TlsPreflightResult);
 
     const { logger } = makeMockLogger();

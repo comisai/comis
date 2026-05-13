@@ -160,12 +160,12 @@ export interface ChannelsDeps {
   onMessageProcessed?: (msg: NormalizedMessage, channelType: string) => void;
   /** Optional approval gate for /approve and /deny chat commands in inbound pipeline. */
   approvalGate?: import("@comis/core").ApprovalGate;
-  /** Per-agent PI session adapters for session stats/destroy in slash commands (CMD-WIRE). */
+  /** Per-agent PI session adapters for session stats/destroy in slash commands. */
   piSessionAdapters?: Map<string, {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
     destroySession(key: SessionKey): Promise<void>;
   }>;
-  /** Per-agent cost trackers for /usage and /status cost data (CMD-WIRE). */
+  /** Per-agent cost trackers for /usage and /status cost data. */
   costTrackers?: Map<string, {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
     getBySession(key: string): { totalTokens: number; totalCost: number };
@@ -207,10 +207,10 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   // Initialize Telegram file-ref guard config
   initTelegramFileGuardConfig(container.config.telegramFileRefGuard);
 
-  // 6.6.6. Bootstrap enabled channel adapters from config
+  // Bootstrap enabled channel adapters from config
   const { adaptersByType, tgPlugin, linePlugin, channelCapabilities, channelPlugins } = await bootstrapAdapters({ container, channelsLogger });
 
-  // 6.6.6.5. Assemble media pipeline (resolvers, preprocessor, preflight)
+  // Assemble media pipeline (resolvers, preprocessor, preflight)
   const {
     compositeResolver,
     resolveAttachment,
@@ -236,7 +236,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     embeddingQueue: deps.embeddingQueue,
   });
 
-  // 6.6.7. Cron delivery listener — delivers scheduled job results to channels
+  // Cron delivery listener — delivers scheduled job results to channels
   container.eventBus.on("scheduler:job_result", async (payload) => {
     // -- Memory review sentinel intercept --
     const resultText = payload.result;
@@ -434,7 +434,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
         // Resolve effective tool policy: job > agent > passthrough `{ profile: "full" }`.
         // Opt-in per job — omitting payload.toolPolicy preserves the agent's interactive
         // tool set. The explicit "full" fallback makes the no-silent-default contract
-        // readable in the call site (see design-doc §"no silent default").
+        // readable in the call site.
         const effectivePolicy =
           payload.toolPolicy ??
           agentConfig?.skills?.toolPolicy ??
@@ -611,7 +611,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     }
   });
 
-  // CRON-CIRCUIT: Notify user when a cron job is auto-suspended
+  // Notify user when a cron job is auto-suspended
   container.eventBus.on("scheduler:job_suspended", async (payload) => {
     const { deliveryTarget, jobName, jobId, consecutiveErrors, lastError } = payload;
     if (!deliveryTarget?.channelType) {
@@ -649,7 +649,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     }
   });
 
-  // 6.6.10. Create and start ChannelManager
+  // Create and start ChannelManager
   const messageRouter = createMessageRouter(routingConfig);
   let channelManager: ChannelManager | undefined;
 
@@ -885,7 +885,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       },
       // /approve and /deny chat command interception
       approvalGate: deps.approvalGate,
-      // CMD-WIRE: General slash command handling via createCommandHandler
+      // General slash command handling via createCommandHandler
       handleSlashCommand: async (text: string, sessionKey: SessionKey, agentId: string) => {
         const parsed = parseSlashCommand(text);
         if (!parsed.found) return undefined;

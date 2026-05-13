@@ -1,0 +1,303 @@
+---
+title: "Tool-First Capability Layer"
+description: "Operator workflow for the tooling: config block — discover MCPs/skills, generate a capability index, and route the agent away from redundant package installs."
+icon: "compass"
+---
+
+The tool-first capability layer prevents agents from running `pip install <market-data-lib>` when a connected MCP server already provides the same data, or from writing a workflow from scratch when a visible prompt skill already covers it. It does this by rendering a per-turn **capability index** into the agent's dynamic preamble (after tool deferral), and by intercepting `exec`/`process` calls that would install a package the operator has marked as redundant.
+
+Both behaviors read from a single operator-owned config block, `tooling:`, in `~/.comis/config.yaml`. This page covers the operator workflow: how to materialize that block, fill it out, and keep it in sync as MCPs and skills come and go.
+
+## Concepts
+
+The `tooling:` block has four sub-trees, all operator-only:
+
+| Sub-tree | Purpose | Renderer / consumer |
+|----------|---------|---------------------|
+| `tooling.capabilityClusters.clusters` | Operator-defined clusters with `label`, `priority`, `preferOverInstalls`. Three reserved IDs (`external-integrations`, `prompt-skills`, `other-tools`) ship with defaults. | Capability-index renderer (per turn) |
+| `tooling.mcp.capabilityHints` | Per-MCP hint: `cluster`, `description`, `replacesPackages`. Keyed by MCP server name. | Renderer + install-detour validator |
+| `tooling.skills.capabilityHints` | Per-skill hint: `cluster`, `description?`, `replacesPackages`. Keyed by skill name or skill key. | Renderer + install-detour validator |
+| `tooling.installDetours.mode` | `"observe"` / `"advise"` / `"soft-stop"` (default `"advise"`) — controls how `exec`/`process` reacts to a redundant-install command. | Install-detour validator |
+| `tooling.capabilityIndex.enabled` | Boolean, default `true`. Toggles the per-turn `## Capabilities` block in the dynamic preamble. | Prompt-assembly pipeline |
+
+The entire `tooling` tree is **immutable at runtime** — `config.patch` from agent-callable surfaces is rejected by `IMMUTABLE_CONFIG_PREFIXES`. Changes apply only after a daemon restart. This is why both CLI verbs below have a daemon-state requirement.
+
+See [`config-yaml`](/reference/config-yaml#tooling) for the full schema.
+
+## The two CLI commands
+
+Two sub-subcommands under `comis config`:
+
+- [`comis config sync-tooling`](#comis-config-sync-tooling) — discovers connected MCPs and installed skills, materializes the `tooling:` block (or appends/prunes against an existing block).
+- [`comis config tooling-fill`](#comis-config-tooling-fill) — populates the `description` and `replacesPackages` stub fields via the live agent.
+
+The canonical operator flow is two invocations:
+
+```bash
+# 1. Seed stub hints (daemon must be DOWN — tooling.* is restart-required)
+systemctl stop comis
+comis config sync-tooling --write
+systemctl start comis
+
+# 2. Fill the stub fields via the agent (daemon must be UP for the LLM call;
+#    the CLI then stops, writes, and restarts on operator authorization)
+comis config tooling-fill --all --yes --restart
+```
+
+After this two-step you have a populated `tooling:` block, and the install-detour subsystem will fire on package overlaps for every hint.
+
+## `comis config sync-tooling`
+
+Three modes:
+
+| Command | Effect | Daemon state |
+|---------|--------|--------------|
+| `comis config sync-tooling` | **Inspect** — print the discovered/existing/diff/wouldWrite shape. No file mutation. | Up or down. |
+| `comis config sync-tooling --write` | **Apply** — atomic write with a `config.pre-sync-tooling-<ISO>-<hex>.yaml` backup. Append-only on existing keys (operator hand-edits preserved); prunes hints for removed MCPs/skills. | **Down.** |
+| `comis config sync-tooling --write --overwrite` | **Regenerate** — wipe and rebuild the managed sub-trees (`mcp.capabilityHints`, `skills.capabilityHints`, `installDetours`, `capabilityIndex`). Preserves operator-authored `tooling.capabilityClusters.clusters` byte-for-byte. | **Down.** |
+
+### Discovery rules
+
+- **MCP servers**: walks `integrations.mcp.servers[].name` from the active config.
+- **Skills**: walks every `agents.<id>.skills.discoveryPaths` plus the daemon defaults `~/.comis/skills` and `~/.comis/workspace/skills`. Each first-level subdirectory containing a `SKILL.md` is a skill. Duplicates across paths dedupe by skill name (first-loaded wins).
+
+### Generated stub shape
+
+Each newly-discovered MCP lands as:
+
+```yaml
+yfinance:
+  cluster: external-integrations
+  description: TODO
+  # TODO: list npm/pip packages this MCP replaces
+  replacesPackages: []
+```
+
+Skills land under `tooling.skills.capabilityHints` with cluster `prompt-skills` by default (or `comis.capability.cluster` from the SKILL.md frontmatter if the skill author declared one). The `description` for a skill defaults to the SKILL.md frontmatter description.
+
+### Append-only contract
+
+Subsequent `sync-tooling --write` runs **never** rewrite operator hand-edits to `description`, `replacesPackages`, or `cluster` on existing entries. Only:
+
+- New hints (newly-discovered MCPs/skills) are added.
+- Stale hints (MCPs/skills no longer in discovery) are removed.
+- Unrecognized operator-authored keys under `tooling.*` (a future `tooling.foo` or operator-only sub-keys) are left untouched.
+
+### Daemon-active guard
+
+`--write` and `--write --overwrite` exit 1 with `daemon is running — stop it before running sync-tooling --write` if the gateway responds to `system.ping` within 1 second. Inspect mode bypasses this check.
+
+### Output
+
+Inspect mode (default) prints, in order:
+
+```
+Discovered MCPs (N)
+  - yfinance
+Discovered Skills (M)
+  - skill-creator
+Existing tooling block: present|absent
+Would add (X)
+  + slack-mcp
+Would remove (Y)
+  - <stale>
+Would write:
+<full YAML preview of the post-mutation document>
+```
+
+`--format json` emits a parseable document with `discovered`, `existing`, `diff`, and `wouldWrite` keys — useful for CI scripting.
+
+`--write` prints a one-line summary on success: `tooling: +N hints, -M hints (backup: <path>)`.
+
+## `comis config tooling-fill`
+
+Fills `description` and `replacesPackages` on a tooling capability hint via the live Comis agent.
+
+```bash
+comis config tooling-fill <hint-name> [flags]
+comis config tooling-fill --all       [flags]
+```
+
+### What the agent does
+
+The CLI POSTs a strictly-bounded prompt to `/api/chat`. The prompt asks the agent to return exactly two lines:
+
+```
+DESCRIPTION: <one-line summary>
+REPLACES_PACKAGES: <JSON array of pip + npm package names>
+```
+
+For an MCP hint, the prompt seeds context with the MCP's `command` and `args` from `integrations.mcp.servers`. For a skill hint, it seeds context with the SKILL.md frontmatter description and asks the agent to refine it.
+
+The response is parsed defensively:
+
+1. Anything outside the two contracted lines is stripped (the agent cannot inject `cluster`, schema changes, or any other field — D-5 in the design).
+2. Package names are validated against `/^@?[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)?$/i` (npm scoped + pip name shape). Names that fail are silently dropped with a warning.
+3. If all package names are dropped, the parser surfaces a hard failure and the orchestrator exits 1 without touching the file.
+
+### State machine
+
+A successful `tooling-fill --yes --restart` runs through 17 ordered steps:
+
+1. Validate args, resolve hint kind (mcp vs skills, `--kind` override on ambiguous bare names)
+2. Parse `config.yaml` AST via `yaml@2.8.4`'s `parseDocument`
+3. Locate target hint, gate idempotency (stub-valued fills freely; non-stub refuses without `--force`)
+4. Verify daemon is **up** (LLM call needs `/api/chat`)
+5. POST to `/api/chat`
+6. Parse response, strip non-contracted fields
+7. Validate package names against the npm/pip regex
+8. Show diff to operator (skip with `--yes`); honour `--dry-run` by exiting here
+9. Get restart authorization (`--restart` / non-TTY requires it explicitly)
+10. **Stop daemon** via auto-detected supervisor (systemd → pm2 → bare-process)
+11. Write backup → `config.pre-tooling-fill-<ISO>-<hex>.yaml`
+12. AST-mutate via `setHintFields` (only `description` and `replacesPackages` — `cluster`, sibling hints, comments preserved)
+13. Atomic write (temp + fsync + rename + parent-dir-fsync; ownership preserved)
+14. `comis config validate` (with `${VAR}` env-substitution so `${COMIS_GATEWAY_TOKEN}`-style configs validate correctly)
+15. **Start daemon**
+16. **Wait for daemon to be alive** — poll `/api/system.ping` for 15 s. `systemctl start` exits 0 once the unit is queued; this poll catches the case where the daemon then crashes during boot.
+17. Delete recoverable temp file
+
+Any failure between steps 10 and 14 triggers the rollback path: restore backup, restart daemon, exit 2 with an honest message about which leg of the rollback succeeded.
+
+### Idempotency
+
+A hint is "stub-valued" iff:
+
+- `description ∈ {missing, "", "TODO"}`, **AND**
+- `replacesPackages ∈ {missing, []}`
+
+Stub-valued hints fill freely. Hints with any operator-authored value refuse:
+
+```
+yfinance: already filled (description: "Yahoo Finance MCP — equity/ETF/forex/index quotes...", replacesPackages: [4 items]). Use --force to overwrite.
+```
+
+`--force` overwrites operator-edited values (the agent's response replaces them entirely; `replacesPackages` is replace, not merge).
+
+### `--all`
+
+Fills every stub-valued hint in **one** daemon-restart cycle. Sequential LLM calls per hint, single backup, single atomic write at end. If the agent call fails for hint K, hints 1..K−1 stay committed; K and K+1..N are skipped; the run exits 1 with stderr listing.
+
+`--all` silently skips operator-filled hints unless `--force` is also set.
+
+### Supervisor auto-detection
+
+The CLI probes in this order:
+
+1. `systemctl is-active comis` → `kind: "systemd"`
+2. `pm2 jlist | jq` finds a `comis` entry → `kind: "pm2"`
+3. `pgrep -f 'node.*daemon\.js'` → `kind: "bare-process"` (refuses to auto-restart — set `--restart-cmd` explicitly)
+
+If none match, the CLI exits 1 with a manual-recipe hint:
+
+```
+Could not auto-detect daemon supervisor (none of systemctl, pm2, pgrep matched).
+Run manually: systemctl stop comis && <edit config.yaml> && systemctl start comis.
+Or pass --restart-cmd "<full stop+start command>" to override.
+```
+
+The `--restart-cmd` override runs once, at the start phase (after the file is written). For a stop+start command like `"systemctl stop comis && systemctl start comis"`, the orchestrator does not invoke it twice — the protected window weakens slightly under `--restart-cmd` (the daemon is up during the file write), but this is operator-explicit and the daemon does not watch `config.yaml` for changes, so the write doesn't take effect until the operator's restart command lands.
+
+### File ownership preservation
+
+Running `tooling-fill` as **root** (the only user with `systemctl` access on a typical VPS deployment) is safe: `atomicWriteFile` captures the original file's `uid:gid` before the write and `chownSync`s the new file back to that owner after the rename. Without this, the new file would be owned by root and the unprivileged daemon service user (`comis` under systemd) would fail to read it at the next restart.
+
+This applies to both `sync-tooling --write` and `tooling-fill` since they share the same atomic-write primitive.
+
+### Backup retention
+
+After every successful run, `pruneOldBackups(homeDir, prefix, keep=5)` trims older backups of the same prefix. The `tooling-fill` and `sync-tooling` prefixes prune independently — a `tooling-fill` backup is never deleted by a `sync-tooling --write` run, and vice versa.
+
+## Verifying the round-trip
+
+After filling, confirm the operator-edit-preservation invariant by re-running `sync-tooling`:
+
+```bash
+comis config sync-tooling --format json | jq .diff
+# → {"add":{"mcps":[],"skills":[]}, "remove":{"mcps":[],"skills":[]}}
+```
+
+An empty diff means the discovered MCPs/skills already have hints, your operator edits (or LLM-generated values) are intact, and a future `--write` would be a no-op.
+
+You can also send a turn through the gateway and watch for `Dynamic preamble assembled` in the daemon logs — the `clusterCount`, `activeToolCount`, and `capabilityIndexTokens` fields reflect the assembled capability index:
+
+```bash
+journalctl -u comis -f | grep "Dynamic preamble assembled"
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Daemon failed to read config file after sync-tooling --write">
+    Likely a stale-permission edge case. Check ownership:
+
+    ```bash
+    ls -la ~/.comis/config.yaml
+    # Should be: -rw------- comis comis
+    ```
+
+    If owned by root, the file was written before Phase 26.1 shipped. Restore from the most recent backup or `chown comis:comis ~/.comis/config.yaml`.
+  </Accordion>
+
+  <Accordion title="systemctl: 'Start request repeated too quickly'">
+    systemd's `start-limit-hit` safety mechanism — typically `5 starts in 10 s`. Recover with:
+
+    ```bash
+    systemctl reset-failed comis
+    systemctl start comis
+    ```
+
+    Not a bug in `tooling-fill`; it's a systemd guard against rapid restart loops. Avoid invoking the CLI repeatedly without spacing in CI.
+  </Accordion>
+
+  <Accordion title="tooling-fill: 'Cannot reach Comis daemon — gateway unreachable'">
+    The CLI's LLM call goes through the local gateway (`/api/chat`). The daemon must be **up** at invocation time. Start it first:
+
+    ```bash
+    systemctl start comis
+    sleep 5
+    comis config tooling-fill yfinance --yes --restart
+    ```
+
+    The CLI will then stop the daemon to do the file edit, and restart it on completion.
+  </Accordion>
+
+  <Accordion title="tooling-fill refuses an existing hint without --force">
+    By design — `tooling-fill` will not overwrite operator-edited values without explicit consent. The error message includes the current values for review:
+
+    ```
+    yfinance: already filled (description: "...", replacesPackages: [4 items]).
+    Use --force to overwrite.
+    ```
+
+    Add `--force` to refill, or hand-edit the YAML directly (which `sync-tooling --write` will then preserve append-only).
+  </Accordion>
+
+  <Accordion title="Validation failed; rolled back to ...yaml. Daemon failed to restart.">
+    The post-write `validateConfig` rejected the new file. The orchestrator restored the backup and attempted a restart. If the daemon also failed to restart, the message will tell you so explicitly:
+
+    ```
+    Validation failed; rolled back to /home/comis/.comis/config.pre-tooling-fill-...yaml.
+    File restored but daemon FAILED TO RESTART (...). Restart manually.
+    ```
+
+    Run `systemctl restart comis` (or the equivalent for your supervisor). If the rollback's own write failed (rare — disk full / permissions), the message includes a `cp <backup> <config>` recovery command.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="MCP Integration" icon="plug" href="/skills/mcp">
+    Connect MCP servers — the upstream of `tooling.mcp.capabilityHints`
+  </Card>
+  <Card title="Custom Skills" icon="wand-magic-sparkles" href="/skills/prompt-skills">
+    Author skills with `comis.capability` metadata
+  </Card>
+  <Card title="config.yaml reference" icon="file-code" href="/reference/config-yaml#tooling">
+    Full schema for the `tooling:` block
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/reference/cli">
+    `config sync-tooling` and `config tooling-fill` flag tables
+  </Card>
+</CardGroup>

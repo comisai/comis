@@ -103,7 +103,7 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("input validation", () => {
-  it("Test 1: rejects empty edits array with [empty_edits]", async () => {
+  it("rejects empty edits array with [empty_edits]", async () => {
     await writeAndRead("test.txt", "hello world");
     const tool = createTool();
     await expect(
@@ -111,7 +111,7 @@ describe("input validation", () => {
     ).rejects.toThrow("[empty_edits]");
   });
 
-  it("Test 2: rejects edit with empty oldText with [empty_oldtext]", async () => {
+  it("rejects edit with empty oldText with [empty_oldtext]", async () => {
     await writeAndRead("test.txt", "hello world");
     const tool = createTool();
     await expect(
@@ -122,7 +122,7 @@ describe("input validation", () => {
     ).rejects.toThrow("[empty_oldtext]");
   });
 
-  it("Test 3: rejects noop edit with [noop_edit]", async () => {
+  it("rejects noop edit with [noop_edit]", async () => {
     await writeAndRead("test.txt", "hello world");
     const tool = createTool();
     await expect(
@@ -139,7 +139,7 @@ describe("input validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("path validation", () => {
-  it("Test 4: rejects path traversal with [path_traversal]", async () => {
+  it("rejects path traversal with [path_traversal]", async () => {
     const tool = createTool();
     await expect(
       tool.execute("id", {
@@ -149,7 +149,7 @@ describe("path validation", () => {
     ).rejects.toThrow("[path_traversal]");
   });
 
-  it("Test 5: allows sharedPaths -- path outside workspace resolves", async () => {
+  it("allows sharedPaths -- path outside workspace resolves", async () => {
     // Create a second temp dir outside workspace
     const sharedDir = await createWorkspace();
     try {
@@ -173,7 +173,7 @@ describe("path validation", () => {
     }
   });
 
-  it("Test 6: rejects protected file (AGENTS.md) with [protected_file]", async () => {
+  it("rejects protected file (AGENTS.md) with [protected_file]", async () => {
     await writeAndRead("AGENTS.md", "# Agents");
     const tool = createTool();
     await expect(
@@ -190,7 +190,7 @@ describe("path validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("file validation", () => {
-  it('Test 7: rejects file not found with [file_not_found] and "Did you mean"', async () => {
+  it('rejects file not found with [file_not_found] and "Did you mean"', async () => {
     // Create a file with a known name so suggestions work
     await fs.writeFile(
       path.join(workspaceDir, "existing-file.ts"),
@@ -206,7 +206,7 @@ describe("file validation", () => {
     ).rejects.toThrow("[file_not_found]");
   });
 
-  it("Test 8: rejects file over 1 GiB with [file_too_large]", async () => {
+  it("rejects file over 1 GiB with [file_too_large]", async () => {
     const absPath = await writeAndRead("big.txt", "content");
     statOverride.fn = async (p: string) => {
       if (p === absPath) {
@@ -228,7 +228,7 @@ describe("file validation", () => {
     ).rejects.toThrow("[file_too_large]");
   });
 
-  it("Test 9: rejects .ipynb with [jupyter_rejected] and notebook_edit", async () => {
+  it("rejects .ipynb with [jupyter_rejected] and notebook_edit", async () => {
     await writeAndRead("test.ipynb", '{"cells": []}');
     const tool = createTool();
     const err = await tool
@@ -242,7 +242,7 @@ describe("file validation", () => {
     expect((err as Error).message).toContain("notebook_edit");
   });
 
-  it("Test 10: rejects device file with [device_file]", async () => {
+  it("rejects device file with [device_file]", async () => {
     // isDeviceFile checks happen before read-before-edit, so no tracker state needed
     const tool = createTool({ sharedPaths: ["/dev"] });
     await expect(
@@ -259,7 +259,7 @@ describe("file validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("state validation", () => {
-  it("Test 11: auto-reads file not previously read and succeeds", async () => {
+  it("auto-reads file not previously read and succeeds", async () => {
     // Create file but do NOT call tracker.recordRead
     const absPath = path.join(workspaceDir, "unread.txt");
     await fs.writeFile(absPath, "content", "utf-8");
@@ -277,7 +277,7 @@ describe("state validation", () => {
     expect(tracker.hasBeenRead(absPath)).toBe(true);
   });
 
-  it("Test 12a: invalidates read state on text_not_found so next read is not stubbed", async () => {
+  it("invalidates read state on text_not_found so next read is not stubbed", async () => {
     const absPath = await writeAndRead("mismatch.txt", "actual content");
     expect(tracker.hasBeenRead(absPath)).toBe(true);
     const tool = createTool();
@@ -291,7 +291,7 @@ describe("state validation", () => {
     expect(tracker.hasBeenRead(absPath)).toBe(false);
   });
 
-  it("Test 12: rejects edit when file is stale with [stale_file]", async () => {
+  it("rejects edit when file is stale with [stale_file]", async () => {
     // Create file, record read
     const absPath = await writeAndRead("stale.txt", "original");
     // Rewrite the file to change mtime
@@ -312,7 +312,7 @@ describe("state validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("successful edits", () => {
-  it("Test 13: successful single edit changes file and returns diff", async () => {
+  it("successful single edit changes file and returns diff", async () => {
     await writeAndRead("test.txt", "hello world");
     const tool = createTool();
     const result = await tool.execute("id", {
@@ -329,7 +329,7 @@ describe("successful edits", () => {
     expect(result.content[0].text).toContain("Successfully replaced");
   });
 
-  it("Test 14: successful batch edit applies both changes", async () => {
+  it("successful batch edit applies both changes", async () => {
     await writeAndRead("test.txt", "foo bar baz");
     const tool = createTool();
     await tool.execute("id", {
@@ -346,7 +346,7 @@ describe("successful edits", () => {
     expect(content).toBe("FOO bar BAZ");
   });
 
-  it("Test 15: result details contain diff, firstChangedLine, matchStrategy, editsApplied", async () => {
+  it("result details contain diff, firstChangedLine, matchStrategy, editsApplied", async () => {
     await writeAndRead("test.txt", "line1\nline2\nline3");
     const tool = createTool();
     const result = await tool.execute("id", {
@@ -361,7 +361,7 @@ describe("successful edits", () => {
     expect(details.editsApplied).toBe(1);
   });
 
-  it("Test 16: post-edit mtime is recorded (re-edit does not fail staleness)", async () => {
+  it("post-edit mtime is recorded (re-edit does not fail staleness)", async () => {
     await writeAndRead("test.txt", "alpha beta gamma");
     const tool = createTool();
     // First edit
@@ -387,7 +387,7 @@ describe("successful edits", () => {
 // ---------------------------------------------------------------------------
 
 describe("config validation", () => {
-  it("Test 17: editing .json that produces invalid JSON returns success with [invalid_config] warning", async () => {
+  it("editing .json that produces invalid JSON returns success with [invalid_config] warning", async () => {
     await writeAndRead("config.json", '{"key": "value"}');
     const tool = createTool();
     // Remove the closing brace to produce invalid JSON
@@ -407,7 +407,7 @@ describe("config validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("curly quote preservation", () => {
-  it("Test 18: editing file with curly quotes preserves curly style", async () => {
+  it("editing file with curly quotes preserves curly style", async () => {
     await writeAndRead(
       "doc.txt",
       'He said \u201Chello\u201D to her',
@@ -434,7 +434,7 @@ describe("curly quote preservation", () => {
 });
 
 describe("trailing newline cleanup", () => {
-  it("Test 19: deleting content cleans up triple+ blank lines", async () => {
+  it("deleting content cleans up triple+ blank lines", async () => {
     await writeAndRead("test.txt", "line1\n\nline2\n\nline3");
     const tool = createTool();
     // Delete line2, which would leave double blank between line1 and line3
@@ -456,7 +456,7 @@ describe("trailing newline cleanup", () => {
 // ---------------------------------------------------------------------------
 
 describe("replaceAll integration", () => {
-  it("Test 21: replaceAll parameter passes through and replaces all occurrences", async () => {
+  it("replaceAll parameter passes through and replaces all occurrences", async () => {
     await writeAndRead("replace-all.txt", "TODO: fix\nTODO: test\nTODO: deploy");
     const tool = createTool();
     const result = await tool.execute("id", {
@@ -477,7 +477,7 @@ describe("replaceAll integration", () => {
 // ---------------------------------------------------------------------------
 
 describe("error code format", () => {
-  it("Test 20: all error messages use [code] Message format", async () => {
+  it("all error messages use [code] Message format", async () => {
     const tool = createTool();
     const errors: string[] = [];
 

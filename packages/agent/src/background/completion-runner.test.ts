@@ -91,7 +91,7 @@ describe("createBackgroundCompletionRunner", () => {
     });
   }
 
-  it("Test 1: completed event triggers executor.execute with synthetic message AND emits background_task:reentered", async () => {
+  it("completed event triggers executor.execute with synthetic message AND emits background_task:reentered", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
 
@@ -123,7 +123,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("Test 2: failed event triggers executor.execute with failure header", async () => {
+  it("failed event triggers executor.execute with failure header", async () => {
     const task = buildTask({ status: "failed", error: "boom", result: undefined });
     taskManager.getTask.mockReturnValue(task);
     const runner = build();
@@ -139,7 +139,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("Test 3: missing session skips re-entry and fallback (session expired)", async () => {
+  it("missing session skips re-entry and fallback (session expired)", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
 
@@ -161,7 +161,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("Test 4: hop cap reached triggers fallbackNotifyFn", async () => {
+  it("hop cap reached triggers fallbackNotifyFn", async () => {
     // Seed task.origin with backgroundHopCount = maxBackgroundHops - 1 so
     // the increment lands at the cap. With maxBackgroundHops = 3 and
     // incoming = 2, nextHopCount = 3 = cap -> fallback fires.
@@ -181,7 +181,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("Test 5: subscription survives a handler error", async () => {
+  it("subscription survives a handler error", async () => {
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
     executor.execute.mockRejectedValueOnce(new Error("transient")).mockResolvedValue({});
@@ -202,7 +202,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("Test 6: shutdown stops further executor calls", async () => {
+  it("shutdown stops further executor calls", async () => {
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
     const runner = build();
@@ -215,7 +215,7 @@ describe("createBackgroundCompletionRunner", () => {
     expect(executor.execute).not.toHaveBeenCalled();
   });
 
-  it("Test 7: restart-recovery announcement uses recovery copy", async () => {
+  it("restart-recovery announcement uses recovery copy", async () => {
     const task = buildTask({
       status: "failed",
       error: "Daemon restarted while task was running",
@@ -235,7 +235,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("Test 8: getTask returning undefined (race) does not throw or fallback-spam", async () => {
+  it("getTask returning undefined (race) does not throw or fallback-spam", async () => {
     taskManager.getTask.mockReturnValue(undefined);
     const runner = build();
     eventBus.emit("background_task:completed", {

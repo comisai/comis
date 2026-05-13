@@ -19,7 +19,7 @@ describe("logOperationModelDryRun", () => {
     mockSecretManager = { has: vi.fn().mockReturnValue(true) };
   });
 
-  // Test 1: Given 1 agent with anthropic provider, logs 1 INFO line containing all 7 operation types
+  // Given 1 agent with anthropic provider, logs 1 INFO line containing all 7 operation types
   it("logs one INFO line per agent with all 7 operation types", () => {
     logOperationModelDryRun({
       agents: {
@@ -44,7 +44,7 @@ describe("logOperationModelDryRun", () => {
     );
   });
 
-  // Test 2: Given 2 agents, logs 2 INFO lines
+  // Given 2 agents, logs 2 INFO lines
   it("logs one INFO line per agent for multiple agents", () => {
     logOperationModelDryRun({
       agents: {
@@ -64,7 +64,7 @@ describe("logOperationModelDryRun", () => {
     expect(agentIds).toContain("agentB");
   });
 
-  // Test 3: Same-provider family with key present => no WARN
+  // Same-provider family with key present => no WARN
   it("does not emit WARN when resolved model uses same provider family with key present", () => {
     mockSecretManager.has.mockReturnValue(true);
 
@@ -79,7 +79,7 @@ describe("logOperationModelDryRun", () => {
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
-  // Test 4: Cross-provider resolution with missing API key => WARN
+  // Cross-provider resolution with missing API key => WARN
   it("emits WARN when cross-provider resolution has missing API key", () => {
     // Agent is anthropic, but cron is overridden to openai
     // secretManager says OPENAI_API_KEY is missing
@@ -109,7 +109,7 @@ describe("logOperationModelDryRun", () => {
     expect(warnObj.resolvedProvider).toBe("openai");
   });
 
-  // Test 5: Interactive has tieringActive=false, family_default sources have tieringActive=true
+  // Interactive has tieringActive=false, family_default sources have tieringActive=true
   it("marks interactive as tieringActive=false and family defaults as tieringActive=true", () => {
     logOperationModelDryRun({
       agents: {
@@ -139,7 +139,7 @@ describe("logOperationModelDryRun", () => {
     }
   });
 
-  // Test 6: Never throws -- if resolveOperationModel somehow throws, error is caught and logged as WARN
+  // Never throws -- if resolveOperationModel somehow throws, error is caught and logged as WARN
   it("catches internal errors and logs WARN instead of throwing", () => {
     // Pass agents with a property that would cause resolution to fail:
     // Use a getter that throws on access to simulate an internal error
@@ -168,7 +168,7 @@ describe("logOperationModelDryRun", () => {
     expect(warnObj.errorKind).toBe("config");
   });
 
-  // Test 7: Non-native provider family (custom YAML provider not in pi-ai
+  // Non-native provider family (custom YAML provider not in pi-ai
   // catalog) => all operations fall to agent_primary, all tieringActive=false.
   // Uses "ollama" (a custom YAML provider type) since native pi-ai providers
   // (xai, openai, anthropic, openrouter, google, etc.) all now resolve via

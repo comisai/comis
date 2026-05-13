@@ -62,7 +62,7 @@ describe("createCrossSessionSender", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 1: Fire-and-forget injects message and returns immediately
+  // Fire-and-forget injects message and returns immediately
   // -----------------------------------------------------------------------
   it("fire-and-forget injects message and returns immediately", async () => {
     const sender = createCrossSessionSender(deps);
@@ -92,7 +92,7 @@ describe("createCrossSessionSender", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 2: Wait mode executes target and returns response
+  // Wait mode executes target and returns response
   // -----------------------------------------------------------------------
   it("wait mode executes target and returns response", async () => {
     const sender = createCrossSessionSender(deps);
@@ -121,7 +121,7 @@ describe("createCrossSessionSender", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 3: Ping-pong mode completes N turns
+  // Ping-pong mode completes N turns
   // -----------------------------------------------------------------------
   it("ping-pong mode completes N turns", async () => {
     const sender = createCrossSessionSender(deps);
@@ -144,7 +144,7 @@ describe("createCrossSessionSender", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 4: ANNOUNCE_SKIP suppresses announcement
+  // ANNOUNCE_SKIP suppresses announcement
   // -----------------------------------------------------------------------
   it("ANNOUNCE_SKIP suppresses announcement and is stripped from response", async () => {
     vi.mocked(deps.executeInSession).mockResolvedValue({
@@ -172,7 +172,7 @@ describe("createCrossSessionSender", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 5: Self-targeting in wait mode throws
+  // Self-targeting in wait mode throws
   // -----------------------------------------------------------------------
   it("self-targeting in wait mode throws deadlock error", async () => {
     const sender = createCrossSessionSender(deps);
@@ -189,7 +189,7 @@ describe("createCrossSessionSender", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 6: Self-targeting in fire-and-forget is allowed
+  // Self-targeting in fire-and-forget is allowed
   // -----------------------------------------------------------------------
   it("self-targeting in fire-and-forget is allowed", async () => {
     const sender = createCrossSessionSender(deps);
@@ -207,7 +207,7 @@ describe("createCrossSessionSender", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 7: Ping-pong stops early on ANNOUNCE_SKIP
+  // Ping-pong stops early on ANNOUNCE_SKIP
   // -----------------------------------------------------------------------
   it("ping-pong stops early on ANNOUNCE_SKIP", async () => {
     let callCount = 0;
@@ -250,7 +250,7 @@ describe("createCrossSessionSender", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 8: Announce sends to channel
+  // Announce sends to channel
   // -----------------------------------------------------------------------
   it("announce sends to channel with correct params", async () => {
     const sender = createCrossSessionSender(deps);
@@ -271,7 +271,7 @@ describe("createCrossSessionSender", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 9: Event emitted for each mode
+  // Event emitted for each mode
   // -----------------------------------------------------------------------
   it("emits session:cross_send event for fire-and-forget mode", async () => {
     const sender = createCrossSessionSender(deps);

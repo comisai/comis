@@ -109,7 +109,7 @@ async function readSseEvents(
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("Gateway: Concurrent HTTP and Mixed Protocol (GW-01, GW-03, GW-08)", () => {
+describe("Gateway: Concurrent HTTP and Mixed Protocol", () => {
   let handle: TestDaemonHandle;
 
   beforeAll(async () => {
@@ -132,10 +132,10 @@ describe("Gateway: Concurrent HTTP and Mixed Protocol (GW-01, GW-03, GW-08)", ()
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // GW-01 — N parallel requests, no misrouting
+  // N parallel requests, no misrouting
   // ---------------------------------------------------------------------------
 
-  describe("GW-01: Parallel HTTP request isolation", () => {
+  describe("Parallel HTTP request isolation", () => {
     it("5 parallel GET /api/agents requests each produce a valid response", async () => {
       const N = 5;
       const requests = Array.from({ length: N }, () =>
@@ -210,10 +210,10 @@ describe("Gateway: Concurrent HTTP and Mixed Protocol (GW-01, GW-03, GW-08)", ()
   });
 
   // ---------------------------------------------------------------------------
-  // GW-03 — Mixed HTTP + WebSocket, no request-id collision
+  // Mixed HTTP + WebSocket, no request-id collision
   // ---------------------------------------------------------------------------
 
-  describe("GW-03: Mixed HTTP + WebSocket isolation", () => {
+  describe("Mixed HTTP + WebSocket isolation", () => {
     it("simultaneous HTTP and WebSocket requests produce independent correct results", async () => {
       let ws: WebSocket | undefined;
       try {
@@ -246,10 +246,10 @@ describe("Gateway: Concurrent HTTP and Mixed Protocol (GW-01, GW-03, GW-08)", ()
   });
 
   // ---------------------------------------------------------------------------
-  // GW-08 — SSE stream survives concurrent POST
+  // SSE stream survives concurrent POST
   // ---------------------------------------------------------------------------
 
-  describe("GW-08: SSE stream resilience under concurrent load", () => {
+  describe("SSE stream resilience under concurrent load", () => {
     it("SSE stream continues delivering events during concurrent POST requests", async () => {
       const controller = new AbortController();
       try {

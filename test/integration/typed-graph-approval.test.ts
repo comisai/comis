@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Typed Graph Approval-Gate Integration Tests (TEST-07)
+ * Typed Graph Approval-Gate Integration Tests
  *
  * Validates the approval-gate typed node against a running daemon:
- *   1. Approval-gate completes when a simulated user reply arrives via EventBus
- *   2. Approval-gate fails on timeout when no reply arrives
+ *   - Approval-gate completes when a simulated user reply arrives via EventBus
+ *   - Approval-gate fails on timeout when no reply arrives
  *
  * The approval-gate node uses wait_for_input (not spawn), so these tests
  * run without LLM API keys. The daemon's EventBus listener matches on
@@ -135,7 +135,7 @@ async function pollGraphUntilTerminalDirect(
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("Typed Graph Approval-Gate Integration (TEST-07)", () => {
+describe("Typed Graph Approval-Gate Integration", () => {
   let handle: TestDaemonHandle;
 
   beforeAll(async () => {
@@ -157,7 +157,7 @@ describe("Typed Graph Approval-Gate Integration (TEST-07)", () => {
   }, 30_000);
 
   // =========================================================================
-  // Test 1: Approval-gate completes when user replies with approval
+  // Approval-gate completes when user replies with approval
   // =========================================================================
 
   it(
@@ -247,7 +247,7 @@ describe("Typed Graph Approval-Gate Integration (TEST-07)", () => {
   );
 
   // =========================================================================
-  // Test 2: Approval-gate fails on timeout when no reply arrives
+  // Approval-gate fails on timeout when no reply arrives
   // =========================================================================
 
   it(

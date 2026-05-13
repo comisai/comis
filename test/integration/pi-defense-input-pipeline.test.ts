@@ -3,10 +3,10 @@
  * PI Defense Input Pipeline E2E Tests (real daemon)
  *
  * Validates the full prompt injection defense pipeline:
- *   PID-01: High-risk injection input emits security:injection_detected with riskLevel "high"
- *   PID-02: OutputGuard redacts API key pattern from echo response
- *   PID-03: Legitimate technical message does not emit security events
- *   PID-04: Medium-risk input emits event with riskLevel "medium"
+ *   - High-risk injection input emits security:injection_detected with riskLevel "high"
+ *   - OutputGuard redacts API key pattern from echo response
+ *   - Legitimate technical message does not emit security events
+ *   - Medium-risk input emits event with riskLevel "medium"
  *
  * Uses port 8610 and unique database path to avoid conflicts with other test suites.
  * Echo provider returns deterministic responses -- no real LLM calls needed.
@@ -66,7 +66,7 @@ describe("PI Defense Input Pipeline E2E", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // PID-01: High-risk injection triggers security:injection_detected
+  // High-risk injection triggers security:injection_detected
   // -------------------------------------------------------------------------
 
   it(
@@ -115,7 +115,7 @@ describe("PI Defense Input Pipeline E2E", () => {
   );
 
   // -------------------------------------------------------------------------
-  // PID-02: OutputGuard redacts API key patterns in daemon context
+  // OutputGuard redacts API key patterns in daemon context
   // -------------------------------------------------------------------------
 
   it(
@@ -150,7 +150,7 @@ describe("PI Defense Input Pipeline E2E", () => {
   );
 
   // -------------------------------------------------------------------------
-  // PID-03: Legitimate message does not trigger security events
+  // Legitimate message does not trigger security events
   // -------------------------------------------------------------------------
 
   it(
@@ -194,7 +194,7 @@ describe("PI Defense Input Pipeline E2E", () => {
   );
 
   // -------------------------------------------------------------------------
-  // PID-04: Medium-risk input emits event with medium riskLevel
+  // Medium-risk input emits event with medium riskLevel
   // -------------------------------------------------------------------------
 
   it(

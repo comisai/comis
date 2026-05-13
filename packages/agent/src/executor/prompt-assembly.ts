@@ -170,10 +170,10 @@ export interface CacheSafeParams {
   provider: string;
   /** Cache retention setting from parent config. */
   cacheRetention: string | undefined;
-  /** 2.1: Timestamp (ms since epoch) when the parent last confirmed a cache write.
+  /** Timestamp (ms since epoch) when the parent last confirmed a cache write.
    *  Propagated to sub-agents via SpawnPacket for TTL expiry guard. */
   cacheWriteTimestamp?: number;
-  /** 4.2: DJB2-style hash of sorted tool names for staleness detection.
+  /** DJB2-style hash of sorted tool names for staleness detection.
    *  When tools change mid-session (e.g., MCP server connects), CacheSafeParams
    *  are refreshed so sub-agents get updated tool lists. */
   toolHash?: string;
@@ -391,7 +391,7 @@ export interface ExecutionPromptResult {
   systemPromptBlocks?: SystemPromptBlocks;
   /** Dynamic content relocated from system prompt for cache stability. */
   dynamicPreamble: string;
-  /** Top-1 RAG memory for inline injection adjacent to user message (Task 229). */
+  /** Top-1 RAG memory for inline injection adjacent to user message. */
   inlineMemory?: string;
 }
 
@@ -590,7 +590,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   }
 
   // 3. RAG retrieval via hybrid memory injector (non-fatal)
-  // Task 229: Top-1 result goes inline with user message for maximum LLM attention;
+  // Top-1 result goes inline with user message for maximum LLM attention;
   // remaining results go into the dynamic preamble (same location as before).
   let memorySections: string[] = [];
   let inlineMemory: string | undefined;
@@ -1079,11 +1079,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // Capture frozen prompt state on first turn for sub-agent cache prefix sharing.
   // Captured AFTER hook execution so frozenSystemPrompt includes hook modifications.
   // Sub-agents should only READ parent params, never populate their own.
-  // 4.2: Compute toolHash from actual toolNames (not stableToolNames) on every turn.
-  //       When tools change mid-session (e.g., MCP server connects), refresh CacheSafeParams
-  //       so sub-agents spawned after the change get updated tool lists.
-  //       Uses actual toolNames for hash comparison but stableToolNames for the snapshot,
-  //       because stableToolNames is what the prompt assembly and cache prefix use.
+  // Compute toolHash from actual toolNames (not stableToolNames) on every turn.
+  // When tools change mid-session (e.g., MCP server connects), refresh CacheSafeParams
+  // so sub-agents spawned after the change get updated tool lists.
+  // Uses actual toolNames for hash comparison but stableToolNames for the snapshot,
+  // because stableToolNames is what the prompt assembly and cache prefix use.
   if (!deps.spawnPacket) {
     const currentToolHash = toolNames.slice().sort().join(",");
     const existing = sessionCacheSafeParams.get(snapshotKey);

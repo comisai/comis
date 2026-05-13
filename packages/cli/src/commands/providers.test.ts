@@ -136,7 +136,7 @@ describe("providers list", () => {
     exitSpy.mockRestore();
   });
 
-  it("Test 1: renders a 3-row table when RPC succeeds", async () => {
+  it("renders a 3-row table when RPC succeeds", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
       "anthropic",
       "openai",
@@ -160,7 +160,7 @@ describe("providers list", () => {
     expect(rows).toHaveLength(3);
   });
 
-  it("Test 2: falls back to local catalog when daemon RPC fails", async () => {
+  it("falls back to local catalog when daemon RPC fails", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
       "anthropic",
     ]);
@@ -178,7 +178,7 @@ describe("providers list", () => {
     expect(rows[0][0]).toBe("anthropic");
   });
 
-  it("Test 3: --format json prints structured array, not a table", async () => {
+  it("--format json prints structured array, not a table", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
       "anthropic",
       "openai",
@@ -212,7 +212,7 @@ describe("providers list", () => {
     });
   });
 
-  it("Test 4: --format table (default) renders a table + info summary", async () => {
+  it("--format table (default) renders a table + info summary", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue(["anthropic"]);
     vi.mocked(withClient).mockImplementation(async () => []);
     vi.mocked(getEnvApiKey).mockReturnValue("sk-test");
@@ -226,7 +226,7 @@ describe("providers list", () => {
     expect(lastInfoMsg).toMatch(/1 provider listed/);
   });
 
-  it("Test 5: empty catalog prints 'No providers found' instead of an empty table", async () => {
+  it("empty catalog prints 'No providers found' instead of an empty table", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([]);
 
     const program = createTestProgram();
@@ -240,7 +240,7 @@ describe("providers list", () => {
     );
   });
 
-  it("Test 6a: Status column = 'keyless' for ollama", async () => {
+  it("Status column = 'keyless' for ollama", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue(["ollama"]);
     vi.mocked(withClient).mockImplementation(async () => []);
     vi.mocked(getEnvApiKey).mockReturnValue(undefined);
@@ -252,7 +252,7 @@ describe("providers list", () => {
     expect(rows[0][2]).toBe("keyless");
   });
 
-  it("Test 6b: Status column = 'keyless' for lm-studio", async () => {
+  it("Status column = 'keyless' for lm-studio", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue(["lm-studio"]);
     vi.mocked(withClient).mockImplementation(async () => []);
     vi.mocked(getEnvApiKey).mockReturnValue(undefined);
@@ -264,7 +264,7 @@ describe("providers list", () => {
     expect(rows[0][2]).toBe("keyless");
   });
 
-  it("Test 6c: Status column = 'configured' when getEnvApiKey returns a key", async () => {
+  it("Status column = 'configured' when getEnvApiKey returns a key", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue(["anthropic"]);
     vi.mocked(withClient).mockImplementation(async () => []);
     vi.mocked(getEnvApiKey).mockImplementation((p: string) =>
@@ -278,7 +278,7 @@ describe("providers list", () => {
     expect(rows[0][2]).toBe("configured");
   });
 
-  it("Test 6d: Status column = 'missing key' when getEnvApiKey returns undefined", async () => {
+  it("Status column = 'missing key' when getEnvApiKey returns undefined", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue(["openai"]);
     vi.mocked(withClient).mockImplementation(async () => []);
     vi.mocked(getEnvApiKey).mockReturnValue(undefined);

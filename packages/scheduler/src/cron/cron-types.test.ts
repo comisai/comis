@@ -253,7 +253,7 @@ describe("CronJobSchema", () => {
     }
   });
 
-  // toolPolicy (design-doc §"Layer 2: CronJobSchema.toolPolicy") ---------------
+  // toolPolicy ---------------------------------------------------------------
 
   it("accepts toolPolicy with cron-minimal profile", () => {
     const result = CronJobSchema.safeParse({

@@ -127,7 +127,7 @@ describe("tool metadata -- coDiscoverWith", () => {
 // ---------------------------------------------------------------------------
 
 describe("tool metadata -- ToolCapabilityMetadata (v1.1)", () => {
-  it("Test 1: stores and retrieves a capability block", () => {
+  it("stores and retrieves a capability block", () => {
     registerToolMetadata("cap_test_basic", {
       capability: { cluster: "data-fetching-financial", summary: "X" },
     });
@@ -139,7 +139,7 @@ describe("tool metadata -- ToolCapabilityMetadata (v1.1)", () => {
     });
   });
 
-  it("Test 2: spread-merge keeps capability + later non-capability fields", () => {
+  it("spread-merge keeps capability + later non-capability fields", () => {
     registerToolMetadata("cap_test_merge", { capability: { cluster: "c1" } });
     registerToolMetadata("cap_test_merge", { isReadOnly: true });
     const meta = getToolMetadata("cap_test_merge");
@@ -147,7 +147,7 @@ describe("tool metadata -- ToolCapabilityMetadata (v1.1)", () => {
     expect(meta!.isReadOnly).toBe(true);
   });
 
-  it("Test 3: re-registering capability replaces wholesale (no deep-merge)", () => {
+  it("re-registering capability replaces wholesale (no deep-merge)", () => {
     registerToolMetadata("cap_test_replace", { capability: { cluster: "c1" } });
     registerToolMetadata("cap_test_replace", {
       capability: { cluster: "c2", summary: "S" },
@@ -156,7 +156,7 @@ describe("tool metadata -- ToolCapabilityMetadata (v1.1)", () => {
     expect(meta!.capability).toEqual({ cluster: "c2", summary: "S" });
   });
 
-  it("Test 4: replacesPackages accepts readonly string array; round-trips", () => {
+  it("replacesPackages accepts readonly string array; round-trips", () => {
     const cap: ToolCapabilityMetadata = {
       replacesPackages: ["pkg-a", "pkg-b"] as const,
     };

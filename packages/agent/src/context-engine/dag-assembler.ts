@@ -11,8 +11,6 @@
  * relevance-ranked AgentMessage[] for the LLM. It replaces the pipeline's
  * history window + dead content evictor with DAG-aware assembly.
  *
- * DAG Assembly & Annotation.
- *
  * @module
  */
 
