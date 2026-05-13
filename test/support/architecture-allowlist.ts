@@ -663,7 +663,274 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
 ] as const;
 export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [] as const;
-export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [] as const;
+export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [
+  // ============================================================================
+  // Phase D — TypeScript hygiene (TS-HYG-01..04 closes via RowMapper<TRow>)
+  // ============================================================================
+  // Every entry below records one `{file, symbol}` cast site in
+  // packages/memory/src/ that currently uses the unsafe
+  // `.all(...) as Type[]` / `.get(...) as Type` form. Phase D TS-HYG-01..04
+  // introduces the typed `RowMapper<TRow>` factory and retargets every
+  // site to `mapper.parseRows(...)` / `mapper.parseOptionalRow(...)`;
+  // each retarget closes one entry in this list atomically.
+  //
+  // The `symbol` field captures the FIRST `\w+` after `as ` per the rule's
+  // regex (e.g. `.get(...) as Row | undefined` records symbol "Row"; the
+  // union pipe truncation is intentional). For `as Array<{...}>` casts the
+  // symbol is "Array" (the angle-bracketed generic body does not match
+  // `\w+`).
+  //
+  // The allowlist key is `{file, symbol}` (per PATTERNS.md key-shape table):
+  // multiple raw cast sites in the same file that target the same `symbol`
+  // collapse into one entry. The live grep yielded 61 raw cast sites
+  // collapsing to 35 unique pairs across 14 files.
+
+  // context-store.ts — 8 unique symbols (CtxConversationRow, CtxMessageRow,
+  // CtxMessagePartRow, CtxSummaryRow, CtxContextItemRow, CtxLargeFileRow,
+  // CtxExpansionGrantRow, Array (inline anonymous row shapes for id-projection
+  // and parent/child queries)).
+  {
+    file: "packages/memory/src/context-store.ts",
+    symbol: "Array",
+    reason: "Inline anonymous row projections (id-list / parent-child id queries); Phase D TS-HYG-03 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/context-store.ts",
+    symbol: "CtxContextItemRow",
+    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/context-store.ts",
+    symbol: "CtxConversationRow",
+    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/context-store.ts",
+    symbol: "CtxExpansionGrantRow",
+    reason: "context-store .get() row cast; Phase D TS-HYG-03 retargets to mapper.parseOptionalRow",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/context-store.ts",
+    symbol: "CtxLargeFileRow",
+    reason: "context-store .get() row cast; Phase D TS-HYG-03 retargets to mapper.parseOptionalRow",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/context-store.ts",
+    symbol: "CtxMessagePartRow",
+    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/context-store.ts",
+    symbol: "CtxMessageRow",
+    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/context-store.ts",
+    symbol: "CtxSummaryRow",
+    reason: "context-store .get() / .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows / mapper.parseOptionalRow",
+    removedIn: "phase-D",
+  },
+
+  // credential-mapping-store.ts — 1 symbol.
+  {
+    file: "packages/memory/src/credential-mapping-store.ts",
+    symbol: "CredentialMappingRow",
+    reason: "credential-mapping-store .get() / .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows / mapper.parseOptionalRow",
+    removedIn: "phase-D",
+  },
+
+  // delivery-mirror-adapter.ts — 1 symbol.
+  {
+    file: "packages/memory/src/delivery-mirror-adapter.ts",
+    symbol: "DeliveryMirrorDbRow",
+    reason: "delivery-mirror-adapter .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+
+  // delivery-queue-adapter.ts — 1 symbol (Array anonymous row shape).
+  {
+    file: "packages/memory/src/delivery-queue-adapter.ts",
+    symbol: "Array",
+    reason: "delivery-queue-adapter anonymous row projection (status/count); Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+
+  // embedding-cache-sqlite.ts — 1 symbol.
+  {
+    file: "packages/memory/src/embedding-cache-sqlite.ts",
+    symbol: "BatchCacheRow",
+    reason: "embedding-cache-sqlite .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+
+  // hybrid-search.ts — 3 symbols.
+  {
+    file: "packages/memory/src/hybrid-search.ts",
+    symbol: "Array",
+    reason: "hybrid-search anonymous row projection (id-only query); Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/hybrid-search.ts",
+    symbol: "FtsSearchRow",
+    reason: "hybrid-search FTS .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/hybrid-search.ts",
+    symbol: "VecSearchRow",
+    reason: "hybrid-search vector .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+
+  // identity-link-store.ts — 1 symbol.
+  {
+    file: "packages/memory/src/identity-link-store.ts",
+    symbol: "IdentityLinkRow",
+    reason: "identity-link-store .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+
+  // memory-api.ts — 2 symbols.
+  {
+    file: "packages/memory/src/memory-api.ts",
+    symbol: "Array",
+    reason: "memory-api anonymous row projection (id-only retention/eviction queries); Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/memory-api.ts",
+    symbol: "MemoryRow",
+    reason: "memory-api .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+
+  // named-graph-store.ts — 2 symbols.
+  {
+    file: "packages/memory/src/named-graph-store.ts",
+    symbol: "Array",
+    reason: "named-graph-store anonymous row projection (list query); Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/named-graph-store.ts",
+    symbol: "NamedGraphRow",
+    reason: "named-graph-store .get() row cast; Phase D TS-HYG-02 retargets to mapper.parseOptionalRow",
+    removedIn: "phase-D",
+  },
+
+  // oauth-profile-store-encrypted.ts — 1 symbol.
+  {
+    file: "packages/memory/src/oauth-profile-store-encrypted.ts",
+    symbol: "OAuthProfileRow",
+    reason: "oauth-profile-store-encrypted .get() / .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows / mapper.parseOptionalRow",
+    removedIn: "phase-D",
+  },
+
+  // observability-store.ts — 9 symbols.
+  {
+    file: "packages/memory/src/observability-store.ts",
+    symbol: "AgentAggDbRow",
+    reason: "observability-store agent-aggregate .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/observability-store.ts",
+    symbol: "ChannelSnapshotDbRow",
+    reason: "observability-store channel-snapshot .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/observability-store.ts",
+    symbol: "DeliveryDbRow",
+    reason: "observability-store delivery-row .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/observability-store.ts",
+    symbol: "DeliveryStatsDbRow",
+    reason: "observability-store delivery-stats .get() cast; Phase D TS-HYG-02 retargets to mapper.parseOptionalRow",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/observability-store.ts",
+    symbol: "DiagnosticDbRow",
+    reason: "observability-store diagnostic .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/observability-store.ts",
+    symbol: "HourlyBucketDbRow",
+    reason: "observability-store hourly-bucket .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/observability-store.ts",
+    symbol: "ProviderAggDbRow",
+    reason: "observability-store provider-aggregate .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/observability-store.ts",
+    symbol: "SessionAggDbRow",
+    reason: "observability-store session-aggregate .get() cast (Row | undefined truncates to Row); Phase D TS-HYG-02 retargets to mapper.parseOptionalRow",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/observability-store.ts",
+    symbol: "TokenUsageDbRow",
+    reason: "observability-store token-usage .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+
+  // row-mapper.ts — 1 symbol (the Phase D mapper module itself currently
+  // contains an internal anonymous row-projection cast; closes when the
+  // module finishes its own TS-HYG-01 refactor).
+  {
+    file: "packages/memory/src/row-mapper.ts",
+    symbol: "Array",
+    reason: "row-mapper internal anonymous row projection (group-by aggregate); Phase D TS-HYG-01 closes when the mapper module finishes its own refactor",
+    removedIn: "phase-D",
+  },
+
+  // session-store.ts — 1 symbol.
+  {
+    file: "packages/memory/src/session-store.ts",
+    symbol: "SessionRow",
+    reason: "session-store .get() row cast; Phase D TS-HYG-02 retargets to mapper.parseOptionalRow",
+    removedIn: "phase-D",
+  },
+
+  // sqlite-memory-adapter.ts — 2 symbols.
+  {
+    file: "packages/memory/src/sqlite-memory-adapter.ts",
+    symbol: "Array",
+    reason: "sqlite-memory-adapter anonymous row projection (id-only tenant query); Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/memory/src/sqlite-memory-adapter.ts",
+    symbol: "MemoryRow",
+    reason: "sqlite-memory-adapter .get() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows / mapper.parseOptionalRow",
+    removedIn: "phase-D",
+  },
+
+  // sqlite-secret-store.ts — 1 symbol (Array<{...}> anonymous decrypt-batch
+  // and list-secrets row shapes; both target Array generic).
+  {
+    file: "packages/memory/src/sqlite-secret-store.ts",
+    symbol: "Array",
+    reason: "sqlite-secret-store anonymous row shapes (decrypt-all batch, secret-list); Phase D TS-HYG-02 retargets to mapper.parseRows",
+    removedIn: "phase-D",
+  },
+] as const;
 export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   // ============================================================================
   // Phase D — TypeScript hygiene (TS-HYG-13 closes via per-declaration audit)
