@@ -664,7 +664,189 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
 ] as const;
 export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [] as const;
 export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [] as const;
-export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [] as const;
+export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
+  // ============================================================================
+  // Phase D — TypeScript hygiene (TS-HYG-13 closes via per-declaration audit)
+  // ============================================================================
+  // NOTE: ChannelManagerDeps (44 optional fields, channel-manager.ts:83) is NOT
+  // in this list — it is hard-excluded by the rule itself per HYG-06 because
+  // v3 §9.2.5 owns its audit. Re-adding it here is a contract violation.
+  {
+    file: "packages/agent/src/executor/pi-executor.ts",
+    typeName: "PiExecutorDeps",
+    optionalCount: 43,
+    reason: "Executor deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/orchestrator/src/inbound/inbound-pipeline.ts",
+    typeName: "InboundPipelineDeps",
+    optionalCount: 40,
+    reason: "Inbound pipeline deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/bootstrap/system-prompt-assembler.ts",
+    typeName: "AssemblerParams",
+    optionalCount: 34,
+    reason: "System-prompt assembler params; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
+    typeName: "RequestBodyInjectorConfig",
+    optionalCount: 32,
+    reason: "Stream-wrapper config; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/bridge/pi-event-bridge.ts",
+    typeName: "PiEventBridgeDeps",
+    optionalCount: 30,
+    reason: "Event-bridge deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-channels.ts",
+    typeName: "ChannelsDeps",
+    optionalCount: 26,
+    reason: "Channels wiring deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/spawn/sub-agent-runner.ts",
+    typeName: "SpawnParams",
+    optionalCount: 25,
+    reason: "Sub-agent spawn params; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/wizard/non-interactive.ts",
+    typeName: "NonInteractiveOptions",
+    optionalCount: 25,
+    reason: "CLI non-interactive options (type alias); Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/executor/executor-post-execution.ts",
+    typeName: "PostExecutionBridgeResult",
+    optionalCount: 22,
+    reason: "Executor post-execution result; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-shutdown.ts",
+    typeName: "ShutdownDeps",
+    optionalCount: 22,
+    reason: "Shutdown wiring deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-agents.ts",
+    typeName: "SingleAgentDeps",
+    optionalCount: 21,
+    reason: "Single-agent wiring deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/orchestrator/src/execution/execution-pipeline.ts",
+    typeName: "ExecutionPipelineDeps",
+    optionalCount: 19,
+    reason: "Execution pipeline deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/executor/executor-tool-assembly.ts",
+    typeName: "ToolAssemblyDeps",
+    optionalCount: 18,
+    reason: "Tool-assembly deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/tools/builtin/web-search-tool.ts",
+    typeName: "WebSearchConfig",
+    optionalCount: 18,
+    reason: "Web-search built-in config; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/web/src/api/types/agent-types.ts",
+    typeName: "AgentDetail",
+    optionalCount: 18,
+    reason: "Web agent-detail API type; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/graph/graph-coordinator-state.ts",
+    typeName: "GraphCoordinatorDeps",
+    optionalCount: 16,
+    reason: "Graph coordinator deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/web/src/views/config-editor/schema-form.ts",
+    typeName: "SchemaProperty",
+    optionalCount: 16,
+    reason: "Schema-form property type; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/context-engine/types-core.ts",
+    typeName: "ContextEngineDeps",
+    optionalCount: 15,
+    reason: "Context-engine deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/executor/command-directive-types.ts",
+    typeName: "CommandDirectives",
+    optionalCount: 14,
+    reason: "Executor command-directives shape; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/commands/sessions.ts",
+    typeName: "SessionEntry",
+    optionalCount: 14,
+    reason: "CLI sessions list entry; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/cli/src/wizard/types.ts",
+    typeName: "WizardState",
+    optionalCount: 14,
+    reason: "CLI wizard state (type alias); Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/orchestrator/src/commands/types.ts",
+    typeName: "CommandDirectives",
+    optionalCount: 14,
+    reason: "Orchestrator command-directives shape (same name as agent peer; independent decl); Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/agent/src/spawn/sub-agent-runner.ts",
+    typeName: "SubAgentRunnerDeps",
+    optionalCount: 13,
+    reason: "Sub-agent runner deps bag (boundary: 13 optionals, strict >12 threshold); Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/daemon/src/daemon-types.ts",
+    typeName: "DaemonOverrides",
+    optionalCount: 13,
+    reason: "Daemon overrides type; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+  {
+    file: "packages/skills/src/platform-tools/registry.ts",
+    typeName: "PlatformToolBuildContext",
+    optionalCount: 13,
+    reason: "Platform-tool build context; Phase D TS-HYG-13 audit per design §7.2.5",
+    removedIn: "phase-D",
+  },
+] as const;
 export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [] as const;
 export const noBackwardCompatAllowlist: readonly NoBackwardCompatAllowlistEntry[] = [] as const;
 export const coverageWaiver: readonly CoverageWaiverEntry[] = [] as const;
