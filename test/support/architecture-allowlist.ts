@@ -193,3 +193,117 @@ export const ALLOWLIST: readonly AllowlistEntry[] = [
   // `no-deps-optional-in-delivery` permanently enforce the closure in
   // test/architecture/source-rules.test.ts.
 ] as const;
+
+// ============================================================================
+// Phase 37 (HYG-01, HYG-02) — v2.1 Code-Quality Allowlist Schema
+// ============================================================================
+
+/**
+ * v2.1 code-quality phase tags. Distinct from `AllowlistEntry.removedIn`
+ * (which uses numeric phases like "phase-29"). Phase 37 introduces this
+ * separate union because the template-literal type `'phase-${number}'`
+ * structurally rejects letter-tagged phases at type-check time — a stale
+ * `removedIn: "phase-Z"` fails `tsc --noEmit` (D-AL-01 / Phase 27 D-03).
+ *
+ * "deferred" indicates an entry deliberately taken out of the v2.1 closure
+ * path (WEB-DECOMP-09 quarter-passes-without-Phase-G trigger). Valid
+ * terminal state, not a temporary tag.
+ */
+export type CodeQualityPhase =
+  | "phase-A"
+  | "phase-B"
+  | "phase-C"
+  | "phase-D"
+  | "phase-E"
+  | "phase-F"
+  | "phase-G"
+  | "phase-H"
+  | "deferred";
+
+/** File-size violation: file exceeds 800-line cap. Closed by file splits. */
+export interface FileSizeAllowlistEntry {
+  readonly file: string; // path relative to repo root
+  readonly lines: number; // line count at allowlist-creation date (informational)
+  readonly reason: string;
+  readonly removedIn: CodeQualityPhase;
+}
+
+/** Raw-throw violation: `throw new Error(...)` / `throw err;` outside boundary modules. */
+export interface RawThrowAllowlistEntry {
+  readonly file: string;
+  readonly lineRanges: ReadonlyArray<readonly [number, number]>; // tolerant of ±1 line drift
+  readonly reason: string;
+  readonly removedIn: CodeQualityPhase | "permanent"; // "permanent" reserved for @allow-throw boundary adapters
+}
+
+/** Untyped SQLite cast: `.all(...) as Type[]` or `.get(...) as Type` outside the Phase D mapper module. */
+export interface UntypedSqliteAllowlistEntry {
+  readonly file: string;
+  readonly symbol: string; // e.g., "TokenUsageDbRow"
+  readonly reason: string;
+  readonly removedIn: CodeQualityPhase;
+}
+
+/** Optional-field bloat: interface/type literal with >12 optional fields lacking an audit-stamp. */
+export interface OptionalFieldAllowlistEntry {
+  readonly file: string;
+  readonly typeName: string;
+  readonly optionalCount: number;
+  readonly reason: string;
+  readonly removedIn: CodeQualityPhase;
+}
+
+/** Direct global call outside sanctioned bootstrap/runtime adapter roots. */
+export interface GlobalsAllowlistEntry {
+  readonly file: string;
+  readonly line: number;
+  readonly global:
+    | "Date.now"
+    | "new Date"
+    | "process.env"
+    | "setTimeout"
+    | "setInterval"
+    | "clearTimeout"
+    | "clearInterval";
+  readonly reason: string;
+  readonly removedIn: CodeQualityPhase;
+}
+
+/**
+ * Phase H production-source historical-reference markers permitted to
+ * mention compatibility / legacy text. Permanent — no removedIn field.
+ * Phase 38 (BC-REM) populates this; max 2-3 entries per BC-REM-22.
+ */
+export interface NoBackwardCompatAllowlistEntry {
+  readonly file: string;
+  readonly line: number;
+  readonly reason: string;
+}
+
+/**
+ * Phase C: files genuinely test-impractical. Permanent — no removedIn
+ * field (D-AL-02). Phase 40 (COV) populates this with permanent reasons.
+ */
+export interface CoverageWaiverEntry {
+  readonly file: string;
+  readonly reason: string;
+}
+
+/**
+ * 7 v2.1 code-quality allowlists. Phase 37 declares them; Plans 02-05
+ * populate fileSizeAllowlist, optionalFieldAllowlist, untypedSqliteAllowlist,
+ * and rawThrowAllowlist. Plan 06 populates globalsAllowlist with the single
+ * HYG-12 marker entry (core/bootstrap.ts:89). noBackwardCompatAllowlist and
+ * coverageWaiver remain empty at Phase 37 close — Phase 38 + Phase 40 own them.
+ *
+ * Shrink-only ratchet: test/architecture/allowlist-shrink.test.ts (extended
+ * in Plan 06 to cover all 8 arrays) compares base..head and rejects any
+ * entry addition.
+ */
+export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [] as const;
+export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [] as const;
+export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [] as const;
+export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [] as const;
+export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [] as const;
+export const noBackwardCompatAllowlist: readonly NoBackwardCompatAllowlistEntry[] = [] as const;
+export const coverageWaiver: readonly CoverageWaiverEntry[] = [] as const;
