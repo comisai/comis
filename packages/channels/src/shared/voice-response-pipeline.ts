@@ -20,7 +20,7 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import type { Result } from "@comis/shared";
 import { ok } from "@comis/shared";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import type { SendMessageOptions, TtsAutoMode } from "@comis/core";
 import { prepareVoicePayload } from "./voice-sender.js";
 
@@ -185,7 +185,7 @@ export async function executeVoiceResponse(
   deps: VoiceResponsePipelineDeps,
   ctx: VoiceResponseContext,
 ): Promise<Result<VoiceResponseResult, Error>> {
-  const startMs = Date.now();
+  const startMs = systemNowMs();
 
   deps.logger.debug(
     { channelType: ctx.channelType },
@@ -206,7 +206,7 @@ export async function executeVoiceResponse(
 
   if (!decision.shouldSynthesize) {
     deps.logger.debug(
-      { channelType: ctx.channelType, durationMs: Date.now() - startMs, reason: "auto-tts-skip" },
+      { channelType: ctx.channelType, durationMs: systemNowMs() - startMs, reason: "auto-tts-skip" },
       "Voice response skipped",
     );
     return ok({ voiceSent: false });
@@ -346,7 +346,7 @@ export async function executeVoiceResponse(
     deps.logger.info(
       {
         channelType: ctx.channelType,
-        durationMs: Date.now() - startMs,
+        durationMs: systemNowMs() - startMs,
         durationSecs: payload.durationSecs,
       },
       "Voice response sent",

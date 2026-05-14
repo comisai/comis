@@ -6,7 +6,7 @@ import type {
   ChannelCapability,
   ChannelPort,
 } from "@comis/core";
-import { ChannelCapabilitySchema } from "@comis/core";
+import { ChannelCapabilitySchema, systemNowMs } from "@comis/core";
 import type { PluginRegistry } from "@comis/core";
 import type { TypedEventBus } from "@comis/core";
 
@@ -89,7 +89,7 @@ export function createChannelRegistry(options: ChannelRegistryOptions): ChannelR
           channelType: plugin.channelType,
           pluginId: plugin.id,
           capabilities: plugin.capabilities,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
       }
 
@@ -116,7 +116,7 @@ export function createChannelRegistry(options: ChannelRegistryOptions): ChannelR
         eventBus.emit("channel:deregistered", {
           channelType,
           pluginId: plugin.id,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
       }
 

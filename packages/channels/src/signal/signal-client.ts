@@ -15,6 +15,7 @@
 
 import { ok, err, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -140,7 +141,7 @@ export async function signalRpcRequest(
 
   const controller = new AbortController();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = systemSetTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(`${baseUrl}/api/v1/rpc`, {
@@ -171,7 +172,7 @@ export async function signalRpcRequest(
     const message = error instanceof Error ? error.message : String(error);
     return err(new Error(`Signal RPC request failed: ${message}`));
   } finally {
-    clearTimeout(timer);
+    systemClearTimeout(timer);
   }
 }
 
@@ -192,7 +193,7 @@ export async function signalHealthCheck(
 ): Promise<Result<void, Error>> {
   const normalized = normalizeBaseUrl(baseUrl);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = systemSetTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(`${normalized}/api/v1/check`, {
@@ -209,7 +210,7 @@ export async function signalHealthCheck(
     const message = error instanceof Error ? error.message : String(error);
     return err(new Error(`Signal health check failed: ${message}`));
   } finally {
-    clearTimeout(timer);
+    systemClearTimeout(timer);
   }
 }
 
@@ -338,10 +339,10 @@ export async function* createSignalEventStream(
       // Exponential backoff reconnection
       try {
         await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(resolve, backoff);
+          const timer = systemSetTimeout(resolve, backoff);
           if (signal) {
             const onAbort = () => {
-              clearTimeout(timer);
+              systemClearTimeout(timer);
               reject(new Error("Aborted"));
             };
             signal.addEventListener("abort", onAbort, { once: true });

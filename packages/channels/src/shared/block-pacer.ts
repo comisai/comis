@@ -11,6 +11,7 @@
 import type { DeliveryTimingConfig } from "@comis/core";
 
 import { calculateDelay, type BlockTimingContext } from "./delivery-timing.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 /** Configuration for block pacing behavior. */
 export interface PacerConfig {
@@ -55,13 +56,13 @@ function delay(ms: number, signal: AbortSignal): Promise<boolean> {
   }
 
   return new Promise<boolean>((resolve) => {
-    const timer = setTimeout(() => {
+    const timer = systemSetTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve(true);
     }, ms);
 
     function onAbort(): void {
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       resolve(false);
     }
 

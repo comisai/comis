@@ -32,6 +32,7 @@ import { ok, err } from "@comis/shared";
 import { messagingApi, webhook } from "@line/bot-sdk";
 import { buildFlexMessage, type FlexTemplate } from "./flex-builder.js";
 import { mapLineToNormalized, isMessageEvent } from "./message-mapper.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -106,7 +107,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
       return;
     }
 
-    _lastMessageAt = Date.now();
+    _lastMessageAt = systemNowMs();
     deps.logger.info(
       { channelType: "line" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length },
       "Inbound message",
@@ -242,7 +243,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
       }
 
       _connected = true;
-      _startedAt = Date.now();
+      _startedAt = systemNowMs();
       deps.logger.info({ channelType: "line" as const, mode: "webhook" }, "Adapter started");
       return ok(undefined);
     },
@@ -269,7 +270,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
 
         const messageId = response.sentMessages[0]?.id ?? "sent";
 
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.debug(
           { channelType: "line" as const, messageId, chatId, preview: text.slice(0, 1500) },
@@ -422,7 +423,7 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
         connected: _connected,
         channelId: _channelId,
         channelType: "line",
-        uptime: _connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: _connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: "webhook",

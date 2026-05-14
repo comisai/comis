@@ -14,6 +14,7 @@
 import { execFile } from "node:child_process";
 import { ok, err, type Result } from "@comis/shared";
 import { createCredentialValidator } from "../shared/credential-validator-factory.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -71,12 +72,12 @@ function findBinary(binary: string): Promise<Result<string, Error>> {
  */
 function probeImsgRpc(binaryPath: string): Promise<Result<void, Error>> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
+    const timer = systemSetTimeout(() => {
       resolve(err(new Error("imsg rpc probe timed out after 5 seconds")));
     }, 5_000);
 
     execFile(binaryPath, ["rpc", "--help"], (error, stdout, stderr) => {
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       const combined = `${stdout}\n${stderr}`.toLowerCase();
       if (combined.includes("unknown command") && combined.includes("rpc")) {
         resolve(

@@ -36,6 +36,7 @@ import {
 import { validateWhatsAppAuth } from "./credential-validator.js";
 import { mapBaileysToNormalized, type BaileysMessage } from "./message-mapper.js";
 import { createWhatsAppVoiceSender } from "./voice-sender.js";
+import { systemNowMs, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -95,7 +96,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
       if (connection === "open") {
         connected = true;
         reconnectAttempt = 0;
-        if (!_startedAt) _startedAt = Date.now();
+        if (!_startedAt) _startedAt = systemNowMs();
         _channelId = `whatsapp-${sock?.user?.id ?? "unknown"}`;
         deps.logger.info({ channelType: "whatsapp" }, "Adapter started");
       }
@@ -150,11 +151,11 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         const msgId = m.key.id;
         if (msgId) {
           rawMessageCache.set(msgId, m as BaileysMessage);
-          const timer = setTimeout(() => rawMessageCache.delete(msgId), RAW_MESSAGE_TTL_MS);
+          const timer = systemSetTimeout(() => rawMessageCache.delete(msgId), RAW_MESSAGE_TTL_MS);
           timer.unref();
         }
 
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         const normalized = mapBaileysToNormalized(m as BaileysMessage);
         deps.logger.info(
           { channelType: "whatsapp", messageId: normalized.id, chatId: m.key.remoteJid ?? "", previewLen: (normalized.text ?? "").length },
@@ -261,7 +262,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
 
         const sent = await sock.sendMessage(channelId, { text });
         const messageId = sent?.key?.id ?? "";
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.debug(
           { channelType: "whatsapp", messageId, chatId: channelId, preview: text.slice(0, 1500) },
@@ -590,7 +591,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         connected,
         channelId: _channelId,
         channelType: "whatsapp",
-        uptime: connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: "socket",

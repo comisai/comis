@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ok, type Result } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
 import type {
   ChannelPort,
   ChannelStatus,
@@ -64,7 +65,7 @@ export class EchoChannelAdapter implements ChannelPort {
 
   async start(): Promise<Result<void, Error>> {
     this.running = true;
-    this.startedAt = Date.now();
+    this.startedAt = systemNowMs();
     return ok(undefined);
   }
 
@@ -87,7 +88,7 @@ export class EchoChannelAdapter implements ChannelPort {
       channelId,
       text,
       options,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
     return ok(messageId);
   }
@@ -172,7 +173,7 @@ export class EchoChannelAdapter implements ChannelPort {
       connected: this.running,
       channelId: this.channelId,
       channelType: this.channelType,
-      uptime: this.running && this.startedAt ? Date.now() - this.startedAt : undefined,
+      uptime: this.running && this.startedAt ? systemNowMs() - this.startedAt : undefined,
       connectionMode: "socket",
     };
   }

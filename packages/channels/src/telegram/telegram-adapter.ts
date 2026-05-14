@@ -38,6 +38,7 @@ import { normalizeTelegramPollResult } from "../shared/poll-normalizer.js";
 import { resolveTelegramThreadContext, resolveOutboundThreadParams, isTelegramThreadNotFoundError, buildTypingThreadParams } from "./thread-context.js";
 import { renderTelegramButtons, renderTelegramCards } from "./rich-renderer.js";
 import { createTelegramVoiceSender } from "./voice-sender.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Bot commands for Telegram autocomplete menu (via setMyCommands)
@@ -197,7 +198,7 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
       return;
     }
 
-    _lastMessageAt = Date.now();
+    _lastMessageAt = systemNowMs();
     const normalized = mapGrammyToNormalized(msg, chatId, botIdentity);
     deps.logger.info(
       { channelType: "telegram", messageId: normalized.id, chatId: String(chatId), previewLen: (normalized.text ?? "").length },
@@ -341,7 +342,7 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
             channelId: String(ctx.callbackQuery.message?.chat.id ?? ctx.from.id),
             senderId: String(ctx.from.id),
             text: ctx.callbackQuery.data,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
             attachments: [],
             metadata: {
               isButtonCallback: true,
@@ -415,7 +416,7 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
       }
 
       _connected = true;
-      _startedAt = Date.now();
+      _startedAt = systemNowMs();
 
       deps.logger.info(
         { channelType: "telegram", botId: botInfo.id, username: botInfo.username, mode: deps.webhookUrl ? "webhook" : "polling" },
@@ -505,7 +506,7 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
         };
 
         const sent = await sendWithThreadFallback(doSend, threadParams, deps.logger);
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.debug(
           { channelType: "telegram", messageId: String(sent.message_id), chatId, preview: finalText.slice(0, 1500) },
@@ -838,7 +839,7 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
         connected: _connected,
         channelId: _channelId,
         channelType: "telegram",
-        uptime: _connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: _connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: "polling",

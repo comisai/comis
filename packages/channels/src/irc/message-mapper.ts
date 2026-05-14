@@ -11,6 +11,7 @@
 
 import type { NormalizedMessage } from "@comis/core";
 import { randomUUID } from "node:crypto";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 
 /**
  * IRC message event shape from irc-framework.
@@ -32,7 +33,7 @@ export interface IrcMessageEvent {
  *
  * - Channel messages: channelId = target ("#channel")
  * - DMs: channelId = sender nick
- * - Timestamps: IRCv3 server-time tag if present, otherwise Date.now()
+ * - Timestamps: IRCv3 server-time tag if present, otherwise systemNowMs()
  * - Attachments: always empty (IRC is text-only)
  * - Metadata: includes ircTarget, isDm flag, and msgid if available
  */
@@ -42,7 +43,7 @@ export function mapIrcToNormalized(event: IrcMessageEvent): NormalizedMessage {
 
   // IRCv3 server-time tag (ISO 8601 format)
   const timestamp =
-    event.tags?.time ? new Date(event.tags.time).getTime() : Date.now();
+    event.tags?.time ? systemDateFrom(event.tags.time).getTime() : systemNowMs();
 
   return {
     id: randomUUID(),

@@ -17,6 +17,7 @@
  */
 
 import type { TypedEventBus, ChannelPort } from "@comis/core";
+import { systemClearInterval, systemNowMs, systemSetInterval } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -170,7 +171,7 @@ export function createChannelHealthMonitor(
    */
   function evaluateActivity(entry: MutableHealthEntry): ChannelHealthState {
     if (!entry.lastMessageAt) return "healthy"; // no activity yet but connected
-    const age = Date.now() - entry.lastMessageAt;
+    const age = systemNowMs() - entry.lastMessageAt;
     if (isStaleExempt(entry)) {
       // Polling/webhook adapters skip stale, but still check idle
       return age > idleThresholdMs ? "idle" : "healthy";
@@ -195,7 +196,7 @@ export function createChannelHealthMonitor(
       // getStatus() threw -- use default
     }
 
-    const now = Date.now();
+    const now = systemNowMs();
     return {
       channelType,
       state: "startup-grace",
@@ -225,7 +226,7 @@ export function createChannelHealthMonitor(
    * Returns true if restart is allowed.
    */
   function canRestart(channelType: string): boolean {
-    const now = Date.now();
+    const now = systemNowMs();
     const timestamps = restartTimestamps.get(channelType) ?? [];
 
     // Filter to last hour
@@ -257,7 +258,7 @@ export function createChannelHealthMonitor(
     if (!canRestart(channelType)) return;
 
     const timestamps = restartTimestamps.get(channelType) ?? [];
-    timestamps.push(Date.now());
+    timestamps.push(systemNowMs());
     restartTimestamps.set(channelType, timestamps);
 
     const entry = entries.get(channelType);
@@ -284,7 +285,7 @@ export function createChannelHealthMonitor(
       const entry = entries.get(channelType);
       if (!entry) continue;
 
-      const pollStart = Date.now();
+      const pollStart = systemNowMs();
       let status: ReturnType<NonNullable<ChannelPort["getStatus"]>> | undefined;
 
       try {
@@ -312,7 +313,7 @@ export function createChannelHealthMonitor(
           newState = "disconnected";
         } else if (status.error) {
           newState = "errored";
-        } else if (Date.now() - entry.adapterStartedAt < startupGraceMs) {
+        } else if (systemNowMs() - entry.adapterStartedAt < startupGraceMs) {
           newState = "startup-grace";
         } else if (entry.activeRuns > 0) {
           // Busy state lifecycle guard
@@ -326,7 +327,7 @@ export function createChannelHealthMonitor(
             newState = evaluateActivity(entry);
           } else if (
             entry.lastRunStartedAt != null &&
-            Date.now() - entry.lastRunStartedAt > stuckThresholdMs
+            systemNowMs() - entry.lastRunStartedAt > stuckThresholdMs
           ) {
             newState = "stuck";
           } else {
@@ -337,21 +338,21 @@ export function createChannelHealthMonitor(
         }
       }
 
-      entry.lastCheckedAt = Date.now();
+      entry.lastCheckedAt = systemNowMs();
 
       // Emit health_check for every poll
       eventBus.emit("channel:health_check", {
         channelType,
         state: newState,
-        responseTimeMs: Date.now() - pollStart,
-        timestamp: Date.now(),
+        responseTimeMs: systemNowMs() - pollStart,
+        timestamp: systemNowMs(),
       });
 
       // Emit health_changed only on state transitions
       if (entry.state !== newState) {
         const previous = entry.state;
         entry.state = newState;
-        entry.stateChangedAt = Date.now();
+        entry.stateChangedAt = systemNowMs();
 
         eventBus.emit("channel:health_changed", {
           channelType,
@@ -360,7 +361,7 @@ export function createChannelHealthMonitor(
           connectionMode: entry.connectionMode,
           error: entry.error,
           lastMessageAt: entry.lastMessageAt,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
 
         // Auto-restart on stale
@@ -388,13 +389,13 @@ export function createChannelHealthMonitor(
     }
 
     // Start periodic polling
-    timer = setInterval(pollAll, pollIntervalMs);
+    timer = systemSetInterval(pollAll, pollIntervalMs);
     timer.unref();
 
     // Return stop function
     return () => {
       if (timer) {
-        clearInterval(timer);
+        systemClearInterval(timer);
         timer = undefined;
       }
     };
@@ -432,7 +433,7 @@ export function createChannelHealthMonitor(
     const entry = entries.get(channelType);
     if (!entry) return;
     entry.activeRuns++;
-    entry.lastRunStartedAt = Date.now();
+    entry.lastRunStartedAt = systemNowMs();
   }
 
   function recordRunEnd(channelType: string): void {

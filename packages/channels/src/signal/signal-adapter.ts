@@ -35,6 +35,7 @@ import {
 import { mapSignalToNormalized } from "./message-mapper.js";
 import { convertIrToSignalTextStyles } from "./signal-format.js";
 import type { MarkdownIR } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -91,7 +92,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
             const normalized = mapSignalToNormalized(envelope, deps.baseUrl);
             if (!normalized) continue;
 
-            _lastMessageAt = Date.now();
+            _lastMessageAt = systemNowMs();
             deps.logger.info(
               { channelType: "signal" as const, messageId: normalized.id, chatId: normalized.channelId, previewLen: (normalized.text ?? "").length },
               "Inbound message",
@@ -172,7 +173,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
       startEventLoop(abortController.signal);
 
       _connected = true;
-      _startedAt = Date.now();
+      _startedAt = systemNowMs();
 
       deps.logger.info(
         { channelType: "signal" as const },
@@ -246,7 +247,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
       const timestamp = (result.value as { timestamp?: number })?.timestamp;
       const messageId = timestamp ? String(timestamp) : "unknown";
 
-      _lastMessageAt = Date.now();
+      _lastMessageAt = systemNowMs();
       _lastError = undefined;
       deps.logger.debug(
         { channelType: "signal" as const, messageId, chatId, preview: text.slice(0, 1500) },
@@ -482,7 +483,7 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
         connected: _connected,
         channelId,
         channelType: "signal",
-        uptime: _connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: _connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: "socket",

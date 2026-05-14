@@ -14,7 +14,7 @@
  */
 
 import type { Attachment, MediaResolverPort, ResolvedMedia } from "@comis/core";
-import { sanitizeLogString } from "@comis/core";
+import { sanitizeLogString, systemNowMs } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import type { Bot } from "grammy";
@@ -95,9 +95,9 @@ export function createTelegramResolver(deps: TelegramResolverDeps): MediaResolve
         const downloadUrl = `https://api.telegram.org/file/bot${deps.botToken}/${file.file_path}`;
 
         // Download via SSRF-guarded fetcher
-        const startMs = Date.now();
+        const startMs = systemNowMs();
         const fetchResult = await deps.ssrfFetcher.fetch(downloadUrl);
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
 
         if (!fetchResult.ok) {
           deps.logger.warn(

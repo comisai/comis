@@ -33,6 +33,7 @@ import { validateSlackCredentials } from "./credential-validator.js";
 import { mapSlackToNormalized } from "./message-mapper.js";
 import { renderSlackButtons, renderSlackCards } from "./rich-renderer.js";
 import { executeSlackAction } from "./slack-actions.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -149,7 +150,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
             return;
           }
 
-          _lastMessageAt = Date.now();
+          _lastMessageAt = systemNowMs();
           const normalized = mapSlackToNormalized(event);
           deps.logger.info(
             { channelType: "slack", messageId: normalized.id, chatId: event.channel, previewLen: (normalized.text ?? "").length },
@@ -203,7 +204,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
                 (body as { channel?: { id?: string } }).channel?.id ?? "",
               senderId: user?.id ?? "",
               text: buttonAction.action_id ?? "",
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
               attachments: [],
               metadata: {
                 isButtonCallback: true,
@@ -255,7 +256,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         await app.start();
 
         _connected = true;
-        _startedAt = Date.now();
+        _startedAt = systemNowMs();
 
         deps.logger.info(
           {
@@ -325,7 +326,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           ...(options?.threadReply && options?.replyTo ? { reply_broadcast: false } : {}),
         });
         const messageId = String(result.ts ?? "");
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.debug(
           { channelType: "slack", messageId, chatId: channelId, preview: text.slice(0, 1500) },
@@ -532,7 +533,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         connected: _connected,
         channelId: _channelId,
         channelType: "slack",
-        uptime: _connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: _connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: deps.mode === "http" ? "webhook" : "socket",

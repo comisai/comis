@@ -39,6 +39,7 @@ import { chunkDiscordText } from "./format-discord.js";
 import { mapDiscordToNormalized } from "./message-mapper.js";
 import { renderDiscordButtons, renderDiscordCards } from "./rich-renderer.js";
 import { createDiscordVoiceSender } from "./voice-sender.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -121,7 +122,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
           return;
         }
 
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         const normalized = mapDiscordToNormalized(msg);
         deps.logger.info(
           { channelType: "discord", messageId: normalized.id, chatId: msg.channelId, previewLen: (normalized.text ?? "").length },
@@ -198,7 +199,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
             channelId: interaction.channelId,
             senderId: interaction.user.id,
             text: interaction.customId,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
             attachments: [],
             metadata: {
               isButtonCallback: true,
@@ -251,7 +252,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
       await client.login(deps.botToken);
 
       _connected = true;
-      _startedAt = Date.now();
+      _startedAt = systemNowMs();
 
       deps.logger.info(
         { channelType: "discord", botId: botInfo.id, username: botInfo.username },
@@ -361,7 +362,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
           await sendable.send({ content: chunks[i] });
         }
 
-        _lastMessageAt = Date.now();
+        _lastMessageAt = systemNowMs();
         _lastError = undefined;
         deps.logger.debug(
           { channelType: "discord", messageId: firstMessage.id, chatId: channelId, preview: text.slice(0, 1500) },
@@ -603,7 +604,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         connected: _connected,
         channelId: _channelId,
         channelType: "discord",
-        uptime: _connected && _startedAt ? Date.now() - _startedAt : undefined,
+        uptime: _connected && _startedAt ? systemNowMs() - _startedAt : undefined,
         lastMessageAt: _lastMessageAt,
         error: _lastError,
         connectionMode: "socket",

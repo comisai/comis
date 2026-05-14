@@ -18,6 +18,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
 import { ok, err, type Result } from "@comis/shared";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -119,7 +120,7 @@ export function createImsgClient(opts: ImsgClientOptions): ImsgClient {
       const req = pending.get(key);
       if (!req) return;
 
-      if (req.timer) clearTimeout(req.timer);
+      if (req.timer) systemClearTimeout(req.timer);
       pending.delete(key);
 
       if (parsed.error) {
@@ -149,7 +150,7 @@ export function createImsgClient(opts: ImsgClientOptions): ImsgClient {
 
   function failAll(error: Error): void {
     for (const [key, req] of pending.entries()) {
-      if (req.timer) clearTimeout(req.timer);
+      if (req.timer) systemClearTimeout(req.timer);
       req.reject(error);
       pending.delete(key);
     }
@@ -216,7 +217,7 @@ export function createImsgClient(opts: ImsgClientOptions): ImsgClient {
 
       return new Promise<Result<unknown, Error>>((resolve) => {
         const key = String(id);
-        const timer = setTimeout(() => {
+        const timer = systemSetTimeout(() => {
           pending.delete(key);
           resolve(err(new Error(`imsg rpc timeout (${method})`)));
         }, DEFAULT_TIMEOUT_MS);
@@ -254,11 +255,11 @@ export function createImsgClient(opts: ImsgClientOptions): ImsgClient {
 
         // Wait for graceful exit, then force kill
         await new Promise<void>((resolve) => {
-          const forceKillTimer = setTimeout(() => {
+          const forceKillTimer = systemSetTimeout(() => {
             if (!proc.killed) {
               proc.kill("SIGTERM");
               // Final SIGKILL after additional timeout
-              setTimeout(() => {
+              systemSetTimeout(() => {
                 if (!proc.killed) {
                   proc.kill("SIGKILL");
                 }
@@ -270,7 +271,7 @@ export function createImsgClient(opts: ImsgClientOptions): ImsgClient {
           }, SHUTDOWN_TIMEOUT_MS);
 
           proc.on("close", () => {
-            clearTimeout(forceKillTimer);
+            systemClearTimeout(forceKillTimer);
             resolve();
           });
         });

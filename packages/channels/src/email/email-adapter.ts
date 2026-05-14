@@ -34,6 +34,7 @@ import { createImapLifecycle } from "./imap-lifecycle.js";
 import { buildThreadingHeaders } from "./threading.js";
 import { isAllowedSender, isAutomatedSender } from "./sender-filter.js";
 import { mapEmailToNormalized } from "./message-mapper.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -164,7 +165,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
         deps.attachmentDir,
       );
 
-      lastActivity = Date.now();
+      lastActivity = systemNowMs();
 
       // Dispatch to all registered handlers
       for (const handler of handlers) {
@@ -271,7 +272,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
     }
 
     const messageId = (mailResult.value as { messageId?: string }).messageId ?? "";
-    lastActivity = Date.now();
+    lastActivity = systemNowMs();
     return ok(messageId);
   }
 
@@ -368,7 +369,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
     }
 
     const messageId = (mailResult.value as { messageId?: string }).messageId ?? "";
-    lastActivity = Date.now();
+    lastActivity = systemNowMs();
     return ok(messageId);
   }
 

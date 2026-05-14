@@ -52,6 +52,7 @@
 // ---------------------------------------------------------------------------
 
 /** Controls when typing indicators are activated by the channel manager. */
+import { systemClearInterval, systemClearTimeout, systemNowMs, systemSetInterval, systemSetTimeout } from "@comis/core";
 export type TypingMode = "never" | "instant" | "thinking" | "message";
 
 /** Configuration for the typing controller. */
@@ -162,17 +163,17 @@ export function createTypingController(
             "Typing circuit breaker tripped",
           );
           if (timer !== null) {
-            clearInterval(timer);
+            systemClearInterval(timer);
             timer = null;
           }
           active = false;
           sealed = true;
           if (ttlTimer !== null) {
-            clearTimeout(ttlTimer);
+            systemClearTimeout(ttlTimer);
             ttlTimer = null;
           }
           if (ttlRefreshTimer !== null) {
-            clearInterval(ttlRefreshTimer);
+            systemClearInterval(ttlRefreshTimer);
             ttlRefreshTimer = null;
           }
         } else {
@@ -190,9 +191,9 @@ export function createTypingController(
   /** Arm or reset the TTL timer. */
   function resetTtl(): void {
     if (ttlTimer !== null) {
-      clearTimeout(ttlTimer);
+      systemClearTimeout(ttlTimer);
     }
-    ttlTimer = setTimeout(() => {
+    ttlTimer = systemSetTimeout(() => {
       if (active) {
         logger?.warn(
           { hint: "Typing TTL expired -- auto-stopping", errorKind: "timeout" as const },
@@ -201,11 +202,11 @@ export function createTypingController(
         active = false;
         sealed = true;
         if (timer !== null) {
-          clearInterval(timer);
+          systemClearInterval(timer);
           timer = null;
         }
         if (ttlRefreshTimer !== null) {
-          clearInterval(ttlRefreshTimer);
+          systemClearInterval(ttlRefreshTimer);
           ttlRefreshTimer = null;
         }
       }
@@ -218,14 +219,14 @@ export function createTypingController(
       if (config.mode === "never" || active || sealed) return;
 
       active = true;
-      _startedAt = Date.now();
+      _startedAt = systemNowMs();
 
       // Send immediately so the user sees "typing" without waiting for
       // the first interval tick.
       doSendTyping(chatId);
 
       // Refresh at interval to keep the indicator alive.
-      timer = setInterval(() => {
+      timer = systemSetInterval(() => {
         doSendTyping(chatId);
       }, config.refreshMs);
 
@@ -235,7 +236,7 @@ export function createTypingController(
       // Belt-and-braces liveness watchdog: refresh the TTL on a fixed cadence so
       // the indicator survives long silences (extended thinking, slow tools,
       // inter-turn gaps) even when no external signal calls refreshTtl().
-      ttlRefreshTimer = setInterval(() => {
+      ttlRefreshTimer = systemSetInterval(() => {
         if (active && !sealed) {
           resetTtl();
         }
@@ -246,15 +247,15 @@ export function createTypingController(
       active = false;
       sealed = true;
       if (timer !== null) {
-        clearInterval(timer);
+        systemClearInterval(timer);
         timer = null;
       }
       if (ttlTimer !== null) {
-        clearTimeout(ttlTimer);
+        systemClearTimeout(ttlTimer);
         ttlTimer = null;
       }
       if (ttlRefreshTimer !== null) {
-        clearInterval(ttlRefreshTimer);
+        systemClearInterval(ttlRefreshTimer);
         ttlRefreshTimer = null;
       }
     },

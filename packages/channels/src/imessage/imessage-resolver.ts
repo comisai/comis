@@ -14,7 +14,7 @@
  */
 
 import type { Attachment, MediaResolverPort, ResolvedMedia } from "@comis/core";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";
 import * as fs from "node:fs/promises";
@@ -86,9 +86,9 @@ export function createIMessageResolver(deps: IMessageResolverDeps): MediaResolve
           }
 
           // Read file
-          const startMs = Date.now();
+          const startMs = systemNowMs();
           const buffer = await fs.readFile(validatedPath);
-          const durationMs = Date.now() - startMs;
+          const durationMs = systemNowMs() - startMs;
 
           // Use attachment mimeType if available, otherwise default
           const mimeType = attachment.mimeType ?? "application/octet-stream";

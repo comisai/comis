@@ -13,6 +13,7 @@
 import { ImapFlow } from "imapflow";
 import { ok, err, fromPromise, type Result } from "@comis/shared";
 import type { ComisLogger } from "@comis/core";
+import { systemClearInterval, systemClearTimeout, systemNowMs, systemSetInterval, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -138,7 +139,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       "Scheduling IMAP reconnect",
     );
 
-    reconnectTimer = setTimeout(() => {
+    reconnectTimer = systemSetTimeout(() => {
       if (stopped) return;
       void connectAndListen();
     }, delay);
@@ -189,11 +190,11 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       return err(connectResult.error instanceof Error ? connectResult.error : new Error(String(connectResult.error)));
     }
 
-    connectedAt = Date.now();
+    connectedAt = systemNowMs();
 
     // Reset backoff if stable
-    setTimeout(() => {
-      if (connectedAt > 0 && Date.now() - connectedAt >= STABLE_CONNECTION_MS) {
+    systemSetTimeout(() => {
+      if (connectedAt > 0 && systemNowMs() - connectedAt >= STABLE_CONNECTION_MS) {
         reconnectDelay = RECONNECT_BASE_MS;
       }
     }, STABLE_CONNECTION_MS + 1000);
@@ -218,7 +219,7 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
 
   function startPolling(): void {
     if (pollingTimer || stopped) return;
-    pollingTimer = setInterval(() => {
+    pollingTimer = systemSetInterval(() => {
       if (client) {
         void fetchNewMessages(client, prevCount + 1);
       }
@@ -239,12 +240,12 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
       stopped = true;
 
       if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
+        systemClearTimeout(reconnectTimer);
         reconnectTimer = undefined;
       }
 
       if (pollingTimer) {
-        clearInterval(pollingTimer);
+        systemClearInterval(pollingTimer);
         pollingTimer = undefined;
       }
 
