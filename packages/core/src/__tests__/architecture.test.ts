@@ -549,3 +549,193 @@ describe("Phase 31 -- secrets-handlers integrity (MEM-CTX-PORTS-13 + 14 part 3 /
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 39 commit 1 (PORTS-01..05) — ClockPort / EnvPort / TimerPort exports
+// and PORTS-05 YAGNI guard (TimerHandle has NO ref() method).
+//
+// These tests are written FIRST (TDD RED): they intentionally fail until
+// commit 2 lands the three type-only port files in packages/core/src/ports/
+// and the barrel update at packages/core/src/ports/index.ts.
+//
+// Test strategy mirrors the existing Phase 28 file-lock / context-store
+// checks above: a `readFileSync` + regex grep against the on-disk source
+// is the load-bearing assertion. Vitest's esbuild transformer erases
+// `type _t = import("../ports/index.js").ClockPort` to `any`, so a pure
+// type-only assertion would silently pass even when the port file is
+// missing. The grep assertions are the binding TDD RED signal.
+// ---------------------------------------------------------------------------
+
+describe("Phase 39 ports (PORTS-01/02/03/04/05)", () => {
+  const PORTS_DIR_P39 = resolve(SRC_ROOT, "ports");
+  const INDEX_PATH_P39 = resolve(PORTS_DIR_P39, "index.ts");
+
+  it("ClockPort interface lives in core/src/ports/clock.ts (PORTS-01) and is re-exported from index.ts", () => {
+    const portFile = resolve(PORTS_DIR_P39, "clock.ts");
+    expect(
+      existsSync(portFile),
+      "packages/core/src/ports/clock.ts must exist (PORTS-01, design §5.2(1))",
+    ).toBe(true);
+    const source = readFileSync(portFile, "utf8");
+    expect(
+      source,
+      "clock.ts must declare `export interface ClockPort` with now() and nowDate() (PORTS-01)",
+    ).toMatch(/export\s+interface\s+ClockPort\b/);
+    expect(source, "ClockPort must declare now()").toMatch(/\bnow\s*\(\s*\)\s*:/);
+    expect(source, "ClockPort must declare nowDate()").toMatch(/\bnowDate\s*\(\s*\)\s*:/);
+
+    const indexSource = readFileSync(INDEX_PATH_P39, "utf8");
+    expect(
+      indexSource,
+      "core/src/ports/index.ts must re-export ClockPort from ./clock.js",
+    ).toMatch(/export\s+type\s+\{\s*ClockPort\s*\}\s+from\s+"\.\/clock\.js"/);
+  });
+
+  it("EnvPort interface lives in core/src/ports/env.ts (PORTS-02) with get() + snapshot() and is re-exported from index.ts", () => {
+    const portFile = resolve(PORTS_DIR_P39, "env.ts");
+    expect(
+      existsSync(portFile),
+      "packages/core/src/ports/env.ts must exist (PORTS-02, design §5.2(2))",
+    ).toBe(true);
+    const source = readFileSync(portFile, "utf8");
+    expect(
+      source,
+      "env.ts must declare `export interface EnvPort` (PORTS-02)",
+    ).toMatch(/export\s+interface\s+EnvPort\b/);
+    expect(source, "EnvPort must declare get(key: string)").toMatch(
+      /\bget\s*\(\s*key\s*:\s*string\s*\)/,
+    );
+    expect(source, "EnvPort.snapshot must accept readonly string[]").toMatch(
+      /\bsnapshot\s*\(\s*keys\s*:\s*readonly\s+string\[\]\s*\)/,
+    );
+    expect(
+      source,
+      "EnvPort.snapshot must return Readonly<Record<string, string | undefined>> (T-39-01-02 mitigation)",
+    ).toMatch(/Readonly<Record<string,\s*string\s*\|\s*undefined>>/);
+
+    const indexSource = readFileSync(INDEX_PATH_P39, "utf8");
+    expect(
+      indexSource,
+      "core/src/ports/index.ts must re-export EnvPort from ./env.js",
+    ).toMatch(/export\s+type\s+\{\s*EnvPort\s*\}\s+from\s+"\.\/env\.js"/);
+  });
+
+  it("TimerHandle and TimerPort live in core/src/ports/timer.ts (PORTS-03/04) and are re-exported from index.ts", () => {
+    const portFile = resolve(PORTS_DIR_P39, "timer.ts");
+    expect(
+      existsSync(portFile),
+      "packages/core/src/ports/timer.ts must exist (PORTS-03, design §5.2(3))",
+    ).toBe(true);
+    const source = readFileSync(portFile, "utf8");
+    expect(source, "timer.ts must declare `export interface TimerHandle`").toMatch(
+      /export\s+interface\s+TimerHandle\b/,
+    );
+    expect(source, "timer.ts must declare `export interface TimerPort`").toMatch(
+      /export\s+interface\s+TimerPort\b/,
+    );
+    // PORTS-04 shape: TimerHandle.cancelled is readonly boolean; cancel() + unref() exist.
+    expect(
+      source,
+      "TimerHandle must declare readonly cancelled: boolean (PORTS-04)",
+    ).toMatch(/\breadonly\s+cancelled\s*:\s*boolean\b/);
+    expect(source, "TimerHandle must declare cancel(): void").toMatch(
+      /\bcancel\s*\(\s*\)\s*:\s*void\b/,
+    );
+    expect(source, "TimerHandle must declare unref(): void").toMatch(
+      /\bunref\s*\(\s*\)\s*:\s*void\b/,
+    );
+    // TimerPort surface — parameter list contains `(callback: () => void,
+    // delayMs: number)` with nested parens, so a flat `[^)]*` regex fails.
+    // Use a balanced-paren match (callback list + trailing whitespace) before
+    // the return-type colon and TimerHandle.
+    expect(
+      source,
+      "TimerPort must declare setTimeout(callback, delayMs): TimerHandle",
+    ).toMatch(/\bsetTimeout\s*\([^()]*\([^)]*\)[^()]*\)\s*:\s*TimerHandle\b/);
+    expect(
+      source,
+      "TimerPort must declare setInterval(callback, intervalMs): TimerHandle",
+    ).toMatch(/\bsetInterval\s*\([^()]*\([^)]*\)[^()]*\)\s*:\s*TimerHandle\b/);
+
+    const indexSource = readFileSync(INDEX_PATH_P39, "utf8");
+    expect(
+      indexSource,
+      "core/src/ports/index.ts must re-export TimerPort + TimerHandle from ./timer.js",
+    ).toMatch(/export\s+type\s+\{\s*TimerPort\s*,\s*TimerHandle\s*\}\s+from\s+"\.\/timer\.js"/);
+  });
+
+  it("TimerHandle deliberately omits ref() per YAGNI (PORTS-05)", () => {
+    const portFile = resolve(PORTS_DIR_P39, "timer.ts");
+    expect(
+      existsSync(portFile),
+      "packages/core/src/ports/timer.ts must exist for the PORTS-05 YAGNI guard to bind",
+    ).toBe(true);
+    const source = readFileSync(portFile, "utf8");
+
+    // Extract the TimerHandle interface body and assert NO bare ref() member.
+    // `unref()` legitimately exists; we filter that out by anchoring on a
+    // member that is NOT preceded by `un` / any identifier character.
+    const handleBlock = /export\s+interface\s+TimerHandle\b[\s\S]*?\n\}/.exec(source);
+    expect(
+      handleBlock,
+      "TimerHandle interface block must be locatable in timer.ts",
+    ).not.toBeNull();
+    const body = handleBlock![0];
+    // Strip comments before scanning — the body legitimately contains the
+    // string "ref()" inside `// NO ref() — YAGNI per PORTS-05`, which is
+    // documentation about the absence of the member. We only care about
+    // actual TypeScript member declarations.
+    const bodyNoComments = body
+      // strip /* ... */ block comments
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      // strip // line comments (to end of line)
+      .replace(/\/\/[^\n]*/g, "");
+    // Match a method member literally named `ref` (boundary-anchored), not
+    // `unref`. Production callers re-refing a timer is a known YAGNI surface;
+    // PORTS-05 freezes that out.
+    const refMember = /(?<![A-Za-z0-9_])ref\s*\(\s*\)/.exec(bodyNoComments);
+    expect(
+      refMember,
+      "TimerHandle MUST NOT declare a ref() method per PORTS-05 (YAGNI). Found a ref()-shaped member in the interface body.",
+    ).toBeNull();
+  });
+
+  it("type-only structural assertions for ClockPort/EnvPort/TimerPort/TimerHandle (PORTS-01..05 contract documentation)", () => {
+    // These remain as living contract documentation; vitest's esbuild
+    // transformer erases the type queries, so the *binding* RED signal is
+    // the grep-based assertions above. After GREEN these compile when
+    // running `tsc --noEmit` on the test file standalone (the package
+    // tsconfig excludes __tests__, so the type system check is advisory).
+    type _Clock = import("../ports/index.js").ClockPort;
+    type _Env = import("../ports/index.js").EnvPort;
+    type _Handle = import("../ports/index.js").TimerHandle;
+    type _Port = import("../ports/index.js").TimerPort;
+    const _clock: _Clock = {
+      now: () => 0,
+      nowDate: () => new Date(0),
+    };
+    const _env: _Env = {
+      get: () => undefined,
+      snapshot: () => Object.freeze({}),
+    };
+    const _h: _Handle = {
+      get cancelled() {
+        return false;
+      },
+      cancel: () => {},
+      unref: () => {},
+    };
+    const _p: _Port = {
+      setTimeout: (_cb, _ms) => _h,
+      setInterval: (_cb, _ms) => _h,
+    };
+    expect(_clock.now()).toBe(0);
+    expect(_env.get("X")).toBeUndefined();
+    expect(_h.cancelled).toBe(false);
+    expect(_p).toBeDefined();
+    // Compile-time YAGNI guard: TimerHandle MUST NOT have ref().
+    type _HasRef = _Handle extends { ref(): unknown } ? true : false;
+    const _noRef: _HasRef = false;
+    expect(_noRef).toBe(false);
+  });
+});

@@ -46,6 +46,9 @@ export type {
   SessionDetailedEntry,
 } from "./session-store-types.js";
 export type { FileLockPort, LockOptions, LockError } from "./file-lock.js";
+export type { ClockPort } from "./clock.js";
+export type { EnvPort } from "./env.js";
+export type { TimerPort, TimerHandle } from "./timer.js";
 export type { ComputeDailyResetNextRun } from "./schedule-callback.js";
 export type {
   TranscriptionPort,
