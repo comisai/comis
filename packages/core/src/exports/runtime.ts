@@ -21,4 +21,7 @@ export {
   systemNowMs,
   systemNowDate,
   systemDateFrom,
+  systemSleep,
+  systemSetTimeout,
+  systemClearTimeout,
 } from "../runtime/system-time.js";

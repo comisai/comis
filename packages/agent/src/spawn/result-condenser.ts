@@ -25,7 +25,7 @@
 
 import { generateSummary, truncateHead, truncateTail } from "@mariozechner/pi-coding-agent";
 import { type SubagentResult, SubagentResultSchema, type CondensedResult } from "@comis/core";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs, systemNowDate } from "@comis/core";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { CHARS_PER_TOKEN } from "../safety/token-estimator.js";
@@ -328,7 +328,7 @@ async function tryLlmCondensation(
 ): Promise<{ result: SubagentResult; condensedTokens: number } | null> {
   try {
     // Wrap fullResult in synthetic UserMessage for generateSummary.
-    const messages = [{ role: "user" as const, content: params.fullResult, timestamp: Date.now() }];
+    const messages = [{ role: "user" as const, content: params.fullResult, timestamp: systemNowMs() }];
 
     const rawOutput: string = await generateSummary(
       messages as any[],
@@ -536,7 +536,7 @@ async function persistFullResult(
         task,
         fullResult: cappedResult,
         condensationLevel: level,
-        persistedAt: new Date().toISOString(),
+        persistedAt: systemNowDate().toISOString(),
         // Finding 20: Parent trace correlation
         ...(metadata?.parentTraceId ? { parentTraceId: metadata.parentTraceId } : {}),
         ...(metadata?.graphId ? { graphId: metadata.graphId } : {}),

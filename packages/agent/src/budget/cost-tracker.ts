@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ModelOperationType } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 /**
  * Per-agent/channel/execution cost record.
@@ -95,7 +96,7 @@ export function createCostTracker(): CostTracker {
   return {
     record(agentId, channelId, executionId, usage) {
       records.push({
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         agentId,
         channelId,
         executionId,
@@ -182,7 +183,7 @@ export function createCostTracker(): CostTracker {
     },
 
     prune(maxAgeMs) {
-      const cutoff = Date.now() - maxAgeMs;
+      const cutoff = systemNowMs() - maxAgeMs;
       let removed = 0;
       let i = 0;
       while (i < records.length) {

@@ -10,6 +10,8 @@
  * @module
  */
 
+import { systemNowMs } from "@comis/core";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -116,7 +118,7 @@ export function createAuthUsageTracker(): AuthUsageTracker {
       s.tokensIn += usage.tokensIn;
       s.tokensOut += usage.tokensOut;
       s.totalCost += usage.cost;
-      s.lastUsedAt = Date.now();
+      s.lastUsedAt = systemNowMs();
 
       if (usage.success) {
         s.successCount += 1;
@@ -144,7 +146,7 @@ export function createAuthUsageTracker(): AuthUsageTracker {
     },
 
     prune(maxAgeMs: number): number {
-      const cutoff = Date.now() - maxAgeMs;
+      const cutoff = systemNowMs() - maxAgeMs;
       let removed = 0;
       for (const [keyName, internal] of stats) {
         if (internal.lastUsedAt < cutoff) {

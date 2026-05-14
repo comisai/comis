@@ -17,6 +17,7 @@
  */
 
 import type { ContextStorePort } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import type {
   TokenBudget,
   DagCompactionConfig,
@@ -197,7 +198,7 @@ export async function runDagCompaction(
   deps: DagCompactionDeps,
 ): Promise<CompactionResult> {
   // Step 1: Record start time
-  const startTime = Date.now();
+  const startTime = systemNowMs();
 
   // Step 2: Run leaf pass
   const leafResult = await runLeafPass(conversationId, {
@@ -237,7 +238,7 @@ export async function runDagCompaction(
   }
 
   // Step 5: Compute duration
-  const durationMs = Date.now() - startTime;
+  const durationMs = systemNowMs() - startTime;
 
   // Step 6: Build CompactionResult
   const totalCondensedCreated = condensedResults.reduce((sum, r) => sum + r.created, 0);
@@ -269,7 +270,7 @@ export async function runDagCompaction(
     maxDepthReached,
     totalSummariesCreated: totalCreated,
     durationMs,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   } satisfies DagCompactionEvent);
 
   // Step 8: Log INFO with overall compaction stats
