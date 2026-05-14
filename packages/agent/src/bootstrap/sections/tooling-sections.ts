@@ -4,7 +4,6 @@
  * and compacted output recovery.
  */
 
-import { TOOL_SUMMARIES, TOOL_ORDER } from "./tool-descriptions.js";
 import { getProviders } from "@mariozechner/pi-ai";
 
 // ---------------------------------------------------------------------------
@@ -15,60 +14,25 @@ import { getProviders } from "@mariozechner/pi-ai";
 export type ModelTier = "small" | "medium" | "large";
 
 /**
- * Build the static `## Available Tools` block (legacy path, gate-off) OR a
- * single residual one-liner pointing the model at the per-turn `## Capabilities`
- * block (gate-on path).
+ * Build the residual one-liner pointing the model at the per-turn
+ * `## Capabilities` block. The capability-index is now the only path; the
+ * legacy flat `## Available Tools` block was removed in phase 38 BC-REM-11.
  *
- * @param capabilityIndexEnabled - When `true`, emits ONLY the residual
- *   one-liner. When `false` or undefined, emits the legacy flat block
- *   BYTE-IDENTICALLY to the pre-feature baseline. The two paths are MUTUALLY
- *   EXCLUSIVE.
- *
- *   Restart-required: this gate selects between two cached system-prompt
- *   shapes; toggling at runtime is forbidden. Operator-facing constraint is
- *   documented in config docs.
+ * The wording below is normative — the per-turn `## Capabilities` block is
+ * rendered into the dynamic preamble by `executor-prompt-runner.ts`.
  */
 export function buildToolingSection(
   toolNames: string[],
   _modelTier: ModelTier,
-  toolSummaries?: Record<string, string>,
-  capabilityIndexEnabled?: boolean,
+  _toolSummaries?: Record<string, string>,
 ): string[] {
   if (toolNames.length === 0) return [];
 
-  // Gate-on path: residual one-liner only. The per-turn `## Capabilities`
-  // block is rendered into the dynamic preamble by `executor-prompt-runner.ts`.
-  // The wording below is normative.
-  if (capabilityIndexEnabled === true) {
-    return [
-      "When this turn includes a `Capabilities` context, refer to it for grouped tool guidance " +
-        "before invoking tools or running installs. Tool schemas in your active toolspace are " +
-        "authoritative for parameter shapes.",
-    ];
-  }
-
-  // Gate-off path: legacy flat block BYTE-IDENTICAL to pre-feature baseline.
-  // DO NOT modify the body below — the byte-identity assertion in
-  // tooling-sections.test.ts depends on this shape staying exact.
-  const summaries = { ...TOOL_SUMMARIES, ...toolSummaries };
-
-  const ordered = TOOL_ORDER.filter((t) => toolNames.includes(t));
-  const extras = toolNames.filter((t) => !TOOL_ORDER.includes(t)).sort();
-  const allTools = [...ordered, ...extras];
-
-  const lines: string[] = ["## Available Tools"];
-  for (const name of allTools) {
-    const desc = summaries[name];
-    lines.push(desc ? `- ${name}: ${desc}` : `- ${name}`);
-  }
-
-  lines.push(
-    "",
-    "Always use tools to gather real data before answering. Never guess or fabricate tool results.",
-    "Refer to each tool's schema for full parameter details.",
-  );
-
-  return lines;
+  return [
+    "When this turn includes a `Capabilities` context, refer to it for grouped tool guidance " +
+      "before invoking tools or running installs. Tool schemas in your active toolspace are " +
+      "authoritative for parameter shapes.",
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -78,21 +42,13 @@ export function buildToolingSection(
 /**
  * Build the static "## Tool Call Style" section with conditional coding guidelines.
  *
- * @param capabilityIndexEnabled - When `true`, AND when `exec` is in
- *   `toolNames`, the rendered output includes the dual-gated "Tool-first
- *   principle" bullet immediately before the existing Python-virtualenv rule.
- *   When `false` or `undefined`, the bullet is omitted; the existing venv
- *   rule emits unchanged when `exec` is present.
- *
- *   Restart-required: the gate value flows from `tooling.capabilityIndex.enabled`
- *   via `AssemblerParams.capabilityIndexEnabled`, populated at the prompt
- *   assembly site from `port.isCapabilityIndexEnabled()`. The value is
- *   config-derived and stable per session — SAFE inside the cache fence.
+ * Post-BC-REM-11: the dual-gated "Tool-first principle" bullet now emits
+ * unconditionally when `exec` is in `toolNames`. The capability-index is
+ * always on; the gate-off branch has been removed.
  */
 export function buildToolCallStyleSection(
   isMinimal: boolean,
   toolNames: string[] = [],
-  capabilityIndexEnabled?: boolean,
 ): string[] {
   if (isMinimal) return [];
 
@@ -139,16 +95,12 @@ export function buildToolCallStyleSection(
     guidelines.push("- Show file paths clearly when working with files.");
   }
   if (has("exec")) {
-    // Dual-gated counterweight to the venv rule below. The bullet precedes
-    // the venv rule because the first read sets the default; the second is
-    // the install fallback. Restart-required: capabilityIndexEnabled flows
-    // from `tooling.capabilityIndex.enabled` via AssemblerParams →
-    // SECTIONS["tool-call-style"].
-    if (capabilityIndexEnabled === true) {
-      guidelines.push(
-        "- **Tool-first principle.** When this turn includes a `Capabilities` context and the task can be satisfied by a connected tool or available skill, prefer that capability over installing a Python or Node package. Use installs only for capabilities not covered by active tools, deferred tools, or visible prompt skills.",
-      );
-    }
+    // Counterweight to the venv rule below. The bullet precedes the venv rule
+    // because the first read sets the default; the second is the install
+    // fallback. Capability-index is always on after phase 38 BC-REM-11.
+    guidelines.push(
+      "- **Tool-first principle.** When this turn includes a `Capabilities` context and the task can be satisfied by a connected tool or available skill, prefer that capability over installing a Python or Node package. Use installs only for capabilities not covered by active tools, deferred tools, or visible prompt skills.",
+    );
     guidelines.push(
       "- **Python projects:** Always create a virtualenv per project (`python3 -m venv .venv`). "
       + "Install packages into the project venv (`source .venv/bin/activate && pip install ...`). "
