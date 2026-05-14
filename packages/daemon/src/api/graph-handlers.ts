@@ -86,64 +86,30 @@ export type GraphHandlerDeps = OrchestratorApiDeps & {
 // ---------------------------------------------------------------------------
 
 /**
- * Migrate legacy debate field to typeId/typeConfig.
- * Legacy saved graphs may contain `debate: { agents, rounds, synthesizer }`.
- * Single-agent "debates" (agents.length < 2) downgrade to regular agent nodes.
- * Multi-agent debates convert to `typeId: "debate"` + `typeConfig`.
- */
-function migrateLegacyDebate(node: Record<string, unknown>): Record<string, unknown> {
-  const debate = node.debate as Record<string, unknown> | undefined;
-  if (!debate) return node;
-
-  const agents = debate.agents as string[] | undefined;
-
-  // Single-agent "debate" -> regular agent node
-  if (Array.isArray(agents) && agents.length < 2) {
-    const { debate: _removed, ...rest } = node;
-    return { ...rest, agentId: agents[0] ?? rest.agentId };
-  }
-
-  // Multi-agent debate -> typeId/typeConfig
-  const { debate: _removed, ...rest } = node;
-  return {
-    ...rest,
-    typeId: "debate",
-    typeConfig: {
-      agents: debate.agents,
-      rounds: debate.rounds ?? 2,
-      ...(debate.synthesizer !== undefined && { synthesizer: debate.synthesizer }),
-    },
-  };
-}
-
-/**
  * Transform snake_case tool parameters to camelCase for parseExecutionGraph.
  * The pipeline tool uses snake_case for LLM parameter conventions. The Zod
  * schemas in @comis/core use camelCase. This function bridges the gap.
- * Legacy `debate` fields are migrated via `migrateLegacyDebate()` before
- * field mapping.
  */
 export function transformNodes(rawNodes: unknown[]): unknown[] {
   return rawNodes.map((raw) => {
     const node = raw as Record<string, unknown>;
-    const migrated = migrateLegacyDebate(node);
     return {
-      nodeId: migrated.node_id ?? migrated.nodeId,
-      task: migrated.task,
-      agentId: migrated.agent ?? migrated.agentId,
-      model: migrated.model,
-      dependsOn: migrated.depends_on ?? migrated.dependsOn,
-      timeoutMs: migrated.timeout_ms ?? migrated.timeoutMs,
-      maxSteps: migrated.max_steps ?? migrated.maxSteps,
-      ...(migrated.barrier_mode ?? migrated.barrierMode
-        ? { barrierMode: migrated.barrier_mode ?? migrated.barrierMode } : {}),
-      ...(migrated.retries !== undefined ? { retries: migrated.retries } : {}),
-      ...(migrated.context_mode ?? migrated.contextMode
-        ? { contextMode: migrated.context_mode ?? migrated.contextMode } : {}),
-      ...(migrated.type_id ?? migrated.typeId
-        ? { typeId: migrated.type_id ?? migrated.typeId } : {}),
-      ...(migrated.type_config ?? migrated.typeConfig
-        ? { typeConfig: migrated.type_config ?? migrated.typeConfig } : {}),
+      nodeId: node.node_id ?? node.nodeId,
+      task: node.task,
+      agentId: node.agent ?? node.agentId,
+      model: node.model,
+      dependsOn: node.depends_on ?? node.dependsOn,
+      timeoutMs: node.timeout_ms ?? node.timeoutMs,
+      maxSteps: node.max_steps ?? node.maxSteps,
+      ...(node.barrier_mode ?? node.barrierMode
+        ? { barrierMode: node.barrier_mode ?? node.barrierMode } : {}),
+      ...(node.retries !== undefined ? { retries: node.retries } : {}),
+      ...(node.context_mode ?? node.contextMode
+        ? { contextMode: node.context_mode ?? node.contextMode } : {}),
+      ...(node.type_id ?? node.typeId
+        ? { typeId: node.type_id ?? node.typeId } : {}),
+      ...(node.type_config ?? node.typeConfig
+        ? { typeConfig: node.type_config ?? node.typeConfig } : {}),
     };
   });
 }

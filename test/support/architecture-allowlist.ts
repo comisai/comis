@@ -562,7 +562,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/daemon/src/api/graph-handlers.ts",
-    lines: 1062,
+    lines: 1028,
     reason: "Daemon RPC handler group; split in Phase F per FILE-SPLIT-06",
     removedIn: "phase-F",
   },
@@ -995,7 +995,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   },
   {
     file: "packages/daemon/src/api/graph-handlers.ts",
-    lineRanges: [[160, 160], [176, 176], [181, 181], [425, 425], [448, 448], [474, 474], [519, 519], [536, 536], [567, 567], [638, 638], [643, 643], [651, 651], [671, 671], [676, 676], [708, 708], [713, 713], [722, 722], [742, 742], [762, 762], [767, 767], [776, 776], [792, 792], [828, 828], [842, 842], [871, 871], [943, 943], [947, 947], [955, 955], [1039, 1039], [1043, 1043], [1051, 1051]],
+    lineRanges: [[126, 126], [142, 142], [147, 147], [391, 391], [414, 414], [440, 440], [485, 485], [502, 502], [533, 533], [604, 604], [609, 609], [617, 617], [637, 637], [642, 642], [674, 674], [679, 679], [688, 688], [708, 708], [728, 728], [733, 733], [742, 742], [758, 758], [794, 794], [808, 808], [837, 837], [909, 909], [913, 913], [921, 921], [1005, 1005], [1009, 1009], [1017, 1017]],
     reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
     removedIn: "phase-D",
   },
@@ -6797,14 +6797,14 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   },
   {
     file: "packages/daemon/src/api/graph-handlers.ts",
-    line: 932,
+    line: 898,
     global: "new Date",
     reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
     removedIn: "phase-B",
   },
   {
     file: "packages/daemon/src/api/graph-handlers.ts",
-    line: 932,
+    line: 898,
     global: "new Date",
     reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
     removedIn: "phase-B",
