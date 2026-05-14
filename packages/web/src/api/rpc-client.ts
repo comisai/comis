@@ -12,8 +12,6 @@
  */
 
 import type { ConnectionStatus } from "./types/index.js";
-import { systemClearInterval, systemClearTimeout, systemSetInterval, systemSetTimeout } from "@comis/core";
-
 /** Pending RPC request tracker */
 interface PendingRequest {
   readonly resolve: (value: unknown) => void;
@@ -104,25 +102,25 @@ export function createRpcClient(): RpcClient {
 
   function clearHeartbeat(): void {
     if (heartbeatTimer !== null) {
-      systemClearInterval(heartbeatTimer);
+      clearInterval(heartbeatTimer);
       heartbeatTimer = null;
     }
     if (heartbeatTimeoutTimer !== null) {
-      systemClearTimeout(heartbeatTimeoutTimer);
+      clearTimeout(heartbeatTimeoutTimer);
       heartbeatTimeoutTimer = null;
     }
   }
 
   function clearReconnectTimer(): void {
     if (reconnectTimer !== null) {
-      systemClearTimeout(reconnectTimer);
+      clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
   }
 
   function rejectAllPending(reason: string): void {
     for (const [id, req] of pending) {
-      systemClearTimeout(req.timer);
+      clearTimeout(req.timer);
       req.reject(new Error(reason));
       pending.delete(id);
     }
@@ -130,14 +128,14 @@ export function createRpcClient(): RpcClient {
 
   function startHeartbeat(): void {
     clearHeartbeat();
-    heartbeatTimer = systemSetInterval(() => {
+    heartbeatTimer = setInterval(() => {
       if (ws === null || ws.readyState !== globalThis.WebSocket.OPEN) return;
 
       const pingId = nextId++;
       ws.send(JSON.stringify({ jsonrpc: "2.0", method: "system.ping", id: pingId }));
 
       // Set a timeout for the pong response
-      heartbeatTimeoutTimer = systemSetTimeout(() => {
+      heartbeatTimeoutTimer = setTimeout(() => {
         // No pong received -- connection is dead
         pending.delete(pingId);
         if (ws !== null) {
@@ -149,18 +147,18 @@ export function createRpcClient(): RpcClient {
       pending.set(pingId, {
         resolve: () => {
           if (heartbeatTimeoutTimer !== null) {
-            systemClearTimeout(heartbeatTimeoutTimer);
+            clearTimeout(heartbeatTimeoutTimer);
             heartbeatTimeoutTimer = null;
           }
         },
         reject: () => {
           // Any response (even error) proves the connection is alive - clear timeout
           if (heartbeatTimeoutTimer !== null) {
-            systemClearTimeout(heartbeatTimeoutTimer);
+            clearTimeout(heartbeatTimeoutTimer);
             heartbeatTimeoutTimer = null;
           }
         },
-        timer: systemSetTimeout(() => {
+        timer: setTimeout(() => {
           // Cleanup stale ping entry (should not normally fire since
           // heartbeat timeout handles it first)
           pending.delete(pingId);
@@ -182,7 +180,7 @@ export function createRpcClient(): RpcClient {
     const delay = Math.min(BACKOFF_BASE_MS * Math.pow(2, reconnectAttempt), BACKOFF_MAX_MS);
     reconnectAttempt++;
 
-    reconnectTimer = systemSetTimeout(() => {
+    reconnectTimer = setTimeout(() => {
       openConnection(currentUrl, currentToken);
     }, delay);
   }
@@ -228,7 +226,7 @@ export function createRpcClient(): RpcClient {
       if (response.id != null) {
         const req = pending.get(response.id);
         if (req) {
-          systemClearTimeout(req.timer);
+          clearTimeout(req.timer);
           pending.delete(response.id);
 
           if (response.error) {
@@ -298,7 +296,7 @@ export function createRpcClient(): RpcClient {
         }
 
         const id = nextId++;
-        const timer = systemSetTimeout(() => {
+        const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error(`RPC request timed out after ${REQUEST_TIMEOUT_MS}ms`));
         }, REQUEST_TIMEOUT_MS);
@@ -319,7 +317,7 @@ export function createRpcClient(): RpcClient {
         try {
           ws.send(message);
         } catch (err) {
-          systemClearTimeout(timer);
+          clearTimeout(timer);
           pending.delete(id);
           reject(new Error("Send failed: " + (err instanceof Error ? err.message : String(err))));
         }

@@ -23,8 +23,6 @@ import {
   validateResponse,
   type MethodName,
 } from "./contracts.generated.js";
-import { systemNowMs } from "@comis/core";
-
 /** Memory search result (api-client local -- not shared with other modules) */
 export interface MemorySearchResult {
   readonly id: string;
@@ -437,8 +435,8 @@ export function createApiClient(
             toolCalls: Number(raw.toolCalls ?? 0),
             compactions: Number(raw.compactions ?? 0),
             resetCount: Number(raw.resetCount ?? 0),
-            createdAt: Number(raw.createdAt ?? systemNowMs()),
-            lastActiveAt: Number(raw.updatedAt ?? raw.lastActiveAt ?? systemNowMs()),
+            createdAt: Number(raw.createdAt ?? Date.now()),
+            lastActiveAt: Number(raw.updatedAt ?? raw.lastActiveAt ?? Date.now()),
           };
         });
       }

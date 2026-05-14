@@ -2051,7 +2051,113 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   },
   // ---- skills ----
   // ---- web ----
-  ] as const;
+  
+  {
+    file: "packages/web/src/api/api-client.ts",
+    line: 438,
+    global: "Date.now",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/api-client.ts",
+    line: 439,
+    global: "Date.now",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 105,
+    global: "clearInterval",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 109,
+    global: "clearTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 116,
+    global: "clearTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 123,
+    global: "clearTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 131,
+    global: "setInterval",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 138,
+    global: "setTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 150,
+    global: "clearTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 157,
+    global: "clearTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 161,
+    global: "setTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 183,
+    global: "setTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 229,
+    global: "clearTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 299,
+    global: "setTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+  {
+    file: "packages/web/src/api/rpc-client.ts",
+    line: 320,
+    global: "clearTimeout",
+    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    removedIn: "phase-B",
+  },
+] as const;
 export const noBackwardCompatAllowlist: readonly NoBackwardCompatAllowlistEntry[] = [
   {
     file: "packages/core/src/config/migrate.ts",
