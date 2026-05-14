@@ -179,7 +179,6 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
 
   // Compute disk path eagerly.
   // Simplified directory naming for new runs: {tenantId}/{runId}.json
-  // Legacy directories used {sanitizedSessionKey}/{runId}.json -- those remain on disk as-is.
   const tenantId = sessionKey.split(":")[0] ?? "default";
   const diskPath = safePath(deps.dataDir, "subagent-results", tenantId, `${runId}.json`);
 

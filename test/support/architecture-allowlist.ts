@@ -3650,14 +3650,14 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   },
   {
     file: "packages/agent/src/spawn/result-condenser.ts",
-    line: 332,
+    line: 331,
     global: "Date.now",
     reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
     removedIn: "phase-B",
   },
   {
     file: "packages/agent/src/spawn/result-condenser.ts",
-    line: 540,
+    line: 539,
     global: "new Date",
     reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
     removedIn: "phase-B",
