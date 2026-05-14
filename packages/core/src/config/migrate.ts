@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+// @migration-since: 2026-04-22
+// @remove-after: v2.2  // revisit at v2.2 milestone close; remove when no production
+//                     // config still uses the pre-migration shape
 /**
  * Config migration: transforms legacy config keys into current schema structures.
  *

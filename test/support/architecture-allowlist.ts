@@ -13138,5 +13138,11 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
     removedIn: "phase-B",
   },
 ] as const;
-export const noBackwardCompatAllowlist: readonly NoBackwardCompatAllowlistEntry[] = [] as const;
+export const noBackwardCompatAllowlist: readonly NoBackwardCompatAllowlistEntry[] = [
+  {
+    file: "packages/core/src/config/migrate.ts",
+    line: 1,
+    reason: "Streaming-config schema migration (defaultPacingMinMs/Max + coalesceMaxChars -> defaultDeliveryTiming/coalescer). @migration-since: 2026-04-22; remove-after: v2.2. Operator-side migration is still realistic; remove when no production config still uses the pre-migration shape.",
+  },
+] as const;
 export const coverageWaiver: readonly CoverageWaiverEntry[] = [] as const;
