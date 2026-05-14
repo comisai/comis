@@ -13,6 +13,7 @@
 import { createHash } from "node:crypto";
 import { createTTLCache } from "@comis/shared";
 import type { TTLCache } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -58,7 +59,11 @@ export function hashHeartbeatPrompt(promptText: string, eventDigest: string): st
  *
  * @param opts.ttlMs - Time-to-live in milliseconds (default: 30 minutes)
  * @param opts.maxEntries - Maximum cache entries (default: 50)
- * @param opts.nowMs - Injectable clock for deterministic testing (default: Date.now)
+ * @param opts.nowMs - Injectable clock for deterministic testing (default:
+ *   `systemNowMs` from `@comis/core/runtime` — the sanctioned-root indirection
+ *   over `Date.now`. Phase 39 PORTS-15: shared's `createTTLCache` no longer
+ *   has a `Date.now` fallback, so a non-null callback must always be supplied
+ *   here).
  */
 export function createHeartbeatResponseCache(opts?: {
   ttlMs?: number;
@@ -68,7 +73,7 @@ export function createHeartbeatResponseCache(opts?: {
   const cache: TTLCache<string> = createTTLCache<string>({
     ttlMs: opts?.ttlMs ?? 30 * 60 * 1000,
     maxEntries: opts?.maxEntries ?? 50,
-    nowMs: opts?.nowMs,
+    nowMs: opts?.nowMs ?? systemNowMs,
   });
 
   return {

@@ -2035,20 +2035,13 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   // ---- orchestrator ----
   // ---- scheduler ----
   // ---- shared ----
-  {
-    file: "packages/shared/src/timeout.ts",
-    line: 46,
-    global: "setTimeout",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/shared/src/timeout.ts",
-    line: 50,
-    global: "clearTimeout",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
+  // Phase 39 Plan 08 (PORTS-14/15/16): packages/shared/src/timeout.ts
+  // setTimeout/clearTimeout entries DRAINED. `withTimeout` no longer reads
+  // either global — it takes a `scheduleTimeout: (cb, ms) => () => void`
+  // callback that every consumer constructs from its TimerPort (Pattern A)
+  // or `systemScheduleTimeout` from `@comis/core/runtime` (Pattern B).
+  // The callback signature is a bare structural type, so `@comis/shared`
+  // imports zero port types and remains the PORTS-16 leaf.
   // ---- skills ----
   // ---- web ----
   

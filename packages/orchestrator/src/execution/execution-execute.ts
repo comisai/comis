@@ -10,7 +10,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { ChannelPort, NormalizedMessage, SessionKey, PerChannelStreamingConfig } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
+import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs, systemSetInterval, systemClearInterval, systemScheduleTimeout } from "@comis/core";
 import { withTimeout, TimeoutError } from "@comis/shared";
 import type { AgentExecutor } from "@comis/agent";
 // Phase 32 commit 6: CommandDirectives moved into orchestrator (ORCH-EXT-08).
@@ -173,6 +173,7 @@ export async function executeLlm(
         }),
       }, () => executor.execute(effectiveMsg, sessionKey, tools, onDelta, agentId, directives as CommandDirectives | undefined, undefined, { operationType: "interactive" as const })),
       deps.executionTimeoutMs ?? 600_000,
+      systemScheduleTimeout,
       "Agent execution",
     );
   } catch (err) {

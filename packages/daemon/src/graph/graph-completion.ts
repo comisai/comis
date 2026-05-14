@@ -8,7 +8,7 @@
  * @module
  */
 
-import { safePath, type SessionKey, systemNowMs, systemDateFrom } from "@comis/core";
+import { safePath, type SessionKey, systemNowMs, systemDateFrom, systemScheduleTimeout } from "@comis/core";
 import { withTimeout } from "@comis/shared";
 import { writeFileSync } from "node:fs";
 import { ANNOUNCE_PARENT_TIMEOUT_MS } from "@comis/agent";
@@ -158,6 +158,7 @@ export function handleGraphCompletion(
               gs.announceChannelId,
             ),
             ANNOUNCE_PARENT_TIMEOUT_MS,
+            systemScheduleTimeout,
             "graph announceToParent",
           ).catch((announceErr: unknown) => {
             deps.logger?.warn(

@@ -20,7 +20,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import PQueue from "p-queue";
-import { systemClearTimeout, systemEnvSnapshot, systemNowMs, systemSetTimeout } from "@comis/core";
+import { systemClearTimeout, systemEnvSnapshot, systemNowMs, systemScheduleTimeout, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -552,6 +552,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
         await withTimeout(
           client.connect(transport),
           connectTimeoutMs,
+          systemScheduleTimeout,
           `MCP server "${serverName}" reconnect`,
         );
 
@@ -559,6 +560,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
         const listResult = await withTimeout(
           client.listTools(),
           connectTimeoutMs,
+          systemScheduleTimeout,
           `MCP server "${serverName}" listTools`,
         );
         const tools: McpToolDefinition[] = listResult.tools.map((tool) => ({
@@ -718,6 +720,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
       await withTimeout(
         client.connect(transport),
         connectTimeoutMs,
+        systemScheduleTimeout,
         `MCP server "${config.name}" connect`,
       );
 
@@ -760,6 +763,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
       const listResult = await withTimeout(
         client.listTools(),
         connectTimeoutMs,
+        systemScheduleTimeout,
         `MCP server "${config.name}" listTools`,
       );
       const tools: McpToolDefinition[] = listResult.tools.map((tool) => ({

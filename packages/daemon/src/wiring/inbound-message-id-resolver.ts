@@ -18,7 +18,7 @@
  */
 
 import { createTTLCache, type TTLCache } from "@comis/shared";
-import type { NormalizedMessage } from "@comis/core";
+import { systemNowMs, type NormalizedMessage } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -65,7 +65,15 @@ export function createInboundMessageIdResolver(
 ): InboundMessageIdResolver {
   const ttlMs = opts.ttlMs ?? 60 * 60 * 1000;
   const maxEntries = opts.maxEntries ?? 10_000;
-  const cache: TTLCache<InboundIdRecord> = createTTLCache({ ttlMs, maxEntries });
+  // Phase 39 PORTS-15: shared's createTTLCache requires a non-null `nowMs`.
+  // The sanctioned-root `systemNowMs` from @comis/core/runtime is the
+  // canonical Pattern-B indirection for daemon-internal helpers that have
+  // no Deps interface to inject a ClockPort into.
+  const cache: TTLCache<InboundIdRecord> = createTTLCache({
+    ttlMs,
+    maxEntries,
+    nowMs: systemNowMs,
+  });
 
   return {
     record(msg, channelType) {

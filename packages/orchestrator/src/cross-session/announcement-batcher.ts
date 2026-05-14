@@ -9,7 +9,7 @@
  * @module
  */
 
-import { parseFormattedSessionKey, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
+import { parseFormattedSessionKey, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
 import { withTimeout } from "@comis/shared";
 
 /** Hard timeout for announceToParent calls (300 seconds / 5 minutes).
@@ -200,6 +200,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
               first.announceChannelId,
             ),
             ANNOUNCE_PARENT_TIMEOUT_MS,
+            systemScheduleTimeout,
             "announceToParent",
           );
           return;
@@ -257,6 +258,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             first.announceChannelId,
           ),
           ANNOUNCE_PARENT_TIMEOUT_MS,
+          systemScheduleTimeout,
           "announceToParent",
         );
       } catch (err) {

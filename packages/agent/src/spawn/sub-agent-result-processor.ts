@@ -19,6 +19,7 @@ import {
   tryGetContext,
   systemNowMs,
   systemNowDate,
+  systemScheduleTimeout,
   systemSleep,
 } from "@comis/core";
 import { withTimeout } from "@comis/shared";
@@ -500,6 +501,7 @@ export async function deliverAnnouncement(params: {
           announceChannelId,
         ),
         ANNOUNCE_PARENT_TIMEOUT_MS,
+        systemScheduleTimeout,
         "announceToParent",
       );
       deps.logger?.debug({ runId, channelType: announceChannelType }, "Sub-agent announcement injected into parent session");
