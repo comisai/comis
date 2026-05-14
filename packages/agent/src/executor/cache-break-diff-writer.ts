@@ -12,7 +12,7 @@
 
 import { writeFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { createPatch } from "diff";
-import { safePath, resolveModelPricing, ZERO_COST } from "@comis/core";
+import { safePath, resolveModelPricing, ZERO_COST, systemDateFrom } from "@comis/core";
 
 const MAX_DIFF_FILES = 50;
 
@@ -125,7 +125,7 @@ export function createCacheBreakDiffWriter(
 
       pruneOldestFiles(config.outputDir, MAX_DIFF_FILES);
 
-      const ts = new Date(event.timestamp).toISOString().replace(/[:.]/g, "-");
+      const ts = systemDateFrom(event.timestamp).toISOString().replace(/[:.]/g, "-");
       const filename = `${ts}_${event.agentId}_${event.reason}.json`;
       const filePath = safePath(config.outputDir, filename);
 
@@ -155,7 +155,7 @@ export function createCacheBreakDiffWriter(
       }
 
       const diff = {
-        timestamp: new Date(event.timestamp).toISOString(),
+        timestamp: systemDateFrom(event.timestamp).toISOString(),
         agentId: event.agentId,
         sessionKey: event.sessionKey,
         provider: event.provider,

@@ -2222,20 +2222,6 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   // Drained 75 globals entries across 22 files. Remaining 2 entries in cache-break-diff-writer.ts
   // are new Date(arg) parsing calls (not clock reads); kept as allowlist entries.
   {
-    file: "packages/agent/src/executor/cache-break-diff-writer.ts",
-    line: 128,
-    global: "new Date",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/executor/cache-break-diff-writer.ts",
-    line: 158,
-    global: "new Date",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
     file: "packages/agent/src/memory/memory-review-job.ts",
     line: 175,
     global: "new Date",
@@ -2343,48 +2329,6 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   {
     file: "packages/agent/src/memory/memory-review-job.ts",
     line: 453,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/model/model-scanner.ts",
-    line: 224,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/model/model-scanner.ts",
-    line: 233,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/model/model-scanner.ts",
-    line: 239,
-    global: "setTimeout",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/model/model-scanner.ts",
-    line: 249,
-    global: "clearTimeout",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/model/model-scanner.ts",
-    line: 252,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/model/model-scanner.ts",
-    line: 284,
     global: "Date.now",
     reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
     removedIn: "phase-B",
@@ -2543,74 +2487,11 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
     reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
     removedIn: "phase-B",
   },
-  {
-    file: "packages/agent/src/rag/rag-retriever.ts",
-    line: 68,
-    global: "new Date",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/rag/rag-retriever.ts",
-    line: 148,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/rag/rag-retriever.ts",
-    line: 179,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/rag/rag-retriever.ts",
-    line: 198,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/rag/rag-retriever.ts",
-    line: 209,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
   // Phase 39 Plan 05 Task 3: safety/circuit-breaker.ts retargeted to ClockPort. Drained 3 entries.
   // Phase 39 Plan 05 Task 1: packages/agent/src/session/session-reset-policy.ts
   // retargeted to TimerPort via injected deps. Drained 2 entries.
   // Phase 39 Plan 05 Task 1: packages/agent/src/spawn/sub-agent-runner.ts
   // retargeted to ClockPort/TimerPort via injected deps. Drained 25 entries.
-  {
-    file: "packages/agent/src/workspace/workspace-manager.ts",
-    line: 175,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/workspace/workspace-manager.ts",
-    line: 243,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/workspace/workspace-manager.ts",
-    line: 266,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/workspace/workspace-manager.ts",
-    line: 330,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
   // ---- channels ----
   {
     file: "packages/channels/src/discord/discord-adapter.ts",
