@@ -17,6 +17,9 @@ import {
   parseFormattedSessionKey,
   safePath,
   tryGetContext,
+  systemNowMs,
+  systemNowDate,
+  systemSleep,
 } from "@comis/core";
 import { withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
@@ -129,7 +132,7 @@ export async function sweepResultFiles(
   _logger?: SubAgentRunnerLogger,
 ): Promise<void> {
   const resultsDir = safePath(dataDir, "subagent-results");
-  const cutoff = Date.now() - retentionMs;
+  const cutoff = systemNowMs() - retentionMs;
 
   let sessionDirs: string[];
   try {
@@ -219,7 +222,7 @@ export async function persistFailureRecord(params: {
         status: "failed",
         error: params.error,
         endReason: params.endReason,
-        failedAt: new Date().toISOString(),
+        failedAt: systemNowDate().toISOString(),
         runtimeMs: params.runtimeMs,
         // Structured error context
         errorContext,
@@ -531,7 +534,7 @@ export async function deliverAnnouncement(params: {
         channelType: announceChannelType,
         channelId: announceChannelId,
         runId,
-        failedAt: Date.now(),
+        failedAt: systemNowMs(),
         attemptCount: 0,
         lastError: sendErr instanceof Error ? sendErr.message : String(sendErr),
         threadId,  // Persist thread context for retried deliveries
@@ -613,7 +616,7 @@ export async function validateOutputs(
         break;
       } catch {
         if (attempt < retries - 1) {
-          await new Promise((r) => setTimeout(r, delayMs));
+          await systemSleep(delayMs);
         }
       }
     }

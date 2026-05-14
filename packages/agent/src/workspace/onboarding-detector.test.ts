@@ -22,6 +22,7 @@ vi.mock("./workspace-state.js", () => ({
 
 vi.mock("@comis/core", () => ({
   safePath: (dir: string, file: string) => `${dir}/${file}`,
+  systemNowMs: () => Date.now(),
 }));
 
 import { detectOnboardingState } from "./onboarding-detector.js";

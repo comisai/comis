@@ -18,6 +18,7 @@
  */
 
 import type { ContextStorePort } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import type {
   IntegrityIssue,
   IntegrityReport,
@@ -62,7 +63,7 @@ export function checkIntegrity(
   deps: IntegrityCheckDeps,
   conversationId: string,
 ): IntegrityReport {
-  const startTime = Date.now();
+  const startTime = systemNowMs();
 
   // Collect issues from all checks
   const issues: IntegrityIssue[] = [
@@ -97,7 +98,7 @@ export function checkIntegrity(
     );
   }
 
-  const durationMs = Date.now() - startTime;
+  const durationMs = systemNowMs() - startTime;
 
   const report: IntegrityReport = {
     conversationId,
@@ -118,7 +119,7 @@ export function checkIntegrity(
     errorsLogged: errorIssues.length,
     issueTypes,
     durationMs,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   } satisfies IntegrityCheckEvent);
 
   // Log INFO summary

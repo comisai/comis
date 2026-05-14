@@ -16,6 +16,7 @@ import type { AssistantMessage } from "@mariozechner/pi-ai";
 import {
   formatSessionKey,
   sanitizeLogString,
+  systemNowMs,
   type SessionKey,
   type TypedEventBus,
   type MemoryPort,
@@ -260,7 +261,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // -----------------------------------------------------------------
         case "tool_execution_start": {
           const toolEvent = event as { toolName: string; toolCallId: string; args?: unknown };
-          m.toolStartTimes.set(toolEvent.toolCallId, Date.now());
+          m.toolStartTimes.set(toolEvent.toolCallId, systemNowMs());
           m.toolCallHistory.push(toolEvent.toolName);
           m.lastActiveToolName = toolEvent.toolName;
 
@@ -288,7 +289,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           deps.eventBus.emit("tool:started", {
             toolName: toolEvent.toolName,
             toolCallId: toolEvent.toolCallId,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),
             traceId: deps.executionId,
@@ -313,7 +314,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           // Calculate duration from tracked start time
           const startTime = m.toolStartTimes.get(endEvent.toolCallId);
-          const durationMs = startTime ? Date.now() - startTime : 0;
+          const durationMs = startTime ? systemNowMs() - startTime : 0;
           m.toolStartTimes.delete(endEvent.toolCallId);
           // Clear active tool once completed (no tool in-flight after this point)
           if (m.lastActiveToolName === endEvent.toolName) m.lastActiveToolName = undefined;
@@ -409,7 +410,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 action,
                 channelType,
                 channelId,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
 
               // Composite-key drain at the bridge call site. The composite
@@ -455,7 +456,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             toolName: endEvent.toolName,
             durationMs,
             success: toolSuccess,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
@@ -688,7 +689,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           }
 
           // Compute LLM latency: turn wallclock minus tool execution time
-          const turnWallclockMs = Date.now() - m.turnStartMs;
+          const turnWallclockMs = systemNowMs() - m.turnStartMs;
           // Cap per-turn tool duration to turn wallclock (parallel tools can sum > wallclock)
           const effectiveTurnToolMs = Math.min(m.turnToolDurationMs, turnWallclockMs);
           m.cumulativeToolWallclockMs += effectiveTurnToolMs;
@@ -723,7 +724,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 graphId: deps.graphId,
                 nodeId: deps.nodeId,
                 cacheWriteTokens,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
             }
 
@@ -921,7 +922,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
             // Emit observability event
             deps.eventBus.emit("observability:token_usage", {
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
               traceId: deps.executionId,
               agentId: deps.agentId,
               channelId: deps.channelId,
@@ -975,7 +976,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   totalTokens: m.totalTokens,
                   llmCallCount: m.llmCallCount,
                   projectedCallsLeft: Math.floor((deps.perExecutionBudgetCap! - m.totalTokens) / avgTokensPerCall),
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
                 deps.logger.warn({
                   totalTokens: m.totalTokens,
@@ -1024,7 +1025,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   contextPercent: contextUsage.percent ?? Math.round((contextUsage.tokens / contextUsage.contextWindow) * 100),
                   contextTokens: contextUsage.tokens,
                   contextWindow: contextUsage.contextWindow,
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
                 deps.logger.debug(
                   {
@@ -1062,14 +1063,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   request: (deps.sepMessageText ?? "").slice(0, 200),
                   steps,
                   completedCount: 0,
-                  createdAtMs: Date.now(),
+                  createdAtMs: systemNowMs(),
                 };
                 deps.executionPlan.current = plan;
                 deps.logger.info(
                   {
                     agentId: deps.agentId,
                     stepCount: steps.length,
-                    durationMs: deps.sepExecutionStartMs ? Date.now() - deps.sepExecutionStartMs : undefined,
+                    durationMs: deps.sepExecutionStartMs ? systemNowMs() - deps.sepExecutionStartMs : undefined,
                   },
                   "SEP plan extracted (mid-loop)",
                 );
@@ -1077,7 +1078,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   agentId: deps.agentId ?? "default",
                   sessionKey: formatSessionKey(deps.sessionKey),
                   stepCount: steps.length,
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
               }
             }
@@ -1156,7 +1157,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           }
 
           // Reset LLM turn timer for next turn
-          m.turnStartMs = Date.now();
+          m.turnStartMs = systemNowMs();
           break;
         }
 
@@ -1164,7 +1165,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // Auto-compaction lifecycle
         // -----------------------------------------------------------------
         case "compaction_start": {
-          m.compactionStartMs = Date.now();
+          m.compactionStartMs = systemNowMs();
           deps.logger.info(
             { sessionKey: formatSessionKey(deps.sessionKey) },
             "Auto-compaction started",
@@ -1172,7 +1173,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           deps.eventBus.emit("compaction:started", {
             agentId: deps.agentId,
             sessionKey: deps.sessionKey,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
           break;
         }
@@ -1197,7 +1198,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               trustLevel: "learned" as const,
               source: { who: "compaction", channel: deps.channelId },
               tags: ["compaction-summary"],
-              createdAt: Date.now(),
+              createdAt: systemNowMs(),
             };
             // Fire-and-forget: never block event processing on memory I/O
             suppressError(deps.memoryPort.store(entry as MemoryEntry), "compaction memory flush");
@@ -1209,10 +1210,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             memoriesWritten,
             trigger: "soft",
             success: !compactionEvent.aborted && !!compactionEvent.result,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
 
-          const durationMs = m.compactionStartMs ? Date.now() - m.compactionStartMs : 0;
+          const durationMs = m.compactionStartMs ? systemNowMs() - m.compactionStartMs : 0;
           m.compactionStartMs = 0; // reset
 
           // WARN for failure/abort

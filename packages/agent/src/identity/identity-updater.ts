@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { safePath, PathTraversalError } from "@comis/core";
+import { safePath, PathTraversalError, systemNowMs } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import * as childProcess from "node:child_process";
 import * as fs from "node:fs/promises";
@@ -76,7 +76,7 @@ export function createIdentityUpdater(workspaceDir: string): IdentityUpdater {
         currentContent,
         proposedContent: content,
         reason,
-        proposedAt: Date.now(),
+        proposedAt: systemNowMs(),
       };
 
       // Replace any existing pending update for this fileType

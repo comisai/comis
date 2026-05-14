@@ -18,6 +18,7 @@
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ContextEngineConfig } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import type {
   ContextEngine,
   ContextEngineDeps,
@@ -135,11 +136,11 @@ async function runLayer(
     };
   }
 
-  const start = Date.now();
+  const start = systemNowMs();
   try {
     const result = await layer.apply(messages, budget);
     breaker.recordSuccess(layer.name);
-    const durationMs = Date.now() - start;
+    const durationMs = systemNowMs() - start;
 
     // Only log layers that actually modify messages
     if (messagesIn !== result.length) {
@@ -156,7 +157,7 @@ async function runLayer(
     };
   } catch (err) {
     breaker.recordFailure(layer.name);
-    const durationMs = Date.now() - start;
+    const durationMs = systemNowMs() - start;
     logger.warn(
       {
         layerName: layer.name,
@@ -442,7 +443,7 @@ export function createContextEngine(
       ? (n: number | undefined) => thinkingCleaner!.setAssistantCountCeiling(n)
       : undefined,
     async transformContext(messages: AgentMessage[]): Promise<AgentMessage[]> {
-      const pipelineStart = Date.now();
+      const pipelineStart = systemNowMs();
 
       // Reset callback state for this invocation
       callbackState.masker = null;
@@ -588,7 +589,7 @@ export function createContextEngine(
         ? Math.max(0, tokensLoaded - Math.ceil(resultChars / CHARS_PER_TOKEN_RATIO))
         : 0;
       const tokensEvicted = snap.evictor ? Math.ceil(snap.evictor.evictedChars / CHARS_PER_TOKEN_RATIO) : 0;
-      const durationMs = Date.now() - pipelineStart;
+      const durationMs = systemNowMs() - pipelineStart;
 
       const metrics: ContextEngineMetrics = {
         thinkingBlocksRemoved: snap.thinking?.blocksRemoved ?? 0,
@@ -618,7 +619,7 @@ export function createContextEngine(
       if (deps.eventBus) {
         const agentId = deps.agentId ?? "";
         const sessionKey = deps.sessionKey ?? "";
-        const timestamp = Date.now();
+        const timestamp = systemNowMs();
 
         if (snap.masker && snap.masker.maskedCount > 0) {
           deps.eventBus.emit("context:masked", {

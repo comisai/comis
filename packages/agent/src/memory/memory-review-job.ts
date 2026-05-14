@@ -16,7 +16,7 @@
  */
 
 import { ok, err, fromPromise, type Result } from "@comis/shared";
-import { safePath, parseFormattedSessionKey } from "@comis/core";
+import { safePath, parseFormattedSessionKey, systemNowMs, systemDateFrom, systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { MemoryReviewConfig } from "@comis/core";
 import type { MemoryPort, MemorySearchOptions } from "@comis/core";
 import type { MemoryEntry } from "@comis/core";
@@ -172,7 +172,7 @@ function buildSessionSummary(
   updatedAt: number,
   messages: unknown[],
 ): string {
-  const isoDate = new Date(updatedAt).toISOString();
+  const isoDate = systemDateFrom(updatedAt).toISOString();
   let lines = `=== Session: ${sessionKey} (messages: ${messageCount}, updated: ${isoDate}) ===\n`;
 
   if (messages.length <= 20) {
@@ -248,7 +248,7 @@ function extractResponseText(response: { content?: unknown[] }): string {
  * @returns Result<void, Error> -- ok on success (even if 0 memories extracted), err on fatal failure
  */
 export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<void, Error>> {
-  const startTime = Date.now();
+  const startTime = systemNowMs();
   const { config, agentId, tenantId, memoryPort, sessionStore, eventBus, logger } = deps;
 
   // Load watermark
@@ -268,8 +268,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: 0,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: Date.now() - startTime,
-      timestamp: Date.now(),
+      durationMs: systemNowMs() - startTime,
+      timestamp: systemNowMs(),
     });
     return ok(undefined);
   }
@@ -304,8 +304,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: 0,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: Date.now() - startTime,
-      timestamp: Date.now(),
+      durationMs: systemNowMs() - startTime,
+      timestamp: systemNowMs(),
     });
     return ok(undefined);
   }
@@ -324,7 +324,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  const timer = systemSetTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
   let responseText: string;
   try {
@@ -336,7 +336,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
           {
             role: "user" as const,
             content: batchContent,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           },
         ],
       },
@@ -350,10 +350,10 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
 
     responseText = extractResponseText(response);
   } catch (llmErr) {
-    clearTimeout(timer);
+    systemClearTimeout(timer);
     return err(new Error(`Memory review LLM call failed: ${llmErr instanceof Error ? llmErr.message : String(llmErr)}`));
   } finally {
-    clearTimeout(timer);
+    systemClearTimeout(timer);
   }
 
   // Parse LLM response
@@ -370,8 +370,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: reviewedSessions.length,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: Date.now() - startTime,
-      timestamp: Date.now(),
+      durationMs: systemNowMs() - startTime,
+      timestamp: systemNowMs(),
     });
     return ok(undefined);
   }
@@ -418,7 +418,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       source: { who: "system", channel: "memory-review" },
       tags: ["auto-review", ...config.autoTags],
       sourceType: "conversation",
-      createdAt: Date.now(),
+      createdAt: systemNowMs(),
     };
 
     const storeResult = await memoryPort.store(entry);
@@ -441,8 +441,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     sessionsReviewed: reviewedSessions.length,
     memoriesExtracted,
     duplicatesSkipped,
-    durationMs: Date.now() - startTime,
-    timestamp: Date.now(),
+    durationMs: systemNowMs() - startTime,
+    timestamp: systemNowMs(),
   });
 
   logger.info({
@@ -450,7 +450,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     sessionsReviewed: reviewedSessions.length,
     memoriesExtracted,
     duplicatesSkipped,
-    durationMs: Date.now() - startTime,
+    durationMs: systemNowMs() - startTime,
   }, "Memory review completed");
 
   return ok(undefined);

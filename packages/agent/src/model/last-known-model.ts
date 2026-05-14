@@ -13,6 +13,8 @@
  * @module
  */
 
+import { systemNowMs } from "@comis/core";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -53,7 +55,7 @@ export function createLastKnownModelTracker(): LastKnownModelTracker {
       entries.set(agentId, {
         provider,
         model,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     },
 

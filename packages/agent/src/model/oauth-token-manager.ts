@@ -48,6 +48,9 @@ import type { SecretManager } from "@comis/core";
 import {
   TypedEventBus,
   safePath,
+  systemNowMs,
+  systemSetTimeout,
+  systemClearTimeout,
   type OAuthCredentialStorePort,
   type OAuthProfile,
   type FileLockPort,
@@ -258,7 +261,7 @@ async function withTimeout<T>(
 ): Promise<{ ok: true; value: T } | { ok: false; reason: "timeout" }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<{ ok: false; reason: "timeout" }>((resolve) => {
-    timer = setTimeout(() => resolve({ ok: false, reason: "timeout" }), timeoutMs);
+    timer = systemSetTimeout(() => resolve({ ok: false, reason: "timeout" }), timeoutMs);
   });
   try {
     const winner = await Promise.race([
@@ -267,7 +270,7 @@ async function withTimeout<T>(
     ]);
     return winner;
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    if (timer !== undefined) systemClearTimeout(timer);
   }
 }
 
@@ -392,7 +395,7 @@ async function refreshOpenAICodexTokenLocal(
     value: {
       access: json.access_token,
       refresh: json.refresh_token,
-      expires: Date.now() + json.expires_in * 1000,
+      expires: systemNowMs() + json.expires_in * 1000,
       accountId,
     },
   };
@@ -571,15 +574,15 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               ? (redactEmailForLog(profile.email) ?? profile.profileId)
               : profile.profileId,
           source: "external",
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
       }
     }
   }
 
   function scheduleCacheInvalidation(): void {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
+    if (debounceTimer) systemClearTimeout(debounceTimer);
+    debounceTimer = systemSetTimeout(() => {
       debounceTimer = null;
       // Invalidate the ENTIRE hot cache (file is rewritten as a whole;
       // per-profile diffing is YAGNI for a sub-1MB JSON).
@@ -760,7 +763,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         provider: providerId,
         profileId,
         identity,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     }
 
@@ -779,12 +782,12 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     initialProfile: OAuthProfile,
   ): Promise<Result<string, OAuthError>> {
     const lockPath = lockSentinelPath(dataDir, initialProfile.profileId);
-    const lockStart = Date.now();
+    const lockStart = systemNowMs();
 
     const lockResult = await fileLock.withLock(
       lockPath,
       async (): Promise<Result<string, OAuthError>> => {
-        const acquireMs = Date.now() - lockStart;
+        const acquireMs = systemNowMs() - lockStart;
         logger.debug(
           {
             provider: providerId,
@@ -795,7 +798,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           "Lock acquired",
         );
 
-        const heldStart = Date.now();
+        const heldStart = systemNowMs();
         try {
           // TOCTOU re-read inside lock to avoid acting on stale cache.
           const reread = await credentialStore.get(initialProfile.profileId);
@@ -840,7 +843,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             // from racing the actual expiry.
             const REFRESH_EXPIRY_BUFFER_MS = 60_000;
             if (typeof profile.expires === "number"
-              && profile.expires > Date.now() + REFRESH_EXPIRY_BUFFER_MS
+              && profile.expires > systemNowMs() + REFRESH_EXPIRY_BUFFER_MS
             ) {
               cache.set(profile.profileId, profile);
               // Mirror the post-refresh lastGood update so subsequent calls
@@ -851,7 +854,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                   provider: providerId,
                   profileId: profile.profileId,
                   submodule: "oauth-token-manager",
-                  remainingMs: profile.expires - Date.now(),
+                  remainingMs: profile.expires - systemNowMs(),
                 },
                 "OAuth token still valid — skipping refresh",
               );
@@ -882,7 +885,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 profileId: profile.profileId,
                 errorKind: "timeout",
                 hint: "auth_endpoint_unreachable",
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
               return err({
                 code: "REFRESH_FAILED",
@@ -930,7 +933,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 // `rewritten.code`.
                 errorKind: rewritten.code,
                 hint: rewritten.hint,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
               return err({
                 code: "REFRESH_FAILED",
@@ -984,7 +987,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 profileId: profile.profileId,
                 errorKind: "timeout",
                 hint: "auth_endpoint_unreachable",
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
               return err({
                 code: "REFRESH_FAILED",
@@ -1022,7 +1025,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 // the discriminator flows via `rewritten.code`.
                 errorKind: rewritten.code,
                 hint: rewritten.hint,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
               return err({
                 code: "REFRESH_FAILED",
@@ -1081,14 +1084,14 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               profileName: toSecretKey(providerId, keyPrefix),
               profileId: profile.profileId,
               expiresAtMs: newProfile.expires,
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
             });
           } else {
             // Cache the unrotated profile for the next read (no DB roundtrip needed).
             cache.set(profile.profileId, profile);
           }
 
-          const completeStart = Date.now();
+          const completeStart = systemNowMs();
           logger.info(
             {
               provider: providerId,
@@ -1125,7 +1128,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               provider: providerId,
               profileId: initialProfile.profileId,
               submodule: "oauth-token-manager",
-              heldMs: Date.now() - heldStart,
+              heldMs: systemNowMs() - heldStart,
             },
             "Lock released",
           );
@@ -1155,7 +1158,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         profileId: initialProfile.profileId,
         errorKind: "auth",
         hint,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
       return err({
         code: "REFRESH_FAILED",
@@ -1354,7 +1357,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
         const expiresAt =
           typeof profile.expires === "number" ? profile.expires : undefined;
         const secsUntilExpiry =
-          expiresAt !== undefined ? Math.floor((expiresAt - Date.now()) / 1000) : undefined;
+          expiresAt !== undefined ? Math.floor((expiresAt - systemNowMs()) / 1000) : undefined;
         logger.debug(
           {
             provider: providerId,
@@ -1420,7 +1423,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
 
     async dispose(): Promise<void> {
       if (debounceTimer) {
-        clearTimeout(debounceTimer);
+        systemClearTimeout(debounceTimer);
         debounceTimer = null;
       }
       if (watcher) {

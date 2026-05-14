@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as fs from "node:fs/promises";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import { incrementOnboardingCount, isIdentityFilled, readWorkspaceState, writeWorkspaceState } from "./workspace-state.js";
 
 /** Auto-complete onboarding after this many messages if identity is still unfilled. */
@@ -36,7 +36,7 @@ export async function detectOnboardingState(workspaceDir: string): Promise<boole
   // Cap: auto-complete onboarding after MAX_ONBOARDING_MESSAGES attempts
   const count = await incrementOnboardingCount(workspaceDir);
   if (count > MAX_ONBOARDING_MESSAGES) {
-    await writeWorkspaceState(workspaceDir, { onboardingCompletedAt: Date.now() });
+    await writeWorkspaceState(workspaceDir, { onboardingCompletedAt: systemNowMs() });
     return false;
   }
   return true;

@@ -17,7 +17,7 @@
  */
 
 import { SessionManager as SdkSessionManager } from "@mariozechner/pi-coding-agent";
-import { formatSessionKey, safePath, type SessionKey } from "@comis/core";
+import { formatSessionKey, safePath, systemNowDate, type SessionKey } from "@comis/core";
 import type { ComisLogger, FileLockPort } from "@comis/core";
 import { suppressError, type Result } from "@comis/shared";
 import { mkdir, unlink, rm, rmdir } from "node:fs/promises";
@@ -270,7 +270,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           ...(metadata.traceId && { traceId: metadata.traceId }),
           ...(metadata.runId && { runId: metadata.runId }),
           ...(metadata.sessionEnd && { sessionEnd: metadata.sessionEnd }),
-          lastUpdated: new Date().toISOString(),
+          lastUpdated: systemNowDate().toISOString(),
         };
         writeFileSync(metadataPath, JSON.stringify(merged, null, 2) + "\n");
       } catch {
@@ -300,7 +300,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
 
         // Extract creation time from session header
         if (header?.timestamp) {
-          createdAt = new Date(header.timestamp).getTime();
+          createdAt = Date.parse(header.timestamp);
         }
 
         for (const entry of entries) {
