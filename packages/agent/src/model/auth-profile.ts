@@ -115,8 +115,9 @@ export function createAuthProfileManager(config: AuthProfileManagerConfig): Auth
   }
 
   /**
-   * Explicit strategy: iterate in config order, return first non-cooldown key.
-   * This is the original behavior, preserved for backward compatibility.
+   * Explicit strategy: iterate the configured profiles in order; return the
+   * first non-cooldown key whose secret resolves. Used when the auth-profile
+   * policy is `explicit` (the default for static API keys).
    */
   function getExplicit(providerProfiles: AuthProfile[]): string | undefined {
     for (const profile of providerProfiles) {
