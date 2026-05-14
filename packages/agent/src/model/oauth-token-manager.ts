@@ -1322,7 +1322,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       }
 
       // Env-bootstrap fallback: tiers (a)/(b)/(c) all came up empty.
-      // Discover candidate profileId + env-var seed from the legacy resolver.
+      // Discover candidate profileId + env-var seed for the env-bootstrap tier.
       const { profileId: candidateProfileId, envSeed } =
         await resolveCandidateProfileId(providerId);
 
