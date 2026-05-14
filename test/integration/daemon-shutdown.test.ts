@@ -29,6 +29,10 @@ describe("Daemon Shutdown", () => {
     handle = await startTestDaemon({
       configPath: SHUTDOWN_CONFIG_PATH,
       logStream: logCapture.stream,
+      // PORTS-18: swap the production TimerPort for createFakeTimers so the
+      // describe block at the bottom of this file can read the unref/cancel
+      // record after shutdown and assert no long-running interval leaked.
+      useFakeTimers: true,
     });
   }, 60_000);
 
@@ -228,6 +232,55 @@ describe("Daemon Shutdown", () => {
         errors,
         `Unexpected error logs during shutdown: ${JSON.stringify(errors.map((e: LogEntry) => ({ level: e.level, msg: e.msg })), null, 2)}`,
       ).toHaveLength(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // PORTS-18: Timer cleanup contract
+  //
+  // The harness was started with `useFakeTimers: true`, so the daemon's
+  // composition root used `createFakeTimers()` from `test/support/fake-timers.ts`
+  // instead of the production `createSystemTimers()`. Every `TimerPort.setTimeout`
+  // and `TimerPort.setInterval` invocation during bootstrap was recorded.
+  //
+  // After SIGTERM (triggered by DMN-02 above) the daemon's graceful-shutdown
+  // sequence must have called either `handle.cancel()` or `handle.unref()` on
+  // every long-running interval. A long-running interval is defined as:
+  //   - kind === "interval" (recurring sweep / prune / watchdog), OR
+  //   - delay >= 30_000 ms (one-shot timer that would block process exit)
+  //
+  // Short one-shot setTimeout calls (< 30s) cannot leak the event loop in
+  // practice — they fire before any reasonable shutdown completes — so we
+  // exclude them from the assertion.
+  //
+  // A regression in this test means Phase 39 Waves 4-7 dropped a `.unref()` or
+  // `cancel()` call somewhere in the daemon-lifetime cleanup wiring. The leaked
+  // entry's `delay`, `kind`, and `registeredAt` help correlate to the call site.
+  // ---------------------------------------------------------------------------
+
+  describe("PORTS-18: Timer cleanup contract", () => {
+    it("every long-running interval was cancelled or unref'd before shutdown completion", () => {
+      expect(shutdownTriggered, "PORTS-18 requires shutdown to have run first").toBe(true);
+      const record = handle.getTimerRecord();
+      expect(
+        record,
+        "test daemon must expose timer record via handle.getTimerRecord() — was useFakeTimers set on startTestDaemon?",
+      ).toBeDefined();
+      if (!record) throw new Error("no timer record"); // type-narrow
+
+      const longRunning = record.filter(
+        (r) => r.kind === "interval" || r.delay >= 30_000,
+      );
+
+      const leaked = longRunning.filter(
+        (r) => !r.cancelled && !r.unrefCalled,
+      );
+
+      expect(
+        leaked,
+        `Long-running intervals leaked after shutdown:\n${JSON.stringify(leaked, null, 2)}\n` +
+          `Each interval scheduled via TimerPort.setInterval (or long setTimeout >= 30s) MUST be cancel()'d or unref()'d before bootstrap shutdown returns.`,
+      ).toEqual([]);
     });
   });
 });

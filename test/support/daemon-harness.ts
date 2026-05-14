@@ -17,6 +17,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanupDatabase } from "./db-cleanup.js";
 import { ASYNC_SETTLE_MS } from "./timeouts.js";
+import { createFakeTimers, type FakeTimers, type FakeTimerEntry } from "./fake-timers.js";
 import type { DaemonInstance } from "@comis/daemon";
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,19 @@ export interface TestDaemonOptions {
    * raw Pino payloads and assert no plaintext appears anywhere.
    */
   disableRedaction?: boolean;
+  /**
+   * PORTS-18: replace the production `createSystemTimers()` adapter at the
+   * daemon composition root with `createFakeTimers()` from
+   * `test/support/fake-timers.ts`. Exposes the underlying timer record via
+   * `handle.getTimerRecord()` so the integration test can assert every
+   * long-running interval registered during bootstrap was either cancelled
+   * or unref'd before shutdown completed.
+   *
+   * Default-mode tests should NOT set this — they rely on real timers so
+   * `setInterval`/`setTimeout` fire as the daemon expects. PORTS-18 explicitly
+   * opts in.
+   */
+  useFakeTimers?: boolean;
 }
 
 /** Handle to a running test daemon instance. */
@@ -57,6 +71,13 @@ export interface TestDaemonHandle {
   authToken: string;
   /** Shut down the daemon gracefully */
   cleanup: () => Promise<void>;
+  /**
+   * PORTS-18: snapshot of fake-timer entries (cancel + unref state) when the
+   * harness was started with `useFakeTimers: true`. Returns `undefined`
+   * otherwise. The integration test reads this AFTER shutdown to assert
+   * every long-running interval was either cancelled or unref'd.
+   */
+  getTimerRecord(): ReadonlyArray<FakeTimerEntry> | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +206,20 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     },
   };
 
+  // PORTS-18: opt-in fake-timer wiring. When `useFakeTimers` is set, install a
+  // `createFakeTimers()` instance at the composition root via `overrides.timers`
+  // (the daemon honors this on the `timers` line in daemon.ts). The harness
+  // records the instance on the closure so the returned handle can expose the
+  // unrefRecord() snapshot via `getTimerRecord()` (used by PORTS-18 shutdown
+  // integration test). Default-mode tests leave `fakeTimers` undefined and the
+  // daemon falls back to `createSystemTimers()`.
+  const fakeTimers: FakeTimers | undefined = options?.useFakeTimers
+    ? createFakeTimers()
+    : undefined;
+  if (fakeTimers) {
+    overrides["timers"] = fakeTimers;
+  }
+
   // Compose tracing-logger override based on logStream + disableRedaction.
   //
   // Routing rules (single call site, per task 1's I-16 fix - the harness must
@@ -279,6 +314,11 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     gatewayUrl,
     authToken,
     cleanup,
+    // PORTS-18: expose the fake-timer record only when fake timers are in play.
+    // When `useFakeTimers` is false the daemon ran on `createSystemTimers()`
+    // (no record to expose); returning `undefined` is the correct signal that
+    // the integration assertion is not applicable.
+    getTimerRecord: () => fakeTimers?.unrefRecord(),
   };
 
   // Set double-start guard
