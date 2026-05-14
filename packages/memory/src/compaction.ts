@@ -23,6 +23,7 @@
 import type Database from "better-sqlite3";
 import type { HookRunner, SessionKey, SessionStorePort } from "@comis/core";
 import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { systemNowMs } from "@comis/core";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -116,7 +117,7 @@ export function createCompactionService(
   return {
     async compact(options?: Partial<CompactionOptions>): Promise<CompactionResult> {
       const opts: CompactionOptions = { ...DEFAULT_OPTIONS, ...options };
-      const now = Date.now();
+      const now = systemNowMs();
       const cutoff = now - opts.minIdleMs;
 
       // List sessions, optionally scoped by tenant
@@ -160,7 +161,7 @@ export function createCompactionService(
           continue;
         }
 
-        const compactionStartMs = Date.now();
+        const compactionStartMs = systemNowMs();
 
         // Call the pluggable summarizer
         const { summary, facts } = await summarizer(sessionData.messages);
@@ -233,7 +234,7 @@ export function createCompactionService(
             sessionKey: parts as SessionKey,
             removedCount: sessionData.messages.length,
             retainedCount: 0,
-            durationMs: Date.now() - compactionStartMs,
+            durationMs: systemNowMs() - compactionStartMs,
           },
           { agentId: agentId ?? "default" },
         );
@@ -243,7 +244,7 @@ export function createCompactionService(
     },
 
     purgeArchives(): number {
-      const now = Date.now();
+      const now = systemNowMs();
       const info = purgeStmt.run(now);
       return info.changes;
     },

@@ -23,6 +23,7 @@ import type {
 } from "@comis/core";
 import { initSecretSchema, validateCanary, CANARY_NAME } from "./secret-store-schema.js";
 import { openSqliteDatabase, chmodDbFiles } from "./sqlite-adapter-base.js";
+import { systemNowMs } from "@comis/core";
 
 /**
  * Concrete return type of createSqliteSecretStore.
@@ -136,7 +137,7 @@ export function createSqliteSecretStore(
         return err(encryptResult.error);
       }
       const encrypted = encryptResult.value;
-      const now = Date.now();
+      const now = systemNowMs();
 
       return tryCatch(() => {
         upsertStmt.run(
@@ -252,7 +253,7 @@ export function createSqliteSecretStore(
     },
 
     recordUsage(name: string): void {
-      const now = Date.now();
+      const now = systemNowMs();
       recordUsageStmt.run(now, name);
     },
 

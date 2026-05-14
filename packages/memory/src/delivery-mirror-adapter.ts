@@ -14,6 +14,7 @@ import type Database from "better-sqlite3";
 import type { DeliveryMirrorPort, DeliveryMirrorEntry, DeliveryMirrorRecordInput } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Internal DB row type (snake_case -- what SQLite returns)
@@ -107,7 +108,7 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
           input.channelId,
           input.origin,
           input.idempotencyKey,
-          Date.now(),
+          systemNowMs(),
         );
         return Promise.resolve(ok(id));
       } catch (e) {
@@ -126,7 +127,7 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
 
     acknowledge(ids: string[]): Promise<Result<void, Error>> {
       try {
-        const now = Date.now();
+        const now = systemNowMs();
         const ackTx = db.transaction((entryIds: string[]) => {
           for (const id of entryIds) {
             ackStmt.run(now, id);
@@ -141,7 +142,7 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
 
     pruneOld(maxAgeMs: number): Promise<Result<number, Error>> {
       try {
-        const cutoff = Date.now() - maxAgeMs;
+        const cutoff = systemNowMs() - maxAgeMs;
         const result = pruneStmt.run(cutoff);
         return Promise.resolve(ok(result.changes));
       } catch (e) {

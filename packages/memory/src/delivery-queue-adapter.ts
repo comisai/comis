@@ -14,6 +14,7 @@ import type Database from "better-sqlite3";
 import type { DeliveryQueuePort, DeliveryQueueEntry, DeliveryQueueEnqueueInput, DeliveryQueueStatusCounts, TypedEventBus } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Internal DB row type (snake_case -- what SQLite returns)
@@ -188,7 +189,7 @@ export function createSqliteDeliveryQueue(
           channelId: entry.channelId,
           channelType: entry.channelType,
           origin: entry.origin,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
         return Promise.resolve(ok(id));
       } catch (e) {
@@ -221,7 +222,7 @@ export function createSqliteDeliveryQueue(
           channelId: entry.channelId,
           channelType: entry.channelType,
           origin: entry.origin,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
         return Promise.resolve(ok(id));
       } catch (e) {
@@ -240,7 +241,7 @@ export function createSqliteDeliveryQueue(
 
     nack(id: string, error: string, nextRetryAt: number): Promise<Result<void, Error>> {
       try {
-        nackStmt.run(Date.now(), nextRetryAt, error, id);
+        nackStmt.run(systemNowMs(), nextRetryAt, error, id);
         return Promise.resolve(ok(undefined));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
@@ -258,7 +259,7 @@ export function createSqliteDeliveryQueue(
 
     pendingEntries(): Promise<Result<DeliveryQueueEntry[], Error>> {
       try {
-        const rows = pendingStmt.all(Date.now()) as DeliveryQueueDbRow[];
+        const rows = pendingStmt.all(systemNowMs()) as DeliveryQueueDbRow[];
         return Promise.resolve(ok(rows.map(rowToEntry)));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
@@ -267,7 +268,7 @@ export function createSqliteDeliveryQueue(
 
     pruneExpired(): Promise<Result<number, Error>> {
       try {
-        const result = pruneStmt.run(Date.now());
+        const result = pruneStmt.run(systemNowMs());
         return Promise.resolve(ok(result.changes));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));

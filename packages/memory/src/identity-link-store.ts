@@ -10,6 +10,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { systemNowMs } from "@comis/core";
 
 /**
  * A single identity link mapping a provider identity to a canonical ID.
@@ -96,7 +97,7 @@ export function createIdentityLinkStore(db: Database.Database): IdentityLinkStor
 
   return {
     link(canonicalId: string, provider: string, providerUserId: string, displayName?: string): void {
-      const now = Date.now();
+      const now = systemNowMs();
       upsertStmt.run(canonicalId, provider, providerUserId, displayName ?? null, now);
     },
 

@@ -15,6 +15,7 @@ import type Database from "better-sqlite3";
 import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 import type { MemoryRow } from "./types.js";
 import { rowToEntry, buildFilterClause, countRows, groupCountRows } from "./row-mapper.js";
+import { systemNowMs } from "@comis/core";
 
 // ── Filter & Scope Types ─────────────────────────────────────────────
 
@@ -131,7 +132,7 @@ export function createMemoryApi(
       } else {
         fullClause = `WHERE ${expiryCondition}`;
       }
-      params.push(Date.now());
+      params.push(systemNowMs());
 
       const sql = `SELECT * FROM memories ${fullClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
       params.push(limit, offset);

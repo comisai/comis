@@ -11,14 +11,7 @@
  */
 
 import type Database from "better-sqlite3";
-import {
-  formatSessionKey,
-  type SessionKey,
-  type SessionStorePort,
-  type SessionData,
-  type SessionListEntry,
-  type SessionDetailedEntry,
-} from "@comis/core";
+import { formatSessionKey, systemNowMs, type SessionData, type SessionDetailedEntry, type SessionKey, type SessionListEntry, type SessionStorePort } from "@comis/core";
 import { z } from "zod";
 import type { SessionRow } from "./types.js";
 
@@ -95,7 +88,7 @@ export function createSessionStore(db: Database.Database): SessionStorePort {
 
   return {
     save(key: SessionKey, messages: unknown[], metadata?: Record<string, unknown>): void {
-      const now = Date.now();
+      const now = systemNowMs();
       const sessionKey = formatSessionKey(key);
       const messagesJson = JSON.stringify(messages);
       const metadataJson = JSON.stringify(metadata ?? {});
@@ -151,7 +144,7 @@ export function createSessionStore(db: Database.Database): SessionStorePort {
     },
 
     deleteStale(maxAgeMs: number): number {
-      const cutoff = Date.now() - maxAgeMs;
+      const cutoff = systemNowMs() - maxAgeMs;
       const result = deleteStaleStmt.run(cutoff);
       return result.changes;
     },

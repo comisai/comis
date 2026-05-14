@@ -12,6 +12,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -781,7 +782,7 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
     },
 
     prune(retentionDays) {
-      const cutoff = Date.now() - retentionDays * 86400000;
+      const cutoff = systemNowMs() - retentionDays * 86400000;
       return pruneTx(cutoff) as ResetResult;
     },
 

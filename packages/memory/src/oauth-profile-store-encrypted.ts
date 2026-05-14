@@ -21,7 +21,7 @@ import type Database from "better-sqlite3";
 import type { Result } from "@comis/shared";
 import { ok, err, fromPromise } from "@comis/shared";
 import type { OAuthCredentialStorePort, OAuthProfile, SecretsCrypto } from "@comis/core";
-import { validateProfileId } from "@comis/core";
+import { systemNowMs, validateProfileId } from "@comis/core";
 import { initOAuthProfileSchema } from "./oauth-profile-schema.js";
 
 const SCHEMA_VERSION = 1;
@@ -130,7 +130,7 @@ export function createOAuthProfileStoreEncrypted(
       const encryptResult = crypto.encrypt(payload);
       if (!encryptResult.ok) return err(encryptResult.error);
       const enc = encryptResult.value;
-      const now = Date.now();
+      const now = systemNowMs();
       return fromPromise(
         (async () => {
           upsertStmt.run(

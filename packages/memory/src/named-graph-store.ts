@@ -12,6 +12,7 @@
 import type Database from "better-sqlite3";
 import { initNamedGraphSchema } from "./named-graph-schema.js";
 import type { NamedGraphRow } from "./types.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -150,7 +151,7 @@ export function createNamedGraphStore(db: Database.Database): NamedGraphStore {
 
   const store: NamedGraphStore = {
     save(entry) {
-      const now = Date.now();
+      const now = systemNowMs();
       upsertStmt.run(
         entry.id,
         entry.tenantId,
@@ -197,7 +198,7 @@ export function createNamedGraphStore(db: Database.Database): NamedGraphStore {
     },
 
     softDelete(id, tenantId) {
-      const now = Date.now();
+      const now = systemNowMs();
       const result = softDeleteStmt.run(now, id, tenantId);
       return result.changes > 0;
     },

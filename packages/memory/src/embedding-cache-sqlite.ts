@@ -18,6 +18,7 @@ import { ok, type Result } from "@comis/shared";
 import type Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { computeEmbeddingIdentityHash } from "./embedding-hash.js";
+import { systemClearInterval, systemNowMs, systemSetInterval } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -178,7 +179,7 @@ export function createSqliteEmbeddingCache(
 
   /** Record a cache hit for lazy access-time tracking. */
   function recordAccess(textHash: string): void {
-    accessBuffer.set(textHash, Date.now());
+    accessBuffer.set(textHash, systemNowMs());
     if (accessBuffer.size >= FLUSH_THRESHOLD) {
       flushAccessBuffer();
     }
@@ -212,7 +213,7 @@ export function createSqliteEmbeddingCache(
     // Optional TTL eviction
     let ttlChanges = 0;
     if (options.ttlMs != null) {
-      const ttlResult = ttlPruneStmt.run(Date.now() - options.ttlMs);
+      const ttlResult = ttlPruneStmt.run(systemNowMs() - options.ttlMs);
       ttlChanges = ttlResult.changes;
     }
 
@@ -227,7 +228,7 @@ export function createSqliteEmbeddingCache(
   // ---------------------------------------------------------------------------
 
   const pruneIntervalMs = options.pruneIntervalMs ?? 300_000;
-  const pruneTimer = setInterval(() => {
+  const pruneTimer = systemSetInterval(() => {
     prune();
   }, pruneIntervalMs);
   // Prevent timer from keeping Node.js process alive
@@ -258,7 +259,7 @@ export function createSqliteEmbeddingCache(
       // Cache miss -- delegate to inner provider
       const result = await inner.embed(text);
       if (result.ok) {
-        const now = Date.now();
+        const now = systemNowMs();
         upsertStmt.run(
           provider,
           modelId,
@@ -311,7 +312,7 @@ export function createSqliteEmbeddingCache(
       if (!batchResult.ok) return batchResult;
 
       // (h) UPSERT miss results in a single transaction
-      const now = Date.now();
+      const now = systemNowMs();
       const upsertMisses = db.transaction(() => {
         for (let j = 0; j < missIndices.length; j++) {
           const idx = missIndices[j];
@@ -345,7 +346,7 @@ export function createSqliteEmbeddingCache(
       // Flush pending access timestamps to SQLite before shutdown
       flushAccessBuffer();
       // Stop periodic prune timer
-      clearInterval(pruneTimer);
+      systemClearInterval(pruneTimer);
       // Forward to inner provider (critical for GPU cleanup with local providers)
       await inner.dispose?.();
     },
