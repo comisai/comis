@@ -47,10 +47,17 @@ export function systemSleep(ms: number): Promise<void> {
 /** Opaque handle for `systemSetTimeout` — pass to `systemClearTimeout` to cancel. */
 export type SystemTimeoutHandle = ReturnType<typeof setTimeout>;
 
+/** Opaque handle for `systemSetInterval` — pass to `systemClearInterval` to cancel. */
+export type SystemIntervalHandle = ReturnType<typeof setInterval>;
+
 /**
  * Schedule a one-shot timeout. Returns a handle that can be passed to
  * `systemClearTimeout` to cancel. Use this from in-package consumers that
  * cannot accept an injected TimerPort.
+ *
+ * The returned handle has Node's native `.unref()` — callers that need to
+ * unref the timer (so it doesn't keep the event loop alive) should chain
+ * `.unref()` on the returned handle.
  */
 export function systemSetTimeout(cb: () => void, ms: number): SystemTimeoutHandle {
   return setTimeout(cb, ms);
@@ -60,3 +67,20 @@ export function systemSetTimeout(cb: () => void, ms: number): SystemTimeoutHandl
 export function systemClearTimeout(handle: SystemTimeoutHandle): void {
   clearTimeout(handle);
 }
+
+/**
+ * Schedule a recurring interval. Returns a handle that can be passed to
+ * `systemClearInterval` to cancel. The returned handle has Node's native
+ * `.unref()` — callers that need to unref the interval (so it doesn't keep
+ * the event loop alive on SIGTERM) MUST chain `.unref()` on the returned
+ * handle. Daemon shutdown safety depends on this.
+ */
+export function systemSetInterval(cb: () => void, ms: number): SystemIntervalHandle {
+  return setInterval(cb, ms);
+}
+
+/** Cancel a recurring `systemSetInterval` handle. Idempotent. */
+export function systemClearInterval(handle: SystemIntervalHandle): void {
+  clearInterval(handle);
+}
+

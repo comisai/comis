@@ -24,4 +24,6 @@ export {
   systemSleep,
   systemSetTimeout,
   systemClearTimeout,
+  systemSetInterval,
+  systemClearInterval,
 } from "../runtime/system-time.js";

@@ -8,6 +8,7 @@
  */
 
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from "node:fs";
+import { systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { McpConnection } from "@comis/skills";
 
@@ -65,7 +66,7 @@ export function createRestartContinuationTracker(): RestartContinuationTracker {
 
   return {
     track(record) {
-      records.set(makeKey(record), { ...record, timestamp: Date.now() });
+      records.set(makeKey(record), { ...record, timestamp: systemNowMs() });
     },
 
     isTracked(record) {
@@ -73,7 +74,7 @@ export function createRestartContinuationTracker(): RestartContinuationTracker {
     },
 
     capture(filePath, recentWindowMs) {
-      const now = Date.now();
+      const now = systemNowMs();
       const recent = Array.from(records.values()).filter(
         (r) => now - r.timestamp < recentWindowMs,
       );
@@ -105,7 +106,7 @@ export function loadContinuations(
     const raw = readFileSync(filePath, "utf-8");
     const parsed: ContinuationRecord[] = JSON.parse(raw);
     unlinkSync(filePath);
-    const now = Date.now();
+    const now = systemNowMs();
     const valid = parsed.filter((r) => now - r.timestamp < staleTtlMs);
     const discarded = parsed.length - valid.length;
     if (discarded > 0) {

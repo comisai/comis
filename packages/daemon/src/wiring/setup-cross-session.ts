@@ -10,7 +10,7 @@
 
 import type { NormalizedMessage, SessionKey, SpawnPacket, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort } from "@comis/core";
 import type { AppContainer } from "@comis/core";
-import { tryGetContext, runWithContext, formatSessionKey, safePath } from "@comis/core";
+import { tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { createTypingController } from "@comis/channels";
 import type { TypingController } from "@comis/channels";
@@ -180,7 +180,7 @@ export function setupCrossSession(deps: {
       channelType: "cross-session",
       senderId: "cross-session-relay",
       text,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
       attachments: [],
       metadata: { crossSession: true },
     };
@@ -255,7 +255,7 @@ export function setupCrossSession(deps: {
       channelType: originChannelType,
       senderId: "parent-agent",
       text: task,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
       attachments: [],
       metadata: {},
     };
@@ -694,7 +694,7 @@ export function setupCrossSession(deps: {
     }, "announceToParent invoked");
 
     // Emit proxy typing around announcement delivery (not spawn-time)
-    const proxyId = `announce-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const proxyId = `announce-${systemNowMs()}-${Math.random().toString(36).slice(2, 8)}`;
     container.eventBus.emit("typing:proxy_start", {
       runId: proxyId,
       channelType,
@@ -703,7 +703,7 @@ export function setupCrossSession(deps: {
         ? callerSessionKey
         : `${callerSessionKey.channelId}:${callerSessionKey.userId}:${callerSessionKey.tenantId}`,
       agentId: callerAgentId,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
     try {
       const result = await executeInSession(callerAgentId, callerSessionKey, text);
@@ -730,7 +730,7 @@ export function setupCrossSession(deps: {
         channelId,
         reason: "completed" as const,
         durationMs: 0,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     }
   };
@@ -885,7 +885,7 @@ export function setupCrossSession(deps: {
     controller.start(evt.channelId);
     proxyControllers.set(evt.runId, {
       controller,
-      startedAt: Date.now(),
+      startedAt: systemNowMs(),
     });
 
     deps.logger?.debug({
@@ -912,8 +912,8 @@ export function setupCrossSession(deps: {
   });
 
   // TTL sweep timer — clean up leaked entries
-  const proxySweepTimer = setInterval(() => {
-    const now = Date.now();
+  const proxySweepTimer = systemSetInterval(() => {
+    const now = systemNowMs();
     for (const [runId, entry] of proxyControllers) {
       if (now - entry.startedAt > PROXY_TTL_MS) {
         entry.controller.stop();
@@ -926,7 +926,7 @@ export function setupCrossSession(deps: {
 
   // Shutdown cleanup — stop all proxy controllers and clear sweep timer
   container.eventBus.on("system:shutdown", () => {
-    clearInterval(proxySweepTimer);
+    systemClearInterval(proxySweepTimer);
     for (const [, entry] of proxyControllers) {
       entry.controller.stop();
     }

@@ -12,6 +12,7 @@ import type { AgentExecutor } from "@comis/agent";
 import {
   safePath,
   generateStrongToken,
+  systemNowMs,
 } from "@comis/core";
 import {
   extractBearerToken,
@@ -122,7 +123,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         secret: resolvedWebhookToken,
         maxBodyBytes: webhooksConfig.maxBodyBytes,
         onWake: async (_mapping) => {
-          const startMs = Date.now();
+          const startMs = systemNowMs();
           let success = true;
           let error: string | undefined;
           try {
@@ -140,14 +141,14 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
               event: "wake",
               statusCode: success ? 200 : 500,
               success,
-              durationMs: Date.now() - startMs,
+              durationMs: systemNowMs() - startMs,
               error,
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
             });
           }
         },
         onAgentAction: async (_mapping, renderedMessage, renderedSessionKey) => {
-          const startMs = Date.now();
+          const startMs = systemNowMs();
           let success = true;
           let error: string | undefined;
           try {
@@ -158,7 +159,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
               channelType: "webhook",
               senderId: "webhook",
               text: renderedMessage,
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
               attachments: [],
               metadata: { webhookMappingId: _mapping.id },
             };
@@ -180,9 +181,9 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
               event: "agent_action",
               statusCode: success ? 200 : 500,
               success,
-              durationMs: Date.now() - startMs,
+              durationMs: systemNowMs() - startMs,
               error,
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
             });
           }
         },
@@ -270,7 +271,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         channelType: "openai",
         senderId: sessionKey?.peerId ?? "openai-api",
         text: enrichedText,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         attachments: [],
         metadata: {
           ...(systemPrompt && { openaiSystemPrompt: systemPrompt }),
@@ -324,7 +325,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         channelType: "responses",
         senderId: sessionKey?.peerId ?? "responses-api",
         text: enrichedText,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         attachments: [],
         metadata: {},
       };

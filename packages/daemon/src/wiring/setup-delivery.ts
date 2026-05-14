@@ -15,7 +15,15 @@
  */
 
 import type { AppConfig, TypedEventBus, DeliveryQueuePort, DeliveryMirrorPort, DeliveryAdapter } from "@comis/core";
-import { createNoOpDeliveryQueue, createNoOpDeliveryMirror, isPermanentError, computeQueueBackoff } from "@comis/core";
+import {
+  createNoOpDeliveryQueue,
+  createNoOpDeliveryMirror,
+  isPermanentError,
+  computeQueueBackoff,
+  systemNowMs,
+  systemSetInterval,
+  systemClearInterval,
+} from "@comis/core";
 import { createSqliteDeliveryQueue, createSqliteDeliveryMirror } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
 import { ok, suppressError } from "@comis/shared";
@@ -109,7 +117,7 @@ export async function setupDeliveryQueue(deps: {
     }
 
     // --- Step 3: Recurring drain timer. ---
-    drainInterval = setInterval(() => {
+    drainInterval = systemSetInterval(() => {
       if (draining) return;                          // single-tick gate
       draining = runOneDrainPass().finally(() => { draining = null; });
       // Fire-and-forget: failures inside drainDeliveryQueue are already logged
@@ -127,15 +135,15 @@ export async function setupDeliveryQueue(deps: {
     // field is a placeholder until the underlying pruneExpired() is
     // extended with per-class breakdown. Canonical Pino object-first;
     // durationMs is the canonical name (CLAUDE.md logging conventions).
-    pruneInterval = setInterval(async () => {
-      const startMs = Date.now();
+    pruneInterval = systemSetInterval(async () => {
+      const startMs = systemNowMs();
       const result = await deliveryQueue.pruneExpired();
       if (result.ok && result.value > 0) {
         logger.debug(
           {
             pruned: result.value,
             class: "delivery_queue",
-            durationMs: Date.now() - startMs,
+            durationMs: systemNowMs() - startMs,
           },
           "Delivery queue pruned",
         );
@@ -146,11 +154,11 @@ export async function setupDeliveryQueue(deps: {
 
   const shutdown = (): void => {
     if (drainInterval) {
-      clearInterval(drainInterval);
+      systemClearInterval(drainInterval);
       drainInterval = undefined;
     }
     if (pruneInterval) {
-      clearInterval(pruneInterval);
+      systemClearInterval(pruneInterval);
       pruneInterval = undefined;
     }
   };
@@ -171,7 +179,7 @@ export async function drainDeliveryQueue(deps: {
   defaultMaxAttempts: number;
 }): Promise<void> {
   const { deliveryQueue, channelAdapters, eventBus, logger, drainBudgetMs, defaultMaxAttempts } = deps;
-  const drainStart = Date.now();
+  const drainStart = systemNowMs();
   const deadline = drainStart + drainBudgetMs;
 
   const pendingResult = await deliveryQueue.pendingEntries();
@@ -195,7 +203,7 @@ export async function drainDeliveryQueue(deps: {
 
   for (const entry of entries) {
     // Budget exhaustion check
-    if (Date.now() > deadline) {
+    if (systemNowMs() > deadline) {
       logger.info(
         { budgetMs: drainBudgetMs, attempted, remaining: entries.length - attempted },
         "Delivery queue drain: budget exhausted",
@@ -233,7 +241,7 @@ export async function drainDeliveryQueue(deps: {
           channelId: entry.channelId,
           messageId: sendResult.value,
           durationMs: 0, // Per-entry duration not tracked in drain; 0 is sentinel
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
       }
     } else {
@@ -243,21 +251,21 @@ export async function drainDeliveryQueue(deps: {
         await deliveryQueue.fail(entry.id, errorMsg);
         failed++;
       } else {
-        const nextRetryAt = Date.now() + computeQueueBackoff(entry.attemptCount);
+        const nextRetryAt = systemNowMs() + computeQueueBackoff(entry.attemptCount);
         await deliveryQueue.nack(entry.id, errorMsg, nextRetryAt);
         failed++;
       }
     }
   }
 
-  const durationMs = Date.now() - drainStart;
+  const durationMs = systemNowMs() - drainStart;
 
   eventBus.emit("delivery:queue_drained", {
     entriesAttempted: attempted,
     entriesDelivered: delivered,
     entriesFailed: failed,
     durationMs,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   });
 
   logger.info(
@@ -337,7 +345,7 @@ export async function setupDeliveryMirror(deps: {
     register(api) {
       api.registerHook("after_delivery", async (event, ctx) => {
         if (!ctx.sessionKey) return; // No session context -- skip
-        const now = Date.now();
+        const now = systemNowMs();
         const idempotencyKey = computeIdempotencyKey(ctx.sessionKey, event.text, now);
         const result = await deliveryMirror.record({
           sessionKey: ctx.sessionKey,
@@ -360,7 +368,7 @@ export async function setupDeliveryMirror(deps: {
   // 3. Prune timer
   let pruneInterval: ReturnType<typeof setInterval> | undefined;
   const startPrune = (): void => {
-    pruneInterval = setInterval(async () => {
+    pruneInterval = systemSetInterval(async () => {
       const result = await deliveryMirror.pruneOld(mirrorConfig.retentionMs);
       if (result.ok && result.value > 0) {
         logger.debug({ pruned: result.value }, "Delivery mirror pruned");
@@ -370,7 +378,7 @@ export async function setupDeliveryMirror(deps: {
   };
   const shutdown = (): void => {
     if (pruneInterval) {
-      clearInterval(pruneInterval);
+      systemClearInterval(pruneInterval);
       pruneInterval = undefined;
     }
   };

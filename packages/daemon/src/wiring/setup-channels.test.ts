@@ -111,6 +111,8 @@ vi.mock("@comis/core", async () => {
       }),
     })),
     createNoOpDeliveryQueue: vi.fn(() => ({})),
+    systemNowMs: () => Date.now(),
+    systemNowDate: () => new Date(),
   };
 });
 
