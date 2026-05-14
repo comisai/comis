@@ -10,6 +10,7 @@ import type { ChannelPort, TypedEventBus } from "@comis/core";
 import type { HeartbeatNotification } from "./heartbeat-runner.js";
 import type { DuplicateDetector } from "./duplicate-detector.js";
 import type { SchedulerLogger } from "../shared-types.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -76,11 +77,11 @@ export async function deliverHeartbeatNotification(
 ): Promise<DeliveryOutcome> {
   const { adaptersByType, duplicateDetector, eventBus, logger } = deps;
   const agentId = options?.agentId ?? "unknown";
-  const startMs = Date.now();
+  const startMs = systemNowMs();
 
   // Helper to emit event and return outcome
   function emitAndReturn(outcome: DeliveryOutcome): DeliveryOutcome {
-    const durationMs = Date.now() - startMs;
+    const durationMs = systemNowMs() - startMs;
     eventBus.emit("scheduler:heartbeat_delivered", {
       agentId,
       channelType: target.channelType,
@@ -90,7 +91,7 @@ export async function deliverHeartbeatNotification(
       outcome: outcome.status,
       reason: outcome.status === "skipped" ? outcome.reason : outcome.status === "failed" ? outcome.error : undefined,
       durationMs,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
     return outcome;
   }
@@ -187,7 +188,7 @@ export async function deliverHeartbeatNotification(
       channelType: target.channelType,
       chatId: target.chatId,
       level: notification.level,
-      durationMs: Date.now() - startMs,
+      durationMs: systemNowMs() - startMs,
     },
     "Heartbeat notification delivered",
   );

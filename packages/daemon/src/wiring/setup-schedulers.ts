@@ -11,7 +11,7 @@
  */
 
 import type { AppContainer, SkillsConfig, ClockPort, TimerPort } from "@comis/core";
-import { safePath, SkillsConfigSchema, formatSessionKey } from "@comis/core";
+import { safePath, SkillsConfigSchema, formatSessionKey, systemNowMs, systemSetTimeout } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { createSessionStore } from "@comis/memory";
 import type { createSessionLifecycle, SessionResetScheduler } from "@comis/agent";
@@ -124,7 +124,7 @@ export async function setupSchedulers(deps: {
     const scheduler = createCronScheduler({
       store: agentCronStore,
       executeJob: async (job) => {
-        const startTs = Date.now();
+        const startTs = systemNowMs();
         const jobLogger = schedulerLogger.child({ agentId, jobId: job.id, jobName: job.name });
         try {
           // Route main-session systemEvent jobs through heartbeat pipeline
@@ -148,8 +148,8 @@ export async function setupSchedulers(deps: {
             }
 
             await agentExecTracker.record({
-              ts: Date.now(), jobId: job.id, status: "ok",
-              durationMs: Date.now() - startTs,
+              ts: systemNowMs(), jobId: job.id, status: "ok",
+              durationMs: systemNowMs() - startTs,
               summary: "Enqueued to heartbeat pipeline",
             });
             return { status: "ok" as const, summary: "Enqueued to heartbeat pipeline" };
@@ -164,7 +164,7 @@ export async function setupSchedulers(deps: {
               { payloadKind: job.payload.kind, hint: "Job has no delivery target — result cannot be delivered. Was the job created from a channel context?", errorKind: "config" as const },
               "Cron job has no delivery target, skipping delivery",
             );
-            await agentExecTracker.record({ ts: Date.now(), jobId: job.id, status: "ok", durationMs: Date.now() - startTs, summary: "No delivery target" });
+            await agentExecTracker.record({ ts: systemNowMs(), jobId: job.id, status: "ok", durationMs: systemNowMs() - startTs, summary: "No delivery target" });
             return { status: "ok" as const, summary: "No delivery target" };
           }
 
@@ -188,7 +188,7 @@ export async function setupSchedulers(deps: {
             result: resultText,
             success: true,
             deliveryTarget: job.deliveryTarget,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
             payloadKind: job.payload.kind,
             sessionStrategy: job.sessionStrategy,
             maxHistoryTurns: job.maxHistoryTurns,
@@ -221,32 +221,32 @@ export async function setupSchedulers(deps: {
           if (deferredPromise) {
             const AGENT_TURN_TIMEOUT_MS = 600_000; // 10 minutes
             const timeoutPromise = new Promise<{ status: "ok" | "error"; error?: string }>((resolve) => {
-              const t = setTimeout(() => resolve({ status: "error" as const, error: "Agent execution timed out (10m)" }), AGENT_TURN_TIMEOUT_MS);
+              const t = systemSetTimeout(() => resolve({ status: "error" as const, error: "Agent execution timed out (10m)" }), AGENT_TURN_TIMEOUT_MS);
               t.unref();
             });
             const execResult = await Promise.race([deferredPromise, timeoutPromise]);
             await agentExecTracker.record({
-              ts: Date.now(), jobId: job.id,
+              ts: systemNowMs(), jobId: job.id,
               status: execResult.status,
-              durationMs: Date.now() - startTs,
+              durationMs: systemNowMs() - startTs,
               ...(execResult.status === "ok" ? { summary: resultText.slice(0, 200) } : { error: execResult.error }),
             });
             return execResult;
           }
 
-          await agentExecTracker.record({ ts: Date.now(), jobId: job.id, status: "ok", durationMs: Date.now() - startTs, summary: resultText.slice(0, 200) });
+          await agentExecTracker.record({ ts: systemNowMs(), jobId: job.id, status: "ok", durationMs: systemNowMs() - startTs, summary: resultText.slice(0, 200) });
           return { status: "ok" as const, summary: resultText.slice(0, 200) };
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
           jobLogger.error(
-            { err, durationMs: Date.now() - startTs, hint: "Check agent workspace and scheduler store for corruption", errorKind: "internal" as const },
+            { err, durationMs: systemNowMs() - startTs, hint: "Check agent workspace and scheduler store for corruption", errorKind: "internal" as const },
             "Cron job execution failed",
           );
           await agentExecTracker.record({
-            ts: Date.now(),
+            ts: systemNowMs(),
             jobId: job.id,
             status: "error",
-            durationMs: Date.now() - startTs,
+            durationMs: systemNowMs() - startTs,
             error: errMsg,
           });
           return { status: "error" as const, error: errMsg };
@@ -285,7 +285,7 @@ export async function setupSchedulers(deps: {
           sessionStrategy: "fresh",
           consecutiveErrors: 0,
           enabled: true,
-          createdAtMs: Date.now(),
+          createdAtMs: systemNowMs(),
         });
         schedulerLogger.info({ agentId, schedule: memoryReviewConfig.schedule ?? "0 2 * * *" }, "Registered memory review cron job");
       }

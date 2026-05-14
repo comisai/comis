@@ -12,6 +12,7 @@ import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { envWithoutSystemdNotify } from "./exec-helpers.js";
+import { systemNowMs } from "@comis/core";
 
 const execFile = promisify(execFileCb);
 
@@ -113,7 +114,7 @@ export function createSecurityUpdateSource(
     name: SOURCE_NAME,
 
     async check(): Promise<HeartbeatCheckResult> {
-      const now = Date.now();
+      const now = systemNowMs();
 
       try {
         const pm = await detectPackageManager();

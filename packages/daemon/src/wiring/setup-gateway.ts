@@ -22,6 +22,8 @@ import {
   runWithContext,
   safePath,
   createDeliveryOrigin,
+  systemNowMs,
+  systemDateFrom,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { readFileSync, existsSync } from "node:fs";
@@ -120,7 +122,7 @@ export function setupRpcBridge(deps: {
   let rpcCallInner: RpcCall;
 
   const rpcCall: RpcCall = async (method, params) => {
-    const rpcStartMs = Date.now();
+    const rpcStartMs = systemNowMs();
     try {
       return await rpcCallInner(method, params);
     } catch (err) {
@@ -129,7 +131,7 @@ export function setupRpcBridge(deps: {
       gatewayLogger.debug({
         method,
         err: errMsg,
-        durationMs: Date.now() - rpcStartMs,
+        durationMs: systemNowMs() - rpcStartMs,
         hint: classified.hint,
         errorKind: classified.errorKind,
       }, "[rpcCall] failed");
@@ -227,7 +229,7 @@ function extractAttachmentMarkers(
       const marker = att.caption
         ? `${att.caption}\n\n<!-- attachment:${json} -->`
         : `<!-- attachment:${json} -->`;
-      markers.push({ content: marker, timestamp: Date.now() });
+      markers.push({ content: marker, timestamp: systemNowMs() });
     }
 
     if (markers.length > 0) {
@@ -343,7 +345,7 @@ export async function handleConfigChatCommand(
       const lines = ["**Config History**", ""];
       for (const entry of result.entries) {
         const sha = entry.sha.slice(0, 7);
-        const date = new Date(entry.timestamp).toLocaleString();
+        const date = systemDateFrom(entry.timestamp).toLocaleString();
         lines.push(`${sha} | ${date} | ${entry.message}`);
       }
       return { handled: true, response: lines.join("\n") };
@@ -539,7 +541,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
         channelType: "gateway",
         senderId: params.sessionKey?.peerId ?? "rpc-client",
         text: enrichedText,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         attachments: [],
         metadata: {},
       };
@@ -555,7 +557,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
         tenantId: sk.tenantId,
         userId: sk.userId,
         sessionKey: formatSessionKey(sk),
-        startedAt: Date.now(),
+        startedAt: systemNowMs(),
         trustLevel,
         deliveryOrigin: createDeliveryOrigin({
           channelType: "gateway",
@@ -567,7 +569,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
       // Assemble per-agent tools via three-tier pipeline (builtin + platform + skills)
       const tools = await assembleToolsForAgent(execAgentId);
       gatewayLogger.debug({ agentId: execAgentId, toolCount: tools.length, ...(connectionId && { connectionId }) }, "Tools assembled for agent");
-      const execStartMs = Date.now();
+      const execStartMs = systemNowMs();
       const execKey = msg.id;
       activeExecutions.set(execKey, { agentId: execAgentId, startedAt: execStartMs });
       let result;
@@ -578,7 +580,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
       }
       gatewayLogger.debug({
         agentId: execAgentId,
-        durationMs: Date.now() - execStartMs,
+        durationMs: systemNowMs() - execStartMs,
         tokensIn: result.tokensUsed.input,
         tokensOut: result.tokensUsed.output,
         tokensTotal: result.tokensUsed.total,
@@ -618,7 +620,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
         }
 
         if (result.response) {
-          messages.push({ role: "assistant", content: result.response, timestamp: Date.now() });
+          messages.push({ role: "assistant", content: result.response, timestamp: systemNowMs() });
         }
         sessionStore.save(sk, messages);
         gatewayLogger.debug(
@@ -944,7 +946,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     ...(webDeps && { webDeps }),
     fingerprint: {
       instanceId,
-      startedAt: new Date(startupStartMs).toISOString(),
+      startedAt: systemDateFrom(startupStartMs).toISOString(),
     },
   });
 

@@ -28,7 +28,7 @@
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { writeFile, unlink } from "node:fs/promises";
-import { ImageGenerateContract, safePath, stripInternalFields } from "@comis/core";
+import { ImageGenerateContract, safePath, stripInternalFields, systemGetEnv } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import type { AttachmentPayload } from "@comis/core";
 import type { MediaApiDeps, RpcHandler } from "./types.js";
@@ -129,8 +129,7 @@ export function createImageHandlers(
               // Cleanup temp file after successful send
               suppressError(unlink(tempPath), "cleanup temp image file");
               const deliveredResult = { success: true, delivered: true, mimeType: result.value.mimeType };
-              // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-              if (process.env.NODE_ENV !== "production") {
+              if (systemGetEnv("NODE_ENV") !== "production") {
                 ImageGenerateContract.response.parse(deliveredResult);
               }
               return deliveredResult;
@@ -148,8 +147,7 @@ export function createImageHandlers(
         imageBase64: result.value.buffer.toString("base64"),
         mimeType: result.value.mimeType,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ImageGenerateContract.response.parse(fallbackResult);
       }
       return fallbackResult;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { MiddlewareHandler, Env } from "hono";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { systemNowMs } from "@comis/core";
 
 /**
  * Hono environment type for webhook HMAC middleware.
@@ -98,7 +99,7 @@ export function createHmacMiddleware(config: HmacMiddlewareConfig): MiddlewareHa
     const tsHeader = c.req.header(timestampHeaderName);
     if (tsHeader) {
       const ts = parseInt(tsHeader, 10);
-      const nowSec = Math.floor(Date.now() / 1000);
+      const nowSec = Math.floor(systemNowMs() / 1000);
       if (Number.isNaN(ts) || Math.abs(nowSec - ts) > maxAgeSec) {
         return c.json({ error: "Webhook timestamp expired or invalid" }, 401);
       }

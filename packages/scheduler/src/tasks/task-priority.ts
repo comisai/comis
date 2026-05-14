@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TaskPriority } from "./task-types.js";
+import { systemNowMs } from "@comis/core";
 
 /**
  * Priority scoring result for a task.
@@ -44,7 +45,7 @@ export function scorePriority(
   if (task.dueDate === undefined) {
     urgency = importance * 0.5;
   } else {
-    const now = nowMs ?? Date.now();
+    const now = nowMs ?? systemNowMs();
     const daysUntilDue = (Date.parse(task.dueDate) - now) / MS_PER_DAY;
 
     if (daysUntilDue < 0) {

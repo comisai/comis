@@ -8,6 +8,7 @@
 
 import { isValidLogLevel, type ComisLogger } from "@comis/infra";
 import type { LoggingConfig } from "@comis/core";
+import { systemGetEnv } from "@comis/core";
 import os from "node:os";
 import type pino from "pino";
 
@@ -90,8 +91,8 @@ export function expandTilde(filePath: string): string {
  * duplicate.
  */
 export function isPm2Managed(): boolean {
-  // eslint-disable-next-line no-restricted-syntax -- ops toggle read before SecretManager is initialized
-  return typeof process.env.PM2_HOME === "string" && process.env.PM2_HOME.length > 0;
+  const pm2Home = systemGetEnv("PM2_HOME");
+  return typeof pm2Home === "string" && pm2Home.length > 0;
 }
 
 /**

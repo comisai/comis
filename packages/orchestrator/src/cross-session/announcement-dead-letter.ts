@@ -13,6 +13,7 @@
 import { appendFile, writeFile, rename, readFile, unlink } from "node:fs/promises";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { TypedEventBus } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 /** Minimal pino-compatible logger for dead-letter queue diagnostics.
  *  Structurally identical to packages/daemon/src/sub-agent-runner.ts
@@ -183,7 +184,7 @@ export function createAnnouncementDeadLetterQueue(
         const fullEntry: DeadLetterEntry = {
           ...entry,
           id: randomUUID(),
-          lastAttemptAt: Date.now(),
+          lastAttemptAt: systemNowMs(),
         };
 
         // Enforce capacity cap
@@ -206,7 +207,7 @@ export function createAnnouncementDeadLetterQueue(
           runId: fullEntry.runId,
           channelType: fullEntry.channelType,
           reason: fullEntry.lastError ?? "delivery_failed",
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
 
         // Fire-and-forget file append
@@ -238,7 +239,7 @@ export function createAnnouncementDeadLetterQueue(
 
         if (entries.length === 0) return;
 
-        const now = Date.now();
+        const now = systemNowMs();
 
         // Filter out expired entries
         entries = entries.filter((entry) => {
@@ -279,7 +280,7 @@ export function createAnnouncementDeadLetterQueue(
                 runId: entry.runId,
                 channelType: entry.channelType,
                 attemptCount: entry.attemptCount + 1,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
               logger?.debug(
                 { runId: entry.runId, attemptCount: entry.attemptCount + 1 },
@@ -287,12 +288,12 @@ export function createAnnouncementDeadLetterQueue(
               );
             } else {
               entry.attemptCount++;
-              entry.lastAttemptAt = Date.now();
+              entry.lastAttemptAt = systemNowMs();
               entry.lastError = "sendToChannel returned false";
             }
           } catch (err: unknown) {
             entry.attemptCount++;
-            entry.lastAttemptAt = Date.now();
+            entry.lastAttemptAt = systemNowMs();
             entry.lastError =
               err instanceof Error ? err.message : String(err);
           }

@@ -23,6 +23,8 @@ import {
   SubagentKillContract,
   SubagentSteerContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
 } from "@comis/core";
 
 import type { RpcHandler } from "./types.js";
@@ -36,8 +38,7 @@ import type { RpcHandler } from "./types.js";
  * Daemon side is the trust boundary; in production the trust check is
  * the in-handler logic, not the contract parse.
  */
-// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-const IS_DEV = process.env.NODE_ENV !== "production";
+const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -105,14 +106,14 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
 
       // Rate limit: 2s between steers to same target
       const lastSteer = steerTimestamps.get(target);
-      if (lastSteer && Date.now() - lastSteer < 2000) {
+      if (lastSteer && systemNowMs() - lastSteer < 2000) {
         throw new Error("Rate limited: wait 2s between steers to same target");
       }
-      steerTimestamps.set(target, Date.now());
+      steerTimestamps.set(target, systemNowMs());
 
       // Prune stale entries older than 1 hour to prevent unbounded growth
       const ONE_HOUR = 60 * 60 * 1000;
-      const now = Date.now();
+      const now = systemNowMs();
       for (const [key, ts] of steerTimestamps) {
         if (now - ts > ONE_HOUR) {
           steerTimestamps.delete(key);

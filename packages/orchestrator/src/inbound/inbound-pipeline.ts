@@ -48,6 +48,7 @@ import { preprocessInboundMessage } from "./inbound-preprocess.js";
 import { evaluateInboundGate } from "./inbound-gate.js";
 import { setupInboundExecution } from "./inbound-setup.js";
 import { routeInboundMessage } from "./inbound-route.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -192,7 +193,7 @@ export async function processInboundMessage(
       channelType: adapter.channelType,
       senderId: msg.senderId,
       channelId: msg.channelId,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
     return;
   }

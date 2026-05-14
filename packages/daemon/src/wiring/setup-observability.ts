@@ -9,6 +9,7 @@
  */
 
 import type { AppContainer } from "@comis/core";
+import { systemSetInterval } from "@comis/core";
 import { createCostTracker, createCacheBreakDiffWriter } from "@comis/agent";
 import type { createTokenTracker } from "../observability/token-tracker.js";
 import type { TokenTracker } from "../observability/token-tracker.js";
@@ -139,7 +140,7 @@ export function setupObservability(deps: {
   const PRUNE_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
   const PRUNE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-  const pruneTimer = setInterval(() => {
+  const pruneTimer = systemSetInterval(() => {
     tokenTracker.prune(PRUNE_MAX_AGE_MS);
     latencyRecorder.prune(PRUNE_MAX_AGE_MS);
   }, PRUNE_INTERVAL_MS);

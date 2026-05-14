@@ -8,6 +8,7 @@ import type { HmacAlgorithm } from "./hmac-verifier.js";
 import { createHmacMiddleware } from "./hmac-verifier.js";
 import type { WebhookMappingContext } from "./webhook-mapping.js";
 import { resolveWebhookMapping, renderTemplate } from "./webhook-mapping.js";
+import { systemNowDate } from "@comis/core";
 
 /** Default maximum webhook body size: 1MB */
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
@@ -250,7 +251,7 @@ export function createMappedWebhookEndpoint(deps: MappedWebhookEndpointDeps): Ho
       headers,
       query: queryObj,
       path: reqPath,
-      now: new Date().toISOString(),
+      now: systemNowDate().toISOString(),
     };
 
     try {

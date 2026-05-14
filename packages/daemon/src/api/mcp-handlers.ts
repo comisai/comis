@@ -51,6 +51,7 @@ import {
   McpReconnectContract,
   McpTestContract,
   stripInternalFields,
+  systemGetEnv,
 } from "@comis/core";
 import type { RpcHandler } from "./types.js";
 
@@ -96,8 +97,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const result = { servers, total: servers.length };
       // Dev-mode response validation gate. Production skips for
       // cold-start budget (D-10); the daemon side is the trust boundary.
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         McpListContract.response.parse(result);
       }
       return result;
@@ -143,8 +143,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         serverVersion: conn.serverInfo,
       };
       // Dev-mode response validation gate.
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         McpStatusContract.response.parse(result);
       }
       return result;
@@ -204,8 +203,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         tools: result.value.tools.map((t) => t.name),
       };
       // Dev-mode response validation gate.
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         McpConnectContract.response.parse(response);
       }
       return response;
@@ -234,8 +232,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const result = { name, status: "disconnected" as const };
       // Dev-mode response validation gate. The success-only
       // `status: z.literal("disconnected")` shape is asserted here.
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         McpDisconnectContract.response.parse(result);
       }
       return result;
@@ -281,8 +278,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
             error: result.error.message,
           };
           // Dev-mode response validation gate.
-          // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-          if (process.env.NODE_ENV !== "production") {
+          if (systemGetEnv("NODE_ENV") !== "production") {
             McpTestContract.response.parse(failure);
           }
           return failure;
@@ -295,8 +291,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           tools: toolNames,
         };
         // Dev-mode response validation gate.
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           McpTestContract.response.parse(success);
         }
         return success;
@@ -306,8 +301,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           error: error instanceof Error ? error.message : String(error),
         };
         // Dev-mode response validation gate.
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           McpTestContract.response.parse(failure);
         }
         return failure;
@@ -361,8 +355,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
             tools: connectResult.value.tools.map((t) => t.name),
           };
           // Dev-mode response validation gate.
-          // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-          if (process.env.NODE_ENV !== "production") {
+          if (systemGetEnv("NODE_ENV") !== "production") {
             McpReconnectContract.response.parse(response);
           }
           return response;
@@ -377,8 +370,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         tools: result.value.tools.map((t) => t.name),
       };
       // Dev-mode response validation gate.
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         McpReconnectContract.response.parse(response);
       }
       return response;

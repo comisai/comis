@@ -13,6 +13,7 @@ import { HEARTBEAT_OK_TOKEN } from "@comis/scheduler";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { envWithoutSystemdNotify } from "./exec-helpers.js";
+import { systemNowMs } from "@comis/core";
 
 const execFile = promisify(execFileCb);
 
@@ -76,7 +77,7 @@ export function createGitWatcherSource(config: GitMonitorConfig): HeartbeatSourc
     name: SOURCE_NAME,
 
     async check(): Promise<HeartbeatCheckResult> {
-      const now = Date.now();
+      const now = systemNowMs();
 
       if (config.repositories.length === 0) {
         return {

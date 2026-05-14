@@ -24,11 +24,7 @@ import type {
   OAuthProfile,
   TypedEventBus,
 } from "@comis/core";
-import {
-  resolveCodexAuthIdentity,
-  rewriteOAuthError,
-  redactEmailForLog,
-} from "@comis/core";
+import { resolveCodexAuthIdentity, rewriteOAuthError, redactEmailForLog, systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { GatewayLogger } from "../server/hono-server.js";
 
 // ---------------------------------------------------------------------------
@@ -62,10 +58,10 @@ export interface PendingFlow {
   verifier: string;
   /** "openai-codex" — used for path-vs-flow provider validation. */
   provider: string;
-  /** Date.now() at insertion time. */
+  /** systemNowMs() at insertion time. */
   createdAt: number;
   /**
-   * Cleanup timer reference. The handler clearTimeout(timer) on consume;
+   * Cleanup timer reference. The handler systemClearTimeout(timer) on consume;
    * the auto-expiry path (PENDING_FLOW_TIMEOUT_MS) deletes the entry.
    */
   timer: ReturnType<typeof setTimeout>;
@@ -165,7 +161,7 @@ async function exchangeAuthorizationCode(params: {
   return {
     access: json.access_token,
     refresh: json.refresh_token,
-    expires: Date.now() + json.expires_in * 1000,
+    expires: systemNowMs() + json.expires_in * 1000,
   };
 }
 
@@ -186,7 +182,7 @@ export function insertPendingFlow(
   flow: Omit<PendingFlow, "timer">,
   logger: GatewayLogger,
 ): void {
-  const timer = setTimeout(() => {
+  const timer = systemSetTimeout(() => {
     map.delete(state);
     logger.debug(
       { provider: flow.provider, submodule: "oauth-callback" },
@@ -231,7 +227,7 @@ export function createOAuthCallbackRoute(deps: OAuthCallbackDeps): Hono {
 
     // One-time-use: cancel the timer + remove the entry BEFORE the
     // exchange so even a failed exchange does not leave a reusable state.
-    clearTimeout(flow.timer);
+    systemClearTimeout(flow.timer);
     deps.pendingFlows.delete(state);
 
     try {
@@ -280,7 +276,7 @@ export function createOAuthCallbackRoute(deps: OAuthCallbackDeps): Hono {
         provider,
         profileId,
         identity: identityForEvent,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       deps.logger.info(

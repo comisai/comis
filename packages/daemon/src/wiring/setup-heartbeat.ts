@@ -10,7 +10,7 @@
 
 import { readFile } from "node:fs/promises";
 import type { AppContainer, ChannelPort } from "@comis/core";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { isHeartbeatContentEffectivelyEmpty } from "@comis/agent";
 import {
@@ -172,7 +172,7 @@ export function setupHeartbeat(deps: HeartbeatSetupDeps): HeartbeatSetupResult {
     ? (agentId: string, tenantId: string): HeartbeatMemoryStats | undefined => {
         const stats = memoryApi.stats(tenantId, agentId);
         if (stats.totalEntries === 0 || stats.oldestCreatedAt === null) return undefined;
-        const ageDays = Math.floor((Date.now() - stats.oldestCreatedAt) / 86_400_000);
+        const ageDays = Math.floor((systemNowMs() - stats.oldestCreatedAt) / 86_400_000);
         return { totalEntries: stats.totalEntries, oldestEntryAgeDays: ageDays };
       }
     : undefined;

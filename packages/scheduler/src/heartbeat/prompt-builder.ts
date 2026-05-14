@@ -17,6 +17,7 @@
 import type { SystemEventEntry } from "../system-events/system-event-types.js";
 import type { EffectiveHeartbeatConfig } from "./heartbeat-config.js";
 import type { HeartbeatTriggerKind } from "./file-gate.js";
+import { systemNowDate } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -118,5 +119,5 @@ export function buildHeartbeatPrompt(
       + "\nConsider reviewing old memories during this heartbeat. Use memory_search to find outdated or redundant entries, and memory_store to update or consolidate them.";
   }
 
-  return body + `\n\nCurrent time: ${new Date().toISOString()}`;
+  return body + `\n\nCurrent time: ${systemNowDate().toISOString()}`;
 }

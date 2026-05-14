@@ -19,6 +19,7 @@ import type {
   TypedEventBus,
   SessionKey,
 } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 /**
  * Result of applying an overflow policy to pending messages.
@@ -126,7 +127,7 @@ export function applyOverflowPolicy(
     channelType,
     policy: config.policy,
     droppedCount: result.dropped,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   });
 
   return result;

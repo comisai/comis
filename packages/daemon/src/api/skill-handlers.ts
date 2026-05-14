@@ -54,6 +54,8 @@ import {
   SkillsCreateContract,
   SkillsUpdateContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
 } from "@comis/core";
 import { createLogger } from "@comis/infra";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
@@ -73,8 +75,7 @@ const SKILL_NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
  * Daemon side is the trust boundary; in production the trust check is
  * the in-handler logic, not the contract parse.
  */
-// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-const IS_DEV = process.env.NODE_ENV !== "production";
+const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
 /**
  * Parse a GitHub directory URL into API-friendly parts.
@@ -490,7 +491,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       // Validate skill name
       if (!params.name || params.name.length > 64 || !SKILL_NAME_RE.test(params.name) || params.name.includes("--")) {
         logger.warn({ skillName: params.name || "(empty)", agentId: callingAgentId, hint: "Skill name must be 1-64 chars, lowercase alphanumeric with single hyphens", errorKind: "validation" as const }, "Skill create rejected: invalid name");
-        deps.eventBus?.emit("skill:failed", { skillName: params.name || "(empty)", error: "Invalid skill name", phase: "create", agentId: callingAgentId, timestamp: Date.now() });
+        deps.eventBus?.emit("skill:failed", { skillName: params.name || "(empty)", error: "Invalid skill name", phase: "create", agentId: callingAgentId, timestamp: systemNowMs() });
         throw new Error("Invalid skill name: must be 1-64 chars, lowercase alphanumeric with hyphens, no leading/trailing/consecutive hyphens");
       }
 
@@ -505,7 +506,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         if (criticalFindings.length > 0) {
           const summary = criticalFindings.map((f) => f.description).join("; ");
           logger.warn({ skillName: params.name, agentId: callingAgentId, scanSummary: summary, hint: "Remove injection patterns, crypto mining, or obfuscated content from skill body", errorKind: "validation" as const }, "Skill create rejected: content scan failed");
-          deps.eventBus?.emit("skill:failed", { skillName: params.name, error: `Content scan failed: ${summary}`, phase: "scan", agentId: callingAgentId, timestamp: Date.now() });
+          deps.eventBus?.emit("skill:failed", { skillName: params.name, error: `Content scan failed: ${summary}`, phase: "scan", agentId: callingAgentId, timestamp: systemNowMs() });
           throw new Error(`Skill content rejected by security scan: ${summary}`);
         }
       }
@@ -545,7 +546,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       }
 
       // Emit skill:created event
-      deps.eventBus?.emit("skill:created", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: Date.now() });
+      deps.eventBus?.emit("skill:created", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: systemNowMs() });
 
       const result = { ok: true as const, path: skillDir, name: params.name };
       if (IS_DEV) SkillsCreateContract.response.parse(result);
@@ -594,7 +595,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
         if (criticalFindings.length > 0) {
           const summary = criticalFindings.map((f) => f.description).join("; ");
           logger.warn({ skillName: params.name, agentId: callingAgentId, scanSummary: summary, hint: "Remove injection patterns, crypto mining, or obfuscated content from skill body", errorKind: "validation" as const }, "Skill update rejected: content scan failed");
-          deps.eventBus?.emit("skill:failed", { skillName: params.name, error: `Content scan failed: ${summary}`, phase: "scan", agentId: callingAgentId, timestamp: Date.now() });
+          deps.eventBus?.emit("skill:failed", { skillName: params.name, error: `Content scan failed: ${summary}`, phase: "scan", agentId: callingAgentId, timestamp: systemNowMs() });
           throw new Error(`Skill content rejected by security scan: ${summary}`);
         }
       }
@@ -616,7 +617,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       }
 
       // Emit skill:updated event
-      deps.eventBus?.emit("skill:updated", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: Date.now() });
+      deps.eventBus?.emit("skill:updated", { skillName: params.name, scope: scope as "local" | "shared", agentId: callingAgentId, timestamp: systemNowMs() });
 
       const result = { ok: true as const, name: params.name };
       if (IS_DEV) SkillsUpdateContract.response.parse(result);

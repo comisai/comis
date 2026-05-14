@@ -8,12 +8,7 @@
  * Extracted from daemon.ts inline session.send handler for testability.
  */
 
-import {
-  parseFormattedSessionKey,
-  type SessionKey,
-  type TypedEventBus,
-  type AgentToAgentConfig,
-} from "@comis/core";
+import { parseFormattedSessionKey, type SessionKey, type TypedEventBus, type AgentToAgentConfig, systemNowMs, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -105,7 +100,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       const newMessage = {
         role: "user",
         content: params.text,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         metadata: { crossSession: true, fromSession: params.callerSessionKey },
       };
       const updatedMessages = [...data.messages, newMessage];
@@ -116,7 +111,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         fromSessionKey: params.callerSessionKey ?? "unknown",
         toSessionKey: params.targetSessionKey,
         mode: params.mode,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       // 5. Fire-and-forget: return immediately
@@ -133,13 +128,13 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
 
       // 7. Execute target agent (use explicit agentId if provided, else infer from key, else "default")
       const agentId = params.agentId ?? parsedKey.agentId ?? "default";
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       const timeoutMs = params.timeoutMs ?? deps.config.waitTimeoutMs;
 
       const execResult = await Promise.race([
         deps.executeInSession(agentId, parsedKey, params.text),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Cross-session wait timed out")), timeoutMs),
+          systemSetTimeout(() => reject(new Error("Cross-session wait timed out")), timeoutMs),
         ),
       ]);
 
@@ -158,7 +153,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           response: stripped,
           announced,
           stats: {
-            runtimeMs: Date.now() - startMs,
+            runtimeMs: systemNowMs() - startMs,
             totalTokens,
             totalCost,
           },
@@ -195,7 +190,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           turnNumber: turnsCompleted,
           totalTurns: maxTurns,
           tokensUsed: turnResult.tokensUsed.total,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
 
         // Swap directions for next turn
@@ -214,7 +209,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         turnsCompleted,
         announced,
         stats: {
-          runtimeMs: Date.now() - startMs,
+          runtimeMs: systemNowMs() - startMs,
           totalTokens,
           totalCost,
         },

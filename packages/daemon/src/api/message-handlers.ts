@@ -34,6 +34,8 @@ import {
   SlackActionContract,
   WhatsappActionContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
 } from "@comis/core";
 import { stat } from "node:fs/promises";
 import { relative } from "node:path";
@@ -50,8 +52,7 @@ import type { RpcHandler } from "./types.js";
  * Daemon side is the trust boundary; in production the trust check is
  * the in-handler logic, not the contract parse.
  */
-// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-const IS_DEV = process.env.NODE_ENV !== "production";
+const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
 /** Minimal broadcast interface for gateway WebSocket push notifications. */
 export interface WsBroadcaster {
@@ -341,7 +342,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         const mimeType = (rawParams.mime_type as string | undefined) ?? "application/octet-stream";
         await writeFile(
           `${mediaPath}.meta`,
-          JSON.stringify({ contentType: mimeType, savedAt: Date.now(), size: fileBuffer.length }),
+          JSON.stringify({ contentType: mimeType, savedAt: systemNowMs(), size: fileBuffer.length }),
         );
 
         // Push notification to all gateway clients with attachment metadata
@@ -354,7 +355,7 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
           mimeType,
           fileName,
           caption,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
 
         // Persist attachment marker to SQLite session so it survives page navigation

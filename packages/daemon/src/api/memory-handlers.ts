@@ -40,6 +40,8 @@ import {
   MemoryExportContract,
   safePath,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
 } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -84,8 +86,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
           createdAt: r.entry.createdAt,
         })),
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MemorySearchFilesContract.response.parse(result);
       }
       return result;
@@ -110,8 +111,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         totalLines: lines.length,
         content: selected.join("\n"),
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryGetFileContract.response.parse(result);
       }
       return result;
@@ -153,7 +153,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
             "Memory store blocked: critical security patterns detected",
           );
           deps.eventBus?.emit("security:memory_tainted", {
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
             agentId: storeAgentId,
             originalTrustLevel: "learned",
             adjustedTrustLevel: "blocked",
@@ -178,7 +178,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
             "Memory write tainted: suspicious patterns detected",
           );
           deps.eventBus?.emit("security:memory_tainted", {
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
             agentId: storeAgentId,
             originalTrustLevel: "learned",
             adjustedTrustLevel: "external",
@@ -214,7 +214,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         trustLevel: storeTrustLevel,
         source: storeSource,
         tags: [storeTag, ...storeTags, ...storeExtraTags],
-        createdAt: Date.now(),
+        createdAt: systemNowMs(),
       });
       if (!storeResult.ok) {
         throw new Error(`Memory store failed: ${storeResult.error.message}`);
@@ -223,8 +223,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         deps.embeddingQueue.enqueue(storeEntryId, storeContent);
       }
       const result = { stored: true as const, id: storeEntryId };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryStoreContract.response.parse(result);
       }
       return result;
@@ -240,8 +239,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       const tenantId = params.tenant_id ?? deps.tenantId;
       const agentId = params.agent_id;
       const result = deps.memoryApi.stats(tenantId, agentId);
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryStatsContract.response.parse(result);
       }
       return result;
@@ -289,8 +287,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         limit,
         hasMore: entries.length === limit,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryBrowseContract.response.parse(result);
       }
       return result;
@@ -329,8 +326,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       }
 
       const result = { deleted: successCount, failed: failCount, total: ids.length };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryDeleteContract.response.parse(result);
       }
       return result;
@@ -355,8 +351,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         entriesRemoved: count,
         scope: { tenantId, agentId: agentId ?? null },
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryFlushContract.response.parse(result);
       }
       return result;
@@ -388,8 +383,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         offset,
         limit,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryExportContract.response.parse(result);
       }
       return result;

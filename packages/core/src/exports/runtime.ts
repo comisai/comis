@@ -24,4 +24,8 @@ export {
   systemSleep,
   systemSetTimeout,
   systemClearTimeout,
+  systemSetInterval,
+  systemClearInterval,
+  systemGetEnv,
+  systemEnvSnapshot,
 } from "../runtime/system-time.js";

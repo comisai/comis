@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventBus, EventMap, EventHandler } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import type { HandlerRef } from "./index.js";
 
 /**
@@ -58,7 +59,7 @@ export function createChannelActivityTracker(deps: {
   function recordActivity(channelId: string, channelType: string, direction: "sent" | "received"): void {
     const existing = channels.get(channelId);
     if (existing) {
-      existing.lastActiveAt = Date.now();
+      existing.lastActiveAt = systemNowMs();
       if (channelType !== "unknown") {
         existing.channelType = channelType;
       }
@@ -70,7 +71,7 @@ export function createChannelActivityTracker(deps: {
     } else {
       channels.set(channelId, {
         channelType,
-        lastActiveAt: Date.now(),
+        lastActiveAt: systemNowMs(),
         sent: direction === "sent" ? 1 : 0,
         received: direction === "received" ? 1 : 0,
       });
@@ -132,7 +133,7 @@ export function createChannelActivityTracker(deps: {
     },
 
     getStale(thresholdMs: number): ChannelActivity[] {
-      const cutoff = Date.now() - thresholdMs;
+      const cutoff = systemNowMs() - thresholdMs;
       const result: ChannelActivity[] = [];
       for (const [channelId, entry] of channels) {
         if (entry.lastActiveAt < cutoff) {

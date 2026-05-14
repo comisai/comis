@@ -39,6 +39,10 @@ import {
   ContextSearchByConversationContract,
   stripInternalFields,
   type ContextStorePort,
+  systemNowMs,
+  systemNowDate,
+  systemDateFrom,
+  systemGetEnv,
 } from "@comis/core";
 import type { RpcHandler } from "./types.js";
 
@@ -134,8 +138,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
       );
 
       const result = { results: results.slice(0, limit), total: results.length };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ContextSearchContract.response.parse(result);
       }
       return result;
@@ -176,8 +179,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
           childIds,
           sourceMessageCount: sourceMessageIds.length,
         };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           ContextInspectContract.response.parse(result);
         }
         return result;
@@ -207,8 +209,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
           explorationSummary: file.exploration_summary,
           content: content.slice(0, 100_000),
         };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           ContextInspectContract.response.parse(result);
         }
         return result;
@@ -273,8 +274,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
           answer: "No relevant summaries found for this recall query.",
           citations: [],
         };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           ContextRecallContract.response.parse(emptyResult);
         }
         return emptyResult;
@@ -284,8 +284,8 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
 
       // Create expansion grant
       const grantId = "grant_" + randomBytes(8).toString("hex");
-      const expiresAt = new Date(
-        Date.now() + deps.config.recallTimeoutMs,
+      const expiresAt = systemDateFrom(
+        systemNowMs() + deps.config.recallTimeoutMs,
       ).toISOString();
 
       deps.store.createGrant({
@@ -340,8 +340,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
           grantId,
           tokensConsumed: grant?.tokens_consumed ?? 0,
         };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           ContextRecallContract.response.parse(result);
         }
         return result;
@@ -365,8 +364,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
       const offset = params.offset ?? 0;
       const conversations = deps.store.listConversations(deps.tenantId, { limit, offset });
       const result = { conversations, total: conversations.length };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ContextConversationsContract.response.parse(result);
       }
       return result;
@@ -401,8 +399,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
       }));
       const messageCount = deps.store.getLastMessageSeq(conversationId);
       const result = { conversationId, nodes, messageCount };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ContextTreeContract.response.parse(result);
       }
       return result;
@@ -434,8 +431,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
           ...summaries.map((s) => ({ id: s.summaryId, type: "summary" as const, content: s.content, rank: s.rank })),
         ].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)).slice(0, limit),
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ContextSearchByConversationContract.response.parse(result);
       }
       return result;
@@ -460,7 +456,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
       const grant = deps.store.getGrant(grantId);
       if (!grant) throw new Error("Grant not found: " + grantId);
       if (grant.revoked) throw new Error("Grant has been revoked: " + grantId);
-      if (new Date(grant.expires_at) < new Date()) {
+      if (systemDateFrom(grant.expires_at) < systemNowDate()) {
         throw new Error("Grant has expired: " + grantId);
       }
 
@@ -540,8 +536,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
         tokensExpanded,
         tokenBudgetRemaining: remainingBudget - tokensExpanded,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ContextExpandContract.response.parse(result);
       }
       return result;

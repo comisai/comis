@@ -26,6 +26,7 @@ import {
   ProvidersEnableContract,
   ProvidersDisableContract,
   stripInternalFields,
+  systemGetEnv,
 } from "@comis/core";
 import type { ProviderEntry, PerAgentConfig } from "@comis/core";
 
@@ -38,8 +39,7 @@ import type { ProviderEntry, PerAgentConfig } from "@comis/core";
  * Daemon side is the trust boundary; in production the trust check is
  * the in-handler logic, not the contract parse.
  */
-// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-const IS_DEV = process.env.NODE_ENV !== "production";
+const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 import { getModels, getProviders, type KnownProvider } from "@mariozechner/pi-ai";
 import { checkBuiltInProviderRedundancy } from "./shared/builtin-provider-guard.js";
 import { persistToConfig } from "./shared/persist-to-config.js";

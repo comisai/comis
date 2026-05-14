@@ -6,7 +6,7 @@
  *
  */
 
-import { type TypedEventBus, sanitizeLogString } from "@comis/core";
+import { type TypedEventBus, sanitizeLogString, systemSetInterval, systemClearInterval } from "@comis/core";
 import type { Result } from "@comis/shared";
 import type { HeartbeatSourcePort, HeartbeatCheckResult } from "./heartbeat-source.js";
 import type { QuietHoursConfig } from "./quiet-hours.js";
@@ -189,7 +189,7 @@ export function createHeartbeatRunner(deps: HeartbeatRunnerDeps): HeartbeatRunne
   return {
     start(): void {
       if (timer !== null) return;
-      timer = setInterval(() => {
+      timer = systemSetInterval(() => {
         void runOnce();
       }, config.intervalMs);
       timer.unref();
@@ -198,7 +198,7 @@ export function createHeartbeatRunner(deps: HeartbeatRunnerDeps): HeartbeatRunne
 
     stop(): void {
       if (timer !== null) {
-        clearInterval(timer);
+        systemClearInterval(timer);
         timer = null;
         logger.info("HeartbeatRunner stopped");
       }

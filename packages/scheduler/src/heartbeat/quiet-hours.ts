@@ -7,6 +7,8 @@
  * windows (e.g., 13:00-17:00). Start time is inclusive, end time exclusive.
  */
 
+import { systemDateFrom } from "@comis/core";
+
 /** Configuration for quiet hours notification suppression. */
 export interface QuietHoursConfig {
   /** Whether quiet hours are enabled. */
@@ -44,7 +46,7 @@ export function parseTimeToMinutes(time: string): number {
  * If timezone is empty string, system local timezone is used.
  */
 export function getCurrentMinutesInTimezone(nowMs: number, timezone: string): number {
-  const date = new Date(nowMs);
+  const date = systemDateFrom(nowMs);
   const options: Intl.DateTimeFormatOptions = {
     hour: "numeric",
     minute: "numeric",

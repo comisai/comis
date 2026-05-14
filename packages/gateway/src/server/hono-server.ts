@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { GatewayConfig, TypedEventBus, HookRunner, HookGatewayStartContext, HookGatewayStopContext } from "@comis/core";
-import { tryGetContext } from "@comis/core";
+import { tryGetContext, systemNowDate } from "@comis/core";
 import type { WSContext, WSEvents } from "hono/ws";
 import type { JSONRPCServer } from "json-rpc-2.0";
 import { serve } from "@hono/node-server";
@@ -175,7 +175,7 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
   app.get("/health", (c) => {
     return c.json({
       status: "ok",
-      timestamp: new Date().toISOString(),
+      timestamp: systemNowDate().toISOString(),
       ...(deps.fingerprint && {
         instanceId: deps.fingerprint.instanceId,
         startedAt: deps.fingerprint.startedAt,

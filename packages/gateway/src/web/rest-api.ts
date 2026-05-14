@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { parseFormattedSessionKey, type TypedEventBus, type EventMap } from "@comis/core";
+import { parseFormattedSessionKey, type TypedEventBus, type EventMap, systemNowMs, systemNowDate } from "@comis/core";
 import type { Env } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -37,7 +37,7 @@ export class ActivityRingBuffer {
       id: this.nextId++,
       event,
       payload,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
 
     if (this.entries.length > this.maxSize) {
@@ -178,7 +178,7 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
   api.get("/health", (c) => {
     return c.json({
       status: "ok",
-      timestamp: new Date().toISOString(),
+      timestamp: systemNowDate().toISOString(),
       ...(deps.fingerprint && {
         instanceId: deps.fingerprint.instanceId,
         startedAt: deps.fingerprint.startedAt,

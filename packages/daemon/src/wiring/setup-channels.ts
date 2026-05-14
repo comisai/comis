@@ -13,7 +13,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin, safePath, createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
+import { formatSessionKey, runWithContext, createDeliveryOrigin, safePath, createDeliveryService, createNoOpDeliveryQueue, systemNowMs, systemNowDate } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { createSessionStore } from "@comis/memory";
@@ -443,17 +443,17 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       }
 
       const syntheticMsg: NormalizedMessage = {
-        id: `cron-${payload.jobId}-${Date.now()}`,
+        id: `cron-${payload.jobId}-${systemNowMs()}`,
         channelId: deliveryTarget.channelId,
         channelType: deliveryTarget.channelType,
         senderId: "system",
         text: resultText,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         attachments: [],
         metadata: { isCronAgentTurn: true, jobId: payload.jobId, jobName },
       };
 
-      const execStartTs = Date.now();
+      const execStartTs = systemNowMs();
       try {
         const allTools = deps.assembleToolsForAgent
           ? await deps.assembleToolsForAgent(payload.agentId)
@@ -491,7 +491,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
           tenantId: sessionKey.tenantId,
           userId: sessionKey.userId,
           sessionKey: formatSessionKey(sessionKey),
-          startedAt: Date.now(),
+          startedAt: systemNowMs(),
           trustLevel: "user",
           channelType: deliveryTarget.channelType,
           deliveryOrigin: deliveryTarget ? createDeliveryOrigin({
@@ -539,7 +539,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
           {
             jobName,
             agentId: payload.agentId,
-            durationMs: Date.now() - execStartTs,
+            durationMs: systemNowMs() - execStartTs,
             responseLen: cleaned.length,
             totalTokens: execResult.tokensUsed.total,
             costUsd: execResult.cost.total,
@@ -553,10 +553,10 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
         const execTracker = deps.cronExecutionTrackers?.get(payload.agentId);
         if (execTracker) {
           await execTracker.record({
-            ts: Date.now(),
+            ts: systemNowMs(),
             jobId: payload.jobId,
             status: "ok",
-            durationMs: Date.now() - execStartTs,
+            durationMs: systemNowMs() - execStartTs,
             summary: cleaned.slice(0, 200),
             totalTokens: execResult.tokensUsed.total,
             costUsd: execResult.cost.total,
@@ -610,10 +610,10 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
         const execTracker = deps.cronExecutionTrackers?.get(payload.agentId);
         if (execTracker) {
           await execTracker.record({
-            ts: Date.now(),
+            ts: systemNowMs(),
             jobId: payload.jobId,
             status: "error",
-            durationMs: Date.now() - execStartTs,
+            durationMs: systemNowMs() - execStartTs,
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -1015,7 +1015,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
         const resolvedProvider = agentConfig?.provider === "default"
           ? modelsConfig?.defaultProvider ?? ""
           : agentConfig?.provider ?? "";
-        const now = new Date();
+        const now = systemNowDate();
         return {
           agent: agentConfig?.name ?? agentId,
           "agent.emoji": "",

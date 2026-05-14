@@ -54,6 +54,8 @@ import {
   SecretsListContract,
   SecretsDeleteContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
 } from "@comis/core";
 
 import type { RpcHandler } from "./types.js";
@@ -70,11 +72,11 @@ import type { RpcHandler } from "./types.js";
  */
 function createTokenBucket(maxTokens: number, windowMs: number) {
   let tokens = maxTokens;
-  let lastRefill = Date.now();
+  let lastRefill = systemNowMs();
 
   return {
     tryConsume(): { allowed: boolean; retryAfterMs?: number } {
-      const now = Date.now();
+      const now = systemNowMs();
       const elapsed = now - lastRefill;
       const refilled = (elapsed / windowMs) * maxTokens;
       tokens = Math.min(maxTokens, tokens + refilled);
@@ -140,7 +142,7 @@ export function createSecretsHandlers(
      * Audit event records name + outcome (never value).
      */
     [SecretsGetContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       // Admin trust check FIRST — separate from the contract schema (D-04).
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
@@ -201,7 +203,7 @@ export function createSecretsHandlers(
       const decryptResult = deps.secretStore.getDecrypted(name);
       if (!decryptResult.ok) {
         deps.container.eventBus.emit("audit:event", {
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "secrets.get",
@@ -213,7 +215,7 @@ export function createSecretsHandlers(
           {
             method: "secrets.get",
             name,
-            durationMs: Date.now() - startMs,
+            durationMs: systemNowMs() - startMs,
             outcome: "failure",
             err: decryptResult.error,
             hint: "Verify master key matches the secrets.db",
@@ -225,7 +227,7 @@ export function createSecretsHandlers(
       }
 
       deps.container.eventBus.emit("audit:event", {
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         agentId: "system",
         tenantId: deps.container.config.tenantId ?? "default",
         actionType: "secrets.get",
@@ -237,7 +239,7 @@ export function createSecretsHandlers(
         {
           method: "secrets.get",
           name,
-          durationMs: Date.now() - startMs,
+          durationMs: systemNowMs() - startMs,
           outcome: "success",
         },
         "Secret retrieved",
@@ -254,8 +256,7 @@ export function createSecretsHandlers(
       // unlike `secrets.list` where any leak fails-closed. Here the parse
       // serves as a defense-in-depth shape check (e.g., `exists` must be
       // a boolean). Production skips for cold-start budget (D-10).
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsGetContract.response.parse(result);
       }
       return result;
@@ -268,7 +269,7 @@ export function createSecretsHandlers(
      * appears in any log call or audit event.
      */
     [SecretsSetContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       // Admin trust check FIRST — separate from the contract schema (D-04).
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
@@ -366,7 +367,7 @@ export function createSecretsHandlers(
       );
       if (!setResult.ok) {
         deps.container.eventBus.emit("audit:event", {
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "secrets.set",
@@ -378,7 +379,7 @@ export function createSecretsHandlers(
           {
             method: "secrets.set",
             name,
-            durationMs: Date.now() - startMs,
+            durationMs: systemNowMs() - startMs,
             outcome: "failure",
             err: setResult.error,
             hint: "Check secrets store backend and master key configuration",
@@ -390,7 +391,7 @@ export function createSecretsHandlers(
       }
 
       deps.container.eventBus.emit("audit:event", {
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         agentId: "system",
         tenantId: deps.container.config.tenantId ?? "default",
         actionType: "secrets.set",
@@ -402,15 +403,14 @@ export function createSecretsHandlers(
         {
           method: "secrets.set",
           name,
-          durationMs: Date.now() - startMs,
+          durationMs: systemNowMs() - startMs,
           outcome: "success",
         },
         "Secret stored",
       );
 
       const result = { name, stored: true };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsSetContract.response.parse(result);
       }
       return result;
@@ -421,7 +421,7 @@ export function createSecretsHandlers(
      * Admin only. Plaintext values are NEVER part of SecretMetadata.
      */
     [SecretsListContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       // Admin trust check FIRST — separate from the contract schema (D-04).
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
@@ -436,12 +436,11 @@ export function createSecretsHandlers(
       if (!deps.secretStore) {
         // No master key configured -- return empty list, not an error.
         deps.logger.debug(
-          { method: "secrets.list", durationMs: Date.now() - startMs },
+          { method: "secrets.list", durationMs: systemNowMs() - startMs },
           "Secrets list returning empty (no encrypted store configured)",
         );
         const emptyResult = { secrets: [] };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           SecretsListContract.response.parse(emptyResult);
         }
         return emptyResult;
@@ -452,7 +451,7 @@ export function createSecretsHandlers(
         deps.logger.error(
           {
             method: "secrets.list",
-            durationMs: Date.now() - startMs,
+            durationMs: systemNowMs() - startMs,
             outcome: "failure",
             err: listResult.error,
             hint: "Check secrets.db file integrity and permissions",
@@ -467,7 +466,7 @@ export function createSecretsHandlers(
         {
           method: "secrets.list",
           count: listResult.value.length,
-          durationMs: Date.now() - startMs,
+          durationMs: systemNowMs() - startMs,
           outcome: "success",
         },
         "Secrets listed",
@@ -483,8 +482,7 @@ export function createSecretsHandlers(
       // from the parsed output BEFORE the response crosses the daemon →
       // CLI boundary. Production skips the parse for cold-start budget
       // compliance (WEB-CONTRACTS-17); dev/test catches structural drift.
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsListContract.response.parse(result);
       }
       return result;
@@ -496,7 +494,7 @@ export function createSecretsHandlers(
      * as destructive.
      */
     [SecretsDeleteContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       // Admin trust check FIRST — separate from the contract schema (D-04).
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
@@ -550,7 +548,7 @@ export function createSecretsHandlers(
       const delResult = deps.secretStore.delete(name);
       if (!delResult.ok) {
         deps.container.eventBus.emit("audit:event", {
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "secrets.delete",
@@ -562,7 +560,7 @@ export function createSecretsHandlers(
           {
             method: "secrets.delete",
             name,
-            durationMs: Date.now() - startMs,
+            durationMs: systemNowMs() - startMs,
             outcome: "failure",
             err: delResult.error,
             hint: "Check secrets.db permissions",
@@ -574,7 +572,7 @@ export function createSecretsHandlers(
       }
 
       deps.container.eventBus.emit("audit:event", {
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         agentId: "system",
         tenantId: deps.container.config.tenantId ?? "default",
         actionType: "secrets.delete",
@@ -587,15 +585,14 @@ export function createSecretsHandlers(
           method: "secrets.delete",
           name,
           existed: delResult.value,
-          durationMs: Date.now() - startMs,
+          durationMs: systemNowMs() - startMs,
           outcome: "success",
         },
         "Secret deleted",
       );
 
       const result = { name, deleted: delResult.value };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsDeleteContract.response.parse(result);
       }
       return result;

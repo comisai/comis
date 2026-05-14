@@ -10,7 +10,7 @@
  */
 
 import type { ChannelPort, NormalizedMessage, SessionKey } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, systemNowMs } from "@comis/core";
 import type { AgentExecutor } from "@comis/agent";
 import type { PerChannelStreamingConfig } from "@comis/core";
 
@@ -152,7 +152,7 @@ export async function routeInboundMessage(
         channelType: adapter.channelType,
         messageCount: deps.groupHistoryBuffer.depth(skFormatted),
         charCount: history.length,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
       deps.logger.debug({
         step: "group-history-inject",
@@ -228,7 +228,7 @@ export async function routeInboundMessage(
               sessionKey,
               channelType: adapter.channelType,
               agentId,
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
             });
             deps.logger.debug(
               { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
@@ -255,7 +255,7 @@ export async function routeInboundMessage(
             channelType: adapter.channelType,
             agentId,
             reason: "compacting",
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
           deps.logger.debug(
             { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
@@ -267,7 +267,7 @@ export async function routeInboundMessage(
             channelType: adapter.channelType,
             agentId,
             reason: "not_streaming",
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
           deps.logger.debug(
             { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
@@ -283,7 +283,7 @@ export async function routeInboundMessage(
             channelType: adapter.channelType,
             agentId,
             reason: runHandle.isCompacting() ? "compacting" : "not_streaming",
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
           deps.logger.debug(
             { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
@@ -322,7 +322,7 @@ export async function routeInboundMessage(
         channelType: adapter.channelType,
         lane: assignment.lane,
         reason: assignment.reason,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     }
 

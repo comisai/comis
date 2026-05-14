@@ -9,7 +9,7 @@
  */
 
 import type { ChannelPort, NormalizedMessage, SessionKey } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, systemNowMs } from "@comis/core";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
 import { isGroupMessage, evaluateSendPolicy, applySessionOverride } from "@comis/channels";
@@ -108,7 +108,7 @@ export function evaluateExecutionPolicy(
         channelType: adapter.channelType,
         chatType: policyCtx.chatType,
         reason: policyDecision.reason,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
       deps.logger.info(
         { channelId: adapter.channelId, reason: policyDecision.reason },
@@ -128,7 +128,7 @@ export function evaluateExecutionPolicy(
       channelType: adapter.channelType,
       chatType: policyCtx.chatType,
       reason: policyDecision.reason,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 
@@ -148,7 +148,7 @@ export function evaluateExecutionPolicy(
           senderTrustLevel: trustLevel,
           modelRoute,
           agentId,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
         msg = {
           ...msg,

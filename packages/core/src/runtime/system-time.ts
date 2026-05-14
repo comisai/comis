@@ -47,10 +47,17 @@ export function systemSleep(ms: number): Promise<void> {
 /** Opaque handle for `systemSetTimeout` — pass to `systemClearTimeout` to cancel. */
 export type SystemTimeoutHandle = ReturnType<typeof setTimeout>;
 
+/** Opaque handle for `systemSetInterval` — pass to `systemClearInterval` to cancel. */
+export type SystemIntervalHandle = ReturnType<typeof setInterval>;
+
 /**
  * Schedule a one-shot timeout. Returns a handle that can be passed to
  * `systemClearTimeout` to cancel. Use this from in-package consumers that
  * cannot accept an injected TimerPort.
+ *
+ * The returned handle has Node's native `.unref()` — callers that need to
+ * unref the timer (so it doesn't keep the event loop alive) should chain
+ * `.unref()` on the returned handle.
  */
 export function systemSetTimeout(cb: () => void, ms: number): SystemTimeoutHandle {
   return setTimeout(cb, ms);
@@ -60,3 +67,46 @@ export function systemSetTimeout(cb: () => void, ms: number): SystemTimeoutHandl
 export function systemClearTimeout(handle: SystemTimeoutHandle): void {
   clearTimeout(handle);
 }
+
+/**
+ * Schedule a recurring interval. Returns a handle that can be passed to
+ * `systemClearInterval` to cancel. The returned handle has Node's native
+ * `.unref()` — callers that need to unref the interval (so it doesn't keep
+ * the event loop alive on SIGTERM) MUST chain `.unref()` on the returned
+ * handle. Daemon shutdown safety depends on this.
+ */
+export function systemSetInterval(cb: () => void, ms: number): SystemIntervalHandle {
+  return setInterval(cb, ms);
+}
+
+/** Cancel a recurring `systemSetInterval` handle. Idempotent. */
+export function systemClearInterval(handle: SystemIntervalHandle): void {
+  clearInterval(handle);
+}
+
+/**
+ * Read an environment variable. Sanctioned-root indirection equivalent of
+ * `process.env[key]` — for in-package consumers that cannot accept an injected
+ * EnvPort. Returns `undefined` if the variable is not set.
+ *
+ * Use this for non-secret env reads at trust-boundary call sites:
+ *   - NODE_ENV (set by the launcher, gates dev-mode response validation)
+ *   - NOTIFY_SOCKET (set by systemd, gates watchdog notifications)
+ *   - PM2_HOME (set by pm2, gates pm2-process detection)
+ *
+ * Secret reads (API keys, OAuth tokens, etc.) MUST go through SecretManager.
+ * This helper is intentionally narrow.
+ */
+// eslint-disable-next-line no-restricted-syntax, security/detect-object-injection -- sanctioned-root env helper at the trust boundary; consumers read non-secret env vars (NODE_ENV, NOTIFY_SOCKET, PM2_HOME). Secrets must use SecretManager.
+export function systemGetEnv(key: string): string | undefined { return process.env[key]; }
+
+/**
+ * Return a shallow copy of `process.env`. Sanctioned-root indirection for
+ * the rare cases that need the full env (e.g., subprocess spawn env that
+ * inherits but strips a specific set of keys). Returns a NEW object so the
+ * caller can mutate without affecting the live env.
+ *
+ * Use sparingly — most callers should read specific keys via `systemGetEnv`.
+ */
+export function systemEnvSnapshot(): NodeJS.ProcessEnv { return { ...process.env }; }
+

@@ -48,6 +48,9 @@ import {
   type AppContainer,
   type ConfigGitManager,
   type GitCommitMetadata,
+  systemNowMs,
+  systemSetTimeout,
+  systemClearTimeout,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { Result } from "@comis/shared";
@@ -68,7 +71,7 @@ let sigusr1Timer: ReturnType<typeof setTimeout> | undefined;
 /** Reset the module-scoped SIGUSR2 debounce timer. For test isolation only. */
 export function _resetSigusr1Timer(): void {
   if (sigusr1Timer !== undefined) {
-    clearTimeout(sigusr1Timer);
+    systemClearTimeout(sigusr1Timer);
     sigusr1Timer = undefined;
   }
 }
@@ -160,7 +163,7 @@ export async function persistToConfig(
   deps: PersistToConfigDeps,
   opts: PersistToConfigOpts,
 ): Promise<Result<{ configPath: string }, string>> {
-  const startMs = Date.now();
+  const startMs = systemNowMs();
 
   try {
     // 1. Determine local config file path (last entry, same as config.patch)
@@ -241,7 +244,7 @@ export async function persistToConfig(
 
     // Best-effort git versioning
     if (deps.configGitManager) {
-      const gitStart = Date.now();
+      const gitStart = systemNowMs();
       const section = Object.keys(opts.patch)[0] ?? "config";
       const meta: GitCommitMetadata = {
         section,
@@ -252,17 +255,17 @@ export async function persistToConfig(
         summary: `${opts.actionType}: ${opts.entityId}`,
       };
       deps.configGitManager.commit(meta).then(() => {
-        deps.logger.debug({ method: "persistToConfig", durationMs: Date.now() - gitStart, outcome: "success" }, "Git commit recorded");
+        deps.logger.debug({ method: "persistToConfig", durationMs: systemNowMs() - gitStart, outcome: "success" }, "Git commit recorded");
       }).catch((gitErr: unknown) => {
-        deps.logger.debug({ method: "persistToConfig", durationMs: Date.now() - gitStart, outcome: "failure", err: gitErr, hint: "Git commit failed (best-effort)", errorKind: "internal" as const }, "Git commit failed (best-effort)");
+        deps.logger.debug({ method: "persistToConfig", durationMs: systemNowMs() - gitStart, outcome: "failure", err: gitErr, hint: "Git commit failed (best-effort)", errorKind: "internal" as const }, "Git commit failed (best-effort)");
       });
     }
 
-    const durationMs = Date.now() - startMs;
+    const durationMs = systemNowMs() - startMs;
 
     // Emit audit event on success
     deps.container.eventBus.emit("audit:event", {
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
       agentId: opts.actingUser ?? "system",
       tenantId: deps.container.config.tenantId ?? "default",
       actionType: opts.actionType,
@@ -282,12 +285,12 @@ export async function persistToConfig(
     // Skip restart when caller handles the mutation in-process (hot-add/hot-remove).
     if (!opts.skipRestart) {
       if (sigusr1Timer !== undefined) {
-        clearTimeout(sigusr1Timer);
+        systemClearTimeout(sigusr1Timer);
       }
-      sigusr1Timer = setTimeout(function fireSigusr1() {
+      sigusr1Timer = systemSetTimeout(function fireSigusr1() {
         if (pendingConfigMutations > 0) {
           // Re-arm: fence still held, retry in 500ms
-          sigusr1Timer = setTimeout(fireSigusr1, 500);
+          sigusr1Timer = systemSetTimeout(fireSigusr1, 500);
           return;
         }
         sigusr1Timer = undefined;
@@ -297,12 +300,12 @@ export async function persistToConfig(
 
     return ok({ configPath });
   } catch (e: unknown) {
-    const durationMs = Date.now() - startMs;
+    const durationMs = systemNowMs() - startMs;
     const errMsg = e instanceof Error ? e.message : String(e);
 
     // Emit audit event on failure
     deps.container.eventBus.emit("audit:event", {
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
       agentId: opts.actingUser ?? "system",
       tenantId: deps.container.config.tenantId ?? "default",
       actionType: opts.actionType,

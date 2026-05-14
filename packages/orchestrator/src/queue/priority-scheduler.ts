@@ -19,6 +19,7 @@
 
 import PQueue from "p-queue";
 import type { TypedEventBus, PriorityLaneConfig } from "@comis/core";
+import { systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -141,8 +142,8 @@ export function createPriorityScheduler(deps: PrioritySchedulerDeps): PrioritySc
   let agingSweepTimer: ReturnType<typeof setInterval> | undefined;
 
   function startAgingSweep(): void {
-    agingSweepTimer = setInterval(() => {
-      const now = Date.now();
+    agingSweepTimer = systemSetInterval(() => {
+      const now = systemNowMs();
       for (const [laneName, entry] of laneMap) {
         if (entry.config.agingPromotionMs <= 0) continue;
         // Check oldest enqueue times
@@ -183,7 +184,7 @@ export function createPriorityScheduler(deps: PrioritySchedulerDeps): PrioritySc
         lane = lowestLane!;
       }
 
-      const enqueuedAt = Date.now();
+      const enqueuedAt = systemNowMs();
       lane.enqueueTimes.push(enqueuedAt);
 
       await lane.queue.add(async () => {
@@ -242,7 +243,7 @@ export function createPriorityScheduler(deps: PrioritySchedulerDeps): PrioritySc
 
       // Stop aging sweep
       if (agingSweepTimer !== undefined) {
-        clearInterval(agingSweepTimer);
+        systemClearInterval(agingSweepTimer);
         agingSweepTimer = undefined;
       }
 
