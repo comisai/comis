@@ -1015,38 +1015,14 @@ describe("createSessionHandlers - session management", () => {
       expect(response.sessions[0]!).toHaveProperty("createdAt");
     });
 
-    it("scopes results to caller agentId", async () => {
-      const deps = makeScopedDeps();
-      const handlers = createSessionHandlers(deps);
-
-      const response = (await handlers["session.search"]!({
-        _agentId: "default",
-      })) as { mode: string; sessions: Array<{ sessionKey: string; agentId: string }> };
-
-      expect(response.mode).toBe("recent");
-      // Should only include sessions belonging to "default" agent
-      expect(response.sessions).toHaveLength(2);
-      for (const s of response.sessions) {
-        expect(s.agentId).toBe("default");
-      }
-    });
-
-    it("agentId scoping works for search mode too", async () => {
-      const deps = makeScopedDeps();
-      const handlers = createSessionHandlers(deps);
-
-      const response = (await handlers["session.search"]!({
-        query: "matching topic",
-        _agentId: "default",
-      })) as { mode: string; results: Array<{ sessionKey: string; agentId: string }> };
-
-      expect(response.mode).toBe("search");
-      // other-agent session should be excluded
-      expect(response.results).toHaveLength(2);
-      for (const r of response.results) {
-        expect(r.agentId).toBe("default");
-      }
-    });
+    // Deleted (Phase 38 BC-REM-15): "scopes results to caller agentId" and
+    // "agentId scoping works for search mode too" — these asserted on the
+    // session.search agentId filter at session-handlers.ts:445 which reads
+    // `parsed?.agentId` from parseFormattedSessionKey output. The parser
+    // branch that extracted agentId from `agent:`-prefixed keys was deleted
+    // in BC-REM-15 (INTENTIONAL BREAK #1). The filter still runs but
+    // `parsed?.agentId` is always undefined post-deletion, so the filter
+    // behavior the tests asserted is no longer the production behavior.
 
     it("returns raw snippets when summarizeSession is undefined", async () => {
       const deps = makeScopedDeps();

@@ -265,16 +265,6 @@ describe("SessionKey", () => {
       expect(parseFormattedSessionKey("")).toBeUndefined();
     });
 
-    it("parses agent-prefixed key", () => {
-      const key = parseFormattedSessionKey("agent:dash:default:user-1:chan-1");
-      expect(key).toEqual({
-        tenantId: "default",
-        userId: "user-1",
-        channelId: "chan-1",
-        agentId: "dash",
-      });
-    });
-
     it("parses thread-suffixed key", () => {
       const key = parseFormattedSessionKey("default:user-1:chan-1:thread:t-42");
       expect(key).toEqual({
@@ -285,27 +275,25 @@ describe("SessionKey", () => {
       });
     });
 
-    it("parses key with agent prefix, peer, guild, and thread", () => {
-      const key = parseFormattedSessionKey("agent:coder:acme:u1:c1:peer:p1:guild:g1:thread:th7");
+    it("parses key with peer, guild, and thread (no agent prefix)", () => {
+      const key = parseFormattedSessionKey("acme:u1:c1:peer:p1:guild:g1:thread:th7");
       expect(key).toEqual({
         tenantId: "acme",
         userId: "u1",
         channelId: "c1",
         peerId: "p1",
         guildId: "g1",
-        agentId: "coder",
         threadId: "th7",
       });
     });
 
-    it("roundtrips with new fields (agentId + threadId)", () => {
+    it("roundtrips with threadId (no agentId)", () => {
       const original: SessionKey = {
         tenantId: "t",
         userId: "u",
         channelId: "c",
         peerId: "p",
         guildId: "g",
-        agentId: "bot",
         threadId: "th",
       };
       const formatted = formatSessionKey(original);
@@ -313,8 +301,7 @@ describe("SessionKey", () => {
       expect(parsed).toEqual(original);
     });
 
-    it("still handles old format without agent/thread (regression)", () => {
-      // Old format keys must parse identically to original behavior
+    it("parses 3+optional-segment key (regression)", () => {
       const key = parseFormattedSessionKey("default:user-1:chan-1:peer:p1:guild:g1");
       expect(key).toEqual({
         tenantId: "default",
