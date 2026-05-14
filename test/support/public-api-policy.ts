@@ -1461,10 +1461,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "AcpServerDeps",
       "createMdnsAdvertiser",
     ])],
-    // @comis/infra: 2 pre-Phase-29 baseline orphans tracked here.
+    // @comis/infra: 2 pre-Phase-29 baseline orphans + 3 Phase 39 Wave 2
+    // transient orphans (Plan 39-02). createSystemClock/createSystemEnv/
+    // createSystemTimers are Node-backed runtime adapters landed without an
+    // in-repo consumer because Wave 3+ (bootstrap closure + production
+    // retargets) consume them. Tracked here per the public-export-consumers
+    // gate; removed wholesale when the daemon composition root wires them
+    // in (Wave 3, PORTS-10/11/12/13).
     ["@comis/infra", new Set<string>([
       "LogFields",
       "VALID_LOG_LEVELS",
+      "createSystemClock",
+      "createSystemEnv",
+      "createSystemTimers",
     ])],
     // @comis/memory: 43 pre-Phase-29 baseline orphans tracked here + 5 Phase-31
     // commit-3 transient orphans (SessionStore alias + SessionDetailedEntry
