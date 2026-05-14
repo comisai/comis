@@ -606,15 +606,17 @@ const DEFAULT_TOOL_DISCOVERY_SCORES: ToolDiscoveryScoreConfig = {
  * @param activeToolNames Names of tools currently ACTIVE in this session
  *   (post-deferral: active + discovered). Used to return "already active"
  *   guidance when queries re-ask for loaded MCPs. Must NOT include names
- *   that were deferred. Default empty set keeps callers backward-compatible.
+ *   that were deferred. Required — pass an empty set when no tools are
+ *   active rather than relying on a default.
  */
 export function createDiscoverTool(
   deferredEntries: DeferredToolEntry[],
   logger: ComisLogger,
-  embeddingPort?: EmbeddingPort,
-  scoreConfig: ToolDiscoveryScoreConfig = DEFAULT_TOOL_DISCOVERY_SCORES,
-  activeToolNames: ReadonlySet<string> = new Set(),
+  embeddingPort: EmbeddingPort | undefined,
+  scoreConfig: ToolDiscoveryScoreConfig | undefined,
+  activeToolNames: ReadonlySet<string>,
 ): ToolDefinition {
+  const resolvedScoreConfig = scoreConfig ?? DEFAULT_TOOL_DISCOVERY_SCORES;
   // Build ToolDefinition[] view for structuredSearch compatibility
   const deferredTools = deferredEntries.map(e => e.original);
 
@@ -728,7 +730,7 @@ export function createDiscoverTool(
       }
 
       // ---------- Floor check ----------
-      const floor = embeddingUsed ? scoreConfig.minHybridScore : scoreConfig.minBm25Score;
+      const floor = embeddingUsed ? resolvedScoreConfig.minHybridScore : resolvedScoreConfig.minBm25Score;
       const normalizedTopScore = ranked[0]?.score ?? 0;
       const filtered = ranked.filter(r => r.score >= floor);
       const topResults = filtered.slice(0, 10);

@@ -570,7 +570,7 @@ describe("discover_tools score-floor filter", () => {
 
   it("zero-signal query returns empty with enriched WARN", async () => {
     const logger = createMockLogger();
-    const discoverTool = createDiscoverTool(makeNoiseFixture(), logger);
+    const discoverTool = createDiscoverTool(makeNoiseFixture(), logger, undefined, undefined, new Set<string>());
 
     const searchResult = await discoverTool.execute!("call-1", { query: "gemini image generate" });
 
@@ -597,7 +597,7 @@ describe("discover_tools score-floor filter", () => {
 
   it("real-signal query still matches with default threshold", async () => {
     const logger = createMockLogger();
-    const discoverTool = createDiscoverTool(makeNoiseFixture(), logger);
+    const discoverTool = createDiscoverTool(makeNoiseFixture(), logger, undefined, undefined, new Set<string>());
 
     const searchResult = await discoverTool.execute!("call-1", { query: "agent manage fleet" });
 
@@ -648,7 +648,7 @@ describe("discover_tools score-floor filter", () => {
     // Default-threshold call: "generate" appears only in custom_tokens, so
     // custom_tokens is the unique top match. Normalized score 1.0 >= 0.8.
     const logger = createMockLogger();
-    const defaultTool = createDiscoverTool(overlapFixture, logger);
+    const defaultTool = createDiscoverTool(overlapFixture, logger, undefined, undefined, new Set<string>());
     const defaultResult = await defaultTool.execute!("call-1", { query: "gemini image generate" });
     const defaultText = (defaultResult.content[0] as any).text;
     expect(defaultText).toContain("<functions>");
@@ -666,6 +666,7 @@ describe("discover_tools score-floor filter", () => {
       logger,
       undefined,
       { minBm25Score: 0, minHybridScore: 0 },
+      new Set<string>(),
     );
     const zeroResult = await zeroTool.execute!("call-1", { query: "gemini image generate" });
     expect(zeroResult.isError).toBe(false);
@@ -698,7 +699,7 @@ describe("discover_tools score-floor filter", () => {
     // Query shares a single incidental token with one doc so BM25 returns a
     // non-empty ranked list (triggering the hybrid re-rank branch), but the
     // cosine-zero penalty drops combined below minHybridScore=0.35.
-    const discoverTool = createDiscoverTool(makeNoiseFixture(), logger, mockEmbedding);
+    const discoverTool = createDiscoverTool(makeNoiseFixture(), logger, mockEmbedding, undefined, new Set<string>());
 
     const searchResult = await discoverTool.execute!("call-1", { query: "billing tokens" });
 
@@ -2262,14 +2263,14 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
       makeEntry("find", "Find files by name or pattern"),
       makeEntry("read", "Read a file from disk"),
     ];
-    const tool = createDiscoverTool(deferred, createMockLogger(), undefined); // no embedding
+    const tool = createDiscoverTool(deferred, createMockLogger(), undefined, undefined, new Set<string>()); // no embedding
     const result = await (tool.execute as unknown as DiscoverFn)("tc-1", { query: "install MCP" });
     expect(result.content[0].text).toContain("mcp_manage");
   });
 
   it("BM25-only mode zero-signal query returns 'no matches'", async () => {
     const deferred = [makeEntry("foo", "does foo"), makeEntry("bar", "does bar")];
-    const tool = createDiscoverTool(deferred, createMockLogger(), undefined);
+    const tool = createDiscoverTool(deferred, createMockLogger(), undefined, undefined, new Set<string>());
     const result = await (tool.execute as unknown as DiscoverFn)("tc-2", { query: "zzzzzzzz" });
     expect(result.content[0].text).toContain("No matching tools found");
   });
@@ -2313,7 +2314,7 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
       embedBatch: async () => { throw new Error("embedding down"); },
     };
     const logger = createMockLogger();
-    const tool = createDiscoverTool(deferred, logger, embedding);
+    const tool = createDiscoverTool(deferred, logger, embedding, undefined, new Set<string>());
     const result = await (tool.execute as unknown as DiscoverFn)("tc-5", { query: "install MCP" });
     expect(result.content[0].text).toContain("mcp_manage");
     expect(logger.warn).toHaveBeenCalledWith(
@@ -2334,7 +2335,7 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
       embedBatch: async () => err(new Error("embedding down")),
     };
     const logger = createMockLogger();
-    const tool = createDiscoverTool(deferred, logger, embedding);
+    const tool = createDiscoverTool(deferred, logger, embedding, undefined, new Set<string>());
     const result = await (tool.execute as unknown as DiscoverFn)("tc-5b", { query: "install MCP" });
     expect(result.content[0].text).toContain("mcp_manage");
   });
