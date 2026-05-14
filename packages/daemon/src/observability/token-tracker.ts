@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventBus, EventMap } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 /**
  * Token usage entry matching the observability:token_usage event payload.
@@ -155,7 +156,7 @@ export function createTokenTracker(eventBus: TypedEventBus): TokenTracker {
     },
 
     prune(maxAgeMs: number): number {
-      const cutoff = Date.now() - maxAgeMs;
+      const cutoff = systemNowMs() - maxAgeMs;
       let removed = 0;
       let i = 0;
       while (i < entries.length) {

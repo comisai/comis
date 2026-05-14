@@ -8,7 +8,7 @@
  * @module
  */
 
-import { safePath, type SessionKey } from "@comis/core";
+import { safePath, type SessionKey, systemNowMs, systemDateFrom } from "@comis/core";
 import { withTimeout } from "@comis/shared";
 import { writeFileSync } from "node:fs";
 import { ANNOUNCE_PARENT_TIMEOUT_MS } from "@comis/agent";
@@ -51,7 +51,7 @@ export function handleGraphCompletion(
   }
 
   // 1. Mark completion time
-  gs.completedAt = Date.now();
+  gs.completedAt = systemNowMs();
 
   // 1b. Clean up event-driven spawn gate on completion
   gs.cacheWarmCleanup?.();
@@ -101,7 +101,7 @@ export function handleGraphCompletion(
     nodesFailed,
     nodesSkipped,
     ...(gs.cancelReason !== undefined && { cancelReason: gs.cancelReason }),
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
     // 3.3: Graph-level cache aggregation
     ...cacheRollupFields,
   });
@@ -302,7 +302,7 @@ export function buildGraphAnnouncement(gs: GraphRunState): GraphAnnouncement {
   const maxAnnouncementChars = gs.maxAnnouncementChars ?? 3000;
   const snap = gs.stateMachine.snapshot();
   const label = gs.graph.graph.label ?? gs.graphId;
-  const durationMs = (gs.completedAt ?? Date.now()) - gs.startedAt;
+  const durationMs = (gs.completedAt ?? systemNowMs()) - gs.startedAt;
 
   // Identify leaf nodes — nodes that no other node depends on
   const depTargets = new Set(gs.graph.graph.nodes.flatMap(n => n.dependsOn));
@@ -584,9 +584,9 @@ export function writeRunMetadata(
     const metadata = {
       graphId: gs.graphId,
       graphName: gs.graph.graph.label ?? gs.graphId,
-      startedAt: new Date(gs.startedAt).toISOString(),
-      completedAt: new Date(gs.completedAt ?? Date.now()).toISOString(),
-      durationMs: (gs.completedAt ?? Date.now()) - gs.startedAt,
+      startedAt: systemDateFrom(gs.startedAt).toISOString(),
+      completedAt: systemDateFrom(gs.completedAt ?? systemNowMs()).toISOString(),
+      durationMs: (gs.completedAt ?? systemNowMs()) - gs.startedAt,
       status: gs.stateMachine.getGraphStatus(),
       traceId: gs.graphTraceId,
       nodesTotal: gs.graph.graph.nodes.length,

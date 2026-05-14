@@ -13,6 +13,7 @@
  */
 
 import type { ProcessMonitor } from "./process-monitor.js";
+import { systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -66,13 +67,13 @@ export function registerGracefulShutdown(deps: ShutdownDeps): ShutdownHandle {
     shuttingDown = true;
 
     deps.logger.info({ signal }, "Graceful shutdown initiated");
-    const shutdownStartMs = Date.now();
+    const shutdownStartMs = systemNowMs();
 
     // Hard timeout: force exit if cleanup hangs
-    const timer = setTimeout(() => {
+    const timer = systemSetTimeout(() => {
       deps.logger.error({
         timeoutMs,
-        shutdownDurationMs: Date.now() - shutdownStartMs,
+        shutdownDurationMs: systemNowMs() - shutdownStartMs,
         hint: "Increase daemon.shutdownTimeoutMs or investigate hung component",
         errorKind: "timeout" as const,
       }, "Shutdown timeout exceeded, forcing exit");
@@ -108,12 +109,12 @@ export function registerGracefulShutdown(deps: ShutdownDeps): ShutdownHandle {
       }
     } catch (error) {
       deps.logger.error({ err: error }, "Error during shutdown");
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       exit(1);
       return;
     }
 
-    deps.logger.info({ shutdownDurationMs: Date.now() - shutdownStartMs, signal }, "Graceful shutdown complete");
+    deps.logger.info({ shutdownDurationMs: systemNowMs() - shutdownStartMs, signal }, "Graceful shutdown complete");
 
     // Defense-in-depth flush before exit.
     // The pino transport system auto-flushes on process.exit(),
@@ -122,11 +123,11 @@ export function registerGracefulShutdown(deps: ShutdownDeps): ShutdownHandle {
       await new Promise<void>((resolve) => {
         deps.logger.flush!(() => resolve());
         // Safety timeout: don't hang forever waiting for flush
-        setTimeout(resolve, 2_000).unref();
+        systemSetTimeout(() => resolve(), 2_000).unref();
       });
     }
 
-    clearTimeout(timer);
+    systemClearTimeout(timer);
     // Exit code encodes intent for the supervisor.
     // - SIGUSR2 is the "restart me" signal from config.patch / gateway.restart
     //   flows. Must exit non-zero so systemd's Restart=on-failure triggers a

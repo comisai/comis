@@ -22,6 +22,7 @@ import {
   type NodeStatus,
   type GraphStatus,
   type NodeExecutionState,
+  systemNowMs,
 } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 
@@ -297,7 +298,7 @@ export function createGraphStateMachine(validated: ValidatedGraph): GraphStateMa
         // Original behavior: any failed/skipped dep -> skip
         if (hasFailedOrSkippedDep(nodeId)) {
           state.status = "skipped";
-          state.completedAt = Date.now();
+          state.completedAt = systemNowMs();
           skipped.push(nodeId);
 
           // Continue cascade to this node's dependents
@@ -312,7 +313,7 @@ export function createGraphStateMachine(validated: ValidatedGraph): GraphStateMa
         // "continue" policy: check barrier satisfiability
         if (isBarrierUnsatisfiable(nodeId, mode)) {
           state.status = "skipped";
-          state.completedAt = Date.now();
+          state.completedAt = systemNowMs();
           skipped.push(nodeId);
 
           // Continue cascade to this node's dependents
@@ -406,7 +407,7 @@ export function createGraphStateMachine(validated: ValidatedGraph): GraphStateMa
     }
     state.status = "running";
     state.runId = runId;
-    state.startedAt = Date.now();
+    state.startedAt = systemNowMs();
     return ok(undefined);
   }
 
@@ -420,7 +421,7 @@ export function createGraphStateMachine(validated: ValidatedGraph): GraphStateMa
     }
     state.status = "completed";
     state.output = output;
-    state.completedAt = Date.now();
+    state.completedAt = systemNowMs();
 
     // Evaluate barriers for dependents
     const newlyReady = evaluateBarriers(nodeId);
@@ -464,7 +465,7 @@ export function createGraphStateMachine(validated: ValidatedGraph): GraphStateMa
     // Original path: no retries remaining, proceed with failure
     state.status = "failed";
     state.error = error;
-    state.completedAt = Date.now();
+    state.completedAt = systemNowMs();
 
     // Transitive failure cascade (returns both skipped and newlyReady)
     const cascadeResult = cascadeFailure(nodeId);
@@ -534,7 +535,7 @@ export function createGraphStateMachine(validated: ValidatedGraph): GraphStateMa
     for (const state of nodeStates.values()) {
       if (state.status === "pending" || state.status === "ready") {
         state.status = "skipped";
-        state.completedAt = Date.now();
+        state.completedAt = systemNowMs();
         cancelled.push(state.nodeId);
       }
     }

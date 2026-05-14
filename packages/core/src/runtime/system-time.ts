@@ -84,3 +84,19 @@ export function systemClearInterval(handle: SystemIntervalHandle): void {
   clearInterval(handle);
 }
 
+/**
+ * Read an environment variable. Sanctioned-root indirection equivalent of
+ * `process.env[key]` — for in-package consumers that cannot accept an injected
+ * EnvPort. Returns `undefined` if the variable is not set.
+ *
+ * Use this for non-secret env reads at trust-boundary call sites:
+ *   - NODE_ENV (set by the launcher, gates dev-mode response validation)
+ *   - NOTIFY_SOCKET (set by systemd, gates watchdog notifications)
+ *   - PM2_HOME (set by pm2, gates pm2-process detection)
+ *
+ * Secret reads (API keys, OAuth tokens, etc.) MUST go through SecretManager.
+ * This helper is intentionally narrow.
+ */
+// eslint-disable-next-line no-restricted-syntax, security/detect-object-injection -- sanctioned-root env helper at the trust boundary; consumers read non-secret env vars (NODE_ENV, NOTIFY_SOCKET, PM2_HOME). Secrets must use SecretManager.
+export function systemGetEnv(key: string): string | undefined { return process.env[key]; }
+

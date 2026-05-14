@@ -10,6 +10,7 @@
  */
 
 import type { TypedEventBus, EventMap } from "@comis/core";
+import { systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
 import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, ChannelSnapshotRow } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
@@ -42,7 +43,7 @@ export function createObsWriteBuffer<T>(
 ): ObsWriteBuffer<T> {
   const { flushFn, maxSize = 50, intervalMs = 500 } = opts;
   let buffer: T[] = [];
-  const timer = setInterval(() => { flush(); }, intervalMs);
+  const timer = systemSetInterval(() => { flush(); }, intervalMs);
   timer.unref();
 
   function flush(): void {
@@ -58,7 +59,7 @@ export function createObsWriteBuffer<T>(
   }
 
   function drain(): void {
-    clearInterval(timer);
+    systemClearInterval(timer);
     flush();
   }
 
@@ -263,17 +264,17 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
 
   // c. Periodic channel snapshot timer
-  const snapshotTimer = setInterval(() => {
+  const snapshotTimer = systemSetInterval(() => {
     const channels = channelActivityTracker.getAll();
     for (const ch of channels) {
       channelSnapshotBuffer.push({
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         channelType: ch.channelType,
         channelId: ch.channelId,
-        status: (Date.now() - ch.lastActiveAt < 300_000) ? "active" : "stale",
+        status: (systemNowMs() - ch.lastActiveAt < 300_000) ? "active" : "stale",
         messagesSent: ch.messagesSent,
         messagesReceived: ch.messagesReceived,
-        uptimeMs: Date.now() - startupTimestamp,
+        uptimeMs: systemNowMs() - startupTimestamp,
       });
     }
   }, snapshotIntervalMs);

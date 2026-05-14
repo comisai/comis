@@ -12,6 +12,9 @@ import {
   type NodeTypeDriver,
   type NodeDriverContext,
   safePath,
+  systemNowMs,
+  systemSetTimeout,
+  systemClearTimeout,
 } from "@comis/core";
 import { tryCatch } from "@comis/shared";
 import { sanitizeAssistantResponse } from "@comis/agent";
@@ -132,7 +135,7 @@ export function markNodeFailed(
     nodeId,
     status: "failed" as const,
     error,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   });
   deps.logger?.debug(
     { graphId: gs.graphId, nodeId, error },
@@ -149,9 +152,9 @@ export function markNodeFailed(
         graphId: gs.graphId,
         nodeId: retryNodeId,
         status: "ready" as const,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
-      const retryTimer = setTimeout(() => {
+      const retryTimer = systemSetTimeout(() => {
         if (gs.stateMachine.isTerminal()) return;
         const currentState = gs.stateMachine.getNodeState(retryNodeId);
         if (!currentState || currentState.status !== "ready") return;
@@ -171,7 +174,7 @@ export function markNodeFailed(
           graphId: gs.graphId,
           nodeId: skippedId,
           status: "skipped" as const,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
       }
     }
@@ -323,14 +326,14 @@ export function spawnNode(
         graphId: gs.graphId,
         nodeId,
         status: "running" as const,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     }
 
     gs.runningCount++;
 
     if (node.timeoutMs !== undefined && node.timeoutMs > 0) {
-      const timer = setTimeout(() => {
+      const timer = systemSetTimeout(() => {
         const nodeState = gs.stateMachine.getNodeState(nodeId);
         if (nodeState && nodeState.status === "running") {
           deps.subAgentRunner.killRun(runId);
@@ -416,7 +419,7 @@ export function spawnReadyNodes(
         { graphId: gs.graphId, nodeId: capturedNodeId, delayMs, staggerIndex: i },
         "Sub-agent spawn staggered for cache prefix sharing",
       );
-      setTimeout(() => {
+      systemSetTimeout(() => {
         // Guard against graph completion during stagger delay
         if (capturedGs.completedAt !== undefined) return;
         // Guard against node already running or completed
@@ -494,7 +497,7 @@ export function startDriverNode(
       graphId: gs.graphId,
       nodeId,
       status: "running" as const,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 
@@ -511,7 +514,7 @@ export function startDriverNode(
   // 6. Set up per-node timeout using driver estimate or node config
   const timeoutMs = node.timeoutMs ?? driver.defaultTimeoutMs;
   if (timeoutMs > 0) {
-    const timer = setTimeout(() => {
+    const timer = systemSetTimeout(() => {
       callbacks.handleDriverTimeout(gs, nodeId);
     }, timeoutMs);
     if (typeof timer === "object" && "unref" in timer) {
@@ -569,7 +572,7 @@ export function handleSubAgentCompleted(
   // 4. Clear per-node timer if exists
   const timer = gs.nodeTimers.get(nodeId);
   if (timer !== undefined) {
-    clearTimeout(timer);
+    systemClearTimeout(timer);
     gs.nodeTimers.delete(nodeId);
   }
 
@@ -655,10 +658,10 @@ export function handleSubAgentCompleted(
           graphId: gs.graphId,
           nodeId: retryNodeId,
           status: "ready" as const,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
 
-        const retryTimer = setTimeout(() => {
+        const retryTimer = systemSetTimeout(() => {
           if (gs.stateMachine.isTerminal()) return;
           const currentState = gs.stateMachine.getNodeState(retryNodeId);
           if (!currentState || currentState.status !== "ready") return;
@@ -680,7 +683,7 @@ export function handleSubAgentCompleted(
             graphId: gs.graphId,
             nodeId: skippedId,
             status: "skipped" as const,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
         }
       }
@@ -714,9 +717,9 @@ export function handleSubAgentCompleted(
       graphId: gs.graphId,
       nodeId,
       status: nodeCompleted ? "completed" as const : "failed" as const,
-      durationMs: finalNodeState?.startedAt ? Date.now() - finalNodeState.startedAt : undefined,
+      durationMs: finalNodeState?.startedAt ? systemNowMs() - finalNodeState.startedAt : undefined,
       error: nodeCompleted ? undefined : (run?.error ?? "Unknown error"),
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 

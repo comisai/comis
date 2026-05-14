@@ -9,6 +9,7 @@
  */
 
 import { fromPromise } from "@comis/shared";
+import { systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,7 +122,7 @@ export async function preWarmGraphCache(
   const context = {
     systemPrompt: deps.systemPrompt,
     messages: [
-      { role: "user" as const, content: ".", timestamp: Date.now() },
+      { role: "user" as const, content: ".", timestamp: systemNowMs() },
     ],
     tools: deps.tools.map((t) => ({
       name: t.name,
@@ -132,7 +133,7 @@ export async function preWarmGraphCache(
 
   // Make the lightweight API call
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000); // 15s timeout
+  const timer = systemSetTimeout(() => controller.abort(), 15_000); // 15s timeout
 
   const callResult = await fromPromise(
     sdk.completeSimple(model, context, {
@@ -144,7 +145,7 @@ export async function preWarmGraphCache(
     }),
   );
 
-  clearTimeout(timer);
+  systemClearTimeout(timer);
 
   if (!callResult.ok) {
     const errorMsg = callResult.error instanceof Error ? callResult.error.message : String(callResult.error);

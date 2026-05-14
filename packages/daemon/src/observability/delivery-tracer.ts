@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventBus, EventMap, EventHandler } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
 import type { HandlerRef } from "./index.js";
 
 /**
@@ -105,7 +105,7 @@ export function createDeliveryTracer(deps: {
       channelId: message.channelId,
       channelType: message.channelType ?? "unknown",
       sessionKey: formatSessionKey(sessionKey),
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }) as EventHandler<"message:received">;
 
@@ -119,13 +119,13 @@ export function createDeliveryTracer(deps: {
   const sentHandler = ((payload: EventMap["message:sent"]) => {
     const pendingEntry = pending.get(payload.channelId);
     if (pendingEntry) {
-      const latencyMs = Date.now() - pendingEntry.timestamp;
+      const latencyMs = systemNowMs() - pendingEntry.timestamp;
       push({
         sourceChannelId: pendingEntry.channelId,
         sourceChannelType: pendingEntry.channelType,
         targetChannelId: payload.channelId,
         targetChannelType: pendingEntry.channelType,
-        deliveredAt: Date.now(),
+        deliveredAt: systemNowMs(),
         latencyMs,
         success: true,
         agentId: undefined,
@@ -144,8 +144,8 @@ export function createDeliveryTracer(deps: {
   // Periodic sweep: remove pending entries older than 60 seconds to prevent memory leaks
   const PENDING_TTL_MS = 60_000;
   const SWEEP_INTERVAL_MS = 30_000;
-  sweepInterval = setInterval(() => {
-    const cutoff = Date.now() - PENDING_TTL_MS;
+  sweepInterval = systemSetInterval(() => {
+    const cutoff = systemNowMs() - PENDING_TTL_MS;
     for (const [key, entry] of pending) {
       if (entry.timestamp < cutoff) {
         pending.delete(key);
@@ -164,7 +164,7 @@ export function createDeliveryTracer(deps: {
       let filtered: DeliveryContext[] = records;
 
       if (sinceMs !== undefined) {
-        const cutoff = Date.now() - sinceMs;
+        const cutoff = systemNowMs() - sinceMs;
         filtered = filtered.filter((r) => r.deliveredAt >= cutoff);
       }
 
@@ -210,7 +210,7 @@ export function createDeliveryTracer(deps: {
       handlers.length = 0;
       pending.clear();
       if (sweepInterval !== undefined) {
-        clearInterval(sweepInterval);
+        systemClearInterval(sweepInterval);
         sweepInterval = undefined;
       }
     },
