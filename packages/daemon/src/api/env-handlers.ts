@@ -36,6 +36,9 @@ import {
   EnvSetContract,
   EnvListContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
+  systemSetTimeout,
 } from "@comis/core";
 import {
   readFileSync,
@@ -57,11 +60,11 @@ import type { RpcHandler } from "./types.js";
  */
 function createTokenBucket(maxTokens: number, windowMs: number) {
   let tokens = maxTokens;
-  let lastRefill = Date.now();
+  let lastRefill = systemNowMs();
 
   return {
     tryConsume(): { allowed: boolean; retryAfterMs?: number } {
-      const now = Date.now();
+      const now = systemNowMs();
       const elapsed = now - lastRefill;
       const refilled = (elapsed / windowMs) * maxTokens;
       tokens = Math.min(maxTokens, tokens + refilled);
@@ -119,7 +122,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
 
   return {
     [EnvSetContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for env.set");
@@ -203,11 +206,11 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
           writeToEnvFile(deps.envFilePath, key, value);
         }
 
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
 
         // Audit event (NEVER include value)
         deps.container.eventBus.emit("audit:event", {
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "env.set",
@@ -223,7 +226,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
         );
 
         // Schedule daemon restart (same 200ms + SIGUSR2 pattern as config-handlers)
-        setTimeout(() => {
+        systemSetTimeout(() => {
           process.kill(process.pid, "SIGUSR2");
         }, 200);
 
@@ -235,18 +238,17 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
             | "envfile",
           restarting: true as const,
         };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           EnvSetContract.response.parse(result);
         }
         return result;
       } catch (e: unknown) {
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
         const errMsg = e instanceof Error ? e.message : String(e);
 
         // Audit event on failure (NEVER include value)
         deps.container.eventBus.emit("audit:event", {
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "env.set",
@@ -270,7 +272,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
      * a key is already configured, instead of asking the user to re-send it.
      */
     [EnvListContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for env.list");
@@ -345,12 +347,12 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
         return { name, source: "envfile" as const };
       });
 
-      const durationMs = Date.now() - startMs;
+      const durationMs = systemNowMs() - startMs;
 
       // Audit event (names OK — they are identifiers, same policy as env.set.
       // Values are not present in this handler's return path at all.)
       deps.container.eventBus.emit("audit:event", {
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         agentId: (rawParams._agentId as string | undefined) ?? "system",
         tenantId: deps.container.config.tenantId ?? "default",
         actionType: "env.list",
@@ -372,8 +374,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       // a secret row (they're intentionally absent from
       // `EnvListEntrySchema`). Production skips the parse for
       // cold-start budget compliance (WEB-CONTRACTS-17).
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         EnvListContract.response.parse(result);
       }
       return result;

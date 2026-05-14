@@ -55,6 +55,10 @@ import {
   GatewayRestartContract,
   stripInternalFields,
   type GitCommitMetadata,
+  systemGetEnv,
+  systemNowMs,
+  systemNowDate,
+  systemSetTimeout,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { suppressError } from "@comis/shared";
@@ -175,11 +179,11 @@ function rejectDuplicateMcpServerNames(patch: Record<string, unknown>): void {
  */
 function createTokenBucket(maxTokens: number, windowMs: number) {
   let tokens = maxTokens;
-  let lastRefill = Date.now();
+  let lastRefill = systemNowMs();
 
   return {
     tryConsume(): { allowed: boolean; retryAfterMs?: number } {
-      const now = Date.now();
+      const now = systemNowMs();
       const elapsed = now - lastRefill;
       // Refill proportionally: tokens per ms = maxTokens / windowMs
       const refilled = (elapsed / windowMs) * maxTokens;
@@ -239,7 +243,7 @@ async function deliverConfigWebhook(opts: {
       traceId: metadata.traceId ?? null,
       summary: metadata.summary,
     },
-    timestamp: new Date().toISOString(),
+    timestamp: systemNowDate().toISOString(),
   };
 
   const body = JSON.stringify(payload);
@@ -488,17 +492,16 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       }
       const userParams = stripInternalFields(rawParams);
       const params = ConfigReadContract.request.parse(userParams);
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       const section = params.section;
       if (section) {
         if (!(section in deps.container.config)) {
           throw new Error(`Unknown config section: "${section}". Valid sections: ${getConfigSections().join(", ")}. Hint: channel settings are under "channels".`);
         }
         const sectionData = deps.container.config[section as keyof typeof deps.container.config];
-        deps.logger.debug({ method: "config.read", durationMs: Date.now() - startMs, outcome: "success", section }, "Config section read");
+        deps.logger.debug({ method: "config.read", durationMs: systemNowMs() - startMs, outcome: "success", section }, "Config section read");
         const sectionResult = redactConfigSecrets(sectionData) as Record<string, unknown>;
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           // Sub-tree shape is loose (z.record) — primitives wrap as `{ value: ... }` would
           // disturb the wire format; only assert the parse is callable. Skip on primitives.
           if (sectionResult !== null && typeof sectionResult === "object") {
@@ -511,11 +514,10 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         config: redactConfigSecrets(deps.container.config) as Record<string, unknown>,
         sections: getConfigSections(),
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ConfigReadContract.response.parse(result);
       }
-      deps.logger.debug({ method: "config.read", durationMs: Date.now() - startMs, outcome: "success" }, "Full config read");
+      deps.logger.debug({ method: "config.read", durationMs: systemNowMs() - startMs, outcome: "success" }, "Full config read");
       return result;
     },
 
@@ -538,7 +540,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         );
       }
 
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       // Bespoke pre-Zod: extract section from path fallback BEFORE contract parse,
       // because the contract's `section` is optional + the bespoke message is
       // friendlier than Zod's. The legacy `path: "a.b.c"` shape resolves to
@@ -785,7 +787,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
 
         // Best-effort git versioning
         if (deps.configGitManager) {
-          const gitStart = Date.now();
+          const gitStart = systemNowMs();
           await deps.configGitManager.commit({
             section,
             key,
@@ -796,17 +798,17 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
               ? `Changed ${section}.${key} to ${JSON.stringify(value)}`
               : `Updated ${section} section`,
           }).then(() => {
-            deps.logger.debug({ method: "config.patch", durationMs: Date.now() - gitStart, outcome: "success", section }, "Git commit recorded");
+            deps.logger.debug({ method: "config.patch", durationMs: systemNowMs() - gitStart, outcome: "success", section }, "Git commit recorded");
           }).catch((gitErr: unknown) => {
-            deps.logger.debug({ method: "config.patch", durationMs: Date.now() - gitStart, outcome: "failure", err: gitErr, section }, "Git commit failed (best-effort)");
+            deps.logger.debug({ method: "config.patch", durationMs: systemNowMs() - gitStart, outcome: "failure", err: gitErr, section }, "Git commit failed (best-effort)");
           });
         }
 
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
 
         // Emit audit event on success
         deps.container.eventBus.emit("audit:event", {
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "config.patch",
@@ -840,23 +842,22 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
 
         // Schedule daemon restart so all subsystems pick up new config atomically.
         // 200ms delay allows the RPC response to flush over WebSocket before shutdown begins.
-        setTimeout(() => {
+        systemSetTimeout(() => {
           process.kill(process.pid, "SIGUSR2");
         }, 200);
 
         const result = { patched: true as const, section, ...(key ? { key } : {}), value, restarting: true as const };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           ConfigPatchContract.response.parse(result);
         }
         return result;
       } catch (e: unknown) {
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
         const errMsg = e instanceof Error ? e.message : String(e);
 
         // Emit audit event on failure
         deps.container.eventBus.emit("audit:event", {
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "config.patch",
@@ -900,7 +901,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       const userParams = stripInternalFields(rawParams);
       const params = ConfigApplyContract.request.parse(userParams);
 
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       const section = params.section;
       const value = params.value as Record<string, unknown>;
       // config.apply replaces the entire section, so resolve the schema at
@@ -987,7 +988,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
 
         // Best-effort git commit
         if (deps.configGitManager) {
-          const gitStart = Date.now();
+          const gitStart = systemNowMs();
           await deps.configGitManager.commit({
             section,
             agent: ctx?.agentId ?? (rawParams._agentId as string | undefined),
@@ -995,17 +996,17 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
             traceId: ctx?.traceId ?? (rawParams._traceId as string | undefined),
             summary: `Replaced ${section} section`,
           }).then(() => {
-            deps.logger.debug({ method: "config.apply", durationMs: Date.now() - gitStart, outcome: "success", section }, "Git commit recorded");
+            deps.logger.debug({ method: "config.apply", durationMs: systemNowMs() - gitStart, outcome: "success", section }, "Git commit recorded");
           }).catch((gitErr: unknown) => {
-            deps.logger.debug({ method: "config.apply", durationMs: Date.now() - gitStart, outcome: "failure", err: gitErr, section }, "Git commit failed (best-effort)");
+            deps.logger.debug({ method: "config.apply", durationMs: systemNowMs() - gitStart, outcome: "failure", err: gitErr, section }, "Git commit failed (best-effort)");
           });
         }
 
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
 
         // Audit event
         deps.container.eventBus.emit("audit:event", {
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "config.apply",
@@ -1037,22 +1038,21 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         }
 
         // Schedule restart
-        setTimeout(() => {
+        systemSetTimeout(() => {
           process.kill(process.pid, "SIGUSR2");
         }, 200);
 
         const result = { applied: true as const, section, restarting: true as const };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           ConfigApplyContract.response.parse(result);
         }
         return result;
       } catch (e: unknown) {
-        const durationMs = Date.now() - startMs;
+        const durationMs = systemNowMs() - startMs;
         const errMsg = e instanceof Error ? e.message : String(e);
 
         deps.container.eventBus.emit("audit:event", {
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "config.apply",
@@ -1079,22 +1079,21 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       }
       const userParams = stripInternalFields(rawParams);
       const params = ConfigSchemaContract.request.parse(userParams);
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       const section = params.section;
       const schema = getConfigSchema(section) as Record<string, unknown>;
       const result = section
         ? { section, schema, sections: getConfigSections() }
         : { schema, sections: getConfigSections() };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ConfigSchemaContract.response.parse(result);
       }
-      deps.logger.debug({ method: "config.schema", durationMs: Date.now() - startMs, outcome: "success", section }, "Config schema read");
+      deps.logger.debug({ method: "config.schema", durationMs: systemNowMs() - startMs, outcome: "success", section }, "Config schema read");
       return result;
     },
 
     [GatewayRestartContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for gateway restart");
@@ -1102,16 +1101,15 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       const userParams = stripInternalFields(rawParams);
       GatewayRestartContract.request.parse(userParams);
 
-      // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager is available for systemd detection
-      const isSystemd = !!process.env["NOTIFY_SOCKET"];
+      const isSystemd = !!systemGetEnv("NOTIFY_SOCKET");
 
       // Use setTimeout to allow the rpcCall response to flush over WebSocket before shutdown begins.
       // setImmediate fires too early and can race with the RPC response write.
-      setTimeout(() => {
+      systemSetTimeout(() => {
         process.kill(process.pid, "SIGUSR2");
       }, 200);
 
-      deps.logger.info({ method: "gateway.restart", durationMs: Date.now() - startMs, outcome: "success", systemd: isSystemd }, "Gateway restart initiated");
+      deps.logger.info({ method: "gateway.restart", durationMs: systemNowMs() - startMs, outcome: "success", systemd: isSystemd }, "Gateway restart initiated");
 
       const result: { restarting: true; systemd: boolean; warning?: string } = {
         restarting: true,
@@ -1121,8 +1119,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         result.warning =
           "Not running under systemd. Process will exit and require manual restart.";
       }
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         GatewayRestartContract.response.parse(result);
       }
       return result;
@@ -1138,12 +1135,11 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       // models `section` AND `limit` as optional; cast through `userParams`
       // before parse to allow the existing handler-internal `section` semantic.
       const params = ConfigHistoryContract.request.parse(userParams);
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       if (!deps.configGitManager) {
-        deps.logger.debug({ method: "config.history", durationMs: Date.now() - startMs, outcome: "success" }, "Config history unavailable (no git)");
+        deps.logger.debug({ method: "config.history", durationMs: systemNowMs() - startMs, outcome: "success" }, "Config history unavailable (no git)");
         const degraded = { entries: [], error: "Config versioning not available" };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           ConfigHistoryContract.response.parse(degraded);
         }
         return degraded;
@@ -1152,18 +1148,16 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       const section = params.section;
       const histResult = await deps.configGitManager.history({ limit, section });
       if (!histResult.ok) {
-        deps.logger.debug({ method: "config.history", durationMs: Date.now() - startMs, outcome: "failure", section }, "Config history query failed");
+        deps.logger.debug({ method: "config.history", durationMs: systemNowMs() - startMs, outcome: "failure", section }, "Config history query failed");
         const errResult = { entries: [], error: histResult.error };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           ConfigHistoryContract.response.parse(errResult);
         }
         return errResult;
       }
-      deps.logger.debug({ method: "config.history", durationMs: Date.now() - startMs, outcome: "success", section, entryCount: histResult.value.length }, "Config history read");
+      deps.logger.debug({ method: "config.history", durationMs: systemNowMs() - startMs, outcome: "success", section, entryCount: histResult.value.length }, "Config history read");
       const okResult = { entries: histResult.value };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ConfigHistoryContract.response.parse(okResult);
       }
       return okResult;
@@ -1176,12 +1170,11 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       }
       const userParams = stripInternalFields(rawParams);
       const params = ConfigDiffContract.request.parse(userParams);
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       if (!deps.configGitManager) {
-        deps.logger.debug({ method: "config.diff", durationMs: Date.now() - startMs, outcome: "success" }, "Config diff unavailable (no git)");
+        deps.logger.debug({ method: "config.diff", durationMs: systemNowMs() - startMs, outcome: "success" }, "Config diff unavailable (no git)");
         const degraded = { diff: "", error: "Config versioning not available" };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           ConfigDiffContract.response.parse(degraded);
         }
         return degraded;
@@ -1189,25 +1182,23 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       const sha = params.sha;
       const diffResult = await deps.configGitManager.diff(sha);
       if (!diffResult.ok) {
-        deps.logger.debug({ method: "config.diff", durationMs: Date.now() - startMs, outcome: "failure", sha }, "Config diff query failed");
+        deps.logger.debug({ method: "config.diff", durationMs: systemNowMs() - startMs, outcome: "failure", sha }, "Config diff query failed");
         const errResult = { diff: "", error: diffResult.error };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           ConfigDiffContract.response.parse(errResult);
         }
         return errResult;
       }
-      deps.logger.debug({ method: "config.diff", durationMs: Date.now() - startMs, outcome: "success", sha }, "Config diff read");
+      deps.logger.debug({ method: "config.diff", durationMs: systemNowMs() - startMs, outcome: "success", sha }, "Config diff read");
       const okResult = { diff: diffResult.value };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ConfigDiffContract.response.parse(okResult);
       }
       return okResult;
     },
 
     [ConfigRollbackContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for config rollback");
@@ -1231,11 +1222,11 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       }
 
       // Trigger daemon restart (same pattern as gateway.restart) per user decision
-      setTimeout(() => {
+      systemSetTimeout(() => {
         process.kill(process.pid, "SIGUSR2");
       }, 200);
 
-      deps.logger.info({ method: "config.rollback", durationMs: Date.now() - startMs, outcome: "success", sha: params.sha, section: "all" }, "Config rollback applied");
+      deps.logger.info({ method: "config.rollback", durationMs: systemNowMs() - startMs, outcome: "success", sha: params.sha, section: "all" }, "Config rollback applied");
 
       const result = {
         rolledBack: true as const,
@@ -1243,15 +1234,14 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         newCommitSha: rollbackResult.value,
         restarting: true as const,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ConfigRollbackContract.response.parse(result);
       }
       return result;
     },
 
     [ConfigGcContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for config garbage collection");
@@ -1279,7 +1269,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         squashResult = squash.value;
       }
 
-      const durationMs = Date.now() - startMs;
+      const durationMs = systemNowMs() - startMs;
       deps.logger.info(
         { method: "config.gc", durationMs, outcome: "success", squashedCount: squashResult?.squashedCount ?? 0 },
         "Config gc complete",
@@ -1289,8 +1279,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         gc: true as const,
         ...(squashResult ? { squashed: squashResult.squashedCount, newRootSha: squashResult.newRootSha } : {}),
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ConfigGcContract.response.parse(result);
       }
       return result;
@@ -1303,7 +1292,7 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
       }
       const userParams = stripInternalFields(rawParams);
       GatewayStatusContract.request.parse(userParams);
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       // process.uptime() / process.memoryUsage() / process.version are Node
       // runtime introspection — admin-trusted; the contract's all-required
       // 6-field schema captures the wire shape.
@@ -1317,11 +1306,10 @@ export function createConfigHandlers(deps: ConfigHandlerDeps): Record<string, Rp
         configPaths: deps.configPaths,
         sections: getConfigSections(),
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         GatewayStatusContract.response.parse(result);
       }
-      deps.logger.debug({ method: "gateway.status", durationMs: Date.now() - startMs, outcome: "success" }, "Gateway status read");
+      deps.logger.debug({ method: "gateway.status", durationMs: systemNowMs() - startMs, outcome: "success" }, "Gateway status read");
       return result;
     },
   };

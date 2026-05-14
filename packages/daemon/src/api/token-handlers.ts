@@ -54,6 +54,8 @@ import {
   TokensRevokeContract,
   TokensRotateContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
 } from "@comis/core";
 import { persistToConfig } from "./shared/persist-to-config.js";
 
@@ -94,7 +96,7 @@ export function createTokenRegistry(
     entries.set(t.id, {
       id: t.id,
       scopes: t.scopes,
-      createdAt: Date.now(),
+      createdAt: systemNowMs(),
       revoked: false,
     });
   }
@@ -105,7 +107,7 @@ export function createTokenRegistry(
       const entry: TokenRegistryEntry = {
         id,
         scopes,
-        createdAt: Date.now(),
+        createdAt: systemNowMs(),
         revoked: false,
       };
       entries.set(id, entry);
@@ -177,8 +179,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       // cold-start budget (D-10); the trust boundary is the
       // TokenRegistry which never stores secrets by construction
       // (line 70-72).
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         TokensListContract.response.parse(result);
       }
       return result;
@@ -251,8 +252,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       // `TokensCreateContract.response` (secret-once policy: the caller
       // MUST see the freshly-minted token EXACTLY once — no
       // re-fetch). The parse is a defense-in-depth shape check.
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         TokensCreateContract.response.parse(result);
       }
       return result;
@@ -313,8 +313,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
 
       const result = { id, revoked: true as const, message: "Token revoked" };
       // Dev-mode response validation gate.
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         TokensRevokeContract.response.parse(result);
       }
       return result;
@@ -394,8 +393,7 @@ export function createTokenHandlers(deps: TokenHandlerDeps): Record<string, RpcH
       // `TokensRotateContract.response` (secret-once policy: same as
       // tokens.create — the caller MUST see the freshly-minted token
       // EXACTLY once).
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         TokensRotateContract.response.parse(result);
       }
       return result;

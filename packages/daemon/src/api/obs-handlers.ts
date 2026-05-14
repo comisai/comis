@@ -80,6 +80,9 @@ import {
   ObsResetContract,
   ObsResetTableContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
+  systemDateFrom,
 } from "@comis/core";
 
 import type { DiagnosticCategory } from "../observability/diagnostic-collector.js";
@@ -112,8 +115,7 @@ export type { ObsHandlerDeps };
  * the in-handler logic, not the contract parse. Mirrors the D-10 gate
  * pattern used in auth-handlers / secrets-handlers / config-handlers.
  */
-// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-const IS_DEV = process.env.NODE_ENV !== "production";
+const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -156,7 +158,7 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
         // SQLite historical events (pre-current-session)
         const sqliteRows = obsStore.queryDiagnostics({
           category: category ?? undefined,
-          sinceMs: sinceMs != null ? Date.now() - sinceMs : undefined,
+          sinceMs: sinceMs != null ? systemNowMs() - sinceMs : undefined,
           limit: limit ?? 50,
         });
 
@@ -205,13 +207,13 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
         result = { providers: inMemoryProviders };
       } else {
         // If sinceMs is within current session, in-memory is sufficient
-        const sinceCutoff = sinceMs != null ? Date.now() - sinceMs : 0;
+        const sinceCutoff = sinceMs != null ? systemNowMs() - sinceMs : 0;
         if (sinceCutoff >= startupTimestamp) {
           result = { providers: inMemoryProviders };
         } else {
           // SQLite aggregation for the full range
           const sqliteAggs = obsStore.aggregateByProvider(
-            sinceMs != null ? Date.now() - sinceMs : undefined,
+            sinceMs != null ? systemNowMs() - sinceMs : undefined,
           );
 
           // Merge: combine by provider+model key
@@ -296,13 +298,13 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
       let merged = snapshot;
 
       if (obsStore && startupTimestamp != null) {
-        const sinceCutoff = sinceMs != null ? Date.now() - sinceMs : 0;
+        const sinceCutoff = sinceMs != null ? systemNowMs() - sinceMs : 0;
         if (sinceCutoff < startupTimestamp) {
           // Query all SQLite data, then subtract current-session overlap
           // to avoid double-counting with in-memory billing estimator.
           // SQLite data from before startup is additive; data after startup
           // is already in the in-memory snapshot.
-          const allAggs = obsStore.aggregateByAgent(sinceMs != null ? Date.now() - sinceMs : undefined);
+          const allAggs = obsStore.aggregateByAgent(sinceMs != null ? systemNowMs() - sinceMs : undefined);
           const currentSessionAggs = obsStore.aggregateByAgent(startupTimestamp);
           const allAgg = allAggs.find((a) => a.agentId === agentId);
           const currentAgg = currentSessionAggs.find((a) => a.agentId === agentId);
@@ -363,7 +365,7 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
       if (!obsStore || startupTimestamp == null) {
         result = inMemory;
       } else {
-        const sqliteAgg = obsStore.aggregateBySession(sessionKey, sinceMs != null ? Date.now() - sinceMs : undefined);
+        const sqliteAgg = obsStore.aggregateBySession(sessionKey, sinceMs != null ? systemNowMs() - sinceMs : undefined);
         result = {
           totalCost: inMemory.totalCost + sqliteAgg.totalCost,
           totalTokens: inMemory.totalTokens + sqliteAgg.totalTokens,
@@ -393,12 +395,12 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
       if (!obsStore || startupTimestamp == null) {
         result = inMemory;
       } else {
-        const sinceCutoff = sinceMs != null ? Date.now() - sinceMs : 0;
+        const sinceCutoff = sinceMs != null ? systemNowMs() - sinceMs : 0;
         if (sinceCutoff >= startupTimestamp) {
           result = inMemory;
         } else {
           // Sum across all providers from SQLite
-          const sqliteAggs = obsStore.aggregateByProvider(sinceMs != null ? Date.now() - sinceMs : undefined);
+          const sqliteAggs = obsStore.aggregateByProvider(sinceMs != null ? systemNowMs() - sinceMs : undefined);
           let sqliteTotalCost = 0;
           let sqliteTotalTokens = 0;
           let sqliteCallCount = 0;
@@ -448,13 +450,13 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
       if (!obsStore || startupTimestamp == null) {
         result = inMemory;
       } else {
-        const sqliteHourly = obsStore.aggregateHourly(Date.now() - 86400000);
+        const sqliteHourly = obsStore.aggregateHourly(systemNowMs() - 86400000);
 
         // Merge by hour bucket: in-memory uses hour-of-day (0-23),
         // SQLite uses epoch-aligned hour timestamps. Convert SQLite to hour-of-day.
         const merged = [...inMemory];
         for (const bucket of sqliteHourly) {
-          const hourOfDay = new Date(bucket.hour).getHours();
+          const hourOfDay = systemDateFrom(bucket.hour).getHours();
           const existing = merged.find((m) => m.hour === hourOfDay);
           if (existing) {
             existing.tokens += bucket.totalTokens;
@@ -572,7 +574,7 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
       } else {
         // Query SQLite for historical records
         const sqliteRows = obsStore.queryDelivery({
-          sinceMs: sinceMs != null ? Date.now() - sinceMs : undefined,
+          sinceMs: sinceMs != null ? systemNowMs() - sinceMs : undefined,
           limit: limit ?? 50,
         });
 
@@ -698,7 +700,7 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
       if (!obsStore) {
         result = { providers: [], totalCacheSaved: 0 };
       } else {
-        const sinceTimestamp = sinceMs != null ? Date.now() - sinceMs : undefined;
+        const sinceTimestamp = sinceMs != null ? systemNowMs() - sinceMs : undefined;
         const providerAggs = obsStore.aggregateByProvider(sinceTimestamp);
 
         // Format response with per-provider cache metrics
@@ -821,7 +823,7 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
         admin: "rpc",
         table: "all" as const,
         rowsDeleted: sqliteResult,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       const result = { reset: true as const, rowsDeleted: sqliteResult };
@@ -870,7 +872,7 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
           diagnostics: table === "diagnostics" ? rowsDeleted : 0,
           channels: table === "channels" ? rowsDeleted : 0,
         },
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       const result = { reset: true as const, table, rowsDeleted };

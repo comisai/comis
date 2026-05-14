@@ -61,6 +61,9 @@ import {
   WorkspaceGitCommitContract,
   WorkspaceGitRestoreContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
+  systemNowDate,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import * as fs from "node:fs/promises";
@@ -90,8 +93,7 @@ export type { WorkspaceHandlerDeps };
  * pattern used in auth-handlers / secrets-handlers / config-handlers /
  * obs-handlers.
  */
-// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-const IS_DEV = process.env.NODE_ENV !== "production";
+const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -143,7 +145,7 @@ async function cleanStaleLock(dir: string, logger: ComisLogger): Promise<void> {
   const lockPath = safePath(dir, ".git", "index.lock");
   try {
     const stat = await fs.stat(lockPath);
-    const ageMs = Date.now() - stat.mtimeMs;
+    const ageMs = systemNowMs() - stat.mtimeMs;
     if (ageMs > STALE_LOCK_THRESHOLD_MS) {
       await fs.unlink(lockPath);
       logger.warn(
@@ -571,7 +573,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps): Record<stri
         const fallback = {
           sha: "unknown",
           author: "unknown",
-          date: new Date().toISOString(),
+          date: systemNowDate().toISOString(),
           message,
         };
         if (IS_DEV) WorkspaceGitCommitContract.response.parse(fallback);
@@ -582,7 +584,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps): Record<stri
       const result = {
         sha: logLines[0] ?? "unknown",
         author: logLines[1] ?? "unknown",
-        date: logLines[2] ?? new Date().toISOString(),
+        date: logLines[2] ?? systemNowDate().toISOString(),
         message: logLines[3] ?? message,
       };
       if (IS_DEV) WorkspaceGitCommitContract.response.parse(result);

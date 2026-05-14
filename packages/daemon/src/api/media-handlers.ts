@@ -51,6 +51,8 @@ import {
   safePath,
   stripInternalFields,
   validateUrl,
+  systemGetEnv,
+  systemNowMs,
 } from "@comis/core";
 import {
   selectVisionProvider,
@@ -116,8 +118,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
             "Vision analysis denied by scope rule",
           );
           const result = { description: "Vision analysis not available for this context." };
-          // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-          if (process.env.NODE_ENV !== "production") {
+          if (systemGetEnv("NODE_ENV") !== "production") {
             ImageAnalyzeContract.response.parse(result);
           }
           return result;
@@ -202,8 +203,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         provider: visionResult.value.provider,
         model: visionResult.value.model,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         ImageAnalyzeContract.response.parse(result);
       }
       return result;
@@ -259,7 +259,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
       // Simple TTL cleanup: delete files older than 1 hour (best-effort)
       try {
         const entries = await fs.readdir(outputDir);
-        const cutoff = Date.now() - 3_600_000;
+        const cutoff = systemNowMs() - 3_600_000;
         for (const entry of entries) {
           try {
             const entryPath = safePath(outputDir, entry);
@@ -284,8 +284,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         mimeType: synthResult.value.mimeType,
         sizeBytes: synthResult.value.audio.byteLength,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         TtsSynthesizeContract.response.parse(result);
       }
       return result;
@@ -309,8 +308,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         strippedText: autoResult.strippedText,
         mode: deps.mediaConfig.tts.autoMode,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         TtsAutoCheckContract.response.parse(result);
       }
       return result;
@@ -327,8 +325,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         linksProcessed: linkResult.linksProcessed,
         errors: linkResult.errors,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         LinkProcessContract.response.parse(result);
       }
       return result;
@@ -360,8 +357,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         language: sttResult.value.language,
         durationMs: sttResult.value.durationMs,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         AudioTranscribeContract.response.parse(result);
       }
       return result;
@@ -400,8 +396,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         language: sttResult.value.language,
         durationMs: sttResult.value.durationMs,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MediaTranscribeContract.response.parse(result);
       }
       return result;
@@ -439,8 +434,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         provider: videoResult.value.provider,
         model: videoResult.value.model,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MediaDescribeVideoContract.response.parse(result);
       }
       return result;
@@ -479,8 +473,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         truncated: extractResult.value.truncated,
         durationMs: extractResult.value.durationMs,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MediaExtractDocumentContract.response.parse(result);
       }
       return result;
@@ -511,8 +504,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         durationMs: sttResult.value.durationMs,
         provider: deps.mediaConfig.tts.provider ?? "configured",
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MediaTestSttContract.response.parse(result);
       }
       return result;
@@ -541,8 +533,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         sizeBytes: synthResult.value.audio.byteLength,
         provider: deps.mediaConfig.tts.provider ?? "unknown",
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MediaTestTtsContract.response.parse(result);
       }
       return result;
@@ -580,8 +571,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         provider: visionResult.value.provider,
         model: visionResult.value.model,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MediaTestVisionContract.response.parse(result);
       }
       return result;
@@ -616,8 +606,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         durationMs: extractResult.value.durationMs,
         pageCount: extractResult.value.pageCount,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MediaTestDocumentContract.response.parse(result);
       }
       return result;
@@ -653,8 +642,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         provider: videoResult.value.provider,
         model: videoResult.value.model,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MediaTestVideoContract.response.parse(result);
       }
       return result;
@@ -675,8 +663,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
         linksProcessed: linkResult.linksProcessed,
         errors: linkResult.errors,
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MediaTestLinkContract.response.parse(result);
       }
       return result;
@@ -713,8 +700,7 @@ export function createMediaHandlers(deps: MediaHandlerDeps): Record<string, RpcH
           maxLinks: 5,
         },
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         MediaProvidersContract.response.parse(result);
       }
       return result;

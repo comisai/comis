@@ -60,6 +60,8 @@ import {
   AuthListContract,
   AuthLogoutContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
 } from "@comis/core";
 import type { OAuthProfile } from "@comis/core";
 
@@ -142,7 +144,7 @@ export function createAuthHandlers(
      * other binding.
      */
     [AuthListContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       // Admin trust check uses the dispatcher-injected `_trustLevel` —
       // intentionally NOT modeled in the contract schema (D-04). Read
       // from rawParams BEFORE the strip-and-parse step.
@@ -157,13 +159,12 @@ export function createAuthHandlers(
         deps.logger.debug(
           {
             method: "auth.list",
-            durationMs: Date.now() - startMs,
+            durationMs: systemNowMs() - startMs,
           },
           "auth.list returning empty (no encrypted store configured)",
         );
         const emptyResult = { profiles: [] as RedactedOAuthProfile[] };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           AuthListContract.response.parse(emptyResult);
         }
         return emptyResult;
@@ -186,7 +187,7 @@ export function createAuthHandlers(
         deps.logger.error(
           {
             method: "auth.list",
-            durationMs: Date.now() - startMs,
+            durationMs: systemNowMs() - startMs,
             outcome: "failure",
             err: listResult.error,
             hint: "Check encrypted auth store (secrets.db) integrity and master key",
@@ -208,7 +209,7 @@ export function createAuthHandlers(
         {
           method: "auth.list",
           count: redacted.length,
-          durationMs: Date.now() - startMs,
+          durationMs: systemNowMs() - startMs,
           outcome: "success",
         },
         "OAuth profiles listed",
@@ -219,8 +220,7 @@ export function createAuthHandlers(
       // accidental access/refresh/accountId fields (they're intentionally
       // absent from RedactedOAuthProfileSchema). Production skips the
       // parse for cold-start budget compliance (WEB-CONTRACTS-17).
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         AuthListContract.response.parse(result);
       }
       return result;
@@ -232,7 +232,7 @@ export function createAuthHandlers(
      * (success/failure).
      */
     [AuthLogoutContract.method]: async (rawParams) => {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       // Admin gate FIRST (separate from the contract schema per D-04).
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
@@ -267,7 +267,7 @@ export function createAuthHandlers(
       const delResult = await deps.oauthCredentialStore.delete(profileId);
       if (!delResult.ok) {
         deps.container.eventBus.emit("audit:event", {
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: "system",
           tenantId: deps.container.config.tenantId ?? "default",
           actionType: "auth.logout",
@@ -279,7 +279,7 @@ export function createAuthHandlers(
           {
             method: "auth.logout",
             profileId,
-            durationMs: Date.now() - startMs,
+            durationMs: systemNowMs() - startMs,
             outcome: "failure",
             err: delResult.error,
             hint: "Check encrypted auth store (secrets.db) permissions",
@@ -291,7 +291,7 @@ export function createAuthHandlers(
       }
 
       deps.container.eventBus.emit("audit:event", {
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         agentId: "system",
         tenantId: deps.container.config.tenantId ?? "default",
         actionType: "auth.logout",
@@ -304,15 +304,14 @@ export function createAuthHandlers(
           method: "auth.logout",
           profileId,
           existed: delResult.value,
-          durationMs: Date.now() - startMs,
+          durationMs: systemNowMs() - startMs,
           outcome: "success",
         },
         "OAuth profile deleted",
       );
 
       const result = { profileId, deleted: delResult.value };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         AuthLogoutContract.response.parse(result);
       }
       return result;

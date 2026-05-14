@@ -37,6 +37,7 @@ import {
   BrowserCloseContract,
   BrowserConsoleContract,
   stripInternalFields,
+  systemGetEnv,
 } from "@comis/core";
 
 import type { RpcHandler } from "./types.js";
@@ -57,8 +58,7 @@ export type { BrowserHandlerDeps };
  * Daemon side is the trust boundary; in production the trust check is
  * the in-handler logic, not the contract parse.
  */
-// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-const IS_DEV = process.env.NODE_ENV !== "production";
+const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
 /**
  * Create browser automation RPC handlers.

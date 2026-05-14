@@ -36,6 +36,10 @@ import {
   SessionExportContract,
   SessionCompactContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
+  systemDateFrom,
+  systemSetTimeout,
 } from "@comis/core";
 import { readdirSync, statSync, readFileSync } from "node:fs";
 
@@ -50,8 +54,7 @@ import type { RpcHandler } from "./types.js";
  * Daemon side is the trust boundary; in production the trust check is
  * the in-handler logic, not the contract parse.
  */
-// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-const IS_DEV = process.env.NODE_ENV !== "production";
+const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -237,7 +240,7 @@ function loadJsonlSession(filePath: string): { messages: unknown[]; metadata: Re
         const msg = e.message as Record<string, unknown>;
         // Attach timestamp from the wrapper if present
         if (e.timestamp && !msg.timestamp) {
-          msg.timestamp = typeof e.timestamp === "string" ? new Date(e.timestamp as string).getTime() : e.timestamp;
+          msg.timestamp = typeof e.timestamp === "string" ? systemDateFrom(e.timestamp as string).getTime() : e.timestamp;
         }
         messages.push(msg);
       }
@@ -362,7 +365,7 @@ export function createSessionHandlers(deps: SessionHandlerDeps): Record<string, 
 
       // Recency filter: only sessions active within N minutes
       if (sinceMinutes !== undefined) {
-        const cutoff = Date.now() - sinceMinutes * 60_000;
+        const cutoff = systemNowMs() - sinceMinutes * 60_000;
         sessions = sessions.filter((s) => s.updatedAt >= cutoff);
       }
 
@@ -922,10 +925,10 @@ export function createSessionHandlers(deps: SessionHandlerDeps): Record<string, 
 
       // For sync mode, poll until complete (up to waitTimeoutMs)
       const timeout = deps.securityConfig.agentToAgent!.waitTimeoutMs;
-      const deadline = Date.now() + timeout;
+      const deadline = systemNowMs() + timeout;
       let run = deps.subAgentRunner.getRunStatus(runId);
-      while ((run?.status === "running" || run?.status === "queued") && Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, 100));
+      while ((run?.status === "running" || run?.status === "queued") && systemNowMs() < deadline) {
+        await new Promise(r => systemSetTimeout(() => r(undefined), 100));
         run = deps.subAgentRunner.getRunStatus(runId);
       }
 
@@ -962,7 +965,7 @@ export function createSessionHandlers(deps: SessionHandlerDeps): Record<string, 
         sessionKey: run.sessionKey,
         startedAt: run.startedAt,
         completedAt: run.completedAt,
-        runtimeMs: run.completedAt ? run.completedAt - run.startedAt : Date.now() - run.startedAt,
+        runtimeMs: run.completedAt ? run.completedAt - run.startedAt : systemNowMs() - run.startedAt,
         response: run.result?.response,
         tokensUsed: run.result?.tokensUsed,
         cost: run.result?.cost,

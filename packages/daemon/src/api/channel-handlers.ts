@@ -29,6 +29,8 @@ import {
   ChannelsDisableContract,
   ChannelsRestartContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
 } from "@comis/core";
 
 import { persistToConfig } from "./shared/persist-to-config.js";
@@ -44,8 +46,7 @@ import type { RpcHandler } from "./types.js";
  * Daemon side is the trust boundary; in production the trust check is
  * the in-handler logic, not the contract parse.
  */
-// eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-const IS_DEV = process.env.NODE_ENV !== "production";
+const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -72,7 +73,7 @@ export function createChannelHandlers(deps: ChannelHandlerDeps): Record<string, 
       ChannelsHealthContract.request.parse(userParams);
 
       if (!deps.healthMonitor) {
-        const result = { channels: [], timestamp: Date.now(), enabled: false };
+        const result = { channels: [], timestamp: systemNowMs(), enabled: false };
         if (IS_DEV) ChannelsHealthContract.response.parse(result);
         return result;
       }
@@ -88,9 +89,9 @@ export function createChannelHandlers(deps: ChannelHandlerDeps): Record<string, 
         consecutiveFailures: entry.consecutiveFailures,
         activeRuns: entry.activeRuns,
         restartAttempts: entry.restartAttempts,
-        uptimeMs: Date.now() - entry.adapterStartedAt,
+        uptimeMs: systemNowMs() - entry.adapterStartedAt,
       }));
-      const result = { channels, timestamp: Date.now(), enabled: true };
+      const result = { channels, timestamp: systemNowMs(), enabled: true };
       if (IS_DEV) ChannelsHealthContract.response.parse(result);
       return result;
     },

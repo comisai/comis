@@ -28,6 +28,8 @@ import {
   DaemonSetLogLevelContract,
   SystemPingContract,
   stripInternalFields,
+  systemGetEnv,
+  systemNowMs,
 } from "@comis/core";
 import type { RpcHandler } from "./types.js";
 
@@ -55,10 +57,9 @@ export function createDaemonHandlers(deps: DaemonHandlerDeps): Record<string, Rp
       SystemPingContract.request.parse(userParams); // sanity-narrow {}
       const result = {
         pong: true as const,
-        ts: Date.now(),
+        ts: systemNowMs(),
       };
-      // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-      if (process.env.NODE_ENV !== "production") {
+      if (systemGetEnv("NODE_ENV") !== "production") {
         SystemPingContract.response.parse(result);
       }
       return result;
@@ -112,8 +113,7 @@ export function createDaemonHandlers(deps: DaemonHandlerDeps): Record<string, Rp
           scope: "module" as const,
           persistent: false as const,
         };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           DaemonSetLogLevelContract.response.parse(result);
         }
         return result;
@@ -126,8 +126,7 @@ export function createDaemonHandlers(deps: DaemonHandlerDeps): Record<string, Rp
           scope: "global" as const,
           persistent: false as const,
         };
-        // eslint-disable-next-line no-restricted-syntax -- D-10 LOCKED: dev-mode response validation gate; daemon side is the trust boundary.
-        if (process.env.NODE_ENV !== "production") {
+        if (systemGetEnv("NODE_ENV") !== "production") {
           DaemonSetLogLevelContract.response.parse(result);
         }
         return result;
