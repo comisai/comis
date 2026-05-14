@@ -557,8 +557,8 @@ async function stageFoundation(input: {
     dataDir,
   });
 
-  // 0.6. Phase 39 PORTS-06: runtime adapter construction (composition root).
-  const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = createSystemTimers();
+  // 0.6. Phase 39 PORTS-06: runtime adapter construction (composition root). PORTS-18: overrides.timers opt-in for test fake-timers; never set in production.
+  const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
 
   // 1. Bootstrap core container
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution

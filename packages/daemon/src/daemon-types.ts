@@ -6,7 +6,7 @@
  * @module
  */
 
-import type { DeviceIdentity } from "@comis/core";
+import type { DeviceIdentity, TimerPort } from "@comis/core";
 import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
 import type { ApprovalGate } from "@comis/core";
 import type { ChannelHealthMonitor } from "@comis/channels";
@@ -137,4 +137,17 @@ export interface DaemonOverrides {
   exit?: (code: number) => void;
   /** Override native-dep preflight check for tests that don't need the probe. */
   preflightDoctor?: (exitFn: (code: number) => void) => Promise<void>;
+  /**
+   * Override TimerPort at composition root (Phase 39 PORTS-18).
+   *
+   * When provided, replaces the production `createSystemTimers()` adapter in
+   * the daemon composition root. The integration test wires a `createFakeTimers()`
+   * here so it can observe `unref()` / `cancel()` invocations on every long-
+   * running interval scheduled during bootstrap, then assert (after shutdown)
+   * that every entry was either cancelled or unref'd — proving Phase 39's
+   * `.unref()` preservation contract.
+   *
+   * Production must never set this; the override is test-only.
+   */
+  timers?: TimerPort;
 }
