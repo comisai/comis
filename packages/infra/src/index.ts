@@ -15,3 +15,8 @@ export { isValidLogLevel, VALID_LOG_LEVELS } from "@comis/core";
 
 // Runtime detection helpers (single source of truth for Docker/PID-1 probes)
 export { isDocker } from "./runtime/is-docker.js";
+
+// Runtime adapters for time/env/timer ports (Phase 39, PORTS-06)
+export { createSystemClock } from "./runtime/clock.js";
+export { createSystemEnv } from "./runtime/env.js";
+export { createSystemTimers } from "./runtime/timers.js";

@@ -131,4 +131,8 @@ export type {
   ClusterConfig,
   McpServerHint,
   SkillHint,
+  ClockPort,
+  EnvPort,
+  TimerPort,
+  TimerHandle,
 } from "../ports/index.js";
