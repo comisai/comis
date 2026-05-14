@@ -55,6 +55,10 @@ function makeContext(overrides: Partial<DeferralContext> = {}): DeferralContext 
     recentlyUsedToolNames: new Set(),
     toolNames: [],
     discoveryTracker: createDiscoveryTracker(),
+    // Default to "anthropic" so MCP deferral applies (mid-turn-injection
+    // family). Tests targeting non-injection providers explicitly override
+    // (e.g., `providerFamily: "openai"`).
+    providerFamily: "anthropic",
     ...overrides,
   };
 }
@@ -2183,23 +2187,6 @@ describe("applyToolDeferral - provider-aware MCP deferral", () => {
 
     expect(result.deferredNames).toContain("mcp__srv--tool_a");
     expect(result.deferredNames).toContain("mcp:tool_b");
-  });
-
-  it("DOES defer MCP tools when providerFamily is undefined (backward compat)", () => {
-    const logger = createMockLogger();
-    const tools: ToolDefinition[] = [
-      makeTool("read"),
-      makeTool("mcp__yfinance--get_price", 100, 50),
-    ];
-    // No providerFamily set -- undefined by default from makeContext
-    const ctx = makeContext({
-      trustLevel: "admin",
-      toolNames: tools.map(t => t.name),
-    });
-
-    const result = applyToolDeferral(tools, 128_000, ctx, logger);
-
-    expect(result.deferredNames).toContain("mcp__yfinance--get_price");
   });
 
   it("non-MCP deferral rules unaffected by providerFamily (privileged tools)", () => {

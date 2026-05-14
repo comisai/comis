@@ -59,9 +59,10 @@ export interface DeferralContext {
   /** Provider family for mid-turn injection awareness.
    *  "anthropic" and "google" support mid-turn tool injection, so MCP tools
    *  can be deferred behind discover_tools. Other providers (e.g., "openai",
-   *  "default") do not inject mid-turn, so MCP tools must be active from the
-   *  start. When undefined, defaults to deferring (backward compat). */
-  providerFamily?: string;
+   *  "default", "other") do not inject mid-turn, so MCP tools must be active
+   *  from the start. Required — pass the explicit family for the resolved
+   *  model; use "default" when no specific family applies. */
+  providerFamily: string;
   /** Names of tools currently ACTIVE in this session (post-deferral).
    *  Consumed by discover_tools to return "already active" guidance when
    *  queries re-ask for loaded MCPs. Must NOT include names that were
@@ -366,8 +367,7 @@ export function applyToolDeferral(
   // Providers without mid-turn injection (OpenAI, xAI, etc.) get MCP tools from the start,
   // because sub-agents only call execute() once and there is no "next execution" for
   // discovered tools to appear in.
-  const skipMcpDeferral = deferralContext.providerFamily !== undefined
-    && deferralContext.providerFamily !== "anthropic"
+  const skipMcpDeferral = deferralContext.providerFamily !== "anthropic"
     && deferralContext.providerFamily !== "google";
   if (!skipMcpDeferral) {
     for (const t of tools) {
