@@ -49,6 +49,7 @@ import type {
   ChunkDeliveryResult,
   DeliveryResult,
 } from "./types.js";
+import { systemNowMs } from "../runtime/system-time.js";
 
 // ---------------------------------------------------------------------------
 // Constants — platform sets local to the delivery pipeline. The chunk-limit
@@ -155,7 +156,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
       text: string,
       options?: DeliverToChannelOptions & { abortSignal?: AbortSignal },
     ): Promise<Result<DeliveryResult, Error>> {
-      const startTime = Date.now();
+      const startTime = systemNowMs();
 
       try {
         // --- 1. EARLY RETURN: empty text ---
@@ -203,7 +204,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               channelType: adapter.channelType,
               reason: hookResult.cancelReason ?? "unknown",
               origin: options?.origin ?? "unknown",
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
             });
             return ok({
               ok: false,
@@ -298,9 +299,9 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 reason,
                 chunksDelivered: chunkResults.filter(r => r.ok).length,
                 totalChunks: chunks.length,
-                durationMs: Date.now() - startTime,
+                durationMs: systemNowMs() - startTime,
                 origin: options?.origin ?? "unknown",
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
               break;
             }
@@ -368,9 +369,9 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               formatApplied: true,
               chunkingApplied: true,
               maxAttempts: 5,
-              createdAt: Date.now(),
-              scheduledAt: Date.now(),
-              expireAt: Date.now() + 3_600_000, // 1 hour
+              createdAt: systemNowMs(),
+              scheduledAt: systemNowMs(),
+              expireAt: systemNowMs() + 3_600_000, // 1 hour
               traceId,
             });
 
@@ -385,7 +386,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
           // Send with or without retry
           const retried = Boolean(deps.retryEngine);
-          const chunkSendStart = Date.now();
+          const chunkSendStart = systemNowMs();
 
           // Build the send promise WITHOUT awaiting yet, so we can register it
           // in deps.inFlightSends synchronously before the underlying HTTPS POST
@@ -438,8 +439,8 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 channelId,
                 channelType: adapter.channelType,
                 messageId: result.value,
-                durationMs: Date.now() - chunkSendStart,
-                timestamp: Date.now(),
+                durationMs: systemNowMs() - chunkSendStart,
+                timestamp: systemNowMs(),
               });
             }
           } else {
@@ -458,7 +459,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                   channelType: adapter.channelType,
                   error: errorMsg,
                   reason: "permanent_error",
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
               } else if (isPermanentError(errorMsg)) {
                 // Permanent error -- fail immediately, no retries
@@ -469,7 +470,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                   channelType: adapter.channelType,
                   error: errorMsg,
                   reason: "permanent_error",
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
               } else if (deps.retryEngine) {
                 // Retry engine was used and exhausted its retries -- fail
@@ -480,11 +481,11 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                   channelType: adapter.channelType,
                   error: errorMsg,
                   reason: "retries_exhausted",
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
               } else {
                 // No retry engine -- nack for queue-level retry
-                const nextRetryAt = Date.now() + computeQueueBackoff(0);
+                const nextRetryAt = systemNowMs() + computeQueueBackoff(0);
                 await deps.deliveryQueue.nack(entryId, errorMsg, nextRetryAt);
                 deps.eventBus?.emit("delivery:nacked", {
                   entryId,
@@ -493,7 +494,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                   error: errorMsg,
                   attemptCount: 1,
                   nextRetryAt,
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
               }
             }
@@ -511,7 +512,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 charCount: chunk.length,
                 ok: false,
                 retried,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
             }
 
@@ -537,7 +538,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               charCount: chunk.length,
               ok: result.ok,
               retried,
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
             });
           }
         }
@@ -565,10 +566,10 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             deliveredChunks: deliveryResult.deliveredChunks,
             failedChunks: deliveryResult.failedChunks,
             totalChars: deliveryResult.totalChars,
-            durationMs: Date.now() - startTime,
+            durationMs: systemNowMs() - startTime,
             origin: options?.origin ?? "unknown",
             strategy,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
         }
 
@@ -583,7 +584,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 channelType: adapter.channelType,
                 channelId,
                 result: deliveryResult,
-                durationMs: Date.now() - startTime,
+                durationMs: systemNowMs() - startTime,
                 origin: options?.origin ?? "unknown",
               },
               {

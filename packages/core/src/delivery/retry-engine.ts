@@ -21,6 +21,11 @@ import type { TypedEventBus } from "../event-bus/index.js";
 import type { Result } from "@comis/shared";
 import { err } from "@comis/shared";
 import type { RetryConfig } from "../config/schema-retry.js";
+import {
+  systemNowMs,
+  systemSetTimeout,
+  systemClearTimeout,
+} from "../runtime/system-time.js";
 
 // ---------------------------------------------------------------------------
 // Error classification
@@ -146,15 +151,15 @@ function computeDelay(attempt: number, config: RetryConfig): number {
  * Abort-aware sleep: resolves after `ms` or immediately when signal fires.
  */
 function abortAwareSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  if (!signal) return new Promise((resolve) => systemSetTimeout(resolve, ms));
   if (signal.aborted) return Promise.resolve();
   return new Promise<void>((resolve) => {
-    const timer = setTimeout(() => {
+    const timer = systemSetTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
     }, ms);
     function onAbort(): void {
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       resolve();
     }
     signal.addEventListener("abort", onAbort, { once: true });
@@ -241,7 +246,7 @@ export function createRetryEngine(
             channelId: adapter.channelId,
             chatId: channelId,
             originalParseMode: String(originalParseMode),
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
 
           // Try sending plain text (counts as one attempt)
@@ -259,7 +264,7 @@ export function createRetryEngine(
               maxAttempts: config.maxAttempts,
               delayMs,
               error: lastError.message,
-              timestamp: Date.now(),
+              timestamp: systemNowMs(),
             });
             await abortAwareSleep(delayMs, abortSignal);
           }
@@ -289,7 +294,7 @@ export function createRetryEngine(
             maxAttempts: config.maxAttempts,
             delayMs,
             error: result.error.message,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
 
           await abortAwareSleep(delayMs, abortSignal);
@@ -303,7 +308,7 @@ export function createRetryEngine(
         chatId: channelId,
         totalAttempts: config.maxAttempts,
         finalError: finalError.message,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       return err(finalError);

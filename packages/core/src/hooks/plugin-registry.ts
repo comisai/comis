@@ -11,6 +11,7 @@ import type {
 import type { HookName, HookHandlerMap } from "../ports/hook-types.js";
 import type { TypedEventBus } from "../event-bus/index.js";
 import { z } from "zod";
+import { systemNowMs } from "../runtime/system-time.js";
 
 /**
  * The plugin registry manages plugin lifecycle and hook storage.
@@ -164,7 +165,7 @@ export function createPluginRegistry(options: PluginRegistryOptions = {}): Plugi
           pluginId: plugin.id,
           pluginName: plugin.name,
           hookCount: facade.hookCount,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
       }
 
@@ -249,7 +250,7 @@ export function createPluginRegistry(options: PluginRegistryOptions = {}): Plugi
           eventBus.emit("plugin:deactivated", {
             pluginId: plugin.id,
             reason: "shutdown",
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
         }
       }

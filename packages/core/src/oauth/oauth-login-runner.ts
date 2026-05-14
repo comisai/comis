@@ -42,6 +42,7 @@ import {
   loginOpenAICodexDeviceCode,
   type DeviceCodeVerificationPrompt,
 } from "./oauth-device-code.js";
+import { systemNowMs, systemSetTimeout, systemClearTimeout } from "../runtime/system-time.js";
 
 // ---------------------------------------------------------------------------
 // Public types (boundary contract)
@@ -206,10 +207,10 @@ function waitForDelayOrLoginSettle(params: {
     const finish = (outcome: "delay" | "settled"): void => {
       if (finished) return;
       finished = true;
-      clearTimeout(timeoutHandle);
+      systemClearTimeout(timeoutHandle);
       resolve(outcome);
     };
-    const timeoutHandle = setTimeout(() => finish("delay"), params.delayMs);
+    const timeoutHandle = systemSetTimeout(() => finish("delay"), params.delayMs);
     params.waitForLoginToSettle.then(
       () => finish("settled"),
       () => finish("settled"),
@@ -370,7 +371,7 @@ export async function loginOpenAICodexOAuth(
   params: LoginRunnerParams,
 ): Promise<Result<LoginRunnerSuccess, LoginError>> {
   const logger = params.logger ?? NO_OP_LOGGER;
-  const startedAt = Date.now();
+  const startedAt = systemNowMs();
 
   // Device-code dispatch. Only "openai-codex" supports device-code today;
   // the CLI rejects other providers at parse time.
@@ -456,7 +457,7 @@ export async function loginOpenAICodexOAuth(
       {
         provider: PROVIDER,
         profileId: successResult.value.profileId,
-        durationMs: Date.now() - startedAt,
+        durationMs: systemNowMs() - startedAt,
         identity:
           redactEmailForLog(successResult.value.email) ??
           successResult.value.displayName ??
@@ -504,7 +505,7 @@ async function loginOpenAICodexDeviceCodeRunner(
   params: LoginRunnerParams,
   logger: ComisLogger,
 ): Promise<Result<LoginRunnerSuccess, LoginError>> {
-  const startedAt = Date.now();
+  const startedAt = systemNowMs();
   logger.info(
     {
       provider: PROVIDER,
@@ -559,7 +560,7 @@ async function loginOpenAICodexDeviceCodeRunner(
     {
       provider: PROVIDER,
       profileId: successResult.value.profileId,
-      durationMs: Date.now() - startedAt,
+      durationMs: systemNowMs() - startedAt,
       identity:
         redactEmailForLog(successResult.value.email) ??
         successResult.value.displayName ??
