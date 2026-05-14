@@ -644,15 +644,18 @@ describe("Phase 39 ports (PORTS-01/02/03/04/05)", () => {
     expect(source, "TimerHandle must declare unref(): void").toMatch(
       /\bunref\s*\(\s*\)\s*:\s*void\b/,
     );
-    // TimerPort surface
+    // TimerPort surface — parameter list contains `(callback: () => void,
+    // delayMs: number)` with nested parens, so a flat `[^)]*` regex fails.
+    // Use a balanced-paren match (callback list + trailing whitespace) before
+    // the return-type colon and TimerHandle.
     expect(
       source,
       "TimerPort must declare setTimeout(callback, delayMs): TimerHandle",
-    ).toMatch(/\bsetTimeout\s*\([^)]*\)\s*:\s*TimerHandle\b/);
+    ).toMatch(/\bsetTimeout\s*\([^()]*\([^)]*\)[^()]*\)\s*:\s*TimerHandle\b/);
     expect(
       source,
       "TimerPort must declare setInterval(callback, intervalMs): TimerHandle",
-    ).toMatch(/\bsetInterval\s*\([^)]*\)\s*:\s*TimerHandle\b/);
+    ).toMatch(/\bsetInterval\s*\([^()]*\([^)]*\)[^()]*\)\s*:\s*TimerHandle\b/);
 
     const indexSource = readFileSync(INDEX_PATH_P39, "utf8");
     expect(
@@ -671,17 +674,26 @@ describe("Phase 39 ports (PORTS-01/02/03/04/05)", () => {
 
     // Extract the TimerHandle interface body and assert NO bare ref() member.
     // `unref()` legitimately exists; we filter that out by anchoring on a
-    // member that is NOT preceded by `un`.
+    // member that is NOT preceded by `un` / any identifier character.
     const handleBlock = /export\s+interface\s+TimerHandle\b[\s\S]*?\n\}/.exec(source);
     expect(
       handleBlock,
       "TimerHandle interface block must be locatable in timer.ts",
     ).not.toBeNull();
     const body = handleBlock![0];
+    // Strip comments before scanning — the body legitimately contains the
+    // string "ref()" inside `// NO ref() — YAGNI per PORTS-05`, which is
+    // documentation about the absence of the member. We only care about
+    // actual TypeScript member declarations.
+    const bodyNoComments = body
+      // strip /* ... */ block comments
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      // strip // line comments (to end of line)
+      .replace(/\/\/[^\n]*/g, "");
     // Match a method member literally named `ref` (boundary-anchored), not
-    // `unref`. Allow optional readonly / async modifiers. Production callers
-    // re-refing a timer is a known YAGNI surface; PORTS-05 freezes that out.
-    const refMember = /(?<![A-Za-z0-9_])ref\s*\(\s*\)/.exec(body);
+    // `unref`. Production callers re-refing a timer is a known YAGNI surface;
+    // PORTS-05 freezes that out.
+    const refMember = /(?<![A-Za-z0-9_])ref\s*\(\s*\)/.exec(bodyNoComments);
     expect(
       refMember,
       "TimerHandle MUST NOT declare a ref() method per PORTS-05 (YAGNI). Found a ref()-shaped member in the interface body.",
