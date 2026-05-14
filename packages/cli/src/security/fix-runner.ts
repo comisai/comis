@@ -15,6 +15,7 @@ import type { RemediationAction, FixResult } from "./fix-types.js";
 import { createPermissionFixes } from "./fixes/fix-permissions.js";
 import { createSecretsFixes } from "./fixes/fix-secrets.js";
 import { createConfigFixes } from "./fixes/fix-config.js";
+import { systemNowDate } from "@comis/core";
 
 /**
  * Create a simple timestamped backup of a file.
@@ -29,7 +30,7 @@ import { createConfigFixes } from "./fixes/fix-config.js";
 function createBackup(filePath: string): string | null {
   try {
     if (!existsSync(filePath)) return null;
-    const timestamp = new Date()
+    const timestamp = systemNowDate()
       .toISOString()
       .replace(/[:.]/g, "")
       .replace("T", "T")

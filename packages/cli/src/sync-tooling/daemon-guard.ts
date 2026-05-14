@@ -19,7 +19,7 @@
  * @module
  */
 
-import { SystemPingContract } from "@comis/core";
+import { SystemPingContract, systemSetTimeout } from "@comis/core";
 import { withClient, callTyped } from "../client/rpc-client.js";
 
 /**
@@ -44,7 +44,7 @@ export async function isDaemonRunning(timeoutMs = 1000): Promise<boolean> {
   // 2000ms. Enforce the 1s deadline with an explicit Promise.race.
   const timeoutToken = Symbol("daemon-guard-timeout");
   const timeout = new Promise<symbol>((resolve) => {
-    setTimeout(() => resolve(timeoutToken), timeoutMs);
+    systemSetTimeout(() => resolve(timeoutToken), timeoutMs);
   });
 
   try {

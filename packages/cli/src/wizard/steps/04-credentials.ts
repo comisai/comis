@@ -40,15 +40,10 @@ import { getModels, type KnownProvider } from "@mariozechner/pi-ai";
 // supply-chain invariants).
 import { homedir } from "node:os";
 import open from "open";
-import {
-  loginOpenAICodexOAuth,
-  isRemoteEnvironment,
-  selectOAuthCredentialStore,
-  // Phase 35 Plan 35-04 (D-01 #1/#2/#3): all four D-01 symbol groups now
+import { // Phase 35 Plan 35-04 (D-01 #1/#2/#3): all four D-01 symbol groups now
   // live in @comis/core; the CLI no longer routes through @comis/agent for
   // these symbols. createFileLock relocated from @comis/scheduler via core.
-  createFileLock,
-} from "@comis/core";
+  createFileLock, isRemoteEnvironment, loginOpenAICodexOAuth, selectOAuthCredentialStore, systemClearTimeout, systemEnvSnapshot, systemGetEnv, systemSetTimeout } from "@comis/core";
 import {
   loadConfigFile,
   validateConfig,
@@ -223,7 +218,7 @@ async function validateKeyLive(
 
   // 5-second timeout
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  const timeout = systemSetTimeout(() => controller.abort(), 5000);
 
   try {
     const response = await fetch(url, {
@@ -244,7 +239,7 @@ async function validateKeyLive(
   } catch {
     return { valid: false, error: "Could not reach provider (network error or timeout)" };
   } finally {
-    clearTimeout(timeout);
+    systemClearTimeout(timeout);
   }
 }
 
@@ -459,8 +454,7 @@ const wizardLogger = createConsoleLogger("info", { name: "wizard-oauth" });
 async function openWizardOAuthStore(): Promise<OAuthCredentialStorePort> {
   const dataDir = safePath(homedir(), ".comis");
   const fileLock = createFileLock();
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager (matches doctor.ts:45 / health.ts:43 precedent)
-  const envPaths = process.env["COMIS_CONFIG_PATHS"];
+  const envPaths = systemGetEnv("COMIS_CONFIG_PATHS");
   const configPath = envPaths?.split(":")[0] ??
     safePath(homedir(), ".comis", "config.yaml");
   const loadResult = loadConfigFile(configPath);
@@ -502,7 +496,7 @@ async function handleCodexOAuth(
   state: WizardState,
   prompter: WizardPrompter,
 ): Promise<WizardState> {
-  const isRemoteDefault = isRemoteEnvironment({ env: process.env });
+  const isRemoteDefault = isRemoteEnvironment({ env: systemEnvSnapshot() });
   const maxRetries = 3;
 
   // Inline helpNote -- AUTH_METHOD_PROVIDERS no longer has an openai entry,

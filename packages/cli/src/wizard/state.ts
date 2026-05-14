@@ -27,6 +27,7 @@ import type {
   PasswordOpts,
 } from "./prompter.js";
 import { CancelError, SkipError } from "./prompter.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------- Constants ----------
 
@@ -479,7 +480,7 @@ export async function runWizardFlow(
           continue;
         }
 
-        const now = Date.now();
+        const now = systemNowMs();
 
         // Double escape (rapid succession) → confirm before exit
         if (now - lastCancelTime < DOUBLE_ESCAPE_MS) {

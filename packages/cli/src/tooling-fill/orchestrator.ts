@@ -58,11 +58,7 @@
 import * as fs from "node:fs";
 import { parseDocument, isMap, isPair, isScalar, type Document } from "yaml";
 import { ok, err, type Result } from "@comis/shared";
-import {
-  loadConfigFile,
-  loadEnvFile,
-  validateConfig,
-} from "@comis/core";
+import { loadConfigFile, loadEnvFile, systemGetEnv, validateConfig } from "@comis/core";
 import { callAgent } from "./agent-call.js";
 import {
   detectSupervisor,
@@ -346,10 +342,8 @@ export async function runToolingFill(
   // attacker-controlled description/replacesPackages values into config.
   // AGENTS.md §2.2 lists "test fault injectors" as an exception to the
   // no-runtime-env rule.
-  // eslint-disable-next-line no-restricted-syntax -- test fault injector (AGENTS.md §2.2 exception)
-  const testAgentResponseRaw = process.env["COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE"];
-  // eslint-disable-next-line no-restricted-syntax -- test runtime detection
-  const isTestRuntime = process.env["NODE_ENV"] === "test" || process.env["VITEST"] === "true";
+  const testAgentResponseRaw = systemGetEnv("COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE");
+  const isTestRuntime = systemGetEnv("NODE_ENV") === "test" || systemGetEnv("VITEST") === "true";
   if (testAgentResponseRaw !== undefined && !isTestRuntime) {
     return {
       exitCode: 1,
@@ -907,8 +901,7 @@ function resolveGatewayConn(
   const m = tokenRaw.match(/^\$\{([A-Z_][A-Z0-9_]*)\}$/);
   let resolvedToken: string;
   if (m !== null) {
-    // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-    const fromEnv = process.env[m[1]!];
+    const fromEnv = systemGetEnv(m[1]!);
     if (fromEnv === undefined || fromEnv.length === 0) {
       return err(
         `gateway.token references \${${m[1]!}} but it is not set — check ~/.comis/.env`,
@@ -1048,8 +1041,7 @@ function resolveEnvRefs(obj: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(obj)) {
     if (typeof value === "string" && value.includes("${")) {
       obj[key] = value.replace(ENV_REF_RE, (match, varName: string) => {
-        // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-        return process.env[varName] ?? match;
+        return systemGetEnv(varName) ?? match;
       });
     } else if (value && typeof value === "object" && !Array.isArray(value)) {
       resolveEnvRefs(value as Record<string, unknown>);

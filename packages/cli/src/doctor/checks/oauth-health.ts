@@ -34,13 +34,7 @@ import { stat, readFile } from "node:fs/promises";
 // Phase 35 Plan 35-04 (D-01 + drift recovery): all OAuth helpers + file-lock
 // adapter consumed from @comis/core. runOAuthTlsPreflight relocated in this
 // plan to close the last CLI → @comis/agent import edge (truth #11 / L17).
-import {
-  selectOAuthCredentialStore,
-  runOAuthTlsPreflight,
-  createFileLock,
-  redactEmailForLog,
-  rewriteOAuthError,
-} from "@comis/core";
+import { createFileLock, redactEmailForLog, rewriteOAuthError, runOAuthTlsPreflight, selectOAuthCredentialStore, systemGetEnv, systemNowMs } from "@comis/core";
 import type {
   OAuthProfile,
   OAuthCredentialStorePort,
@@ -196,7 +190,7 @@ async function checkProfiles(
  * the human-readable message.
  */
 function profileExpiryFinding(profile: OAuthProfile): DoctorFinding {
-  const msUntilExpiry = profile.expires - Date.now();
+  const msUntilExpiry = profile.expires - systemNowMs();
   const secsUntilExpiry = Math.floor(msUntilExpiry / 1000);
   const identityLabel = redactEmailForLog(profile.email) ?? profile.profileId;
   // CRITICAL: NEVER include profile.access or profile.refresh in any
@@ -404,8 +398,7 @@ function caCertificatesInstallHint(os: OsRelease | null): string {
 // ---------------------------------------------------------------------------
 
 function checkHttpsProxyHeuristic(): DoctorFinding {
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const httpsProxy = process.env["HTTPS_PROXY"] ?? process.env["https_proxy"];
+  const httpsProxy = systemGetEnv("HTTPS_PROXY") ?? systemGetEnv("https_proxy");
   if (!httpsProxy) {
     return {
       category: CATEGORY,

@@ -25,7 +25,7 @@
 
 import * as fs from "node:fs";
 import { randomBytes } from "node:crypto";
-import { safePath, PathTraversalError } from "@comis/core";
+import { PathTraversalError, safePath, systemNowDate } from "@comis/core";
 import { ok, err, tryCatch, type Result } from "@comis/shared";
 
 /**
@@ -77,12 +77,12 @@ function validatePrefix(prefix: string): void {
  * `prefix` is validated against `/^[a-z0-9-]+$/`; non-conforming
  * prefixes throw synchronously.
  *
- * @param now - Override the timestamp (default: `new Date()`).
+ * @param now - Override the timestamp (default: `systemNowDate()`).
  * @param rng - Override the 6-char hex suffix generator (default: `randomBytes(3).toString('hex')`).
  * @param prefix - Command prefix for the filename (default: `"sync-tooling"`).
  */
 export function buildBackupFilename(
-  now: Date = new Date(),
+  now: Date = systemNowDate(),
   rng: () => string = () => randomBytes(3).toString("hex"),
   prefix: string = "sync-tooling",
 ): string {
@@ -132,7 +132,7 @@ export function writeBackup(
   // safePath throws PathTraversalError on null bytes / traversal escapes;
   // we wrap with tryCatch and surface as BACKUP_WRITE_FAILED so the caller
   // sees a single failure mode for "could not produce a backup."
-  const filename = buildBackupFilename(new Date(), undefined, prefix);
+  const filename = buildBackupFilename(systemNowDate(), undefined, prefix);
   const safePathResult = tryCatch(() => safePath(homeDir, ".comis", filename));
   if (!safePathResult.ok) {
     const cause =

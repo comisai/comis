@@ -10,6 +10,7 @@
  */
 
 import type { RpcClient } from "./client/rpc-client.js";
+import { systemSetTimeout } from "@comis/core";
 
 /**
  * Builder interface for configuring mock RPC client responses.
@@ -89,7 +90,7 @@ export function createMockRpcClient(): MockRpcClientBuilder {
           if (timeouts.has(method)) {
             const delayMs = timeouts.get(method)!;
             return new Promise((_resolve, reject) => {
-              setTimeout(() => {
+              systemSetTimeout(() => {
                 reject(
                   new Error(
                     `Connection to daemon timed out after ${delayMs}ms. Is the daemon running?`,
