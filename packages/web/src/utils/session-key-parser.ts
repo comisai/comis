@@ -7,12 +7,15 @@
  * session row component and session list views to display human-readable session labels.
  *
  * Session key format:
- *   [agent:{agentId}:]{tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]
+ *   {tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]
+ *
+ * The legacy `agent:<agentId>:` prefix (pre-v2.1) is no longer recognized
+ * here — the daemon parser dropped it in BC-REM-15 (Phase 38) and the
+ * emitter dropped it in the CR-01 follow-up. This parser mirrors the daemon.
  */
 
 /** Parsed fields from a formatted session key string. */
 export interface ParsedSessionKey {
-  agentId?: string;
   tenantId: string;
   userId: string;
   channelId: string;
@@ -33,22 +36,14 @@ const IDLE_THRESHOLD_MS = 60 * 60 * 1000;
 /**
  * Parse a formatted session key string into its constituent parts.
  *
- * Handles keys with or without the `agent:` prefix and optional
- * `peer:`, `guild:`, `thread:` tagged segments.
+ * Handles keys with optional `peer:`, `guild:`, `thread:` tagged segments.
  *
  * @param formatted - Full session key string from the daemon.
  * @returns Parsed key object, or undefined if the format is invalid.
  */
 export function parseSessionKeyString(formatted: string): ParsedSessionKey | undefined {
   if (!formatted || typeof formatted !== "string") return undefined;
-  let parts = formatted.split(":");
-
-  // Detect and strip agent: prefix
-  let agentId: string | undefined;
-  if (parts[0] === "agent" && parts.length >= 5) {
-    agentId = parts[1];
-    parts = parts.slice(2);
-  }
+  const parts = formatted.split(":");
 
   if (parts.length < 3) return undefined;
 
@@ -57,10 +52,6 @@ export function parseSessionKeyString(formatted: string): ParsedSessionKey | und
     userId: parts[1]!,
     channelId: parts[2]!,
   };
-
-  if (agentId !== undefined) {
-    key.agentId = agentId;
-  }
 
   // Parse optional peer:, guild:, thread: segments
   for (let i = 3; i < parts.length; i++) {

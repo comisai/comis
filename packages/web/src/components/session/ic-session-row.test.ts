@@ -6,10 +6,13 @@ import type { SessionInfo } from "../../api/types/index.js";
 // Side-effect import to register custom element
 import "./ic-session-row.js";
 
-/** Create a session with a parseable key (agent prefix format). */
+/** Create a session with a parseable key.
+ *  CR-01 follow-up to BC-REM-15 (Phase 38): session keys no longer carry an
+ *  `agent:<agentId>:` prefix; the agent identity is sourced from the
+ *  session row's `agentId` field instead. */
 function makeSession(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
-    key: "agent:default:myTenant:user123:telegram",
+    key: "myTenant:user123:telegram",
     agentId: "default",
     channelType: "telegram",
     messageCount: 47,

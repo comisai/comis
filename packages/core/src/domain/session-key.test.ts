@@ -183,14 +183,19 @@ describe("SessionKey", () => {
       expect(formatSessionKey(key)).toBe("acme-corp:admin:ops");
     });
 
-    it("prepends agent prefix when agentId is set", () => {
+    // CR-01 follow-up to BC-REM-15 (Phase 38): `formatSessionKey` no longer
+    // emits an `agent:<agentId>:` prefix when `key.agentId` is set. The
+    // `SessionKey.agentId` field is retained on the schema for caller
+    // ergonomics but is intentionally not serialized — agent isolation
+    // happens out-of-band (per-agent workspace dirs, watermark files, etc.).
+    it("does NOT emit agent prefix when agentId is set (BC-REM-15 / CR-01)", () => {
       const key: SessionKey = {
         tenantId: "default",
         userId: "user-42",
         channelId: "general",
         agentId: "myAgent",
       };
-      expect(formatSessionKey(key)).toBe("agent:myAgent:default:user-42:general");
+      expect(formatSessionKey(key)).toBe("default:user-42:general");
     });
 
     it("appends thread suffix when threadId is set", () => {
@@ -203,8 +208,8 @@ describe("SessionKey", () => {
       expect(formatSessionKey(key)).toBe("default:user-42:general:thread:t123");
     });
 
-    it("includes both agentId and threadId", () => {
-      const key: SessionKey = {
+    it("emits identical output for agentId-set and agentId-unset keys (BC-REM-15 / CR-01)", () => {
+      const withAgent: SessionKey = {
         tenantId: "default",
         userId: "u1",
         channelId: "c1",
@@ -212,7 +217,15 @@ describe("SessionKey", () => {
         agentId: "dash",
         threadId: "th-7",
       };
-      expect(formatSessionKey(key)).toBe("agent:dash:default:u1:c1:peer:p1:thread:th-7");
+      const withoutAgent: SessionKey = {
+        tenantId: "default",
+        userId: "u1",
+        channelId: "c1",
+        peerId: "p1",
+        threadId: "th-7",
+      };
+      expect(formatSessionKey(withAgent)).toBe(formatSessionKey(withoutAgent));
+      expect(formatSessionKey(withAgent)).toBe("default:u1:c1:peer:p1:thread:th-7");
     });
 
     it("produces identical output without agentId/threadId", () => {

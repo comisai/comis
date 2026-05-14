@@ -3,6 +3,21 @@
  * Project-wide no-backward-compat invariant (Phase 38 — BC-REM-02, 03,
  * 04, 05, 06, 07, 21, 23).
  *
+ * Scope (intentional, by design): production source under `packages/*\/src/`
+ * only. This matches the npm-tarball scope — files included in the
+ * published `@comis/*` tarballs by `prepack.js` (the umbrella `comisai`
+ * package bundles each `packages/*\/dist/` built from `packages/*\/src/`).
+ * Non-shipped paths (`test/support/`, root config files, `scripts/`,
+ * `tools/`, `website/`, `packages/comis/` umbrella) are out of scope
+ * because they do not reach end-users and therefore cannot regress the
+ * shipped contract.
+ *
+ * If you need to add a BC-text exemption for a file outside
+ * `packages/*\/src/`, that file is outside the ratchet's scope by
+ * definition — no allowlist entry is needed. The rule's failure mode
+ * (per-line citation with absolute path) makes the in-scope/out-of-scope
+ * distinction visible at review time.
+ *
  * Enforces the v2.1 "no backward-compat" policy (see CLAUDE.md user
  * memory `feedback_no_backward_compat`) by gating production source at
  * `packages/*\/src/` against:
@@ -248,14 +263,14 @@ describe("no-backward-compat — Phase 38 (BC-REM-02/03/04/05/06/07/21/23)", () 
       violations,
       formatViolations({
         description:
-          "Production source must not contain backward-compat / legacy-alias / legacy-mode / legacy-fallback text outside the noBackwardCompatAllowlist (line-pinned permanent historical references, max 3 entries per BC-REM-22) and outside the BC_REM_02_PATH_TAIL_ALLOWLIST (pre-existing benign-text files captured at Phase 38 baseline).",
+          "Production source under packages/*/src/ must not contain backward-compat / legacy-alias / legacy-mode / legacy-fallback text outside the noBackwardCompatAllowlist (line-pinned permanent historical references, max 3 entries per BC-REM-22) and outside the BC_REM_02_PATH_TAIL_ALLOWLIST (pre-existing benign-text files captured at Phase 38 baseline). Scope is intentionally limited to npm-tarball-bundled source (the published @comis/* tarballs from packages/*/src/) — non-shipped paths (test/support/, root configs, scripts/, tools/, website/, packages/comis/ umbrella) are out of scope by design because they do not reach end-users.",
         violations,
         suggestedFix:
-          "Delete the legacy code path and its compatibility comment (preferred). Alternatively, if the code is a permanent-historical-reference migration that must remain pending v2.2 cleanup, add a {file, line, reason} entry to noBackwardCompatAllowlist in test/support/architecture-allowlist.ts (max 3 entries per BC-REM-22) and annotate the file with `@migration-since: <YYYY-MM-DD>; @remove-after: <milestone>`. Adding a new file to BC_REM_02_PATH_TAIL_ALLOWLIST is reserved for documented pre-existing benign text — not new BC code.",
+          "Delete the legacy code path and its compatibility comment (preferred). Alternatively, if the code is a permanent-historical-reference migration that must remain pending v2.2 cleanup, add a {file, line, reason} entry to noBackwardCompatAllowlist in test/support/architecture-allowlist.ts (max 3 entries per BC-REM-22) and annotate the file with `@migration-since: <YYYY-MM-DD>; @remove-after: <milestone>`. Adding a new file to BC_REM_02_PATH_TAIL_ALLOWLIST is reserved for documented pre-existing benign text — not new BC code. If the offending text is outside packages/*/src/ it is outside this ratchet's scope by design — no allowlist entry needed.",
         designRef:
           "code-quality-plan-2026-05-10.md §11.3 (BC-REM-02), §11.5 / Phase 38 wave-close",
         allowlistRef:
-          "noBackwardCompatAllowlist (line-pinned) + BC_REM_02_PATH_TAIL_ALLOWLIST (in-file, this test)",
+          "noBackwardCompatAllowlist (line-pinned) + BC_REM_02_PATH_TAIL_ALLOWLIST (in-file, this test). Scope: packages/*/src/ only (npm-tarball-bundled source).",
       }),
     ).toEqual([]);
 

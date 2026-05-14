@@ -240,13 +240,16 @@ export const SessionResetPolicySchema = z.strictObject({
  * - "per-peer": one session per peer across all channels
  * - "per-channel-peer": one session per channel+peer (default)
  * - "per-account-channel-peer": includes bot account identifier in channel for multi-bot isolation
+ *
+ * Note: the `agentPrefix` field was removed in Phase 38 (CR-01 follow-up to
+ * BC-REM-15). It is no longer accepted — operators with `agentPrefix: true`
+ * in their YAML will see a strict-object validation error at config load.
+ * Agent isolation is now handled out-of-band (per-agent workspaces, etc.).
  */
 export const DmScopeConfigSchema = z.strictObject({
   /** DM scope mode controlling session isolation granularity */
   mode: z.enum(["main", "per-peer", "per-channel-peer", "per-account-channel-peer"])
     .default("per-channel-peer"),
-  /** Prepend agent:<agentId>: to session keys for multi-agent isolation */
-  agentPrefix: z.boolean().default(false),
   /** Append :thread:<threadId> to session keys for forum/thread isolation */
   threadIsolation: z.boolean().default(true),
 });

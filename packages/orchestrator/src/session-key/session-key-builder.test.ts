@@ -150,28 +150,12 @@ describe("buildScopedSessionKey", () => {
     });
   });
 
-  describe("agent prefix", () => {
-    it("sets agentId when agentPrefixEnabled is true", () => {
-      const msg = makeMsg();
-      const key = buildScopedSessionKey({
-        msg,
-        agentId: "dash",
-        adapterChannelId: "bot-1",
-        agentPrefixEnabled: true,
-      });
-      expect(key.agentId).toBe("dash");
-    });
-
-    it("does not set agentId when agentPrefixEnabled is false (default)", () => {
-      const msg = makeMsg();
-      const key = buildScopedSessionKey({
-        msg,
-        agentId: "dash",
-        adapterChannelId: "bot-1",
-      });
-      expect(key.agentId).toBeUndefined();
-    });
-  });
+  // Deleted (Phase 38 CR-01 follow-up to BC-REM-15): "agent prefix" describe
+  // block — the `agentPrefixEnabled` param + `key.agentId` assignment were
+  // removed because the session-key formatter no longer serializes
+  // `agent:<agentId>:`. `key.agentId` is intentionally never set by
+  // `buildScopedSessionKey` post-CR-01; the `agentId` param is retained on
+  // ScopedSessionKeyParams for caller ergonomics only.
 
   describe("thread ID", () => {
     it("sets threadId when provided", () => {
