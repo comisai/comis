@@ -8,6 +8,7 @@ import { createGlobalState, type GlobalState } from "./state/global-state.js";
 import { createEventDispatcher, type EventDispatcher } from "./state/event-dispatcher.js";
 import { PollingController } from "./state/polling-controller.js";
 import type { ConnectionStatus } from "./api/types/index.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 // Import shell components (always needed) and dashboard (default landing view)
 import "./components/shell/ic-sidebar.js";
 import "./components/shell/ic-topbar.js";
@@ -302,7 +303,7 @@ export class IcApp extends LitElement {
     this._cleanup();
     document.removeEventListener("keydown", this._boundKeyHandler);
     if (this._pendingGotoKey) {
-      clearTimeout(this._pendingGotoKey);
+      systemClearTimeout(this._pendingGotoKey);
       this._pendingGotoKey = null;
     }
   }
@@ -355,7 +356,7 @@ export class IcApp extends LitElement {
     if (this._gotoWaiting) {
       this._gotoWaiting = false;
       if (this._pendingGotoKey) {
-        clearTimeout(this._pendingGotoKey);
+        systemClearTimeout(this._pendingGotoKey);
         this._pendingGotoKey = null;
       }
       switch (e.key.toLowerCase()) {
@@ -371,7 +372,7 @@ export class IcApp extends LitElement {
     // Start G+letter sequence
     if (e.key === "g" && !e.ctrlKey && !e.metaKey && !e.altKey) {
       this._gotoWaiting = true;
-      this._pendingGotoKey = setTimeout(() => {
+      this._pendingGotoKey = systemSetTimeout(() => {
         this._gotoWaiting = false;
         this._pendingGotoKey = null;
       }, 500);

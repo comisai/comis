@@ -11,6 +11,7 @@
 
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import type { RpcClient } from "../api/rpc-client.js";
+import { systemClearInterval, systemSetInterval } from "@comis/core";
 
 /** Badge count data returned by polling. */
 export interface BadgeCounts {
@@ -58,12 +59,12 @@ export class PollingController implements ReactiveController {
 
   hostConnected(): void {
     this._poll();
-    this._timer = setInterval(() => this._poll(), this._intervalMs);
+    this._timer = systemSetInterval(() => this._poll(), this._intervalMs);
   }
 
   hostDisconnected(): void {
     if (this._timer !== null) {
-      clearInterval(this._timer);
+      systemClearInterval(this._timer);
       this._timer = null;
     }
   }

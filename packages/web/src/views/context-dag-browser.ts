@@ -17,6 +17,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { DagConversation, DagTreeNode } from "../api/types/memory-types.js";
+import { systemClearTimeout, systemDateFrom, systemSetTimeout } from "@comis/core";
 
 // Side-effect imports for sub-components
 import "../components/feedback/ic-loading.js";
@@ -444,13 +445,13 @@ export class IcContextDagBrowser extends LitElement {
     const query = e.detail;
     this._searchQuery = query;
     if (this._searchTimeout) {
-      clearTimeout(this._searchTimeout);
+      systemClearTimeout(this._searchTimeout);
     }
     if (!query) {
       this._searchResults = [];
       return;
     }
-    this._searchTimeout = setTimeout(() => this._executeSearch(query), 300);
+    this._searchTimeout = systemSetTimeout(() => this._executeSearch(query), 300);
   }
 
   private async _executeSearch(query: string): Promise<void> {
@@ -503,7 +504,7 @@ export class IcContextDagBrowser extends LitElement {
           <div class="conv-session">${conv.session_key.length > 40 ? conv.session_key.slice(0, 40) + "..." : conv.session_key}</div>
           ${conv.title ? html`<div class="conv-session">${conv.title}</div>` : nothing}
           <div class="conv-meta">
-            <ic-relative-time .timestamp=${new Date(conv.updated_at).getTime()}></ic-relative-time>
+            <ic-relative-time .timestamp=${systemDateFrom(conv.updated_at).getTime()}></ic-relative-time>
           </div>
         </button>
       `)}

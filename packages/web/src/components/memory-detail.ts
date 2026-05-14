@@ -3,6 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { MemoryEntry } from "../api/types/index.js";
+import { systemDateFrom } from "@comis/core";
 import "./data/ic-tag.js";
 
 /**
@@ -165,7 +166,7 @@ export class IcMemoryDetail extends LitElement {
   }
 
   private _formatTimestamp(timestamp: number): string {
-    return new Date(timestamp).toLocaleString(undefined, {
+    return systemDateFrom(timestamp).toLocaleString(undefined, {
       year: "numeric",
       month: "short",
       day: "numeric",

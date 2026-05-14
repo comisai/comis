@@ -28,6 +28,7 @@ import "../../components/graph/ic-variable-prompt.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/feedback/ic-toast.js";
 import { extractVariables, substituteVariables } from "../../utils/extract-variables.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 /** Grid size for snap-to-grid and nudge operations (px) */
 const GRID_SIZE = 24;
@@ -111,8 +112,8 @@ export class IcPipelineBuilder extends LitElement {
       this._isDirty = snap.isDirty;
 
       // Debounced reactive validation (150ms to avoid flash on keystroke)
-      if (this._validationTimer) clearTimeout(this._validationTimer);
-      this._validationTimer = setTimeout(() => {
+      if (this._validationTimer) systemClearTimeout(this._validationTimer);
+      this._validationTimer = systemSetTimeout(() => {
         const result = validateGraph(this._nodes, this._edges);
         this._graphState?.setValidation(result);
         this._validationResult = result;
@@ -152,7 +153,7 @@ export class IcPipelineBuilder extends LitElement {
     this._rpcStatusUnsub?.();
     this._rpcStatusUnsub = null;
     if (this._validationTimer) {
-      clearTimeout(this._validationTimer);
+      systemClearTimeout(this._validationTimer);
       this._validationTimer = null;
     }
     if (this._stateUnsub) {
@@ -240,7 +241,7 @@ export class IcPipelineBuilder extends LitElement {
   private _onHighlightNodes(e: CustomEvent<{ nodeIds: string[] }>): void {
     this._highlightNodeIds = e.detail.nodeIds;
     // Auto-clear after 3 seconds
-    setTimeout(() => { this._highlightNodeIds = []; }, 3000);
+    systemSetTimeout(() => { this._highlightNodeIds = []; }, 3000);
   }
 
   // -- Node editor panel event handlers --------------------------------------

@@ -8,6 +8,7 @@ import type { ApiClient } from "../../api/api-client.js";
 import type { EventDispatcher } from "../../state/event-dispatcher.js";
 import { SseController } from "../../state/sse-controller.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // Side-effect imports to register custom elements used in template
 import "../../components/data/ic-data-table.js";
@@ -478,7 +479,7 @@ export class IcAgentList extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
   }
@@ -493,8 +494,8 @@ export class IcAgentList extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadAgents();
     }, delayMs);

@@ -34,6 +34,7 @@ export { serializeYaml as serializeToYaml, parseYaml };
 
 import type { TabDef } from "../components/nav/ic-tabs.js";
 import type { SchemaProperty } from "./config-editor/schema-form.js";
+import { systemClearTimeout, systemDateFrom, systemSetTimeout } from "@comis/core";
 
 type LoadState = "loading" | "loaded" | "error";
 
@@ -762,8 +763,8 @@ export class IcConfigEditor extends LitElement {
 
   /** Trailing-edge debounce for history reload on SSE events. */
   private _scheduleHistoryReload(): void {
-    if (this._historyReloadTimer !== null) clearTimeout(this._historyReloadTimer);
-    this._historyReloadTimer = setTimeout(() => {
+    if (this._historyReloadTimer !== null) systemClearTimeout(this._historyReloadTimer);
+    this._historyReloadTimer = systemSetTimeout(() => {
       this._historyReloadTimer = null;
       this._loadHistory();
     }, 300);
@@ -772,10 +773,10 @@ export class IcConfigEditor extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._yamlDebounceTimer !== null) {
-      clearTimeout(this._yamlDebounceTimer);
+      systemClearTimeout(this._yamlDebounceTimer);
     }
     if (this._historyReloadTimer !== null) {
-      clearTimeout(this._historyReloadTimer);
+      systemClearTimeout(this._historyReloadTimer);
     }
     this._rpcStatusUnsub?.();
     this._rpcStatusUnsub = null;
@@ -928,9 +929,9 @@ export class IcConfigEditor extends LitElement {
 
     // Debounced validation
     if (this._yamlDebounceTimer !== null) {
-      clearTimeout(this._yamlDebounceTimer);
+      systemClearTimeout(this._yamlDebounceTimer);
     }
-    this._yamlDebounceTimer = setTimeout(() => {
+    this._yamlDebounceTimer = systemSetTimeout(() => {
       this._validateYaml();
     }, 500);
   }
@@ -1286,7 +1287,7 @@ export class IcConfigEditor extends LitElement {
     const isSelected = entry.sha === this._selectedSha;
     const isNewest = index === 0;
     const author = entry.metadata.user || entry.metadata.agent || "system";
-    const fullDate = new Date(entry.timestamp).toLocaleString();
+    const fullDate = systemDateFrom(entry.timestamp).toLocaleString();
 
     return html`
       <div
@@ -1295,7 +1296,7 @@ export class IcConfigEditor extends LitElement {
       >
         <div class="history-entry-header">
           <ic-relative-time
-            .timestamp=${new Date(entry.timestamp).getTime()}
+            .timestamp=${systemDateFrom(entry.timestamp).getTime()}
             title=${fullDate}
           ></ic-relative-time>
           <code class="history-sha">${entry.sha.slice(0, 7)}</code>

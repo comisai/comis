@@ -19,6 +19,7 @@ import {
 import { cleanMessageContent } from "../utils/message-content.js";
 import type { BudgetSegment } from "../components/data/ic-budget-segment-bar.js";
 import type { WaterfallLayer } from "../components/data/ic-layer-waterfall.js";
+import { systemDateFrom } from "@comis/core";
 
 // Side-effect imports to register child custom elements
 import "../components/nav/ic-breadcrumb.js";
@@ -798,7 +799,7 @@ export class IcSessionDetail extends LitElement {
                 this._selectedSnapshot = snap;
               }}
             >
-              <span class="exec-time">${new Date(snap.timestamp).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+              <span class="exec-time">${systemDateFrom(snap.timestamp).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
               <span class="exec-duration">${snap.durationMs}ms</span>
               <span class="cache-badge ${snap.cacheHitTokens > 0 ? "cache-badge--hit" : "cache-badge--miss"}">
                 ${snap.cacheHitTokens > 0 ? "HIT" : "MISS"}
@@ -886,11 +887,11 @@ export class IcSessionDetail extends LitElement {
       <div class="metrics-grid">
         <ic-stat-card
           label="Created"
-          value=${new Date(session.createdAt).toLocaleDateString()}
+          value=${systemDateFrom(session.createdAt).toLocaleDateString()}
         ></ic-stat-card>
         <ic-stat-card
           label="Last Active"
-          value=${new Date(session.lastActiveAt).toLocaleString()}
+          value=${systemDateFrom(session.lastActiveAt).toLocaleString()}
         ></ic-stat-card>
         <ic-stat-card label="Status" .value=${""}>
         </ic-stat-card>
@@ -987,7 +988,7 @@ export class IcSessionDetail extends LitElement {
         <div class="info-item">
           <span class="info-label">Created</span>
           <span class="info-value"
-            >${new Date(session.createdAt).toLocaleDateString()}</span
+            >${systemDateFrom(session.createdAt).toLocaleDateString()}</span
           >
         </div>
         ${session.label

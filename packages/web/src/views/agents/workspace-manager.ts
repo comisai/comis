@@ -4,6 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import type { RpcClient } from "../../api/rpc-client.js";
+import { systemDateFrom } from "@comis/core";
 
 // Side-effect imports to register custom elements used in template
 import "../../components/nav/ic-breadcrumb.js";
@@ -1328,7 +1329,7 @@ export class IcWorkspaceManager extends LitElement {
                   <span class="commit-sha">${commit.sha.slice(0, 7)}</span>
                   <span class="commit-message">${commit.message}</span>
                   <span class="commit-time">
-                    <ic-relative-time .timestamp=${new Date(commit.date).getTime()}></ic-relative-time>
+                    <ic-relative-time .timestamp=${systemDateFrom(commit.date).getTime()}></ic-relative-time>
                   </span>
                 </div>
               `,

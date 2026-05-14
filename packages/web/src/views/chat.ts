@@ -2,6 +2,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import type { ApiClient, ChatResponse, ChatHistoryMessage } from "../api/api-client.js";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 
 /** A single chat message in the conversation. */
 interface ChatMessage {
@@ -298,7 +299,7 @@ export class IcChat extends LitElement {
   }
 
   private _formatTime(timestamp: number): string {
-    const date = new Date(timestamp);
+    const date = systemDateFrom(timestamp);
     return date.toLocaleTimeString(undefined, {
       hour: "2-digit",
       minute: "2-digit",
@@ -339,7 +340,7 @@ export class IcChat extends LitElement {
       id: crypto.randomUUID(),
       role,
       content,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
       ...(error ? { error } : {}),
     };
   }

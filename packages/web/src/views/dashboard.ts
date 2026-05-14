@@ -14,6 +14,7 @@ import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
+import { systemClearInterval, systemClearTimeout, systemSetInterval, systemSetTimeout } from "@comis/core";
 // Import sub-components (side-effect registrations)
 import "../components/data/ic-stat-card.js";
 import "../components/data/ic-sparkline.js";
@@ -473,7 +474,7 @@ export class IcDashboard extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
     this._stopRpcRefresh();
@@ -521,8 +522,8 @@ export class IcDashboard extends LitElement {
   // ---------------------------------------------------------------------------
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadData();
     }, delayMs);
@@ -552,14 +553,14 @@ export class IcDashboard extends LitElement {
 
   private _startRpcRefresh(): void {
     if (this._rpcRefreshInterval !== null) return;
-    this._rpcRefreshInterval = setInterval(() => {
+    this._rpcRefreshInterval = systemSetInterval(() => {
       this._loadRpcData();
     }, RPC_REFRESH_INTERVAL_MS);
   }
 
   private _stopRpcRefresh(): void {
     if (this._rpcRefreshInterval !== null) {
-      clearInterval(this._rpcRefreshInterval);
+      systemClearInterval(this._rpcRefreshInterval);
       this._rpcRefreshInterval = null;
     }
   }

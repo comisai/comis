@@ -7,6 +7,7 @@ import type { ApiClient } from "../api/api-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 // Side-effect imports for sub-components
 import "../components/nav/ic-tabs.js";
 import "../components/feedback/ic-empty-state.js";
@@ -525,7 +526,7 @@ export class IcModelsView extends LitElement {
     this._rpcStatusUnsub?.();
     this._rpcStatusUnsub = null;
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
   }
@@ -553,8 +554,8 @@ export class IcModelsView extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadData();
     }, delayMs);

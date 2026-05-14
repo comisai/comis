@@ -2,6 +2,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles } from "../../styles/shared.js";
+import { systemNowMs } from "@comis/core";
 
 // Side-effect imports for sub-components used in template
 import "../../components/domain/ic-chat-message.js";
@@ -177,7 +178,7 @@ export class IcMessageRenderer extends LitElement {
       return html`
         <ic-chat-message
           .role=${"assistant"} .content=${this.streamingContent}
-          .timestamp=${Date.now()} .showActions=${false}
+          .timestamp=${systemNowMs()} .showActions=${false}
         ></ic-chat-message>
         <div class="streaming-indicator">
           <span class="token-counter">${this._formatTokens(this.streamingTokens)}</span>

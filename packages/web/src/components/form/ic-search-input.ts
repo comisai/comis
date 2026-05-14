@@ -2,6 +2,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 /**
  * Debounced search input with clear button.
@@ -116,7 +117,7 @@ export class IcSearchInput extends LitElement {
 
   private _cancelDebounce(): void {
     if (this._debounceTimer !== null) {
-      clearTimeout(this._debounceTimer);
+      systemClearTimeout(this._debounceTimer);
       this._debounceTimer = null;
     }
   }
@@ -125,7 +126,7 @@ export class IcSearchInput extends LitElement {
     const input = e.target as HTMLInputElement;
     this.value = input.value;
     this._cancelDebounce();
-    this._debounceTimer = setTimeout(() => {
+    this._debounceTimer = systemSetTimeout(() => {
       this._fireSearch();
     }, this.debounce);
   }

@@ -19,6 +19,7 @@ import "../components/scheduler/ic-cron-editor.js";
 
 import type { CronJobInput } from "../components/scheduler/ic-cron-editor.js";
 import type { TabDef } from "../components/nav/ic-tabs.js";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 
 /* ------------------------------------------------------------------ */
 /*  Local types -- DO NOT import from @comis/scheduler              */
@@ -127,7 +128,7 @@ function formatSchedule(schedule: SchedulerCronJob["schedule"]): string {
       return `Every ${Math.round(ms / 1000)}s`;
     }
     case "at":
-      return schedule.at ? new Date(schedule.at).toLocaleString() : "one-shot";
+      return schedule.at ? systemDateFrom(schedule.at).toLocaleString() : "one-shot";
     default:
       return schedule.kind;
   }
@@ -140,7 +141,7 @@ function formatMs(ms: number): string {
 
 function formatTimestamp(ts: number): string {
   if (ts <= 0) return "--";
-  const d = new Date(ts);
+  const d = systemDateFrom(ts);
   return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
@@ -793,7 +794,7 @@ export class IcSchedulerView extends LitElement {
           jobId: d.jobId,
           jobName: d.jobName ?? d.jobId,
           agentId: d.agentId ?? "",
-          timestamp: d.timestamp ?? Date.now(),
+          timestamp: d.timestamp ?? systemNowMs(),
           success: "pending",
         };
         this._executions = [record, ...this._executions].slice(0, 50);
@@ -818,7 +819,7 @@ export class IcSchedulerView extends LitElement {
             jobId: d.jobId,
             jobName: d.jobName ?? d.jobId,
             agentId: d.agentId ?? "",
-            timestamp: d.timestamp ?? Date.now(),
+            timestamp: d.timestamp ?? systemNowMs(),
             success: d.success ?? true,
             durationMs: d.durationMs,
             error: d.error,
@@ -835,7 +836,7 @@ export class IcSchedulerView extends LitElement {
           level: (d.level as "ok" | "alert" | "critical") ?? "ok",
           reason: d.reason,
           durationMs: d.durationMs ?? 0,
-          timestamp: d.timestamp ?? Date.now(),
+          timestamp: d.timestamp ?? systemNowMs(),
         };
         this._heartbeatDeliveries = [record, ...this._heartbeatDeliveries].slice(0, 50);
       },
@@ -847,7 +848,7 @@ export class IcSchedulerView extends LitElement {
           reason: d.reason ?? "",
           consecutiveErrors: d.consecutiveErrors ?? 0,
           backoffMs: d.backoffMs ?? 0,
-          timestamp: d.timestamp ?? Date.now(),
+          timestamp: d.timestamp ?? systemNowMs(),
         };
         this._heartbeatAlerts = [record, ...this._heartbeatAlerts].slice(0, 50);
         this._updateAgentFromAlert(record);
@@ -855,12 +856,12 @@ export class IcSchedulerView extends LitElement {
       "scheduler:task_extracted": (data) => {
         const d = data as { taskId?: string; title?: string; priority?: string; confidence?: number; sessionKey?: string; timestamp?: number };
         const task: ExtractedTask = {
-          taskId: d.taskId ?? `task-${Date.now()}`,
+          taskId: d.taskId ?? `task-${systemNowMs()}`,
           title: d.title ?? "Untitled task",
           priority: d.priority ?? "medium",
           confidence: d.confidence ?? 0,
           sessionKey: d.sessionKey ?? "",
-          timestamp: d.timestamp ?? Date.now(),
+          timestamp: d.timestamp ?? systemNowMs(),
           status: "pending",
         };
         this._extractedTasks = [task, ...this._extractedTasks];
@@ -1034,7 +1035,7 @@ export class IcSchedulerView extends LitElement {
         sessionTarget: jobData.sessionTarget,
         enabled: jobData.enabled,
         consecutiveErrors: 0,
-        createdAtMs: Date.now(),
+        createdAtMs: systemNowMs(),
         deliveryTarget: jobData.deliveryTarget,
       };
       this._jobs = [...this._jobs, tempJob];
@@ -1366,7 +1367,7 @@ export class IcSchedulerView extends LitElement {
       `;
     }
 
-    const now = Date.now();
+    const now = systemNowMs();
     const enabledCount = this._heartbeatAgents.filter(a => a.enabled).length;
     const backoffCount = this._heartbeatAgents.filter(a => a.backoffUntilMs > now).length;
     const errorCount = this._heartbeatAgents.filter(a => a.consecutiveErrors > 0).length;

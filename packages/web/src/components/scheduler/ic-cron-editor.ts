@@ -2,6 +2,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
+import { systemClearTimeout, systemDateFrom, systemNowDate, systemSetTimeout } from "@comis/core";
 
 /* ------------------------------------------------------------------ */
 /*  Local types - DO NOT import from @comis/scheduler              */
@@ -125,7 +126,7 @@ export function computeNextCronRuns(
   const endTime = from.getTime() + maxMs;
 
   // Start one minute past `from`
-  const cursor = new Date(from);
+  const cursor = systemDateFrom(from);
   cursor.setSeconds(0, 0);
   cursor.setTime(cursor.getTime() + 60_000);
 
@@ -137,7 +138,7 @@ export function computeNextCronRuns(
     const dow = cursor.getDay();
 
     if (minuteSet.has(m) && hourSet.has(h) && domSet.has(dom) && monthSet.has(mon) && dowSet.has(dow)) {
-      results.push(new Date(cursor));
+      results.push(systemDateFrom(cursor));
     }
 
     cursor.setTime(cursor.getTime() + 60_000);
@@ -155,7 +156,7 @@ export function computeNextEveryRuns(everyMs: number, count: number, from: Date)
   let t = from.getTime();
   for (let i = 0; i < count; i++) {
     t += everyMs;
-    results.push(new Date(t));
+    results.push(systemDateFrom(t));
   }
   return results;
 }
@@ -165,9 +166,9 @@ export function computeNextEveryRuns(everyMs: number, count: number, from: Date)
  * Returns a single-element array if the datetime is in the future, empty otherwise.
  */
 export function computeNextAtRun(at: string, from?: Date): Date[] {
-  const d = new Date(at);
+  const d = systemDateFrom(at);
   if (isNaN(d.getTime())) return [];
-  const ref = from ?? new Date();
+  const ref = from ?? systemNowDate();
   return d.getTime() > ref.getTime() ? [d] : [];
 }
 
@@ -481,7 +482,7 @@ export class IcCronEditor extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._previewTimer !== null) {
-      clearTimeout(this._previewTimer);
+      systemClearTimeout(this._previewTimer);
       this._previewTimer = null;
     }
   }
@@ -516,15 +517,15 @@ export class IcCronEditor extends LitElement {
 
   private _schedulePreviewDebounced(): void {
     if (this._previewTimer !== null) {
-      clearTimeout(this._previewTimer);
+      systemClearTimeout(this._previewTimer);
     }
-    this._previewTimer = setTimeout(() => {
+    this._previewTimer = systemSetTimeout(() => {
       this._computePreview();
     }, 500);
   }
 
   private _computePreview(): void {
-    const now = new Date();
+    const now = systemNowDate();
     let runs: Date[] = [];
 
     switch (this._scheduleKind) {

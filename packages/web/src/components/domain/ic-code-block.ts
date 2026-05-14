@@ -2,6 +2,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // Side-effect import to register ic-icon
 import "../display/ic-icon.js";
@@ -236,7 +237,7 @@ export class IcCodeBlock extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._copyTimer !== null) {
-      clearTimeout(this._copyTimer);
+      systemClearTimeout(this._copyTimer);
       this._copyTimer = null;
     }
   }
@@ -245,8 +246,8 @@ export class IcCodeBlock extends LitElement {
     try {
       await navigator.clipboard.writeText(this.code);
       this._copied = true;
-      if (this._copyTimer !== null) clearTimeout(this._copyTimer);
-      this._copyTimer = setTimeout(() => {
+      if (this._copyTimer !== null) systemClearTimeout(this._copyTimer);
+      this._copyTimer = systemSetTimeout(() => {
         this._copied = false;
         this._copyTimer = null;
       }, 2000);

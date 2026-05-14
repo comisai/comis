@@ -8,6 +8,7 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
+import { systemClearTimeout, systemDateFrom, systemNowMs, systemSetTimeout } from "@comis/core";
 
 // Side-effect registrations for sub-components
 import "../components/nav/ic-breadcrumb.js";
@@ -598,7 +599,7 @@ export class IcChannelDetail extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
   }
@@ -630,8 +631,8 @@ export class IcChannelDetail extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadData();
     }, delayMs);
@@ -990,7 +991,7 @@ export class IcChannelDetail extends LitElement {
   /** Format epoch ms to relative time string: "5m ago", "2h ago", etc. */
   private _formatTimeAgo(epochMs: number): string {
     if (epochMs <= 0) return "unknown";
-    const diffMs = Date.now() - epochMs;
+    const diffMs = systemNowMs() - epochMs;
     const diffSec = Math.floor(diffMs / 1000);
     if (diffSec < 60) return "just now";
     const diffMin = Math.floor(diffSec / 60);
@@ -1004,7 +1005,7 @@ export class IcChannelDetail extends LitElement {
   /** Derive per-hour message counts from delivery trace timestamps (24 buckets). */
   private _deriveActivityFromTraces(traces: DeliveryTraceEntry[]): number[] {
     if (traces.length === 0) return [];
-    const now = Date.now();
+    const now = systemNowMs();
     const buckets = new Array<number>(24).fill(0);
     for (const t of traces) {
       const ts = t.timestamp ?? t.deliveredAt ?? 0;
@@ -1205,7 +1206,7 @@ export class IcChannelDetail extends LitElement {
                 <span>Last message:</span>
                 <span
                   class="last-message-time"
-                  title=${new Date(this._channelLastActiveAt).toISOString()}
+                  title=${systemDateFrom(this._channelLastActiveAt).toISOString()}
                 >${this._formatTimeAgo(this._channelLastActiveAt)}</span>
               </div>
             `

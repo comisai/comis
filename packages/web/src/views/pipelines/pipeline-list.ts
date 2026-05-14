@@ -12,6 +12,7 @@ import "../../components/graph/ic-variable-prompt.js";
 import "../../components/feedback/ic-toast.js";
 import "../../components/feedback/ic-empty-state.js";
 import { extractVariables, substituteVariables } from "../../utils/extract-variables.js";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 import "../../components/feedback/ic-loading.js";
 import "../../components/shell/ic-skeleton-view.js";
 import "../../components/display/ic-icon.js";
@@ -32,7 +33,7 @@ const STATUS_COLORS: Record<string, string> = {
 function formatRelativeTime(epochMs: number | undefined): string {
   if (!epochMs) return "Never";
 
-  const diff = Date.now() - epochMs;
+  const diff = systemNowMs() - epochMs;
   if (diff < 0) return "just now";
 
   const seconds = Math.floor(diff / 1000);
@@ -47,7 +48,7 @@ function formatRelativeTime(epochMs: number | undefined): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
 
-  return new Date(epochMs).toISOString().slice(0, 10);
+  return systemDateFrom(epochMs).toISOString().slice(0, 10);
 }
 
 /**

@@ -8,6 +8,7 @@ import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { parseSessionKeyString, formatSessionDisplayName } from "../utils/session-key-parser.js";
 import { stripSilentTokens, stripUserSystemContext } from "../utils/message-content.js";
+import { systemClearInterval, systemNowMs, systemSetInterval, systemSetTimeout } from "@comis/core";
 
 // Side-effect imports to register child components
 import "../components/domain/ic-chat-message.js";
@@ -709,7 +710,7 @@ export class IcChatConsole extends LitElement {
 
     // Clean up recording
     if (this._recordingTimer !== null) {
-      clearInterval(this._recordingTimer);
+      systemClearInterval(this._recordingTimer);
     }
     if (this._mediaRecorder?.state === "recording") {
       this._mediaRecorder.stop();
@@ -785,7 +786,7 @@ export class IcChatConsole extends LitElement {
         agentId: String(data.agentId ?? "unknown"),
         channelType: String(data.channelType ?? "web"),
         messageCount: 0,
-        lastActivity: Date.now(),
+        lastActivity: systemNowMs(),
       };
       this._sessions = [session, ...this._sessions];
     };
@@ -827,7 +828,7 @@ export class IcChatConsole extends LitElement {
             id: crypto.randomUUID(),
             role: "assistant",
             content: this._streamBuffer,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           };
           this._messages = [...this._messages, msg];
         }
@@ -854,7 +855,7 @@ export class IcChatConsole extends LitElement {
           id: crypto.randomUUID(),
           role: "assistant",
           content: text,
-          timestamp: typeof p?.timestamp === "number" ? p.timestamp : Date.now(),
+          timestamp: typeof p?.timestamp === "number" ? p.timestamp : systemNowMs(),
         };
         this._messages = [...this._messages, msg];
         this._syncSessionMessageCount();
@@ -885,7 +886,7 @@ export class IcChatConsole extends LitElement {
           id: crypto.randomUUID(),
           role: "assistant",
           content,
-          timestamp: typeof p?.timestamp === "number" ? p.timestamp : Date.now(),
+          timestamp: typeof p?.timestamp === "number" ? p.timestamp : systemNowMs(),
         };
         this._messages = [...this._messages, msg];
         this._syncSessionMessageCount();
@@ -900,7 +901,7 @@ export class IcChatConsole extends LitElement {
       id: String(data.id ?? crypto.randomUUID()),
       role: (data.role as ChatMessageData["role"]) ?? "assistant",
       content: String(data.content ?? ""),
-      timestamp: (data.timestamp as number) ?? Date.now(),
+      timestamp: (data.timestamp as number) ?? systemNowMs(),
     };
     this._messages = [...this._messages, msg];
 
@@ -1060,7 +1061,7 @@ export class IcChatConsole extends LitElement {
       agentId: this._selectedAgent,
       channelType: "web",
       messageCount: 0,
-      lastActivity: Date.now(),
+      lastActivity: systemNowMs(),
     };
     this._sessions = [newSession, ...this._sessions];
     this._activeSession = sessionKey;
@@ -1103,7 +1104,7 @@ export class IcChatConsole extends LitElement {
     this.updateComplete.then(() => {
       // Push to macrotask queue so cascading Lit updates (e.g. _messages -> updated -> scrollToBottom)
       // and requestAnimationFrame callbacks have all settled before we focus.
-      setTimeout(() => {
+      systemSetTimeout(() => {
         if (this._textarea && !this._textarea.disabled) {
           this._textarea.focus();
         }
@@ -1188,7 +1189,7 @@ export class IcChatConsole extends LitElement {
         id: crypto.randomUUID(),
         role: "user",
         content: text,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       };
       this._messages = [...this._messages, userMsg];
     }
@@ -1216,7 +1217,7 @@ export class IcChatConsole extends LitElement {
           id: crypto.randomUUID(),
           role: "assistant",
           content: cleaned,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         };
         this._messages = [...this._messages, assistantMsg];
       }
@@ -1225,7 +1226,7 @@ export class IcChatConsole extends LitElement {
         id: crypto.randomUUID(),
         role: "error",
         content: err instanceof Error ? err.message : "Failed to send message",
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       };
       this._messages = [...this._messages, errorMsg];
     } finally {
@@ -1242,7 +1243,7 @@ export class IcChatConsole extends LitElement {
     const count = this._messages.filter((m) => m.role !== "error").length;
     this._sessions = this._sessions.map((s) =>
       s.key === this._activeSession
-        ? { ...s, messageCount: count, lastActivity: Date.now() }
+        ? { ...s, messageCount: count, lastActivity: systemNowMs() }
         : s,
     );
   }
@@ -1263,7 +1264,7 @@ export class IcChatConsole extends LitElement {
       this._recording = true;
       this._recordingDuration = 0;
 
-      this._recordingTimer = setInterval(() => {
+      this._recordingTimer = systemSetInterval(() => {
         this._recordingDuration++;
         if (this._recordingDuration >= MAX_RECORDING_DURATION) {
           IcToast.show("Maximum recording duration reached", "warning");
@@ -1329,7 +1330,7 @@ export class IcChatConsole extends LitElement {
   private _resetRecordingState(): void {
     this._recording = false;
     if (this._recordingTimer !== null) {
-      clearInterval(this._recordingTimer);
+      systemClearInterval(this._recordingTimer);
       this._recordingTimer = null;
     }
   }
@@ -1465,7 +1466,7 @@ export class IcChatConsole extends LitElement {
           id: crypto.randomUUID(),
           role: "system",
           content: `Available commands:\n${helpLines}`,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         };
         this._messages = [...this._messages, helpMsg];
         break;
@@ -1510,7 +1511,7 @@ export class IcChatConsole extends LitElement {
             id: crypto.randomUUID(),
             role: "assistant",
             content: retryClean,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           };
           this._messages = [...this._messages, assistantMsg];
         }
@@ -1519,7 +1520,7 @@ export class IcChatConsole extends LitElement {
           id: crypto.randomUUID(),
           role: "error",
           content: err instanceof Error ? err.message : "Retry failed",
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         };
         this._messages = [...this._messages, errorMsg];
       } finally {

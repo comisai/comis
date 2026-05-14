@@ -28,6 +28,7 @@ import "./security/event-feed.js";
 
 import type { IcSecurityEventFeed } from "./security/event-feed.js";
 import type { IcApprovalQueue } from "./security/approval-queue.js";
+import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 type LoadState = "loading" | "loaded" | "error";
 
@@ -278,8 +279,8 @@ export class IcSecurityView extends LitElement {
   private _healthReloadDebounce: ReturnType<typeof setTimeout> | null = null;
 
   private _scheduleHealthReload(delayMs = 300): void {
-    if (this._healthReloadDebounce !== null) clearTimeout(this._healthReloadDebounce);
-    this._healthReloadDebounce = setTimeout(() => {
+    if (this._healthReloadDebounce !== null) systemClearTimeout(this._healthReloadDebounce);
+    this._healthReloadDebounce = systemSetTimeout(() => {
       this._healthReloadDebounce = null;
       void this._loadProviderHealth();
     }, delayMs);
@@ -293,7 +294,7 @@ export class IcSecurityView extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._healthReloadDebounce !== null) {
-      clearTimeout(this._healthReloadDebounce);
+      systemClearTimeout(this._healthReloadDebounce);
       this._healthReloadDebounce = null;
     }
   }
@@ -331,7 +332,7 @@ export class IcSecurityView extends LitElement {
           const severity: SecurityEvent["severity"] = action === "redacted" ? "high" : "medium";
           const findingCount = (meta.findingCount as number) ?? 0;
           const evt: SecurityEvent = {
-            id: `sec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            id: `sec-${systemNowMs()}-${Math.random().toString(36).slice(2, 6)}`,
             type: "output_guard",
             severity,
             message: `Output guard ${action ?? "scan"}: ${findingCount} finding(s)`,
@@ -341,7 +342,7 @@ export class IcSecurityView extends LitElement {
               action: meta.action,
               context: meta.context,
             },
-            timestamp: (auditData.timestamp as number) ?? Date.now(),
+            timestamp: (auditData.timestamp as number) ?? systemNowMs(),
             agentId: auditData.agentId as string | undefined,
           };
           this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
@@ -357,12 +358,12 @@ export class IcSecurityView extends LitElement {
         const source = (d.source as string) ?? "unknown";
         const patterns = (d.patterns as string[]) ?? [];
         const evt: SecurityEvent = {
-          id: `sec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `sec-${systemNowMs()}-${Math.random().toString(36).slice(2, 6)}`,
           type: "injection",
           severity,
           message: `Injection detected from ${source}`,
           details: { patterns, source, sessionKey: d.sessionKey },
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: d.agentId as string | undefined,
         };
         this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
@@ -379,12 +380,12 @@ export class IcSecurityView extends LitElement {
         const threshold = d.threshold as number ?? 0;
         const action = (d.action as string) ?? "block";
         const evt: SecurityEvent = {
-          id: `sec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `sec-${systemNowMs()}-${Math.random().toString(36).slice(2, 6)}`,
           type: "input_guard",
           severity: "critical",
           message: `Rate limit exceeded: ${count}/${threshold} (action: ${action})`,
           details: { sessionKey: d.sessionKey, count, threshold, action },
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         };
         this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
       },
@@ -394,12 +395,12 @@ export class IcSecurityView extends LitElement {
         const originalTrustLevel = (d.originalTrustLevel as string) ?? "unknown";
         const adjustedTrustLevel = (d.adjustedTrustLevel as string) ?? "unknown";
         const evt: SecurityEvent = {
-          id: `sec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `sec-${systemNowMs()}-${Math.random().toString(36).slice(2, 6)}`,
           type: "memory_tainted",
           severity: blocked ? "high" : "medium",
           message: `Memory tainted for ${d.agentId ?? "unknown"}: ${originalTrustLevel} -> ${adjustedTrustLevel}`,
           details: { patterns: d.patterns, blocked, originalTrustLevel, adjustedTrustLevel },
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: d.agentId as string | undefined,
         };
         this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
@@ -407,12 +408,12 @@ export class IcSecurityView extends LitElement {
       "security:warn": (data) => {
         const d = data as Record<string, unknown>;
         const evt: SecurityEvent = {
-          id: `sec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `sec-${systemNowMs()}-${Math.random().toString(36).slice(2, 6)}`,
           type: "warn",
           severity: "medium",
           message: (d.message as string) ?? "Security warning",
           details: { category: d.category },
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: d.agentId as string | undefined,
         };
         this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
@@ -424,12 +425,12 @@ export class IcSecurityView extends LitElement {
         const severity = severityMap[outcome] ?? "medium";
         const secretName = (d.secretName as string) ?? "unknown";
         const evt: SecurityEvent = {
-          id: `sec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `sec-${systemNowMs()}-${Math.random().toString(36).slice(2, 6)}`,
           type: "secret_access",
           severity,
           message: `Secret '${secretName}' ${outcome} by ${d.agentId ?? "unknown"}`,
           details: { secretName, outcome },
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           agentId: d.agentId as string | undefined,
         };
         this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
@@ -439,12 +440,12 @@ export class IcSecurityView extends LitElement {
         const secretName = (d.secretName as string) ?? "unknown";
         const action = (d.action as string) ?? "modified";
         const evt: SecurityEvent = {
-          id: `sec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `sec-${systemNowMs()}-${Math.random().toString(36).slice(2, 6)}`,
           type: "secret_access",
           severity: "medium",
           message: `Secret '${secretName}' ${action}`,
           details: { secretName, action },
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         };
         this._securityEvents = [evt, ...this._securityEvents].slice(0, MAX_SECURITY_EVENTS);
       },
@@ -518,7 +519,7 @@ export class IcSecurityView extends LitElement {
         totalCacheSaved: number;
       }>("agent.cacheStats");
 
-      const now = Date.now();
+      const now = systemNowMs();
       const fiveMinAgo = now - 5 * 60 * 1000;
 
       const cards: ProviderHealthCard[] = (result.providers ?? []).map((entry) => {
@@ -643,7 +644,7 @@ export class IcSecurityView extends LitElement {
   }
 
   private _renderHealthTab() {
-    const now = Date.now();
+    const now = systemNowMs();
     const activeCooldowns = this._authCooldowns.filter((c) => c.timestamp + c.cooldownMs > now);
 
     return html`

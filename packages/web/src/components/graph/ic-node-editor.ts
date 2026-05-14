@@ -22,6 +22,7 @@ import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { PipelineNode, PipelineEdge, NodeTypeId } from "../../api/types/index.js";
 import type { RpcClient } from "../../api/rpc-client.js";
 import { wouldCreateCycle } from "../../utils/cycle-detection.js";
+import { systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -774,7 +775,7 @@ export class IcNodeEditor extends LitElement {
         this._cycleErrors = newErrors;
 
         // Clear error after 2 seconds
-        setTimeout(() => {
+        systemSetTimeout(() => {
           const cleared = new Map(this._cycleErrors);
           cleared.delete(depNodeId);
           this._cycleErrors = cleared;

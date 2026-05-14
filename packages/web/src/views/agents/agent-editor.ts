@@ -30,6 +30,7 @@ import "./editors/agent-log-level-editor.js";
 import { BUILTIN_TOOLS } from "./editors/editor-types.js";
 import type { CatalogProvider, FieldChangeDetail } from "./editors/editor-types.js";
 import type { LogLevelChangeDetail } from "./editors/agent-log-level-editor.js";
+import { systemSetTimeout } from "@comis/core";
 
 /** Default form state for a new agent. */
 function createDefaultForm(): Record<string, unknown> {
@@ -585,7 +586,7 @@ export class IcAgentEditor extends LitElement {
       await this.rpcClient!.call("daemon.setLogLevel", params);
       this._logLevelApplied = module ?? "__global__";
       IcToast.show(`Log level ${module ? `${module}: ` : ""}${level}`, "success");
-      setTimeout(() => { this._logLevelApplied = ""; }, 3000);
+      systemSetTimeout(() => { this._logLevelApplied = ""; }, 3000);
     } catch (err) {
       IcToast.show(err instanceof Error ? err.message : "Failed to set log level", "error");
     }

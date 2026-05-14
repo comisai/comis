@@ -15,6 +15,7 @@
  */
 
 /** Parsed fields from a formatted session key string. */
+import { systemNowMs } from "@comis/core";
 export interface ParsedSessionKey {
   tenantId: string;
   userId: string;
@@ -93,7 +94,7 @@ export function formatSessionDisplayName(key: ParsedSessionKey): string {
  * @returns Computed session status.
  */
 export function computeSessionStatus(lastActiveAt: number): SessionStatus {
-  const elapsed = Date.now() - lastActiveAt;
+  const elapsed = systemNowMs() - lastActiveAt;
   if (elapsed < ACTIVE_THRESHOLD_MS) return "active";
   if (elapsed < IDLE_THRESHOLD_MS) return "idle";
   return "expired";

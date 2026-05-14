@@ -7,6 +7,7 @@ import type { ApiClient } from "../api/api-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
+import { systemClearTimeout, systemDateFrom, systemNowMs, systemSetTimeout } from "@comis/core";
 // Side-effect imports for sub-components
 import "../components/nav/ic-tabs.js";
 import "../components/form/ic-search-input.js";
@@ -960,7 +961,7 @@ export class IcSkillsView extends LitElement {
     this._rpcStatusUnsub?.();
     this._rpcStatusUnsub = null;
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
   }
@@ -975,8 +976,8 @@ export class IcSkillsView extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadData();
     }, delayMs);
@@ -994,7 +995,7 @@ export class IcSkillsView extends LitElement {
         this._recentSkillEvents = [{
           skillName: d.skillName ?? "unknown",
           agentId: d.agentId ?? "",
-          timestamp: d.timestamp ?? Date.now(),
+          timestamp: d.timestamp ?? systemNowMs(),
           outcome: "executed" as const,
         }, ...this._recentSkillEvents].slice(0, 50);
       },
@@ -1003,7 +1004,7 @@ export class IcSkillsView extends LitElement {
         this._recentSkillEvents = [{
           skillName: d.skillName ?? "unknown",
           agentId: d.agentId ?? "",
-          timestamp: d.timestamp ?? Date.now(),
+          timestamp: d.timestamp ?? systemNowMs(),
           outcome: "rejected" as const,
           reason: d.reason,
         }, ...this._recentSkillEvents].slice(0, 50);
@@ -1774,7 +1775,7 @@ export class IcSkillsView extends LitElement {
               <span class=${ev.outcome === "executed" ? "event-outcome--executed" : "event-outcome--rejected"}>
                 ${ev.outcome}${ev.reason ? html` <span class="event-reason">(${ev.reason})</span>` : ""}
               </span>
-              <span class="event-time">${new Date(ev.timestamp).toLocaleTimeString()}</span>
+              <span class="event-time">${systemDateFrom(ev.timestamp).toLocaleTimeString()}</span>
             </div>
           `)}
         </div>

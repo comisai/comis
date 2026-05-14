@@ -8,6 +8,7 @@ import type { RpcClient } from "../../api/rpc-client.js";
 import type { EventDispatcher } from "../../state/event-dispatcher.js";
 import { SseController } from "../../state/sse-controller.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
+import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 // Side-effect imports to register custom elements used in template
 import "../../components/nav/ic-breadcrumb.js";
@@ -421,7 +422,7 @@ export class IcAgentDetail extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this._reloadDebounce !== null) {
-      clearTimeout(this._reloadDebounce);
+      systemClearTimeout(this._reloadDebounce);
       this._reloadDebounce = null;
     }
   }
@@ -435,8 +436,8 @@ export class IcAgentDetail extends LitElement {
   }
 
   private _scheduleReload(delayMs = 300): void {
-    if (this._reloadDebounce !== null) clearTimeout(this._reloadDebounce);
-    this._reloadDebounce = setTimeout(() => {
+    if (this._reloadDebounce !== null) systemClearTimeout(this._reloadDebounce);
+    this._reloadDebounce = systemSetTimeout(() => {
       this._reloadDebounce = null;
       void this._loadData();
     }, delayMs);
@@ -932,7 +933,7 @@ export class IcAgentDetail extends LitElement {
     const hb = this._heartbeatState;
     if (!hb) return nothing;
 
-    const now = Date.now();
+    const now = systemNowMs();
     const inBackoff = hb.backoffUntilMs > now;
     const hasErrors = hb.consecutiveErrors > 0;
     const isRunning = hb.tickStartedAtMs > 0;

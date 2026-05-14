@@ -2,6 +2,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { sharedStyles } from "../../styles/shared.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 /** Represents a single toast notification. */
 interface ToastItem {
@@ -158,7 +159,7 @@ export class IcToast extends LitElement {
     }
     document.removeEventListener("ic-toast", this._onDocumentToast as EventListener);
     for (const timer of this._timers.values()) {
-      clearTimeout(timer);
+      systemClearTimeout(timer);
     }
     this._timers.clear();
   }
@@ -197,7 +198,7 @@ export class IcToast extends LitElement {
     this._toasts = updated;
 
     // Auto-dismiss
-    const timer = setTimeout(() => {
+    const timer = systemSetTimeout(() => {
       this._removeToast(id);
     }, duration);
     this._timers.set(id, timer);
@@ -211,7 +212,7 @@ export class IcToast extends LitElement {
   private _clearTimer(id: number): void {
     const timer = this._timers.get(id);
     if (timer !== undefined) {
-      clearTimeout(timer);
+      systemClearTimeout(timer);
       this._timers.delete(id);
     }
   }

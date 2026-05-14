@@ -28,6 +28,7 @@ import { autoLayout, computeFitViewport } from "../../utils/graph-layout.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/nav/ic-breadcrumb.js";
 import type { BreadcrumbItem } from "../../components/nav/ic-breadcrumb.js";
+import { systemClearInterval, systemSetInterval, systemSetTimeout } from "@comis/core";
 import "../../components/graph/ic-graph-canvas.js";
 import "../../components/monitor/ic-monitor-status-bar.js";
 import "../../components/monitor/ic-node-detail-panel.js";
@@ -471,7 +472,7 @@ export class IcPipelineMonitor extends LitElement {
       this._monitorState.startPolling(this.rpcClient, this.graphId, nodeDefinitions, edges);
 
       // Compute fit viewport after a short delay to let first poll complete
-      setTimeout(() => {
+      systemSetTimeout(() => {
         if (nodeDefinitions.length > 0) {
           this._viewport = computeFitViewport(
             nodeDefinitions,
@@ -523,7 +524,7 @@ export class IcPipelineMonitor extends LitElement {
     // Track SSE connection state changes for polling control.
     // Periodically check eventDispatcher.connected and toggle polling mode.
     let wasSseConnected = this.eventDispatcher.connected;
-    const connectionCheckInterval = setInterval(() => {
+    const connectionCheckInterval = systemSetInterval(() => {
       if (!this.eventDispatcher || !this._monitorState) return;
       const isNowConnected = this.eventDispatcher.connected;
 
@@ -531,7 +532,7 @@ export class IcPipelineMonitor extends LitElement {
         // SSE reconnected: do recovery poll then suspend
         this._monitorState.resumePolling();
         // Give the recovery poll a moment, then suspend
-        setTimeout(() => {
+        systemSetTimeout(() => {
           this._monitorState?.suspendPolling();
         }, 500);
       } else if (!isNowConnected && wasSseConnected) {
@@ -542,7 +543,7 @@ export class IcPipelineMonitor extends LitElement {
     }, 3000);
 
     // Store the interval cleanup
-    this._sseUnsubs.push(() => clearInterval(connectionCheckInterval));
+    this._sseUnsubs.push(() => systemClearInterval(connectionCheckInterval));
   }
 
   // ---------------------------------------------------------------------------

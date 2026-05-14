@@ -6,6 +6,7 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import type { FetchedMessage, PlatformCapabilities } from "../api/types/index.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
+import { systemSetTimeout } from "@comis/core";
 
 // Side-effect registrations for sub-components
 import "../components/nav/ic-breadcrumb.js";
@@ -778,7 +779,7 @@ export class IcMessageCenter extends LitElement {
         const check = () => {
           if (rpc.status === "connected") { resolve(); return; }
           if (rpc.status === "disconnected") { resolve(); return; }
-          setTimeout(check, 100);
+          systemSetTimeout(check, 100);
         };
         check();
       });

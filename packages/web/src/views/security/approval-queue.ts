@@ -5,6 +5,7 @@ import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { RpcClient } from "../../api/rpc-client.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import type { ApprovalRequest } from "../../components/domain/ic-approval-card.js";
+import { systemNowMs } from "@comis/core";
 
 // Side-effect imports for sub-components used in template
 import "../../components/data/ic-tag.js";
@@ -60,7 +61,7 @@ function loadHistory(): ResolvedApproval[] {
     const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
     if (!raw) return [];
     const entries = JSON.parse(raw) as ResolvedApproval[];
-    const cutoff = Date.now() - HISTORY_TTL_MS;
+    const cutoff = systemNowMs() - HISTORY_TTL_MS;
     return entries.filter((e) => e.resolvedAt > cutoff);
   } catch {
     return [];
@@ -69,7 +70,7 @@ function loadHistory(): ResolvedApproval[] {
 
 function saveHistory(entries: ResolvedApproval[]): void {
   try {
-    const cutoff = Date.now() - HISTORY_TTL_MS;
+    const cutoff = systemNowMs() - HISTORY_TTL_MS;
     const pruned = entries.filter((e) => e.resolvedAt > cutoff);
     localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(pruned));
   } catch {
@@ -349,7 +350,7 @@ export class IcApprovalQueue extends LitElement {
       ...mapped,
       outcome: detail.approved ? "approved" : "denied",
       reason: detail.reason ?? "",
-      resolvedAt: detail.resolvedAt ?? Date.now(),
+      resolvedAt: detail.resolvedAt ?? systemNowMs(),
       resolvedBy: detail.approvedBy ?? "system",
     };
     this._resolvedApprovals = [resolved, ...this._resolvedApprovals];
@@ -364,7 +365,7 @@ export class IcApprovalQueue extends LitElement {
       const request = this._pendingApprovals.find((a) => a.id === id);
       this._pendingApprovals = this._pendingApprovals.filter((a) => a.id !== id);
       if (request) {
-        const resolved: ResolvedApproval = { ...request, outcome: "approved", reason, resolvedAt: Date.now(), resolvedBy: "operator" };
+        const resolved: ResolvedApproval = { ...request, outcome: "approved", reason, resolvedAt: systemNowMs(), resolvedBy: "operator" };
         this._resolvedApprovals = [resolved, ...this._resolvedApprovals];
         saveHistory(this._resolvedApprovals);
       }
@@ -383,7 +384,7 @@ export class IcApprovalQueue extends LitElement {
       const request = this._pendingApprovals.find((a) => a.id === id);
       this._pendingApprovals = this._pendingApprovals.filter((a) => a.id !== id);
       if (request) {
-        const resolved: ResolvedApproval = { ...request, outcome: "denied", reason, resolvedAt: Date.now(), resolvedBy: "operator" };
+        const resolved: ResolvedApproval = { ...request, outcome: "denied", reason, resolvedAt: systemNowMs(), resolvedBy: "operator" };
         this._resolvedApprovals = [resolved, ...this._resolvedApprovals];
         saveHistory(this._resolvedApprovals);
       }
@@ -407,7 +408,7 @@ export class IcApprovalQueue extends LitElement {
           ...a,
           outcome: approved ? "approved" : "denied",
           reason: approved ? "Bulk approved by operator" : "Bulk denied by operator",
-          resolvedAt: Date.now(),
+          resolvedAt: systemNowMs(),
           resolvedBy: "operator",
         };
         this._resolvedApprovals = [resolved, ...this._resolvedApprovals];

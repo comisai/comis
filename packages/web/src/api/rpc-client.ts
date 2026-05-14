@@ -12,6 +12,7 @@
  */
 
 import type { ConnectionStatus } from "./types/index.js";
+import { systemClearInterval, systemClearTimeout, systemSetInterval, systemSetTimeout } from "@comis/core";
 
 /** Pending RPC request tracker */
 interface PendingRequest {
@@ -103,25 +104,25 @@ export function createRpcClient(): RpcClient {
 
   function clearHeartbeat(): void {
     if (heartbeatTimer !== null) {
-      clearInterval(heartbeatTimer);
+      systemClearInterval(heartbeatTimer);
       heartbeatTimer = null;
     }
     if (heartbeatTimeoutTimer !== null) {
-      clearTimeout(heartbeatTimeoutTimer);
+      systemClearTimeout(heartbeatTimeoutTimer);
       heartbeatTimeoutTimer = null;
     }
   }
 
   function clearReconnectTimer(): void {
     if (reconnectTimer !== null) {
-      clearTimeout(reconnectTimer);
+      systemClearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
   }
 
   function rejectAllPending(reason: string): void {
     for (const [id, req] of pending) {
-      clearTimeout(req.timer);
+      systemClearTimeout(req.timer);
       req.reject(new Error(reason));
       pending.delete(id);
     }
@@ -129,14 +130,14 @@ export function createRpcClient(): RpcClient {
 
   function startHeartbeat(): void {
     clearHeartbeat();
-    heartbeatTimer = setInterval(() => {
+    heartbeatTimer = systemSetInterval(() => {
       if (ws === null || ws.readyState !== globalThis.WebSocket.OPEN) return;
 
       const pingId = nextId++;
       ws.send(JSON.stringify({ jsonrpc: "2.0", method: "system.ping", id: pingId }));
 
       // Set a timeout for the pong response
-      heartbeatTimeoutTimer = setTimeout(() => {
+      heartbeatTimeoutTimer = systemSetTimeout(() => {
         // No pong received -- connection is dead
         pending.delete(pingId);
         if (ws !== null) {
@@ -148,18 +149,18 @@ export function createRpcClient(): RpcClient {
       pending.set(pingId, {
         resolve: () => {
           if (heartbeatTimeoutTimer !== null) {
-            clearTimeout(heartbeatTimeoutTimer);
+            systemClearTimeout(heartbeatTimeoutTimer);
             heartbeatTimeoutTimer = null;
           }
         },
         reject: () => {
           // Any response (even error) proves the connection is alive - clear timeout
           if (heartbeatTimeoutTimer !== null) {
-            clearTimeout(heartbeatTimeoutTimer);
+            systemClearTimeout(heartbeatTimeoutTimer);
             heartbeatTimeoutTimer = null;
           }
         },
-        timer: setTimeout(() => {
+        timer: systemSetTimeout(() => {
           // Cleanup stale ping entry (should not normally fire since
           // heartbeat timeout handles it first)
           pending.delete(pingId);
@@ -181,7 +182,7 @@ export function createRpcClient(): RpcClient {
     const delay = Math.min(BACKOFF_BASE_MS * Math.pow(2, reconnectAttempt), BACKOFF_MAX_MS);
     reconnectAttempt++;
 
-    reconnectTimer = setTimeout(() => {
+    reconnectTimer = systemSetTimeout(() => {
       openConnection(currentUrl, currentToken);
     }, delay);
   }
@@ -227,7 +228,7 @@ export function createRpcClient(): RpcClient {
       if (response.id != null) {
         const req = pending.get(response.id);
         if (req) {
-          clearTimeout(req.timer);
+          systemClearTimeout(req.timer);
           pending.delete(response.id);
 
           if (response.error) {
@@ -297,7 +298,7 @@ export function createRpcClient(): RpcClient {
         }
 
         const id = nextId++;
-        const timer = setTimeout(() => {
+        const timer = systemSetTimeout(() => {
           pending.delete(id);
           reject(new Error(`RPC request timed out after ${REQUEST_TIMEOUT_MS}ms`));
         }, REQUEST_TIMEOUT_MS);
@@ -318,7 +319,7 @@ export function createRpcClient(): RpcClient {
         try {
           ws.send(message);
         } catch (err) {
-          clearTimeout(timer);
+          systemClearTimeout(timer);
           pending.delete(id);
           reject(new Error("Send failed: " + (err instanceof Error ? err.message : String(err))));
         }

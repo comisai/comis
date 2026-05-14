@@ -12,6 +12,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { RpcClient } from "../../../api/rpc-client.js";
+import { systemSetTimeout } from "@comis/core";
 
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace"] as const;
 
@@ -139,7 +140,7 @@ export class IcAgentLogLevelEditor extends LitElement {
   override willUpdate(changed: Map<string | number | symbol, unknown>): void {
     if (changed.has("applied") && this.applied) {
       this._applied = { ...this._applied, [this.applied]: true };
-      setTimeout(() => {
+      systemSetTimeout(() => {
         this._applied = { ...this._applied, [this.applied]: false };
       }, 3000);
     }

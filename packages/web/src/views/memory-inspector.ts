@@ -5,6 +5,7 @@ import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { ApiClient, BrowseMemoryParams } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { MemoryEntry, MemoryStats, EmbeddingCacheStats } from "../api/types/index.js";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 import "../components/memory-table.js";
 import "../components/memory-detail.js";
 import "../components/data/ic-stat-card.js";
@@ -673,7 +674,7 @@ export class IcMemoryInspector extends LitElement {
       score: typeof raw.score === "number" ? raw.score : undefined,
       hasEmbedding: Boolean(raw.hasEmbedding ?? false),
       embeddingDims: typeof raw.embeddingDims === "number" ? raw.embeddingDims : undefined,
-      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : systemNowMs(),
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : undefined,
     };
   }
@@ -780,10 +781,10 @@ export class IcMemoryInspector extends LitElement {
         params.agentId = this._agentFilter;
       }
       if (this._dateFrom) {
-        params.from = new Date(this._dateFrom).getTime();
+        params.from = systemDateFrom(this._dateFrom).getTime();
       }
       if (this._dateTo) {
-        params.to = new Date(this._dateTo).getTime();
+        params.to = systemDateFrom(this._dateTo).getTime();
       }
 
       const result = await this.apiClient.browseMemory(params as unknown as BrowseMemoryParams);
@@ -809,11 +810,11 @@ export class IcMemoryInspector extends LitElement {
       if (!this._trustFilter.has(entry.trustLevel)) return false;
       if (this._agentFilter && entry.agentId !== this._agentFilter) return false;
       if (this._dateFrom) {
-        const from = new Date(this._dateFrom).getTime();
+        const from = systemDateFrom(this._dateFrom).getTime();
         if (entry.createdAt < from) return false;
       }
       if (this._dateTo) {
-        const to = new Date(this._dateTo).getTime() + 86400000; // End of day
+        const to = systemDateFrom(this._dateTo).getTime() + 86400000; // End of day
         if (entry.createdAt > to) return false;
       }
       return true;
@@ -1035,7 +1036,7 @@ export class IcMemoryInspector extends LitElement {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `memory-export-${Date.now()}.jsonl`;
+      a.download = `memory-export-${systemNowMs()}.jsonl`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -1096,7 +1097,7 @@ export class IcMemoryInspector extends LitElement {
   }
 
   private _formatRelativeTime(timestamp: number): string {
-    const now = Date.now();
+    const now = systemNowMs();
     const diffMs = now - timestamp;
     const diffSec = Math.floor(diffMs / 1000);
     const diffMin = Math.floor(diffSec / 60);
@@ -1118,7 +1119,7 @@ export class IcMemoryInspector extends LitElement {
   }
 
   private _formatFullDate(timestamp: number): string {
-    return new Date(timestamp).toLocaleString();
+    return systemDateFrom(timestamp).toLocaleString();
   }
 
   /** Render byAgent horizontal bar chart sorted by count descending. */
