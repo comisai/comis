@@ -500,7 +500,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       ? (isAnthropicFamily(resolvedModel.provider) ? "anthropic"
         : isGoogleFamily(resolvedModel.provider) ? "google"
         : "other")
-      : undefined,
+      : "default",
   };
   const deferralResult = applyToolDeferral(
     mergedCustomTools,

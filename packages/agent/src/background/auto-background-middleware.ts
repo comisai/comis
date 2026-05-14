@@ -11,7 +11,7 @@
 import { suppressError } from "@comis/shared";
 import type { BackgroundTasksConfig } from "@comis/core";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-import type { BackgroundTaskManager, NotifyFn } from "./background-task-manager.js";
+import type { BackgroundTaskManager } from "./background-task-manager.js";
 import type { BackgroundTaskOrigin } from "./background-task-types.js";
 
 /**
@@ -57,7 +57,6 @@ export function wrapToolForAutoBackground(
   tool: ToolDefinition,
   manager: BackgroundTaskManager,
   config: BackgroundTasksConfig,
-  notifyFn: NotifyFn,
   originResolver: () => BackgroundTaskOrigin | undefined,
 ): ToolDefinition {
   // `exec` opts out of the generic auto-background wrapper to enforce
@@ -142,8 +141,8 @@ export function wrapToolForAutoBackground(
       // Wire completion/failure handlers (fire-and-forget)
       suppressError(
         taskPromise.then(
-          (result) => manager.complete(taskId, result, notifyFn),
-          (error) => manager.fail(taskId, error, notifyFn),
+          (result) => manager.complete(taskId, result),
+          (error) => manager.fail(taskId, error),
         ),
         "background task completion handler",
       );

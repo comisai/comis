@@ -50,18 +50,16 @@ export interface BackgroundTaskManager {
   /**
    * Mark a task as completed.
    *
-   * The legacy `notifyFn` argument is preserved for backward compatibility but
-   * unused — the completion-dispatcher subscribes to the
-   * `background_task:completed` event emitted here and decides whether to fire
-   * the user-visible fallback notification. Single-owner contract eliminates
-   * double-notify.
+   * The completion-dispatcher subscribes to the `background_task:completed`
+   * event emitted here and decides whether to fire the user-visible fallback
+   * notification. Single-owner contract eliminates double-notify.
    */
-  complete(taskId: string, result: unknown, notifyFn?: NotifyFn): void;
+  complete(taskId: string, result: unknown): void;
   /**
-   * Mark a task as failed. See `complete` for the single-owner note — the
-   * `notifyFn` argument is unused; the dispatcher routes notification.
+   * Mark a task as failed. See `complete` for the single-owner note —
+   * the dispatcher routes notification via the emitted event.
    */
-  fail(taskId: string, error: unknown, notifyFn?: NotifyFn): void;
+  fail(taskId: string, error: unknown): void;
   cancel(taskId: string): Result<void, Error>;
   getTask(taskId: string): BackgroundTask | undefined;
   getTasks(agentId: string): BackgroundTask[];
@@ -183,7 +181,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       return ok(taskId);
     },
 
-    complete(taskId, result, _notifyFn?) {
+    complete(taskId, result) {
       const task = tasks.get(taskId);
       if (!task || task.status !== "running") return;
 
@@ -206,14 +204,13 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       });
 
       // Notification routing lives in the completion-dispatcher (subscribed
-      // to background_task:completed above). The legacy `notifyFn` argument
-      // is kept for backward compatibility but unused here — the dispatcher
-      // inspects task.dispatchState before firing the user-visible fallback,
-      // and the runner skips when state is "notified" (single-owner contract,
-      // zero spurious outbound).
+      // to background_task:completed above). The dispatcher inspects
+      // task.dispatchState before firing the user-visible fallback, and the
+      // runner skips when state is "notified" (single-owner contract, zero
+      // spurious outbound).
     },
 
-    fail(taskId, error, _notifyFn?) {
+    fail(taskId, error) {
       const task = tasks.get(taskId);
       if (!task || task.status !== "running") return;
 
@@ -236,7 +233,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         timestamp: Date.now(),
       });
 
-      // See complete() above — notifyFn arg is unused; dispatcher owns routing.
+      // See complete() above — the dispatcher owns notification routing.
     },
 
     cancel(taskId) {

@@ -1000,7 +1000,7 @@ async function stageAgents(input: {
     contextStore,
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
-    channelPluginsRef, backgroundTaskManager, bgNotifyFn,
+    channelPluginsRef, backgroundTaskManager,
     secretsCrypto, secretsDb,
   } = foundation;
   const _setupMedia = overrides.setupMedia ?? setupMedia;
@@ -1061,7 +1061,6 @@ async function stageAgents(input: {
       return plugin?.capabilities?.limits?.maxMessageChars;
     },
     backgroundTaskManager,  // Auto-background middleware in executor pipeline
-    backgroundNotifyFn: bgNotifyFn,  // Completion notification via deferred notificationService ref
     // Plumb the secrets bootstrap result through so setup-agents can wire the
     // OAuth credential store. encrypted-mode shares the existing
     // better-sqlite3 connection (no dual-handle).
