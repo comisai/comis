@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ActionClassification } from "./action-classifier.js";
+import { systemNowDate } from "../runtime/system-time.js";
 
 /**
  * Audit event schema for structured security logging.
@@ -62,7 +63,7 @@ export interface CreateAuditEventParams {
 export function createAuditEvent(params: CreateAuditEventParams): AuditEvent {
   const event: AuditEvent = {
     id: randomUUID(),
-    timestamp: new Date().toISOString(),
+    timestamp: systemNowDate().toISOString(),
     tenantId: params.tenantId,
     agentId: params.agentId,
     userId: params.userId,

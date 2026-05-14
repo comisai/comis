@@ -39,6 +39,7 @@ import { ok, err } from "@comis/shared";
 import { rewriteOAuthError, resolveCodexAccessTokenExpiry } from "../security/oauth-helpers.js";
 import type { OAuthErrorCode } from "../security/oauth-helpers.js";
 import type { LoginError } from "./oauth-login-runner.js";
+import { systemNowMs, systemSleep } from "../runtime/system-time.js";
 
 // -------- Constants --------
 const OPENAI_AUTH_BASE_URL = "https://auth.openai.com";
@@ -189,7 +190,7 @@ function sanitizeDeviceCodeErrorText(value: string): string {
 }
 
 function resolveNextDeviceCodePollDelayMs(intervalMs: number, deadlineMs: number): number {
-  const remainingMs = Math.max(0, deadlineMs - Date.now());
+  const remainingMs = Math.max(0, deadlineMs - systemNowMs());
   return Math.min(Math.max(intervalMs, OPENAI_CODEX_DEVICE_CODE_MIN_INTERVAL_MS), remainingMs);
 }
 
@@ -262,9 +263,9 @@ async function pollOpenAICodexDeviceCode(params: {
   userCode: string;
   intervalMs: number;
 }): Promise<DeviceCodeAuthorizationCode> {
-  const deadline = Date.now() + OPENAI_CODEX_DEVICE_CODE_TIMEOUT_MS;
+  const deadline = systemNowMs() + OPENAI_CODEX_DEVICE_CODE_TIMEOUT_MS;
 
-  while (Date.now() < deadline) {
+  while (systemNowMs() < deadline) {
     const response = await params.fetchFn(`${OPENAI_AUTH_BASE_URL}/api/accounts/deviceauth/token`, {
       method: "POST",
       headers: resolveOpenAICodexDeviceCodeHeaders("application/json"),
@@ -289,9 +290,7 @@ async function pollOpenAICodexDeviceCode(params: {
     }
 
     if (response.status === 403 || response.status === 404) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, resolveNextDeviceCodePollDelayMs(params.intervalMs, deadline)),
-      );
+      await systemSleep(resolveNextDeviceCodePollDelayMs(params.intervalMs, deadline));
       continue;
     }
 
@@ -345,8 +344,8 @@ async function exchangeOpenAICodexDeviceCode(params: {
   const expiresInMs = normalizeTokenLifetimeMs(body?.expires_in);
   const expires =
     expiresInMs !== undefined
-      ? Date.now() + expiresInMs
-      : (resolveCodexAccessTokenExpiry(access) ?? Date.now());
+      ? systemNowMs() + expiresInMs
+      : (resolveCodexAccessTokenExpiry(access) ?? systemNowMs());
 
   return {
     access,

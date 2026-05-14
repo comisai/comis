@@ -14,6 +14,7 @@
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import type { ConfigError } from "./types.js";
+import { systemNowDate } from "../runtime/system-time.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -120,7 +121,7 @@ export function createTimestampedBackup(
   }
 
   // Generate backup path
-  const timestamp = formatTimestamp(deps.now?.() ?? new Date());
+  const timestamp = formatTimestamp(deps.now?.() ?? systemNowDate());
   const backupPath = `${configPath}.backup.${timestamp}`;
 
   // Copy file

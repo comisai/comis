@@ -16,6 +16,7 @@
  * @module
  */
 import type { ComisLogger, LogMethod } from "./log-fields.js";
+import { systemNowMs } from "../runtime/system-time.js";
 
 function emit(
   level: string,
@@ -32,7 +33,7 @@ function emit(
   }
   const line = JSON.stringify({
     level,
-    time: Date.now(),
+    time: systemNowMs(),
     ...bindings,
     ...obj,
     msg,

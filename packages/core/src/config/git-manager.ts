@@ -609,7 +609,7 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
       const initResult = await initRepo();
       if (!initResult.ok) return err(initResult.error);
 
-      const thresholdMs = new Date(olderThan).getTime();
+      const thresholdMs = Date.parse(olderThan);
       if (isNaN(thresholdMs)) return err(`Invalid date: ${olderThan}`);
 
       // Get all commits oldest-first
@@ -621,7 +621,7 @@ export function createConfigGitManager(deps: GitManagerDeps): ConfigGitManager {
 
       const commits = lines.map((line) => {
         const spaceIdx = line.indexOf(" ");
-        return { sha: line.slice(0, spaceIdx), timestamp: new Date(line.slice(spaceIdx + 1)).getTime() };
+        return { sha: line.slice(0, spaceIdx), timestamp: Date.parse(line.slice(spaceIdx + 1)) };
       });
 
       const oldCommits = commits.filter((c) => c.timestamp < thresholdMs);

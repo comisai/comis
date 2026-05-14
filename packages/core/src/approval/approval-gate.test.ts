@@ -5,9 +5,43 @@ import type { ApprovalGate, ApprovalGateDeps } from "./approval-gate.js";
 import { TypedEventBus } from "../event-bus/bus.js";
 import type { EventMap } from "../event-bus/events.js";
 import type { ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "../domain/approval-request.js";
+import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+
+// ---------------------------------------------------------------------------
+// Phase 39: lightweight port wrappers that delegate to globals so
+// vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
+// ---------------------------------------------------------------------------
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -41,6 +75,8 @@ beforeEach(() => {
   eventBus = new TypedEventBus();
   gate = createApprovalGate({
     eventBus,
+    clock: testClock,
+    timers: testTimers,
     getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
   });
 });
@@ -419,6 +455,8 @@ describe("denial cache", () => {
   beforeEach(() => {
     gateWithTtl = createApprovalGate({
       eventBus,
+      clock: testClock,
+      timers: testTimers,
       getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
       getDenialCacheTtlMs: () => DENIAL_CACHE_TTL,
       getBatchApprovalTtlMs: () => 0, // Disable approval cache for denial cache tests
@@ -548,6 +586,8 @@ describe("denial cache", () => {
     // dispose by checking that a new request on a fresh gate works normally.
     const freshGate = createApprovalGate({
       eventBus,
+      clock: testClock,
+      timers: testTimers,
       getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
       getDenialCacheTtlMs: () => DENIAL_CACHE_TTL,
     });
@@ -785,6 +825,8 @@ describe("dispose with system:shutdown", () => {
     const DENIAL_CACHE_TTL = 30_000;
     const gateWithTtl = createApprovalGate({
       eventBus,
+      clock: testClock,
+      timers: testTimers,
       getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
       getDenialCacheTtlMs: () => DENIAL_CACHE_TTL,
       getBatchApprovalTtlMs: () => 0, // Disable approval cache for this test
@@ -816,6 +858,8 @@ describe("approval cache", () => {
   beforeEach(() => {
     gateWithApprovalCache = createApprovalGate({
       eventBus,
+      clock: testClock,
+      timers: testTimers,
       getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
       getDenialCacheTtlMs: () => 30_000,
       getBatchApprovalTtlMs: () => APPROVAL_CACHE_TTL,
@@ -924,6 +968,8 @@ describe("approval cache", () => {
   it("batchApprovalTtlMs=0 disables approval cache entirely", async () => {
     const disabledGate = createApprovalGate({
       eventBus,
+      clock: testClock,
+      timers: testTimers,
       getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
       getBatchApprovalTtlMs: () => 0,
     });
@@ -991,6 +1037,8 @@ describe("approval cache", () => {
     // After dispose, create a fresh gate to verify old cache is gone
     const freshGate = createApprovalGate({
       eventBus,
+      clock: testClock,
+      timers: testTimers,
       getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
       getBatchApprovalTtlMs: () => APPROVAL_CACHE_TTL,
     });
@@ -1057,6 +1105,8 @@ describe("approval cache serialization and logging", () => {
   beforeEach(() => {
     gateWithApprovalCache = createApprovalGate({
       eventBus,
+      clock: testClock,
+      timers: testTimers,
       getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
       getDenialCacheTtlMs: () => 30_000,
       getBatchApprovalTtlMs: () => APPROVAL_CACHE_TTL,
@@ -1159,6 +1209,8 @@ describe("approval cache serialization and logging", () => {
     // Create a NEW gate and restore
     const newGate = createApprovalGate({
       eventBus,
+      clock: testClock,
+      timers: testTimers,
       getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
       getDenialCacheTtlMs: () => 30_000,
       getBatchApprovalTtlMs: () => APPROVAL_CACHE_TTL,
@@ -1201,6 +1253,8 @@ describe("approval cache serialization and logging", () => {
     const debugFn = vi.fn();
     const gateWithLogger = createApprovalGate({
       eventBus,
+      clock: testClock,
+      timers: testTimers,
       getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
       getDenialCacheTtlMs: () => 30_000,
       getBatchApprovalTtlMs: () => APPROVAL_CACHE_TTL,
@@ -1232,6 +1286,8 @@ describe("approval cache serialization and logging", () => {
     const debugFn = vi.fn();
     const gateWithLogger = createApprovalGate({
       eventBus,
+      clock: testClock,
+      timers: testTimers,
       getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
       getDenialCacheTtlMs: () => 30_000,
       getBatchApprovalTtlMs: () => APPROVAL_CACHE_TTL,

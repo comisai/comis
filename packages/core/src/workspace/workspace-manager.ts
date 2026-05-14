@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { DEFAULT_TEMPLATES, WORKSPACE_FILE_NAMES, type WorkspaceFileName } from "./templates.js";
 import { readWorkspaceState, writeWorkspaceState, isIdentityFilled } from "./workspace-state.js";
 import type { WorkspaceState } from "./workspace-state.js";
+import { systemNowMs } from "../runtime/system-time.js";
 
 const execFile = promisify(execFileCb);
 
@@ -173,7 +174,7 @@ export async function ensureWorkspace(options: EnsureWorkspaceOptions): Promise<
       }
     }
     if (bootstrapNewlyWritten) {
-      await writeWorkspaceState(dir, { bootstrapSeededAt: Date.now() });
+      await writeWorkspaceState(dir, { bootstrapSeededAt: systemNowMs() });
     }
   }
 
@@ -195,7 +196,7 @@ export interface RegisterWorkspaceResult {
   registered: number;
   /** Files whose tracker entry already matched disk mtime -- no re-read performed. */
   skipped: number;
-  /** Total wall-clock duration in ms (Date.now() deltas). */
+  /** Total wall-clock duration in ms (systemNowMs() deltas). */
   durationMs: number;
 }
 
@@ -241,7 +242,7 @@ export async function registerWorkspaceFilesInTracker(
   tracker: WorkspaceSeedTracker,
   logger?: WorkspaceRegisterLogger,
 ): Promise<RegisterWorkspaceResult> {
-  const startMs = Date.now();
+  const startMs = systemNowMs();
   let registered = 0;
   let skipped = 0;
   for (const name of WORKSPACE_FILE_NAMES) {
@@ -264,7 +265,7 @@ export async function registerWorkspaceFilesInTracker(
       // still reflects how many files were present (registered + skipped).
     }
   }
-  const durationMs = Date.now() - startMs;
+  const durationMs = systemNowMs() - startMs;
   logger?.debug?.(
     { dir, registered, skipped, durationMs, fileCount: WORKSPACE_FILE_NAMES.length },
     "Workspace template files registered in tracker",
@@ -328,7 +329,7 @@ export async function getWorkspaceStatus(dir: string): Promise<WorkspaceStatus> 
   // Detect and record onboarding completion (fires once)
   const isComplete = !bootstrapPresent || identityFilled;
   if (isComplete && state.bootstrapSeededAt && !state.onboardingCompletedAt) {
-    const now = Date.now();
+    const now = systemNowMs();
     await writeWorkspaceState(dir, { onboardingCompletedAt: now });
     state.onboardingCompletedAt = now;
   }

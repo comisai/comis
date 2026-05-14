@@ -6,6 +6,10 @@
 
 import { bootstrap, loadEnvFile, createApprovalGate, parseFormattedSessionKey, createConfigGitManager, envSubset, generateStrongToken, createAuditAggregator, createInjectionRateLimiter, validateMemoryWrite, checkApprovalsConfig, safePath, resolveConfigSecretRefs, formatSessionKey, BackgroundTasksConfigSchema } from "@comis/core";
 import type { SecretStorePort, WrapExternalContentOptions, PerAgentConfig, ToolCapabilityPort } from "@comis/core";
+// Phase 39 PORTS-06: runtime adapter factories — constructed at the composition
+// root and threaded through wiring helpers that retarget Date.now / process.env
+// / setTimeout / setInterval (PORTS-11/12/13). Sanctioned construction site.
+import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/infra";
 import { setupSecrets as _setupSecretsImpl, createSqliteSecretStore, createNamedGraphStore, createContextStore, createObservabilityStore } from "@comis/memory";
 import type { ObservabilityStore } from "@comis/memory";
 import { ok, err, suppressError } from "@comis/shared";
@@ -299,6 +303,11 @@ export interface FoundationHandle {
   dataDir: string;
   configPaths: string[];
   envPath: string;
+  // Phase 39 PORTS-06 runtime adapters (constructed at composition root,
+  // threaded through later stages and consumer factories).
+  clock: import("@comis/core").ClockPort;
+  env: import("@comis/core").EnvPort;
+  timers: import("@comis/core").TimerPort;
   // Secrets (4 fields)
   secretStore: SecretStorePort | undefined;
   secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
@@ -548,6 +557,9 @@ async function stageFoundation(input: {
     dataDir,
   });
 
+  // 0.6. Phase 39 PORTS-06: runtime adapter construction (composition root).
+  const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = createSystemTimers();
+
   // 1. Bootstrap core container
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution
   const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"];
@@ -653,7 +665,7 @@ async function stageFoundation(input: {
   const canaryFallbackSecret = createHmac("sha256", container.config.tenantId)
     .update("comis:canary-fallback")
     .digest("hex");
-  const injectionRateLimiter = createInjectionRateLimiter();
+  const injectionRateLimiter = createInjectionRateLimiter({ clock, timers });
 
   // Session mirroring (must precede setupAgents — agents receive a live deliveryMirror port)
   const { deliveryMirror, startPrune: startMirrorPrune, shutdown: shutdownMirror } = await setupDeliveryMirror({
@@ -695,6 +707,7 @@ async function stageFoundation(input: {
 
   return {
     container, dataDir, configPaths, envPath,
+    clock, env, timers,
     secretStore, secretsCrypto, secretsDb, permissionCorrections,
     execGit, configGitManager,
     logger, logLevelManager, daemonLogger, gatewayLogger, channelsLogger, agentLogger,
@@ -920,11 +933,18 @@ function wirePostAgentsCleanup(deps: {
 function buildAuditBundle(deps: {
   eventBus: Awaited<ReturnType<typeof bootstrap>> extends import("@comis/shared").Result<infer C, unknown> ? C extends { eventBus: infer EB } ? EB : never : never;
   skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
+  clock: import("@comis/core").ClockPort;
+  timers: import("@comis/core").TimerPort;
 }): {
   auditAggregator: ReturnType<typeof createAuditAggregator>;
   onSuspiciousContent: WrapExternalContentOptions["onSuspiciousContent"];
 } {
-  const auditAggregator = createAuditAggregator(deps.eventBus, undefined, deps.skillsLogger);
+  const auditAggregator = createAuditAggregator(
+    deps.eventBus,
+    { clock: deps.clock, timers: deps.timers },
+    undefined,
+    deps.skillsLogger,
+  );
   const onSuspiciousContent: WrapExternalContentOptions["onSuspiciousContent"] = (info) => {
     auditAggregator.record({ source: "external_content", patterns: info.patterns });
   };
@@ -995,6 +1015,7 @@ async function stageAgents(input: {
   const { overrides, foundation } = input;
   const {
     container, dataDir,
+    clock, timers,
     daemonLogger, gatewayLogger, agentLogger, schedulerLogger, skillsLogger,
     memoryAdapter, db, sessionStore, cachedPort, embeddingQueue,
     contextStore,
@@ -1126,6 +1147,8 @@ async function stageAgents(input: {
   const { auditAggregator, onSuspiciousContent } = buildAuditBundle({
     eventBus: container.eventBus,
     skillsLogger,
+    clock,
+    timers,
   });
 
   // 6.6.7. Media (moved up from 6.6.8 -- media infrastructure must be ready before channels)
@@ -1145,6 +1168,8 @@ async function stageAgents(input: {
     getTimeoutMs: () => container.config.approvals?.defaultTimeoutMs ?? 30_000,
     getDenialCacheTtlMs: () => container.config.approvals?.denialCacheTtlMs ?? 60_000,
     getBatchApprovalTtlMs: () => container.config.approvals?.batchApprovalTtlMs ?? 30_000,
+    clock,                // Phase 39 PORTS-11 wall-clock reads
+    timers,               // Phase 39 PORTS-13 setTimeout scheduling
     logger: daemonLogger, // Approval cache hit/miss debug logging
   });
 
