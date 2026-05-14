@@ -8,7 +8,10 @@
 import { describe, it, expect } from "vitest";
 import { createSessionLatch, createAccumulativeLatch } from "./session-latch.js";
 import type { SessionLatch, AccumulativeLatch } from "./session-latch.js";
-import { _clearSessionLatchesForTest, _getOrCreateSessionLatchesForTest } from "./pi-executor.js";
+import {
+  clearSessionLatches as _clearSessionLatchesForTest,
+  getOrCreateSessionLatches as _getOrCreateSessionLatchesForTest,
+} from "./executor-session-state.js";
 
 describe("SessionLatch", () => {
   describe("createSessionLatch() with no args", () => {

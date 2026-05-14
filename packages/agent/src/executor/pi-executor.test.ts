@@ -5,7 +5,7 @@ import type { PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core"
 import { formatSessionKey, runWithContext, tryGetContext } from "@comis/core";
 import type { ExecutionResult } from "./types.js";
 import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot } from "./prompt-assembly.js";
-import { clearSessionToolSchemaSnapshot } from "./pi-executor.js";
+import { clearSessionToolSchemaSnapshot } from "./executor-session-state.js";
 import { resetPairedMemoryDedupForTests } from "./executor-post-execution.js";
 import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "./cache-break-detection.js";
 
@@ -290,7 +290,12 @@ vi.mock("node:fs", async (importOriginal) => {
 // Import modules after mock setup
 // ---------------------------------------------------------------------------
 
-import { createPiExecutor, createBeforeToolCallGuard, mergeSessionStats, clearSessionToolSchemaSnapshotHash, _getOrCreateSessionLatchesForTest, _clearSessionLatchesForTest, type PiExecutorDeps } from "./pi-executor.js";
+import { createPiExecutor, createBeforeToolCallGuard, mergeSessionStats, type PiExecutorDeps } from "./pi-executor.js";
+import {
+  clearSessionToolSchemaSnapshotHash,
+  getOrCreateSessionLatches as _getOrCreateSessionLatchesForTest,
+  clearSessionLatches as _clearSessionLatchesForTest,
+} from "./executor-session-state.js";
 // PiExecutorDeps requires toolCapabilityPort. Tests use the test-only stub
 // from @comis/core's __test-helpers/ directory (NOT the production no-op
 // factory re-exported from @comis/core — the architecture-grep boundary

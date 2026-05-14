@@ -18,16 +18,18 @@ vi.mock("@comis/agent", () => ({
 
 import {
   createSubAgentRunner,
+  ANNOUNCE_PARENT_TIMEOUT_MS,
+  type SubAgentRunnerDeps,
+} from "./sub-agent-runner.js";
+import {
   buildAnnouncementMessage,
   validateOutputs,
   classifyAbortReason,
   persistFailureRecord,
   deliverFailureNotification,
-  ANNOUNCE_PARENT_TIMEOUT_MS,
-  type SubAgentRunnerDeps,
   type ValidationResult,
   type AbortClassification,
-} from "./sub-agent-runner.js";
+} from "./sub-agent-result-processor.js";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
