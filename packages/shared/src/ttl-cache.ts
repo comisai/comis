@@ -5,6 +5,14 @@
  * Uses lazy expiry on get/has and Map insertion order for oldest-first
  * eviction when maxEntries is exceeded.
  *
+ * Phase 39 PORTS-15: `nowMs` is REQUIRED. The previous `?? Date.now`
+ * fallback is removed so that no clock read in this leaf utility ever
+ * resolves to the `Date.now` global. Callers thread `nowMs` from their
+ * injected `ClockPort` (Pattern A: `nowMs: () => deps.clock.now()`) or
+ * from the sanctioned-root `systemNowMs` helper (Pattern B). The
+ * callback is a bare structural type to preserve the PORTS-16 leaf
+ * invariant for `@comis/shared` (no `@comis/core` import).
+ *
  * @module
  */
 
@@ -18,8 +26,8 @@ export interface TTLCacheOptions {
   ttlMs: number;
   /** Maximum number of entries. When exceeded, oldest entry is evicted. */
   maxEntries?: number;
-  /** Injectable clock for deterministic testing. Defaults to Date.now. */
-  nowMs?: () => number;
+  /** Required clock callback — no Date.now fallback (Phase 39 PORTS-15). */
+  nowMs: () => number;
 }
 
 /** A TTL-based cache with lazy expiry and optional max-entry eviction. */
@@ -56,12 +64,14 @@ interface CacheEntry<T> {
 /**
  * Create a TTL-based in-memory cache.
  *
- * @param opts - Cache configuration
+ * @param opts - Cache configuration. `nowMs` is REQUIRED (PORTS-15) — no
+ *   `Date.now` fallback. Pass `nowMs: () => deps.clock.now()` (Pattern A)
+ *   or `nowMs: systemNowMs` (Pattern B) at the call site.
  * @returns TTLCache instance
  */
 export function createTTLCache<T>(opts: TTLCacheOptions): TTLCache<T> {
   const { ttlMs, maxEntries } = opts;
-  const getNow = opts.nowMs ?? Date.now;
+  const getNow = opts.nowMs;
 
   const store = new Map<string, CacheEntry<T>>();
 
