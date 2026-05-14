@@ -15,7 +15,7 @@
 import * as fs from "node:fs/promises";
 import { Hono } from "hono";
 import { z } from "zod";
-import { safePath, PathTraversalError } from "@comis/core";
+import { safePath, PathTraversalError, systemNowMs } from "@comis/core";
 import { extractBearerToken } from "../auth/token-auth.js";
 import type { TokenStore } from "../auth/token-auth.js";
 
@@ -119,7 +119,7 @@ export function createMediaRoutes(deps: MediaRoutesDeps): Hono {
 
     // Check TTL expiration
     if (ttlMs !== undefined) {
-      const age = Math.max(0, Date.now() - stat.mtimeMs);
+      const age = Math.max(0, systemNowMs() - stat.mtimeMs);
       if (age >= ttlMs) {
         return c.json({ error: "Media expired" }, 410);
       }

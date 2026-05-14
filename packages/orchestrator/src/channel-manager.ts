@@ -32,7 +32,7 @@ import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent"
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig, AckReactionConfig } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, systemNowMs, systemSetTimeout } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 
@@ -418,16 +418,16 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       // Empty-Set fast path takes no log line, no setTimeout, no Promise.race --
       // existing shutdown latency is preserved when nothing is in flight.
       if (inFlightSends.size > 0) {
-        const drainStart = Date.now();
+        const drainStart = systemNowMs();
         const inFlightCount = inFlightSends.size;
         await Promise.race([
           Promise.allSettled([...inFlightSends]),
-          new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+          new Promise<void>((resolve) => systemSetTimeout(resolve, 5000)),
         ]);
         deps.logger.info(
           {
             inFlightCount,
-            drainMs: Date.now() - drainStart,
+            drainMs: systemNowMs() - drainStart,
             remaining: inFlightSends.size,
             hint: "Outbound sends drained before adapter teardown to avoid duplicate-message risk on SIGUSR2 hot-reload",
           },

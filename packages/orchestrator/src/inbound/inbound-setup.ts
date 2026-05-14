@@ -93,6 +93,7 @@ function isHeartbeatExecution(msg: NormalizedMessage): boolean {
 // ---------------------------------------------------------------------------
 
 import { resolveStreamingConfig } from "../execution/execution-pipeline.js";
+import { systemNowMs } from "@comis/core";
 
 /**
  * Send ack reaction and create typing controller for the inbound message.
@@ -124,7 +125,7 @@ export function setupInboundExecution(
                 channelType: adapter.channelType,
                 messageId: platformMsgId,
                 emoji: deps.ackReactionConfig!.emoji,
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
             } else {
               deps.logger.warn({
@@ -204,7 +205,7 @@ export function setupInboundExecution(
         channelId: adapter.channelId,
         chatId: processedMsg.channelId,
         mode: streamCfg.typingMode,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     }
   }

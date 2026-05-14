@@ -9,7 +9,7 @@
  * @module
  */
 
-import { parseFormattedSessionKey, type SessionKey } from "@comis/core";
+import { parseFormattedSessionKey, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 import { withTimeout } from "@comis/shared";
 
 /** Hard timeout for announceToParent calls (300 seconds / 5 minutes).
@@ -223,7 +223,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
                 channelType: first.announceChannelType,
                 channelId: first.announceChannelId,
                 runId: first.runId,
-                failedAt: Date.now(),
+                failedAt: systemNowMs(),
                 attemptCount: 0,
                 lastError: sendErr instanceof Error ? sendErr.message : String(sendErr),
               });
@@ -281,7 +281,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
                 channelType: item.announceChannelType,
                 channelId: item.announceChannelId,
                 runId: item.runId,
-                failedAt: Date.now(),
+                failedAt: systemNowMs(),
                 attemptCount: 0,
                 lastError: sendErr instanceof Error ? sendErr.message : String(sendErr),
               });
@@ -314,10 +314,10 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     // Clear existing debounce timer and reset
     const existingTimer = timers.get(batchKey);
     if (existingTimer !== undefined) {
-      clearTimeout(existingTimer);
+      systemClearTimeout(existingTimer);
     }
 
-    const timer = setTimeout(() => {
+    const timer = systemSetTimeout(() => {
       void deliverBatch(batchKey);
     }, debounceMs);
 
@@ -337,7 +337,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   async function flush(): Promise<void> {
     // Clear all debounce timers
     for (const timer of timers.values()) {
-      clearTimeout(timer);
+      systemClearTimeout(timer);
     }
     timers.clear();
 

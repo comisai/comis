@@ -19,7 +19,7 @@
  */
 
 import type { NormalizedMessage, SessionKey, TypedEventBus, DebounceBufferConfig } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, systemNowMs, systemSetTimeout, systemClearTimeout } from "@comis/core";
 import { coalesceMessages } from "./coalescer.js";
 
 /**
@@ -74,13 +74,13 @@ export function createDebounceBuffer(deps: DebounceBufferDeps): DebounceBuffer {
     if (!entry || entry.messages.length === 0) {
       // Clean up empty entries
       if (entry) {
-        clearTimeout(entry.timer);
+        systemClearTimeout(entry.timer);
         buffers.delete(key);
       }
       return;
     }
 
-    clearTimeout(entry.timer);
+    systemClearTimeout(entry.timer);
     const messages = [...entry.messages];
     const { sessionKey, channelType } = entry;
     buffers.delete(key);
@@ -91,7 +91,7 @@ export function createDebounceBuffer(deps: DebounceBufferDeps): DebounceBuffer {
       channelType,
       messageCount: messages.length,
       trigger,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
 
     // Coalesce messages before delivering to callback
@@ -115,7 +115,7 @@ export function createDebounceBuffer(deps: DebounceBufferDeps): DebounceBuffer {
         }
 
         // Create new buffer entry
-        const timer = setTimeout(() => flushEntry(key, "timer"), config.windowMs);
+        const timer = systemSetTimeout(() => flushEntry(key, "timer"), config.windowMs);
         timer.unref();
         entry = { messages: [message], timer, channelType, sessionKey };
         buffers.set(key, entry);
@@ -126,7 +126,7 @@ export function createDebounceBuffer(deps: DebounceBufferDeps): DebounceBuffer {
           channelType,
           bufferedCount: 1,
           windowMs: config.windowMs,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
         return;
       }
@@ -135,8 +135,8 @@ export function createDebounceBuffer(deps: DebounceBufferDeps): DebounceBuffer {
       entry.messages.push(message);
 
       // Reset debounce timer
-      clearTimeout(entry.timer);
-      const newTimer = setTimeout(() => flushEntry(key, "timer"), config.windowMs);
+      systemClearTimeout(entry.timer);
+      const newTimer = systemSetTimeout(() => flushEntry(key, "timer"), config.windowMs);
       newTimer.unref();
       entry.timer = newTimer;
 
@@ -146,7 +146,7 @@ export function createDebounceBuffer(deps: DebounceBufferDeps): DebounceBuffer {
         channelType,
         bufferedCount: entry.messages.length,
         windowMs: config.windowMs,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       // Hard cap: force-flush on overflow
@@ -175,7 +175,7 @@ export function createDebounceBuffer(deps: DebounceBufferDeps): DebounceBuffer {
       const key = formatSessionKey(sessionKey);
       const entry = buffers.get(key);
       if (entry) {
-        clearTimeout(entry.timer);
+        systemClearTimeout(entry.timer);
         buffers.delete(key);
       }
     },

@@ -18,7 +18,7 @@ import type { ChannelPort, NormalizedMessage, SessionKey, TypedEventBus, Deliver
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
 import type { SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
 import type { SendMessageOptions } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin } from "@comis/core";
+import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import type { AgentExecutor } from "@comis/agent";
@@ -204,7 +204,7 @@ export async function executeAndDeliver(
   directives?: Record<string, unknown>,
 ): Promise<void> {
   // Track lifecycle timing for diagnostic:message_processed event
-  const receivedAt = Date.now();
+  const receivedAt = systemNowMs();
 
   /** Emit diagnostic:message_processed with current lifecycle state. */
   function emitDiagnostic(tokensUsed: number, cost: number, finishReason: string): void {
@@ -215,14 +215,14 @@ export async function executeAndDeliver(
       agentId,
       sessionKey: formatSessionKey(sessionKey),
       receivedAt,
-      executionDurationMs: Date.now() - receivedAt,
+      executionDurationMs: systemNowMs() - receivedAt,
       deliveryDurationMs: 0,
-      totalDurationMs: Date.now() - receivedAt,
+      totalDurationMs: systemNowMs() - receivedAt,
       tokensUsed,
       cost,
       success: true,
       finishReason,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 
@@ -253,7 +253,7 @@ export async function executeAndDeliver(
       tenantId: sessionKey.tenantId,
       userId: sessionKey.userId,
       sessionKey: formatSessionKey(sessionKey),
-      startedAt: Date.now(),
+      startedAt: systemNowMs(),
       trustLevel: policy.trustLevel,
       channelType: adapter.channelType,
       deliveryOrigin: createDeliveryOrigin({
@@ -349,8 +349,8 @@ export async function executeAndDeliver(
         deps.eventBus.emit("typing:stopped", {
           channelId: adapter.channelId,
           chatId: policy.effectiveMsg.channelId,
-          durationMs: Date.now() - startedAt,
-          timestamp: Date.now(),
+          durationMs: systemNowMs() - startedAt,
+          timestamp: systemNowMs(),
         });
       }
     }
@@ -395,7 +395,7 @@ function handleFollowupTrigger(
       sessionKey: formatSessionKey(sessionKey),
       chainId,
       maxDepth,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
     return;
   }
@@ -422,7 +422,7 @@ function handleFollowupTrigger(
     reason: resultMeta.compaction_triggered ? "compaction" : "tool_result",
     chainId,
     chainDepth: newDepth,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   });
 
   // Re-enqueue follow-up through command queue (fire-and-forget)

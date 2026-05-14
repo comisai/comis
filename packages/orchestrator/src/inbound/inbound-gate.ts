@@ -11,7 +11,7 @@
  */
 
 import type { ChannelPort, NormalizedMessage, SessionKey, AutoReplyEngineConfig } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, systemNowMs } from "@comis/core";
 // Phase 32 commit 6: command parsers/matchers moved into orchestrator (ORCH-EXT-08).
 // Use local relative imports — orchestrator depends on @comis/agent for other
 // symbols but commands now live inside this package.
@@ -106,7 +106,7 @@ export async function evaluateInboundGate(
         senderId: msg.senderId,
         activationMode: arConfig.groupActivation,
         reason: decision.reason,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
       // Continue to routing + execution below
     } else if (decision.action === "inject-history") {
@@ -115,7 +115,7 @@ export async function evaluateInboundGate(
         senderId: msg.senderId,
         reason: decision.reason,
         injectedAsHistory: true,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
       deps.logger.info(
         {
@@ -166,7 +166,7 @@ export async function evaluateInboundGate(
         senderId: msg.senderId,
         reason: decision.reason,
         injectedAsHistory: false,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
       deps.logger.info(
         {
@@ -201,7 +201,7 @@ export async function evaluateInboundGate(
           sessionKey,
           override: arg,
           changedBy: msg.senderId,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         });
         await deps.deliveryService.deliverToChannel(adapter, msg.channelId, `Send policy override set to: ${arg}`, { skipChunking: true });
       } else {
@@ -259,7 +259,7 @@ export async function evaluateInboundGate(
             sessionKey,
             reason: "user_stop",
             agentId,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
           deps.logger.info(
             { agentId, sessionKey: formattedKey },
@@ -364,7 +364,7 @@ export async function evaluateInboundGate(
             skillName: skill.skillName,
             invokedBy: "user",
             args: skillMatch.args,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
         } else {
           deps.logger.warn(

@@ -11,6 +11,7 @@
  */
 
 import type { NormalizedMessage, SessionKey } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -77,7 +78,7 @@ export function createFollowupTrigger(deps: FollowupTriggerDeps): FollowupTrigge
         channelType,
         senderId: "system",
         text: "[System: Continue processing. Previous results are in your conversation history.]",
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         attachments: [],
         metadata: {
           isFollowup: true,

@@ -12,7 +12,7 @@
  */
 
 import type { ChannelPort, NormalizedMessage, SessionKey } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, systemNowMs } from "@comis/core";
 import { sanitizeAssistantResponse, extractFinalTagContent } from "@comis/agent";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
@@ -169,7 +169,7 @@ export async function filterExecutionResponse(
     deps.eventBus.emit("response:filtered", {
       channelId: adapter.channelId,
       suppressedBy: filter.suppressedBy!,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
     return { deliver: false, reason: "filtered" };
   }

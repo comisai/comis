@@ -27,7 +27,7 @@ import type {
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { PriorityScheduler } from "./priority-scheduler.js";
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemSetInterval, systemClearInterval } from "@comis/core";
 
 import type { SessionLane } from "./lane.js";
 import { applyOverflowPolicy } from "./overflow.js";
@@ -135,12 +135,12 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
         queue: new PQueue({ concurrency: 1 }),
         pendingMessages: [],
         isExecuting: false,
-        lastActivityMs: Date.now(),
+        lastActivityMs: systemNowMs(),
       };
       lanes.set(key, lane);
       logger?.debug({ sessionKey: key }, "Session lane created");
     }
-    lane.lastActivityMs = Date.now();
+    lane.lastActivityMs = systemNowMs();
     return lane;
   }
 
@@ -178,12 +178,12 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
       sessionKey,
       channelType,
       messageCount: collected.length,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
 
     // Enqueue a single task with the coalesced message
     void executeLaneTask(
-      lane, sessionKey, channelType, priorityLane, Date.now(), [coalesced], handler,
+      lane, sessionKey, channelType, priorityLane, systemNowMs(), [coalesced], handler,
       () => processCollectedMessages(key, lane, sessionKey, channelType, handler, priorityLane),
     );
   }
@@ -191,8 +191,8 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
   /** Start the periodic cleanup sweep for idle lanes. */
   function startCleanupSweep(): void {
     const sweepIntervalMs = Math.min(config.cleanupIdleMs, 60_000);
-    cleanupTimer = setInterval(() => {
-      const now = Date.now();
+    cleanupTimer = systemSetInterval(() => {
+      const now = systemNowMs();
       for (const [key, lane] of lanes) {
         if (
           !lane.isExecuting &&
@@ -239,7 +239,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
   ): Promise<void> {
     return lane.queue.add(() =>
       runThroughGate(priorityLane, async () => {
-        const dequeuedAt = Date.now();
+        const dequeuedAt = systemNowMs();
         eventBus.emit("queue:dequeued", {
           sessionKey,
           channelType,
@@ -253,7 +253,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
         } finally {
           lane.isExecuting = false;
           delete lane.abortController;
-          lane.lastActivityMs = Date.now();
+          lane.lastActivityMs = systemNowMs();
           onComplete?.();
         }
       }),
@@ -276,7 +276,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
         const key = formatSessionKey(sessionKey);
         const lane = getOrCreateLane(key);
         const channelConfig = resolveChannelConfig(channelType);
-        const enqueuedAt = Date.now();
+        const enqueuedAt = systemNowMs();
 
         // Emit enqueued event
         eventBus.emit("queue:enqueued", {
@@ -323,11 +323,11 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
             if (channelConfig.debounceMs > 0) {
               const existingTimer = debounceTimers.get(key);
               if (existingTimer !== undefined) {
-                clearTimeout(existingTimer);
+                systemClearTimeout(existingTimer);
               }
               debounceTimers.set(
                 key,
-                setTimeout(() => {
+                systemSetTimeout(() => {
                   debounceTimers.delete(key);
                   // Only process if execution has finished by debounce time
                   if (!lane.isExecuting) {
@@ -374,7 +374,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
             // Clear any existing debounce timer
             const existingTimer = debounceTimers.get(key);
             if (existingTimer !== undefined) {
-              clearTimeout(existingTimer);
+              systemClearTimeout(existingTimer);
               debounceTimers.delete(key);
             }
 
@@ -388,7 +388,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
                 const coalesced = coalesceMessages(collected);
                 eventBus.emit("queue:coalesced", {
                   sessionKey, channelType,
-                  messageCount: collected.length, timestamp: Date.now(),
+                  messageCount: collected.length, timestamp: systemNowMs(),
                 });
                 lane.isExecuting = true;
                 lane.abortController = new AbortController();
@@ -397,7 +397,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
                 } finally {
                   lane.isExecuting = false;
                   delete lane.abortController;
-                  lane.lastActivityMs = Date.now();
+                  lane.lastActivityMs = systemNowMs();
                 }
               }),
             );
@@ -452,7 +452,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
     touchLane(sessionKey: string): void {
       const lane = lanes.get(sessionKey);
       if (lane) {
-        lane.lastActivityMs = Date.now();
+        lane.lastActivityMs = systemNowMs();
       }
     },
 
@@ -474,10 +474,10 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
       logger?.debug({ activeLanes: lanes.size }, "Command queue shutting down");
       isShutdown = true;
 
-      for (const timer of debounceTimers.values()) clearTimeout(timer);
+      for (const timer of debounceTimers.values()) systemClearTimeout(timer);
       debounceTimers.clear();
 
-      if (cleanupTimer !== undefined) { clearInterval(cleanupTimer); cleanupTimer = undefined; }
+      if (cleanupTimer !== undefined) { systemClearInterval(cleanupTimer); cleanupTimer = undefined; }
 
       for (const lane of lanes.values()) lane.queue.pause();
       globalGate.pause();
@@ -501,7 +501,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
       if (activePromises.length > 0) {
         await Promise.race([
           Promise.all(activePromises),
-          new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
+          new Promise<void>((resolve) => systemSetTimeout(resolve, 3_000)),
         ]);
       }
 

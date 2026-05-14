@@ -13,6 +13,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { SSEStreamingApi } from "hono/streaming";
 import { suppressError } from "@comis/shared";
+import { systemNowMs } from "@comis/core";
 import {
   ChatCompletionRequestSchema,
   createOpenAIError,
@@ -269,7 +270,7 @@ export function createOpenaiCompletionsRoute(
 
       // Generate completion identifiers
       const completionId = `chatcmpl-${crypto.randomUUID()}`;
-      const created = Math.floor(Date.now() / 1000);
+      const created = Math.floor(systemNowMs() / 1000);
 
       // Build session key for OpenAI compat requests
       const sessionKey = {

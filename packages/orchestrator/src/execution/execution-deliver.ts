@@ -9,7 +9,7 @@
  */
 
 import type { ChannelPort, NormalizedMessage, PerChannelStreamingConfig } from "@comis/core";
-import { tryGetContext, chunkForDelivery, createBlockRetryGuard } from "@comis/core";
+import { tryGetContext, chunkForDelivery, createBlockRetryGuard, systemNowMs } from "@comis/core";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
 import { buildThreadSendOpts } from "./execution-pipeline.js";
@@ -83,7 +83,7 @@ export async function deliverExecutionResponse(
       blockCount: evt.blockCount,
       charCount: evt.charCount,
       trigger: evt.trigger,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 
@@ -94,7 +94,7 @@ export async function deliverExecutionResponse(
       channelId: adapter.channelId,
       chatId: effectiveMsg.channelId,
       mode: blockStreamCfg.typingMode,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 
@@ -173,7 +173,7 @@ export async function deliverExecutionResponse(
         blockIndex,
         totalBlocks,
         charCount: text.length,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
       blockIndex++;
     });
@@ -196,7 +196,7 @@ export async function deliverExecutionResponse(
   // Delivery complete INFO bookend
   const deliveryDurationMs = Math.round(performance.now() - deliveryStartMs);
   const e2eDurationMs = effectiveMsg.timestamp
-    ? Date.now() - effectiveMsg.timestamp
+    ? systemNowMs() - effectiveMsg.timestamp
     : undefined;
   deps.logger.info({
     traceId: deliveryCtx?.traceId,

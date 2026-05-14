@@ -4,6 +4,7 @@ import type { TLSSocket } from "node:tls";
 import { ok, err } from "@comis/shared";
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { systemNowMs, systemDateFrom } from "@comis/core";
 
 /**
  * TLS certificate paths for mTLS validation.
@@ -51,8 +52,8 @@ export function validateCertificates(paths: CertPaths): Result<void, Error> {
     try {
       const pem = readFileSync(file.path, "utf-8");
       const cert = new X509Certificate(pem);
-      const notAfter = new Date(cert.validTo);
-      if (notAfter.getTime() < Date.now()) {
+      const notAfter = systemDateFrom(cert.validTo);
+      if (notAfter.getTime() < systemNowMs()) {
         return err(new Error(`${file.label} at ${file.path} expired on ${cert.validTo}`));
       }
     } catch (e: unknown) {

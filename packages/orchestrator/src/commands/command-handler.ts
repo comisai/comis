@@ -17,6 +17,7 @@ import type {
   CommandHandlerDeps,
 } from "./types.js";
 import { MIN_USER_BUDGET, MAX_USER_BUDGET } from "./budget-command.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -263,7 +264,7 @@ function handleStatus(deps: CommandHandlerDeps, sessionKey: SessionKey): Command
   const effectiveModel = session.modelOverride ?? `${config.provider}/${config.model}`;
   lines.push(`Model: ${effectiveModel}`);
   if (session.createdAt) {
-    const elapsed = Date.now() - session.createdAt;
+    const elapsed = systemNowMs() - session.createdAt;
     lines.push(`Session started: ${formatRelativeTime(elapsed)}`);
   }
 

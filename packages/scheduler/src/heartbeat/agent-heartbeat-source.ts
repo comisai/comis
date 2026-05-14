@@ -21,7 +21,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { SessionKey, NormalizedMessage } from "@comis/core";
-import { formatSessionKey, runWithContext } from "@comis/core";
+import { formatSessionKey, runWithContext, systemNowMs } from "@comis/core";
 import type { SchedulerLogger } from "../shared-types.js";
 import type { SystemEventQueue } from "../system-events/system-event-queue.js";
 import type { EffectiveHeartbeatConfig } from "./heartbeat-config.js";
@@ -298,7 +298,7 @@ export function createAgentHeartbeatSource(
         channelType: config.target?.channelType ?? "heartbeat",
         senderId: "system",
         text: promptText,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
         attachments: [],
         metadata: {
           trigger: "heartbeat",
@@ -329,7 +329,7 @@ export function createAgentHeartbeatSource(
           tenantId: sessionKey.tenantId,
           userId: sessionKey.userId,
           sessionKey: formattedKey,
-          startedAt: Date.now(),
+          startedAt: systemNowMs(),
           trustLevel: "user",
           channelType: msg.channelType,
         },
@@ -341,7 +341,7 @@ export function createAgentHeartbeatSource(
       );
 
       logger.info(
-        { agentId, trigger, durationMs: Date.now() - msg.timestamp },
+        { agentId, trigger, durationMs: systemNowMs() - msg.timestamp },
         "Heartbeat run complete",
       );
 
@@ -365,7 +365,7 @@ export function createAgentHeartbeatSource(
         }
         // Store last heartbeat for dedup
         if (deps.sessionOps) {
-          deps.sessionOps.storeLastHeartbeat(formattedKey, outcome.cleanedText, Date.now());
+          deps.sessionOps.storeLastHeartbeat(formattedKey, outcome.cleanedText, systemNowMs());
         }
         return;
       }
@@ -378,7 +378,7 @@ export function createAgentHeartbeatSource(
 
       // Store last heartbeat for dedup
       if (deps.sessionOps) {
-        deps.sessionOps.storeLastHeartbeat(formattedKey, outcome.text, Date.now());
+        deps.sessionOps.storeLastHeartbeat(formattedKey, outcome.text, systemNowMs());
       }
 
       // 11. Deliver response via delivery bridge (fire-and-forget)
@@ -394,7 +394,7 @@ export function createAgentHeartbeatSource(
           sourceName: "heartbeat",
           text: outcome.text,
           level,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
         };
         const deliveryOpts: DeliveryOptions = {
           agentId,

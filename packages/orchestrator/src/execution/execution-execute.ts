@@ -10,7 +10,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { ChannelPort, NormalizedMessage, SessionKey, PerChannelStreamingConfig } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin } from "@comis/core";
+import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
 import { withTimeout, TimeoutError } from "@comis/shared";
 import type { AgentExecutor } from "@comis/agent";
 // Phase 32 commit 6: CommandDirectives moved into orchestrator (ORCH-EXT-08).
@@ -93,7 +93,7 @@ export async function executeLlm(
     typingLifecycle?.controller.refreshTtl();
     activeToolCount++;
     if (!toolTtlRefreshTimer && typingLifecycle?.controller.isActive) {
-      toolTtlRefreshTimer = setInterval(() => {
+      toolTtlRefreshTimer = systemSetInterval(() => {
         typingLifecycle?.controller.refreshTtl();
       }, 30_000);
     }
@@ -102,7 +102,7 @@ export async function executeLlm(
   const onToolExecuted = (): void => {
     activeToolCount = Math.max(0, activeToolCount - 1);
     if (activeToolCount === 0 && toolTtlRefreshTimer) {
-      clearInterval(toolTtlRefreshTimer);
+      systemClearInterval(toolTtlRefreshTimer);
       toolTtlRefreshTimer = null;
     }
   };
@@ -124,7 +124,7 @@ export async function executeLlm(
   const cleanup = (): void => {
     deps.eventBus.off("tool:started", onToolStarted);
     deps.eventBus.off("tool:executed", onToolExecuted);
-    if (toolTtlRefreshTimer) { clearInterval(toolTtlRefreshTimer); toolTtlRefreshTimer = null; }
+    if (toolTtlRefreshTimer) { systemClearInterval(toolTtlRefreshTimer); toolTtlRefreshTimer = null; }
     deps.eventBus.off("execution:aborted", onExecutionAborted);
   };
 
@@ -135,7 +135,7 @@ export async function executeLlm(
       channelId: adapter.channelId,
       chatId: effectiveMsg.channelId,
       mode: blockStreamCfg.typingMode,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 
@@ -161,7 +161,7 @@ export async function executeLlm(
         tenantId: sessionKey.tenantId,
         userId: sessionKey.userId,
         sessionKey: formatSessionKey(sessionKey),
-        startedAt: Date.now(),
+        startedAt: systemNowMs(),
         trustLevel,
         channelType: adapter.channelType,
         deliveryOrigin: createDeliveryOrigin({
@@ -189,7 +189,7 @@ export async function executeLlm(
         sessionKey,
         reason: "pipeline_timeout",
         agentId,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       await adapter.sendMessage(

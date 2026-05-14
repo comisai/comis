@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { Cron } from "croner";
 import type { CronSchedule } from "./cron-types.js";
+import { systemDateFrom } from "@comis/core";
 
 /**
  * Compute the next run time in milliseconds for a given schedule.
@@ -28,7 +29,7 @@ function computeCron(expr: string, tz: string | undefined, nowMs: number): numbe
     const timezone = tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     const cron = new Cron(expr, { timezone, catch: false });
     // 1ms lookback prevents skipping current-second boundary
-    const nextDate = cron.nextRun(new Date(nowMs - 1));
+    const nextDate = cron.nextRun(systemDateFrom(nowMs - 1));
     if (!nextDate) return undefined;
     const nextMs = nextDate.getTime();
     if (!Number.isFinite(nextMs) || nextMs < nowMs) return undefined;
@@ -58,7 +59,7 @@ function computeEvery(
 }
 
 function computeAt(at: string, nowMs: number): number | undefined {
-  const dateMs = new Date(at).getTime();
+  const dateMs = systemDateFrom(at).getTime();
   if (!Number.isFinite(dateMs)) return undefined;
   return dateMs > nowMs ? dateMs : undefined;
 }
