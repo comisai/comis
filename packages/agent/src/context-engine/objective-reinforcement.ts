@@ -13,6 +13,7 @@
  */
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import { systemNowMs } from "@comis/core";
 import type { ContextLayer, TokenBudget } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -97,7 +98,7 @@ export function createObjectiveReinforcementLayer(objective: string): ContextLay
       const reinforcementMessage: AgentMessage = {
         role: "user" as const,
         content: [{ type: "text" as const, text: `[Objective Reinforcement]\nYour primary objective: ${objective}\nStay focused on this objective. The conversation was compacted -- re-read your system prompt for full context.` }],
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       };
 
       // Splice after the compaction summary (new array, no mutation)

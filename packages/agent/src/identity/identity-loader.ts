@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as fs from "node:fs/promises";
-import { safePath, PathTraversalError } from "@comis/core";
+import { safePath, PathTraversalError, systemNowDate } from "@comis/core";
 
 /**
  * Loaded identity file contents. Each field is present only if
@@ -93,7 +93,7 @@ export function assembleSystemPrompt(
   const sections: string[] = [];
 
   // Inject current date/time so the agent can schedule correctly
-  const now = new Date();
+  const now = systemNowDate();
   const isoTimestamp = now.toISOString();
   const localTime = now.toLocaleString("en-US", {
     dateStyle: "full",

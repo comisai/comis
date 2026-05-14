@@ -24,6 +24,18 @@ export function systemNowDate(): Date {
 }
 
 /**
+ * Build a `Date` instance from a known timestamp value (epoch ms, ISO string,
+ * etc.). This is NOT a clock read — it converts an already-known value into a
+ * Date for formatting/display. The classifier flags `new Date(arg)` regardless
+ * of whether an argument is supplied; this sanctioned-root helper is the
+ * approved indirection for in-package consumers that need Date instances for
+ * formatting (e.g., `formatTimestamp(epochMs)`, `new Date(stored).toISOString()`).
+ */
+export function systemDateFrom(value: number | string): Date {
+  return new Date(value);
+}
+
+/**
  * Sleep for the specified milliseconds. Promise-based wrapper around
  * `setTimeout` for use at sanctioned-root indirection points
  * (e.g., OAuth device-code polling loops, retry backoff).

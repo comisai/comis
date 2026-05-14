@@ -10,6 +10,7 @@
  * @module
  */
 
+import { systemNowMs } from "@comis/core";
 import type { ExecutionResult } from "../executor/types.js";
 import type { ContextUsageData } from "../safety/context-window-guard.js";
 import type { ThinkingBlockHash } from "./thinking-block-hash-invariant.js";
@@ -178,7 +179,7 @@ export function createBridgeMetrics(): BridgeMetricsState {
     turnToolDurationMs: 0,
     consecutiveEmptyTurns: 0,
     turnCount: 0,
-    turnStartMs: Date.now(),
+    turnStartMs: systemNowMs(),
     compactionStartMs: 0,
     lastStopReason: undefined,
     ghostCostUsd: 0,

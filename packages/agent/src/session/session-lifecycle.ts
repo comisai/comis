@@ -18,6 +18,7 @@
  */
 
 import type { SessionKey, HookRunner } from "@comis/core";
+import { systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { SessionStorePort } from "@comis/core";
 
@@ -112,7 +113,7 @@ export function createSessionLifecycle(
       if (data === undefined) {
         return true;
       }
-      return data.updatedAt + timeout < Date.now();
+      return data.updatedAt + timeout < systemNowMs();
     },
 
     expire(key: SessionKey): boolean {
