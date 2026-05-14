@@ -184,30 +184,6 @@ describe("graph-handlers", () => {
       expect(result[0]).not.toHaveProperty("typeId");
       expect(result[0]).not.toHaveProperty("typeConfig");
     });
-
-    it("migrates legacy debate to typeId/typeConfig", () => {
-      const result = transformNodes([
-        { node_id: "old", task: "Discuss", debate: { agents: ["a", "b"], rounds: 3, synthesizer: "judge" } },
-      ]);
-
-      expect(result[0]).toMatchObject({
-        nodeId: "old",
-        typeId: "debate",
-        typeConfig: { agents: ["a", "b"], rounds: 3, synthesizer: "judge" },
-      });
-      expect(result[0]).not.toHaveProperty("debate");
-    });
-
-    it("downgrades single-agent legacy debate to regular node", () => {
-      const result = transformNodes([
-        { node_id: "solo", task: "Think", debate: { agents: ["solo-agent"], rounds: 2 } },
-      ]);
-
-      expect(result[0]).not.toHaveProperty("typeId");
-      expect(result[0]).not.toHaveProperty("typeConfig");
-      expect(result[0]).not.toHaveProperty("debate");
-      expect((result[0] as Record<string, unknown>).agentId).toBe("solo-agent");
-    });
   });
 
   // -------------------------------------------------------------------------
@@ -1313,37 +1289,6 @@ describe("graph-handlers", () => {
       expect(result).toHaveProperty("agents", "array");
       expect(result).toHaveProperty("rounds", "number");
       expect(result).toHaveProperty("synthesizer", "string (optional)");
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // transformNodes migration completeness (gap cases)
-  // -------------------------------------------------------------------------
-
-  describe("transformNodes migration completeness", () => {
-    it("empty agents array in debate removes debate field, preserves agentId", () => {
-      const result = transformNodes([
-        { node_id: "empty", task: "Topic", agent: "fallback", debate: { agents: [] } },
-      ]);
-
-      // Empty agents (length < 2) downgrades to regular node
-      expect(result[0]).not.toHaveProperty("typeId");
-      expect(result[0]).not.toHaveProperty("typeConfig");
-      expect(result[0]).not.toHaveProperty("debate");
-      // agents[0] is undefined, so agentId falls back to the original
-      expect((result[0] as Record<string, unknown>).agentId).toBe("fallback");
-    });
-
-    it("default rounds applied when debate has agents but no explicit rounds", () => {
-      const result = transformNodes([
-        { node_id: "no-rounds", task: "Discuss", debate: { agents: ["a", "b"] } },
-      ]);
-
-      expect(result[0]).toMatchObject({
-        nodeId: "no-rounds",
-        typeId: "debate",
-        typeConfig: { agents: ["a", "b"], rounds: 2 },
-      });
     });
   });
 
