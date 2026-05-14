@@ -1302,12 +1302,6 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
     "type": "object"
   },
   {
-    "default": false,
-    "immutable": true,
-    "path": "agents.session.dmScope.agentPrefix",
-    "type": "boolean"
-  },
-  {
     "default": "per-channel-peer",
     "immutable": true,
     "path": "agents.session.dmScope.mode",
@@ -14113,10 +14107,6 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
         "dmScope": {
           "additionalProperties": false,
           "properties": {
-            "agentPrefix": {
-              "default": false,
-              "type": "boolean"
-            },
             "mode": {
               "default": "per-channel-peer",
               "enum": [
@@ -14134,7 +14124,6 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
           },
           "required": [
             "mode",
-            "agentPrefix",
             "threadIsolation"
           ],
           "type": "object"
@@ -22109,10 +22098,6 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
               "dmScope": {
                 "additionalProperties": false,
                 "properties": {
-                  "agentPrefix": {
-                    "default": false,
-                    "type": "boolean"
-                  },
                   "mode": {
                     "default": "per-channel-peer",
                     "enum": [
@@ -22130,7 +22115,6 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
                 },
                 "required": [
                   "mode",
-                  "agentPrefix",
                   "threadIsolation"
                 ],
                 "type": "object"

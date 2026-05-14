@@ -341,11 +341,19 @@ describe("runMemoryReview", () => {
     }));
   });
 
-  it("filters sessions by agentId prefix in session key", async () => {
+  // Deleted (Phase 38 CR-01 follow-up to BC-REM-15): "filters sessions by
+  // agentId prefix in session key" — the agent-prefix filter was dropped
+  // when the session-key formatter stopped emitting `agent:<agentId>:`
+  // (no live session keys carry the prefix anymore). Memory review now
+  // iterates every session in the agent's tenant; per-agent isolation
+  // happens out-of-band via the per-agent workspace-scoped watermark file.
+
+  it("reviews all sessions in the tenant (no agent-prefix filter post-CR-01)", async () => {
     const deps = makeDeps({ agentId: "my-agent" });
     (deps.sessionStore.listDetailed as Mock).mockReturnValue([
-      makeSession("agent:my-agent:default:user1:ch1", 10, 2000),
-      makeSession("agent:other-agent:default:user1:ch1", 10, 3000),
+      // Both sessions are in the same tenant; no agent prefix in either key.
+      makeSession("default:user1:ch1", 10, 2000),
+      makeSession("default:user2:ch1", 10, 3000),
     ]);
     (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
       messages: [{ role: "user", content: "hello" }],
@@ -358,9 +366,9 @@ describe("runMemoryReview", () => {
     });
 
     await runMemoryReview(deps);
-    // Only my-agent session should be reviewed
+    // Both tenant sessions reviewed (no per-agent prefix filter).
     expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
-      sessionsReviewed: 1,
+      sessionsReviewed: 2,
     }));
   });
 });

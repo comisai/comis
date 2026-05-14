@@ -8,17 +8,12 @@ import {
 } from "./session-key-parser.js";
 
 describe("parseSessionKeyString", () => {
-  it("parses a full session key with agent prefix", () => {
-    const result = parseSessionKeyString("agent:default:myTenant:user123:telegram");
-    expect(result).toEqual({
-      agentId: "default",
-      tenantId: "myTenant",
-      userId: "user123",
-      channelId: "telegram",
-    });
-  });
+  // CR-01 follow-up to BC-REM-15 (Phase 38): the browser parser no longer
+  // recognizes the legacy `agent:<agentId>:` prefix. The daemon parser
+  // dropped it in BC-REM-15, and the daemon emitter dropped it in the
+  // CR-01 follow-up. This parser mirrors the daemon.
 
-  it("parses a key without agent prefix", () => {
+  it("parses a basic 3-part key", () => {
     const result = parseSessionKeyString("myTenant:user123:discord");
     expect(result).toEqual({
       tenantId: "myTenant",
@@ -48,9 +43,8 @@ describe("parseSessionKeyString", () => {
   });
 
   it("parses a key with optional thread segment", () => {
-    const result = parseSessionKeyString("agent:bot1:myTenant:user123:slack:thread:t001");
+    const result = parseSessionKeyString("myTenant:user123:slack:thread:t001");
     expect(result).toEqual({
-      agentId: "bot1",
       tenantId: "myTenant",
       userId: "user123",
       channelId: "slack",
@@ -58,12 +52,11 @@ describe("parseSessionKeyString", () => {
     });
   });
 
-  it("parses a key with all optional segments", () => {
+  it("parses a key with all optional segments (no agent prefix)", () => {
     const result = parseSessionKeyString(
-      "agent:default:myTenant:user123:telegram:peer:chat456:guild:g789:thread:t001",
+      "myTenant:user123:telegram:peer:chat456:guild:g789:thread:t001",
     );
     expect(result).toEqual({
-      agentId: "default",
       tenantId: "myTenant",
       userId: "user123",
       channelId: "telegram",
@@ -88,20 +81,17 @@ describe("parseSessionKeyString", () => {
     expect(parseSessionKeyString(undefined as any)).toBeUndefined();
   });
 
-  it("handles agent prefix with exactly 5 parts", () => {
-    const result = parseSessionKeyString("agent:bot:ten:usr:ch");
-    expect(result).toEqual({
-      agentId: "bot",
-      tenantId: "ten",
-      userId: "usr",
-      channelId: "ch",
-    });
-  });
+  // Deleted (Phase 38 CR-01 follow-up to BC-REM-15): "parses a full session
+  // key with agent prefix", "handles agent prefix with exactly 5 parts",
+  // "falls through to non-agent parsing when agent prefix has < 5 parts" —
+  // the `agent:` prefix is no longer recognized by either parser.
 
-  it("falls through to non-agent parsing when agent prefix has < 5 parts", () => {
-    // "agent:bot:ten:usr" has 4 parts, agent prefix needs >= 5,
-    // so it parses as non-agent key: tenantId=agent, userId=bot, channelId=ten
-    const result = parseSessionKeyString("agent:bot:ten:usr");
+  it("treats a stray `agent:` prefix as ordinary tenant/user/channel parts (post-CR-01)", () => {
+    // `agent:bot:ten:usr:ch` was previously parsed as agentId="bot",
+    // tenantId="ten", userId="usr", channelId="ch". Post-CR-01 the prefix
+    // is no longer special-cased — the parser simply consumes the first
+    // three colon-separated parts as tenantId / userId / channelId.
+    const result = parseSessionKeyString("agent:bot:ten:usr:ch");
     expect(result).toEqual({
       tenantId: "agent",
       userId: "bot",

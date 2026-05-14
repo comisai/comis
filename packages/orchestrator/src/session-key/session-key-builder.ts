@@ -12,7 +12,9 @@ export type DmScopeMode = "main" | "per-peer" | "per-channel-peer" | "per-accoun
 export interface ScopedSessionKeyParams {
   /** The incoming normalized message */
   msg: NormalizedMessage;
-  /** Agent identifier for multi-agent setups */
+  /** Agent identifier for multi-agent setups (retained for caller ergonomics
+   *  and future telemetry; NOT serialized into the session key — see
+   *  CR-01 follow-up to BC-REM-15 in `@comis/core/domain/session-key.ts`). */
   agentId: string;
   /** ChannelPort.channelId — bot account identifier */
   adapterChannelId: string;
@@ -20,8 +22,6 @@ export interface ScopedSessionKeyParams {
   tenantId?: string;
   /** DM scope mode (defaults to "per-channel-peer") */
   dmScopeMode?: DmScopeMode;
-  /** Whether to prepend agent:<agentId>: to the session key */
-  agentPrefixEnabled?: boolean;
   /** Thread ID for forum/thread isolation */
   threadId?: string;
 }
@@ -44,7 +44,7 @@ function isGroupMessage(msg: NormalizedMessage): boolean {
 }
 
 /**
- * Build a scoped session key based on DM scope mode, agent prefix, and thread isolation.
+ * Build a scoped session key based on DM scope mode and thread isolation.
  *
  * Group messages always use per-channel-peer behavior regardless of dmScopeMode.
  * DM messages apply the configured scope mode:
@@ -52,15 +52,16 @@ function isGroupMessage(msg: NormalizedMessage): boolean {
  * - "per-peer": per-peer sessions across all channels
  * - "per-channel-peer": per-channel per-peer sessions (default)
  * - "per-account-channel-peer": includes adapter channel ID for multi-bot isolation
+ *
+ * The `agentId` param is retained for caller ergonomics / future telemetry
+ * but is NOT serialized into the session key (CR-01 follow-up to BC-REM-15).
  */
 export function buildScopedSessionKey(params: ScopedSessionKeyParams): SessionKey {
   const {
     msg,
-    agentId,
     adapterChannelId,
     tenantId = "default",
     dmScopeMode = "per-channel-peer",
-    agentPrefixEnabled = false,
     threadId,
   } = params;
 
@@ -102,10 +103,6 @@ export function buildScopedSessionKey(params: ScopedSessionKeyParams): SessionKe
         key.peerId = msg.senderId;
         break;
     }
-  }
-
-  if (agentPrefixEnabled) {
-    key.agentId = agentId;
   }
 
   if (threadId !== undefined) {

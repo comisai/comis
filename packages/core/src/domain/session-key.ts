@@ -38,16 +38,17 @@ export function parseSessionKey(raw: unknown): Result<SessionKey, z.ZodError> {
 /**
  * Format a SessionKey into a deterministic string for use as a cache/lookup key.
  *
- * Format: `[agent:{agentId}:]{tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
- * where the `agent:` prefix and `thread:` suffix are emitted only when the
- * corresponding optional field is set.
+ * Format: `{tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
+ * where each tagged suffix is emitted only when the corresponding optional
+ * field is set. Symmetric with `parseFormattedSessionKey`.
+ *
+ * The `SessionKey.agentId` field is intentionally NOT serialized — agent
+ * isolation is handled out-of-band (per-agent workspace dirs, per-agent
+ * watermark files, etc.), and BC-REM-15 (Phase 38) deleted the matching
+ * parser branch. Setting `key.agentId` has no effect on the formatted output.
  */
 export function formatSessionKey(key: SessionKey): string {
-  let formatted = "";
-  if (key.agentId !== undefined) {
-    formatted += `agent:${key.agentId}:`;
-  }
-  formatted += `${key.tenantId}:${key.userId}:${key.channelId}`;
+  let formatted = `${key.tenantId}:${key.userId}:${key.channelId}`;
   if (key.peerId !== undefined) {
     formatted += `:peer:${key.peerId}`;
   }
@@ -62,7 +63,7 @@ export function formatSessionKey(key: SessionKey): string {
 
 /**
  * Parse a formatted session key string back into a SessionKey object.
- * Reverses the output of formatSessionKey() for the unprefixed-agent form.
+ * Symmetric inverse of `formatSessionKey`.
  *
  * Accepted format: `{tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
  *

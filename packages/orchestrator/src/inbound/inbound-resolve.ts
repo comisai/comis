@@ -89,7 +89,6 @@ export function resolveInboundAgent(
     agentId,
     adapterChannelId: adapter.channelId,
     dmScopeMode: (dmScopeConfig?.mode as DmScopeMode) ?? undefined,
-    agentPrefixEnabled: dmScopeConfig?.agentPrefix,
     threadId: dmScopeConfig?.threadIsolation ? threadId : undefined,
   });
 

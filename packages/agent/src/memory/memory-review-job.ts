@@ -130,23 +130,17 @@ async function saveWatermark(watermarkPath: string, watermark: ReviewWatermark):
 
 function filterSessions(
   sessions: SessionDetailedEntry[],
-  agentId: string,
   config: MemoryReviewConfig,
   watermark: ReviewWatermark,
 ): SessionDetailedEntry[] {
+  // CR-01 follow-up to BC-REM-15 (Phase 38): session keys no longer carry an
+  // `agent:<agentId>:` prefix, so the prior per-agent prefix filter has been
+  // dropped. Memory review now iterates every session in the agent's tenant
+  // (the caller passes `tenantId` to `sessionStore.listDetailed`); per-agent
+  // isolation is handled by the per-agent workspace-scoped watermark file
+  // (`safePath(workspacePath, ".memory-review-watermark")`).
   return sessions
     .filter((s) => {
-      // Filter by agent prefix in session key
-      const agentPrefix = `agent:${agentId}:`;
-      if (!s.sessionKey.startsWith(agentPrefix)) {
-        // For default agent, accept sessions without agent: prefix
-        if (agentId === "default" && !s.sessionKey.startsWith("agent:")) {
-          // OK -- default agent owns unprefixed sessions
-        } else {
-          return false;
-        }
-      }
-
       // Skip sessions below minMessages threshold
       if (s.messageCount < config.minMessages) return false;
 
@@ -263,7 +257,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
 
   // List and filter sessions
   const allSessions = sessionStore.listDetailed(tenantId);
-  const qualifyingSessions = filterSessions(allSessions, agentId, config, watermark);
+  const qualifyingSessions = filterSessions(allSessions, config, watermark);
 
   logger.debug({ agentId, totalSessions: allSessions.length, qualifying: qualifyingSessions.length }, "Memory review session filtering complete");
 

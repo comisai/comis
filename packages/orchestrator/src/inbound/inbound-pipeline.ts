@@ -67,7 +67,7 @@ export interface InboundPipelineDeps {
   sendPolicyConfig?: SendPolicyConfig;
   getResetTriggers?: (agentId: string) => string[];
   identityResolver?: { resolve(provider: string, providerUserId: string): string | undefined };
-  getDmScopeConfig?: (agentId: string) => { mode?: string; agentPrefix?: boolean; threadIsolation?: boolean } | undefined;
+  getDmScopeConfig?: (agentId: string) => { mode?: string; threadIsolation?: boolean } | undefined;
   debounceBuffer?: DebounceBuffer;
   groupHistoryBuffer?: GroupHistoryBuffer;
   followupTrigger?: FollowupTrigger;

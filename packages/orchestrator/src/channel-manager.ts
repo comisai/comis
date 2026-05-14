@@ -105,7 +105,7 @@ export interface ChannelManagerDeps {
   /** Optional identity link resolver for cross-platform user recognition. When absent, senderId is used directly. */
   identityResolver?: { resolve(provider: string, providerUserId: string): string | undefined };
   /** Optional DM scope config callback per agent. When absent, defaults to per-channel-peer (current behavior). */
-  getDmScopeConfig?: (agentId: string) => { mode?: string; agentPrefix?: boolean; threadIsolation?: boolean } | undefined;
+  getDmScopeConfig?: (agentId: string) => { mode?: string; threadIsolation?: boolean } | undefined;
   /** Optional retry engine for resilient message delivery. When absent, sends use adapter.sendMessage directly. */
   retryEngine?: RetryEngine;
   /** Delivery queue for crash-safe message persistence. Optional -- when absent, agent responses skip queue. */
