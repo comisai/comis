@@ -113,7 +113,6 @@ export const TOOL_MASKING_TIERS: ReadonlyMap<string, ToolMaskingTier> = new Map(
   ["memory_get", "protected"],
   ["memory_store", "protected"],
   ["read", "protected"],
-  ["file_read", "protected"], // legacy alias — upstream SDK may emit this name
   ["session_search", "protected"],
   // Ephemeral: short keep window
   ["web_search", "ephemeral"],

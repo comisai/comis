@@ -67,7 +67,7 @@ function makeOffloadedToolResult(toolCallId: string, toolName: string): AgentMes
     role: "toolResult",
     toolCallId,
     toolName,
-    content: [{ type: "text", text: `[Tool result offloaded to disk: ${toolName} returned 50000 chars.\nThe agent's analysis is in the assistant response below.\nUse file_read to re-access if needed: /tmp/test.json]` }],
+    content: [{ type: "text", text: `[Tool result offloaded to disk: ${toolName} returned 50000 chars.\nThe agent's analysis is in the assistant response below.\nUse read to re-access if needed: /tmp/test.json]` }],
     isError: false,
     timestamp: Date.now(),
   } as AgentMessage;
@@ -199,7 +199,9 @@ describe("createObservationMaskerLayer", () => {
       makeToolResult("tc_store", "memory_store", "Stored successfully"),
       makeUserMsg("Q4"),
       makeAssistantMsg("A4"),
-      makeToolResult("tc_file", "file_read", "File contents here..."),
+      // Post-BC-REM-11: use canonical `read` (protected-tier) in place of
+      // the deleted `file_read` alias.
+      makeToolResult("tc_file", "read", "File contents here..."),
       // 4 more bash results that will be within keep window (3)
       makeUserMsg("Q5"),
       makeAssistantMsg("A5"),
@@ -929,7 +931,7 @@ describe("createObservationMaskerLayer", () => {
         toolName: "bash",
         content: [{
           type: "text",
-          text: `[Tool result offloaded to disk: bash returned 12000 chars.\nThe agent's analysis is in the assistant response below.\nUse file_read to re-access if needed: /path/to/file.json]`,
+          text: `[Tool result offloaded to disk: bash returned 12000 chars.\nThe agent's analysis is in the assistant response below.\nUse read to re-access if needed: /path/to/file.json]`,
         }],
         isError: false,
         timestamp: Date.now(),
@@ -967,7 +969,7 @@ describe("createObservationMaskerLayer", () => {
         toolName: "bash",
         content: [{
           type: "text",
-          text: `[Tool result offloaded to disk: bash returned 12000 chars. hasMore=true\n--- head (1500 chars) ---\n${"x".repeat(1500)}\n--- tail (500 chars) ---\n${"y".repeat(500)}\nUse file_read to re-access full content: /path/to/file.json]`,
+          text: `[Tool result offloaded to disk: bash returned 12000 chars. hasMore=true\n--- head (1500 chars) ---\n${"x".repeat(1500)}\n--- tail (500 chars) ---\n${"y".repeat(500)}\nUse read to re-access full content: /path/to/file.json]`,
         }],
         isError: false,
         timestamp: Date.now(),
@@ -1131,7 +1133,10 @@ describe("createObservationMaskerLayer", () => {
         makeToolResult("tc_mem_store", "memory_store", "stored ok"),
         makeUserMsg("Q4"),
         makeAssistantMsg("A4"),
-        makeToolResult("tc_file_read", "file_read", "file content"),
+        // Post-BC-REM-11: `file_read` is no longer a protected-tier alias;
+        // use the canonical `read` tool name (also protected-tier) to keep
+        // 5-protected-tool coverage.
+        makeToolResult("tc_read", "read", "file content"),
         makeUserMsg("Q5"),
         makeAssistantMsg("A5"),
         makeToolResult("tc_session", "session_search", "session data"),
@@ -1143,7 +1148,7 @@ describe("createObservationMaskerLayer", () => {
       expect((result.find((m) => (m as any).toolCallId === "tc_mem_search") as any).content[0].text).toBe("search results");
       expect((result.find((m) => (m as any).toolCallId === "tc_mem_get") as any).content[0].text).toBe("get results");
       expect((result.find((m) => (m as any).toolCallId === "tc_mem_store") as any).content[0].text).toBe("stored ok");
-      expect((result.find((m) => (m as any).toolCallId === "tc_file_read") as any).content[0].text).toBe("file content");
+      expect((result.find((m) => (m as any).toolCallId === "tc_read") as any).content[0].text).toBe("file content");
       expect((result.find((m) => (m as any).toolCallId === "tc_session") as any).content[0].text).toBe("session data");
     });
 
@@ -1211,21 +1216,23 @@ describe("createObservationMaskerLayer", () => {
       };
       const layer = createObservationMaskerLayer(config);
 
-      // [bash, file_read, bash, file_read, bash] with observationKeepWindow=2
-      // -> 2 most recent bash kept, file_read all kept
+      // [bash, read, bash, read, bash] with observationKeepWindow=2
+      // -> 2 most recent bash kept, read all kept. Post-BC-REM-11: use
+      // canonical `read` (also protected-tier) in place of the deleted
+      // `file_read` alias.
       const messages: AgentMessage[] = [
         makeUserMsg("Q1"),
         makeAssistantMsg("A1"),
         makeToolResult("tc_bash_1", "bash", "output 1"),
         makeUserMsg("Q2"),
         makeAssistantMsg("A2"),
-        makeToolResult("tc_fr_1", "file_read", "file content 1"),
+        makeToolResult("tc_fr_1", "read", "file content 1"),
         makeUserMsg("Q3"),
         makeAssistantMsg("A3"),
         makeToolResult("tc_bash_2", "bash", "output 2"),
         makeUserMsg("Q4"),
         makeAssistantMsg("A4"),
-        makeToolResult("tc_fr_2", "file_read", "file content 2"),
+        makeToolResult("tc_fr_2", "read", "file content 2"),
         makeUserMsg("Q5"),
         makeAssistantMsg("A5"),
         makeToolResult("tc_bash_3", "bash", "output 3"),
@@ -1245,7 +1252,7 @@ describe("createObservationMaskerLayer", () => {
       const bash3 = result.find((m) => (m as any).toolCallId === "tc_bash_3") as any;
       expect(bash3.content[0].text).toBe("output 3");
 
-      // All file_read (protected) should be kept
+      // All read (protected) should be kept
       const fr1 = result.find((m) => (m as any).toolCallId === "tc_fr_1") as any;
       expect(fr1.content[0].text).toBe("file content 1");
 
