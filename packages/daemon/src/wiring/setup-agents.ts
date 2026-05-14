@@ -339,7 +339,7 @@ export async function setupSingleAgent(
   await ensureWorkspace({ dir });
 
   // Per-agent safety controls (shared by PiExecutor)
-  const circuitBreaker = createCircuitBreaker(effectiveConfig.circuitBreaker);
+  const circuitBreaker = createCircuitBreaker(effectiveConfig.circuitBreaker, deps.clock);
   const budgetGuard = createBudgetGuard(effectiveConfig.budgets);
   const costTracker = createCostTracker();
   const stepCounter = createStepCounter(effectiveConfig.maxSteps);

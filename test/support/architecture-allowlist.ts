@@ -2900,27 +2900,7 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
     reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
     removedIn: "phase-B",
   },
-  {
-    file: "packages/agent/src/safety/circuit-breaker.ts",
-    line: 41,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/safety/circuit-breaker.ts",
-    line: 64,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/agent/src/safety/circuit-breaker.ts",
-    line: 71,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
+  // Phase 39 Plan 05 Task 3: safety/circuit-breaker.ts retargeted to ClockPort. Drained 3 entries.
   {
     file: "packages/agent/src/safety/provider-health-monitor.ts",
     line: 144,

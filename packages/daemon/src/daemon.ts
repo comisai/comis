@@ -630,7 +630,7 @@ async function stageFoundation(input: {
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
-  } = await setupMemory({ container, memoryLogger });
+  } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite)
   // DAEMON-API-09 refs #6/#7: obsStore + obsPersistence via const+IIFE

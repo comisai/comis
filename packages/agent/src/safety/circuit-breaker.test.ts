@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createCircuitBreaker, type CircuitBreaker, type CircuitState } from "./circuit-breaker.js";
+import type { ClockPort } from "@comis/core";
+
+// Phase 39 PORTS-11: test clock that delegates to Date.now.
+const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 describe("createCircuitBreaker", () => {
   beforeEach(() => {
@@ -18,13 +22,13 @@ describe("createCircuitBreaker", () => {
   };
 
   it("starts in closed state", () => {
-    const cb = createCircuitBreaker(defaultConfig);
+    const cb = createCircuitBreaker(defaultConfig, testClock);
     expect(cb.getState()).toBe("closed" satisfies CircuitState);
     expect(cb.isOpen()).toBe(false);
   });
 
   it("remains closed after fewer failures than threshold", () => {
-    const cb = createCircuitBreaker(defaultConfig);
+    const cb = createCircuitBreaker(defaultConfig, testClock);
     cb.recordFailure();
     cb.recordFailure();
     expect(cb.getState()).toBe("closed");
@@ -32,7 +36,7 @@ describe("createCircuitBreaker", () => {
   });
 
   it("transitions to open after failureThreshold consecutive failures", () => {
-    const cb = createCircuitBreaker(defaultConfig);
+    const cb = createCircuitBreaker(defaultConfig, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
@@ -41,7 +45,7 @@ describe("createCircuitBreaker", () => {
   });
 
   it("resets failure count on recordSuccess in closed state", () => {
-    const cb = createCircuitBreaker(defaultConfig);
+    const cb = createCircuitBreaker(defaultConfig, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordSuccess();
@@ -52,7 +56,7 @@ describe("createCircuitBreaker", () => {
   });
 
   it("remains open before resetTimeoutMs elapses", () => {
-    const cb = createCircuitBreaker(defaultConfig);
+    const cb = createCircuitBreaker(defaultConfig, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
@@ -64,7 +68,7 @@ describe("createCircuitBreaker", () => {
   });
 
   it("transitions to halfOpen after resetTimeoutMs elapses", () => {
-    const cb = createCircuitBreaker(defaultConfig);
+    const cb = createCircuitBreaker(defaultConfig, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
@@ -77,7 +81,7 @@ describe("createCircuitBreaker", () => {
   });
 
   it("transitions from halfOpen to closed on recordSuccess", () => {
-    const cb = createCircuitBreaker(defaultConfig);
+    const cb = createCircuitBreaker(defaultConfig, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
@@ -92,7 +96,7 @@ describe("createCircuitBreaker", () => {
   });
 
   it("transitions from halfOpen to open on recordFailure", () => {
-    const cb = createCircuitBreaker(defaultConfig);
+    const cb = createCircuitBreaker(defaultConfig, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
@@ -107,7 +111,7 @@ describe("createCircuitBreaker", () => {
   });
 
   it("reset() returns to closed with zero failures", () => {
-    const cb = createCircuitBreaker(defaultConfig);
+    const cb = createCircuitBreaker(defaultConfig, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
@@ -127,7 +131,7 @@ describe("createCircuitBreaker", () => {
     const cb = createCircuitBreaker({
       ...defaultConfig,
       failureThreshold: 1,
-    });
+    }, testClock);
     cb.recordFailure();
     expect(cb.getState()).toBe("open");
   });
@@ -136,7 +140,7 @@ describe("createCircuitBreaker", () => {
     const cb = createCircuitBreaker({
       ...defaultConfig,
       resetTimeoutMs: 10_000,
-    });
+    }, testClock);
     cb.recordFailure();
     cb.recordFailure();
     cb.recordFailure();
