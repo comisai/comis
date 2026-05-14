@@ -305,20 +305,29 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).not.toThrow();
   });
 
-  it("config.history: response accepts a populated entries array (with optional author)", () => {
+  it("config.history: response accepts a populated entries array with metadata", () => {
     expect(() =>
       ConfigHistoryContract.response.parse({
         entries: [
           {
             sha: "abc1234",
-            date: "2026-05-12T20:00:00Z",
+            timestamp: "2026-05-12T20:00:00Z",
             message: "Changed agents.default.provider to openai",
+            metadata: {
+              section: "agents",
+              key: "default.provider",
+              summary: "Changed agents.default.provider to openai",
+            },
           },
           {
             sha: "def5678",
-            date: "2026-05-12T20:05:00Z",
+            timestamp: "2026-05-12T20:05:00Z",
             message: "Updated logLevel section",
-            author: "Moshe Anconina <m@example.com>",
+            metadata: {
+              section: "logLevel",
+              user: "Moshe Anconina",
+              summary: "Updated logLevel section",
+            },
           },
         ],
       }),
