@@ -1981,28 +1981,45 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   },
 ] as const;
 // ============================================================================
-// globalsAllowlist (Plan 37-06)
+// globalsAllowlist (Plan 37-06 → CLOSED at Phase 39 Plan 09)
 //
 // One entry per current callable-global site outside the bootstrap-allowlist
 // paths in BOOTSTRAP_PATH_PATTERNS (test/support/globals-classifier.ts).
 //
-// Drift from RESEARCH.md inventory: RESEARCH.md anticipated ~360+1 entries;
-// the live tree had 1588 entries at Phase 37 close (the bootstrap.ts:89 env
-// fallback marker + 1587 Phase B closure entries). Phase 39 Plan 03
-// (PORTS-10) closed the env-fallback marker, leaving 1587 Phase B retarget
-// entries; the +1226 drift remains in the upward direction (more callable-
-// global sites than RESEARCH planned) — Phase 39 (PORTS) has more closure
-// work than originally estimated. Documented per RESEARCH.md Pitfall §1
-// (the pre-authorized drift procedure: live count is the source of truth).
+// Phase 39 closure state (PORTS-17 — final drain): every Phase-B PORTS retarget
+// entry has been drained. Production source files in packages/{shared,core,
+// agent,channels,cli,daemon,gateway,memory,orchestrator,scheduler,skills}/src/
+// either consume ClockPort/EnvPort/TimerPort via injected Deps (Pattern A),
+// indirect through @comis/core/runtime/system-time.ts sanctioned helpers
+// (Pattern B), or live in a sanctioned root exempt from the classifier rule
+// (BOOTSTRAP_PATH_PATTERNS). No retarget entry outlives its closure (PORTS-19).
 //
-// All entries are tagged removedIn: "phase-B". Phase 39 (PORTS) removes
-// each entry atomically as the corresponding call site is retargeted
-// through ClockPort/EnvPort/TimerPort (design doc §5.2 steps 7-8).
-// No entry is allowed to outlive its retarget.
+// The 15 remaining entries below are NOT Phase 39 retarget debt — they are
+// permanent architectural carve-outs for the web SPA browser bundle:
+// packages/web/src/api/ is a leaf seam that WEB-CONTRACTS-15 forbids from
+// importing any @comis/* workspace package (the SPA must work without a
+// pnpm install). The direct setTimeout / setInterval / clearTimeout /
+// Date.now calls in api-client.ts and rpc-client.ts are the right shape for
+// a browser-resident bundle, and their classifier hits are sanctioned by
+// the WEB-CONTRACTS-15 boundary contract rather than expected to drain.
+//
+// Drift history (kept for forensic audit): RESEARCH.md anticipated ~360+1
+// entries; live tree at Phase 37 close held 1588 entries (the bootstrap.ts:89
+// env fallback marker + 1587 Phase-B closure entries). Phase 39 closed all of
+// them across Plans 03-08, including the env-fallback marker in Plan 03
+// (PORTS-10). The +1226 drift was documented per RESEARCH.md Pitfall §1.
+//
+// Future regressions: any new outside-sanctioned-root direct-global call in
+// packages/*/src/ MUST either retarget through the appropriate port at the
+// composition root or be added here as a carve-out with a real reason. If
+// you're adding an entry, the planner has missed an architectural decision —
+// surface it before committing.
 // ============================================================================
 export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   // ============================================================================
   // Phase B — PORTS-11/12/13 closure (direct global calls retargeted to ports).
+  // Final state at Phase 39 Plan 09 close: zero retarget entries remain;
+  // only the WEB-CONTRACTS-15 web/api seam carve-outs (below) are kept.
   // Grouped by package, then sorted by file/line for stable diffs.
   // ============================================================================
   // ---- agent ----
