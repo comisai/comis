@@ -14,12 +14,6 @@
 
 import { stripInvisible } from "@comis/core";
 
-/**
- * Re-export ZERO_WIDTH_REGEX from the shared module for backward compatibility.
- * Previously defined locally; now sourced from @comis/core/security/injection-patterns.
- */
-export { ZERO_WIDTH_REGEX } from "@comis/core";
-
 /** Result of the full sanitization pipeline. */
 export interface SanitizeResult {
   /** The final sanitized content. */

@@ -3,11 +3,11 @@ import { describe, it, expect } from "vitest";
 import {
   stripHtmlComments,
   sanitizeSkillBody,
-  ZERO_WIDTH_REGEX,
   HTML_COMMENT_REGEX,
   TRUNCATION_MARKER,
 } from "./sanitizer.js";
 import type { SanitizeResult } from "./sanitizer.js";
+import { ZERO_WIDTH_REGEX } from "@comis/core";
 
 describe("stripHtmlComments", () => {
   it("returns unchanged text when no comments present", () => {
