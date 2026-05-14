@@ -26,9 +26,7 @@ export interface AdaptiveCacheRetentionConfig {
   escalationThreshold: number;
   /** Called once when retention escalates from cold to warm. */
   onEscalated?: () => void;
-  /** Design 2.4: Escalation mode -- "turns" requires N turns before promoting, "tokens" uses cumulative cache reads. Default: "turns". */
-  escalationMode?: "tokens" | "turns";
-  /** Design 2.4: Minimum turns before escalation when escalationMode is "turns". Default: 3. */
+  /** Design 2.4: Minimum turns before escalation. Default: 3. */
   escalationTurnThreshold?: number;
 }
 
@@ -70,7 +68,6 @@ export interface AdaptiveCacheRetention {
 export function createAdaptiveCacheRetention(
   config: AdaptiveCacheRetentionConfig,
 ): AdaptiveCacheRetention {
-  const mode = config.escalationMode ?? "turns";   // Design 2.4: default to turn-based
   const turnThreshold = config.escalationTurnThreshold ?? 3;  // Design 2.4: require 3+ turns
 
   let totalCacheReads = 0;
@@ -85,29 +82,20 @@ export function createAdaptiveCacheRetention(
   function tryEscalate(): void {
     if (escalated || currentRetention === config.warmRetention) return;
 
-    if (mode === "tokens") {
-      // Legacy mode: escalate based on cumulative cache reads only
-      if (totalCacheReads >= config.escalationThreshold) {
-        currentRetention = config.warmRetention;
-        escalated = true;
-        config.onEscalated?.();
-      }
-    } else {
-      // Fast-path -- large first-turn cache write means big system prompt.
-      // Escalate on turn 2 instead of waiting for turnThreshold (3).
-      if (turnCount >= 2 && lastCacheWriteTokens > FAST_PATH_CACHE_WRITE_THRESHOLD && totalCacheReads > 0) {
-        currentRetention = config.warmRetention;
-        escalated = true;
-        config.onEscalated?.();
-        return;
-      }
-      // Standard path: require N turns (+2 when gate closed)
-      const effectiveThreshold = costGateOpen ? turnThreshold : turnThreshold + 2;
-      if (turnCount >= effectiveThreshold && totalCacheReads > 0) {
-        currentRetention = config.warmRetention;
-        escalated = true;
-        config.onEscalated?.();
-      }
+    // Fast-path -- large first-turn cache write means big system prompt.
+    // Escalate on turn 2 instead of waiting for turnThreshold (3).
+    if (turnCount >= 2 && lastCacheWriteTokens > FAST_PATH_CACHE_WRITE_THRESHOLD && totalCacheReads > 0) {
+      currentRetention = config.warmRetention;
+      escalated = true;
+      config.onEscalated?.();
+      return;
+    }
+    // Standard path: require N turns (+2 when gate closed)
+    const effectiveThreshold = costGateOpen ? turnThreshold : turnThreshold + 2;
+    if (turnCount >= effectiveThreshold && totalCacheReads > 0) {
+      currentRetention = config.warmRetention;
+      escalated = true;
+      config.onEscalated?.();
     }
   }
 
