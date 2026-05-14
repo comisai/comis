@@ -100,3 +100,13 @@ export function systemClearInterval(handle: SystemIntervalHandle): void {
 // eslint-disable-next-line no-restricted-syntax, security/detect-object-injection -- sanctioned-root env helper at the trust boundary; consumers read non-secret env vars (NODE_ENV, NOTIFY_SOCKET, PM2_HOME). Secrets must use SecretManager.
 export function systemGetEnv(key: string): string | undefined { return process.env[key]; }
 
+/**
+ * Return a shallow copy of `process.env`. Sanctioned-root indirection for
+ * the rare cases that need the full env (e.g., subprocess spawn env that
+ * inherits but strips a specific set of keys). Returns a NEW object so the
+ * caller can mutate without affecting the live env.
+ *
+ * Use sparingly — most callers should read specific keys via `systemGetEnv`.
+ */
+export function systemEnvSnapshot(): NodeJS.ProcessEnv { return { ...process.env }; }
+

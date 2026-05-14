@@ -3560,62 +3560,6 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   },
   // ---- core ----
   // ---- daemon ----
-  {
-    file: "packages/daemon/src/device/device-pairing.ts",
-    line: 176,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/daemon/src/device/device-pairing.ts",
-    line: 188,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/daemon/src/monitoring/disk-space-source.ts",
-    line: 50,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/daemon/src/monitoring/exec-helpers.ts",
-    line: 41,
-    global: "process.env",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/daemon/src/monitoring/git-watcher-source.ts",
-    line: 79,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/daemon/src/monitoring/security-update-source.ts",
-    line: 116,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/daemon/src/monitoring/system-resources-source.ts",
-    line: 193,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
-  {
-    file: "packages/daemon/src/monitoring/systemd-service-source.ts",
-    line: 75,
-    global: "Date.now",
-    reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
-    removedIn: "phase-B",
-  },
   // Phase 39 Plan 05 Task 1: setup-background-tasks.ts setInterval retargeted to
   // deps.timers.setInterval. Drained 1 entry.
   // Phase 39 Plan 05 Task 1: setup-cross-session.ts line numbers bumped due to
