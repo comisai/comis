@@ -22,6 +22,7 @@ import { parseFormattedSessionKey } from "@comis/core";
 import type { SessionResetPolicyConfig, ResetPolicyOverride } from "@comis/core";
 import type { SessionStorePort, SessionDetailedEntry } from "@comis/core";
 import type { ComputeDailyResetNextRun } from "@comis/core";
+import type { TimerPort, TimerHandle } from "@comis/core";
 import type { SessionLifecycle } from "./session-lifecycle.js";
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,8 @@ export interface SessionResetSchedulerDeps {
   computeDailyResetNextRun: ComputeDailyResetNextRun;
   /** Injectable clock for testing. Defaults to Date.now. */
   nowMs?: () => number;
+  /** Timer scheduling (Phase 39 PORTS-13). Sweep-interval uses .unref() so it does not block shutdown. */
+  timers: TimerPort;
 }
 
 /** Session reset scheduler interface. */
@@ -240,7 +243,7 @@ export function createSessionResetScheduler(
   deps: SessionResetSchedulerDeps,
 ): SessionResetScheduler {
   const getNow = deps.nowMs ?? Date.now;
-  let timer: ReturnType<typeof setInterval> | null = null;
+  let timer: TimerHandle | null = null;
 
   function sweep(): void {
     const config = deps.getConfig();
@@ -288,13 +291,13 @@ export function createSessionResetScheduler(
       sweep();
       const config = deps.getConfig();
       const intervalMs = config?.sweepIntervalMs ?? 300_000;
-      timer = setInterval(sweep, intervalMs);
-      timer.unref();
+      timer = deps.timers.setInterval(sweep, intervalMs);
+      timer.unref();   // PRESERVED — TimerHandle has .unref() per PORTS-04
     },
 
     stop(): void {
       if (timer) {
-        clearInterval(timer);
+        timer.cancel();
         timer = null;
       }
     },

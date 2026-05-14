@@ -7,8 +7,41 @@ import { safePath } from "@comis/core";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { wrapToolForAutoBackground, type ToolDefinition } from "./auto-background-middleware.js";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
-import type { BackgroundTasksConfig } from "@comis/core";
+import type { BackgroundTasksConfig, ClockPort, TimerPort, TimerHandle } from "@comis/core";
 import type { BackgroundTaskOrigin } from "./background-task-types.js";
+
+// ---------------------------------------------------------------------------
+// Phase 39: lightweight port wrappers that delegate to globals so
+// vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 function createMockEventBus() {
   return { emit: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
@@ -81,6 +114,8 @@ describe("wrapToolForAutoBackground", () => {
       dataDir,
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
+      clock: testClock,
+      timers: testTimers,
       maxPerAgent: 5,
       maxTotal: 20,
       maxBackgroundDurationMs: 60_000,
@@ -97,7 +132,7 @@ describe("wrapToolForAutoBackground", () => {
 
   afterEach(() => {
     for (const task of manager.getAllTasks()) {
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
     }
     rmSync(dataDir, { recursive: true, force: true });
   });
@@ -223,6 +258,8 @@ describe("wrapToolForAutoBackground", () => {
       dataDir,
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
+      clock: testClock,
+      timers: testTimers,
       maxPerAgent: 1,
       maxTotal: 1,
       maxBackgroundDurationMs: 60_000,
@@ -240,7 +277,7 @@ describe("wrapToolForAutoBackground", () => {
 
     // Clean up the stuck task
     for (const task of limitedManager.getAllTasks()) {
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
     }
   });
 

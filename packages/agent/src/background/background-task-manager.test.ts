@@ -7,6 +7,40 @@ import { safePath } from "@comis/core";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
 import { persistTaskSync } from "./background-task-persistence.js";
 import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task-types.js";
+import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Phase 39: lightweight port wrappers that delegate to globals so
+// vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 function createMockEventBus() {
   return { emit: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
@@ -47,6 +81,8 @@ describe("BackgroundTaskManager", () => {
       dataDir,
       eventBus,
       logger,
+      clock: testClock,
+      timers: testTimers,
       maxPerAgent: 2,
       maxTotal: 3,
       maxBackgroundDurationMs: 100, // 100ms for testing
@@ -56,7 +92,7 @@ describe("BackgroundTaskManager", () => {
   afterEach(() => {
     // Clean up any timers set by the manager
     for (const task of manager.getAllTasks()) {
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
     }
     rmSync(dataDir, { recursive: true, force: true });
   });
@@ -262,6 +298,8 @@ describe("BackgroundTaskManager", () => {
         dataDir,
         eventBus,
         logger,
+        clock: testClock,
+        timers: testTimers,
         maxPerAgent: 5,
         maxTotal: 20,
       });
@@ -402,6 +440,8 @@ describe("BackgroundTaskManager", () => {
           dataDir: testDir,
           eventBus: recoverEventBus,
           logger: recoverLogger,
+          clock: testClock,
+          timers: testTimers,
           maxPerAgent: 5,
           maxTotal: 20,
         });
@@ -451,6 +491,8 @@ describe("BackgroundTaskManager", () => {
           dataDir: testDir,
           eventBus: createMockEventBus(),
           logger: createMockLogger(),
+          clock: testClock,
+          timers: testTimers,
           maxPerAgent: 5,
           maxTotal: 20,
         });

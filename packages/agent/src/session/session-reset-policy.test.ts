@@ -5,7 +5,37 @@ import type {
   SessionKey,
   SessionResetPolicyConfig,
   ComputeDailyResetNextRun,
+  TimerPort,
+  TimerHandle,
 } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Phase 39: lightweight TimerPort wrapper that delegates to globals so
+// vi.useFakeTimers() continues to intercept setInterval below.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 import type { SessionStore, SessionDetailedEntry } from "@comis/memory";
 // Test-only import from @comis/scheduler: provides the canonical cron-shape
 // helper that daemon composition (setup-schedulers.ts) wires into agent's
@@ -408,6 +438,7 @@ describe("createSessionResetScheduler", () => {
       getConfig: () => defaultConfig({ mode: "idle", idleTimeoutMs: 10_000 }),
       computeDailyResetNextRun,
       nowMs: () => Date.now(),
+      timers: testTimers,
       ...overrides,
     };
   }

@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { BackgroundTaskOrigin } from "@comis/core";
+import type { BackgroundTaskOrigin, TimerHandle } from "@comis/core";
 export type { BackgroundTaskOrigin };
 
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "cancelled";
@@ -66,7 +66,8 @@ export interface BackgroundTask {
   // In-memory only (not serialized):
   _promise?: Promise<unknown>;
   _abortController?: AbortController;
-  _hardTimeoutTimer?: ReturnType<typeof setTimeout>;
+  /** Phase 39 PORTS-13: TimerHandle replaces NodeJS.Timeout for cancel-safe shutdown. */
+  _hardTimeoutTimer?: TimerHandle;
 }
 
 /** Serializable subset of BackgroundTask for file persistence. */

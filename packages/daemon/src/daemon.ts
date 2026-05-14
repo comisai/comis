@@ -689,6 +689,8 @@ async function stageFoundation(input: {
     dataDir,
     eventBus: container.eventBus,
     logger: logLevelManager.getLogger("background-tasks"),
+    clock,
+    timers,
   });
 
   // Deferred notification ref + bgNotifyFn closure
@@ -1127,6 +1129,7 @@ async function stageAgents(input: {
     subprocessEnv,
     systemEventQueue,  // cron-heartbeat routing
     onCronWake: buildDeferredCronWakeCallback(cronWakeCallbackRef, daemonLogger),
+    clock, timers,     // Phase 39 PORTS-11/13
   });
 
   // Post-setupAgents cleanup wiring: session expiry, Gemini cache disposal,
@@ -1657,6 +1660,7 @@ async function stageChannels(input: {
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
     activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
     fileLock: singleAgentDeps.fileLock,
+    clock: handle.clock, timers: handle.timers,
   });
   const promptTimeoutTimestamps: number[] = [];
   container.eventBus.on("execution:prompt_timeout", () => { promptTimeoutTimestamps.push(Date.now()); });

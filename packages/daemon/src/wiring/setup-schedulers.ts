@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { AppContainer, SkillsConfig } from "@comis/core";
+import type { AppContainer, SkillsConfig, ClockPort, TimerPort } from "@comis/core";
 import { safePath, SkillsConfigSchema, formatSessionKey } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { createSessionStore } from "@comis/memory";
@@ -83,8 +83,12 @@ export async function setupSchedulers(deps: {
   systemEventQueue?: SystemEventQueue;
   /** Callback to wake the heartbeat immediately */
   onCronWake?: (reason: string) => void;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: ClockPort;
+  /** Timer scheduling (Phase 39 PORTS-13). Threaded into SessionResetScheduler. */
+  timers: TimerPort;
 }): Promise<SchedulersResult> {
-  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake } = deps;
+  const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, timers } = deps;
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
 
@@ -362,6 +366,7 @@ export async function setupSchedulers(deps: {
       },
       computeDailyResetNextRun,
       nowMs: undefined, // Use real clock in production
+      timers,           // Phase 39 PORTS-13
     });
 
     scheduler.start();

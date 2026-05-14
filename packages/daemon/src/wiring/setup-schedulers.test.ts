@@ -124,6 +124,9 @@ function createMinimalDeps(overrides: Record<string, any> = {}) {
     schedulerLogger: createMockLogger() as any,
     agentLogger: createMockLogger() as any,
     skillsLogger: createMockLogger() as any,
+    // Phase 39 PORTS-11/13: stub clock + timers required by SetupSchedulersDeps.
+    clock: { now: () => Date.now(), nowDate: () => new Date() } as any,
+    timers: { setTimeout: vi.fn(), setInterval: vi.fn() } as any,
     ...overrides,
   };
 }

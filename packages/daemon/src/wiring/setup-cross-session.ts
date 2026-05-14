@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { NormalizedMessage, SessionKey, SpawnPacket, DeliveryService, DeliverToChannelOptions } from "@comis/core";
+import type { NormalizedMessage, SessionKey, SpawnPacket, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort } from "@comis/core";
 import type { AppContainer } from "@comis/core";
 import { tryGetContext, runWithContext, formatSessionKey, safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -161,6 +161,10 @@ export function setupCrossSession(deps: {
    * lock-protected session-write path. Phase 32 commit 12 (ORCH-EXT-15).
    */
   fileLock: import("@comis/core").FileLockPort;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: ClockPort;
+  /** Timer scheduling (Phase 39 PORTS-13). */
+  timers: TimerPort;
 }): CrossSessionResult {
   const { sessionStore, container, assembleToolsForAgent, getExecutor, adaptersByType } = deps;
 
@@ -830,6 +834,8 @@ export function setupCrossSession(deps: {
     narrativeCaster,  // tagged result formatting
     lifecycleHooks,  // spawn preparation + completion hooks
     deadLetterQueue,  // announcement persistence on delivery failure
+    clock: deps.clock,    // Phase 39 PORTS-11
+    timers: deps.timers,  // Phase 39 PORTS-13
   });
 
   // ---------------------------------------------------------------------------
