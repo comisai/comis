@@ -19,7 +19,7 @@
 
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "typebox";
-import { wrapWebContent, type WrapExternalContentOptions } from "@comis/core";
+import { systemDateFrom, systemNowDate, systemNowMs, type WrapExternalContentOptions, wrapWebContent } from "@comis/core";
 import { fetchUrlContent } from "./web-fetch-tool.js";
 import type { TTLCache } from "@comis/shared";
 import {
@@ -388,8 +388,8 @@ function mapFreshnessToProvider(
       // Custom range: compute days between start and today
       const rangeMatch = freshness.match(/^(\d{4}-\d{2}-\d{2})to(\d{4}-\d{2}-\d{2})$/);
       if (rangeMatch) {
-        const startDate = new Date(rangeMatch[1]);
-        const now = new Date();
+        const startDate = systemDateFrom(rangeMatch[1]);
+        const now = systemNowDate();
         const diffMs = now.getTime() - startDate.getTime();
         const diffDays = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
         return { days: diffDays };
@@ -401,7 +401,7 @@ function mapFreshnessToProvider(
       const exaShortcutMap: Record<string, number> = { pd: 1, pw: 7, pm: 30, py: 365 };
       const daysBack = exaShortcutMap[freshness];
       if (daysBack !== undefined) {
-        const start = new Date();
+        const start = systemNowDate();
         start.setUTCDate(start.getUTCDate() - daysBack);
         return { startPublishedDate: start.toISOString().split("T")[0] + "T00:00:00.000Z" };
       }
@@ -555,7 +555,7 @@ function buildOrchestratorPayload(params: {
   grokModel: string;
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
 }): Record<string, unknown> {
-  const tookMs = Date.now() - params.start;
+  const tookMs = systemNowMs() - params.start;
 
   switch (params.provider) {
     case "perplexity":
@@ -639,7 +639,7 @@ async function executeProviderSearch(params: {
     return { ...cached, cached: true };
   }
 
-  const start = Date.now();
+  const start = systemNowMs();
 
   // Build provider-specific config for the providerConfig escape hatch
   const providerConfig = buildProviderConfig(params);

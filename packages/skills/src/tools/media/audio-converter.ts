@@ -15,7 +15,7 @@ import * as fs from "node:fs/promises";
 import * as crypto from "node:crypto";
 import type { Result } from "@comis/shared";
 import { ok, err, fromPromise } from "@comis/shared";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 
 const execFileAsync = promisify(execFile);
 
@@ -102,7 +102,7 @@ export function createAudioConverter(deps: AudioConverterDeps): AudioConverter {
       inputPath: string,
       outputPath: string,
     ): Promise<Result<ConversionResult, Error>> {
-      const startMs = Date.now();
+      const startMs = systemNowMs();
       const inputFormat = extensionOf(inputPath);
 
       try {
@@ -112,7 +112,7 @@ export function createAudioConverter(deps: AudioConverterDeps): AudioConverter {
           { timeout: ENCODE_TIMEOUT_MS, maxBuffer: MAX_BUFFER },
         );
 
-        const elapsedMs = Date.now() - startMs;
+        const elapsedMs = systemNowMs() - startMs;
 
         // Log ffmpeg process lifecycle
         logger.debug(
@@ -143,7 +143,7 @@ export function createAudioConverter(deps: AudioConverterDeps): AudioConverter {
         return ok({ outputPath, durationMs, codec: "opus" });
       } catch (e: unknown) {
         const error = e instanceof Error ? e : new Error(String(e));
-        const elapsedMs = Date.now() - startMs;
+        const elapsedMs = systemNowMs() - startMs;
 
         // Extract stderr from the error if available
         const stderr = (e as { stderr?: string }).stderr ?? "";

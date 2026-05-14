@@ -2,6 +2,7 @@
 /**
  * Rate limiter for image generation -- per-agent hourly budget.
  */
+import { systemNowMs } from "@comis/core";
 export interface ImageGenRateLimiter {
   /** Try to acquire a generation slot for the given agent. Returns false if over limit. */
   tryAcquire(agentId: string): boolean;
@@ -28,7 +29,7 @@ export function createImageGenRateLimiter(opts: {
   nowMs?: () => number;
 }): ImageGenRateLimiter {
   const buckets = new Map<string, AgentBucket>();
-  const nowMs = opts.nowMs ?? (() => Date.now());
+  const nowMs = opts.nowMs ?? (() => systemNowMs());
   const windowMs = 3_600_000; // 1 hour
 
   return {

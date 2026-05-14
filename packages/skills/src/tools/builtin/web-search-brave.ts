@@ -8,7 +8,7 @@
  * @module
  */
 
-import { wrapWebContent, type WrapExternalContentOptions } from "@comis/core";
+import { systemDateFrom, type WrapExternalContentOptions, wrapWebContent } from "@comis/core";
 import { readResponseText, withTimeout } from "./web-shared.js";
 import { registerSearchProvider, type SearchProvider, type SearchProviderParams } from "./search-provider.js";
 
@@ -61,7 +61,7 @@ function isValidIsoDate(value: string): boolean {
   if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
     return false;
   }
-  const date = new Date(Date.UTC(year, month - 1, day));
+  const date = systemDateFrom(Date.UTC(year, month - 1, day));
   return (
     date.getUTCFullYear() === year &&
     date.getUTCMonth() === month - 1 &&

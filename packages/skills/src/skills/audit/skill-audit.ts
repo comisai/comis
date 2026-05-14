@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { TypedEventBus } from "@comis/core";
-import { createAuditEvent, classifyAction } from "@comis/core";
+import { classifyAction, createAuditEvent, systemNowMs } from "@comis/core";
 
 /**
  * Skill audit action types.
@@ -62,7 +62,7 @@ export function emitSkillAudit(eventBus: TypedEventBus, opts: SkillAuditOptions)
   });
 
   eventBus.emit("audit:event", {
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
     agentId: auditEvent.agentId,
     tenantId: auditEvent.tenantId,
     actionType: auditEvent.actionType,
@@ -72,7 +72,7 @@ export function emitSkillAudit(eventBus: TypedEventBus, opts: SkillAuditOptions)
   });
 
   // Emit the specific skill event
-  const now = Date.now();
+  const now = systemNowMs();
   switch (opts.action) {
     case "skill.prompt.load":
       eventBus.emit("skill:prompt_loaded", {

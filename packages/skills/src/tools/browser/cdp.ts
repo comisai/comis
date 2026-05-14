@@ -15,6 +15,7 @@
 // ── Types ────────────────────────────────────────────────────────────
 
 /** A CDP target as returned by /json/list. */
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 export type CdpTarget = {
   id: string;
   type: string;
@@ -54,7 +55,7 @@ export function appendCdpPath(cdpUrl: string, path: string): string {
  */
 async function fetchJson<T>(url: string, timeoutMs = 1500): Promise<T> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  const t = systemSetTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, { signal: ctrl.signal });
     if (!res.ok) {
@@ -62,7 +63,7 @@ async function fetchJson<T>(url: string, timeoutMs = 1500): Promise<T> {
     }
     return (await res.json()) as T;
   } finally {
-    clearTimeout(t);
+    systemClearTimeout(t);
   }
 }
 

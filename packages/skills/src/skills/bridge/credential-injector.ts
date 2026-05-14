@@ -15,7 +15,7 @@
  */
 
 import type { SecretManager, TypedEventBus, CredentialMapping } from "@comis/core";
-import { validateUrl, sanitizeLogString } from "@comis/core";
+import { sanitizeLogString, systemNowMs, validateUrl } from "@comis/core";
 import type { AgentTool, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 
 // ---------------------------------------------------------------------------
@@ -189,7 +189,7 @@ export function createCredentialInjector(
       secretName,
       agentId: agentId ?? "unknown",
       outcome,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 

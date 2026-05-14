@@ -15,6 +15,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { systemDateFrom, systemNowMs } from "@comis/core";
 
 /** Blocked device file paths that agents must never read. */
 export const BLOCKED_DEVICE_PATHS: ReadonlySet<string> = new Set([
@@ -151,7 +152,7 @@ export function createFileStateTracker(): FileStateTracker {
       recordRead(path: string, mtime: number, offset?: number, limit?: number, contentSample?: Buffer): void {
         const entry: FileReadState = {
           mtime,
-          readAt: Date.now(),
+          readAt: systemNowMs(),
         };
         if (offset !== undefined) entry.offset = offset;
         if (limit !== undefined) entry.limit = limit;
@@ -178,7 +179,7 @@ export function createFileStateTracker(): FileStateTracker {
         if (recorded.limit !== limit) return false;
 
         const sizeHuman = formatSize(currentSize);
-        const isoDate = new Date(currentMtime).toISOString().split("T")[0];
+        const isoDate = systemDateFrom(currentMtime).toISOString().split("T")[0];
         return `File unchanged since last read (${sizeHuman}, mtime ${isoDate}). To re-read, use a different offset/limit range.`;
       },
 

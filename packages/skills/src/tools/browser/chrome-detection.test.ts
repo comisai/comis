@@ -14,9 +14,13 @@ vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),
 }));
 
-vi.mock("node:child_process", () => ({
-  spawn: vi.fn(),
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn: vi.fn(),
+  };
+});
 
 vi.mock("node:os", () => ({
   default: {

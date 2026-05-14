@@ -20,6 +20,7 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import PQueue from "p-queue";
+import { systemClearTimeout, systemEnvSnapshot, systemNowMs, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -297,7 +298,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
         command: wrapped.command,
         args: wrapped.args,
         stderr: "pipe",  // capture stderr for debugging
-        ...(config.env ? { env: { ...process.env, ...config.env } as Record<string, string> } : {}),
+        ...(config.env ? { env: { ...systemEnvSnapshot(), ...config.env } as Record<string, string> } : {}),
         ...(config.cwd ? { cwd: config.cwd } : {}),
       });
     } else if (config.transport === "sse") {
@@ -356,7 +357,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
                 connections.set(serverName, {
                   ...conn,
                   tools: newTools,
-                  lastHealthCheck: Date.now(),
+                  lastHealthCheck: systemNowMs(),
                 });
 
                 const previousNames = new Set(previousTools.map(t => t.name));
@@ -370,7 +371,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
                   currentToolCount: newTools.length,
                   addedTools,
                   removedTools,
-                  timestamp: Date.now(),
+                  timestamp: systemNowMs(),
                 });
 
                 logger.info(
@@ -461,7 +462,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
     deps.eventBus?.emit("mcp:server:disconnected", {
       serverName,
       reason,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
 
     // If user explicitly disconnected, skip reconnection
@@ -503,7 +504,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
     if (!config) return;
 
     let lastError = "";
-    const startTime = Date.now();
+    const startTime = systemNowMs();
 
     for (let attempt = 0; attempt < reconnectOpts.maxAttempts; attempt++) {
       if (signal.aborted) return;
@@ -516,7 +517,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
         attempt: attempt + 1,
         maxAttempts: reconnectOpts.maxAttempts,
         nextDelayMs: delayMs,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
 
       // Update attempt counter on connection
@@ -531,8 +532,8 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
       // Wait for backoff delay (abort-aware)
       await new Promise<void>((resolve) => {
         if (signal.aborted) { resolve(); return; }
-        const timer = setTimeout(resolve, delayMs);
-        const onAbort = () => { clearTimeout(timer); resolve(); };
+        const timer = systemSetTimeout(resolve, delayMs);
+        const onAbort = () => { systemClearTimeout(timer); resolve(); };
         signal.addEventListener("abort", onAbort, { once: true });
       });
 
@@ -603,7 +604,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
           client,
           status: "connected",
           tools,
-          lastHealthCheck: Date.now(),
+          lastHealthCheck: systemNowMs(),
           reconnectAttempt: 0,
           maxReconnectAttempts: reconnectOpts.maxAttempts,
           generation: generations.get(serverName) ?? 0,
@@ -618,8 +619,8 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
           serverName,
           attempt: attempt + 1,
           toolCount: tools.length,
-          durationMs: Date.now() - startTime,
-          timestamp: Date.now(),
+          durationMs: systemNowMs() - startTime,
+          timestamp: systemNowMs(),
         });
 
         logger.info(
@@ -652,7 +653,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
       serverName,
       attempts: reconnectOpts.maxAttempts,
       lastError: truncatedError,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
 
     logger.error(
@@ -773,7 +774,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
         client,
         status: "connected",
         tools,
-        lastHealthCheck: Date.now(),
+        lastHealthCheck: systemNowMs(),
         reconnectAttempt: 0,
         maxReconnectAttempts: reconnectOpts.maxAttempts,
         generation: generations.get(config.name) ?? 0,
@@ -801,7 +802,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
         client: null as unknown as Client,
         status: "error",
         tools: [],
-        lastHealthCheck: Date.now(),
+        lastHealthCheck: systemNowMs(),
         reconnectAttempt: 0,
         maxReconnectAttempts: reconnectOpts.maxAttempts,
         error: message,
@@ -999,7 +1000,7 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
             connections.set(serverName, {
               ...latestConn,
               status: "error",
-              lastHealthCheck: Date.now(),
+              lastHealthCheck: systemNowMs(),
             });
           }
         } else {

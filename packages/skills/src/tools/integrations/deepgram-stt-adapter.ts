@@ -3,6 +3,7 @@ import type { TranscriptionPort, TranscriptionOptions, TranscriptionResult } fro
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { sanitizeApiError } from "./media-adapter-shared.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 /**
  * Configuration for the Deepgram STT adapter.
@@ -85,7 +86,7 @@ export function createDeepgramSttAdapter(config: DeepgramSttConfig): Transcripti
         }
 
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const timeout = systemSetTimeout(() => controller.abort(), timeoutMs);
         try {
           const response = await fetch(`${baseUrl}/listen?${params.toString()}`, {
             method: "POST",
@@ -114,7 +115,7 @@ export function createDeepgramSttAdapter(config: DeepgramSttConfig): Transcripti
               : undefined,
           });
         } finally {
-          clearTimeout(timeout);
+          systemClearTimeout(timeout);
         }
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") {

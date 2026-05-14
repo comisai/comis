@@ -11,6 +11,7 @@
 import type { Attachment, TranscriptionPort } from "@comis/core";
 import type { MediaProcessorLogger } from "./media-preprocessor.js";
 import { resolveMediaAttachment } from "./media-handler-factory.js";
+import { systemNowMs } from "@comis/core";
 
 /** Deps subset needed by the audio handler. */
 export interface AudioHandlerDeps {
@@ -54,14 +55,14 @@ export async function processAudioAttachment(
   const buffer = await resolveMediaAttachment(att, deps.resolveAttachment, deps.logger, "Audio");
   if (!buffer) return {};
 
-  const sttStart = Date.now();
+  const sttStart = systemNowMs();
   try {
     const result = await deps.transcriber.transcribe(buffer, {
       mimeType: att.mimeType ?? "audio/ogg",
     });
 
     if (result.ok) {
-      const durationMs = Date.now() - sttStart;
+      const durationMs = systemNowMs() - sttStart;
       deps.logger.info(
         { url: att.url, language: result.value.language },
         "Audio attachment transcribed",

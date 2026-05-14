@@ -3,6 +3,7 @@ import type { TranscriptionPort, TranscriptionOptions, TranscriptionResult } fro
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { sanitizeApiError, mimeToExtension } from "./media-adapter-shared.js";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 /**
  * Configuration for the OpenAI STT adapter.
@@ -75,7 +76,7 @@ export function createOpenAISttAdapter(config: OpenAISttConfig): TranscriptionPo
         }
 
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const timeout = systemSetTimeout(() => controller.abort(), timeoutMs);
         try {
           const response = await fetch(`${baseUrl}/audio/transcriptions`, {
             method: "POST",
@@ -100,7 +101,7 @@ export function createOpenAISttAdapter(config: OpenAISttConfig): TranscriptionPo
             durationMs: undefined,
           });
         } finally {
-          clearTimeout(timeout);
+          systemClearTimeout(timeout);
         }
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") {

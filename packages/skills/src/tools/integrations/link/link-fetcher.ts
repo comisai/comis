@@ -13,7 +13,7 @@
 
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { validateUrl } from "@comis/core";
+import { systemClearTimeout, systemSetTimeout, validateUrl } from "@comis/core";
 import {
   extractReadableContent,
   truncateText,
@@ -64,7 +64,7 @@ export async function fetchLinkContent(
 
     // Step 2: Fetch with timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), config.fetchTimeoutMs);
+    const timeoutId = systemSetTimeout(() => controller.abort(), config.fetchTimeoutMs);
 
     let response: Response;
     try {
@@ -77,7 +77,7 @@ export async function fetchLinkContent(
         redirect: "error",
       });
     } finally {
-      clearTimeout(timeoutId);
+      systemClearTimeout(timeoutId);
     }
 
     // Step 3: Check HTTP status

@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import type { InstallDetourDecision } from "./install-detour.js";
+import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -134,7 +135,7 @@ function killProcessGroup(
     const onExit = (code: number | null) => {
       if (resolved) return;
       resolved = true;
-      clearTimeout(escalationTimer);
+      systemClearTimeout(escalationTimer);
       session.status = "killed";
       session.exitCode = code;
       resolve({ exitCode: code, killed: true });
@@ -161,7 +162,7 @@ function killProcessGroup(
     }
 
     // Escalate to SIGKILL after 5 seconds
-    const escalationTimer = setTimeout(() => {
+    const escalationTimer = systemSetTimeout(() => {
       if (resolved) return;
       try {
         if (session.sandboxed) {
@@ -173,7 +174,7 @@ function killProcessGroup(
         // Process already dead
       }
       // Give a brief moment for the exit event
-      setTimeout(() => {
+      systemSetTimeout(() => {
         if (!resolved) {
           resolved = true;
           child.removeListener("exit", onExit);
@@ -211,7 +212,7 @@ export function createProcessRegistry(
   }
 
   function list() {
-    const now = Date.now();
+    const now = systemNowMs();
     return Array.from(sessions.values()).map((s) => {
       const lines = s.stdout.split("\n").filter((l) => l.length > 0);
       const tail = lines.slice(-5).join("\n");
@@ -254,7 +255,7 @@ export function createProcessRegistry(
       stderrLength: session.stderr.length,
       command: session.command,
       startedAt: session.startedAt,
-      runtimeMs: Date.now() - session.startedAt,
+      runtimeMs: systemNowMs() - session.startedAt,
       ...(session.description && { description: session.description }),
     };
   }

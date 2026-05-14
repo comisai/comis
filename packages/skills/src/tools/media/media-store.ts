@@ -13,7 +13,7 @@ import * as crypto from "node:crypto";
 import { z } from "zod";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 
 /** Media ID validation pattern: letters, digits, dots, hyphens, underscores. */
 const MEDIA_ID_PATTERN = /^[\p{L}\p{N}._-]+$/u;
@@ -148,7 +148,7 @@ export function createMediaStore(deps: MediaStoreDeps): MediaStore {
         // Ensure directory exists
         await fs.mkdir(dir, { recursive: true });
 
-        const savedAt = Date.now();
+        const savedAt = systemNowMs();
         const meta: SidecarMeta = { contentType, savedAt, size: buffer.length };
 
         // Write file and metadata atomically
@@ -208,7 +208,7 @@ export function createMediaStore(deps: MediaStoreDeps): MediaStore {
     async cleanup(customTtl?: number): Promise<Result<number, Error>> {
       try {
         const effectiveTtl = customTtl ?? ttl;
-        const now = Date.now();
+        const now = systemNowMs();
         let removed = 0;
 
         let entries: string[];

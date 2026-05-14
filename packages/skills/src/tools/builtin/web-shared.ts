@@ -10,6 +10,7 @@
 
 import { suppressError, createTTLCache } from "@comis/shared";
 import type { TTLCache } from "@comis/shared";
+import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 export type { TTLCache };
 
@@ -48,7 +49,7 @@ export function normalizeCacheKey(value: string): string {
  * Wraps createTTLCache from @comis/shared.
  */
 export function createWebCache<T>(ttlMs: number, maxEntries = DEFAULT_CACHE_MAX_ENTRIES): TTLCache<T> {
-  return createTTLCache<T>({ ttlMs, maxEntries });
+  return createTTLCache<T>({ ttlMs, maxEntries, nowMs: systemNowMs });
 }
 
 /**
@@ -60,12 +61,12 @@ export function withTimeout(signal: AbortSignal | undefined, timeoutMs: number):
     return signal ?? new AbortController().signal;
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = systemSetTimeout(() => controller.abort(), timeoutMs);
   if (signal) {
     signal.addEventListener(
       "abort",
       () => {
-        clearTimeout(timer);
+        systemClearTimeout(timer);
         controller.abort();
       },
       { once: true },
@@ -74,7 +75,7 @@ export function withTimeout(signal: AbortSignal | undefined, timeoutMs: number):
   controller.signal.addEventListener(
     "abort",
     () => {
-      clearTimeout(timer);
+      systemClearTimeout(timer);
     },
     { once: true },
   );

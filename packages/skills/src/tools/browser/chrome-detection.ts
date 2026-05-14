@@ -16,6 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import type { BrowserConfig } from "./config.js";
 import { DEFAULT_CDP_PORT, DEFAULT_BROWSER_PROFILE } from "./constants.js";
+import { systemClearTimeout, systemGetEnv, systemNowMs, systemSetTimeout } from "@comis/core";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -150,8 +151,7 @@ export function findChrome(
  */
 function resolveUserDataDir(profileName: string): string {
   const configDir =
-    // eslint-disable-next-line no-restricted-syntax -- XDG standard directory detection, not secret access
-    process.env["XDG_CONFIG_HOME"] || `${os.homedir()}/.config`;
+    systemGetEnv("XDG_CONFIG_HOME") || `${os.homedir()}/.config`;
   return `${configDir}/comis/browser/${profileName}/user-data`;
 }
 
@@ -163,7 +163,7 @@ async function isChromeReachable(
   timeoutMs = 500,
 ): Promise<boolean> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  const t = systemSetTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(`${cdpUrl}/json/version`, {
       signal: ctrl.signal,
@@ -172,7 +172,7 @@ async function isChromeReachable(
   } catch {
     return false;
   } finally {
-    clearTimeout(t);
+    systemClearTimeout(t);
   }
 }
 
@@ -233,13 +233,12 @@ export async function launchChrome(
   // Always open a blank tab to ensure a target exists.
   args.push("about:blank");
 
-  const startedAt = Date.now();
+  const startedAt = systemNowMs();
 
   // Use filtered env instead of raw process.env
   const chromeEnv = spawnEnv
     ? { ...spawnEnv, HOME: os.homedir() }
-    // eslint-disable-next-line no-restricted-syntax -- PATH for subprocess spawn, not secret access (fallback when no spawnEnv provided)
-    : { PATH: process.env["PATH"] ?? "", HOME: os.homedir() };
+    : { PATH: systemGetEnv("PATH") ?? "", HOME: os.homedir() };
 
   const proc = spawn(exe.path, args, {
     stdio: "pipe",
@@ -248,12 +247,12 @@ export async function launchChrome(
 
   // Wait for CDP to become reachable.
   const cdpUrl = `http://127.0.0.1:${cdpPort}`;
-  const readyDeadline = Date.now() + 15_000;
-  while (Date.now() < readyDeadline) {
+  const readyDeadline = systemNowMs() + 15_000;
+  while (systemNowMs() < readyDeadline) {
     if (await isChromeReachable(cdpUrl, 500)) {
       break;
     }
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise<void>((r) => systemSetTimeout(() => r(), 200));
   }
 
   if (!(await isChromeReachable(cdpUrl, 500))) {
@@ -295,10 +294,10 @@ export async function stopChrome(
     // ignore
   }
 
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+  const start = systemNowMs();
+  while (systemNowMs() - start < timeoutMs) {
     if (proc.exitCode !== null || proc.killed) return;
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise<void>((r) => systemSetTimeout(() => r(), 100));
   }
 
   try {

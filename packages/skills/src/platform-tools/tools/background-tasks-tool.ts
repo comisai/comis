@@ -12,6 +12,7 @@ import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { Result } from "@comis/shared";
 import { readStringParam, readEnumParam } from "../tool-helpers.js";
+import { systemDateFrom } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Local interface for BackgroundTaskManager dependency injection.
@@ -113,9 +114,9 @@ export function createBackgroundTasksTool(deps: {
             id: t.id,
             toolName: t.toolName,
             status: t.status,
-            startedAt: new Date(t.startedAt).toISOString(),
+            startedAt: systemDateFrom(t.startedAt).toISOString(),
             completedAt: t.completedAt
-              ? new Date(t.completedAt).toISOString()
+              ? systemDateFrom(t.completedAt).toISOString()
               : undefined,
           }));
           return {
@@ -137,9 +138,9 @@ export function createBackgroundTasksTool(deps: {
             id: task.id,
             toolName: task.toolName,
             status: task.status,
-            startedAt: new Date(task.startedAt).toISOString(),
+            startedAt: systemDateFrom(task.startedAt).toISOString(),
             completedAt: task.completedAt
-              ? new Date(task.completedAt).toISOString()
+              ? systemDateFrom(task.completedAt).toISOString()
               : undefined,
             error: task.error,
           };

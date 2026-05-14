@@ -25,6 +25,7 @@ import {
   MAX_PAGE_ERRORS,
 } from "./constants.js";
 import { suppressError } from "@comis/shared";
+import { systemNowDate, systemSetTimeout } from "@comis/core";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -110,7 +111,7 @@ export function ensurePageState(page: Page): PageState {
       state.console.push({
         type: msg.type(),
         text: msg.text(),
-        timestamp: new Date().toISOString(),
+        timestamp: systemNowDate().toISOString(),
         location: msg.location(),
       });
       if (state.console.length > MAX_CONSOLE_MESSAGES) {
@@ -123,7 +124,7 @@ export function ensurePageState(page: Page): PageState {
         message: err?.message ? String(err.message) : String(err),
         name: err?.name ? String(err.name) : undefined,
         stack: err?.stack ? String(err.stack) : undefined,
-        timestamp: new Date().toISOString(),
+        timestamp: systemNowDate().toISOString(),
       });
       if (state.errors.length > MAX_PAGE_ERRORS) {
         state.errors.shift();
@@ -136,7 +137,7 @@ export function ensurePageState(page: Page): PageState {
       state.requestIds.set(req, id);
       state.requests.push({
         id,
-        timestamp: new Date().toISOString(),
+        timestamp: systemNowDate().toISOString(),
         method: req.method(),
         url: req.url(),
         resourceType: req.resourceType(),
@@ -256,7 +257,7 @@ async function connectBrowser(
       } catch (err) {
         lastErr = err;
         const delay = 250 + attempt * 250;
-        await new Promise((r) => setTimeout(r, delay));
+        await new Promise<void>((r) => systemSetTimeout(() => r(), delay));
       }
     }
     throw lastErr instanceof Error

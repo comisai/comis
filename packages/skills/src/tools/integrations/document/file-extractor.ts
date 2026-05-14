@@ -25,6 +25,7 @@ import { ok, err } from "@comis/shared";
 import { classifyFile } from "./file-classifier.js";
 import { decodeTextBuffer } from "./text-decoder.js";
 import { isBinaryContent } from "./binary-detector.js";
+import { systemNowMs } from "@comis/core";
 
 /**
  * Text-extractable MIME types supported by this adapter.
@@ -87,7 +88,7 @@ export function createFileExtractor(deps: FileExtractorDeps): FileExtractionPort
     async extract(
       input: FileExtractionInput,
     ): Promise<Result<FileExtractionResult, FileExtractionError>> {
-      const start = Date.now();
+      const start = systemNowMs();
 
       // 1. Resolve source
       if (input.source === "url") {
@@ -176,7 +177,7 @@ export function createFileExtractor(deps: FileExtractorDeps): FileExtractionPort
         mimeType: mimeType ?? "text/plain",
         extractedChars: text.length,
         truncated,
-        durationMs: Date.now() - start,
+        durationMs: systemNowMs() - start,
         buffer,
       });
     },

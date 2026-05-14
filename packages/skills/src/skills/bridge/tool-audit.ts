@@ -12,7 +12,7 @@
 
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 import type { TypedEventBus } from "@comis/core";
-import { tryGetContext } from "@comis/core";
+import { systemNowMs, tryGetContext } from "@comis/core";
 
 /**
  * Wrap an AgentTool with audit event emission.
@@ -77,7 +77,7 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
           toolName: tool.name,
           durationMs,
           success,
-          timestamp: Date.now(),
+          timestamp: systemNowMs(),
           userId: ctx?.userId,
           traceId: ctx?.traceId,
           agentId,

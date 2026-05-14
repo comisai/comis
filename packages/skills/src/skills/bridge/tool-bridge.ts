@@ -31,6 +31,7 @@ import type { LazyPaths } from "../../tools/builtin/file/safe-path-wrapper.js";
 import { createWebFetchTool } from "../../tools/builtin/web-fetch-tool.js";
 import { createWebSearchTool } from "../../tools/builtin/web-search-tool.js";
 import { resolveSourceProfile, type ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Built-in tool collection
@@ -208,7 +209,7 @@ export async function assembleToolPipeline(
             ? `explicit_deny:${f.reason.denyEntry}`
             : `not_in_profile:${f.reason.profile}`,
         })),
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     }
   }

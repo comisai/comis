@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 
-import { safePath } from "@comis/core";
+import { safePath, systemGetEnv } from "@comis/core";
 
 import type { SandboxOptions, SandboxProvider } from "./types.js";
 
@@ -39,8 +39,7 @@ function buildSbplProfile(opts: SandboxOptions): string {
   // pip scans all sys.path entries via os.scandir(); .pth files in system
   // site-packages inject ~/Projects/... and ~/Library/Python/... paths.
   // Without read access, pip crashes with PermissionError.
-  // eslint-disable-next-line no-restricted-syntax -- Trusted: reading HOME for sandbox profile, no secrets
-  const home = process.env.HOME ?? homedir();
+  const home = systemGetEnv("HOME") ?? homedir();
   const homeReadPaths = [
     safePath(home, "Library"),
     safePath(home, "Projects"),

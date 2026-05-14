@@ -31,6 +31,7 @@ import { scanSkillContent } from "../prompt/content-scanner.js";
 import { discoverSkills, type SkillMetadata, type SkillSource } from "./discovery.js";
 import { evaluateSkillEligibility, type RuntimeEligibilityContext } from "./eligibility.js";
 import { createSkillWatcher, type SkillWatcherHandle } from "./skill-watcher.js";
+import { systemNowMs } from "@comis/core";
 
 /**
  * Operator hint shape consumed by `getPromptSkillCapabilities`.
@@ -330,7 +331,7 @@ export function createSkillRegistry(
     eventBus.emit("skill:registry_reset", {
       clearedMetadata: prevMetadataCount,
       clearedPromptCache: prevCacheCount,
-      timestamp: Date.now(),
+      timestamp: systemNowMs(),
     });
   }
 
@@ -582,7 +583,7 @@ export function createSkillRegistry(
           eventBus.emit("skills:reloaded", {
             agentId: auditContext.agentId,
             skillCount: metadataMap.size,
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
         },
         logger,
@@ -805,7 +806,7 @@ export function createSkillRegistry(
       eventBus.emit("skill:registry_reset", {
         clearedMetadata: prevMetadataCount,
         clearedPromptCache: prevCacheCount,
-        timestamp: Date.now(),
+        timestamp: systemNowMs(),
       });
     },
   };

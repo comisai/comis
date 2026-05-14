@@ -20,6 +20,7 @@ import {
 } from "../tool-helpers.js";
 import { createMultiActionDispatchTool } from "../messaging-factory.js";
 import type { RpcCall } from "./cron-tool.js";
+import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Parameter schema
@@ -276,7 +277,7 @@ export function createMessageTool(rpcCall: RpcCall): AgentTool<typeof MessageToo
             channelType,
             channelId,
             ...(caption !== undefined && { caption }),
-            deliveredAt: Date.now(),
+            deliveredAt: systemNowMs(),
           };
           return { visibleDelivery: record };
         },

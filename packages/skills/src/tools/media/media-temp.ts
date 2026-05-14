@@ -14,7 +14,7 @@ import * as os from "node:os";
 import * as crypto from "node:crypto";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { safePath } from "@comis/core";
+import { safePath, systemClearInterval, systemNowMs, systemSetInterval } from "@comis/core";
 
 /** Configuration for the managed temp directory. */
 export interface MediaTempConfig {
@@ -123,7 +123,7 @@ export function createMediaTempManager(
           throw readErr;
         }
 
-        const now = Date.now();
+        const now = systemNowMs();
         let removed = 0;
 
         for (const entry of entries) {
@@ -163,7 +163,7 @@ export function createMediaTempManager(
       // 5 minutes" = periodic cleanup. Architecturally simpler than
       // subscribing to TypedEventBus heartbeat from @comis/scheduler
       // and functionally equivalent at the same 5-minute interval.
-      cleanupTimer = setInterval(async () => {
+      cleanupTimer = systemSetInterval(async () => {
         await manager.cleanup();
       }, cleanupIntervalMs);
       cleanupTimer.unref();
@@ -171,7 +171,7 @@ export function createMediaTempManager(
 
     stopCleanupInterval(): void {
       if (cleanupTimer) {
-        clearInterval(cleanupTimer);
+        systemClearInterval(cleanupTimer);
         cleanupTimer = undefined;
       }
     },

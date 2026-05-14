@@ -23,6 +23,7 @@ import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import type { PdfPageRenderer } from "./pdf-page-renderer.js";
 import { RENDER_SCALE, MAX_VISION_PAGES } from "./pdf-page-renderer.js";
+import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
 
 /**
  * Dependencies for the PDF extractor factory.
@@ -90,7 +91,7 @@ export function createPdfExtractor(deps: PdfExtractorDeps): FileExtractionPort {
     async extract(
       input: FileExtractionInput,
     ): Promise<Result<FileExtractionResult, FileExtractionError>> {
-      const start = Date.now();
+      const start = systemNowMs();
 
       // 1. Resolve source -- URL not supported yet (deferred)
       if (input.source === "url") {
@@ -121,7 +122,7 @@ export function createPdfExtractor(deps: PdfExtractorDeps): FileExtractionPort {
 
       // 4. AbortController timeout setup
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), deps.config.timeoutMs);
+      const timer = systemSetTimeout(() => controller.abort(), deps.config.timeoutMs);
 
       try {
         // 5. Load PDF document
@@ -231,7 +232,7 @@ export function createPdfExtractor(deps: PdfExtractorDeps): FileExtractionPort {
             mimeType,
             extractedChars: text.length,
             truncated,
-            durationMs: Date.now() - start,
+            durationMs: systemNowMs() - start,
             buffer,
             pageCount: pagesToExtract,
             totalPages: pdf.numPages,
@@ -268,7 +269,7 @@ export function createPdfExtractor(deps: PdfExtractorDeps): FileExtractionPort {
         });
       } finally {
         // 9. Cleanup: clear timeout in outermost finally
-        clearTimeout(timer);
+        systemClearTimeout(timer);
       }
     },
   };

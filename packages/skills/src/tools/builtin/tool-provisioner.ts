@@ -9,7 +9,7 @@
  * @module
  */
 
-import { safePath } from "@comis/core";
+import { safePath, systemGetEnv } from "@comis/core";
 import { existsSync, mkdirSync, createWriteStream, chmodSync, renameSync, rmSync } from "node:fs";
 import { arch, platform, homedir } from "node:os";
 import { spawnSync, execFile } from "node:child_process";
@@ -136,8 +136,7 @@ export async function ensureTool(
   if (!config) return undefined;
 
   // Respect offline mode
-  // eslint-disable-next-line no-restricted-syntax -- ops toggle read before SecretManager is initialized
-  if (process.env.COMIS_OFFLINE === "1" || process.env.COMIS_OFFLINE === "true") {
+  if (systemGetEnv("COMIS_OFFLINE") === "1" || systemGetEnv("COMIS_OFFLINE") === "true") {
     logger?.debug?.(`${config.name} not found, offline mode enabled`);
     return undefined;
   }

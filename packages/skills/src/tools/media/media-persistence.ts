@@ -14,7 +14,7 @@ import * as fs from "node:fs/promises";
 import * as crypto from "node:crypto";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { safePath } from "@comis/core";
+import { safePath, systemNowMs } from "@comis/core";
 import { detectMime, getExtensionForMime } from "./mime-detection.js";
 import type { MediaKind } from "./constants.js";
 
@@ -145,7 +145,7 @@ export function createMediaPersistenceService(
         // 8. Write file to disk
         await fs.writeFile(filePath, buffer);
 
-        const savedAt = Date.now();
+        const savedAt = systemNowMs();
         const result: PersistedFile = {
           filePath,
           relativePath,

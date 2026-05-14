@@ -22,7 +22,7 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type, type Static } from "typebox";
 import { Impit } from "impit";
-import { validateUrl, wrapWebContent, EXTERNAL_CONTENT_WARNING, type WrapExternalContentOptions, FileExtractionConfigSchema } from "@comis/core";
+import { EXTERNAL_CONTENT_WARNING, FileExtractionConfigSchema, systemNowDate, systemNowMs, type WrapExternalContentOptions, validateUrl, wrapWebContent } from "@comis/core";
 import { createPdfExtractor } from "../integrations/document/pdf-extractor.js";
 import {
   detectErrorPagePattern,
@@ -219,7 +219,7 @@ export async function fetchUrlContent(params: {
   }
 
   const client = getClient();
-  const start = Date.now();
+  const start = systemNowMs();
   let res: { ok: boolean; status: number; statusText: string; headers: Headers; text: () => Promise<string>; bytes: () => Promise<Uint8Array> };
   try {
     res = await client.fetch(url, {
@@ -234,7 +234,7 @@ export async function fetchUrlContent(params: {
     return {
       url: params.url,
       error: `Fetch failed: ${message}`,
-      tookMs: Date.now() - start,
+      tookMs: systemNowMs() - start,
     };
   }
 
@@ -243,7 +243,7 @@ export async function fetchUrlContent(params: {
     return {
       url: params.url,
       error: "URL redirected to a different location. Redirects are blocked for security.",
-      tookMs: Date.now() - start,
+      tookMs: systemNowMs() - start,
       status: res.status,
     };
   }
@@ -255,7 +255,7 @@ export async function fetchUrlContent(params: {
     return {
       url: params.url,
       error: patternMessage ?? `HTTP ${res.status}: ${truncatedDetail || res.statusText}`,
-      tookMs: Date.now() - start,
+      tookMs: systemNowMs() - start,
       status: res.status,
     };
   }
@@ -281,7 +281,7 @@ export async function fetchUrlContent(params: {
         url: params.url,
         text: truncated.text,
         title: pdfResult.value.fileName,
-        tookMs: Date.now() - start,
+        tookMs: systemNowMs() - start,
         status: res.status,
         extractor: "pdf",
         truncated: truncated.truncated,
@@ -290,7 +290,7 @@ export async function fetchUrlContent(params: {
     return {
       url: params.url,
       error: `PDF extraction failed: ${pdfResult.error.message}`,
-      tookMs: Date.now() - start,
+      tookMs: systemNowMs() - start,
       status: res.status,
     };
   }
@@ -352,7 +352,7 @@ export async function fetchUrlContent(params: {
     url: params.url,
     text: truncated.text,
     title,
-    tookMs: Date.now() - start,
+    tookMs: systemNowMs() - start,
     status: res.status,
     extractor,
     truncated: truncated.truncated,
@@ -398,7 +398,7 @@ async function runWebFetch(params: {
   }
 
   const client = getClient();
-  const start = Date.now();
+  const start = systemNowMs();
   let res: { ok: boolean; status: number; statusText: string; headers: Headers; text: () => Promise<string>; bytes: () => Promise<Uint8Array> };
   try {
     res = await client.fetch(url, {
@@ -475,8 +475,8 @@ async function runWebFetch(params: {
         totalBytes: contentLength !== null && Number.isFinite(contentLength) ? contentLength : null,
         bodyTruncated: false,
         length: wrappedText.length,
-        fetchedAt: new Date().toISOString(),
-        tookMs: Date.now() - start,
+        fetchedAt: systemNowDate().toISOString(),
+        tookMs: systemNowMs() - start,
         text: wrappedText,
         pageCount: pdfResult.value.pageCount,
         totalPages: pdfResult.value.totalPages,
@@ -566,8 +566,8 @@ async function runWebFetch(params: {
     totalBytes: contentLength !== null && Number.isFinite(contentLength) ? contentLength : null,
     bodyTruncated,
     length: wrappedText.length,
-    fetchedAt: new Date().toISOString(),
-    tookMs: Date.now() - start,
+    fetchedAt: systemNowDate().toISOString(),
+    tookMs: systemNowMs() - start,
     text: wrappedText,
   };
 

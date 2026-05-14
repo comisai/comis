@@ -16,6 +16,7 @@
 import { watch, type FSWatcher } from "chokidar";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { systemClearTimeout, systemSetTimeout } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -125,8 +126,8 @@ export function createSkillWatcher(options: SkillWatcherOptions): SkillWatcherHa
   let parentWatcher: FSWatcher | null = null;
 
   const scheduleReload = (): void => {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
+    if (debounceTimer) systemClearTimeout(debounceTimer);
+    debounceTimer = systemSetTimeout(() => {
       debounceTimer = null;
       logger?.info({}, "Skill file change detected, triggering re-discovery");
       onReload();
@@ -208,7 +209,7 @@ export function createSkillWatcher(options: SkillWatcherOptions): SkillWatcherHa
 
   return {
     close: async () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
+      if (debounceTimer) systemClearTimeout(debounceTimer);
       await Promise.all([
         skillWatcher?.close(),
         parentWatcher?.close(),

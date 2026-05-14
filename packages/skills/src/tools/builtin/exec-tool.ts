@@ -28,7 +28,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, writeFileSync, copyFileSync, statSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
-import { safePath, PathTraversalError } from "@comis/core";
+import { PathTraversalError, safePath, systemClearTimeout, systemEnvSnapshot, systemNowMs, systemSetTimeout } from "@comis/core";
 import type { SecretManager } from "@comis/core";
 import type { ExecSandboxConfig } from "./sandbox/types.js";
 import { resolvePaths } from "./file/safe-path-wrapper.js";
@@ -540,7 +540,7 @@ function buildInstallDetourEventPayload(
     })),
     mode,
     action,
-    timestamp: Date.now(),
+    timestamp: systemNowMs(),
   };
 }
 
@@ -689,7 +689,7 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
             commandPrefix: command.slice(0, 200),
             reason: validationError.message,
             blocker: validationError.blocker as "sanitize" | "substitution" | "pipe" | "denylist" | "path" | "redirect" | "env",
-            timestamp: Date.now(),
+            timestamp: systemNowMs(),
           });
           throwToolError("permission_denied", validationError.message);
         }
@@ -913,7 +913,7 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
                 secretName: name,
                 agentId,
                 outcome: "success",
-                timestamp: Date.now(),
+                timestamp: systemNowMs(),
               });
             }
             logger?.info(
@@ -928,7 +928,7 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
         }
 
         // Build environment (use filtered subprocess env instead of raw process.env).
-        const baseEnv = subprocessEnv ?? (process.env as Record<string, string>);
+        const baseEnv = subprocessEnv ?? (systemEnvSnapshot() as Record<string, string>);
 
         // Workspace-internal env split into two halves:
         //
@@ -1024,8 +1024,8 @@ interface EscalationContext {
   child: ReturnType<typeof spawn>;
   /** performance.now() at spawn -- monotonic, used for elapsed durationMs. */
   startTime: number;
-  /** Date.now() at spawn -- Unix epoch ms, used for ProcessSession.startedAt
-   *  (which downstream code subtracts from Date.now() to compute runtimeMs).
+  /** systemNowMs() at spawn -- Unix epoch ms, used for ProcessSession.startedAt
+   *  (which downstream code subtracts from systemNowMs() to compute runtimeMs).
    *  Captured separately because performance.now() is a monotonic clock relative
    *  to process start, not a wall clock. */
   startTimeMs: number;
@@ -1054,7 +1054,7 @@ interface EscalationContext {
  */
 function escalateToBackground(ctx: EscalationContext): void {
   ctx.setResolved();
-  clearTimeout(ctx.timeoutTimer);
+  systemClearTimeout(ctx.timeoutTimer);
   if (ctx.signal) ctx.signal.removeEventListener("abort", ctx.onAbort);
 
   const session: ProcessSession = {
@@ -1167,7 +1167,7 @@ function executeForeground(
   installDetourMode?: "observe" | "advise" | "soft-stop",
 ): Promise<AgentToolResult<unknown>> {
   const startTime = performance.now();
-  const startTimeMs = Date.now();
+  const startTimeMs = systemNowMs();
 
   return new Promise((resolve) => {
     const { bin, args, cwd: spawnCwd } = buildSpawnCommand(
@@ -1280,7 +1280,7 @@ function executeForeground(
 
     // Manual timeout via setTimeout + killTree
     let timedOut = false;
-    const timeoutTimer = setTimeout(() => {
+    const timeoutTimer = systemSetTimeout(() => {
       if (resolved) return;
       timedOut = true;
       if (pid) killTree(pid, !!sandboxConfig);
@@ -1307,7 +1307,7 @@ function executeForeground(
     // Auto-background escalation timer
     const effectiveAutoMs = autoBackgroundMs ?? 15_000;
     const escalationTimer = (effectiveAutoMs > 0 && registry)
-      ? setTimeout(() => {
+      ? systemSetTimeout(() => {
           if (resolved) return;
           escalateToBackground({
             command, child, startTime, startTimeMs, stdoutBuf, stderrBuf,
@@ -1330,8 +1330,8 @@ function executeForeground(
       // after tool resolution (orphaned child process output)
       child.stdout?.removeAllListeners("data");
       child.stderr?.removeAllListeners("data");
-      clearTimeout(timeoutTimer);
-      if (escalationTimer) clearTimeout(escalationTimer);
+      systemClearTimeout(timeoutTimer);
+      if (escalationTimer) systemClearTimeout(escalationTimer);
       if (signal) signal.removeEventListener("abort", onAbort);
       if (spillStream) spillStream.end();
 
@@ -1476,8 +1476,8 @@ function executeForeground(
     child.on("error", (err: Error) => {
       if (resolved) return;
       resolved = true;
-      clearTimeout(timeoutTimer);
-      if (escalationTimer) clearTimeout(escalationTimer);
+      systemClearTimeout(timeoutTimer);
+      if (escalationTimer) systemClearTimeout(escalationTimer);
       if (signal) signal.removeEventListener("abort", onAbort);
       if (spillStream) spillStream.end();
 
@@ -1529,7 +1529,7 @@ function executeBackground(
     id: sessionId,
     command,
     pid: child.pid,
-    startedAt: Date.now(),
+    startedAt: systemNowMs(),
     status: "running",
     exitCode: undefined,
     stdout: "",
