@@ -156,17 +156,14 @@ export interface ContextEngineDeps {
   /** Optional sink for the signature-replay scrubber's per-apply stats.
    *  Receives the SAME shape the scrubber emits to its `onScrubbed` callback,
    *  so callers can accumulate per-execute totals without the scrubber owning
-   *  the accumulator. Invoked alongside the existing snapshot wiring in
-   *  context-engine.ts (the snapshot consumer at lines ~720-727 still works
-   *  because field names and shapes are unchanged). */
+   *  the accumulator. Canonical field names: `blocksAffected` (signed thinking
+   *  blocks removed) and `toolCallsAffected` (tool-call `thoughtSignature`
+   *  fields stripped). */
   onSignatureReplayScrubbed?: (stats: {
     scrubbedAssistantMessages: number;
     blocksAffected: number;
     toolCallsAffected: number;
     latestAssistantIdx: number;
-    dropped: number;
-    signaturesStripped: number;
-    reason?: string;
   }) => void;
 
   // --- API-grounded token estimation ---

@@ -74,11 +74,15 @@ function makeOffloadedToolResult(toolCallId: string, toolName: string): AgentMes
 }
 
 function makeMaskedToolResult(toolCallId: string, toolName: string): AgentMessage {
+  // Phase 38 BC-REM-16: helper now emits the canonical
+  // `[Tool result summarized:` prefix. The pre-deletion helper emitted
+  // `[Tool result cleared:` which `isAlreadyMasked` no longer recognizes
+  // post-deletion — see cleanup-helpers.ts (INTENTIONAL BREAK #2).
   return {
     role: "toolResult",
     toolCallId,
     toolName,
-    content: [{ type: "text", text: `[Tool result cleared: ${toolName} -- see assistant analysis above]` }],
+    content: [{ type: "text", text: `[Tool result summarized: ${toolName} — see assistant analysis above]` }],
     isError: false,
     timestamp: Date.now(),
   } as AgentMessage;
@@ -287,7 +291,7 @@ describe("createObservationMaskerLayer", () => {
 
     // Already-masked should NOT be double-masked
     const masked = result.find((m) => (m as any).toolCallId === "tc_already_masked") as any;
-    expect(masked.content[0].text).toBe("[Tool result cleared: bash -- see assistant analysis above]");
+    expect(masked.content[0].text).toBe("[Tool result summarized: bash — see assistant analysis above]");
   });
 
   // -------------------------------------------------------------------------
@@ -824,7 +828,7 @@ describe("createObservationMaskerLayer", () => {
 
     // Already masked: should remain with masked text (no double-masking)
     const prevMasked = result.find((m) => (m as any).toolCallId === "tc-prev-masked") as any;
-    expect(prevMasked.content[0].text).toBe("[Tool result cleared: bash -- see assistant analysis above]");
+    expect(prevMasked.content[0].text).toBe("[Tool result summarized: bash — see assistant analysis above]");
 
     // Regular old tool result: should be masked
     const oldResult = result.find((m) => (m as any).toolCallId === "tc-old") as any;

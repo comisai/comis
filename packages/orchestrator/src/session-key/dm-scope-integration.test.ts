@@ -112,23 +112,10 @@ describe("DM Scope Integration", () => {
     expect(formatted).toBe("default:user-123:channel-789:peer:user-123:guild:guild-abc");
   });
 
-  it("agent prefix roundtrip: format and parse recovers agentId", () => {
-    const msg = makeDmMessage();
-    const key = buildScopedSessionKey({
-      msg,
-      agentId: "dash",
-      adapterChannelId: "bot-1",
-      agentPrefixEnabled: true,
-    });
-    const formatted = formatSessionKey(key);
-    expect(formatted).toMatch(/^agent:dash:/);
-
-    const parsed = parseFormattedSessionKey(formatted);
-    expect(parsed).toBeDefined();
-    expect(parsed!.agentId).toBe("dash");
-    expect(parsed!.tenantId).toBe("default");
-    expect(parsed!.userId).toBe("user-123");
-  });
+  // Deleted (Phase 38 BC-REM-15): "agent prefix roundtrip" test covered the
+  // since-deleted parser branch that recovered agentId from the formatted key.
+  // INTENTIONAL BREAK #1 — formatSessionKey still emits `agent:` prefix when
+  // agentId is set, but parseFormattedSessionKey no longer extracts it.
 
   it("thread isolation roundtrip: format and parse recovers threadId", () => {
     const msg = makeDmMessage();
@@ -146,27 +133,10 @@ describe("DM Scope Integration", () => {
     expect(parsed!.threadId).toBe("thread-789");
   });
 
-  it("full roundtrip: agent prefix + guild + thread all recovered", () => {
-    const msg = makeGroupMessage();
-    const key = buildScopedSessionKey({
-      msg,
-      agentId: "dash",
-      adapterChannelId: "bot-1",
-      agentPrefixEnabled: true,
-      threadId: "thread-999",
-    });
-    const formatted = formatSessionKey(key);
-    const parsed = parseFormattedSessionKey(formatted);
-
-    expect(parsed).toBeDefined();
-    expect(parsed!.agentId).toBe("dash");
-    expect(parsed!.tenantId).toBe("default");
-    expect(parsed!.userId).toBe("user-123");
-    expect(parsed!.channelId).toBe("channel-789");
-    expect(parsed!.peerId).toBe("user-123");
-    expect(parsed!.guildId).toBe("guild-abc");
-    expect(parsed!.threadId).toBe("thread-999");
-  });
+  // Deleted (Phase 38 BC-REM-15): "full roundtrip: agent prefix + guild +
+  // thread all recovered" — the agent-prefix portion of the roundtrip is no
+  // longer supported. parseFormattedSessionKey returns agentId === undefined
+  // for `agent:`-prefixed keys post-deletion (INTENTIONAL BREAK #1).
 
   it("extractThreadId returns channelId for Discord threads (parentChannelId set)", () => {
     const msg = makeDmMessage({

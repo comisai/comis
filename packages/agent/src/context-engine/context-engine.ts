@@ -187,7 +187,7 @@ async function runLayer(
 function getCallbackSnapshot(state: {
   masker: { maskedCount: number; totalChars: number; persistedToDisk: boolean } | null;
   thinking: { blocksRemoved: number; cacheFenceIndex?: number; messagesProtected?: number; totalMessages?: number } | null;
-  signatureReplayScrubber: { dropped: number; signaturesStripped: number; reason?: string } | null;
+  signatureReplayScrubber: { scrubbedAssistantMessages: number; blocksAffected: number; toolCallsAffected: number; latestAssistantIdx: number } | null;
   signatureSurrogateGuard: { signaturesStripped: number } | null;
   reasoningTags: { tagsStripped: number } | null;
   compaction: { fallbackLevel: 1 | 2 | 3; attempts: number; originalMessages: number; keptMessages: number } | null;
@@ -256,7 +256,7 @@ export function createContextEngine(
   interface CallbackState {
     masker: { maskedCount: number; totalChars: number; persistedToDisk: boolean } | null;
     thinking: { blocksRemoved: number; cacheFenceIndex?: number; messagesProtected?: number; totalMessages?: number } | null;
-    signatureReplayScrubber: { dropped: number; signaturesStripped: number; reason?: string } | null;
+    signatureReplayScrubber: { scrubbedAssistantMessages: number; blocksAffected: number; toolCallsAffected: number; latestAssistantIdx: number } | null;
     signatureSurrogateGuard: { signaturesStripped: number } | null;
     reasoningTags: { tagsStripped: number } | null;
     compaction: { fallbackLevel: 1 | 2 | 3; attempts: number; originalMessages: number; keptMessages: number } | null;
@@ -302,9 +302,8 @@ export function createContextEngine(
     layers.push(createSignatureReplayScrubber({
       getReplayDriftMode,
       onScrubbed: (stats) => {
-        // Snapshot the latest stats for the existing post-pipeline DEBUG
-        // summary at lines ~720-727 (preserves legacy aliases dropped /
-        // signaturesStripped / reason).
+        // Snapshot the latest stats for the post-pipeline DEBUG summary
+        // (canonical field names blocksAffected / toolCallsAffected).
         callbackState.signatureReplayScrubber = stats;
         // Also forward stats to the optional per-execute accumulator wired
         // in by executor-context-engine-setup.ts. The two callbacks are
@@ -726,14 +725,11 @@ export function createContextEngine(
             thinkingFenceIndex: snap.thinking.cacheFenceIndex,
           }),
           ...(snap.reasoningTags && snap.reasoningTags.tagsStripped > 0 ? { reasoningTagsStripped: snap.reasoningTags.tagsStripped } : {}),
-          ...(snap.signatureReplayScrubber && snap.signatureReplayScrubber.dropped > 0
-            ? { signatureReplayScrubberDropped: snap.signatureReplayScrubber.dropped }
+          ...(snap.signatureReplayScrubber && snap.signatureReplayScrubber.blocksAffected > 0
+            ? { signatureReplayScrubberDropped: snap.signatureReplayScrubber.blocksAffected }
             : {}),
-          ...(snap.signatureReplayScrubber && snap.signatureReplayScrubber.signaturesStripped > 0
-            ? { signatureReplayScrubberSignaturesStripped: snap.signatureReplayScrubber.signaturesStripped }
-            : {}),
-          ...(snap.signatureReplayScrubber?.reason !== undefined
-            ? { signatureReplayScrubberReason: snap.signatureReplayScrubber.reason }
+          ...(snap.signatureReplayScrubber && snap.signatureReplayScrubber.toolCallsAffected > 0
+            ? { signatureReplayScrubberSignaturesStripped: snap.signatureReplayScrubber.toolCallsAffected }
             : {}),
           ...(snap.signatureSurrogateGuard && snap.signatureSurrogateGuard.signaturesStripped > 0
             ? { signatureSurrogateGuardSignaturesStripped: snap.signatureSurrogateGuard.signaturesStripped }

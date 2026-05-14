@@ -39,9 +39,8 @@ export function parseSessionKey(raw: unknown): Result<SessionKey, z.ZodError> {
  * Format a SessionKey into a deterministic string for use as a cache/lookup key.
  *
  * Format: `[agent:{agentId}:]{tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
- *
- * When agentId/threadId are absent, output is identical to the original format
- * for backward compatibility.
+ * where the `agent:` prefix and `thread:` suffix are emitted only when the
+ * corresponding optional field is set.
  */
 export function formatSessionKey(key: SessionKey): string {
   let formatted = "";
@@ -63,25 +62,15 @@ export function formatSessionKey(key: SessionKey): string {
 
 /**
  * Parse a formatted session key string back into a SessionKey object.
- * Reverses the output of formatSessionKey().
+ * Reverses the output of formatSessionKey() for the unprefixed-agent form.
  *
- * Format: `[agent:{agentId}:]{tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
- *
- * Old format keys (no agent prefix, no thread suffix) parse identically
- * to the original behavior for backward compatibility.
+ * Accepted format: `{tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
  *
  * @returns SessionKey if the format is valid, undefined otherwise
  */
 export function parseFormattedSessionKey(formatted: string): SessionKey | undefined {
   if (!formatted || typeof formatted !== "string") return undefined;
-  let parts = formatted.split(":");
-
-  // Detect and strip agent: prefix
-  let agentId: string | undefined;
-  if (parts[0] === "agent" && parts.length >= 5) {
-    agentId = parts[1];
-    parts = parts.slice(2);
-  }
+  const parts = formatted.split(":");
 
   if (parts.length < 3) return undefined;
 
@@ -109,10 +98,6 @@ export function parseFormattedSessionKey(formatted: string): SessionKey | undefi
     userId: parts[1]!,
     channelId: channelIdParts.join(":"),
   };
-
-  if (agentId !== undefined) {
-    key.agentId = agentId;
-  }
 
   // Parse optional peer:, guild:, and thread: segments starting where
   // channelId ended.
