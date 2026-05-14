@@ -25,6 +25,8 @@ import {
   type PerAgentConfig,
   type TypedEventBus,
   type OutputGuardPort,
+  type ClockPort,
+  type TimerPort,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { fromPromise } from "@comis/shared";
@@ -128,6 +130,10 @@ export interface RunPromptParams {
     envelopeConfig?: EnvelopeConfig;
     outputGuard?: OutputGuardPort;
     canaryToken?: string;
+    /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+    clock: ClockPort;
+    /** Timer scheduling (Phase 39 PORTS-13). */
+    timers: TimerPort;
   };
   // Callbacks
   onResetTimer: (fn: (() => void) | undefined) => void;
@@ -386,6 +392,8 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
         providerHealth: deps.providerHealth,
         lastKnownModel: deps.lastKnownModel,
         onResetTimer: (fn) => { onResetTimer(fn); },
+        clock: deps.clock,
+        timers: deps.timers,
       },
     });
     promptSucceeded = retryResult.succeeded;
@@ -523,7 +531,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
             // Brief settle before retry. Distinct from the 3s silent-retry
             // delay because signed-replay is a deterministic state error,
             // not a transient provider condition.
-            await new Promise(r => setTimeout(r, 1_000));
+            await new Promise<void>(r => { const h = deps.timers.setTimeout(() => r(), 1_000); void h; });
 
             const retryResult = await runWithModelRetry({
               session,
@@ -546,6 +554,8 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
                 providerHealth: deps.providerHealth,
                 lastKnownModel: deps.lastKnownModel,
                 onResetTimer: (fn) => { onResetTimer(fn); },
+                clock: deps.clock,
+                timers: deps.timers,
               },
             });
             promptSucceeded = retryResult.succeeded;
@@ -578,7 +588,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
               blocksRemoved,
               thoughtSignaturesStripped,
               succeeded: recovered,
-              timestamp: Date.now(),
+              timestamp: deps.clock.now(),
             });
 
             if (recovered) {
@@ -700,7 +710,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
             }
 
             // Brief delay to let transient provider conditions clear
-            await new Promise(r => setTimeout(r, 3_000));
+            await new Promise<void>(r => { const h = deps.timers.setTimeout(() => r(), 3_000); void h; });
 
             // Re-enter the full model retry pipeline
             const retryResult = await runWithModelRetry({
@@ -724,6 +734,8 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
                 providerHealth: deps.providerHealth,
                 lastKnownModel: deps.lastKnownModel,
                 onResetTimer: (fn) => { onResetTimer(fn); },
+                clock: deps.clock,
+                timers: deps.timers,
               },
             });
             promptSucceeded = retryResult.succeeded;
@@ -792,6 +804,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
                           session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
                           effectiveTimeout.retryPromptTimeoutMs,
                           () => session.abort(),
+                          deps.timers,
                         );
 
                         const lkwText = getVisibleAssistantText(session);
@@ -895,7 +908,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
         sessionKey: formatSessionKey(sessionKey),
         originalMaxTokens,
         escalatedMaxTokens,
-        timestamp: Date.now(),
+        timestamp: deps.clock.now(),
       });
 
       // One-shot stream wrapper: inject escalated maxTokens into the next prompt call
@@ -918,6 +931,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
           }),
           effectiveTimeout.retryPromptTimeoutMs,
           () => session.abort(),
+          deps.timers,
         );
 
         // Update response from escalated attempt
@@ -1022,6 +1036,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
         formattedKey,
         eventBus: deps.eventBus,
         logger: deps.logger,
+        clock: deps.clock,
       });
       if (plan) {
         executionPlanRef.current = plan;
@@ -1166,6 +1181,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
         outputGuard: deps.outputGuard, response: result.response, context: "success",
         canaryToken: deps.canaryToken, agentId: agentId ?? "unknown",
         tenantId: sessionKey.tenantId, sessionKey, eventBus: deps.eventBus, logger: deps.logger,
+        clock: deps.clock,
       });
       result.response = guardScan.response;
     }
@@ -1196,6 +1212,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
           }),
           effectiveTimeout.retryPromptTimeoutMs,
           () => session.abort(),
+          deps.timers,
         );
         promptSucceeded = true;
         promptError = undefined;
@@ -1232,7 +1249,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
       deps.logger.warn(
         {
           err: promptError,
-          totalElapsedMs: Date.now() - executionStartMs,
+          totalElapsedMs: deps.clock.now() - executionStartMs,
           hint: "All models failed (primary + fallbacks)",
           errorKind: "dependency" as ErrorKind,
         },
@@ -1301,7 +1318,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
         const estimatedTotalCost = estimatedInputCost + estimatedCacheWriteCost + estimatedCacheReadCost;
 
         deps.eventBus.emit("observability:token_usage", {
-          timestamp: Date.now(),
+          timestamp: deps.clock.now(),
           traceId: executionId,
           agentId: agentId ?? "default",
           channelId: msg.channelId,
@@ -1360,6 +1377,7 @@ export async function runPrompt(params: RunPromptParams): Promise<PromptRunResul
           outputGuard: deps.outputGuard, response: result.response, context: "error",
           canaryToken: deps.canaryToken, agentId: agentId ?? "unknown",
           tenantId: sessionKey.tenantId, sessionKey, eventBus: deps.eventBus, logger: deps.logger,
+          clock: deps.clock,
         });
         result.response = guardScan.response;
       }

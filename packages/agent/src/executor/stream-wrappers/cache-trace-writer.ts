@@ -34,6 +34,8 @@ export interface CacheTraceConfig {
   maxSize?: string;
   /** Number of rotated files to keep. Undefined = no rotation. */
   maxFiles?: number;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: import("@comis/core").ClockPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +180,7 @@ export function createCacheTraceWriter(
       appendJsonlLine(
         config.filePath,
         {
-          ts: new Date().toISOString(),
+          ts: config.clock.nowDate().toISOString(),
           type: "cache_trace",
           agentId: config.agentId,
           sessionId: config.sessionId,

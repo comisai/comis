@@ -29,6 +29,7 @@
  */
 
 import { unlinkSync } from "node:fs";
+import type { EnvPort } from "@comis/core";
 
 /** Shape returned when fault injection fires (otherwise `undefined`). */
 export interface SilentFailureInjection {
@@ -50,15 +51,17 @@ interface Logger {
  * through to real execution.
  *
  * @param logger - For WARN on successful injection, DEBUG on unexpected FS errors.
+ * @param env - EnvPort for reading the test-only fault flag env vars (Phase 39 PORTS-12).
  * @param context - Extra fields attached to the WARN log (agentId, sessionKey, etc.).
  * @returns SilentFailureInjection when fault fired; undefined otherwise.
  */
 export function tryInjectSilentFailure(
   logger: Logger,
+  env: EnvPort,
   context: Record<string, unknown> = {},
 ): SilentFailureInjection | undefined {
-  // eslint-disable-next-line no-restricted-syntax -- ops toggle read before SecretManager is initialized
-  const faultFlag = process.env.COMIS_TEST_SILENT_FAIL_FLAG;
+  // Phase 39 PORTS-12: env reads via injected port (was process.env).
+  const faultFlag = env.get("COMIS_TEST_SILENT_FAIL_FLAG");
   if (!faultFlag) return undefined;
 
   // Optional scope gate: COMIS_TEST_SILENT_FAIL_SCOPE controls which
@@ -67,8 +70,7 @@ export function tryInjectSilentFailure(
   //   "subagent"          — only sub-agent sessions may fire
   //   "parent"            — only non-sub-agent sessions may fire
   // Sub-agent session keys contain "sub-agent:" (see sub-agent-runner).
-  // eslint-disable-next-line no-restricted-syntax -- ops toggle read before SecretManager is initialized
-  const scope = process.env.COMIS_TEST_SILENT_FAIL_SCOPE;
+  const scope = env.get("COMIS_TEST_SILENT_FAIL_SCOPE");
   if (scope === "subagent" || scope === "parent") {
     const sessionKey = typeof context.sessionKey === "string" ? context.sessionKey : "";
     const isSubAgent = sessionKey.includes("sub-agent:") || sessionKey.includes("sub-agent-");

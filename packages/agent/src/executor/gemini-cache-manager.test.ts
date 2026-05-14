@@ -53,6 +53,7 @@ function makeConfig(overrides?: Partial<GeminiCacheManagerConfig>): GeminiCacheM
     maxActiveCachesPerAgent: 20,
     refreshThreshold: 0.5,
     logger: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    clock: { now: () => Date.now(), nowDate: () => new Date() },
     ...overrides,
   };
 }

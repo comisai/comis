@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createCacheTraceWriter, parseSize, rotateIfNeeded } from "./cache-trace-writer.js";
+import type { ClockPort } from "@comis/core";
+const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 import type { CacheTraceConfig } from "./cache-trace-writer.js";
 import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers.js";
 
@@ -53,7 +55,7 @@ describe("createCacheTraceWriter", () => {
   });
 
   it("writes JSONL line with model ID and message count", () => {
-    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl" };
+    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl", clock: testClock };
     const wrapper = createCacheTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -76,7 +78,7 @@ describe("createCacheTraceWriter", () => {
   });
 
   it("includes truncated system prompt SHA-256 digest", () => {
-    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl" };
+    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl", clock: testClock };
     const wrapper = createCacheTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -91,7 +93,7 @@ describe("createCacheTraceWriter", () => {
   });
 
   it("includes agent ID when provided", () => {
-    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl", agentId: "agent-42" };
+    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl", agentId: "agent-42", clock: testClock };
     const wrapper = createCacheTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -102,7 +104,7 @@ describe("createCacheTraceWriter", () => {
   });
 
   it("includes session ID when provided", () => {
-    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl", agentId: "agent-42", sessionId: "telegram:chat123:user456" };
+    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl", agentId: "agent-42", sessionId: "telegram:chat123:user456", clock: testClock };
     const wrapper = createCacheTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -113,7 +115,7 @@ describe("createCacheTraceWriter", () => {
   });
 
   it("includes tool count from context", () => {
-    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl" };
+    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl", clock: testClock };
     const wrapper = createCacheTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -130,7 +132,7 @@ describe("createCacheTraceWriter", () => {
   });
 
   it("passes through to next StreamFn unchanged", () => {
-    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl" };
+    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl", clock: testClock };
     const wrapper = createCacheTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -147,7 +149,7 @@ describe("createCacheTraceWriter", () => {
   it("does not throw when appendFileSync fails", () => {
     mockAppendFileSync.mockImplementation(() => { throw new Error("disk full"); });
 
-    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl" };
+    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl", clock: testClock };
     const wrapper = createCacheTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -168,7 +170,7 @@ describe("createCacheTraceWriter", () => {
   });
 
   it("returns a named function for logging", () => {
-    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl" };
+    const config: CacheTraceConfig = { filePath: "/tmp/trace.jsonl", clock: testClock };
     const wrapper = createCacheTraceWriter(config, logger);
     expect(wrapper.name).toBe("cacheTraceWriter");
   });
@@ -181,6 +183,7 @@ describe("createCacheTraceWriter", () => {
       filePath: "/tmp/trace.jsonl",
       maxSize: "5m",
       maxFiles: 2,
+      clock: testClock,
     };
     const wrapper = createCacheTraceWriter(config, logger);
     const wrappedFn = wrapper(base);

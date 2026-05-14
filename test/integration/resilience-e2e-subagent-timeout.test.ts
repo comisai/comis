@@ -28,6 +28,40 @@ import {
 } from "@comis/agent";
 
 import { TypedEventBus } from "@comis/core";
+import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Phase 39: lightweight port wrappers that delegate to globals so
+// vi.useFakeTimers() continues to intercept timer ticks below.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 // ---------------------------------------------------------------------------
 // Shared temp directory
@@ -99,6 +133,8 @@ function buildIntegrationDeps(
     tenantId: "test-subagent-timeout",
     dataDir: tmpDir,
     logger: mockLogger,
+    clock: testClock,
+    timers: testTimers,
     ...overrides,
   } as SubAgentRunnerDeps & { eventBus: TypedEventBus };
 }

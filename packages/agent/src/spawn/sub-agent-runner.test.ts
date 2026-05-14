@@ -30,6 +30,40 @@ import {
   type ValidationResult,
   type AbortClassification,
 } from "./sub-agent-result-processor.js";
+import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Phase 39: lightweight port wrappers that delegate to globals so
+// vi.useFakeTimers() continues to intercept Date.now / setTimeout / setInterval below.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -60,6 +94,8 @@ function createMockDeps(): SubAgentRunnerDeps {
       subAgentToolGroups: ["coding"],
     },
     tenantId: "default",
+    clock: testClock,
+    timers: testTimers,
   };
 }
 
@@ -1214,6 +1250,8 @@ describe("createSubAgentRunner", () => {
           },
         } as SubAgentRunnerDeps["config"],
         tenantId: "default",
+        clock: testClock,
+        timers: testTimers,
       };
     }
 
@@ -1420,6 +1458,8 @@ describe("createSubAgentRunner", () => {
           subagentContext: { maxSpawnDepth: 3, maxChildrenPerAgent: 1, maxQueuedPerAgent: 10 },
         } as SubAgentRunnerDeps["config"],
         tenantId: "default",
+        clock: testClock,
+        timers: testTimers,
       };
 
       const runner = createSubAgentRunner(limitDeps);
@@ -1466,6 +1506,8 @@ describe("createSubAgentRunner", () => {
           subagentContext: { maxSpawnDepth: 3, maxChildrenPerAgent: 1, maxQueuedPerAgent: 2 },
         } as SubAgentRunnerDeps["config"],
         tenantId: "default",
+        clock: testClock,
+        timers: testTimers,
       };
 
       const runner = createSubAgentRunner(limitDeps);
@@ -1502,6 +1544,8 @@ describe("createSubAgentRunner", () => {
           subagentContext: { maxSpawnDepth: 3, maxChildrenPerAgent: 1, maxQueuedPerAgent: 0 },
         } as SubAgentRunnerDeps["config"],
         tenantId: "default",
+        clock: testClock,
+        timers: testTimers,
       };
 
       const runner = createSubAgentRunner(limitDeps);
@@ -1535,6 +1579,8 @@ describe("createSubAgentRunner", () => {
           subagentContext: { maxSpawnDepth: 3, maxChildrenPerAgent: 1, maxQueuedPerAgent: 10, queueTimeoutMs: 5_000 },
         } as SubAgentRunnerDeps["config"],
         tenantId: "default",
+        clock: testClock,
+        timers: testTimers,
       };
 
       const runner = createSubAgentRunner(limitDeps);
@@ -1630,6 +1676,8 @@ describe("createSubAgentRunner", () => {
           },
         } as SubAgentRunnerDeps["config"],
         tenantId: "default",
+        clock: testClock,
+        timers: testTimers,
       };
     }
 
@@ -2794,6 +2842,8 @@ describe("spawn rejection WARN logs", () => {
       } as SubAgentRunnerDeps["config"],
       tenantId: "default",
       logger,
+      clock: testClock,
+      timers: testTimers,
     };
   }
 

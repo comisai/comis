@@ -15,9 +15,33 @@
  */
 
 import type { CacheRetention } from "@mariozechner/pi-ai";
+import type { ClockPort } from "@comis/core";
 import { createSessionLatch } from "./session-latch.js";
 import type { SessionLatch } from "./session-latch.js";
 import { createCacheBreakDetector } from "./cache-break-detection.js";
+
+// ---------------------------------------------------------------------------
+// Module-level clock provider (Phase 39 PORTS-11)
+// ---------------------------------------------------------------------------
+// The executor session-state module holds module-level Maps (sessionDeliveredGuides,
+// sessionToolSchemaSnapshots, etc.) for cross-turn state. These can't accept
+// a per-call clock parameter — so the daemon composition root sets a module-level
+// clock provider at startup via `setSessionStateClock(clock)`. Until set, the
+// fallback throws to surface mis-wiring early.
+
+let moduleClock: ClockPort | undefined;
+
+export function setSessionStateClock(clock: ClockPort): void {
+  moduleClock = clock;
+}
+
+function getNow(): number {
+  if (!moduleClock) {
+    // @allow-throw: module-level Map cannot return Result; surface mis-wiring at first access (Phase 39 PORTS-11)
+    throw new Error("executor-session-state: clock not initialized — call setSessionStateClock() at daemon startup");
+  }
+  return moduleClock.now();
+}
 
 // ---------------------------------------------------------------------------
 // Design 4.1: Bounded session Maps with LRU eviction + TTL
@@ -49,7 +73,7 @@ export function createBoundedSessionMap<V>(
   const map = new Map<string, BoundedMapEntry<V>>();
 
   function evictStale(): void {
-    const now = Date.now();
+    const now = getNow();
     for (const [key, entry] of map) {
       if (now - entry.lastAccess > ttlMs) map.delete(key);
     }
@@ -67,7 +91,7 @@ export function createBoundedSessionMap<V>(
       if (!entry) return undefined;
       // Move to most-recently-used: delete then re-insert
       map.delete(key);
-      entry.lastAccess = Date.now();
+      entry.lastAccess = getNow();
       map.set(key, entry);
       return entry.value;
     },
@@ -76,7 +100,7 @@ export function createBoundedSessionMap<V>(
       if (map.has(key)) {
         map.delete(key);
       }
-      map.set(key, { value, lastAccess: Date.now() });
+      map.set(key, { value, lastAccess: getNow() });
       // Evict stale and over-capacity entries after insertion
       evictStale();
     },
@@ -245,7 +269,7 @@ export function clearSessionBreakpointIndex(sessionKey: string): void {
 /** Eviction cooldown state -- tracks turns remaining after server-side eviction. */
 export interface EvictionCooldownState {
   turnsRemaining: number;
-  evictedAt: number;  // Date.now() of eviction detection
+  evictedAt: number;  // getNow() of eviction detection
 }
 
 const sessionEvictionCooldown = createBoundedSessionMap<EvictionCooldownState>();
@@ -257,7 +281,7 @@ export function getEvictionCooldown(sessionKey: string): EvictionCooldownState |
 
 /** Set eviction cooldown (called on server eviction detection). */
 export function setEvictionCooldown(sessionKey: string, turnsRemaining: number): void {
-  sessionEvictionCooldown.set(sessionKey, { turnsRemaining, evictedAt: Date.now() });
+  sessionEvictionCooldown.set(sessionKey, { turnsRemaining, evictedAt: getNow() });
 }
 
 /** Decrement eviction cooldown by 1 turn. Deletes entry when reaching 0. */
@@ -400,7 +424,11 @@ let cacheBreakDetectorInstance: ReturnType<typeof createCacheBreakDetector> | un
 /** Lazily create or return the singleton cache break detector. */
 export function getCacheBreakDetector(logger: { debug: (...args: unknown[]) => void; info: (...args: unknown[]) => void }): ReturnType<typeof createCacheBreakDetector> {
   if (!cacheBreakDetectorInstance) {
-    cacheBreakDetectorInstance = createCacheBreakDetector(logger);
+    if (!moduleClock) {
+      // @allow-throw: module-level singleton cannot return Result; surface mis-wiring at first access (Phase 39 PORTS-11)
+      throw new Error("executor-session-state: clock not initialized — call setSessionStateClock() before getCacheBreakDetector()");
+    }
+    cacheBreakDetectorInstance = createCacheBreakDetector(logger, { clock: moduleClock });
   }
   return cacheBreakDetectorInstance;
 }

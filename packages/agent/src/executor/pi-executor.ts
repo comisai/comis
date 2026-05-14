@@ -51,6 +51,9 @@ import {
   type InjectionRateLimiter,
   type SenderTrustDisplayConfig,
   type ToolCapabilityPort,
+  type ClockPort,
+  type EnvPort,
+  type TimerPort,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError } from "@comis/shared";
@@ -104,6 +107,7 @@ import {
   recordCacheSavings,
   getCacheSavings,
   clearSessionCacheSavings,
+  setSessionStateClock,
 } from "./executor-session-state.js";
 import { validateInput } from "./executor-input-guard.js";
 import { scanWithOutputGuard } from "./executor-response-filter.js";
@@ -369,6 +373,12 @@ export interface PiExecutorDeps {
   backgroundTaskManager?: BackgroundTaskManager;
   /** Max message.send/reply calls per execution (0 = unlimited, default: 3). */
   maxSendsPerExecution?: number;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: ClockPort;
+  /** Environment-variable reads (Phase 39 PORTS-12). Required for fault-injector and model-retry env reads. */
+  env: EnvPort;
+  /** Timer scheduling (Phase 39 PORTS-13). Required by executor-prompt-runner (race timers) and prompt-timeout. */
+  timers: TimerPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +396,10 @@ export function createPiExecutor(
   config: PerAgentConfig,
   deps: PiExecutorDeps,
 ): AgentExecutor {
+  // Phase 39 PORTS-11: initialize module-level clock provider for session-state Maps.
+  // The Maps in executor-session-state.ts cannot accept per-call clock since they're
+  // module-level shared state — set once at executor construction time.
+  setSessionStateClock(deps.clock);
   // Compaction resets lifecycle timers (prevents stale demotion data).
   // Uses resetTrackerTimers which checks Map membership -- never creates phantom entries.
   deps.eventBus.on("compaction:flush", (event) => {
@@ -424,7 +438,7 @@ export function createPiExecutor(
       overrides?: ExecutionOverrides,
     ): Promise<ExecutionResult> {
       // a. Record execution start time
-      const executionStartMs = Date.now();
+      const executionStartMs = deps.clock.now();
 
       // a-bis. Pre-resolve OAuth token before any pi-coding-agent
       // dispatch. The setRuntimeApiKey side-effect inside resolveProviderApiKey
@@ -474,6 +488,7 @@ export function createPiExecutor(
         rateLimiter: deps.rateLimiter,
         eventBus: deps.eventBus,
         logger: deps.logger,
+        clock: deps.clock,
       });
       if (!inputGuardResult.passed) {
         result.finishReason = (inputGuardResult.earlyFinishReason ?? "error") as ExecutionResult["finishReason"];
@@ -516,7 +531,7 @@ export function createPiExecutor(
       // configs; see packages/agent/src/executor/fault-injector.ts for the
       // safety analysis.
       {
-        const injection = tryInjectSilentFailure(deps.logger, {
+        const injection = tryInjectSilentFailure(deps.logger, deps.env, {
           agentId,
           sessionKey: formatSessionKey(sessionKey),
         });
@@ -1225,7 +1240,7 @@ export function createPiExecutor(
             // Enrich with elapsed time for tiered server-side attribution.
             checkCacheBreak: (input) => cacheBreakDetector.checkResponseForCacheBreak({
               ...input,
-              lastResponseElapsedMs: getElapsedSinceLastResponse(formattedKey),
+              lastResponseElapsedMs: getElapsedSinceLastResponse(formattedKey, deps.clock),
               // W4: Thread message block count for lookback window detection.
               messageBlockCount: session.agent.state.messages?.length ?? 0,
             }),
@@ -1239,7 +1254,7 @@ export function createPiExecutor(
               tokenAnchor = {
                 inputTokens,
                 messageCount: Math.max(0, messageCount),
-                timestamp: Date.now(),
+                timestamp: deps.clock.now(),
               };
             },
             // Pre-LLM-call hook -- runs once per `turn_start`,
@@ -1493,6 +1508,8 @@ export function createPiExecutor(
                 envelopeConfig: deps.envelopeConfig,
                 outputGuard: deps.outputGuard,
                 canaryToken: deps.canaryToken,
+                clock: deps.clock,
+                timers: deps.timers,
               },
               onResetTimer: (fn) => { currentResetTimer = fn; },
               // Provide last cache write tokens for improved timeout cost estimation
@@ -1547,6 +1564,7 @@ export function createPiExecutor(
                 outputGuard: deps.outputGuard, response: result.response, context: "exception",
                 canaryToken: deps.canaryToken, agentId: agentId ?? "unknown",
                 tenantId: sessionKey.tenantId, sessionKey, eventBus: deps.eventBus, logger: deps.logger,
+                clock: deps.clock,
               });
               result.response = guardScan.response;
             }
@@ -1583,6 +1601,7 @@ export function createPiExecutor(
                 activeRunRegistry: deps.activeRunRegistry,
                 embeddingEnqueue: deps.embeddingEnqueue,
                 workspaceDir: deps.workspaceDir,
+                clock: deps.clock,
               },
               sessionAdapter,
               executionCacheRetentionClear: () => { executionCacheRetention = undefined; },

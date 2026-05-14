@@ -37,6 +37,8 @@ import { supportsToolSearch } from "../tool-deferral.js";
  * Controls cache breakpoints, 1M beta header, service_tier, and store injection.
  */
 export interface RequestBodyInjectorConfig {
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: import("@comis/core").ClockPort;
   /** Getter for per-execution cache retention override. */
   getCacheRetention: () => CacheRetention | undefined;
   /** Getter for conversation message retention. When provided, conversation
@@ -1243,7 +1245,7 @@ export function createRequestBodyInjector(
             const TTL_MAP: Record<string, number> = { short: 300_000, long: 3_600_000 };
             const ttlMs = TTL_MAP[config.parentCacheRetention ?? "short"] ?? 300_000;
             const SAFETY_MARGIN = 0.8;
-            const elapsed = Date.now() - config.cacheWriteTimestamp;
+            const elapsed = config.clock.now() - config.cacheWriteTimestamp;
             if (elapsed > ttlMs * SAFETY_MARGIN) {
               effectiveSkipCacheWrite = false;
               logger.debug(

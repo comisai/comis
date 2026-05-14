@@ -102,6 +102,8 @@ export interface ToolAssemblyDeps {
   };
   /** Resolve platform message character limit for a channel type. */
   getChannelMaxChars?: (channelType: string) => number | undefined;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: import("@comis/core").ClockPort;
 }
 
 /** Result of the tool assembly pipeline. */
@@ -341,6 +343,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // Forward the tool-capability port so prompt-assembly.ts can read
       // `port.isCapabilityIndexEnabled()` for the static-prompt swap gate.
       toolCapabilityPort: deps.toolCapabilityPort,
+      clock: deps.clock,
     },
     msg,
     sessionKey,

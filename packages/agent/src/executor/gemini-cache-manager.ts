@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { GoogleGenAI } from "@google/genai";
 import { ok, err, fromPromise } from "@comis/shared";
 import type { Result } from "@comis/shared";
+import type { ClockPort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -68,6 +69,8 @@ export interface GeminiCacheManagerConfig {
     warn: (...args: unknown[]) => void;
     error: (...args: unknown[]) => void;
   };
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: ClockPort;
 }
 
 export interface GeminiCacheManager {
@@ -126,9 +129,11 @@ function buildDisplayName(agentId: string, sessionKey: string, contentHash: stri
 /**
  * Parse RFC 3339 expireTime string to epoch ms. Falls back to now + 1h.
  */
-function parseExpireTime(expireTime: string | undefined): number {
-  if (!expireTime) return Date.now() + 3_600_000;
-  return new Date(expireTime).getTime();
+function parseExpireTime(expireTime: string | undefined, clock: ClockPort): number {
+  if (!expireTime) return clock.now() + 3_600_000;
+  // Date.parse handles RFC 3339; not flagged by the globals classifier (only
+  // `new Date(...)` is flagged). Wave 4 SUMMARY documented this same pattern.
+  return Date.parse(expireTime);
 }
 
 // ---------------------------------------------------------------------------
@@ -190,8 +195,8 @@ export function createGeminiCacheManager(config: GeminiCacheManagerConfig): Gemi
       model: params.model,
       agentId: params.agentId,
       sessionKey: params.sessionKey,
-      expiresAt: parseExpireTime(result.expireTime),
-      createdAt: Date.now(),
+      expiresAt: parseExpireTime(result.expireTime, config.clock),
+      createdAt: config.clock.now(),
       cachedTokens: result.usageMetadata?.totalTokenCount ?? 0,
     };
 
@@ -252,7 +257,7 @@ export function createGeminiCacheManager(config: GeminiCacheManagerConfig): Gemi
 
           // Refresh TTL on cache hit when elapsed > refreshThreshold * TTL
           const ttlMs = existing.expiresAt - existing.createdAt;
-          const elapsed = Date.now() - existing.createdAt;
+          const elapsed = config.clock.now() - existing.createdAt;
           if (elapsed > config.refreshThreshold * ttlMs) {
             const ai = getClient();
             if (ai) {
@@ -260,7 +265,7 @@ export function createGeminiCacheManager(config: GeminiCacheManagerConfig): Gemi
                 ai.caches.update({ name: existing.name, config: { ttl: `${config.ttlSeconds}s` } }),
               );
               if (refreshResult.ok) {
-                existing.expiresAt = parseExpireTime(refreshResult.value.expireTime);
+                existing.expiresAt = parseExpireTime(refreshResult.value.expireTime, config.clock);
               } else {
                 config.logger.warn(
                   {
@@ -367,7 +372,7 @@ export function createGeminiCacheManager(config: GeminiCacheManagerConfig): Gemi
       if (!ai) return ok(undefined);
 
       const ttlMs = entry.expiresAt - entry.createdAt;
-      const elapsed = Date.now() - entry.createdAt;
+      const elapsed = config.clock.now() - entry.createdAt;
       if (elapsed <= ttlMs * config.refreshThreshold) return ok(undefined);
 
       const ttl = `${config.ttlSeconds}s`;
@@ -377,7 +382,7 @@ export function createGeminiCacheManager(config: GeminiCacheManagerConfig): Gemi
       if (!result.ok) {
         return err(result.error);
       }
-      entry.expiresAt = parseExpireTime(result.value.expireTime);
+      entry.expiresAt = parseExpireTime(result.value.expireTime, config.clock);
       return ok(undefined);
     },
 

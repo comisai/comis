@@ -630,7 +630,7 @@ async function stageFoundation(input: {
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
-  } = await setupMemory({ container, memoryLogger });
+  } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite)
   // DAEMON-API-09 refs #6/#7: obsStore + obsPersistence via const+IIFE
@@ -679,6 +679,7 @@ async function stageFoundation(input: {
     maxActiveCachesPerAgent: 20,
     refreshThreshold: 0.5,
     logger: daemonLogger,
+    clock,
   });
 
   // Deferred channel plugins ref (populated after setupChannels)
@@ -689,6 +690,8 @@ async function stageFoundation(input: {
     dataDir,
     eventBus: container.eventBus,
     logger: logLevelManager.getLogger("background-tasks"),
+    clock,
+    timers,
   });
 
   // Deferred notification ref + bgNotifyFn closure
@@ -1015,7 +1018,7 @@ async function stageAgents(input: {
   const { overrides, foundation } = input;
   const {
     container, dataDir,
-    clock, timers,
+    clock, env, timers,
     daemonLogger, gatewayLogger, agentLogger, schedulerLogger, skillsLogger,
     memoryAdapter, db, sessionStore, cachedPort, embeddingQueue,
     contextStore,
@@ -1090,6 +1093,7 @@ async function stageAgents(input: {
     // Daemon-global MCP manager threaded into setupSingleAgent for
     // per-agent ToolCapabilityPort adapter construction.
     mcpClientManager,
+    clock, env, timers,  // Phase 39 PORTS-11/12/13
   });
 
   // Log operation model resolutions at startup (dry-run validation)
@@ -1127,6 +1131,7 @@ async function stageAgents(input: {
     subprocessEnv,
     systemEventQueue,  // cron-heartbeat routing
     onCronWake: buildDeferredCronWakeCallback(cronWakeCallbackRef, daemonLogger),
+    clock, timers,     // Phase 39 PORTS-11/13
   });
 
   // Post-setupAgents cleanup wiring: session expiry, Gemini cache disposal,
@@ -1657,6 +1662,7 @@ async function stageChannels(input: {
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
     activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
     fileLock: singleAgentDeps.fileLock,
+    clock: handle.clock, timers: handle.timers,
   });
   const promptTimeoutTimestamps: number[] = [];
   container.eventBus.on("execution:prompt_timeout", () => { promptTimeoutTimestamps.push(Date.now()); });

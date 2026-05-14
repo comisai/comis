@@ -10,6 +10,7 @@
  */
 
 import { TimeoutError } from "@comis/shared";
+import type { TimerPort, TimerHandle } from "@comis/core";
 
 /**
  * Error thrown when a session.prompt() call exceeds its wall-clock timeout.
@@ -45,11 +46,12 @@ export function withPromptTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   abort: () => void | Promise<void>,
+  timers: TimerPort,
 ): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
+  let timer: TimerHandle;
 
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
+    timer = timers.setTimeout(() => {
       // abort() may return Promise<void> -- handle both sync throw and async rejection
       try {
         // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
@@ -62,7 +64,7 @@ export function withPromptTimeout<T>(
   });
 
   return Promise.race([promise, timeoutPromise]).finally(() => {
-    clearTimeout(timer);
+    timer.cancel();
     // Suppress unhandled rejection when the original promise rejects after timeout wins
     // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
     promise.catch(() => {});
@@ -97,14 +99,15 @@ export function withResettablePromptTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   abort: () => void | Promise<void>,
+  timers: TimerPort,
 ): ResettableTimeout<T> {
   let settled = false;
-  let timer: ReturnType<typeof setTimeout>;
+  let timer: TimerHandle | undefined;
   let rejectFn: (reason: unknown) => void;
 
   function startTimer(): void {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
+    if (timer) timer.cancel();
+    timer = timers.setTimeout(() => {
       if (settled) return;
       settled = true;
       // abort() fire-and-forget -- same pattern as withPromptTimeout
@@ -125,7 +128,7 @@ export function withResettablePromptTimeout<T>(
 
   const racedPromise = Promise.race([promise, timeoutPromise]).finally(() => {
     settled = true;
-    clearTimeout(timer);
+    if (timer) timer.cancel();
     // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
     promise.catch(() => {});
   });

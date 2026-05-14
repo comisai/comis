@@ -20,6 +20,7 @@ import {
   type InputValidationResult,
   type InputSecurityGuard,
   type InjectionRateLimiter,
+  type ClockPort,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 
@@ -51,8 +52,10 @@ export function validateInput(params: {
   rateLimiter?: InjectionRateLimiter;
   eventBus: TypedEventBus;
   logger: ComisLogger;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: ClockPort;
 }): InputGuardResult {
-  const { msg, sessionKey, agentId, inputValidator, inputGuard, rateLimiter, eventBus, logger } = params;
+  const { msg, sessionKey, agentId, inputValidator, inputGuard, rateLimiter, eventBus, logger, clock } = params;
   let safetyReinforcement: string | undefined;
 
   // Structural validation
@@ -68,7 +71,7 @@ export function validateInput(params: {
         "InputValidator flagged message",
       );
       eventBus.emit("security:injection_detected", {
-        timestamp: Date.now(),
+        timestamp: clock.now(),
         source: "user_input" as const,
         patterns: validation.reasons,
         riskLevel: "medium" as const,
@@ -96,7 +99,7 @@ export function validateInput(params: {
         "InputSecurityGuard blocked message",
       );
       eventBus.emit("security:injection_detected", {
-        timestamp: Date.now(),
+        timestamp: clock.now(),
         source: "user_input" as const,
         patterns: guardResult.patterns,
         riskLevel: guardResult.riskLevel,
@@ -118,7 +121,7 @@ export function validateInput(params: {
     // Emit event for warn/reinforce actions
     if (guardResult.action !== "pass") {
       eventBus.emit("security:injection_detected", {
-        timestamp: Date.now(),
+        timestamp: clock.now(),
         source: "user_input" as const,
         patterns: guardResult.patterns,
         riskLevel: guardResult.riskLevel,
@@ -148,7 +151,7 @@ export function validateInput(params: {
         if (rateResult.level === "warn") {
           // Emit rate exceeded event at warn level
           eventBus.emit("security:injection_rate_exceeded", {
-            timestamp: Date.now(),
+            timestamp: clock.now(),
             sessionKey: formatSessionKey(sessionKey),
             count: rateResult.count,
             threshold: rateResult.count,
@@ -171,7 +174,7 @@ export function validateInput(params: {
         if (rateResult.level === "audit") {
           // Emit rate exceeded event at audit level
           eventBus.emit("security:injection_rate_exceeded", {
-            timestamp: Date.now(),
+            timestamp: clock.now(),
             sessionKey: formatSessionKey(sessionKey),
             count: rateResult.count,
             threshold: rateResult.count,
@@ -179,7 +182,7 @@ export function validateInput(params: {
           });
           // Emit audit:event with full context
           eventBus.emit("audit:event", {
-            timestamp: Date.now(),
+            timestamp: clock.now(),
             agentId: agentId ?? "unknown",
             tenantId: sessionKey.tenantId,
             actionType: "injection_rate_exceeded",

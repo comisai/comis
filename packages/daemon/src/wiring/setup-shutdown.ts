@@ -90,8 +90,8 @@ export interface ShutdownDeps {
   auditAggregator?: { destroy: () => void };
   /** Injection rate limiter for clearing timers on shutdown (optional). */
   injectionRateLimiter?: { destroy: () => void };
-  /** Periodic lock cleanup timer (from setupAgents). */
-  lockCleanupTimer?: ReturnType<typeof setInterval>;
+  /** Periodic lock cleanup timer (from setupAgents). Phase 39 PORTS-13: TimerHandle. */
+  lockCleanupTimer?: import("@comis/core").TimerHandle;
   /** Data directory for restart continuation file (optional). */
   dataDir?: string;
   /** Restart continuation tracker for capturing active sessions before shutdown (optional). */
@@ -260,7 +260,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       // Clear periodic lock cleanup timer
       if (lockCleanupTimer) {
         await withStepTimeout(() => {
-          clearInterval(lockCleanupTimer);
+          lockCleanupTimer.cancel();
           daemonLogger.info({ component: "lock-cleanup-timer", shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "lock-cleanup-timer", daemonLogger);
       }

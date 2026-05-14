@@ -234,6 +234,9 @@ function createMinimalDeps(overrides: Record<string, any> = {}) {
       isLocked: vi.fn(async () => false),
       cleanupStaleLocks: vi.fn(async () => 0),
     },
+    // Phase 39 PORTS-11/13: stub clock + timers required by setupCrossSession deps.
+    clock: { now: () => Date.now(), nowDate: () => new Date() },
+    timers: { setTimeout: vi.fn(), setInterval: vi.fn() },
     ...overrides,
   } as any;
 }

@@ -16,7 +16,34 @@ import Database from "better-sqlite3";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { initSchema, createSessionStore, type SessionStore } from "@comis/memory";
 import { formatSessionKey, type SessionKey, type TypedEventBus } from "@comis/core";
-import type { SessionResetPolicyConfig, ComputeDailyResetNextRun } from "@comis/core";
+import type { SessionResetPolicyConfig, ComputeDailyResetNextRun, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Phase 39: lightweight TimerPort wrapper that delegates to globals.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 // Test-only @comis/scheduler import — see session-reset-policy.test.ts for
 // rationale. Production agent source no longer imports scheduler after Phase 32
 // commit 12.
@@ -87,6 +114,7 @@ function createTestHarness(config: Partial<SessionResetPolicyConfig> = {}): Test
     getConfig: () => currentConfig,
     computeDailyResetNextRun,
     nowMs: () => currentNowMs,
+    timers: testTimers,
   });
 
   return {

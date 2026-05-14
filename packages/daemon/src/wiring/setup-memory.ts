@@ -122,8 +122,10 @@ export function createEmbeddingCircuitBreaker(
 export async function setupMemory(deps: {
   container: AppContainer;
   memoryLogger: ComisLogger;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: import("@comis/core").ClockPort;
 }): Promise<MemoryResult> {
-  const { container, memoryLogger } = deps;
+  const { container, memoryLogger, clock } = deps;
   const memoryConfig = container.config.memory;
   const embeddingConfig = container.config.embedding;
 
@@ -163,7 +165,7 @@ export async function setupMemory(deps: {
         failureThreshold: 3,
         resetTimeoutMs: 60_000,
         halfOpenTimeoutMs: 30_000,
-      });
+      }, clock);
       embeddingCbRef = embeddingCb;
       embeddingPort = createEmbeddingCircuitBreaker(embeddingPort, embeddingCb, memoryLogger);
       memoryLogger.debug("Embedding circuit breaker active (threshold=3, reset=60s)");

@@ -41,6 +41,9 @@ function silentLogger() {
   };
 }
 
+// Phase 39 PORTS-11: test clock stub for createCacheBreakDetector.
+const testClock = { now: () => Date.now(), nowDate: () => new Date() };
+
 const SESSION_KEY = "test:user_a:chan_ttl";
 const AGENT_ID = "default";
 const MODEL = "claude-opus-4-7";
@@ -80,7 +83,7 @@ function paramsWithCacheControl(retention: string | undefined) {
 
 describe("TTL monotonicity -- retention escalation", () => {
   it("default -> 1h yields a retention_changed event when cache misses", () => {
-    const detector = createCacheBreakDetector(silentLogger());
+    const detector = createCacheBreakDetector(silentLogger(), { clock: testClock });
     const sk = `${SESSION_KEY}:esc`;
 
     detector.recordPromptState(
@@ -124,7 +127,7 @@ describe("TTL monotonicity -- retention escalation", () => {
   });
 
   it("1h -> default (de-escalation) is also flagged retention_changed", () => {
-    const detector = createCacheBreakDetector(silentLogger());
+    const detector = createCacheBreakDetector(silentLogger(), { clock: testClock });
     const sk = `${SESSION_KEY}:de-esc`;
 
     detector.recordPromptState(
@@ -169,7 +172,7 @@ describe("TTL monotonicity -- retention escalation", () => {
 
 describe("TTL monotonicity -- stable retention is NOT flagged", () => {
   it("default -> default with stable cache reads: no event", () => {
-    const detector = createCacheBreakDetector(silentLogger());
+    const detector = createCacheBreakDetector(silentLogger(), { clock: testClock });
     const sk = `${SESSION_KEY}:stable-default`;
 
     detector.recordPromptState(
@@ -209,7 +212,7 @@ describe("TTL monotonicity -- stable retention is NOT flagged", () => {
   });
 
   it("1h -> 1h with stable cache reads: no event", () => {
-    const detector = createCacheBreakDetector(silentLogger());
+    const detector = createCacheBreakDetector(silentLogger(), { clock: testClock });
     const sk = `${SESSION_KEY}:stable-1h`;
 
     detector.recordPromptState(

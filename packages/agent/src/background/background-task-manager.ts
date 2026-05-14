@@ -9,7 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { ok, err, type Result } from "@comis/shared";
-import type { TypedEventBus } from "@comis/core";
+import type { TypedEventBus, ClockPort, TimerPort } from "@comis/core";
 import { persistTaskSync, recoverTasks, removeTaskFile } from "./background-task-persistence.js";
 import type {
   BackgroundTask,
@@ -34,6 +34,10 @@ export interface BackgroundTaskManagerOpts {
     warn(obj: Record<string, unknown>, msg: string): void;
     debug(obj: Record<string, unknown>, msg: string): void;
   };
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: ClockPort;
+  /** Timer scheduling (Phase 39 PORTS-13). Hard-timeout setTimeout uses .unref(). */
+  timers: TimerPort;
   maxPerAgent?: number;
   maxTotal?: number;
   maxBackgroundDurationMs?: number;
@@ -82,6 +86,8 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     dataDir,
     eventBus,
     logger,
+    clock,
+    timers,
     maxPerAgent = 5,
     maxTotal = 20,
     maxBackgroundDurationMs = 300_000,
@@ -146,7 +152,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         id: taskId,
         toolName,
         status: "running",
-        startedAt: Date.now(),
+        startedAt: clock.now(),
         origin,
         // Seed the dispatch state machine. Default policy is "deferred" —
         // the dispatcher inspects dispatchState before firing fallback notify
@@ -158,13 +164,13 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       };
 
       // Hard-timeout abort
-      const timer = setTimeout(() => {
+      const timer = timers.setTimeout(() => {
         if (task.status === "running") {
           ac.abort();
           manager.fail(taskId, new Error("Hard timeout exceeded"));
         }
       }, maxBackgroundDurationMs);
-      timer.unref();
+      timer.unref();   // PRESERVED — TimerHandle has .unref() per PORTS-04
       task._hardTimeoutTimer = timer;
 
       tasks.set(taskId, task);
@@ -175,7 +181,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         agentId,
         taskId,
         toolName,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
 
       return ok(taskId);
@@ -186,10 +192,10 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       if (!task || task.status !== "running") return;
 
       task.status = "completed";
-      task.completedAt = Date.now();
+      task.completedAt = clock.now();
       task.result = truncateResult(result);
 
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
       decrementCounters(task.origin.agentId);
       persistTaskSync(dataDir, task);
 
@@ -200,7 +206,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         toolName: task.toolName,
         durationMs,
         origin: task.origin,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
 
       // Notification routing lives in the completion-dispatcher (subscribed
@@ -215,10 +221,10 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       if (!task || task.status !== "running") return;
 
       task.status = "failed";
-      task.completedAt = Date.now();
+      task.completedAt = clock.now();
       task.error = error instanceof Error ? error.message : String(error);
 
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
       decrementCounters(task.origin.agentId);
       persistTaskSync(dataDir, task);
 
@@ -230,7 +236,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         error: task.error,
         durationMs,
         origin: task.origin,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
 
       // See complete() above — the dispatcher owns notification routing.
@@ -242,10 +248,10 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       if (task.status !== "running") return err(new Error(`Task ${taskId} is not running (status: ${task.status})`));
 
       task.status = "cancelled";
-      task.completedAt = Date.now();
+      task.completedAt = clock.now();
 
       if (task._abortController) task._abortController.abort();
-      if (task._hardTimeoutTimer) clearTimeout(task._hardTimeoutTimer);
+      if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
       decrementCounters(task.origin.agentId);
       persistTaskSync(dataDir, task);
 
@@ -253,7 +259,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         agentId: task.origin.agentId,
         taskId,
         toolName: task.toolName,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
 
       return ok(undefined);
@@ -307,9 +313,9 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             taskId: task.id,
             toolName: task.toolName,
             error: persisted.error,
-            durationMs: (persisted.completedAt ?? Date.now()) - persisted.startedAt,
+            durationMs: (persisted.completedAt ?? clock.now()) - persisted.startedAt,
             origin: task.origin,
-            timestamp: Date.now(),
+            timestamp: clock.now(),
           });
         }
       }
@@ -335,7 +341,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     },
 
     cleanup(maxAgeMs = 86_400_000) {
-      const cutoff = Date.now() - maxAgeMs;
+      const cutoff = clock.now() - maxAgeMs;
       for (const [taskId, task] of tasks) {
         if (task.status !== "running" && (task.completedAt ?? task.startedAt) < cutoff) {
           tasks.delete(taskId);

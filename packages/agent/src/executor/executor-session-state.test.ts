@@ -13,7 +13,11 @@ import {
   SESSION_STATE_MAX,
   SESSION_STATE_TTL_MS,
   createBoundedSessionMap,
+  setSessionStateClock,
 } from "./executor-session-state.js";
+
+// Phase 39 PORTS-11: initialize module-level clock provider for tests.
+setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
 
 // ---------------------------------------------------------------------------
 // Constants

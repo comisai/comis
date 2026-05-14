@@ -19,6 +19,8 @@ import {
   type TypedEventBus,
   type AgentToAgentConfig,
   type DeliveryOrigin,
+  type ClockPort,
+  type TimerPort,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
@@ -259,6 +261,10 @@ export interface SubAgentRunnerDeps {
   };
   /** Base data directory for locating subagent-results (e.g., ~/.comis). Optional — caller may omit. */
   dataDir?: string;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: ClockPort;
+  /** Timer scheduling (Phase 39 PORTS-13). Sweep-interval + watchdog setTimeout + shutdown-timeout setTimeout. */
+  timers: TimerPort;
   /** Optional lifecycle hooks for spawn preparation and completion */
   lifecycleHooks?: {
     prepareSpawn(params: {
@@ -340,6 +346,7 @@ export interface SpawnParams {
 // ---------------------------------------------------------------------------
 
 export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
+  const { clock, timers } = deps;
   const runs = new Map<string, SubAgentRun>();
   const activePromises = new Set<Promise<void>>();
 
@@ -388,8 +395,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       channelType: run.announceChannelType,
       channelId: run.announceChannelId,
       reason,
-      durationMs: (run.completedAt ?? Date.now()) - run.startedAt,
-      timestamp: Date.now(),
+      durationMs: (run.completedAt ?? clock.now()) - run.startedAt,
+      timestamp: clock.now(),
     });
   }
 
@@ -400,8 +407,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const SWEEP_INTERVAL_MS = 300_000;
   const MAX_RUNS = 1000;
 
-  const sweepInterval = setInterval(() => {
-    const now = Date.now();
+  const sweepInterval = timers.setInterval(() => {
+    const now = clock.now();
     const retentionMs = deps.config.subAgentRetentionMs;
 
     for (const [runId, run] of runs) {
@@ -627,7 +634,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         maxDepth,
         currentChildren: 0,
         maxChildren: 0,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
       });
       deps.logger?.warn({
         agentId: params.agentId,
@@ -661,7 +668,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             maxDepth,
             currentChildren: activeChildren,
             maxChildren,
-            timestamp: Date.now(),
+            timestamp: clock.now(),
           });
           deps.logger?.warn({
             agentId: params.agentId,
@@ -689,7 +696,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             maxDepth,
             currentChildren: activeChildren,
             maxChildren,
-            timestamp: Date.now(),
+            timestamp: clock.now(),
           });
           deps.logger?.warn({
             agentId: params.agentId,
@@ -709,7 +716,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         // Queue the spawn
         const queuedRunId = randomUUID();
-        const now = Date.now();
+        const now = clock.now();
         const queuedRun: SubAgentRun = {
           runId: queuedRunId,
           status: "queued",
@@ -779,7 +786,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     const runId = randomUUID();
     const run: SubAgentRun = {
       runId, status: "running", agentId: params.agentId,
-      task: params.task, sessionKey: "", startedAt: Date.now(),
+      task: params.task, sessionKey: "", startedAt: clock.now(),
       requesterOrigin: params.requesterOrigin,
       depth: currentDepth,
       callerSessionKey: params.callerSessionKey,
@@ -829,7 +836,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         deps.sessionStore.save(subSessionKey, [], {
           parentSessionKey: params.callerSessionKey,
           spawnedByAgent: params.callerAgentId,
-          spawnedAt: Date.now(),
+          spawnedAt: clock.now(),
           taskDescription: params.task,
           runId,
           modelOverride: params.model,
@@ -862,7 +869,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       deps.sessionStore.save(subSessionKey, [], {
         parentSessionKey: params.callerSessionKey,
         spawnedByAgent: params.callerAgentId,
-        spawnedAt: Date.now(),
+        spawnedAt: clock.now(),
         taskDescription: params.task,
         runId,
         modelOverride: params.model,
@@ -884,7 +891,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Update run with session info and running status
     run.sessionKey = formattedKey;
     run.status = "running";
-    run.startedAt = Date.now();
+    run.startedAt = clock.now();
 
     deps.logger?.info({
       runId, agentId: params.agentId,
@@ -898,7 +905,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Emit spawn event
     deps.eventBus.emit("session:sub_agent_spawned", {
       runId, parentSessionKey: params.callerSessionKey ?? "unknown",
-      agentId: params.agentId, task: params.task, timestamp: Date.now(),
+      agentId: params.agentId, task: params.task, timestamp: clock.now(),
     });
 
     // Async execution
@@ -954,7 +961,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             tenantId: parsed?.tenantId ?? deps.tenantId,
             userId: parsed?.userId ?? "sub-agent",
             sessionKey: formattedKey,
-            startedAt: Date.now(),
+            startedAt: clock.now(),
             trustLevel: "admin",
             // Propagate channel context for downstream tool RPC injection
             ...(run.announceChannelType && { channelType: run.announceChannelType }),
@@ -973,7 +980,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // Guard: if already killed, skip completion logic
         if (run.status === "failed") return;
 
-        const completedAt = Date.now();
+        const completedAt = clock.now();
         run.status = "completed";
         run.completedAt = completedAt;
         run.result = result;
@@ -1044,7 +1051,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               compressionRatio: condensedResult.compressionRatio,
               taskComplete: condensedResult.result.taskComplete,
               diskPath: condensedResult.diskPath,
-              timestamp: Date.now(),
+              timestamp: clock.now(),
             });
 
             deps.logger?.debug({
@@ -1176,7 +1183,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               trustLevel: "system",
               source: { who: "sub-agent-runner", sessionKey: formattedKey },
               tags: ["sub-agent-result", "task-completion", ...(abortClassification ? ["aborted"] : [])],
-              createdAt: Date.now(),
+              createdAt: clock.now(),
               sourceType: "tool",
             });
 
@@ -1289,7 +1296,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // Guard: if already killed, skip error handling logic
         if (run.status === "failed") return;
 
-        const completedAt = Date.now();
+        const completedAt = clock.now();
         run.status = "failed";
         run.completedAt = completedAt;
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1408,11 +1415,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       ? Math.min(params.max_steps * perStepMs, maxRunMs)
       : maxRunMs;
 
-    const watchdogTimer = setTimeout(() => {
+    const watchdogTimer = timers.setTimeout(() => {
       // Guard: if already completed/failed/killed, skip
       if (run.status !== "running") return;
 
-      const completedAt = Date.now();
+      const completedAt = clock.now();
       const runtimeMs = completedAt - run.startedAt;
 
       run.status = "failed";
@@ -1498,7 +1505,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }, runTimeoutMs);
 
     // Clear watchdog on normal completion/failure
-    execPromise.finally(() => clearTimeout(watchdogTimer));
+    execPromise.finally(() => watchdogTimer.cancel());
 
     activePromises.add(execPromise);
     execPromise.finally(() => {
@@ -1554,7 +1561,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    */
   function listRuns(recentMinutes?: number): SubAgentRun[] {
     const cutoff = recentMinutes && recentMinutes > 0
-      ? Date.now() - recentMinutes * 60_000
+      ? clock.now() - recentMinutes * 60_000
       : 0;
 
     return [...runs.values()]
@@ -1580,7 +1587,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     run.status = "failed";
-    run.completedAt = Date.now();
+    run.completedAt = clock.now();
     run.error = "Killed by parent agent";
 
     // Persist failure record for killed runs (fire-and-forget, belt-defense)
@@ -1665,7 +1672,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   async function shutdown(): Promise<void> {
-    clearInterval(sweepInterval);
+    sweepInterval.cancel();
 
     // Flush any batched announcements before draining active runs
     if (deps.batcher) {
@@ -1685,7 +1692,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
     // Wait for all active runs with a 30-second timeout
     const timeout = new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 30_000);
+      const timer = timers.setTimeout(resolve, 30_000);
       timer.unref();
     });
 

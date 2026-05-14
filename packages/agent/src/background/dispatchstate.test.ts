@@ -27,6 +27,40 @@ import type {
   BackgroundTaskOrigin,
   PersistedTaskState,
 } from "./background-task-types.js";
+import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Phase 39: lightweight port wrappers that delegate to globals so
+// vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(t);
+    },
+    unref() {
+      if (cancelled || unrefCalled) return;
+      unrefCalled = true;
+      t.unref();
+    },
+  };
+}
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 function createMockEventBus() {
   const emits: Array<{ event: string; data: unknown }> = [];
@@ -174,6 +208,8 @@ describe("dispatchState 3-state machine + persistence + recovery", () => {
       dataDir,
       eventBus: mockBus.bus,
       logger,
+      clock: testClock,
+      timers: testTimers,
       maxPerAgent: 5,
       maxTotal: 20,
       maxBackgroundDurationMs: 60_000,

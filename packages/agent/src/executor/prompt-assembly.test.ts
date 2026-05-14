@@ -160,6 +160,13 @@ function makeParams(overrides?: Partial<PromptAssemblyParams>): PromptAssemblyPa
     operationType: "interactive",
     ...overrides,
   };
+  if (!(merged.deps as Record<string, unknown>).clock) {
+    merged.deps = {
+      ...merged.deps,
+      // Phase 39 PORTS-11: required clock for prompt-assembly time reads.
+      clock: { now: () => Date.now(), nowDate: () => new Date() },
+    } as PromptAssemblyParams["deps"];
+  }
   if (!(merged.deps as Record<string, unknown>).toolCapabilityPort) {
     merged.deps = {
       ...merged.deps,
