@@ -2,6 +2,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAuditAggregator } from "./audit-aggregator.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
+import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
+
+// ---------------------------------------------------------------------------
+// Phase 39: lightweight port wrappers that delegate to globals so
+// vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
+// ---------------------------------------------------------------------------
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() { if (cancelled) return; cancelled = true; clearTimeout(t); },
+    unref() { if (cancelled || unrefCalled) return; unrefCalled = true; t.unref(); },
+  };
+}
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
+
+const testDeps = { clock: testClock, timers: testTimers };
 
 describe("createAuditAggregator", () => {
   beforeEach(() => {
@@ -14,7 +42,7 @@ describe("createAuditAggregator", () => {
 
   it("deduplicates events within window", () => {
     const eventBus = createMockEventBus();
-    const aggregator = createAuditAggregator(eventBus, { windowMs: 5000 });
+    const aggregator = createAuditAggregator(eventBus, testDeps, { windowMs: 5000 });
 
     aggregator.record({ source: "external_content", patterns: ["a"] });
     aggregator.record({ source: "external_content", patterns: ["b"] });
@@ -32,7 +60,7 @@ describe("createAuditAggregator", () => {
 
   it("emits summary at window close with correct payload", () => {
     const eventBus = createMockEventBus();
-    const aggregator = createAuditAggregator(eventBus, { windowMs: 5000 });
+    const aggregator = createAuditAggregator(eventBus, testDeps, { windowMs: 5000 });
 
     aggregator.record({ source: "external_content", patterns: ["pattern_a"] });
     aggregator.record({ source: "external_content", patterns: ["pattern_b"] });
@@ -51,7 +79,7 @@ describe("createAuditAggregator", () => {
 
   it("counts unique patterns", () => {
     const eventBus = createMockEventBus();
-    const aggregator = createAuditAggregator(eventBus, { windowMs: 5000 });
+    const aggregator = createAuditAggregator(eventBus, testDeps, { windowMs: 5000 });
 
     aggregator.record({ source: "external_content", patterns: ["a", "b"] });
     aggregator.record({ source: "external_content", patterns: ["b", "c"] });
@@ -68,7 +96,7 @@ describe("createAuditAggregator", () => {
 
   it("respects maxPatternsPerSummary cap", () => {
     const eventBus = createMockEventBus();
-    const aggregator = createAuditAggregator(eventBus, {
+    const aggregator = createAuditAggregator(eventBus, testDeps, {
       windowMs: 5000,
       maxPatternsPerSummary: 2,
     });
@@ -86,7 +114,7 @@ describe("createAuditAggregator", () => {
 
   it("handles multiple concurrent windows for different sources", () => {
     const eventBus = createMockEventBus();
-    const aggregator = createAuditAggregator(eventBus, { windowMs: 5000 });
+    const aggregator = createAuditAggregator(eventBus, testDeps, { windowMs: 5000 });
 
     aggregator.record({ source: "external_content", patterns: ["a"] });
     aggregator.record({ source: "tool_output", patterns: ["b"] });
@@ -107,7 +135,7 @@ describe("createAuditAggregator", () => {
 
   it("flush() emits all pending windows immediately", () => {
     const eventBus = createMockEventBus();
-    const aggregator = createAuditAggregator(eventBus, { windowMs: 60_000 });
+    const aggregator = createAuditAggregator(eventBus, testDeps, { windowMs: 60_000 });
 
     aggregator.record({ source: "external_content", patterns: ["a"] });
     aggregator.record({ source: "tool_output", patterns: ["b"] });
@@ -120,7 +148,7 @@ describe("createAuditAggregator", () => {
 
   it("destroy() clears all timers without emitting", () => {
     const eventBus = createMockEventBus();
-    const aggregator = createAuditAggregator(eventBus, { windowMs: 5000 });
+    const aggregator = createAuditAggregator(eventBus, testDeps, { windowMs: 5000 });
 
     aggregator.record({ source: "external_content", patterns: ["a"] });
     aggregator.record({ source: "tool_output", patterns: ["b"] });
@@ -138,6 +166,7 @@ describe("createAuditAggregator", () => {
     const mockLogger = { info: vi.fn() };
     const aggregator = createAuditAggregator(
       eventBus,
+      testDeps,
       { windowMs: 5000 },
       mockLogger,
     );
@@ -159,7 +188,7 @@ describe("createAuditAggregator", () => {
 
   it("accepts new events after window closes for same source", () => {
     const eventBus = createMockEventBus();
-    const aggregator = createAuditAggregator(eventBus, { windowMs: 5000 });
+    const aggregator = createAuditAggregator(eventBus, testDeps, { windowMs: 5000 });
 
     aggregator.record({ source: "external_content", patterns: ["a"] });
     vi.advanceTimersByTime(5001);

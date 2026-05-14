@@ -8,11 +8,15 @@
  * Each user is tracked independently by `${tenantId}:${userId}` key so
  * group-chat participants do not affect each other.
  *
- * Uses setTimeout per-entry with unref() for clean daemon shutdown.
+ * Uses timers.setTimeout per-entry with unref() for clean daemon shutdown.
  * Provides destroy() to clear all timers and entries.
+ *
+ * Phase 39 PORTS-11/13: time + scheduling injected via ClockPort/TimerPort.
  *
  * @module
  */
+
+import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
 
 export interface InjectionRateLimiterConfig {
   /** Time window in ms for counting detections. Default: 300_000 (5 minutes). */
@@ -25,6 +29,16 @@ export interface InjectionRateLimiterConfig {
   readonly entryTtlMs: number;
   /** Max entries to prevent memory leak. Default: 10_000. */
   readonly maxEntries: number;
+}
+
+/**
+ * Dependencies for the injection rate limiter factory (Phase 39 PORTS-11/13).
+ */
+export interface InjectionRateLimiterDeps {
+  /** Wall-clock reads for sliding-window timestamps. */
+  readonly clock: ClockPort;
+  /** setTimeout scheduling — produces cancellable TimerHandle objects. */
+  readonly timers: TimerPort;
 }
 
 export interface RateLimitResult {
@@ -47,7 +61,7 @@ export interface InjectionRateLimiter {
 
 interface UserBucket {
   timestamps: number[];
-  timer: ReturnType<typeof setTimeout>;
+  timer: TimerHandle;
 }
 
 /**
@@ -71,12 +85,13 @@ function evictOldest(buckets: Map<string, UserBucket>): void {
 
   if (oldestKey !== undefined) {
     const bucket = buckets.get(oldestKey)!;
-    clearTimeout(bucket.timer);
+    bucket.timer.cancel();
     buckets.delete(oldestKey);
   }
 }
 
 export function createInjectionRateLimiter(
+  deps: InjectionRateLimiterDeps,
   config?: Partial<InjectionRateLimiterConfig>,
 ): InjectionRateLimiter {
   const windowMs = config?.windowMs ?? 300_000;
@@ -87,21 +102,20 @@ export function createInjectionRateLimiter(
 
   const buckets = new Map<string, UserBucket>();
 
-  function createTtlTimer(key: string): ReturnType<typeof setTimeout> {
-    const timer = setTimeout(() => {
+  function createTtlTimer(key: string): TimerHandle {
+    const timer = deps.timers.setTimeout(() => {
       buckets.delete(key);
     }, entryTtlMs);
-    // Unref timer so it does not prevent Node process exit
-    if (typeof timer === "object" && "unref" in timer) {
-      timer.unref();
-    }
+    // Unref timer so it does not prevent Node process exit.
+    // .unref() preserved per PORTS-04 cancel-safety contract.
+    timer.unref();
     return timer;
   }
 
   return {
     record(tenantId: string, userId: string): RateLimitResult {
       const key = `${tenantId}:${userId}`;
-      const now = Date.now();
+      const now = deps.clock.now();
 
       let bucket = buckets.get(key);
 
@@ -124,7 +138,7 @@ export function createInjectionRateLimiter(
       bucket.timestamps.push(now);
 
       // Reset TTL timer
-      clearTimeout(bucket.timer);
+      bucket.timer.cancel();
       bucket.timer = createTtlTimer(key);
 
       // Compute result
@@ -154,7 +168,7 @@ export function createInjectionRateLimiter(
 
     destroy(): void {
       for (const bucket of buckets.values()) {
-        clearTimeout(bucket.timer);
+        bucket.timer.cancel();
       }
       buckets.clear();
     },

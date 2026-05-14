@@ -2,6 +2,34 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createInjectionRateLimiter } from "./injection-rate-limiter.js";
 import type { InjectionRateLimiter } from "./injection-rate-limiter.js";
+import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
+
+// ---------------------------------------------------------------------------
+// Phase 39: lightweight port wrappers that delegate to globals so
+// vi.useFakeTimers() continues to intercept Date.now / setTimeout below.
+// ---------------------------------------------------------------------------
+
+const testClock: ClockPort = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() { if (cancelled) return; cancelled = true; clearTimeout(t); },
+    unref() { if (cancelled || unrefCalled) return; unrefCalled = true; t.unref(); },
+  };
+}
+
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
+
+const testDeps = { clock: testClock, timers: testTimers };
 
 describe("createInjectionRateLimiter", () => {
   let limiter: InjectionRateLimiter;
@@ -16,7 +44,7 @@ describe("createInjectionRateLimiter", () => {
   });
 
   it("returns InjectionRateLimiter with record, getCount, destroy methods", () => {
-    limiter = createInjectionRateLimiter();
+    limiter = createInjectionRateLimiter(testDeps);
     expect(typeof limiter.record).toBe("function");
     expect(typeof limiter.getCount).toBe("function");
     expect(typeof limiter.destroy).toBe("function");
@@ -24,20 +52,20 @@ describe("createInjectionRateLimiter", () => {
 
   describe("record - basic counting", () => {
     it("first detection returns count 1, level none", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       const result = limiter.record("tenant1", "user1");
       expect(result).toEqual({ count: 1, level: "none", thresholdCrossed: false });
     });
 
     it("second detection returns count 2, level none", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       limiter.record("tenant1", "user1");
       const result = limiter.record("tenant1", "user1");
       expect(result).toEqual({ count: 2, level: "none", thresholdCrossed: false });
     });
 
     it("third detection (default warnThreshold) returns level warn with thresholdCrossed true", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       limiter.record("tenant1", "user1");
       limiter.record("tenant1", "user1");
       const result = limiter.record("tenant1", "user1");
@@ -45,7 +73,7 @@ describe("createInjectionRateLimiter", () => {
     });
 
     it("fourth detection returns level warn but thresholdCrossed false (already crossed)", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       limiter.record("tenant1", "user1");
       limiter.record("tenant1", "user1");
       limiter.record("tenant1", "user1");
@@ -54,14 +82,14 @@ describe("createInjectionRateLimiter", () => {
     });
 
     it("fifth detection (default auditThreshold) returns level audit with thresholdCrossed true", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       for (let i = 0; i < 4; i++) limiter.record("tenant1", "user1");
       const result = limiter.record("tenant1", "user1");
       expect(result).toEqual({ count: 5, level: "audit", thresholdCrossed: true });
     });
 
     it("sixth detection returns level audit but thresholdCrossed false", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       for (let i = 0; i < 5; i++) limiter.record("tenant1", "user1");
       const result = limiter.record("tenant1", "user1");
       expect(result).toEqual({ count: 6, level: "audit", thresholdCrossed: false });
@@ -70,7 +98,7 @@ describe("createInjectionRateLimiter", () => {
 
   describe("record - user-scoped counting", () => {
     it("different users have independent counters", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       limiter.record("tenant1", "user1");
       limiter.record("tenant1", "user1");
       const r1 = limiter.record("tenant1", "user1");
@@ -83,7 +111,7 @@ describe("createInjectionRateLimiter", () => {
     });
 
     it("different tenants with same userId have independent counters", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       limiter.record("tenant1", "user1");
       limiter.record("tenant1", "user1");
       const r1 = limiter.record("tenant1", "user1");
@@ -99,7 +127,7 @@ describe("createInjectionRateLimiter", () => {
   describe("record - sliding window", () => {
     it("timestamps older than windowMs are pruned", () => {
       const windowMs = 5000;
-      limiter = createInjectionRateLimiter({ windowMs });
+      limiter = createInjectionRateLimiter(testDeps, { windowMs });
 
       limiter.record("t", "u");
       limiter.record("t", "u");
@@ -114,7 +142,7 @@ describe("createInjectionRateLimiter", () => {
 
     it("window boundary: timestamps at exactly windowMs are kept", () => {
       const windowMs = 5000;
-      limiter = createInjectionRateLimiter({ windowMs });
+      limiter = createInjectionRateLimiter(testDeps, { windowMs });
 
       limiter.record("t", "u");
 
@@ -128,7 +156,7 @@ describe("createInjectionRateLimiter", () => {
 
   describe("record - custom thresholds", () => {
     it("custom warnThreshold and auditThreshold", () => {
-      limiter = createInjectionRateLimiter({ warnThreshold: 2, auditThreshold: 4 });
+      limiter = createInjectionRateLimiter(testDeps, { warnThreshold: 2, auditThreshold: 4 });
 
       limiter.record("t", "u");
       const r2 = limiter.record("t", "u");
@@ -147,12 +175,12 @@ describe("createInjectionRateLimiter", () => {
 
   describe("getCount", () => {
     it("returns 0 for unknown user", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       expect(limiter.getCount("unknown", "user")).toBe(0);
     });
 
     it("returns current count for tracked user", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       limiter.record("t", "u");
       limiter.record("t", "u");
       limiter.record("t", "u");
@@ -163,7 +191,7 @@ describe("createInjectionRateLimiter", () => {
   describe("TTL eviction", () => {
     it("entry is evicted after entryTtlMs of inactivity", () => {
       const entryTtlMs = 3000;
-      limiter = createInjectionRateLimiter({ entryTtlMs });
+      limiter = createInjectionRateLimiter(testDeps, { entryTtlMs });
 
       limiter.record("t", "u");
       expect(limiter.getCount("t", "u")).toBe(1);
@@ -176,7 +204,7 @@ describe("createInjectionRateLimiter", () => {
 
     it("TTL timer is reset on each record call", () => {
       const entryTtlMs = 3000;
-      limiter = createInjectionRateLimiter({ entryTtlMs });
+      limiter = createInjectionRateLimiter(testDeps, { entryTtlMs });
 
       limiter.record("t", "u");
 
@@ -199,7 +227,7 @@ describe("createInjectionRateLimiter", () => {
 
   describe("maxEntries cap", () => {
     it("evicts oldest entry when maxEntries exceeded", () => {
-      limiter = createInjectionRateLimiter({ maxEntries: 2 });
+      limiter = createInjectionRateLimiter(testDeps, { maxEntries: 2 });
 
       limiter.record("tenant", "user1");
       vi.advanceTimersByTime(1); // Ensure distinct timestamps
@@ -216,7 +244,7 @@ describe("createInjectionRateLimiter", () => {
 
   describe("destroy", () => {
     it("clears all entries and timers", () => {
-      limiter = createInjectionRateLimiter();
+      limiter = createInjectionRateLimiter(testDeps);
       limiter.record("t", "u1");
       limiter.record("t", "u2");
       limiter.record("t", "u3");
@@ -230,7 +258,7 @@ describe("createInjectionRateLimiter", () => {
 
     it("no timers fire after destroy", () => {
       const entryTtlMs = 3000;
-      limiter = createInjectionRateLimiter({ entryTtlMs });
+      limiter = createInjectionRateLimiter(testDeps, { entryTtlMs });
 
       limiter.record("t", "u");
       limiter.destroy();

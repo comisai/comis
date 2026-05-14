@@ -32,6 +32,7 @@ import {
   createAuditAggregator,
   type AuditAggregator,
 } from "@comis/core";
+import { createSystemClock, createSystemTimers } from "@comis/infra";
 
 // ---------------------------------------------------------------------------
 // Fixtures: secret-shaped strings (placeholders -- not real credentials)
@@ -283,10 +284,14 @@ describe("Output Guard -- audit aggregation seam", () => {
         source: payload.source,
       });
     });
-    aggregator = createAuditAggregator(bus, {
-      windowMs: 60_000,
-      maxPatternsPerSummary: 10,
-    });
+    aggregator = createAuditAggregator(
+      bus,
+      { clock: createSystemClock(), timers: createSystemTimers() },
+      {
+        windowMs: 60_000,
+        maxPatternsPerSummary: 10,
+      },
+    );
   });
 
   afterEach(() => {
