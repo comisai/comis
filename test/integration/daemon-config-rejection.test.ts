@@ -147,7 +147,7 @@ describe("Config Rejection (DAEMON-03)", () => {
   it("bootstrap returns error Result for invalid config", () => {
     const result = bootstrap({
       configPaths: [badYamlPath],
-      watchConfig: false,
+      env: {},
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {

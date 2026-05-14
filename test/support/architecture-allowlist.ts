@@ -293,8 +293,9 @@ export interface CoverageWaiverEntry {
  * 7 v2.1 code-quality allowlists. Phase 37 declares them; Plans 02-05
  * populate fileSizeAllowlist, optionalFieldAllowlist, untypedSqliteAllowlist,
  * and rawThrowAllowlist. Plan 06 populates globalsAllowlist with the single
- * HYG-12 marker entry (core/bootstrap.ts:89). noBackwardCompatAllowlist and
- * coverageWaiver remain empty at Phase 37 close — Phase 38 + Phase 40 own them.
+ * bootstrap.ts:89 env-fallback entry (closed in Phase 39 Plan 03 / PORTS-10).
+ * noBackwardCompatAllowlist and coverageWaiver remain empty at Phase 37
+ * close — Phase 38 + Phase 40 own them.
  *
  * Shrink-only ratchet: test/architecture/allowlist-shrink.test.ts (extended
  * in Plan 06 to cover all 8 arrays) compares base..head and rejects any
@@ -1986,32 +1987,20 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
 // paths in BOOTSTRAP_PATH_PATTERNS (test/support/globals-classifier.ts).
 //
 // Drift from RESEARCH.md inventory: RESEARCH.md anticipated ~360+1 entries;
-// the live tree has 1588 entries (the HYG-12 marker + 1587 Phase B closure
-// entries). The +1226 drift is the upward direction (more callable-global
-// sites than RESEARCH planned) — Phase 39 (PORTS) has more closure work
-// than originally estimated. Documented per RESEARCH.md Pitfall §1 (the
-// pre-authorized drift procedure: live count is the source of truth).
+// the live tree had 1588 entries at Phase 37 close (the bootstrap.ts:89 env
+// fallback marker + 1587 Phase B closure entries). Phase 39 Plan 03
+// (PORTS-10) closed the env-fallback marker, leaving 1587 Phase B retarget
+// entries; the +1226 drift remains in the upward direction (more callable-
+// global sites than RESEARCH planned) — Phase 39 (PORTS) has more closure
+// work than originally estimated. Documented per RESEARCH.md Pitfall §1
+// (the pre-authorized drift procedure: live count is the source of truth).
 //
 // All entries are tagged removedIn: "phase-B". Phase 39 (PORTS) removes
 // each entry atomically as the corresponding call site is retargeted
 // through ClockPort/EnvPort/TimerPort (design doc §5.2 steps 7-8).
 // No entry is allowed to outlive its retarget.
-//
-// The HYG-12 marker (packages/core/src/bootstrap.ts:89) is the first entry
-// and uses a specific reason text; all others use the generic Phase B
-// retarget reason.
 // ============================================================================
 export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
-  // ============================================================================
-  // HYG-12 marker — bootstrap composition root env fallback (Phase 39 PORTS-10 closes first)
-  // ============================================================================
-  {
-    file: "packages/core/src/bootstrap.ts",
-    line: 89,
-    global: "process.env",
-    reason: "options.env ?? process.env fallback — Phase B replaces with required BootstrapOptions.env",
-    removedIn: "phase-B",
-  },
   // ============================================================================
   // Phase B — PORTS-11/12/13 closure (direct global calls retargeted to ports).
   // Grouped by package, then sorted by file/line for stable diffs.

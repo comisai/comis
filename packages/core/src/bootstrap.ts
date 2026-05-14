@@ -40,8 +40,8 @@ function resolveConfigPaths(config: AppConfig): AppConfig {
 export interface BootstrapOptions {
   /** Config file paths in layer priority order (later overrides earlier) */
   configPaths: string[];
-  /** Environment variables to seed the SecretManager (defaults to process.env) */
-  env?: Record<string, string | undefined>;
+  /** Environment variables to seed the SecretManager (required — no process.env fallback). */
+  env: Record<string, string | undefined>;
 }
 
 /**
@@ -86,7 +86,7 @@ export interface AppContainer {
  */
 export function bootstrap(options: BootstrapOptions): Result<AppContainer, ConfigError> {
   // 1. Create SecretManager
-  const env = options.env ?? process.env;
+  const env = options.env;
   const secretManager = createSecretManager(env);
 
   // 2. Load layered config (with env var substitution via SecretManager).

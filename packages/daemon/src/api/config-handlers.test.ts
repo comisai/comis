@@ -28,7 +28,7 @@ function createTempConfig(): { dir: string; configPath: string; cleanup: () => v
 }
 
 function makeDeps(configPath: string): ConfigHandlerDeps & { logger: ComisLogger } {
-  const result = bootstrap({ configPaths: [configPath] });
+  const result = bootstrap({ configPaths: [configPath], env: {} });
   if (!result.ok) {
     throw new Error(`Bootstrap failed in test: ${result.error.message}`);
   }
@@ -1768,10 +1768,10 @@ describe("config.patch credential guard", () => {
   it("succeeds when providers.entries.<id>.apiKeyName is in secretManager (Source A)", async () => {
     const deps = makeDeps(tempConfig.configPath);
     // Wire a provider entry whose apiKeyName resolves via the bootstrap's
-    // secretManager (process.env in tests). Set the env value first.
-    process.env.OR_KEY = "sk-or-v1-xxx";
-    // Re-bootstrap so the secretManager picks up the new env value.
-    const freshDeps = makeDeps(tempConfig.configPath);
+    // secretManager. Seed the env map explicitly per PORTS-10 — bootstrap
+    // no longer falls back to process.env, so the test seeds the
+    // SecretManager via makeDepsWithEnv.
+    const freshDeps = makeDepsWithEnv(tempConfig.configPath, { OR_KEY: "sk-or-v1-xxx" });
     (freshDeps.container.config as { providers: { entries: Record<string, unknown> } }).providers.entries["openrouter"] = {
       type: "openai",
       name: "OR",
@@ -1794,7 +1794,6 @@ describe("config.patch credential guard", () => {
       _trustLevel: "admin",
     });
     expect(result).toMatchObject({ patched: true });
-    delete process.env.OR_KEY;
   });
 
   it("rejection message names the configured apiKeyName when entry exists but secret is missing", async () => {
