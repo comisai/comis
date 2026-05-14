@@ -24,6 +24,9 @@ import {
   openAuthenticatedWebSocket,
   sendJsonRpc,
 } from "../support/ws-helpers.js";
+import type { ClockPort } from "@comis/core";
+
+const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -200,11 +203,14 @@ describe("Circuit breaker lifecycle (unit-integration)", () => {
   it(
     "TOOL-04: circuit breaker opens after N provider failures",
     () => {
-      const cb = createCircuitBreaker({
-        failureThreshold: 3,
-        resetTimeoutMs: 2000,
-        halfOpenTimeoutMs: 1000,
-      });
+      const cb = createCircuitBreaker(
+        {
+          failureThreshold: 3,
+          resetTimeoutMs: 2000,
+          halfOpenTimeoutMs: 1000,
+        },
+        testClock,
+      );
 
       expect(cb.getState()).toBe("closed");
       expect(cb.isOpen()).toBe(false);
@@ -226,11 +232,14 @@ describe("Circuit breaker lifecycle (unit-integration)", () => {
   it(
     "TOOL-05: circuit breaker recovers to half-open after resetTimeoutMs",
     async () => {
-      const cb = createCircuitBreaker({
-        failureThreshold: 3,
-        resetTimeoutMs: 100,
-        halfOpenTimeoutMs: 50,
-      });
+      const cb = createCircuitBreaker(
+        {
+          failureThreshold: 3,
+          resetTimeoutMs: 100,
+          halfOpenTimeoutMs: 50,
+        },
+        testClock,
+      );
 
       cb.recordFailure();
       cb.recordFailure();
@@ -255,11 +264,14 @@ describe("Circuit breaker lifecycle (unit-integration)", () => {
     "TOOL-06: circuit breaker closes after successful probe in half-open",
     async () => {
       // Test success path: half-open -> closed
-      const cb = createCircuitBreaker({
-        failureThreshold: 3,
-        resetTimeoutMs: 100,
-        halfOpenTimeoutMs: 50,
-      });
+      const cb = createCircuitBreaker(
+        {
+          failureThreshold: 3,
+          resetTimeoutMs: 100,
+          halfOpenTimeoutMs: 50,
+        },
+        testClock,
+      );
 
       cb.recordFailure();
       cb.recordFailure();
@@ -274,11 +286,14 @@ describe("Circuit breaker lifecycle (unit-integration)", () => {
       expect(cb.isOpen()).toBe(false);
 
       // Test failure path: half-open -> open (failure re-opens breaker)
-      const cb2 = createCircuitBreaker({
-        failureThreshold: 3,
-        resetTimeoutMs: 100,
-        halfOpenTimeoutMs: 50,
-      });
+      const cb2 = createCircuitBreaker(
+        {
+          failureThreshold: 3,
+          resetTimeoutMs: 100,
+          halfOpenTimeoutMs: 50,
+        },
+        testClock,
+      );
 
       cb2.recordFailure();
       cb2.recordFailure();
