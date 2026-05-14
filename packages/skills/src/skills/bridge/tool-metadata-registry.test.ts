@@ -100,7 +100,7 @@ describe("tool-metadata-registry -- result size caps", () => {
 // ===========================================================================
 
 describe("tool-metadata-registry -- parallelism read-only tools", () => {
-  const READ_ONLY_TOOLS = [
+  const readOnlyToolNames = [
     "read", "grep", "find", "ls",
     "web_search", "web_fetch", "browser",
     "memory_search", "memory_get", "session_search",
@@ -112,8 +112,8 @@ describe("tool-metadata-registry -- parallelism read-only tools", () => {
   ];
 
   it("registers all 24 read-only tools with isReadOnly: true", () => {
-    expect(READ_ONLY_TOOLS).toHaveLength(24);
-    for (const name of READ_ONLY_TOOLS) {
+    expect(readOnlyToolNames).toHaveLength(24);
+    for (const name of readOnlyToolNames) {
       const meta = getToolMetadata(name);
       expect(meta, `${name} should have metadata`).toBeDefined();
       expect(meta!.isReadOnly, `${name} should be read-only`).toBe(true);

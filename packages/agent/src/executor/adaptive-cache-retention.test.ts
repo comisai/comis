@@ -12,9 +12,16 @@ function createDefaultConfig(overrides?: Partial<AdaptiveCacheRetentionConfig>):
     coldStartRetention: "short",
     warmRetention: "long",
     escalationThreshold: 1000,
-    escalationMode: "tokens",  // Existing tests use token-based escalation
     ...overrides,
   };
+}
+
+/** Drive the turn-based escalation past its default 3-turn threshold. */
+function escalateViaTurns(retention: ReturnType<typeof createAdaptiveCacheRetention>, turnsBeyondThreshold = 0): void {
+  for (let i = 0; i < 3 + turnsBeyondThreshold; i++) {
+    retention.recordTurn();
+    retention.recordCacheReads(10_000);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -28,36 +35,27 @@ describe("createAdaptiveCacheRetention", () => {
     expect(retention.getRetention()).toBe("short");
   });
 
-  it("does not escalate below threshold (999 tokens with threshold 1000)", () => {
+  it("does not escalate after 1 turn with cache reads", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
-    retention.recordCacheReads(999);
+    retention.recordTurn();
+    retention.recordCacheReads(50_000);
 
     expect(retention.getRetention()).toBe("short");
   });
 
-  it("escalates exactly at threshold (1000 tokens with threshold 1000)", () => {
+  it("escalates after 3 turns with cache reads (default turn-based threshold)", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
-    retention.recordCacheReads(1000);
+    escalateViaTurns(retention);
 
-    expect(retention.getRetention()).toBe("long");
-  });
-
-  it("escalates on cumulative reads across multiple calls (500 + 500 = 1000)", () => {
-    const retention = createAdaptiveCacheRetention(createDefaultConfig());
-
-    retention.recordCacheReads(500);
-    expect(retention.getRetention()).toBe("short");
-
-    retention.recordCacheReads(500);
     expect(retention.getRetention()).toBe("long");
   });
 
   it("once escalated, stays at warmRetention even if no further reads", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
-    retention.recordCacheReads(2000);
+    escalateViaTurns(retention);
     expect(retention.getRetention()).toBe("long");
 
     // No further reads -- should remain "long"
@@ -78,8 +76,8 @@ describe("createAdaptiveCacheRetention", () => {
     // Before escalation
     expect(retention.getMessageRetention()).toBe("short");
 
-    // Escalate via cache reads
-    retention.recordCacheReads(5000);
+    // Escalate via 3 turns + reads
+    escalateViaTurns(retention);
     expect(retention.getRetention()).toBe("long");
 
     // After escalation -- message retention tracks warm retention
@@ -90,7 +88,7 @@ describe("createAdaptiveCacheRetention", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
     // Escalate
-    retention.recordCacheReads(5000);
+    escalateViaTurns(retention);
     expect(retention.getMessageRetention()).toBe("long");
 
     // Reset restores cold-start behavior
@@ -98,39 +96,39 @@ describe("createAdaptiveCacheRetention", () => {
     expect(retention.getMessageRetention()).toBe("short");
   });
 
-  it("recordCacheReads(0) does not escalate", () => {
+  it("recordTurn() with zero cache reads does not escalate", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
-    retention.recordCacheReads(0);
-    retention.recordCacheReads(0);
-    retention.recordCacheReads(0);
+    retention.recordTurn();
+    retention.recordTurn();
+    retention.recordTurn();
+    // No cache reads recorded -- turn-based escalation requires totalCacheReads > 0
 
     expect(retention.getRetention()).toBe("short");
   });
 
-  it("respects custom escalation threshold", () => {
+  it("respects custom escalationTurnThreshold", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
-      escalationThreshold: 5000,
+      escalationTurnThreshold: 5,
     }));
 
-    retention.recordCacheReads(4999);
+    // 4 turns with cache reads -- should NOT escalate
+    for (let i = 0; i < 4; i++) {
+      retention.recordTurn();
+      retention.recordCacheReads(10_000);
+    }
     expect(retention.getRetention()).toBe("short");
 
-    retention.recordCacheReads(1);
-    expect(retention.getRetention()).toBe("long");
-  });
-
-  it("escalates above threshold with large single read", () => {
-    const retention = createAdaptiveCacheRetention(createDefaultConfig());
-
-    retention.recordCacheReads(50000);
-
+    // 5th turn -- should escalate
+    retention.recordTurn();
+    retention.recordCacheReads(10_000);
     expect(retention.getRetention()).toBe("long");
   });
 
   it("hasEscalated() returns false before threshold", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
+    retention.recordTurn();
     retention.recordCacheReads(500);
 
     expect(retention.hasEscalated()).toBe(false);
@@ -139,7 +137,7 @@ describe("createAdaptiveCacheRetention", () => {
   it("hasEscalated() returns true after threshold", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
-    retention.recordCacheReads(1000);
+    escalateViaTurns(retention);
 
     expect(retention.hasEscalated()).toBe(true);
   });
@@ -147,7 +145,7 @@ describe("createAdaptiveCacheRetention", () => {
   it("hasEscalated() remains true once set (one-way)", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
-    retention.recordCacheReads(2000);
+    escalateViaTurns(retention);
     expect(retention.hasEscalated()).toBe(true);
 
     // No further reads -- should remain true
@@ -165,7 +163,7 @@ describe("createAdaptiveCacheRetention", () => {
       onEscalated,
     }));
 
-    retention.recordCacheReads(1000);
+    escalateViaTurns(retention);
 
     expect(onEscalated).toHaveBeenCalledOnce();
     expect(retention.hasEscalated()).toBe(true);
@@ -177,38 +175,22 @@ describe("createAdaptiveCacheRetention", () => {
       onEscalated,
     }));
 
+    retention.recordTurn();
     retention.recordCacheReads(999);
 
     expect(onEscalated).not.toHaveBeenCalled();
     expect(retention.hasEscalated()).toBe(false);
   });
 
-  it("onEscalated called only once even with multiple reads past threshold", () => {
+  it("onEscalated called only once even with additional turns past threshold", () => {
     const onEscalated = vi.fn();
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
       onEscalated,
     }));
 
-    retention.recordCacheReads(500);
-    retention.recordCacheReads(500);  // Crosses threshold
-    retention.recordCacheReads(500);  // Well past
+    escalateViaTurns(retention, 2);
 
     expect(onEscalated).toHaveBeenCalledOnce();
-  });
-
-  it("works without onEscalated callback (backward compat)", () => {
-    // Omit onEscalated entirely -- explicitly use token mode
-    const retention = createAdaptiveCacheRetention({
-      coldStartRetention: "short",
-      warmRetention: "long",
-      escalationThreshold: 1000,
-      escalationMode: "tokens",
-    });
-
-    retention.recordCacheReads(2000);
-
-    expect(retention.hasEscalated()).toBe(true);
-    expect(retention.getRetention()).toBe("long");
   });
 
   it("warm session starts with configRetention as coldStart", () => {
@@ -233,11 +215,9 @@ describe("createAdaptiveCacheRetention", () => {
     it("after escalation, reset() restores coldStartRetention ('short')", () => {
       const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
-      // Escalate
-      retention.recordCacheReads(2000);
+      escalateViaTurns(retention);
       expect(retention.getRetention()).toBe("long");
 
-      // Reset
       retention.reset();
 
       expect(retention.getRetention()).toBe("short");
@@ -246,7 +226,7 @@ describe("createAdaptiveCacheRetention", () => {
     it("after reset(), hasEscalated() returns false", () => {
       const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
-      retention.recordCacheReads(2000);
+      escalateViaTurns(retention);
       expect(retention.hasEscalated()).toBe(true);
 
       retention.reset();
@@ -254,19 +234,16 @@ describe("createAdaptiveCacheRetention", () => {
       expect(retention.hasEscalated()).toBe(false);
     });
 
-    it("after reset(), recordCacheReads can re-escalate to warmRetention", () => {
+    it("after reset(), the retention can re-escalate to warmRetention", () => {
       const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
-      // Escalate
-      retention.recordCacheReads(2000);
+      escalateViaTurns(retention);
       expect(retention.getRetention()).toBe("long");
 
-      // Reset
       retention.reset();
       expect(retention.getRetention()).toBe("short");
 
-      // Re-escalate
-      retention.recordCacheReads(1000);
+      escalateViaTurns(retention);
       expect(retention.getRetention()).toBe("long");
       expect(retention.hasEscalated()).toBe(true);
     });
@@ -278,14 +255,14 @@ describe("createAdaptiveCacheRetention", () => {
       }));
 
       // First escalation
-      retention.recordCacheReads(1000);
+      escalateViaTurns(retention);
       expect(onEscalated).toHaveBeenCalledTimes(1);
 
       // Reset
       retention.reset();
 
       // Second escalation -- callback should fire again
-      retention.recordCacheReads(1000);
+      escalateViaTurns(retention);
       expect(onEscalated).toHaveBeenCalledTimes(2);
     });
 
@@ -303,18 +280,21 @@ describe("createAdaptiveCacheRetention", () => {
       expect(retention.hasEscalated()).toBe(false);
     });
 
-    it("after reset(), totalCacheReads is 0 (999 tokens does not escalate with threshold 1000)", () => {
+    it("after reset(), turnCount is 0 (2 turns post-reset do not re-escalate)", () => {
       const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
       // Escalate
-      retention.recordCacheReads(5000);
+      escalateViaTurns(retention);
       expect(retention.getRetention()).toBe("long");
 
       // Reset
       retention.reset();
 
-      // Record 999 tokens -- should NOT escalate (threshold is 1000)
-      retention.recordCacheReads(999);
+      // 2 post-reset turns -- below the default threshold of 3
+      retention.recordTurn();
+      retention.recordCacheReads(10_000);
+      retention.recordTurn();
+      retention.recordCacheReads(10_000);
       expect(retention.getRetention()).toBe("short");
       expect(retention.hasEscalated()).toBe(false);
     });
@@ -388,11 +368,11 @@ describe("createStaticRetention", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Turn-count-based escalation mode (design 2.4)
+// Turn-count-based escalation (design 2.4) — canonical path after BC-REM-11
 // ---------------------------------------------------------------------------
 
-describe("createAdaptiveCacheRetention with turn-based escalation", () => {
-  it("does NOT escalate after 1 turn with 50K cache reads (default mode)", () => {
+describe("createAdaptiveCacheRetention turn-based escalation", () => {
+  it("does NOT escalate after 1 turn with 50K cache reads", () => {
     const retention = createAdaptiveCacheRetention({
       coldStartRetention: "short",
       warmRetention: "long",
@@ -422,7 +402,7 @@ describe("createAdaptiveCacheRetention with turn-based escalation", () => {
     expect(retention.hasEscalated()).toBe(false);
   });
 
-  it("escalates after 3 turns with cache reads (meets default threshold)", () => {
+  it("escalates after 3 turns with cache reads (default threshold)", () => {
     const retention = createAdaptiveCacheRetention({
       coldStartRetention: "short",
       warmRetention: "long",
@@ -476,21 +456,6 @@ describe("createAdaptiveCacheRetention with turn-based escalation", () => {
     expect(retention.getRetention()).toBe("long");
   });
 
-  it("token-mode escalation works when explicitly set", () => {
-    const retention = createAdaptiveCacheRetention({
-      coldStartRetention: "short",
-      warmRetention: "long",
-      escalationThreshold: 1000,
-      escalationMode: "tokens",
-    });
-
-    // Single turn with enough tokens should escalate in token mode
-    retention.recordCacheReads(1000);
-
-    expect(retention.getRetention()).toBe("long");
-    expect(retention.hasEscalated()).toBe(true);
-  });
-
   it("non-graph subagents with static 'short' do not escalate", () => {
     // Non-graph subagents use createStaticRetention("short")
     const retention = createStaticRetention("short");
@@ -526,7 +491,6 @@ describe("Fast-path escalation", () => {
   it("fast-path: escalates on turn 2 when first turn wrote >20K tokens and cache reads > 0", () => {
     const onEscalated = vi.fn();
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
-      escalationMode: "turns",
       onEscalated,
     }));
 
@@ -545,7 +509,6 @@ describe("Fast-path escalation", () => {
   it("no fast-path: first turn wrote <20K tokens -- standard 3-turn threshold applies", () => {
     const onEscalated = vi.fn();
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
-      escalationMode: "turns",
       onEscalated,
     }));
 
@@ -561,9 +524,7 @@ describe("Fast-path escalation", () => {
   });
 
   it("fast-path requires totalCacheReads > 0 -- zero cache reads on turn 2 does not escalate", () => {
-    const retention = createAdaptiveCacheRetention(createDefaultConfig({
-      escalationMode: "turns",
-    }));
+    const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
     // Turn 1: large write but no cache reads recorded anywhere
     retention.recordTurnWithCacheWrite(25_000);
@@ -576,7 +537,6 @@ describe("Fast-path escalation", () => {
   it("recordTurnWithCacheWrite increments turnCount -- standard escalation triggers at 3 turns", () => {
     const onEscalated = vi.fn();
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
-      escalationMode: "turns",
       onEscalated,
     }));
 
@@ -596,9 +556,7 @@ describe("Fast-path escalation", () => {
   });
 
   it("reset() clears fast-path state (lastCacheWriteTokens resets to 0)", () => {
-    const retention = createAdaptiveCacheRetention(createDefaultConfig({
-      escalationMode: "turns",
-    }));
+    const retention = createAdaptiveCacheRetention(createDefaultConfig());
 
     // Turn 1: large write
     retention.recordTurnWithCacheWrite(25_000);
@@ -638,7 +596,7 @@ describe("cost-aware TTL gating", () => {
       coldStartRetention: "short",
       warmRetention: "long",
       escalationThreshold: 1000,
-      // default escalationMode = "turns", escalationTurnThreshold = 3
+      // default escalationTurnThreshold = 3
     });
 
     retention.setCostGateOpen(false);
@@ -749,7 +707,6 @@ describe("cost-aware TTL gating", () => {
 describe("prefix instability detection", () => {
   it("forces retention to 'short' after PREFIX_INSTABILITY_THRESHOLD consecutive baseline reads", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
-      escalationMode: "turns",
       escalationTurnThreshold: 3,
     }));
     // Escalate first
@@ -776,7 +733,6 @@ describe("prefix instability detection", () => {
 
   it("recovers when cacheRead exceeds baseline", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
-      escalationMode: "turns",
       escalationTurnThreshold: 3,
     }));
     // Escalate
@@ -798,7 +754,6 @@ describe("prefix instability detection", () => {
 
   it("does not trigger when not escalated", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
-      escalationMode: "turns",
       escalationTurnThreshold: 3,
     }));
     // Not escalated yet
@@ -812,7 +767,6 @@ describe("prefix instability detection", () => {
 
   it("reset clears instability state", () => {
     const retention = createAdaptiveCacheRetention(createDefaultConfig({
-      escalationMode: "turns",
       escalationTurnThreshold: 3,
     }));
     // Escalate

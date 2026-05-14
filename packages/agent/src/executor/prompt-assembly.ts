@@ -804,13 +804,6 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     subagentRole: undefined, // relocated to dynamic preamble for sub-agent cache sharing
     excludeBootstrapFromContext: true, // BOOTSTRAP.md is either elevated (onboarding) or dead weight (post-onboarding); never useful in Project Context
     workspaceProfile: config.workspace?.profile,
-    /**
-     * Read once per call. The value is config-derived / restart-required,
-     * so it's stable across all turns in this session. Reading it via the
-     * port (rather than from config directly) isolates this code from the
-     * config-schema shape and matches the live adapter contract.
-     */
-    capabilityIndexEnabled: deps.toolCapabilityPort.isCapabilityIndexEnabled(),
     sepEnabled: params.sepEnabled,
   };
 

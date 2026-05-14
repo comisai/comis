@@ -28,10 +28,10 @@
  *     between turns — cache-fence enforcement at the source-grep boundary.
  *     `assemblerParams` MUST stay free of live-runtime accessors so the
  *     cached system-prompt prefix remains byte-identical when the skill
- *     registry reloads between turns. The config-derived
- *     `capabilityIndexEnabled` boolean IS allowed inside `assemblerParams`
- *     because it is operator-only/restart-required and stable across the
- *     session — the grep targets only LIVE-RUNTIME accessors.
+ *     registry reloads between turns. (Phase 38 BC-REM-11 removed the
+ *     last config-derived boolean from `assemblerParams` along with the
+ *     static-prompt gate-off branch in `tooling-sections.ts`; only
+ *     LIVE-RUNTIME accessors remain forbidden.)
  *   - `bootstrap/` and `workspace/` directories remain agent-owned per
  *     Phase 32 ORCH-EXT-09 audit (OQ-5). Both directories are executor
  *     support (LLM system-prompt assembly + ~/.comis/ filesystem-layout
@@ -218,10 +218,10 @@ describe("@comis/agent -- architecture invariants", () => {
   //   - the live-runtime MCP-server accessor (mutates between turns when
   //     servers connect/disconnect.)
   //
-  // `capabilityIndexEnabled` (a config-derived BOOLEAN, restart-required) IS
-  // allowed inside `assemblerParams` — config-derived values are stable
-  // across the session by design. The grep below targets the LIVE-RUNTIME
-  // accessors only.
+  // The grep below targets the LIVE-RUNTIME accessors only. Phase 38
+  // BC-REM-11 removed the last config-derived boolean that previously
+  // flowed through `assemblerParams`; only live-runtime accessors remain
+  // forbidden by the cache-fence invariant.
 
   it("prompt-assembly.ts does NOT import capability-index-context or call live-runtime port accessors", () => {
     // The test scans the executor/ directory and filters for prompt-assembly.ts

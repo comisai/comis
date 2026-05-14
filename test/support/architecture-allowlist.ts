@@ -2971,7 +2971,7 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
   },
   {
     file: "packages/agent/src/executor/prompt-assembly.ts",
-    line: 1098,
+    line: 1091,
     global: "Date.now",
     reason: "Direct global call; Phase B PORTS-11/12/13 retargets to injected ClockPort/EnvPort/TimerPort",
     removedIn: "phase-B",

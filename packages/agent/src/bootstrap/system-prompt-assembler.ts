@@ -125,28 +125,6 @@ export interface AssemblerParams {
   excludeBootstrapFromContext?: boolean;
   /** Workspace profile controlling platform instruction verbosity ('full' or 'specialist'). */
   workspaceProfile?: "full" | "specialist";
-  /**
-   * Capability index gate.
-   *
-   * When `true`, `buildToolingSection` emits the residual one-liner instead
-   * of the legacy `## Available Tools` flat block; the per-turn
-   * `## Capabilities` block is rendered into the dynamic preamble in
-   * `executor-prompt-runner.ts`.
-   * When `false` or `undefined`, the static prompt is byte-identical to
-   * the pre-feature baseline.
-   *
-   * RESTART-REQUIRED: this flag selects between two cached system-prompt
-   * shapes. Daemon wiring documents the operator-facing constraint.
-   *
-   * SAFE INSIDE THE CACHE FENCE: this value is config-derived
-   * (operator-only, restart-required) and stable across all turns of a
-   * session. Plumbing it through `assemblerParams` does NOT create a
-   * cache-thrash regression. Live-runtime accessors
-   * (getPromptSkillCapabilities, getConnectedMcpServers) are forbidden
-   * inside this interface and enforced by an architecture-grep test.
-   * Adding a config-derived flag to the cache fence is safe.
-   */
-  capabilityIndexEnabled?: boolean;
   /** Whether Silent Execution Planner (SEP) is enabled for this agent. */
   sepEnabled?: boolean;
 }
@@ -251,8 +229,8 @@ export const SECTIONS: ReadonlyArray<SectionDescriptor> = [
   { id: "safety",           includeIn: MODES_ALL,      build: (p, m) => buildSafetySection(m === "minimal") },
   { id: "language",         includeIn: MODES_ALL,      build: (p) => buildLanguageSection(p.userLanguage) },
   // --- Semi-stable body: operational-kept sections (MODES_ALL -- builders self-filter for minimal) ---
-  { id: "tooling",          includeIn: MODES_ALL,      build: (p, m) => buildToolingSection(p.toolNames ?? [], m === "minimal" ? "small" as ModelTier : "large" as ModelTier, p.toolSummaries, p.capabilityIndexEnabled) },
-  { id: "tool-call-style",  includeIn: MODES_ALL,      build: (p, m) => buildToolCallStyleSection(m === "minimal", p.toolNames ?? [], p.capabilityIndexEnabled) },
+  { id: "tooling",          includeIn: MODES_ALL,      build: (p, m) => buildToolingSection(p.toolNames ?? [], m === "minimal" ? "small" as ModelTier : "large" as ModelTier, p.toolSummaries) },
+  { id: "tool-call-style",  includeIn: MODES_ALL,      build: (p, m) => buildToolCallStyleSection(m === "minimal", p.toolNames ?? []) },
   // --- Operational-stripped sections (MODES_FULL_MIN -- dropped in "operational") ---
   { id: "self-update",      includeIn: MODES_FULL_MIN, build: (p, m) => buildSelfUpdateGatingSection(p.toolNames ?? [], m === "minimal", true) },
   { id: "config-secret",    includeIn: MODES_FULL_MIN, build: (p, m) => buildConfigSecretIntegritySection(p.toolNames ?? [], m === "minimal") },

@@ -70,8 +70,11 @@ describe("resolveToolMaskingTier", () => {
     expect(resolveToolMaskingTier("read")).toBe("protected");
   });
 
-  it("returns 'protected' for file_read (legacy alias)", () => {
-    expect(resolveToolMaskingTier("file_read")).toBe("protected");
+  it("returns 'standard' for file_read (legacy SDK alias deleted in BC-REM-11)", () => {
+    // Pre-phase-38 this returned 'protected' via a legacy alias for the
+    // pre-rename SDK permission name. @anthropic-ai/sdk 0.91+ emits 'read'
+    // (not 'file_read'); the alias has been removed.
+    expect(resolveToolMaskingTier("file_read")).toBe("standard");
   });
 
   it("returns 'protected' for session_search", () => {
@@ -122,15 +125,15 @@ describe("resolveToolMaskingTier", () => {
 });
 
 describe("TOOL_MASKING_TIERS", () => {
-  it("has exactly 11 entries (6 protected + 5 ephemeral)", () => {
-    expect(TOOL_MASKING_TIERS.size).toBe(11);
+  it("has exactly 10 entries (5 protected + 5 ephemeral) — file_read legacy alias deleted in BC-REM-11", () => {
+    expect(TOOL_MASKING_TIERS.size).toBe(10);
   });
 
-  it("contains 6 protected-tier entries (read + file_read legacy alias)", () => {
+  it("contains 5 protected-tier entries", () => {
     const protectedEntries = [...TOOL_MASKING_TIERS.entries()].filter(
       ([, tier]) => tier === "protected",
     );
-    expect(protectedEntries).toHaveLength(6);
+    expect(protectedEntries).toHaveLength(5);
   });
 
   it("contains 5 ephemeral-tier entries", () => {

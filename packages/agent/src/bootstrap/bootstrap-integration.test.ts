@@ -245,7 +245,8 @@ describe("15+ section assembly", () => {
 
     // Verify key section headings are present
     expect(prompt).toContain("## Safety");
-    expect(prompt).toContain("## Available Tools");
+    // Post-BC-REM-11: tooling section emits the residual one-liner (no heading)
+    expect(prompt).toContain("When this turn includes a `Capabilities` context");
     expect(prompt).toContain("## Workspace");
     expect(prompt).toContain("## Runtime");
     expect(prompt).toContain("## Project Context");
@@ -291,8 +292,8 @@ describe("Prompt verbosity modes", () => {
       bootstrapFiles: contextFiles,
     });
 
-    // Included in minimal
-    expect(result).toContain("## Available Tools");
+    // Included in minimal — post-BC-REM-11 tooling block is the residual one-liner (no heading)
+    expect(result).toContain("When this turn includes a `Capabilities` context");
     expect(result).toContain("## Runtime");
     expect(result).toContain("## Project Context");
 
