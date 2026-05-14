@@ -208,9 +208,6 @@ export interface PiEventBridgeResult {
   getDrainState: () => DrainInflightState;
 }
 
-// Re-export helper functions for backward compatibility with existing imports
-export { sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
-
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------

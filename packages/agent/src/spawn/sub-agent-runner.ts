@@ -257,7 +257,7 @@ export interface SubAgentRunnerDeps {
       sessionKey: string;
     }): string;
   };
-  /** Base data directory for locating subagent-results (e.g., ~/.comis). Optional for backward compat. */
+  /** Base data directory for locating subagent-results (e.g., ~/.comis). Optional — caller may omit. */
   dataDir?: string;
   /** Optional lifecycle hooks for spawn preparation and completion */
   lifecycleHooks?: {
@@ -334,10 +334,6 @@ export interface SpawnParams {
    *  because their cache prefix has no downstream consumers. */
   isLeafNode?: boolean;
 }
-
-// Re-export extracted result processor types and functions for backward compatibility
-export { classifyAbortReason, buildAnnouncementMessage, deliverFailureNotification, sweepResultFiles, persistFailureRecord, validateOutputs } from "./sub-agent-result-processor.js";
-export type { AbortClassification, ValidationResult } from "./sub-agent-result-processor.js";
 
 // ---------------------------------------------------------------------------
 // Factory

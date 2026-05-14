@@ -6,16 +6,18 @@ import {
   getMinCacheableTokens,
   CACHEABLE_BLOCK_TYPES,
   addCacheControlToLastBlock,
-  getOrCacheRenderedTool,
-  clearSessionPerToolCache,
   resolveCacheRetention,
   clearSessionBetaHeaderLatches,
-  clearSessionRenderedToolCache,
   clearStaleThinkingBlocks,
   sortToolsForCacheStability,
   estimateBlockTokens,
   clearSessionPrefixStability,
 } from "./request-body-injector.js";
+import {
+  getOrCacheRenderedTool,
+  clearSessionPerToolCache,
+  clearSessionRenderedToolCache,
+} from "./tool-schema-cache.js";
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, resolveBreakpointStrategy } from "./config-resolver.js";
 import type { RequestBodyInjectorConfig } from "./request-body-injector.js";
 import { createSessionLatch } from "../session-latch.js";

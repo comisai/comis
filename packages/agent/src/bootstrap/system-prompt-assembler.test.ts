@@ -2372,7 +2372,7 @@ describe("staticPrefix/attribution byte-identity full vs operational", () => {
     const full = assembleRichSystemPrompt({ ...params, promptMode: "full" });
     const op = assembleRichSystemPrompt({ ...params, promptMode: "operational" });
 
-    // Present in full but not in operational (MODES_FULL-only sections)
+    // Present in both full and operational (MODES_ALL sections — see SECTIONS array)
     expect(full).toContain("## Safety");
     expect(op).toContain("## Safety");
     // Sections that drop in operational

@@ -240,18 +240,6 @@ export function mergeSessionStats(
 // ---------------------------------------------------------------------------
 
 
-// Re-export for backward compatibility with consumers that import from pi-executor.ts
-export {
-  clearSessionDeliveredGuides,
-  clearSessionToolSchemaSnapshot,
-  clearSessionToolSchemaSnapshotHash,
-  clearSessionBreakpointIndex,
-  clearSessionCacheWarm,
-  clearSessionLatches,
-  clearSessionLatches as _clearSessionLatchesForTest,
-  getOrCreateSessionLatches as _getOrCreateSessionLatchesForTest,
-} from "./executor-session-state.js";
-
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------

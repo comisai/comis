@@ -18,9 +18,6 @@ import {
 // Preserve existing public exports for downstream @comis/channels consumers.
 export { NO_REPLY_TOKEN, HEARTBEAT_OK_TOKEN };
 
-/** Regex retained for backward compatibility with downstream re-exports. */
-export const REPLY_TAG_RE = /<\/?reply(?:\s[^>]*)?>|<reply>/gi;
-
 export interface FilterResult {
   shouldDeliver: boolean;
   cleanedText: string;

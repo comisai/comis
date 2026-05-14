@@ -233,12 +233,6 @@ const MODES_ALL: ReadonlySet<PromptMode> = new Set<PromptMode>(["full", "operati
  *  Minimal-mode builders typically self-filter to [] via their own isMinimal flag;
  *  membership here preserves pre-refactor behavior without changing minimal output. */
 const MODES_FULL_MIN: ReadonlySet<PromptMode> = new Set<PromptMode>(["full", "minimal"]);
-/** Sections present only in full mode (stripped in operational AND minimal).
- *  Reserved for sections whose builder is cheap but whose output is not desired
- *  in either non-interactive context. Currently unused; MODES_FULL_MIN is
- *  preferred to preserve pre-refactor minimal output. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for future use
-const MODES_FULL: ReadonlySet<PromptMode> = new Set<PromptMode>(["full"]);
 
 /**
  * Canonical section list in emission order.

@@ -593,7 +593,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "credentialsStep",
       "RpcClient",
     ])],
-    // @comis/core: 379 baseline orphans tracked here (367 post-Phase-28; Phase 29-04 sweep dropped 3: ZERO_WIDTH_REGEX, SchedulerConfigSchema, SchedulerConfig; Phase 30 plan 02 added 9; Phase 31 plan 05 added 3 master-key helpers — see inline comment near end of this set).
+    // @comis/core: 379 baseline orphans tracked here (367 post-Phase-28; Phase 29-04 sweep dropped 3: ZERO_WIDTH_REGEX, SchedulerConfigSchema, SchedulerConfig; Phase 30 plan 02 added 9; Phase 31 plan 05 added 3 master-key helpers; Phase 38 plan 02 BC-REM-10 re-added ZERO_WIDTH_REGEX after sanitizer.ts re-export deletion — see inline comment near end of this set).
     // added by Phase 30 plan 02 — see the inline comment near the end of
     // this set).
     ["@comis/core", new Set<string>([
@@ -796,6 +796,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "scanEnvForSecrets",
       "AuditSeverity",
       "AuditOptions",
+      // Re-added by Phase 38 BC-REM-10: sanitizer.ts BC re-export deleted; the
+      // only remaining in-repo consumer is sanitizer.test.ts (test files are
+      // excluded from public-export-consumers.test.ts's consumer scan).
+      // ZERO_WIDTH_REGEX is part of the documented @comis/core security surface
+      // (paired with TAG_BLOCK_REGEX, stripInvisible, containsTagBlockChars).
+      "ZERO_WIDTH_REGEX",
       "TAG_BLOCK_REGEX",
       "IGNORE_INSTRUCTIONS_BROAD",
       "DISREGARD_PREVIOUS",

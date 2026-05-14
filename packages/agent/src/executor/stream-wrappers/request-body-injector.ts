@@ -154,13 +154,10 @@ export interface RequestBodyInjectorConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Tool schema caches extracted to tool-schema-cache.ts (leaf module).
-// Re-exported here for backward compatibility with existing consumers.
+// Tool schema caches: internal local consumers only — the barrel (index.ts) and
+// public surface re-export these names directly from `./tool-schema-cache.js`.
 // ---------------------------------------------------------------------------
 import { sessionRenderedToolCache, getOrCacheRenderedTool } from "./tool-schema-cache.js";
-
-export { clearSessionRenderedToolCache, getOrCacheRenderedTool, clearSessionPerToolCache } from "./tool-schema-cache.js";
-export type { RenderedToolCacheEntry } from "./tool-schema-cache.js";
 
 // ---------------------------------------------------------------------------
 // Sticky-on beta header latches.
