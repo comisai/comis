@@ -22,6 +22,7 @@ import {
   type PerAgentConfig,
   type TypedEventBus,
   type MemoryPort,
+  type ClockPort,
   tryGetContext,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
@@ -183,6 +184,8 @@ export interface PostExecutionParams {
     activeRunRegistry?: ActiveRunRegistry;
     embeddingEnqueue?: (entryId: string, content: string) => void;
     workspaceDir: string;
+    /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+    clock: ClockPort;
   };
   // Session adapter
   sessionAdapter: ComisSessionManager;
@@ -281,8 +284,8 @@ const pairedMemoryDedup = new Map<string, number>();
  *
  * Exported for unit tests.
  */
-export function isDuplicatePairedMemory(content: string, agentId: string): boolean {
-  const now = Date.now();
+export function isDuplicatePairedMemory(content: string, agentId: string, clock: ClockPort): boolean {
+  const now = clock.now();
 
   if (pairedMemoryDedup.size > DEDUP_MAX_ENTRIES) {
     for (const [key, ts] of pairedMemoryDedup) {
@@ -347,13 +350,14 @@ export function buildSessionEndMetadata(args: {
   totalTokens: number;
   executionId: string;
   traceId: string | undefined;
+  clock: ClockPort;
 }): SessionMetadata {
   return {
     ...(args.traceId && { traceId: args.traceId }),
     runId: args.executionId,
     sessionEnd: {
       type: "session_end",
-      timestamp: new Date().toISOString(),
+      timestamp: args.clock.nowDate().toISOString(),
       endReason: END_REASON_MAP[args.finishReason] ?? "error",
       durationMs: args.durationMs,
       totalTokens: args.totalTokens,
@@ -472,7 +476,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         cacheHitTokens: cacheReadTokens,
         cacheWriteTokens,
         cacheMissTokens: inputTokens,  // Already the uncached portion from the API
-        timestamp: Date.now(),
+        timestamp: deps.clock.now(),
       });
     }
   }
@@ -497,8 +501,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       stepsPlanned: toolCalls,
       stepsCompleted: toolCalls,
       stepsSkipped: 0,
-      durationMs: Date.now() - plan.createdAtMs,
-      timestamp: Date.now(),
+      durationMs: deps.clock.now() - plan.createdAtMs,
+      timestamp: deps.clock.now(),
     });
   }
 
@@ -507,11 +511,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // because the TTL guard reads from the same module-level Map on next call.
   const capturedRetention = streamSetup.capturedRetention;
   if (capturedRetention) {
-    recordLastResponseTs(formattedKey, capturedRetention.getRetention());
+    recordLastResponseTs(formattedKey, capturedRetention.getRetention(), deps.clock);
   }
 
   // Execution bookend INFO log with summary stats
-  const durationMs = Date.now() - executionStartMs;
+  const durationMs = deps.clock.now() - executionStartMs;
   // LLM/tool/contextEngine duration breakdown from bridge cumulative trackers
   const llmDurationMs = bridgeResult.cumulativeLlmDurationMs ?? 0;
   // Use wallclock-capped tool duration for overhead decomposition (parallel tools can inflate raw sum)
@@ -650,6 +654,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       totalTokens: result.tokensUsed.total,
       executionId,
       traceId: tryGetContext()?.traceId,
+      clock: deps.clock,
     }));
   } catch { /* fire-and-forget */ }
 
@@ -696,10 +701,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     !skipMemoryForOperation &&
     shouldStorePairedMemory(msg.text, result.response)
   ) {
-    const now = Date.now();
+    const now = deps.clock.now();
     const pairedContent = buildPairedMemoryContent(msg.text, result.response);
 
-    if (isDuplicatePairedMemory(pairedContent, effectiveAgentId)) {
+    if (isDuplicatePairedMemory(pairedContent, effectiveAgentId, deps.clock)) {
       deps.logger.debug(
         { agentId: effectiveAgentId, sessionKey: formattedKey },
         "Paired memory skipped: duplicate content within dedup window",

@@ -423,6 +423,31 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
     // Inert-but-not-broken; matches the production no-op port behavior the
     // daemon injects.
     toolCapabilityPort: createCapabilityPortStub(),
+    // Phase 39 PORTS-11/12/13: required deps for clock, env, and timers.
+    clock: { now: () => Date.now(), nowDate: () => new Date() },
+    env: { get: (k: string) => undefined, snapshot: () => Object.freeze({}) },
+    timers: {
+      setTimeout: (cb: () => void, ms: number) => {
+        const t = setTimeout(cb, ms);
+        let cancelled = false;
+        let unrefCalled = false;
+        return {
+          get cancelled() { return cancelled; },
+          cancel() { if (cancelled) return; cancelled = true; clearTimeout(t); },
+          unref() { if (cancelled || unrefCalled) return; unrefCalled = true; t.unref(); },
+        };
+      },
+      setInterval: (cb: () => void, ms: number) => {
+        const t = setInterval(cb, ms);
+        let cancelled = false;
+        let unrefCalled = false;
+        return {
+          get cancelled() { return cancelled; },
+          cancel() { if (cancelled) return; cancelled = true; clearInterval(t); },
+          unref() { if (cancelled || unrefCalled) return; unrefCalled = true; t.unref(); },
+        };
+      },
+    },
     ...overrides,
   };
 }

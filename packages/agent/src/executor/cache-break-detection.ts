@@ -489,6 +489,8 @@ interface DetectorLogger {
 export interface CacheBreakDetectorOptions {
   /** Design 3.4: Override max tracked sessions (default: MAX_TRACKING_ENTRIES = 15). */
   maxTrackingEntries?: number;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: import("@comis/core").ClockPort;
 }
 
 /**
@@ -499,9 +501,10 @@ export interface CacheBreakDetectorOptions {
  */
 export function createCacheBreakDetector(
   logger: DetectorLogger,
-  options?: CacheBreakDetectorOptions,
+  options: CacheBreakDetectorOptions,
 ): CacheBreakDetector {
-  const maxEntries = options?.maxTrackingEntries ?? MAX_TRACKING_ENTRIES;
+  const maxEntries = options.maxTrackingEntries ?? MAX_TRACKING_ENTRIES;
+  const clock = options.clock;
 
   // Design 3.4: Create LRU map with WARN on eviction
   sessionDetectorState = createLruMap<string, DetectorState>(maxEntries, (evictedKey) => {
@@ -670,7 +673,7 @@ export function createCacheBreakDetector(
         ttlCategory: deriveTtlCategory(state.currentSnapshot.retention),
         agentId: state.agentId,
         sessionKey: input.sessionKey,
-        timestamp: Date.now(),
+        timestamp: clock.now(),
         // Thread lazy-materialized content for diff writer
         previousSystem: prevContent?.system,
         currentSystem: currContent?.system,

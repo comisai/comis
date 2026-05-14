@@ -247,6 +247,8 @@ export interface PromptAssemblyParams {
      * statically enforce this restriction.
      */
     toolCapabilityPort: ToolCapabilityPort;
+    /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+    clock: import("@comis/core").ClockPort;
   };
   msg: NormalizedMessage;
   sessionKey: SessionKey;
@@ -595,7 +597,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   let memorySections: string[] = [];
   let inlineMemory: string | undefined;
   if (deps.memoryPort && config.rag?.enabled && !params.skipRag) {
-    const ragStart = Date.now();
+    const ragStart = deps.clock.now();
     try {
       logger.debug({ agentId, queryLength: msg.text.length }, "RAG search started");
       const searchResults = await deps.memoryPort.search(sessionKey, msg.text, {
@@ -622,12 +624,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           inlineMemory = injection.inlineMemory;
           memorySections = injection.systemPromptSections;
         }
-        logger.debug({ agentId, resultCount: deduped.length, durationMs: Date.now() - ragStart }, "RAG search complete");
+        logger.debug({ agentId, resultCount: deduped.length, durationMs: deps.clock.now() - ragStart }, "RAG search complete");
       } else {
-        logger.debug({ agentId, resultCount: 0, durationMs: Date.now() - ragStart }, "RAG search complete");
+        logger.debug({ agentId, resultCount: 0, durationMs: deps.clock.now() - ragStart }, "RAG search complete");
       }
     } catch (err) {
-      logger.warn({ agentId, err, durationMs: Date.now() - ragStart, hint: "RAG search failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG retrieval failed (non-fatal)");
+      logger.warn({ agentId, err, durationMs: deps.clock.now() - ragStart, hint: "RAG search failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG retrieval failed (non-fatal)");
     }
   }
 
@@ -707,7 +709,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         trustLevel: currentSenderTrust,
         displayMode: senderTrustDisplayMode,
         sessionKey: formatSessionKey(sessionKey),
-        timestamp: Date.now(),
+        timestamp: deps.clock.now(),
       });
     }
   }
@@ -1088,7 +1090,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         model: config.model,
         provider: config.provider,
         cacheRetention: config.cacheRetention,
-        cacheWriteTimestamp: Date.now(),
+        cacheWriteTimestamp: deps.clock.now(),
         toolHash: currentToolHash,
       });
     }

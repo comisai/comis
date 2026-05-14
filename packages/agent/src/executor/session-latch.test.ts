@@ -11,7 +11,11 @@ import type { SessionLatch, AccumulativeLatch } from "./session-latch.js";
 import {
   clearSessionLatches as _clearSessionLatchesForTest,
   getOrCreateSessionLatches as _getOrCreateSessionLatchesForTest,
+  setSessionStateClock,
 } from "./executor-session-state.js";
+
+// Phase 39 PORTS-11: initialize module-level clock provider for tests.
+setSessionStateClock({ now: () => Date.now(), nowDate: () => new Date() });
 
 describe("SessionLatch", () => {
   describe("createSessionLatch() with no args", () => {

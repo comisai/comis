@@ -679,6 +679,7 @@ async function stageFoundation(input: {
     maxActiveCachesPerAgent: 20,
     refreshThreshold: 0.5,
     logger: daemonLogger,
+    clock,
   });
 
   // Deferred channel plugins ref (populated after setupChannels)
@@ -1017,7 +1018,7 @@ async function stageAgents(input: {
   const { overrides, foundation } = input;
   const {
     container, dataDir,
-    clock, timers,
+    clock, env, timers,
     daemonLogger, gatewayLogger, agentLogger, schedulerLogger, skillsLogger,
     memoryAdapter, db, sessionStore, cachedPort, embeddingQueue,
     contextStore,
@@ -1092,6 +1093,7 @@ async function stageAgents(input: {
     // Daemon-global MCP manager threaded into setupSingleAgent for
     // per-agent ToolCapabilityPort adapter construction.
     mcpClientManager,
+    clock, env, timers,  // Phase 39 PORTS-11/12/13
   });
 
   // Log operation model resolutions at startup (dry-run validation)

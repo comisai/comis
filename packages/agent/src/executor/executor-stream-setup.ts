@@ -86,6 +86,8 @@ export interface StreamSetupDeps {
   tenantId?: string;
   tracingDefaults?: { maxSize: string; maxFiles: number };
   geminiCacheManager?: GeminiCacheManager;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: import("@comis/core").ClockPort;
 }
 
 /** Parameters for the setupStreamWrappers function. */
@@ -230,7 +232,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     clearSessionLatches(formattedKey);                  // 4. SESS-LATCH: Reset latches for fresh cache cycle
     // Latch idle thinking clear when elapsed > 1h
     if (!executionOverrides?.spawnPacket) {
-      const elapsed = getElapsedSinceLastResponse(formattedKey);
+      const elapsed = getElapsedSinceLastResponse(formattedKey, deps.clock);
       if (elapsed !== undefined && elapsed > 60 * 60 * 1000) {
         getOrCreateSessionLatches(formattedKey).idleThinkingClear.setOnce(true);
       }
@@ -243,6 +245,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       getRetention: () => capturedRetention?.getRetention(),
       onTtlExpiry,
       logger: deps.logger,
+      clock: deps.clock,
     }),
     validationErrorFormatter,
     bouncerWrapper,
@@ -268,6 +271,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     ),
     createRequestBodyInjector(
       {
+        clock: deps.clock,
         getCacheRetention: () => capturedRetention?.getRetention()
           ?? capturedCacheRetention ?? config.cacheRetention,
         getMessageRetention: () => capturedRetention?.getMessageRetention(),
@@ -280,7 +284,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
         cacheWriteTimestamp: executionOverrides?.spawnPacket?.cacheSafeParams?.cacheWriteTimestamp,
         parentCacheRetention: executionOverrides?.spawnPacket?.cacheSafeParams?.cacheRetention,
         getCacheFenceIndex: () => getBreakpointIndex(formattedKey) ?? -1,
-        getElapsedSinceLastResponse: () => getElapsedSinceLastResponse(formattedKey),
+        getElapsedSinceLastResponse: () => getElapsedSinceLastResponse(formattedKey, deps.clock),
         getLastResponseTs: () => getLastResponseTs(formattedKey),
         promoteRecentZoneOnSlowCadence:
           config.advancedCacheOptimization?.enableRecentZonePromotion ?? true,
@@ -395,8 +399,8 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
       const traceMaxFiles = deps.tracingDefaults?.maxFiles ?? 3;
 
       wrappers.push(
-        createCacheTraceWriter({ filePath: cacheTracePath, agentId, sessionId: formattedKey, maxSize: traceMaxSize, maxFiles: traceMaxFiles }, deps.logger),
-        createApiPayloadTraceWriter({ filePath: apiPayloadPath, agentId, sessionId: formattedKey, maxSize: traceMaxSize, maxFiles: traceMaxFiles }, deps.logger),
+        createCacheTraceWriter({ filePath: cacheTracePath, agentId, sessionId: formattedKey, maxSize: traceMaxSize, maxFiles: traceMaxFiles, clock: deps.clock }, deps.logger),
+        createApiPayloadTraceWriter({ filePath: apiPayloadPath, agentId, sessionId: formattedKey, maxSize: traceMaxSize, maxFiles: traceMaxFiles, clock: deps.clock }, deps.logger),
       );
 
       deps.logger.info(

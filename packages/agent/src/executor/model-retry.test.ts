@@ -4,6 +4,27 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { parseModelString, runWithModelRetry, isAuthError, type ModelRetryParams } from "./model-retry.js";
 import { PromptTimeoutError } from "./prompt-timeout.js";
 import { createLastKnownModelTracker } from "../model/last-known-model.js";
+import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+
+// ---------------------------------------------------------------------------
+// Phase 39: port stubs that delegate to globals so vi.useFakeTimers() intercepts.
+// ---------------------------------------------------------------------------
+
+function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
+  let cancelled = false;
+  let unrefCalled = false;
+  return {
+    get cancelled() { return cancelled; },
+    cancel() { if (cancelled) return; cancelled = true; clearTimeout(t); },
+    unref() { if (cancelled || unrefCalled) return; unrefCalled = true; t.unref(); },
+  };
+}
+
+const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
+const testTimers: TimerPort = {
+  setTimeout: (cb, ms) => wrapTimerHandle(setTimeout(cb, ms)),
+  setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -77,6 +98,8 @@ function makeParams(overrides?: Partial<ModelRetryParams>): ModelRetryParams {
       modelRegistry: makeModelRegistry(),
       agentId: "test-agent",
       sessionKey: "test-session",
+      clock: testClock,
+      timers: testTimers,
     },
     ...overrides,
   };
@@ -138,6 +161,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           authRotation: authRotation as any,
         },
       });
@@ -166,6 +191,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           authRotation: authRotation as any,
         },
       });
@@ -192,6 +219,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger,
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           authRotation: authRotation as any,
         },
       });
@@ -219,6 +248,8 @@ describe("runWithModelRetry", () => {
           eventBus,
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           authRotation: authRotation as any,
           fallbackModels: ["openai:gpt-4"],
         },
@@ -258,6 +289,8 @@ describe("runWithModelRetry", () => {
           logger: createMockLogger(),
           modelRegistry,
           fallbackModels: ["openai:gpt-4"],
+          clock: testClock,
+          timers: testTimers,
         },
       });
 
@@ -290,6 +323,8 @@ describe("runWithModelRetry", () => {
           eventBus,
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           fallbackModels: ["openai:gpt-4", "google:gemini-pro"],
         },
       });
@@ -320,6 +355,8 @@ describe("runWithModelRetry", () => {
           logger: createMockLogger(),
           modelRegistry,
           fallbackModels: ["openai:gpt-4"],
+          clock: testClock,
+          timers: testTimers,
         },
       });
 
@@ -349,6 +386,8 @@ describe("runWithModelRetry", () => {
           eventBus,
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           fallbackModels: ["openai:gpt-4", "google:gemini-pro"],
         },
       });
@@ -383,6 +422,8 @@ describe("runWithModelRetry", () => {
           eventBus,
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           // no fallbackModels
         },
       });
@@ -410,6 +451,8 @@ describe("runWithModelRetry", () => {
           eventBus,
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           fallbackModels: ["invalid-format-no-colon"],
         },
       });
@@ -478,6 +521,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           fallbackModels: ["openai:gpt-4"],
         },
       });
@@ -503,6 +548,8 @@ describe("runWithModelRetry", () => {
           eventBus,
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           agentId: "agent-1",
           sessionKey: "session-1",
         },
@@ -580,6 +627,8 @@ describe("runWithModelRetry", () => {
           eventBus,
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           fallbackModels: ["openai:gpt-4"],
         },
       });
@@ -607,6 +656,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           fallbackModels: ["openai:gpt-4"],
         },
       });
@@ -634,6 +685,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           fallbackModels: ["openai:gpt-4"],
         },
       });
@@ -664,6 +717,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           authRotation: authRotation as any,
           fallbackModels: ["openai:gpt-4"],
         },
@@ -713,6 +768,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger,
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           agentId: "test-agent",
           sessionKey: "test-session",
         },
@@ -742,6 +799,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger,
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           agentId: "test-agent",
           sessionKey: "test-session",
         },
@@ -821,6 +880,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           fallbackModels: ["openai:gpt-4"],
         },
       });
@@ -856,6 +917,8 @@ describe("runWithModelRetry", () => {
           eventBus,
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           fallbackModels: ["openai:gpt-4"],
           lastKnownModel: lkwTracker,
           agentId: "test-agent",
@@ -900,6 +963,8 @@ describe("runWithModelRetry", () => {
           eventBus,
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           lastKnownModel: lkwTracker,
         },
       });
@@ -930,6 +995,8 @@ describe("runWithModelRetry", () => {
           eventBus,
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           lastKnownModel: lkwTracker,
           agentId: "test-agent",
         },
@@ -960,6 +1027,8 @@ describe("runWithModelRetry", () => {
           eventBus: makeEventBus(),
           logger: createMockLogger(),
           modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
           lastKnownModel: lkwTracker,
           agentId: "test-agent",
         },

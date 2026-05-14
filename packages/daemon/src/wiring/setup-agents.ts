@@ -176,6 +176,12 @@ export interface SingleAgentDeps {
    * session-write-lock call site is safe.
    */
   fileLock: FileLockPort;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: import("@comis/core").ClockPort;
+  /** Environment-variable reads (Phase 39 PORTS-12). */
+  env: import("@comis/core").EnvPort;
+  /** Timer scheduling (Phase 39 PORTS-13). */
+  timers: import("@comis/core").TimerPort;
 }
 
 /** Per-agent outputs from setupSingleAgent(), matching the Maps in AgentsResult. */
@@ -233,8 +239,8 @@ export interface AgentsResult {
    * skillRegistries.
    */
   toolCapabilityPorts: Map<string, ToolCapabilityPort>;
-  /** Periodic lock cleanup timer (cleared on shutdown). */
-  lockCleanupTimer: ReturnType<typeof setInterval>;
+  /** Periodic lock cleanup timer (cleared on shutdown). Phase 39 PORTS-13: TimerHandle. */
+  lockCleanupTimer: import("@comis/core").TimerHandle;
   /** Shared single-agent dependencies for hot-add closure capture. */
   singleAgentDeps: SingleAgentDeps;
   /** Global provider health monitor for daemon-level health metrics */
@@ -699,6 +705,10 @@ export async function setupSingleAgent(
     storeCompletions: effectiveConfig.storeCompletions,
     providerCapabilities: container.config.providers?.entries?.[resolved.provider]?.capabilities,
     maxSendsPerExecution: container.config.messages?.maxSendsPerExecution,
+    // Phase 39 PORTS-11/12/13: runtime adapter ports threaded into the executor.
+    clock: deps.clock,
+    env: deps.env,
+    timers: deps.timers,
   });
 
   agentLogger.debug(
@@ -784,6 +794,12 @@ export async function setupAgents(deps: {
    * daemon.ts threads it in after running setupMcp before setupAgents.
    */
   mcpClientManager: McpClientManager;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: import("@comis/core").ClockPort;
+  /** Environment-variable reads (Phase 39 PORTS-12). */
+  env: import("@comis/core").EnvPort;
+  /** Timer scheduling (Phase 39 PORTS-13). */
+  timers: import("@comis/core").TimerPort;
 }): Promise<AgentsResult> {
   const { container, memoryAdapter, sessionStore, agentLogger } = deps;
 
@@ -962,6 +978,10 @@ export async function setupAgents(deps: {
     mcpClientManager: deps.mcpClientManager,
     // Canonical FileLockPort adapter — see comment at construction site.
     fileLock,
+    // Phase 39 PORTS-11/12/13: runtime adapter ports.
+    clock: deps.clock,
+    env: deps.env,
+    timers: deps.timers,
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
@@ -993,7 +1013,7 @@ export async function setupAgents(deps: {
 
   // Periodic stale lock cleanup (every 30 minutes)
   const LOCK_CLEANUP_INTERVAL_MS = 30 * 60_000;
-  const lockCleanupTimer = setInterval(() => {
+  const lockCleanupTimer = deps.timers.setInterval(() => {
     for (const [agentId, dir] of workspaceDirs) {
       const lockDir = safePath(dir, ".locks");
       suppressError(

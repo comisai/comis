@@ -57,6 +57,8 @@ export interface ContextEngineSetupDeps {
    * with fallthrough to authStorage for non-OAuth providers.
    */
   oauthManager?: OAuthTokenManager;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: import("@comis/core").ClockPort;
 }
 
 /** Parameters for context engine creation. */
@@ -162,6 +164,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
           api: currentApi,
         },
         idleMs,
+        now: deps.clock.now(),
       });
 
       memoizedDrift = existingDrift;
@@ -397,7 +400,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
           filesInjected: stats.filesInjected,
           skillsInjected: stats.skillsInjected,
           overflowStripped: stats.overflowStripped,
-          timestamp: Date.now(),
+          timestamp: deps.clock.now(),
         });
       },
       onOverflow: (stats: { contextChars: number; budgetChars: number; recoveryAction: "strip_files" | "strip_skills" | "remove_position1" | "remove_rehydration" | "none" }) => {
@@ -407,7 +410,7 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
           contextTokens: Math.ceil(stats.contextChars / CHARS_PER_TOKEN_RATIO),
           budgetTokens: Math.ceil(stats.budgetChars / CHARS_PER_TOKEN_RATIO),
           recoveryAction: stats.recoveryAction,
-          timestamp: Date.now(),
+          timestamp: deps.clock.now(),
         });
       },
     }),

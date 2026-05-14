@@ -10,6 +10,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { ClockPort } from "@comis/core";
+
+// Phase 39 PORTS-11: test-only clock stub.
+const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
+
 import {
   createCacheBreakDetector,
   extractAnthropicPromptState,
@@ -238,7 +243,7 @@ describe("recordPromptState", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -347,7 +352,7 @@ describe("checkResponseForCacheBreak", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -446,7 +451,7 @@ describe("checkResponseForCacheBreak", () => {
 describe("AND-based cache break threshold", () => {
   let detector: CacheBreakDetector;
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger as any);
+    detector = createCacheBreakDetector(noopLogger as any, { clock: testClock });
   });
 
   it("returns null when only absolute exceeds (3K drop on 200K context)", () => {
@@ -497,7 +502,7 @@ describe("AND-based cache break threshold", () => {
 describe("lazy per-tool hash comparison", () => {
   let detector: CacheBreakDetector;
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger as any);
+    detector = createCacheBreakDetector(noopLogger as any, { clock: testClock });
   });
 
   it("skips per-tool diff when toolsHash unchanged", () => {
@@ -557,7 +562,7 @@ describe("attributeReason priority", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -623,7 +628,7 @@ describe("notifyCompaction", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -646,7 +651,7 @@ describe("notifyTtlExpiry", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -669,7 +674,7 @@ describe("session isolation", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -710,7 +715,7 @@ describe("callCount", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -739,7 +744,7 @@ describe("CacheBreakEvent structure", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -906,7 +911,7 @@ describe("notifyContentModification (G-09)", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -1124,7 +1129,7 @@ describe("header and extra-body tracking", () => {
     let detector: CacheBreakDetector;
 
     beforeEach(() => {
-      detector = createCacheBreakDetector(noopLogger);
+      detector = createCacheBreakDetector(noopLogger, { clock: testClock });
       detector.reset();
     });
 
@@ -1176,7 +1181,7 @@ describe("header and extra-body tracking", () => {
     let detector: CacheBreakDetector;
 
     beforeEach(() => {
-      detector = createCacheBreakDetector(noopLogger);
+      detector = createCacheBreakDetector(noopLogger, { clock: testClock });
       detector.reset();
     });
 
@@ -1227,7 +1232,7 @@ describe("LRU-bounded tracking", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -1328,7 +1333,7 @@ describe("model exclusion", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -1384,7 +1389,7 @@ describe("tiered server-side attribution", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -1451,7 +1456,7 @@ describe("lookback-aware cache break attribution", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -1538,7 +1543,7 @@ describe("effort value tracking", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -1649,7 +1654,7 @@ describe("cacheControlHash", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -1757,7 +1762,7 @@ describe("lazy buildDiffableContent", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -1836,7 +1841,7 @@ describe("aliasSession", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -1936,7 +1941,7 @@ describe("API error suppression", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
-    detector = createCacheBreakDetector(noopLogger);
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
   });
 
@@ -2032,7 +2037,7 @@ describe("cache break detector LRU eviction warning", () => {
       warn: warnSpy,
     };
     // Use small maxTrackingEntries for testing
-    const detector = createCacheBreakDetector(logger, { maxTrackingEntries: 3 });
+    const detector = createCacheBreakDetector(logger, { maxTrackingEntries: 3, clock: testClock });
 
     // Fill up to capacity
     detector.recordPromptState(makeBaseInput({ sessionKey: "session-1" }));
@@ -2051,7 +2056,7 @@ describe("cache break detector LRU eviction warning", () => {
   it("MAX_TRACKING_ENTRIES can be overridden via options parameter", () => {
     const warnSpy = vi.fn();
     const logger = { debug: () => {}, info: () => {}, warn: warnSpy };
-    const detector = createCacheBreakDetector(logger, { maxTrackingEntries: 2 });
+    const detector = createCacheBreakDetector(logger, { maxTrackingEntries: 2, clock: testClock });
 
     detector.recordPromptState(makeBaseInput({ sessionKey: "s1" }));
     detector.recordPromptState(makeBaseInput({ sessionKey: "s2" }));

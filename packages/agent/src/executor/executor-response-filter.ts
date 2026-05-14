@@ -17,6 +17,7 @@ import {
   type SessionKey,
   type TypedEventBus,
   type OutputGuardPort,
+  type ClockPort,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import type { ExecutionPlan } from "../planner/types.js";
@@ -56,8 +57,9 @@ export function scanWithOutputGuard(params: {
   sessionKey: SessionKey;
   eventBus: TypedEventBus;
   logger: ComisLogger;
+  clock: ClockPort;
 }): OutputGuardScanResult {
-  const { outputGuard, response, context, canaryToken, agentId, tenantId, eventBus, logger } = params;
+  const { outputGuard, response, context, canaryToken, agentId, tenantId, eventBus, logger, clock } = params;
 
   const guardResult = outputGuard.scan(response, { canaryToken });
   if (!guardResult.ok) {
@@ -109,7 +111,7 @@ export function scanWithOutputGuard(params: {
       metadata.context = "exception_response";
     }
     eventBus.emit("audit:event", {
-      timestamp: Date.now(),
+      timestamp: clock.now(),
       agentId,
       tenantId,
       actionType: "output_guard",
@@ -367,8 +369,9 @@ export function extractExecutionPlan(params: {
   formattedKey: string;
   eventBus: TypedEventBus;
   logger: ComisLogger;
+  clock: ClockPort;
 }): ExecutionPlan | undefined {
-  const { response, messageText, maxSteps, minSteps, executionStartMs, agentId, formattedKey, eventBus, logger } = params;
+  const { response, messageText, maxSteps, minSteps, executionStartMs, agentId, formattedKey, eventBus, logger, clock } = params;
 
   const steps = extractPlanFromResponse(response, maxSteps);
   if (steps && steps.length >= minSteps) {
@@ -377,17 +380,17 @@ export function extractExecutionPlan(params: {
       request: messageText.slice(0, 200),
       steps,
       completedCount: 0,
-      createdAtMs: Date.now(),
+      createdAtMs: clock.now(),
     };
     logger.info(
-      { agentId, stepCount: steps.length, durationMs: Date.now() - executionStartMs },
+      { agentId, stepCount: steps.length, durationMs: clock.now() - executionStartMs },
       "SEP plan extracted",
     );
     eventBus.emit("sep:plan_extracted", {
       agentId: agentId ?? "default",
       sessionKey: formattedKey,
       stepCount: steps.length,
-      timestamp: Date.now(),
+      timestamp: clock.now(),
     });
     return plan;
   }

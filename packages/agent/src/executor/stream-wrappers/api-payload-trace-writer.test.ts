@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createApiPayloadTraceWriter } from "./api-payload-trace-writer.js";
 import type { ApiPayloadTraceConfig } from "./api-payload-trace-writer.js";
 import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers.js";
+import type { ClockPort } from "@comis/core";
+const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 // Mock node:fs -- appendFileSync, statSync, renameSync, unlinkSync
 vi.mock("node:fs", async (importOriginal) => {
@@ -53,7 +55,7 @@ describe("createApiPayloadTraceWriter", () => {
   });
 
   it("writes pre-call JSONL line with model ID and provider", () => {
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -72,7 +74,7 @@ describe("createApiPayloadTraceWriter", () => {
   });
 
   it("includes options in trace output", () => {
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -87,7 +89,7 @@ describe("createApiPayloadTraceWriter", () => {
   });
 
   it("includes agent ID when provided", () => {
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", agentId: "agent-99" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", agentId: "agent-99", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -98,7 +100,7 @@ describe("createApiPayloadTraceWriter", () => {
   });
 
   it("includes session ID when provided", () => {
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", agentId: "agent-99", sessionId: "discord:guild:channel:user" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", agentId: "agent-99", sessionId: "discord:guild:channel:user", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -109,7 +111,7 @@ describe("createApiPayloadTraceWriter", () => {
   });
 
   it("passes through to next StreamFn unchanged", () => {
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -124,7 +126,7 @@ describe("createApiPayloadTraceWriter", () => {
   });
 
   it("handles empty options gracefully", () => {
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -138,7 +140,7 @@ describe("createApiPayloadTraceWriter", () => {
   it("does not throw when appendFileSync fails and logs WARN with hint+errorKind", () => {
     mockAppendFileSync.mockImplementation(() => { throw new Error("disk full"); });
 
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -172,7 +174,7 @@ describe("createApiPayloadTraceWriter", () => {
     };
     base.mockReturnValue(mockStream);
 
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", agentId: "agent-s", sessionId: "slack:ch:user" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", agentId: "agent-s", sessionId: "slack:ch:user", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -207,7 +209,7 @@ describe("createApiPayloadTraceWriter", () => {
     };
     base.mockReturnValue(mockStream);
 
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", agentId: "agent-7" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", agentId: "agent-7", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -236,7 +238,7 @@ describe("createApiPayloadTraceWriter", () => {
 
   it("silently ignores when stream has no result() method", () => {
     // base returns plain string "stream-result" -- no result() method
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
 
@@ -248,7 +250,7 @@ describe("createApiPayloadTraceWriter", () => {
   });
 
   it("returns a named function for logging", () => {
-    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl" };
+    const config: ApiPayloadTraceConfig = { filePath: "/tmp/api.jsonl", clock: testClock };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     expect(wrapper.name).toBe("apiPayloadTraceWriter");
   });
@@ -261,6 +263,7 @@ describe("createApiPayloadTraceWriter", () => {
       filePath: "/tmp/api.jsonl",
       maxSize: "5m",
       maxFiles: 2,
+      clock: testClock,
     };
     const wrapper = createApiPayloadTraceWriter(config, logger);
     const wrappedFn = wrapper(base);
@@ -304,6 +307,7 @@ describe("TTFT tracking in createApiPayloadTraceWriter", () => {
       filePath: "/tmp/api.jsonl",
       agentId: "test-agent",
       sessionId: "test-session",
+      clock: testClock,
     };
 
     // Create a stream mock that resolves result() with usage data
@@ -344,6 +348,7 @@ describe("TTFT tracking in createApiPayloadTraceWriter", () => {
     const config: ApiPayloadTraceConfig = {
       filePath: "/tmp/api.jsonl",
       agentId: "test-agent",
+      clock: testClock,
     };
 
     const mockResult = {

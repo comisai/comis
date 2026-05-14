@@ -179,6 +179,7 @@ describe("buildSessionEndMetadata", () => {
     totalTokens: 567,
     executionId: "exec-Y",
     traceId: "trace-X",
+    clock: { now: () => Date.now(), nowDate: () => new Date() },
   };
 
   it("routes request-scope traceId into traceId, executionId into runId (distinct values)", () => {

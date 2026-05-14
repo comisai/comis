@@ -9,6 +9,10 @@ import {
   _getSessionLastResponseTsForTest,
 } from "./ttl-guard.js";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
+import type { ClockPort } from "@comis/core";
+
+// Phase 39 PORTS-11: test clock stub.
+const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -58,7 +62,7 @@ describe("TTL guard", () => {
 
       // Record a timestamp at t=0 with "short" retention
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "short");
+      recordLastResponseTs(sessionKey, "short", testClock);
 
       // Advance 5 minutes + 1ms (300001ms > 300000ms)
       vi.setSystemTime(new Date(300_001));
@@ -68,6 +72,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -87,7 +92,7 @@ describe("TTL guard", () => {
       const sessionKey = "session-long-expiry";
 
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "long");
+      recordLastResponseTs(sessionKey, "long", testClock);
 
       // Advance 60 minutes + 1ms (3600001ms > 3600000ms)
       vi.setSystemTime(new Date(3_600_001));
@@ -97,6 +102,7 @@ describe("TTL guard", () => {
         getRetention: () => "long",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -115,7 +121,7 @@ describe("TTL guard", () => {
       const sessionKey = "session-short-no-expiry";
 
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "short");
+      recordLastResponseTs(sessionKey, "short", testClock);
 
       // Only 200 seconds (200000ms < 300000ms)
       vi.setSystemTime(new Date(200_000));
@@ -125,6 +131,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -143,7 +150,7 @@ describe("TTL guard", () => {
       const sessionKey = "session-long-no-expiry";
 
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "long");
+      recordLastResponseTs(sessionKey, "long", testClock);
 
       // Only 30 minutes (1800000ms < 3600000ms)
       vi.setSystemTime(new Date(1_800_000));
@@ -153,6 +160,7 @@ describe("TTL guard", () => {
         getRetention: () => "long",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -171,7 +179,7 @@ describe("TTL guard", () => {
       const sessionKey = "session-exact-boundary";
 
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "short");
+      recordLastResponseTs(sessionKey, "short", testClock);
 
       // Exactly 5 minutes (300000ms == 300000ms, should NOT fire)
       vi.setSystemTime(new Date(300_000));
@@ -181,6 +189,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -205,7 +214,7 @@ describe("TTL guard", () => {
       const sessionKey = "session-google";
 
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "short");
+      recordLastResponseTs(sessionKey, "short", testClock);
       vi.setSystemTime(new Date(600_000)); // 10 min, well past 5 min
 
       const wrapper = createTtlGuard({
@@ -213,6 +222,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -231,7 +241,7 @@ describe("TTL guard", () => {
       const sessionKey = "session-openai";
 
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "short");
+      recordLastResponseTs(sessionKey, "short", testClock);
       vi.setSystemTime(new Date(600_000));
 
       const wrapper = createTtlGuard({
@@ -239,6 +249,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -257,7 +268,7 @@ describe("TTL guard", () => {
       const sessionKey = "session-deepseek";
 
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "short");
+      recordLastResponseTs(sessionKey, "short", testClock);
       vi.setSystemTime(new Date(600_000));
 
       const wrapper = createTtlGuard({
@@ -265,6 +276,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -283,7 +295,7 @@ describe("TTL guard", () => {
       const sessionKey = "session-anthropic";
 
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "short");
+      recordLastResponseTs(sessionKey, "short", testClock);
       vi.setSystemTime(new Date(300_001));
 
       const wrapper = createTtlGuard({
@@ -291,6 +303,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -308,7 +321,7 @@ describe("TTL guard", () => {
       const sessionKey = "session-bedrock";
 
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "short");
+      recordLastResponseTs(sessionKey, "short", testClock);
       vi.setSystemTime(new Date(300_001));
 
       const wrapper = createTtlGuard({
@@ -316,6 +329,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -345,6 +359,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -364,7 +379,7 @@ describe("TTL guard", () => {
 
       vi.setSystemTime(new Date(0));
       // Store with "none" retention (no TTL boundary defined for "none")
-      recordLastResponseTs(sessionKey, "none");
+      recordLastResponseTs(sessionKey, "none", testClock);
       vi.setSystemTime(new Date(600_000)); // 10 minutes
 
       const wrapper = createTtlGuard({
@@ -392,7 +407,7 @@ describe("TTL guard", () => {
     it("stores timestamp and retention in Map", () => {
       vi.setSystemTime(new Date(12345));
 
-      recordLastResponseTs("key-a", "short");
+      recordLastResponseTs("key-a", "short", testClock);
 
       const map = _getSessionLastResponseTsForTest();
       expect(map.get("key-a")).toEqual({ ts: 12345, retention: "short" });
@@ -400,10 +415,10 @@ describe("TTL guard", () => {
 
     it("overwrites previous entry for same session key", () => {
       vi.setSystemTime(new Date(100));
-      recordLastResponseTs("key-b", "short");
+      recordLastResponseTs("key-b", "short", testClock);
 
       vi.setSystemTime(new Date(200));
-      recordLastResponseTs("key-b", "long");
+      recordLastResponseTs("key-b", "long", testClock);
 
       const map = _getSessionLastResponseTsForTest();
       expect(map.get("key-b")).toEqual({ ts: 200, retention: "long" });
@@ -411,10 +426,10 @@ describe("TTL guard", () => {
 
     it("maintains independent entries for different session keys", () => {
       vi.setSystemTime(new Date(100));
-      recordLastResponseTs("key-c", "short");
+      recordLastResponseTs("key-c", "short", testClock);
 
       vi.setSystemTime(new Date(200));
-      recordLastResponseTs("key-d", "long");
+      recordLastResponseTs("key-d", "long", testClock);
 
       const map = _getSessionLastResponseTsForTest();
       expect(map.get("key-c")).toEqual({ ts: 100, retention: "short" });
@@ -428,15 +443,15 @@ describe("TTL guard", () => {
 
   describe("getElapsedSinceLastResponse", () => {
     it("returns undefined when no entry exists for the session key", () => {
-      expect(getElapsedSinceLastResponse("nonexistent-key")).toBeUndefined();
+      expect(getElapsedSinceLastResponse("nonexistent-key", testClock)).toBeUndefined();
     });
 
     it("returns positive elapsed milliseconds when entry exists", () => {
       vi.setSystemTime(new Date(10_000));
-      recordLastResponseTs("idle-test-key", "long");
+      recordLastResponseTs("idle-test-key", "long", testClock);
 
       vi.setSystemTime(new Date(70_000)); // 60 seconds later
-      const elapsed = getElapsedSinceLastResponse("idle-test-key");
+      const elapsed = getElapsedSinceLastResponse("idle-test-key", testClock);
 
       expect(elapsed).toBe(60_000);
     });
@@ -448,7 +463,7 @@ describe("TTL guard", () => {
 
   describe("clearSessionLastResponseTs", () => {
     it("removes the entry for the given key", () => {
-      recordLastResponseTs("key-e", "short");
+      recordLastResponseTs("key-e", "short", testClock);
 
       clearSessionLastResponseTs("key-e");
 
@@ -474,7 +489,7 @@ describe("TTL guard", () => {
 
       // First: record at t=0, advance past TTL
       vi.setSystemTime(new Date(0));
-      recordLastResponseTs(sessionKey, "short");
+      recordLastResponseTs(sessionKey, "short", testClock);
 
       vi.setSystemTime(new Date(300_001)); // Past 5 min TTL
 
@@ -483,6 +498,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry,
         logger,
+        clock: testClock,
       });
 
       const stream = wrapper(next);
@@ -493,7 +509,7 @@ describe("TTL guard", () => {
 
       // Now update the timestamp (simulating post-response recording)
       vi.setSystemTime(new Date(300_001));
-      recordLastResponseTs(sessionKey, "short");
+      recordLastResponseTs(sessionKey, "short", testClock);
 
       // Advance by only 2 minutes from the new timestamp -- should NOT expire
       vi.setSystemTime(new Date(300_001 + 120_000));
@@ -505,6 +521,7 @@ describe("TTL guard", () => {
         getRetention: () => "short",
         onTtlExpiry: onTtlExpiry2,
         logger,
+        clock: testClock,
       });
 
       const stream2 = wrapper2(next2);

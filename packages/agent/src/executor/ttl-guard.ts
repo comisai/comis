@@ -14,7 +14,7 @@
 
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { CacheRetention } from "@mariozechner/pi-ai";
-import type { ComisLogger } from "@comis/core";
+import type { ComisLogger, ClockPort } from "@comis/core";
 
 import { isAnthropicFamily } from "../provider/capabilities.js";
 import type { StreamFnWrapper } from "./stream-wrappers/types.js";
@@ -50,6 +50,8 @@ export interface TtlGuardConfig {
   onTtlExpiry: () => void;
   /** Logger for debug output. */
   logger: ComisLogger;
+  /** Wall-clock + monotonic time reads (Phase 39 PORTS-11). */
+  clock: ClockPort;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,7 +88,7 @@ export function createTtlGuard(config: TtlGuardConfig): StreamFnWrapper {
       }
 
       // Check wall-clock elapsed time (strict greater-than, not >=)
-      const elapsed = Date.now() - lastEntry.ts;
+      const elapsed = config.clock.now() - lastEntry.ts;
       if (elapsed > ttlMs) {
         config.logger.debug(
           { sessionKey: config.sessionKey, elapsedMs: elapsed, ttlMs, retention: lastEntry.retention },
@@ -108,8 +110,8 @@ export function createTtlGuard(config: TtlGuardConfig): StreamFnWrapper {
  * Record the timestamp and retention for the last assistant response in a session.
  * Called after each successful LLM response to update the TTL baseline.
  */
-export function recordLastResponseTs(sessionKey: string, retention: CacheRetention): void {
-  sessionLastResponseTs.set(sessionKey, { ts: Date.now(), retention });
+export function recordLastResponseTs(sessionKey: string, retention: CacheRetention, clock: ClockPort): void {
+  sessionLastResponseTs.set(sessionKey, { ts: clock.now(), retention });
 }
 
 /**
@@ -125,10 +127,10 @@ export function clearSessionLastResponseTs(sessionKey: string): void {
  * Returns undefined if no response has been recorded (cold-start).
  * Used by the idle-based thinking clear to determine if cache is cold.
  */
-export function getElapsedSinceLastResponse(sessionKey: string): number | undefined {
+export function getElapsedSinceLastResponse(sessionKey: string, clock: ClockPort): number | undefined {
   const entry = sessionLastResponseTs.get(sessionKey);
   if (!entry) return undefined;
-  return Date.now() - entry.ts;
+  return clock.now() - entry.ts;
 }
 
 /**
