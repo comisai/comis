@@ -135,8 +135,6 @@ export interface SingleAgentDeps {
   getChannelMaxChars?: (channelType: string) => number | undefined;
   /** Background task manager for auto-promotion of long-running tools. */
   backgroundTaskManager?: import("@comis/agent").BackgroundTaskManager;
-  /** Callback to send completion notifications for background tasks. */
-  backgroundNotifyFn?: import("@comis/agent").NotifyFn;
   /**
    * SecretsCrypto engine bound to SECRETS_MASTER_KEY. Defined when the daemon
    * was started with a valid master key (encrypted-secrets mode). Required
@@ -695,7 +693,6 @@ export async function setupSingleAgent(
     geminiCacheManager: deps.geminiCacheManager,  // Gemini cache lifecycle manager
     getChannelMaxChars: deps.getChannelMaxChars,  // Platform char limit for verbosity hints
     backgroundTaskManager: deps.backgroundTaskManager,  // Auto-background middleware
-    backgroundNotifyFn: deps.backgroundNotifyFn,  // Background task completion notifications
     // Provider compatibility config threading
     enforceFinalTag: effectiveConfig.enforceFinalTag,
     fastMode: effectiveConfig.fastMode,
@@ -769,8 +766,6 @@ export async function setupAgents(deps: {
   getChannelMaxChars?: (channelType: string) => number | undefined;
   /** Background task manager for auto-promotion of long-running tools. */
   backgroundTaskManager?: import("@comis/agent").BackgroundTaskManager;
-  /** Callback to send completion notifications for background tasks. */
-  backgroundNotifyFn?: import("@comis/agent").NotifyFn;
   /**
    * SecretsCrypto engine bound to SECRETS_MASTER_KEY. Defined when daemon
    * was started with a valid master key. Required for
@@ -955,7 +950,6 @@ export async function setupAgents(deps: {
     geminiCacheManager: deps.geminiCacheManager,
     getChannelMaxChars: deps.getChannelMaxChars,
     backgroundTaskManager: deps.backgroundTaskManager,
-    backgroundNotifyFn: deps.backgroundNotifyFn,
     // Secrets bootstrap output for OAuth wiring.
     secretsCrypto: deps.secretsCrypto,
     secretsDb: deps.secretsDb,

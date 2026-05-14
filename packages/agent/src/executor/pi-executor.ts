@@ -120,7 +120,7 @@ import { CHARS_PER_TOKEN_RATIO } from "../context-engine/constants.js";
 import { getElapsedSinceLastResponse } from "./ttl-guard.js";
 import { clearSessionBlockStability } from "./block-stability-tracker.js";
 import type { GeminiCacheManager } from "./gemini-cache-manager.js";
-import type { BackgroundTaskManager, NotifyFn } from "../background/index.js";
+import type { BackgroundTaskManager } from "../background/index.js";
 import { wrapToolForAutoBackground } from "../background/index.js";
 import { BackgroundTasksConfigSchema } from "@comis/core";
 import type { BackgroundTaskOrigin } from "@comis/core";
@@ -367,8 +367,6 @@ export interface PiExecutorDeps {
   getChannelMaxChars?: (channelType: string) => number | undefined;
   /** Background task manager for auto-promotion of long-running tools. */
   backgroundTaskManager?: BackgroundTaskManager;
-  /** Callback to send completion notifications for background tasks. */
-  backgroundNotifyFn?: NotifyFn;
   /** Max message.send/reply calls per execution (0 = unlimited, default: 3). */
   maxSendsPerExecution?: number;
 }
@@ -1465,7 +1463,6 @@ export function createPiExecutor(
                 tool as any,
                 deps.backgroundTaskManager!,
                 bgConfig,
-                deps.backgroundNotifyFn ?? (async () => {}),
                 originResolver,
               );
               tool.execute = (wrapped as unknown as typeof tool).execute;
