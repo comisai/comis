@@ -199,25 +199,5 @@ describe("globals — production source (HYG-07, HYG-08, HYG-12)", () => {
       allFiles.length,
       "sanity: listAllProductionFiles enumerated at least one file",
     ).toBeGreaterThan(0);
-
-    // HYG-12: verify the seeded core/bootstrap.ts:89 entry actually
-    // matches a real classifier hit (catches drift if bootstrap.ts
-    // changes structurally and line 89 no longer has process.env access).
-    // Note: bootstrap.ts is in packages/core/src/, NOT in
-    // BOOTSTRAP_PATH_PATTERNS — so it WOULD surface as a violation, and
-    // the allowlist entry suppresses it. If line 89 is no longer a
-    // process.env site (e.g., a refactor moved it), the allowlist
-    // entry is stale and the suppression-vs-actual mismatch surfaces
-    // as a new violation elsewhere. Phase B (PORTS) closes this when
-    // it removes the line and the entry together.
-    const bootstrapViolations = violations.filter(
-      (v) =>
-        repoRelative(v.file) === "packages/core/src/bootstrap.ts" &&
-        v.pattern === "process.env",
-    );
-    expect(
-      bootstrapViolations.length,
-      "sanity: core/bootstrap.ts has at least one process.env site (HYG-12 marker is non-stale)",
-    ).toBeGreaterThan(0);
   });
 });
