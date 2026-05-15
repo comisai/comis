@@ -20,7 +20,7 @@ import { safePath, parseFormattedSessionKey, systemNowMs, systemDateFrom, system
 import type { MemoryReviewConfig } from "@comis/core";
 import type { MemoryPort, MemorySearchOptions } from "@comis/core";
 import type { MemoryEntry } from "@comis/core";
-import type { SessionKey } from "@comis/core";
+import type { SessionData, SessionKey } from "@comis/core";
 import { completeSimple, getModel } from "@mariozechner/pi-ai";
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -39,14 +39,6 @@ export interface SessionDetailedEntry {
   createdAt: number;
   updatedAt: number;
   messageCount: number;
-}
-
-/** Session data loaded by formatted key. */
-export interface SessionData {
-  messages: unknown[];
-  metadata: Record<string, unknown>;
-  createdAt: number;
-  updatedAt: number;
 }
 
 /** Dependencies injected into the memory review handler. */
