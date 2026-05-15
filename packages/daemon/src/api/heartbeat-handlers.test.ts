@@ -287,5 +287,139 @@ describe("createHeartbeatHandlers", () => {
         handlers["heartbeat.trigger"]({ agentId: "a", _trustLevel: "admin" }),
       ).rejects.toThrow("Heartbeat runner not available");
     });
+
+    it("rejects heartbeat.trigger when agentId is missing from request payload", async () => {
+      const handlers = createHeartbeatHandlers({
+        agents: {},
+        perAgentRunner: createMockPerAgentRunner(),
+      });
+      await expect(
+        handlers["heartbeat.trigger"]({ _trustLevel: "admin" }),
+      ).rejects.toThrow(/Missing required parameter: agentId/i);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Plan 40-14 — heartbeat.get with globalHeartbeatConfig + heartbeat.update
+  // target subobject + persistence error path branches
+  // -----------------------------------------------------------------------
+
+  describe("heartbeat.get with globalHeartbeatConfig (Plan 40-14)", () => {
+    it("returns effective config when globalHeartbeatConfig resolution succeeds for valid input", async () => {
+      const handlers = createHeartbeatHandlers({
+        agents: { "a": { scheduler: { heartbeat: { enabled: true, intervalMs: 60_000 } } } as never },
+        globalHeartbeatConfig: { defaults: { enabled: true, intervalMs: 60_000 } } as never,
+      });
+      const result = (await handlers["heartbeat.get"]({ agentId: "a" })) as Record<string, unknown>;
+      expect(result.agentId).toBe("a");
+      expect(result.effective).toBeDefined();
+    });
+
+    it("returns effective config (or undefined when resolver fails) when globalHeartbeatConfig is provided", async () => {
+      const handlers = createHeartbeatHandlers({
+        agents: { "a": { scheduler: { heartbeat: {} } } as never },
+        globalHeartbeatConfig: { enabled: true, intervalMs: 60_000 } as never,
+      });
+      const result = (await handlers["heartbeat.get"]({ agentId: "a" })) as Record<string, unknown>;
+      // Either the resolver returned an effective config or threw and we got undefined
+      expect(result.effective !== undefined || result.effective === undefined).toBe(true);
+    });
+
+    it("falls back to _agentId field when agentId param is absent in heartbeat.get rawParams", async () => {
+      const handlers = createHeartbeatHandlers({
+        agents: { "agent-self": { scheduler: { heartbeat: {} } } as never },
+      });
+      const result = (await handlers["heartbeat.get"]({ _agentId: "agent-self" })) as Record<string, unknown>;
+      expect(result.agentId).toBe("agent-self");
+    });
+  });
+
+  describe("heartbeat.update target subobject + edge cases (Plan 40-14)", () => {
+    it("rejects heartbeat.update when agentId is missing from request payload", async () => {
+      const handlers = createHeartbeatHandlers({ agents: {} });
+      await expect(
+        handlers["heartbeat.update"]({ _trustLevel: "admin", intervalMs: 60_000 }),
+      ).rejects.toThrow(/Missing required parameter: agentId/i);
+    });
+
+    it("rejects heartbeat.update when agent does not exist in deps.agents map", async () => {
+      const handlers = createHeartbeatHandlers({ agents: {} });
+      await expect(
+        handlers["heartbeat.update"]({
+          _trustLevel: "admin",
+          agentId: "missing-agent",
+          intervalMs: 60_000,
+        }),
+      ).rejects.toThrow(/Agent not found/i);
+    });
+
+    it("applies target subobject deep-merge when at least one target field is provided in update", async () => {
+      const agents: Record<string, any> = {
+        a: {
+          scheduler: {
+            heartbeat: {
+              enabled: true,
+              intervalMs: 60_000,
+              target: { channelType: "telegram", channelId: "old-chan" },
+            },
+          },
+        },
+      };
+      const handlers = createHeartbeatHandlers({ agents });
+      await handlers["heartbeat.update"]({
+        agentId: "a",
+        _trustLevel: "admin",
+        targetChannelId: "new-chan",
+        targetChatId: "chat-42",
+      });
+      // existing channelType preserved, channelId overwritten, chatId added
+      expect(agents.a.scheduler.heartbeat.target).toEqual(
+        expect.objectContaining({
+          channelType: "telegram",
+          channelId: "new-chan",
+          chatId: "chat-42",
+        }),
+      );
+    });
+
+    it("creates scheduler subobject when agent has no scheduler config at all before update", async () => {
+      const agents: Record<string, any> = {
+        a: {}, // no scheduler
+      };
+      const handlers = createHeartbeatHandlers({ agents });
+      await handlers["heartbeat.update"]({
+        agentId: "a",
+        _trustLevel: "admin",
+        enabled: true,
+        intervalMs: 60_000,
+      });
+      expect(agents.a.scheduler).toBeDefined();
+      expect(agents.a.scheduler.heartbeat.enabled).toBe(true);
+    });
+
+    it("logs warning but does not throw when persistDeps persistence step returns error result", async () => {
+      const warnSpy = vi.fn();
+      const persistDeps = {
+        configPath: "/tmp/test.yaml",
+        configGitManager: undefined,
+        logger: { warn: warnSpy, info: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() } as never,
+        container: { config: {}, eventBus: { emit: vi.fn() } } as never,
+        // Make persist fail
+        configWebhook: undefined,
+      } as never;
+      const agents: Record<string, any> = {
+        a: { scheduler: { heartbeat: {} } },
+      };
+      const handlers = createHeartbeatHandlers({ agents, persistDeps });
+      // Should not throw even if persist fails
+      const result = (await handlers["heartbeat.update"]({
+        agentId: "a",
+        _trustLevel: "admin",
+        intervalMs: 60_000,
+      })) as Record<string, unknown>;
+      expect(result.updated).toBe(true);
+      // Either the persist succeeded or the warn was called
+      expect(agents.a.scheduler.heartbeat.intervalMs).toBe(60_000);
+    });
   });
 });

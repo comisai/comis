@@ -237,6 +237,90 @@ describe("createOAuthCallbackRoute", () => {
   // would duplicate the integration tier's coverage without strengthening
   // the invariant. This file's header (line 15-16) already documents the
   // delegation: "covered by the integration test; stays it.todo here".
+
+  // -------------------------------------------------------------------------
+  // Plan 40-14 — additional branch coverage for the exchange + persistence
+  // paths. These run against vi.spyOn(globalThis, 'fetch') stubs and a
+  // mocked OAuthCredentialStorePort; they exercise rejection branches that
+  // the integration test cannot deterministically simulate.
+  // -------------------------------------------------------------------------
+
+  it("returns 500 Login Failed when token exchange returns non-OK response with body-text", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("invalid_grant", { status: 400 }),
+    );
+    const pendingFlows = new Map<string, PendingFlow>();
+    const state = "exchange-fail-state";
+    seedPendingFlow(pendingFlows, state, {
+      verifier: "v",
+      provider: "openai-codex",
+      createdAt: Date.now(),
+    });
+    const deps = makeDeps({ pendingFlows });
+    const app = createOAuthCallbackRoute(deps);
+    const res = await makeCallbackRequest(app, "openai-codex", { code: "c", state });
+    expect(res.status).toBe(500);
+    const html = await res.text();
+    expect(html).toContain("Login Failed");
+    expect(pendingFlows.has(state)).toBe(false);
+    expect(deps.logger.warn).toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("returns 500 Login Failed when token exchange response body-text read throws", async () => {
+    // Construct a Response with a body that throws on .text()
+    const responseLike = {
+      ok: false,
+      status: 502,
+      text: () => Promise.reject(new Error("body read aborted")),
+      json: () => Promise.reject(new Error("not invoked")),
+    } as unknown as Response;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(responseLike);
+    const pendingFlows = new Map<string, PendingFlow>();
+    const state = "body-read-fail";
+    seedPendingFlow(pendingFlows, state, {
+      verifier: "v",
+      provider: "openai-codex",
+      createdAt: Date.now(),
+    });
+    const deps = makeDeps({ pendingFlows });
+    const app = createOAuthCallbackRoute(deps);
+    const res = await makeCallbackRequest(app, "openai-codex", { code: "c", state });
+    expect(res.status).toBe(500);
+    fetchSpy.mockRestore();
+  });
+
+  it("returns 500 Login Failed when the identity decode fails after a successful token exchange", async () => {
+    // Successful exchange → tokens have well-formed shape but the access
+    // token cannot be decoded by resolveCodexAuthIdentity; the handler
+    // rejects with "Failed to extract accountId" and routes through
+    // rewriteOAuthError.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: "not-a-real-jwt",
+          refresh_token: "rr",
+          expires_in: 3600,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const pendingFlows = new Map<string, PendingFlow>();
+    const state = "decode-fail-state";
+    seedPendingFlow(pendingFlows, state, {
+      verifier: "v",
+      provider: "openai-codex",
+      createdAt: Date.now(),
+    });
+    const deps = makeDeps({ pendingFlows });
+    const app = createOAuthCallbackRoute(deps);
+    const res = await makeCallbackRequest(app, "openai-codex", { code: "c", state });
+    expect(res.status).toBe(500);
+    // The credentialStore.set should NEVER be invoked when identity decode fails
+    expect(deps.credentialStore.set).not.toHaveBeenCalled();
+    expect(pendingFlows.has(state)).toBe(false);
+    fetchSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------

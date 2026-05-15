@@ -252,4 +252,105 @@ describe("createModelHandlers - model management", () => {
       ).rejects.toThrow("Admin access required");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Plan 40-14 — models.test branch coverage for providerEntries + status paths
+  // -------------------------------------------------------------------------
+
+  describe("models.test (Plan 40-14 branches)", () => {
+    it("reports customModels count for not_configured provider when providerEntries entry is enabled", async () => {
+      const deps = makeDeps({
+        agents: {}, // no agents using "custom-prov"
+        providerEntries: {
+          "custom-prov": {
+            enabled: true,
+            models: [{ id: "m1" }, { id: "m2" }],
+          } as never,
+        } as never,
+      });
+      const handlers = createModelHandlers(deps);
+      const result = (await handlers["models.test"]!({ provider: "custom-prov" })) as {
+        status: string;
+        customModels?: number;
+      };
+      expect(result.status).toBe("not_configured");
+      expect(result.customModels).toBe(2);
+    });
+
+    it("omits customModels field for not_configured provider when providerEntries entry is disabled", async () => {
+      const deps = makeDeps({
+        agents: {},
+        providerEntries: {
+          "disabled-prov": { enabled: false, models: [{ id: "m1" }] } as never,
+        } as never,
+      });
+      const handlers = createModelHandlers(deps);
+      const result = (await handlers["models.test"]!({ provider: "disabled-prov" })) as {
+        status: string;
+        customModels?: number;
+      };
+      expect(result.status).toBe("not_configured");
+      expect(result.customModels).toBeUndefined();
+    });
+
+    it("returns available status with custom_provider source when catalog empty but custom entry enabled", async () => {
+      const emptyCatalog = {
+        getAll: () => [],
+        getByProvider: () => [],
+        getProviders: () => [],
+        get: () => undefined,
+        loadStatic: () => {},
+        mergeScanned: () => {},
+      } as never;
+      const deps = makeDeps({
+        modelCatalog: emptyCatalog,
+        agents: {
+          main: { provider: "custom-x", model: "cust-1" } as never,
+        },
+        providerEntries: {
+          "custom-x": {
+            enabled: true,
+            models: [{ id: "cust-1" }, { id: "cust-2" }],
+          } as never,
+        } as never,
+      });
+      const handlers = createModelHandlers(deps);
+      const result = (await handlers["models.test"]!({ provider: "custom-x" })) as {
+        status: string;
+        source?: string;
+        modelsAvailable: number;
+        models?: string[];
+      };
+      expect(result.status).toBe("available");
+      expect(result.source).toBe("custom_provider");
+      expect(result.modelsAvailable).toBe(2);
+      expect(result.models).toEqual(["cust-1", "cust-2"]);
+    });
+
+    it("returns no_models status when catalog empty and no custom provider entry matches", async () => {
+      const emptyCatalog = {
+        getAll: () => [],
+        getByProvider: () => [],
+        getProviders: () => [],
+        get: () => undefined,
+        loadStatic: () => {},
+        mergeScanned: () => {},
+      } as never;
+      const deps = makeDeps({
+        modelCatalog: emptyCatalog,
+        agents: {
+          main: { provider: "lonely", model: "model-x" } as never,
+        },
+      });
+      const handlers = createModelHandlers(deps);
+      const result = (await handlers["models.test"]!({ provider: "lonely" })) as {
+        status: string;
+        modelsAvailable: number;
+        validatedModels: number;
+      };
+      expect(result.status).toBe("no_models");
+      expect(result.modelsAvailable).toBe(0);
+      expect(result.validatedModels).toBe(0);
+    });
+  });
 });
