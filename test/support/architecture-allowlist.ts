@@ -671,7 +671,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/channels/src/telegram/telegram-adapter.ts",
     lines: 852,
-    reason: "Channel adapter; split in Phase F per FILE-SPLIT-20",
+    reason: "@allow-throw boundary: Telegram SDK boundary throws; consumed by adapter try/catch + inbound-pipeline catch (Phase 41 TS-HYG-07).",
     removedIn: "phase-F",
   },
   // memory (2 files)
@@ -761,56 +761,56 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/channels/src/discord/discord-resolver.ts",
     lineRanges: [[62, 62]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: media-resolver throw inside fromPromise(); converted to Result.err by ssrfFetcher boundary adapter (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/channels/src/imessage/imessage-resolver.ts",
     lineRanges: [[59, 59], [75, 75], [83, 83]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: media-resolver throws inside fromPromise(); converted to Result.err (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/channels/src/line/line-resolver.ts",
     lineRanges: [[55, 55], [77, 77], [83, 83]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: media-resolver throws inside fromPromise(); converted to Result.err (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/channels/src/signal/signal-client.ts",
     lineRanges: [[95, 95], [261, 261]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: signal-client SDK boundary throws; caught by adapter try/catch chain converting to inbound-pipeline errors (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/channels/src/signal/signal-resolver.ts",
     lineRanges: [[62, 62]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: media-resolver throws inside fromPromise(); converted to Result.err (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/channels/src/slack/media-handler.ts",
     lineRanges: [[86, 86], [89, 89], [92, 92], [146, 146]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: Slack media-handler boundary throws; consumed by slack-resolver/adapter try/catch chain converting to ResolvedMedia Result (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/channels/src/slack/slack-resolver.ts",
     lineRanges: [[72, 72], [86, 86], [91, 91], [96, 96], [102, 102], [113, 113]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: media-resolver throws inside fromPromise(); converted to Result.err (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/channels/src/telegram/telegram-adapter.ts",
     lineRanges: [[125, 125], [503, 503], [551, 551]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: Telegram SDK boundary throws; consumed by adapter try/catch + inbound-pipeline catch (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/channels/src/whatsapp/whatsapp-resolver.ts",
     lineRanges: [[94, 94], [100, 100], [106, 106], [126, 126]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: media-resolver throws inside fromPromise(); converted to Result.err (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   // ----- cli package (17 files) -----
   {
@@ -1179,26 +1179,26 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/gateway/src/acp/acp-server.ts",
     lineRanges: [[132, 132]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: ACP HTTP server route handler; throws caught by Hono framework error-handler boundary (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/gateway/src/oauth/oauth-callback-route.ts",
     lineRanges: [[154, 154], [250, 250], [269, 269]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: OAuth HTTP callback route; throws caught by Hono error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/gateway/src/rpc/method-router.ts",
     lineRanges: [[72, 72], [204, 204], [222, 222], [235, 235], [240, 240], [248, 248]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: JSON-RPC method-router; JSONRPCErrorException + scope-check throws caught by json-rpc-2.0 library and converted to JSON-RPC error response (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/gateway/src/web/media-routes.ts",
     lineRanges: [[109, 109], [169, 169]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: gateway HTTP media-routes; throws caught by Hono framework error-handler boundary per AGENTS.md §2.1 web exception (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   // ----- memory package (7 files) -----
   {
@@ -1278,32 +1278,32 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/scheduler/src/cron/cron-scheduler.ts",
     lineRanges: [[208, 208]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: cron scheduler boundary error; consumed by setup-schedulers daemon-wiring catch (daemon.ts bootstrap) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/scheduler/src/cron/cron-store.ts",
     lineRanges: [[96, 96], [136, 136], [152, 152], [172, 172]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: file-IO + lock-acquisition errors in CronStore; consumed via daemon cron-handlers + setup-schedulers (Decision 2 transitive) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/scheduler/src/execution/execution-tracker.ts",
     lineRanges: [[149, 149]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: scheduler-execution state-tracking guard; consumed via daemon scheduler wiring catch (daemon.ts bootstrap boundary) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/scheduler/src/heartbeat/quiet-hours.ts",
     lineRanges: [[30, 30], [35, 35]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: quiet-hours time-format validation guards; consumed via setup-heartbeat daemon-wiring (daemon.ts bootstrap) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/scheduler/src/tasks/task-store.ts",
     lineRanges: [[49, 49]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: task-store SQLite adapter precondition guards; consumed via daemon heartbeat handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   // ----- skills package (40 files) -----
   {
@@ -1550,8 +1550,8 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/web/src/api/api-client.ts",
     lineRanges: [[171, 171], [175, 175], [212, 212], [231, 231]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: web API client dev-time validation guards; consumed by Lit element error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   // ----- web package permanent (1 file) -----
   // Phase 41 TS-HYG-12: requireGlobalState helper throws
@@ -1905,7 +1905,7 @@ export const globalsAllowlist: readonly GlobalsAllowlistEntry[] = [
     file: "packages/web/src/api/api-client.ts",
     line: 438,
     global: "Date.now",
-    reason: "Web SPA api/ seam — WEB-CONTRACTS-15 forbids @comis/* imports; direct global is required for the browser bundle",
+    reason: "@allow-throw boundary: web API client dev-time validation guards; consumed by Lit element error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception (Phase 41 TS-HYG-07).",
     removedIn: "phase-B",
   },
   {

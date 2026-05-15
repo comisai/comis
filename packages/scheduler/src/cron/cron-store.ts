@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: file-IO + lock-acquisition errors in CronStore; consumed via daemon cron-handlers + setup-schedulers (Decision 2 transitive) (Phase 41 TS-HYG-07).
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";

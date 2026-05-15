@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: Telegram SDK boundary throws; consumed by adapter try/catch + inbound-pipeline catch (Phase 41 TS-HYG-07).
 /**
  * Telegram Channel Adapter: ChannelPort implementation using Grammy.
  *
