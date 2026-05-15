@@ -18,7 +18,7 @@ const SUSPICIOUS_LITERAL_PATTERNS: Array<{ pattern: RegExp; hint: string }> = [
  * Pattern for environment variable references: ${VAR_NAME}
  * Matches uppercase letters, digits, and underscores (must start with letter or underscore).
  */
-const ENV_VAR_PATTERN = /\$\{([A-Z_][A-Z0-9_]*)\}/g;
+const ENV_VAR_PATTERN = /\$\{(?<varName>[A-Z_][A-Z0-9_]*)\}/g;
 
 /**
  * Pattern for escaped variable references: $${VAR_NAME}
@@ -31,7 +31,7 @@ const ESCAPED_VAR_PATTERN = /\$\$\{([A-Z_][A-Z0-9_]*)\}/g;
  * Only matches when the entire string is a single bare reference (no mixed content).
  * This catches the common agent mistake of writing `$GEMINI_API_KEY` instead of `${GEMINI_API_KEY}`.
  */
-const BARE_VAR_PATTERN = /^\$([A-Z_][A-Z0-9_]*)$/;
+const BARE_VAR_PATTERN = /^\$(?<varName>[A-Z_][A-Z0-9_]*)$/;
 
 /**
  * Substitute `${VAR_NAME}` references in all string values of an object tree.
@@ -120,8 +120,8 @@ function substituteString(
   // Agents commonly write `$GEMINI_API_KEY` instead of `${GEMINI_API_KEY}`.
   // Only matches whole-string bare refs to avoid false positives on paths like $HOME/dir.
   const bareMatch = input.match(BARE_VAR_PATTERN);
-  if (bareMatch) {
-    const varName = bareMatch[1]!;
+  if (bareMatch?.groups?.varName) {
+    const varName = bareMatch.groups.varName;
     const value = getSecret(varName);
     if (value === undefined) {
       const context = configPath ? ` in config at ${configPath}` : "";
@@ -166,8 +166,10 @@ function substituteString(
 
   // Step 3: Perform actual substitution
   working = working.replace(ENV_VAR_PATTERN, (_match, varName: string) => {
-    // We already verified all vars exist above, so this is safe
-    return getSecret(varName)!;
+    // Step 2's missing-var loop above already guarantees presence; this defensive
+    // null-coalesce keeps the type system happy without a non-null assertion
+    // (Phase 41 TS-HYG-12). The empty-string fallback is unreachable in practice.
+    return getSecret(varName) ?? "";
   });
 
   // Step 4: Restore escaped sequences as literal ${VAR}
@@ -226,8 +228,8 @@ function walkForRefs(value: unknown, out: Set<string>): void {
 function collectRefsFromString(input: string, out: Set<string>): void {
   // Bare whole-string reference first (mirrors substituteString step 0).
   const bareMatch = input.match(BARE_VAR_PATTERN);
-  if (bareMatch) {
-    out.add(bareMatch[1]!);
+  if (bareMatch?.groups?.varName) {
+    out.add(bareMatch.groups.varName);
     return;
   }
 
@@ -343,8 +345,8 @@ function collectUnresolvedFromString(
 ): void {
   // Whole-string bare reference first (mirrors substituteString step 0).
   const bareMatch = input.match(BARE_VAR_PATTERN);
-  if (bareMatch) {
-    const varName = bareMatch[1]!;
+  if (bareMatch?.groups?.varName) {
+    const varName = bareMatch.groups.varName;
     if (getSecret(varName) === undefined) {
       out.push({ path, varName });
     }
