@@ -1,0 +1,151 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > addCacheControlToLastBlock on 3-block message (retention=long) 1`] = `
+"{
+  "content": [
+    {
+      "text": "a",
+      "type": "text"
+    },
+    {
+      "id": "x",
+      "input": {},
+      "name": "bash",
+      "type": "tool_use"
+    },
+    {
+      "cache_control": {
+        "ttl": "1h",
+        "type": "ephemeral"
+      },
+      "text": "b",
+      "type": "text"
+    }
+  ],
+  "role": "user"
+}"
+`;
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > addCacheControlToLastBlock on 3-block message (retention=undefined) 1`] = `
+"{
+  "content": [
+    {
+      "text": "first",
+      "type": "text"
+    },
+    {
+      "thinking": "thoughts",
+      "type": "thinking"
+    },
+    {
+      "cache_control": {
+        "type": "ephemeral"
+      },
+      "text": "last",
+      "type": "text"
+    }
+  ],
+  "role": "user"
+}"
+`;
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > estimateBlockTokens — text + tool_use blocks 1`] = `
+"{
+  "empty": 0,
+  "text": 13,
+  "toolUse": 21
+}"
+`;
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > getMinCacheableTokens: per-model thresholds (3 representative model IDs) 1`] = `
+"{
+  "haiku45": 4096,
+  "sonnet35": 1024,
+  "sonnet37": 1024,
+  "undefinedInput": 1024,
+  "unknown": 1024
+}"
+`;
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > hashBreakpointContent: synthetic message history 1`] = `
+"{
+  "atIdx0": 3279424237,
+  "atIdx1": 2891612586,
+  "atIdx2": 186080589
+}"
+`;
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > identifyBreakpointZone: boundary cases 1`] = `
+"{
+  "atMidZone": "mid",
+  "atRecentBoundary": "recent",
+  "atSemiStableBoundary": "semi-stable",
+  "deepInRecent": "recent",
+  "zeroMessages": "recent"
+}"
+`;
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > resolveCacheRetention — 2 representative override scenarios 1`] = `
+"{
+  "emptyOverrides": "short",
+  "longestPrefixWins": "long",
+  "noOverrides": "short",
+  "prefixMatch": "long"
+}"
+`;
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > sortToolsForCacheStability — builtins/mcp/server ordering 1`] = `
+"[
+  {
+    "name": "bash"
+  },
+  {
+    "name": "file_read"
+  },
+  {
+    "name": "mcp__alpha--write"
+  },
+  {
+    "name": "mcp__zeta--read"
+  },
+  {
+    "name": "server_search",
+    "type": "tool_search_tool_regex_20251119"
+  }
+]"
+`;
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > public API surface > CACHEABLE_BLOCK_TYPES — constant set membership 1`] = `
+"[
+  "image",
+  "text",
+  "tool_result",
+  "tool_use"
+]"
+`;
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > public API surface > createRequestBodyInjector returns a function (typeof) 1`] = `
+"{
+  "name": "requestBodyInjector",
+  "typeof": "function"
+}"
+`;
+
+exports[`request-body-injector parity (EXEC-SPLIT-01) > public API surface > exports the expected named symbols 1`] = `
+"[
+  "CACHEABLE_BLOCK_TYPES",
+  "addCacheControlToLastBlock",
+  "clearSessionBetaHeaderLatches",
+  "clearSessionCadenceTracker",
+  "clearSessionPrefixStability",
+  "clearStaleThinkingBlocks",
+  "createRequestBodyInjector",
+  "estimateBlockTokens",
+  "getMinCacheableTokens",
+  "hashBreakpointContent",
+  "identifyBreakpointZone",
+  "maybePromoteBreakpoints",
+  "resolveCacheRetention",
+  "sortToolsForCacheStability"
+]"
+`;

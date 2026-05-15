@@ -45,7 +45,8 @@
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import * as ts from "typescript";
 import { findInSourceFiles } from "../../../../test/support/source-grep.js";
 import { findForbiddenImports } from "../../../../test/support/import-checker.js";
 import { formatViolations } from "../../../../test/support/architecture-helpers.js";
@@ -722,6 +723,177 @@ describe("@comis/agent -- architecture invariants", () => {
       `rows missing evidence-link: ${missingEvidence
         .map((r) => r.field)
         .join(", ")}`,
+    ).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 42 EXEC-SPLIT-06 + EXEC-SPLIT-08 — closure-extraction + dependency-direction
+  // structural invariants for the Phase 42 pi-executor + prompt-runner splits.
+  //
+  // RED phase (Wave 1): the target subdirectories DO NOT exist; both tests are
+  // vacuously satisfied (early-return on !existsSync(dir)). The dependency
+  // arrow inference + closure-extraction protocol are not yet exercised.
+  //
+  // GREEN trajectory: as Wave 4 (prompt-runner) + Wave 5 (pi-executor) split
+  // commits land, the directories come into existence and the assertions
+  // enforce their respective invariants.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * EXEC-SPLIT-06 — closure-extraction protocol enforcement.
+   *
+   * Every helper extracted from createPiExecutor's closure body (under
+   * pi-executor/) takes its state via an explicit first parameter named
+   * `state` typed as a Readonly<...> shape — not via closure capture.
+   * This catches silent state-drift regressions where a refactor moves
+   * code out of the factory closure while leaving closure-captured
+   * variables intact (the highest-cost regression class for Phase 42
+   * Wave 5 — see RESEARCH §"Pattern 2: Closure-Extraction Protocol").
+   *
+   * Exempt files: index.ts, pi-executor.ts (the factory itself);
+   * before-tool-call-guard.ts and session-stats.ts (co-equal top-level
+   * functions that already take named typed parameters — these are
+   * mechanically extracted in plan 42-05, not reshaped per RESEARCH
+   * §"Anti-Patterns to Avoid"); types.ts (type-only collection file).
+   *
+   * Pre-split (Wave 1) state: pi-executor/ directory does not exist;
+   * assertion is vacuously satisfied.
+   */
+  it("pi-executor extracted helpers accept state by parameter (EXEC-SPLIT-06)", () => {
+    const piExecutorDir = resolve(SRC_ROOT, "executor/pi-executor");
+    if (!existsSync(piExecutorDir)) {
+      // Vacuously satisfied pre-split — directory will materialize in Wave 5.
+      expect([]).toEqual([]);
+      return;
+    }
+    const helperFiles = readdirSync(piExecutorDir).filter(
+      (f) =>
+        f.endsWith(".ts") &&
+        !f.endsWith(".test.ts") &&
+        f !== "index.ts" &&
+        f !== "pi-executor.ts" &&
+        f !== "before-tool-call-guard.ts" &&
+        f !== "session-stats.ts" &&
+        f !== "types.ts",
+    );
+    const violations: Array<{ file: string; export: string; reason: string }> =
+      [];
+    for (const file of helperFiles) {
+      const source = readFileSync(resolve(piExecutorDir, file), "utf8");
+      const sf = ts.createSourceFile(
+        file,
+        source,
+        ts.ScriptTarget.ES2023,
+        true,
+      );
+      ts.forEachChild(sf, (node) => {
+        if (
+          ts.isFunctionDeclaration(node) &&
+          node.modifiers?.some(
+            (m) => m.kind === ts.SyntaxKind.ExportKeyword,
+          )
+        ) {
+          const name = node.name?.text ?? "<anonymous>";
+          const firstParam = node.parameters[0];
+          if (
+            !firstParam ||
+            !ts.isIdentifier(firstParam.name) ||
+            firstParam.name.text !== "state"
+          ) {
+            violations.push({
+              file,
+              export: name,
+              reason:
+                "First parameter must be `state` (closure-extraction protocol EXEC-SPLIT-06)",
+            });
+          }
+        }
+      });
+    }
+    expect(
+      violations,
+      formatViolations({
+        description:
+          "Every exported function in packages/agent/src/executor/pi-executor/ (excluding index.ts, pi-executor.ts, before-tool-call-guard.ts, session-stats.ts, types.ts) must accept its state via an explicit first parameter named `state`. Closure capture silently breaks under code motion — the explicit-state contract makes every helper independently testable and immune to drift.",
+        violations: violations.map((v) => ({
+          file: `executor/pi-executor/${v.file}`,
+          line: 0,
+          snippet: `export function ${v.export}(... ) — ${v.reason}`,
+        })),
+        suggestedFix:
+          "Reshape the helper to `export function <name>(state: Readonly<PiExecutorState>, ...args)`. The state shape is defined alongside the factory; helpers should read from `state` instead of closure-capturing values.",
+        designRef:
+          "code-quality-plan §8.2.2 / Phase 42 / EXEC-SPLIT-06 (closure-extraction protocol)",
+      }),
+    ).toEqual([]);
+  });
+
+  /**
+   * EXEC-SPLIT-08 — prompt-runner dependency-direction.
+   *
+   * Modules extracted from executor-prompt-runner.ts into prompt-runner/
+   * (other than prompt-runner.ts itself and index.ts) must not import
+   * from prompt-runner.ts. The dependency arrow points inward: the thin
+   * orchestrator (prompt-runner.ts) calls into leaf modules; leaves
+   * never call back into the orchestrator. A cycle here re-creates the
+   * mega-function smell at the package boundary.
+   *
+   * Pre-split (Wave 1) state: prompt-runner/ directory does not exist;
+   * assertion is vacuously satisfied.
+   */
+  it("prompt-runner leaf modules do not import from prompt-runner.ts (EXEC-SPLIT-08)", () => {
+    const promptRunnerDir = resolve(SRC_ROOT, "executor/prompt-runner");
+    if (!existsSync(promptRunnerDir)) {
+      // Vacuously satisfied pre-split — directory will materialize in Wave 4.
+      expect([]).toEqual([]);
+      return;
+    }
+    const leafFiles = readdirSync(promptRunnerDir).filter(
+      (f) =>
+        f.endsWith(".ts") &&
+        !f.endsWith(".test.ts") &&
+        f !== "index.ts" &&
+        f !== "prompt-runner.ts",
+    );
+    const violations: Array<{ file: string; importPath: string }> = [];
+    for (const file of leafFiles) {
+      const source = readFileSync(resolve(promptRunnerDir, file), "utf8");
+      const sf = ts.createSourceFile(
+        file,
+        source,
+        ts.ScriptTarget.ES2023,
+        true,
+      );
+      ts.forEachChild(sf, (node) => {
+        if (
+          ts.isImportDeclaration(node) &&
+          ts.isStringLiteral(node.moduleSpecifier)
+        ) {
+          const spec = node.moduleSpecifier.text;
+          if (
+            spec === "./prompt-runner.js" ||
+            spec.endsWith("/prompt-runner.js")
+          ) {
+            violations.push({ file, importPath: spec });
+          }
+        }
+      });
+    }
+    expect(
+      violations,
+      formatViolations({
+        description:
+          "Every leaf module under packages/agent/src/executor/prompt-runner/ (excluding index.ts and prompt-runner.ts) must NOT import from prompt-runner.ts. The orchestrator depends inward on leaves; leaves never depend back on the orchestrator.",
+        violations: violations.map((v) => ({
+          file: `executor/prompt-runner/${v.file}`,
+          line: 0,
+          snippet: `imports "${v.importPath}" — leaf modules must not depend on prompt-runner.ts`,
+        })),
+        suggestedFix:
+          "Promote the shared symbol to prompt-runner-types.ts (type-only) or a sibling leaf module. Never let a leaf import back into the orchestrator file.",
+        designRef:
+          "code-quality-plan §8.2.3 / Phase 42 / EXEC-SPLIT-08 (dependency-direction)",
+      }),
     ).toEqual([]);
   });
 });
