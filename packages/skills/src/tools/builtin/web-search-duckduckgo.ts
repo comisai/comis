@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: web-search SDK boundary wrapper; throws caught by web-search-tool dispatcher AgentTool wrapper (Phase 41 TS-HYG-07).
 /**
  * DuckDuckGo HTML search provider for the web_search tool.
  *

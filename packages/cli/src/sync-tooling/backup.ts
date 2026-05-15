@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: CLI helper consumed by command entry points; throws caught at Commander.js boundary per AGENTS.md §2.1 (Phase 41 TS-HYG-07).
 /**
  * Pre-mutation backup helper for sync-tooling `--write` operations.
  *
