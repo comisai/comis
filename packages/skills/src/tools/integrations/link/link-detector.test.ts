@@ -11,7 +11,7 @@ import { extractLinksFromMessage } from "./link-detector.js";
 // ---------------------------------------------------------------------------
 
 describe("extractLinksFromMessage", () => {
-  it("extracts bare URLs", () => {
+  it("extracts bare URLs from message text via extractLinksFromMessage()", () => {
     const result = extractLinksFromMessage("Check https://example.com for more info");
 
     expect(result).toHaveLength(1);
@@ -29,7 +29,7 @@ describe("extractLinksFromMessage", () => {
     expect(result).toContain("https://other.com/");
   });
 
-  it("deduplicates URLs", () => {
+  it("deduplicates URLs in the extracted-link result array when the same URL appears multiple times", () => {
     const result = extractLinksFromMessage(
       "Visit https://example.com and again https://example.com",
     );
@@ -37,7 +37,7 @@ describe("extractLinksFromMessage", () => {
     expect(result).toHaveLength(1);
   });
 
-  it("respects maxLinks", () => {
+  it("respects maxLinks option by capping the extracted-link result array at that count", () => {
     const text = [
       "https://one.com",
       "https://two.com",
@@ -75,7 +75,7 @@ describe("extractLinksFromMessage", () => {
     expect(result).toHaveLength(0);
   });
 
-  it("skips invalid URLs", () => {
+  it("skips malformed/invalid URLs and excludes them from extracted-link results", () => {
     const result = extractLinksFromMessage("Not a URL: https://");
 
     expect(result).toHaveLength(0);

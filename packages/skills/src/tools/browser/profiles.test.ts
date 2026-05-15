@@ -10,7 +10,7 @@ import {
 
 describe("profiles", () => {
   describe("PROFILE_COLORS", () => {
-    it("has 10 entries", () => {
+    it("declares exactly 10 hex color entries in the PROFILE_COLORS array", () => {
       expect(PROFILE_COLORS).toHaveLength(10);
     });
 
