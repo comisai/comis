@@ -12,17 +12,17 @@ import {
   sortToolsForCacheStability,
   estimateBlockTokens,
   clearSessionPrefixStability,
-} from "./request-body-injector.js";
+} from "./index.js";
 import {
   getOrCacheRenderedTool,
   clearSessionPerToolCache,
   clearSessionRenderedToolCache,
-} from "./tool-schema-cache.js";
-import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, resolveBreakpointStrategy } from "./config-resolver.js";
-import type { RequestBodyInjectorConfig } from "./request-body-injector.js";
-import { createSessionLatch } from "../session-latch.js";
-import type { SessionLatch } from "../session-latch.js";
-import { createMockLogger, createMockStreamFn, makeAssistantMessage, makeContext } from "./__test-helpers/index.js";
+} from "../tool-schema-cache.js";
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, resolveBreakpointStrategy } from "../config-resolver.js";
+import type { RequestBodyInjectorConfig } from "./index.js";
+import { createSessionLatch } from "../../session-latch.js";
+import type { SessionLatch } from "../../session-latch.js";
+import { createMockLogger, createMockStreamFn, makeAssistantMessage, makeContext } from "../__test-helpers/index.js";
 
 describe("createRequestBodyInjector", () => {
   let logger: ReturnType<typeof createMockLogger>;
@@ -2054,32 +2054,7 @@ describe("breakpoint cap increase", () => {
   });
 });
 
-describe("getMinCacheableTokens", () => {
-  it("resolves known model prefixes correctly", () => {
-    expect(getMinCacheableTokens("claude-opus-4-6-20260301")).toBe(4096);
-    expect(getMinCacheableTokens("claude-opus-4-5-20250929")).toBe(4096);
-    expect(getMinCacheableTokens("claude-opus-4-1-20260315")).toBe(1024);
-    expect(getMinCacheableTokens("claude-opus-4-20260101")).toBe(1024);
-    expect(getMinCacheableTokens("claude-sonnet-4-6-20260301")).toBe(2048);
-    expect(getMinCacheableTokens("claude-sonnet-4-5-20250929")).toBe(1024);
-    expect(getMinCacheableTokens("claude-sonnet-4-20250514")).toBe(1024);
-    expect(getMinCacheableTokens("claude-haiku-4-5-20250929")).toBe(4096);
-    expect(getMinCacheableTokens("claude-haiku-3-5-20240620")).toBe(2048);
-  });
-
-  it("matches longest prefix first (opus-4-6 before opus-4-)", () => {
-    // opus-4-6 and opus-4-5 must match their specific entries (4096), not the catch-all opus-4- (1024)
-    expect(getMinCacheableTokens("claude-opus-4-6-20260301")).toBe(4096);
-    expect(getMinCacheableTokens("claude-opus-4-5-20250929")).toBe(4096);
-    // sonnet-4-5 must match its specific entry (1024), not the catch-all sonnet-4- (also 1024 here, but tests prefix priority)
-    expect(getMinCacheableTokens("claude-sonnet-4-5-20250929")).toBe(1024);
-  });
-
-  it("falls back to DEFAULT_MIN_CACHEABLE_TOKENS for unknown models", () => {
-    expect(getMinCacheableTokens("gpt-4-turbo")).toBe(1024);
-    expect(getMinCacheableTokens("unknown-model")).toBe(1024);
-  });
-});
+// describe("getMinCacheableTokens") — extracted to cache-breakpoints.test.ts (Phase 42 EXEC-SPLIT-03).
 
 describe("tool definition caching", () => {
   let logger: ReturnType<typeof createMockLogger>;
@@ -2443,141 +2418,8 @@ describe("lookback window enforcement", () => {
   });
 });
 
-describe("CACHEABLE_BLOCK_TYPES", () => {
-  it("includes text, tool_use, tool_result, image", () => {
-    expect(CACHEABLE_BLOCK_TYPES.has("text")).toBe(true);
-    expect(CACHEABLE_BLOCK_TYPES.has("tool_use")).toBe(true);
-    expect(CACHEABLE_BLOCK_TYPES.has("tool_result")).toBe(true);
-    expect(CACHEABLE_BLOCK_TYPES.has("image")).toBe(true);
-  });
-
-  it("does NOT include thinking or redacted_thinking", () => {
-    expect(CACHEABLE_BLOCK_TYPES.has("thinking")).toBe(false);
-    expect(CACHEABLE_BLOCK_TYPES.has("redacted_thinking")).toBe(false);
-  });
-});
-
-describe("addCacheControlToLastBlock thinking exclusion", () => {
-  it("skips thinking block and places cache_control on preceding text block", () => {
-    const message: Record<string, unknown> = {
-      role: "assistant",
-      content: [
-        { type: "text", text: "Hello" },
-        { type: "thinking", thinking: "internal reasoning" },
-      ],
-    };
-    addCacheControlToLastBlock(message);
-    const content = message.content as Record<string, unknown>[];
-    expect(content[0].cache_control).toEqual({ type: "ephemeral" });
-    expect(content[1].cache_control).toBeUndefined();
-  });
-
-  it("skips redacted_thinking block and places cache_control on preceding text block", () => {
-    const message: Record<string, unknown> = {
-      role: "assistant",
-      content: [
-        { type: "text", text: "Hello" },
-        { type: "redacted_thinking", data: "encrypted" },
-      ],
-    };
-    addCacheControlToLastBlock(message);
-    const content = message.content as Record<string, unknown>[];
-    expect(content[0].cache_control).toEqual({ type: "ephemeral" });
-    expect(content[1].cache_control).toBeUndefined();
-  });
-
-  it("places cache_control on cacheable block types as normal (text regression)", () => {
-    const message: Record<string, unknown> = {
-      role: "assistant",
-      content: [
-        { type: "text", text: "first" },
-        { type: "text", text: "last" },
-      ],
-    };
-    addCacheControlToLastBlock(message);
-    const content = message.content as Record<string, unknown>[];
-    expect(content[0].cache_control).toBeUndefined();
-    expect(content[1].cache_control).toEqual({ type: "ephemeral" });
-  });
-
-  it("places cache_control on tool_use block (regression)", () => {
-    const message: Record<string, unknown> = {
-      role: "assistant",
-      content: [
-        { type: "text", text: "Hello" },
-        { type: "tool_use", id: "tu1", name: "bash", input: {} },
-      ],
-    };
-    addCacheControlToLastBlock(message);
-    const content = message.content as Record<string, unknown>[];
-    expect(content[1].cache_control).toEqual({ type: "ephemeral" });
-  });
-
-  it("places cache_control on tool_result block (regression)", () => {
-    const message: Record<string, unknown> = {
-      role: "user",
-      content: [
-        { type: "tool_result", tool_use_id: "tu1", content: "output" },
-      ],
-    };
-    addCacheControlToLastBlock(message);
-    const content = message.content as Record<string, unknown>[];
-    expect(content[0].cache_control).toEqual({ type: "ephemeral" });
-  });
-
-  it("places cache_control on image block (regression)", () => {
-    const message: Record<string, unknown> = {
-      role: "user",
-      content: [
-        { type: "text", text: "See image:" },
-        { type: "image", source: { type: "base64", data: "..." } },
-      ],
-    };
-    addCacheControlToLastBlock(message);
-    const content = message.content as Record<string, unknown>[];
-    expect(content[0].cache_control).toBeUndefined();
-    expect(content[1].cache_control).toEqual({ type: "ephemeral" });
-  });
-
-  it("falls back to last block when only block is thinking (edge case)", () => {
-    const message: Record<string, unknown> = {
-      role: "assistant",
-      content: [
-        { type: "thinking", thinking: "internal" },
-      ],
-    };
-    addCacheControlToLastBlock(message);
-    const content = message.content as Record<string, unknown>[];
-    // Fallback: place on last block even though it's thinking
-    expect(content[0].cache_control).toEqual({ type: "ephemeral" });
-  });
-
-  it("respects long retention with ttl='1h'", () => {
-    const message: Record<string, unknown> = {
-      role: "assistant",
-      content: [
-        { type: "text", text: "Hello" },
-        { type: "thinking", thinking: "reasoning" },
-      ],
-    };
-    addCacheControlToLastBlock(message, "long" as any);
-    const content = message.content as Record<string, unknown>[];
-    expect(content[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
-    expect(content[1].cache_control).toBeUndefined();
-  });
-
-  it("no-ops on empty content array", () => {
-    const message: Record<string, unknown> = { role: "assistant", content: [] };
-    addCacheControlToLastBlock(message);
-    expect((message.content as unknown[]).length).toBe(0);
-  });
-
-  it("no-ops on non-array content", () => {
-    const message: Record<string, unknown> = { role: "assistant", content: "plain text" };
-    addCacheControlToLastBlock(message);
-    expect(message.content).toBe("plain text");
-  });
-});
+// describe("CACHEABLE_BLOCK_TYPES") + describe("addCacheControlToLastBlock thinking exclusion")
+// — extracted to cache-breakpoints.test.ts (Phase 42 EXEC-SPLIT-03).
 describe("breakpoint strategy config", () => {
   let logger: ReturnType<typeof createMockLogger>;
 
@@ -3083,15 +2925,21 @@ describe("createRequestBodyInjector — defer_loading injection", () => {
 
   // Source-level regression that the local supportsToolSearch helper was
   // removed in favor of the shared export from tool-deferral.ts.
+  //
+  // Post-Phase-42 EXEC-SPLIT-02: the defer_loading injection logic
+  // (formerly in request-body-injector.ts) moved to
+  // request-body/tool-deferral-injection.ts. The relative path to the
+  // shared helper deepened one level (../tool-deferral.js →
+  // ../../tool-deferral.js).
   it("does NOT declare its own `function supportsToolSearch` (uses shared helper)", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const url = await import("node:url");
     const here = path.dirname(url.fileURLToPath(import.meta.url));
-    const src = await fs.readFile(path.join(here, "request-body-injector.ts"), "utf8");
+    const src = await fs.readFile(path.join(here, "tool-deferral-injection.ts"), "utf8");
     expect(src).not.toMatch(/function\s+supportsToolSearch\s*\(/);
     // Imported via the shared tool-deferral module instead.
-    expect(src).toMatch(/from\s+["']\.\.\/tool-deferral\.js["']/);
+    expect(src).toMatch(/from\s+["']\.\.\/\.\.\/tool-deferral\.js["']/);
   });
 });
 
@@ -3995,36 +3843,7 @@ describe("per-tool content-addressed memoization", () => {
   });
 });
 
-describe("per-model cache retention override", () => {
-  it("returns override when model matches prefix", () => {
-    const result = resolveCacheRetention("claude-sonnet-4-6-20260301", "long", { "claude-sonnet": "none" });
-    expect(result).toBe("none");
-  });
-
-  it("uses longest-prefix-first: claude-sonnet-4-6 matches before claude-sonnet", () => {
-    const overrides = {
-      "claude-sonnet": "none" as const,
-      "claude-sonnet-4-6": "short" as const,
-    };
-    const result = resolveCacheRetention("claude-sonnet-4-6-20260301", "long", overrides);
-    expect(result).toBe("short");
-  });
-
-  it("returns agent-level retention when no override matches", () => {
-    const result = resolveCacheRetention("gpt-4o", "long", { "claude-sonnet": "none" });
-    expect(result).toBe("long");
-  });
-
-  it("returns agent-level retention when overrides is undefined", () => {
-    const result = resolveCacheRetention("claude-sonnet-4-6", "long", undefined);
-    expect(result).toBe("long");
-  });
-
-  it("returns agent-level retention when overrides is empty object", () => {
-    const result = resolveCacheRetention("claude-sonnet-4-6", "short", {});
-    expect(result).toBe("short");
-  });
-});
+// describe("per-model cache retention override") — extracted to cache-breakpoints.test.ts (Phase 42 EXEC-SPLIT-03).
 
 describe("Per-model kill switch strips ALL cache_control markers", () => {
   let logger: ReturnType<typeof createMockLogger>;
@@ -5580,142 +5399,14 @@ describe("sticky-on beta header latches", () => {
   });
 });
 
-describe("clearStaleThinkingBlocks", () => {
+// Pure-function describes for clearStaleThinkingBlocks (5 tests) extracted to
+// tool-result-clearing.test.ts (Phase 42 EXEC-SPLIT-03). Integration tests
+// (via createRequestBodyInjector) stay below.
+describe("clearStaleThinkingBlocks (integration)", () => {
   let logger: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
     logger = createMockLogger();
-  });
-
-  it("removes thinking blocks from assistant messages beyond keepWindow", () => {
-    const messages: Array<Record<string, unknown>> = [
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-      { role: "assistant", content: [
-        { type: "thinking", thinking: "Let me think about this..." },
-        { type: "text", text: "Response 1" },
-      ]},
-      { role: "user", content: [{ type: "text", text: "Next" }] },
-      { role: "assistant", content: [
-        { type: "thinking", thinking: "Thinking again..." },
-        { type: "text", text: "Response 2" },
-      ]},
-      { role: "user", content: [{ type: "text", text: "Last" }] },
-      { role: "assistant", content: [
-        { type: "thinking", thinking: "Final thought..." },
-        { type: "text", text: "Response 3" },
-      ]},
-    ];
-
-    // keepWindow = 1: only last assistant message keeps thinking blocks
-    const cleared = clearStaleThinkingBlocks(messages, 1);
-
-    expect(cleared).toBe(2); // 2 thinking blocks cleared from first 2 assistant messages
-    // First assistant: thinking removed, text preserved
-    expect((messages[1]!.content as any[]).length).toBe(1);
-    expect((messages[1]!.content as any[])[0].type).toBe("text");
-    // Second assistant: thinking removed, text preserved
-    expect((messages[3]!.content as any[]).length).toBe(1);
-    expect((messages[3]!.content as any[])[0].type).toBe("text");
-    // Third assistant: within keepWindow, thinking preserved
-    expect((messages[5]!.content as any[]).length).toBe(2);
-    expect((messages[5]!.content as any[])[0].type).toBe("thinking");
-  });
-
-  it("preserves redacted_thinking blocks (block.redacted === true)", () => {
-    const messages: Array<Record<string, unknown>> = [
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-      { role: "assistant", content: [
-        { type: "thinking", redacted: true, data: "encrypted-signature" },
-        { type: "thinking", thinking: "Normal thinking to be cleared" },
-        { type: "text", text: "Response" },
-      ]},
-      { role: "user", content: [{ type: "text", text: "Next" }] },
-      { role: "assistant", content: [
-        { type: "text", text: "Latest response" },
-      ]},
-    ];
-
-    // keepWindow = 1: first assistant beyond window
-    const cleared = clearStaleThinkingBlocks(messages, 1);
-
-    expect(cleared).toBe(1); // Only non-redacted thinking cleared
-    const firstAssistantContent = messages[1]!.content as any[];
-    expect(firstAssistantContent.length).toBe(2); // redacted_thinking + text
-    expect(firstAssistantContent[0].type).toBe("thinking");
-    expect(firstAssistantContent[0].redacted).toBe(true);
-    expect(firstAssistantContent[1].type).toBe("text");
-  });
-
-  it("preserves text, tool_use, and image blocks in assistant messages", () => {
-    const messages: Array<Record<string, unknown>> = [
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-      { role: "assistant", content: [
-        { type: "thinking", thinking: "To be cleared" },
-        { type: "text", text: "Response text" },
-        { type: "tool_use", id: "tu_1", name: "bash", input: {} },
-        { type: "image", source: { type: "base64", data: "abc" } },
-      ]},
-      { role: "user", content: [{ type: "text", text: "Next" }] },
-      { role: "assistant", content: [{ type: "text", text: "Latest" }] },
-    ];
-
-    const cleared = clearStaleThinkingBlocks(messages, 1);
-
-    expect(cleared).toBe(1);
-    const content = messages[1]!.content as any[];
-    expect(content.length).toBe(3); // text + tool_use + image (thinking removed)
-    expect(content[0].type).toBe("text");
-    expect(content[1].type).toBe("tool_use");
-    expect(content[2].type).toBe("image");
-  });
-
-  it("preserves all thinking blocks within the keepWindow", () => {
-    const messages: Array<Record<string, unknown>> = [
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-      { role: "assistant", content: [
-        { type: "thinking", thinking: "Thought 1" },
-        { type: "text", text: "Response 1" },
-      ]},
-      { role: "user", content: [{ type: "text", text: "Next" }] },
-      { role: "assistant", content: [
-        { type: "thinking", thinking: "Thought 2" },
-        { type: "text", text: "Response 2" },
-      ]},
-    ];
-
-    // keepWindow = 5: all 2 assistant messages fit within window
-    const cleared = clearStaleThinkingBlocks(messages, 5);
-
-    expect(cleared).toBe(0);
-    // Both messages should retain their thinking blocks
-    expect((messages[1]!.content as any[]).length).toBe(2);
-    expect((messages[3]!.content as any[]).length).toBe(2);
-  });
-
-  it("returns count of cleared blocks", () => {
-    const messages: Array<Record<string, unknown>> = [
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-      { role: "assistant", content: [
-        { type: "thinking", thinking: "Thought A" },
-        { type: "thinking", thinking: "Thought B" },
-        { type: "text", text: "Response 1" },
-      ]},
-      { role: "user", content: [{ type: "text", text: "Next" }] },
-      { role: "assistant", content: [
-        { type: "thinking", thinking: "Thought C" },
-        { type: "text", text: "Response 2" },
-      ]},
-      { role: "user", content: [{ type: "text", text: "Last" }] },
-      { role: "assistant", content: [
-        { type: "text", text: "Response 3" },
-      ]},
-    ];
-
-    // keepWindow = 1: first 2 assistants beyond window, 3rd within
-    const cleared = clearStaleThinkingBlocks(messages, 1);
-
-    // First assistant: 2 thinking blocks cleared, second assistant: 1 thinking cleared
-    expect(cleared).toBe(3);
   });
 
   it("onPayload calls clearStaleThinkingBlocks alongside clearStaleToolResults when elapsed > TTL", async () => {
@@ -6200,84 +5891,7 @@ describe("gap closure: single TTL estimation pass with text extraction", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// sortToolsForCacheStability
-// ---------------------------------------------------------------------------
-
-describe("sortToolsForCacheStability", () => {
-  it("places built-in tools before MCP tools in mixed input", () => {
-    const input = [
-      { name: "read" },
-      { name: "mcp__z_tool" },
-      { name: "write" },
-      { name: "mcp:a_tool" },
-      { name: "mcp__m_tool" },
-    ];
-    const result = sortToolsForCacheStability(input as Array<Record<string, unknown>>);
-    const names = result.map(t => t.name);
-    // Built-in tools come first in original order
-    expect(names[0]).toBe("read");
-    expect(names[1]).toBe("write");
-    // MCP tools come after, sorted alphabetically by localeCompare
-    const mcpNames = names.slice(2);
-    expect(mcpNames).toEqual([...mcpNames].sort((a, b) => (a as string).localeCompare(b as string)));
-    expect(mcpNames).toContain("mcp:a_tool");
-    expect(mcpNames).toContain("mcp__m_tool");
-    expect(mcpNames).toContain("mcp__z_tool");
-  });
-
-  it("sorts MCP tools alphabetically among themselves", () => {
-    const input = [
-      { name: "mcp__zebra" },
-      { name: "mcp:alpha" },
-      { name: "mcp__middle" },
-    ];
-    const result = sortToolsForCacheStability(input as Array<Record<string, unknown>>);
-    const names = result.map(t => t.name);
-    // All MCP -- sorted alphabetically by localeCompare
-    expect(names).toEqual([...names].sort((a, b) => (a as string).localeCompare(b as string)));
-    expect(names.length).toBe(3);
-  });
-
-  it("preserves built-in tool relative order (not re-sorted)", () => {
-    const input = [
-      { name: "write" },
-      { name: "bash" },
-      { name: "read" },
-    ];
-    const result = sortToolsForCacheStability(input as Array<Record<string, unknown>>);
-    expect(result.map(t => t.name)).toEqual(["write", "bash", "read"]);
-  });
-
-  it("returns empty array for empty input", () => {
-    const result = sortToolsForCacheStability([]);
-    expect(result).toEqual([]);
-  });
-
-  it("returns same order for all built-in tools", () => {
-    const input = [
-      { name: "read" },
-      { name: "write" },
-      { name: "bash" },
-    ];
-    const result = sortToolsForCacheStability(input as Array<Record<string, unknown>>);
-    expect(result.map(t => t.name)).toEqual(["read", "write", "bash"]);
-  });
-
-  it("excludes server-side tools from sorting and places them at end", () => {
-    const input = [
-      { name: "read" },
-      { type: "tool_search_tool_regex_20251119", name: "tool_search_tool_regex" },
-      { name: "mcp:foo" },
-    ];
-    const result = sortToolsForCacheStability(input as Array<Record<string, unknown>>);
-    expect(result.map(t => t.name)).toEqual([
-      "read",
-      "mcp:foo",
-      "tool_search_tool_regex",
-    ]);
-  });
-});
+// describe("sortToolsForCacheStability") — extracted to cache-breakpoints.test.ts (Phase 42 EXEC-SPLIT-03).
 
 // ---------------------------------------------------------------------------
 // Zone-aware retention tests

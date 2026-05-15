@@ -342,7 +342,7 @@ describe("ANTHROPIC_FAMILY de-duplication regression", () => {
 
   it.each([
     "packages/agent/src/executor/ttl-guard.ts",
-    "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
+    "packages/agent/src/executor/stream-wrappers/request-body/factory.ts",
     "packages/agent/src/executor/stream-wrappers/config-resolver.ts",
   ])("%s does not declare a local ANTHROPIC_FAMILY Set", (relPath) => {
     const source = readFileSync(join(repoRoot, relPath), "utf8");
@@ -355,7 +355,7 @@ describe("ANTHROPIC_FAMILY de-duplication regression", () => {
 
   it.each([
     "packages/agent/src/executor/ttl-guard.ts",
-    "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
+    "packages/agent/src/executor/stream-wrappers/request-body/factory.ts",
     "packages/agent/src/executor/stream-wrappers/config-resolver.ts",
   ])("%s imports isAnthropicFamily from provider/capabilities", (relPath) => {
     const source = readFileSync(join(repoRoot, relPath), "utf8");

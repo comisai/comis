@@ -16,13 +16,16 @@
  *     identifier in `tool-lifecycle.ts`, and the discovery-handoff message
  *     text where the public tool name is the stable API the LLM calls), NOT
  *     provider-branched prompt teaching. `tool_search_tool_regex` has an
- *     allowlist for `request-body-injector.ts` (the surviving
+ *     allowlist for `request-body/tool-deferral-injection.ts` (the surviving
  *     Anthropic-payload-reshape file where the literal appears as a
- *     tool-name field in the API payload), `cache-break-detection.ts`
- *     (server-side-tool skip-list with the literal in comments + a
- *     `tool_search_tool_` prefix-match), and `stub-filter-injector.ts`
- *     (JSDoc explaining the payload-reshape interaction with the
- *     stub-filter).
+ *     tool-name field in the API payload; post-Phase-42 EXEC-SPLIT-02 — was
+ *     previously `request-body-injector.ts`), `request-body/types.ts`
+ *     (JSDoc reference on the deferred-tools config option),
+ *     `cache-detection/anthropic-extractor.ts` (server-side-tool skip-list
+ *     with the literal in comments + a `tool_search_tool_` prefix-match;
+ *     post-Phase-42 EXEC-SPLIT-09 — was previously `cache-break-detection.ts`),
+ *     and `stub-filter-injector.ts` (JSDoc explaining the payload-reshape
+ *     interaction with the stub-filter).
  *   - `prompt-assembly.ts` does NOT import `capability-index-context.ts`
  *     AND does NOT call the two live-runtime port accessors that mutate
  *     between turns — cache-fence enforcement at the source-grep boundary.
@@ -151,7 +154,7 @@ describe("@comis/agent -- architecture invariants", () => {
       "discovery-tracker.ts",      // JSDoc explaining the session-scoped tracker tied to discover_tools
       "pi-executor.ts",            // JSDoc + comments referring to discover_tools as a known concept (mid-turn injection)
       // Anthropic payload-reshape identifiers.
-      "request-body-injector.ts",  // payload reshape removes the client-side discover_tools tool name
+      "tool-deferral-injection.ts", // payload reshape removes the client-side discover_tools tool name (post-Phase-42 EXEC-SPLIT-02 split; previously request-body-injector.ts)
       "stub-filter-injector.ts",   // JSDoc explaining stub-filter interaction with discover_tools removal
     ];
     const offenders = result.matches.filter(
@@ -169,11 +172,13 @@ describe("@comis/agent -- architecture invariants", () => {
   it("tool_search_tool_regex literal absent from production source (excluding allowlist)", () => {
     // Allowlist of files where "tool_search_tool_regex" legitimately appears
     // as a tool-identifier in the Anthropic API payload reshape (NOT prompt
-    // teaching shipped to the model). Three legitimate carriers, all in the
+    // teaching shipped to the model). Four legitimate carriers, all in the
     // payload-reshape / cache-detection layer:
-    //   - request-body-injector.ts — appends the server-side tool to the API
-    //     payload (type discriminant + name field) when supportsToolSearch
-    //     gates a tool-search-eligible model.
+    //   - request-body/tool-deferral-injection.ts — appends the server-side
+    //     tool to the API payload (type discriminant + name field) when
+    //     supportsToolSearch gates a tool-search-eligible model. Post-Phase-42
+    //     split (EXEC-SPLIT-02); was previously request-body-injector.ts.
+    //   - request-body/types.ts — JSDoc on the config option naming the tool.
     //   - cache-detection/anthropic-extractor.ts — skip-list comments + per-tool-hash
     //     skip for server-side tools that lack input_schema (the literal appears
     //     in comments naming what gets skipped; the runtime check uses the
@@ -184,7 +189,7 @@ describe("@comis/agent -- architecture invariants", () => {
     //     tool to the rendered Anthropic payload.
     // The supportsToolSearch gate in tool-deferral.ts (surviving-caller
     // branch) routes invocations of this reshape through
-    // request-body-injector.ts.
+    // request-body/tool-deferral-injection.ts.
     const result = findInSourceFiles({
       rootDir: SRC_ROOT,
       needle: "tool_search_tool_regex",
@@ -192,7 +197,8 @@ describe("@comis/agent -- architecture invariants", () => {
       excludeFileSuffixes: [".test.ts"],
     });
     const ALLOWED_FILES = [
-      "request-body-injector.ts",  // surviving Anthropic-payload-reshape file
+      "tool-deferral-injection.ts", // post-Phase-42 EXEC-SPLIT-02: request-body/ payload-reshape module
+      "request-body/types.ts",     // JSDoc reference on the deferred-tools config option
       "anthropic-extractor.ts",    // post-EXEC-SPLIT-09: cache-detection/ extractor module
       "stub-filter-injector.ts",   // JSDoc cross-reference to the payload reshape
     ];
@@ -202,7 +208,8 @@ describe("@comis/agent -- architecture invariants", () => {
     expect(
       offenders,
       "tool_search_tool_regex literal must not appear outside the allowlist " +
-        "(request-body-injector.ts, cache-detection/anthropic-extractor.ts, stub-filter-injector.ts)",
+        "(request-body/tool-deferral-injection.ts, request-body/types.ts, " +
+        "cache-detection/anthropic-extractor.ts, stub-filter-injector.ts)",
     ).toEqual([]);
     expect(result.checkedFiles, "sanity: helper walked at least one production source file").toBeGreaterThan(0);
   });
