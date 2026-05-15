@@ -500,42 +500,48 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "Thinned PiExecutor factory + withSession callback (§13.3 fallback per Plan 42-05); 4 co-equal/closure-extracted helpers shipped; inside-lock callback deferred to focused follow-up. EXEC-SPLIT-06 structural test GREEN non-vacuously (5 closure-extracted helpers walked).",
     removedIn: "deferred",
   },
-  // Phase E adjacent (6 agent files; reason cites the generic EXEC-SPLIT-15 group)
+  // Phase 42 closure — §8.2.5 adjacent files decision (EXEC-SPLIT-15).
+  // Per-file decisions made at Phase 42 closing commit (Plan 42-06); line counts
+  // re-measured at HEAD; all 6 entries converted from phase-E → deferred with
+  // explicit reasons. File 6 (executor-post-execution.ts) re-measured at 816L
+  // (>810 per §8.2.5 matrix branch), so its default split-attempt branch is
+  // foreclosed and the deferred-with-reason fallback applies. Phase 42 SHIPPED
+  // with 0 phase-E tags in any allowlist (closure invariant).
   {
     file: "packages/agent/src/bridge/pi-event-bridge.ts",
-    lines: 1498,
-    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
-    removedIn: "phase-E",
+    lines: 1496,
+    reason: "Executor-adjacent file (1,496L re-measured at Phase 42 closing commit; -2L drift from 1,498L design-doc cite); 17 small event handlers; mechanical split by event family deferred to a focused follow-up — engineer-time budget consumed by 4 primary executor splits (EXEC-SPLIT-15 default-defer per §8.2.5)",
+    removedIn: "deferred",
   },
   {
     file: "packages/agent/src/model/oauth-token-manager.ts",
-    lines: 1438,
-    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
-    removedIn: "phase-E",
+    lines: 1441,
+    reason: "Executor-adjacent file (1,441L re-measured at Phase 42 closing commit; +3L drift from 1,438L design-doc cite); 5th-largest non-daemon agent file; OAuth surface is mature/stable; splitting requires care to preserve runtime-override priority path (setRuntimeApiKey side effect) (EXEC-SPLIT-15 default-defer per §8.2.5)",
+    removedIn: "deferred",
   },
   {
     file: "packages/agent/src/spawn/sub-agent-runner.ts",
-    lines: 1708,
-    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
-    removedIn: "phase-E",
+    lines: 1715,
+    reason: "Executor-adjacent file (1,715L re-measured at Phase 42 closing commit; +7L drift from 1,708L design-doc cite); gated by §7.2.5 SubAgentRunnerDeps audit; Phase 41 closed the audit (Plan 41-06; AUDIT.md exists) but the natural module seams require focused-follow-up care (EXEC-SPLIT-15 default-defer per §8.2.5)",
+    removedIn: "deferred",
   },
   {
     file: "packages/agent/src/executor/prompt-assembly.ts",
-    lines: 1105,
-    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
-    removedIn: "phase-E",
+    lines: 1100,
+    reason: "Executor-adjacent file (1,100L re-measured at Phase 42 closing commit; -5L drift from 1,105L design-doc cite); Phase 39 PORTS-11/12/13 closed direct-global retargeting (Plan 39-05); no obvious natural seam at this size; defer pending further audit (EXEC-SPLIT-15 default-defer per §8.2.5)",
+    removedIn: "deferred",
   },
   {
     file: "packages/agent/src/executor/tool-deferral.ts",
-    lines: 1033,
-    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
-    removedIn: "phase-E",
+    lines: 1035,
+    reason: "Executor-adjacent file (1,035L re-measured at Phase 42 closing commit; +2L drift from 1,033L design-doc cite); BM25/cosine ranking algorithm conceptually separate from deferral orchestration; split sensible but not urgent (EXEC-SPLIT-15 default-defer per §8.2.5)",
+    removedIn: "deferred",
   },
   {
     file: "packages/agent/src/executor/executor-post-execution.ts",
-    lines: 806,
-    reason: "Executor-adjacent file; Phase E may split or carry removedIn: deferred per EXEC-SPLIT-15",
-    removedIn: "phase-E",
+    lines: 816,
+    reason: "Executor-adjacent file (816L re-measured at Phase 42 closing commit; +10L drift from 806L design-doc cite); barely above 800L cap but now >810L threshold per §8.2.5 matrix branch — the matrix's split-attempt branch (801-810 + clean seam) is foreclosed by the re-measurement; defer pending Phase B/H global-removal shrinkage or a focused Phase 43-adjacent post-run-cleanup/metrics helper extraction (EXEC-SPLIT-15 §8.2.5 file-6 fallback)",
+    removedIn: "deferred",
   },
 
   // ============================================================================
