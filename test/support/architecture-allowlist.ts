@@ -678,7 +678,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/memory/src/observability-store.ts",
     lines: 802,
-    reason: "Memory observability store; split in Phase F per FILE-SPLIT-21",
+    reason: "@allow-throw boundary: unknown-table guard in resetTable(); consumed by obs-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
     removedIn: "phase-F",
   },
   {
@@ -1204,44 +1204,44 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/memory/src/credential-mapping-store.ts",
     lineRanges: [[91, 91]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: validation throw inside tryCatch() port wrapper; consumed by daemon RPC handlers (Decision 2 transitive) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/memory/src/memory-api.ts",
     lineRanges: [[188, 188]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: MemoryApi.clear() scope-required guard; consumed by daemon memory-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/memory/src/observability-store.ts",
     lineRanges: [[795, 795]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: unknown-table guard in resetTable(); consumed by obs-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/memory/src/row-mapper.ts",
     lineRanges: [[193, 193], [218, 218], [223, 223]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: SQL-injection ALLOWED_TABLES/COLUMNS guard; prevents unsafe table/column names from reaching prepare(); consumed by MemoryApi adapter (daemon RPC @allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/memory/src/schema.ts",
     lineRanges: [[43, 43]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: initSchema embeddingDimensions DDL precondition; consumed at daemon bootstrap entry (daemon.ts catch boundary) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/memory/src/secret-store-schema.ts",
     lineRanges: [[81, 81], [114, 114], [120, 120]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: master-key canary mismatch must hard-fail; encryption-correctness assertion zone per AGENTS.md §2.1 analog (security-critical) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/memory/src/session-store.ts",
     lineRanges: [[106, 106]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: 10MB session-size guard; consumed by daemon session-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   // ----- orchestrator package (5 files) -----
   {

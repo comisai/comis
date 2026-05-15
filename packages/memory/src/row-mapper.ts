@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: Internal SQL-injection guard in countRows/groupCountRows (ALLOWED_TABLES / ALLOWED_GROUP_COLUMNS); throws prevent unsafe table/column names from reaching prepare(); consumed by MemoryApi adapter (daemon RPC handler @allow-throw boundary per Decision 2) (Phase 41 TS-HYG-07).
 /**
  * Shared helpers for converting between MemoryRow (DB row) and
  * MemoryEntry (domain type), and for common DB operations.

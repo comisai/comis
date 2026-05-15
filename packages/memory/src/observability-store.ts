@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: Unknown-table guard in ObservabilityStore.resetTable(); consumed via obs-handlers (daemon RPC @allow-throw boundary per Decision 2 transitive) (Phase 41 TS-HYG-07).
 /**
  * ObservabilityStore — SQLite persistence for observability data.
  *
