@@ -48,6 +48,21 @@ import { systemNowMs } from "@comis/core";
 export interface DiscordAdapterDeps {
   botToken: string;
   logger: ComisLogger;
+  /**
+   * Optional Discord REST API root URL override (e.g. `http://127.0.0.1:54321`).
+   * When set, the discord.js Client is constructed with `rest.api = apiRoot`.
+   * The WebSocket gateway URL is fetched FROM this REST endpoint
+   * (`GET /api/v10/gateway/bot`), so redirecting `apiRoot` to a 127.0.0.1
+   * mock automatically redirects gateway connections too (the mock returns
+   * its own ws://127.0.0.1 URL).
+   *
+   * Production callers leave this undefined — discord.js uses its default
+   * `https://discord.com/api`.
+   *
+   * Phase 40 / Plan 40-09 / COV-15 — production seam for the wire-level
+   * E2E mock chat-platform fixture (test/e2e/mocks/discord/).
+   */
+  apiRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,6 +77,10 @@ export interface DiscordAdapterDeps {
  * Developer Portal.
  */
 export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
+  // E2E seam: when deps.apiRoot is set, redirect discord.js's REST traffic
+  // (and, transitively via /gateway/bot, the WebSocket gateway) to that URL.
+  // Production callers leave it unset and discord.js uses its default
+  // (https://discord.com/api). Phase 40 / Plan 40-09 / COV-15.
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -71,6 +90,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
       GatewayIntentBits.GuildMessageReactions,
       GatewayIntentBits.DirectMessageReactions,
     ],
+    ...(deps.apiRoot ? { rest: { api: deps.apiRoot } } : {}),
   });
 
   const handlers: MessageHandler[] = [];

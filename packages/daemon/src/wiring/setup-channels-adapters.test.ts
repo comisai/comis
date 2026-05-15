@@ -187,11 +187,28 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({ discord: { enabled: true, botToken: "disc-tok" } });
     const result = await bootstrapAdapters({ container, channelsLogger });
 
-    expect(validateDiscordToken).toHaveBeenCalledWith("disc-tok");
+    // Phase 40 / Plan 40-09: validateDiscordToken now takes (token, apiRoot?);
+    // production path passes undefined for the second arg.
+    expect(validateDiscordToken).toHaveBeenCalledWith("disc-tok", undefined);
     expect(createDiscordPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ botToken: "disc-tok" }),
     );
     expect(result.adaptersByType.get("discord")).toBe(mockDiscordPlugin.adapter);
+  });
+
+  it("threads discord.apiRoot through to validateDiscordToken + plugin factory (COV-15 E2E seam)", async () => {
+    const container = makeContainer({
+      discord: { enabled: true, botToken: "disc-tok", apiRoot: "http://127.0.0.1:54322" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateDiscordToken).toHaveBeenCalledWith("disc-tok", "http://127.0.0.1:54322");
+    expect(createDiscordPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        botToken: "disc-tok",
+        apiRoot: "http://127.0.0.1:54322",
+      }),
+    );
   });
 
   it("creates Slack adapter with socket-mode credentials", async () => {

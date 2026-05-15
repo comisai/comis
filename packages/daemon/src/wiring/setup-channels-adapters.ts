@@ -132,11 +132,19 @@ export async function bootstrapAdapters(deps: {
   if (channelConfig.discord.enabled) {
     const token = (channelConfig.discord.botToken as string | undefined) || getSecret("DISCORD_BOT_TOKEN");
     if (token) {
-      const validation = await validateDiscordToken(token);
+      // E2E redirection seam (Phase 40 / Plan 40-09): when discord.apiRoot
+      // is set, both validation (/users/@me) and runtime traffic (REST +
+      // gateway-discovery via /gateway/bot) hit the override URL. Production
+      // leaves it unset and discord.js uses https://discord.com/api.
+      const discordApiRoot = channelConfig.discord.apiRoot && channelConfig.discord.apiRoot.length > 0
+        ? channelConfig.discord.apiRoot
+        : undefined;
+      const validation = await validateDiscordToken(token, discordApiRoot);
       if (validation.ok) {
         const plugin = createDiscordPlugin({
           botToken: token,
           logger: channelsLogger,
+          ...(discordApiRoot ? { apiRoot: discordApiRoot } : {}),
         });
         adaptersByType.set("discord", plugin.adapter);
         channelCapabilities.set("discord", { supportsReactions: true, replyToMetaKey: "discordMessageId" });
