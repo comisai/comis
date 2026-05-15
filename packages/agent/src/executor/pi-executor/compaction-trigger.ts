@@ -18,7 +18,7 @@
 
 import { formatSessionKey } from "@comis/core";
 
-import type { PiExecutorDeps } from "./pi-executor.js";
+import type { PiExecutorDeps } from "./pi-executor-types.js";
 import { resetTrackerTimers } from "../tool-lifecycle.js";
 import {
   getCacheBreakDetector,

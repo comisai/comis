@@ -484,11 +484,21 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // ============================================================================
   // Phase E — Executor splits (4 primary + 6 adjacent = 10 files) — closes Phase 42 (EXEC-SPLIT)
   // ============================================================================
+  // §13.3 fallback (Plan 42-05): closure-extracted helpers shipped (safety-gate,
+  // compaction-trigger, executor-error-mapping, session-bootstrap,
+  // message-envelope — all state-first per EXEC-SPLIT-06) but the inside-lock
+  // withSession callback body resisted further closure extraction without
+  // either a 50+-field state shape or breaking the natural orchestrator-edge
+  // boundary. Pass-1 (co-equal extractions) + Pass-2 (5 closure-extracted
+  // helpers) shipped. EXEC-SPLIT-06 structural test GREEN non-vacuously.
+  // Revisit the withSession callback split in a focused follow-up (Phase G/H)
+  // — likely seam is sub-decomposing the bridge construction (~210L) and
+  // stream-wrapper wiring (~30L) into independent helpers.
   {
-    file: "packages/agent/src/executor/pi-executor.ts",
-    lines: 1641,
-    reason: "Core executor; split in Phase E into pi-executor/ subdirectory per EXEC-SPLIT-05",
-    removedIn: "phase-E",
+    file: "packages/agent/src/executor/pi-executor/pi-executor.ts",
+    lines: 1397,
+    reason: "Thinned PiExecutor factory + withSession callback (§13.3 fallback per Plan 42-05); 4 co-equal/closure-extracted helpers shipped; inside-lock callback deferred to focused follow-up. EXEC-SPLIT-06 structural test GREEN non-vacuously (5 closure-extracted helpers walked).",
+    removedIn: "deferred",
   },
   // Phase E adjacent (6 agent files; reason cites the generic EXEC-SPLIT-15 group)
   {
@@ -1672,10 +1682,10 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
 
   // -- (b) Clustered-optional deps bags: split candidates for a future refactor --
   {
-    file: "packages/agent/src/executor/pi-executor.ts",
+    file: "packages/agent/src/executor/pi-executor/pi-executor-types.ts",
     typeName: "PiExecutorDeps",
-    optionalCount: 43,
-    reason: "(b) Cluster-split candidate: optionals mix 8 concerns (safety controls, adapters/registries, tool wiring, media/prompts, provider compatibility, secret/output guards, delivery/cache, observability ports). Every optional field documented per-line; construction site (setup-agents.ts:645) conditionally supplies values from config + AppContainer. Future refactor: split into PiExecutorSafetyDeps + PiExecutorToolingDeps + PiExecutorProviderDeps + PiExecutorObservabilityDeps. (TS-HYG-13 — Plan 41-08 audit; keep until structural refactor wave).",
+    optionalCount: 42,
+    reason: "(b) Cluster-split candidate: optionals mix 8 concerns (safety controls, adapters/registries, tool wiring, media/prompts, provider compatibility, secret/output guards, delivery/cache, observability ports). Every optional field documented per-line; construction site (setup-agents.ts:645) conditionally supplies values from config + AppContainer. Future refactor: split into PiExecutorSafetyDeps + PiExecutorToolingDeps + PiExecutorProviderDeps + PiExecutorObservabilityDeps. (TS-HYG-13 — Plan 41-08 audit; keep until structural refactor wave; path + count updated post-Phase-42 EXEC-SPLIT-05 split — interface moved to pi-executor-types.ts to break the no-cycles invariant; one optional field consolidated during the move).",
     removedIn: "phase-D",
   },
   {
@@ -2143,6 +2153,15 @@ export const coverageWaiver: readonly CoverageWaiverEntry[] = [
   {
     file: "packages/agent/src/executor/prompt-runner/failure-path.ts",
     reason: "Phase 42 EXEC-SPLIT-07 Rule 3 sub-module of output-escalation.ts (failure-path overflow recovery + error classification + timeout ghost-cost emission + OutputGuard error scan). Was extracted to keep output-escalation.ts under the 500L cap. Each downstream symbol is independently tested (overflow-recovery.test.ts, error-classifier.test.ts, executor-response-filter.test.ts); end-to-end failure-path semantics are exercised by the integration suite.",
+  },
+  // -- Phase 42 EXEC-SPLIT-05 (pi-executor/) --
+  {
+    file: "packages/agent/src/executor/pi-executor/index.ts",
+    reason: "Barrel re-export module (Phase 42 EXEC-SPLIT-05 split). Re-exports 3 canonical public values (createPiExecutor + createBeforeToolCallGuard + mergeSessionStats) + 1 type (PiExecutorDeps) from sibling leaf modules without aliases; surface is verified by the parity test (pi-executor.parity.test.ts) and by the EXEC-SPLIT-06 closure-extraction structural test.",
+  },
+  {
+    file: "packages/agent/src/executor/pi-executor/pi-executor-types.ts",
+    reason: "Pure type-only module (Phase 42 EXEC-SPLIT-05 split). Hosts PiExecutorDeps interface (42 optional fields); no runtime values to test. Extracted to a dedicated file to break the cyclic-import detected by no-cycles.test.ts when the closure-extracted helpers (safety-gate, compaction-trigger, etc.) import the type. Type-level surface is verified by the parity test (pi-executor.parity.test.ts) + the cluster-split allowlist entry that tracks the structural state.",
   },
 ] as const;
 

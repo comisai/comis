@@ -231,8 +231,8 @@ export { wrapInEnvelope, formatElapsed } from "./envelope/index.js";
 // ---------------------------------------------------------------------------
 
 // PiExecutor core
-export { createPiExecutor } from "./executor/pi-executor.js";
-export type { PiExecutorDeps } from "./executor/pi-executor.js";
+export { createPiExecutor } from "./executor/pi-executor/index.js";
+export type { PiExecutorDeps } from "./executor/pi-executor/index.js";
 
 // Wire session:expired to clearSession functions
 export { clearSessionState, wireSessionStateCleanup } from "./executor/session-snapshot-cleanup.js";

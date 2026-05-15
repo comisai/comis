@@ -24,7 +24,7 @@ import type {
 
 import type { ExecutionResult, ExecutionOverrides } from "../types.js";
 import type { ExecutionPlan } from "../../planner/types.js";
-import type { PiExecutorDeps } from "./pi-executor.js";
+import type { PiExecutorDeps } from "./pi-executor-types.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
 import { resolveProviderApiKey } from "../../model/resolve-provider-api-key.js";
 import {

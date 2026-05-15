@@ -6,7 +6,7 @@ import {
   createBeforeToolCallGuard,
   mergeSessionStats,
   type PiExecutorDeps,
-} from "./pi-executor.js";
+} from "./pi-executor/index.js";
 import type { StepCounter } from "./step-counter.js";
 import type { BudgetGuard, BudgetSnapshot } from "../budget/budget-guard.js";
 import type { CircuitBreaker, CircuitState } from "../safety/circuit-breaker.js";

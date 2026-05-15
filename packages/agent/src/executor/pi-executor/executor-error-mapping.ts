@@ -19,7 +19,7 @@ import type {
 } from "@comis/core";
 
 import type { ExecutionResult } from "../types.js";
-import type { PiExecutorDeps } from "./pi-executor.js";
+import type { PiExecutorDeps } from "./pi-executor-types.js";
 import type { ComisSessionManager } from "../../session/comis-session-manager.js";
 
 /**

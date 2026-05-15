@@ -152,7 +152,8 @@ describe("@comis/agent -- architecture invariants", () => {
       "executor-post-execution.ts", // comment about stripping discover_tools result schemas
       "schema-stripping.ts",       // tool-name discriminant: `msg.toolName !== "discover_tools"`
       "discovery-tracker.ts",      // JSDoc explaining the session-scoped tracker tied to discover_tools
-      "pi-executor.ts",            // JSDoc + comments referring to discover_tools as a known concept (mid-turn injection)
+      "pi-executor.ts",            // JSDoc + comments referring to discover_tools as a known concept (mid-turn injection) — pre-split + post-Phase-42 path under pi-executor/
+      "pi-executor-types.ts",      // PiExecutorDeps interface JSDoc references discover_tools concept (post-Phase-42 EXEC-SPLIT-05 split)
       // Anthropic payload-reshape identifiers.
       "tool-deferral-injection.ts", // payload reshape removes the client-side discover_tools tool name (post-Phase-42 EXEC-SPLIT-02 split; previously request-body-injector.ts)
       "stub-filter-injector.ts",   // JSDoc explaining stub-filter interaction with discover_tools removal

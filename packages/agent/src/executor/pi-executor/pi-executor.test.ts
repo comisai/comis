@@ -3,11 +3,11 @@ import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { ok, err } from "@comis/shared";
 import type { PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
 import { formatSessionKey, runWithContext, tryGetContext } from "@comis/core";
-import type { ExecutionResult } from "./types.js";
-import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot } from "./prompt-assembly.js";
-import { clearSessionToolSchemaSnapshot } from "./executor-session-state.js";
-import { resetPairedMemoryDedupForTests } from "./executor-post-execution.js";
-import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "./cache-detection/index.js";
+import type { ExecutionResult } from "../types.js";
+import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot } from "../prompt-assembly.js";
+import { clearSessionToolSchemaSnapshot } from "../executor-session-state.js";
+import { resetPairedMemoryDedupForTests } from "../executor-post-execution.js";
+import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache-detection/index.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock setup -- vi.hoisted runs before vi.mock factories
@@ -221,12 +221,12 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   },
 }));
 
-vi.mock("../session/orphaned-message-repair.js", () => ({
+vi.mock("../../session/orphaned-message-repair.js", () => ({
   repairOrphanedMessages: vi.fn().mockReturnValue({ repaired: false }),
   scrubPoisonedThinkingBlocks: vi.fn().mockReturnValue({ scrubbed: false, blocksRemoved: 0 }),
 }));
 
-vi.mock("../bridge/pi-event-bridge.js", () => ({
+vi.mock("../../bridge/pi-event-bridge.js", () => ({
   createPiEventBridge: vi.fn().mockReturnValue({
     listener: mockBridgeListener,
     getResult: mockGetResult,
@@ -238,7 +238,7 @@ vi.mock("../bridge/pi-event-bridge.js", () => ({
   }),
 }));
 
-vi.mock("../bootstrap/index.js", () => ({
+vi.mock("../../bootstrap/index.js", () => ({
   assembleRichSystemPrompt: mockAssembleRichSystemPrompt,
   assembleRichSystemPromptBlocks: vi.fn().mockReturnValue({ staticPrefix: "static-prefix", attribution: "attribution", semiStableBody: "semi-stable-body" }),
   buildDateTimeSection: mockBuildDateTimeSection,
@@ -255,20 +255,20 @@ vi.mock("../bootstrap/index.js", () => ({
   buildSubagentRoleSection: vi.fn().mockReturnValue([]),
 }));
 
-vi.mock("../rag/rag-retriever.js", () => ({
+vi.mock("../../rag/rag-retriever.js", () => ({
   deduplicateResults: mockDeduplicateResults,
 }));
 
-vi.mock("../rag/hybrid-memory-injector.js", () => ({
+vi.mock("../../rag/hybrid-memory-injector.js", () => ({
   createHybridMemoryInjector: mockCreateHybridMemoryInjector,
 }));
 
-vi.mock("../envelope/message-envelope.js", () => ({
+vi.mock("../../envelope/message-envelope.js", () => ({
   wrapInEnvelope: mockWrapInEnvelope,
 }));
 
 // Mock tool-parallelism module -- passthrough so existing tests are unaffected
-vi.mock("./tool-parallelism.js", () => ({
+vi.mock("../tool-parallelism.js", () => ({
   createMutationSerializer: vi.fn().mockReturnValue((tools: unknown[]) => tools),
   isReadOnlyTool: vi.fn().mockReturnValue(false),
   isConcurrencySafe: vi.fn().mockReturnValue(false),
@@ -290,22 +290,22 @@ vi.mock("node:fs", async (importOriginal) => {
 // Import modules after mock setup
 // ---------------------------------------------------------------------------
 
-import { createPiExecutor, createBeforeToolCallGuard, mergeSessionStats, type PiExecutorDeps } from "./pi-executor.js";
+import { createPiExecutor, type PiExecutorDeps } from "./pi-executor.js";
 import {
   clearSessionToolSchemaSnapshotHash,
   getOrCreateSessionLatches as _getOrCreateSessionLatchesForTest,
   clearSessionLatches as _clearSessionLatchesForTest,
-} from "./executor-session-state.js";
+} from "../executor-session-state.js";
 // PiExecutorDeps requires toolCapabilityPort. Tests use the test-only stub
 // from @comis/core's __test-helpers/ directory (NOT the production no-op
 // factory re-exported from @comis/core — the architecture-grep boundary
 // forbids production-stub crossover both ways).
-import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
-import { repairOrphanedMessages } from "../session/orphaned-message-repair.js";
-import { createPiEventBridge } from "../bridge/pi-event-bridge.js";
-import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../bootstrap/index.js";
-import { createRagRetriever } from "../rag/rag-retriever.js";
-import { wrapInEnvelope } from "../envelope/message-envelope.js";
+import { createCapabilityPortStub } from "../../../../core/src/ports/__test-helpers/tool-capability-stub.js";
+import { repairOrphanedMessages } from "../../session/orphaned-message-repair.js";
+import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
+import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../../bootstrap/index.js";
+import { createRagRetriever } from "../../rag/rag-retriever.js";
+import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { SettingsManager } from "@mariozechner/pi-coding-agent";
 import { createAgentSession } from "@mariozechner/pi-coding-agent";
 import { appendFileSync } from "node:fs";
@@ -819,7 +819,7 @@ describe("PiExecutor", () => {
     });
 
     it("classifies PromptTimeoutError with errorType PromptTimeout and retryable true", async () => {
-      const { PromptTimeoutError } = await import("./prompt-timeout.js");
+      const { PromptTimeoutError } = await import("../prompt-timeout.js");
       mockPrompt.mockRejectedValueOnce(new PromptTimeoutError(30000));
 
       const deps = createMockDeps({ fallbackModels: [] });
@@ -836,7 +836,7 @@ describe("PiExecutor", () => {
     });
 
     it("emits estimated observability:token_usage event on PromptTimeoutError", async () => {
-      const { PromptTimeoutError } = await import("./prompt-timeout.js");
+      const { PromptTimeoutError } = await import("../prompt-timeout.js");
       mockPrompt.mockRejectedValueOnce(new PromptTimeoutError(30000));
 
       const deps = createMockDeps({ fallbackModels: [] });
@@ -869,7 +869,7 @@ describe("PiExecutor", () => {
     });
 
     it("timeout estimation includes system prompt characters in token count", async () => {
-      const { PromptTimeoutError } = await import("./prompt-timeout.js");
+      const { PromptTimeoutError } = await import("../prompt-timeout.js");
       mockPrompt.mockRejectedValueOnce(new PromptTimeoutError(30000));
       // System prompt of 400 chars = 100 estimated tokens at CHARS_PER_TOKEN_RATIO=4
       mockAssembleRichSystemPrompt.mockReturnValueOnce("x".repeat(400));
@@ -893,7 +893,7 @@ describe("PiExecutor", () => {
     });
 
     it("timeout estimation includes tool definition characters in token count", async () => {
-      const { PromptTimeoutError } = await import("./prompt-timeout.js");
+      const { PromptTimeoutError } = await import("../prompt-timeout.js");
       mockPrompt.mockRejectedValueOnce(new PromptTimeoutError(30000));
       // Empty system prompt to isolate tool contribution
       mockAssembleRichSystemPrompt.mockReturnValueOnce("");
@@ -923,7 +923,7 @@ describe("PiExecutor", () => {
     });
 
     it("timeout estimation includes estimated cache write cost", async () => {
-      const { PromptTimeoutError } = await import("./prompt-timeout.js");
+      const { PromptTimeoutError } = await import("../prompt-timeout.js");
       mockPrompt.mockRejectedValueOnce(new PromptTimeoutError(30000));
       // Known system prompt of 400 chars for predictable cache write token estimate
       mockAssembleRichSystemPrompt.mockReturnValueOnce("x".repeat(400));
@@ -948,7 +948,7 @@ describe("PiExecutor", () => {
     });
 
     it("timeout estimation with empty system prompt and no tools has zero cache write cost", async () => {
-      const { PromptTimeoutError } = await import("./prompt-timeout.js");
+      const { PromptTimeoutError } = await import("../prompt-timeout.js");
       mockPrompt.mockRejectedValueOnce(new PromptTimeoutError(30000));
       mockAssembleRichSystemPrompt.mockReturnValueOnce("");
       mockGetAllTools.mockReturnValueOnce([]);
@@ -5279,7 +5279,7 @@ describe("PiExecutor", () => {
 
   describe("Parallel read-only execution", () => {
     it("applies mutation serializer to custom tools before session creation", async () => {
-      const { createMutationSerializer } = await import("./tool-parallelism.js");
+      const { createMutationSerializer } = await import("../tool-parallelism.js");
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
@@ -5288,161 +5288,6 @@ describe("PiExecutor", () => {
 
       expect(createMutationSerializer).toHaveBeenCalledOnce();
     });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// createBeforeToolCallGuard (standalone unit tests)
-// ---------------------------------------------------------------------------
-
-describe("createBeforeToolCallGuard", () => {
-  it("blocks when step counter is exhausted", async () => {
-    const stepCounter = { shouldHalt: () => true, increment: () => 1, reset: () => {}, getCount: () => 50 };
-    const budgetGuard = { checkBudget: () => ok(undefined), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any;
-    const circuitBreaker = { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} };
-
-    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker);
-    const result = await guard({});
-
-    expect(result).toEqual({ block: true, reason: expect.stringContaining("Step limit") });
-  });
-
-  it("blocks when budget exhausted", async () => {
-    const stepCounter = { shouldHalt: () => false, increment: () => 1, reset: () => {}, getCount: () => 0 };
-    const budgetGuard = { checkBudget: () => err(new Error("exceeded")), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any;
-    const circuitBreaker = { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} };
-
-    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker);
-    const result = await guard({});
-
-    expect(result).toEqual({ block: true, reason: expect.stringContaining("budget") });
-  });
-
-  it("blocks when circuit breaker open", async () => {
-    const stepCounter = { shouldHalt: () => false, increment: () => 1, reset: () => {}, getCount: () => 0 };
-    const budgetGuard = { checkBudget: () => ok(undefined), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any;
-    const circuitBreaker = { isOpen: () => true, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "open" as const, reset: () => {} };
-
-    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker);
-    const result = await guard({});
-
-    expect(result).toEqual({ block: true, reason: expect.stringContaining("circuit") });
-  });
-
-  it("allows execution when all checks pass", async () => {
-    const stepCounter = { shouldHalt: () => false, increment: () => 1, reset: () => {}, getCount: () => 0 };
-    const budgetGuard = { checkBudget: () => ok(undefined), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any;
-    const circuitBreaker = { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} };
-
-    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker);
-    const result = await guard({});
-
-    expect(result).toBeUndefined();
-  });
-
-  it("checks step counter first (priority order)", async () => {
-    // All three would block -- step counter should be the reason
-    const stepCounter = { shouldHalt: () => true, increment: () => 1, reset: () => {}, getCount: () => 50 };
-    const budgetGuard = { checkBudget: () => err(new Error("exceeded")), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any;
-    const circuitBreaker = { isOpen: () => true, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "open" as const, reset: () => {} };
-
-    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker);
-    const result = await guard({});
-
-    expect(result).toEqual({ block: true, reason: expect.stringContaining("Step limit") });
-  });
-
-  it("blocks when tool retry breaker returns block verdict", async () => {
-    const stepCounter = { shouldHalt: () => false, increment: () => 1, reset: () => {}, getCount: () => 0 };
-    const budgetGuard = { checkBudget: () => ok(undefined), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any;
-    const circuitBreaker = { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} };
-    const toolRetryBreaker = {
-      beforeToolCall: () => ({ block: true, reason: "Tool blocked by retry breaker" }),
-      recordResult: () => {},
-      getBlockedTools: () => [],
-      reset: () => {},
-    };
-
-    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker, toolRetryBreaker);
-    // Simulate SDK context shape: { toolCall: { name }, args }
-    const result = await guard({ toolCall: { name: "mcp__yfinance--get_recs" }, args: { symbol: "NVDA" } });
-
-    expect(result).toEqual({ block: true, reason: "Tool blocked by retry breaker" });
-  });
-
-  it("allows execution when tool retry breaker returns no block", async () => {
-    const stepCounter = { shouldHalt: () => false, increment: () => 1, reset: () => {}, getCount: () => 0 };
-    const budgetGuard = { checkBudget: () => ok(undefined), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any;
-    const circuitBreaker = { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} };
-    const toolRetryBreaker = {
-      beforeToolCall: () => ({ block: false }),
-      recordResult: () => {},
-      getBlockedTools: () => [],
-      reset: () => {},
-    };
-
-    const guard = createBeforeToolCallGuard(stepCounter, budgetGuard, circuitBreaker, toolRetryBreaker);
-    const result = await guard({ toolCall: { name: "web_search" }, args: { query: "test" } });
-
-    expect(result).toBeUndefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// mergeSessionStats
-// ---------------------------------------------------------------------------
-
-describe("mergeSessionStats", () => {
-  it("overrides token totals from SDK stats", () => {
-    const result = {
-      tokensUsed: { input: 100, output: 50, total: 150, cacheRead: 10, cacheWrite: 5 },
-      cost: { total: 0.01, cacheSaved: 0 },
-    };
-    mergeSessionStats(result, () => ({
-      tokens: { input: 200, output: 80, total: 280, cacheRead: 30, cacheWrite: 10 },
-    }));
-    expect(result.tokensUsed).toEqual({ input: 200, output: 80, total: 280, cacheRead: 30, cacheWrite: 10 });
-  });
-
-  it("preserves cost from bridge (not SDK)", () => {
-    const result = {
-      tokensUsed: { input: 100, output: 50, total: 150 },
-      cost: { total: 0.05, cacheSaved: 0.01 },
-    };
-    mergeSessionStats(result, () => ({
-      tokens: { input: 200, output: 80, total: 280 },
-    }));
-    expect(result.cost).toEqual({ total: 0.05, cacheSaved: 0.01 });
-  });
-
-  it("handles missing getSessionStats gracefully", () => {
-    const result = {
-      tokensUsed: { input: 100, output: 50, total: 150 },
-      cost: { total: 0.01, cacheSaved: 0 },
-    };
-    mergeSessionStats(result, undefined);
-    expect(result.tokensUsed.input).toBe(100);
-  });
-
-  it("handles getSessionStats throwing gracefully", () => {
-    const result = {
-      tokensUsed: { input: 100, output: 50, total: 150 },
-      cost: { total: 0.01, cacheSaved: 0 },
-    };
-    mergeSessionStats(result, () => { throw new Error("boom"); });
-    expect(result.tokensUsed.input).toBe(100);
-  });
-
-  it("uses bridge cacheRead/cacheWrite when SDK values are undefined", () => {
-    const result = {
-      tokensUsed: { input: 100, output: 50, total: 150, cacheRead: 10, cacheWrite: 5 },
-      cost: { total: 0.01, cacheSaved: 0 },
-    };
-    mergeSessionStats(result, () => ({
-      tokens: { input: 200, output: 80, total: 280 },
-    }));
-    expect(result.tokensUsed.cacheRead).toBe(10);
-    expect(result.tokensUsed.cacheWrite).toBe(5);
   });
 });
 
@@ -5479,7 +5324,7 @@ describe("ExcludeDeferralResult wiring", () => {
 
   describe("schema stripping integration", () => {
     it("should import stripDiscoverySchemas from schema-stripping module", async () => {
-      const mod = await import("./schema-stripping.js");
+      const mod = await import("../schema-stripping.js");
       expect(mod.stripDiscoverySchemas).toBeDefined();
       expect(typeof mod.stripDiscoverySchemas).toBe("function");
     });

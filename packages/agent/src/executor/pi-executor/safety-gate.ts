@@ -23,7 +23,7 @@ import type {
 import { formatSessionKey } from "@comis/core";
 
 import type { ExecutionResult } from "../types.js";
-import type { PiExecutorDeps } from "./pi-executor.js";
+import type { PiExecutorDeps } from "./pi-executor-types.js";
 import { validateInput } from "../executor-input-guard.js";
 import { tryInjectSilentFailure } from "../fault-injector.js";
 
