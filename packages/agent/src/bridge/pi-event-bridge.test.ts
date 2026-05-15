@@ -4174,7 +4174,9 @@ describe("drain at bridge call site", () => {
   });
 
   it("drain helper is removed from pi-executor.ts (the OLD home)", async () => {
-    const { stripped } = await readSrcRelative("../executor/pi-executor.ts");
+    // Path updated post-Phase-42 EXEC-SPLIT-05 split — old pi-executor.ts
+    // moved to pi-executor/pi-executor.ts.
+    const { stripped } = await readSrcRelative("../executor/pi-executor/pi-executor.ts");
     // NO drainQueue / drainSession / drainAt definition or call in
     // pi-executor.ts.
     expect(stripped).not.toMatch(/drainQueue/);

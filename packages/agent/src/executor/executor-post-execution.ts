@@ -42,7 +42,12 @@ import {
   deleteBreakpointIndex,
   getBreakpointIndexMapSize,
 } from "./executor-session-state.js";
-import { mergeSessionStats } from "./pi-executor.js";
+// Import directly from the leaf module (not the barrel) to keep the cycle
+// detector happy — pi-executor.ts imports executor-post-execution.ts in the
+// finally block, so going through the barrel would create
+// executor-post-execution → pi-executor/index → pi-executor/pi-executor →
+// executor-post-execution.
+import { mergeSessionStats } from "./pi-executor/session-stats.js";
 import { recordLastResponseTs } from "./ttl-guard.js";
 import { stripDiscoverySchemas } from "./schema-stripping.js";
 import { getWorkspaceStatus } from "../workspace/index.js";
