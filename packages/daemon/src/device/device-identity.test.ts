@@ -138,4 +138,29 @@ describe("device-identity", () => {
       ).toBe(false);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // Plan 40-14 — loadOrCreateDeviceIdentity error path branches
+  // -----------------------------------------------------------------------
+
+  describe("loadOrCreateDeviceIdentity error paths (Plan 40-14)", () => {
+    it("returns err Result when existing device.json contains malformed JSON content on disk", () => {
+      const stateDir = makeTmpDir();
+      const identityDir = stateDir + "/identity";
+      fs.mkdirSync(identityDir, { recursive: true });
+      fs.writeFileSync(identityDir + "/device.json", "{not-valid-json", "utf-8");
+      const result = loadOrCreateDeviceIdentity(stateDir);
+      expect(result.ok).toBe(false);
+    });
+
+    it("returns err Result when stateDir parent is not a writable directory", () => {
+      // Use a state dir that's actually a file — mkdirSync(stateDir/identity) will fail
+      const stateDir = makeTmpDir();
+      fs.rmSync(stateDir, { recursive: true });
+      fs.writeFileSync(stateDir, "file-not-directory", "utf-8");
+      tmpDirs.push(stateDir); // ensure cleanup
+      const result = loadOrCreateDeviceIdentity(stateDir);
+      expect(result.ok).toBe(false);
+    });
+  });
 });
