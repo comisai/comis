@@ -46,7 +46,7 @@ export default defineConfig({
         "packages/channels/src/**/*.ts":     { lines: 82, branches: 70, functions: 85,  statements: 82 },
         "packages/cli/src/**/*.ts":          { lines: 71, branches: 62, functions: 73,  statements: 71 },
         "packages/scheduler/src/**/*.ts":    { lines: 96, branches: 88, functions: 98,  statements: 96 },
-        "packages/orchestrator/src/**/*.ts": { lines: 85, branches: 73, functions: 89,  statements: 85 },
+        "packages/orchestrator/src/**/*.ts": { lines: 93, branches: 81, functions: 92,  statements: 92 },
         "packages/daemon/src/**/*.ts":       { lines: 73, branches: 61, functions: 73,  statements: 73 },
         "packages/gateway/src/**/*.ts":      { lines: 80, branches: 69, functions: 84,  statements: 80 },
         "packages/web/src/**/*.ts":          { lines: 55, branches: 45, functions: 48,  statements: 55 },
