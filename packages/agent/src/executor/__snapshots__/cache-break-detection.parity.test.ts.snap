@@ -1,0 +1,170 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > CacheBreakReason — exhaustive enumerated union snapshot 1`] = `
+"[
+  "cache_control_changed",
+  "cache_metadata_changed",
+  "effort_changed",
+  "extra_body_changed",
+  "headers_changed",
+  "likely_server_eviction",
+  "lookback_window_exceeded",
+  "model_changed",
+  "retention_changed",
+  "server_eviction",
+  "system_changed",
+  "tools_changed",
+  "ttl_expiry",
+  "ttl_expiry_long",
+  "ttl_expiry_short"
+]"
+`;
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > computeHash — primitives + objects + undefined 1`] = `
+"{
+  "arr": 3594018827,
+  "empty": 5381,
+  "nullVal": 2090557760,
+  "obj": 3576240559,
+  "str": 2374576464,
+  "undef": 3088032823
+}"
+`;
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > createCacheBreakDetector — first-call baseline returns null 1`] = `
+"{
+  "event": null,
+  "isNull": true
+}"
+`;
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > djb2 — 3 representative strings 1`] = `
+"{
+  "empty": 5381,
+  "longer": 2012963070,
+  "short": 261238937,
+  "unicode": 1259250924
+}"
+`;
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > extractAnthropicPromptState — synthetic request body 1`] = `
+"{
+  "agentId": "agent-xyz",
+  "breakpointBudget": {
+    "message": 1,
+    "sdkAuto": 1,
+    "system": 1,
+    "tool": 1,
+    "total": 4
+  },
+  "buildDiffableContentInvocation": {
+    "system": "You are a helpful assistant",
+    "tools": "[\\n  {\\n    \\"name\\": \\"bash\\",\\n    \\"description\\": \\"Run bash\\",\\n    \\"input_schema\\": {\\n      \\"type\\": \\"object\\",\\n      \\"properties\\": {\\n        \\"cmd\\": {\\n          \\"type\\": \\"string\\"\\n        }\\n      }\\n    }\\n  },\\n  {\\n    \\"name\\": \\"file_read\\",\\n    \\"description\\": \\"Read file\\",\\n    \\"input_schema\\": {\\n      \\"type\\": \\"object\\",\\n      \\"properties\\": {\\n        \\"path\\": {\\n          \\"type\\": \\"string\\"\\n        }\\n      }\\n    }\\n  }\\n]"
+  },
+  "buildDiffableContentTypeof": "function",
+  "cacheControlHash": 3026281758,
+  "cacheMetadataHash": 2975259015,
+  "extraBodyHash": null,
+  "headersHash": 846203504,
+  "model": "claude-sonnet-4-5",
+  "perToolHashes": {
+    "bash": 1555047436,
+    "file_read": 1972413029
+  },
+  "provider": "anthropic",
+  "retention": "short",
+  "sessionKey": "session-abc",
+  "systemHash": 1505069073,
+  "toolNames": [
+    "bash",
+    "file_read"
+  ],
+  "toolsHash": 1586744134
+}"
+`;
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > extractGeminiPromptState — synthetic request body 1`] = `
+"{
+  "agentId": "agent-abc",
+  "cacheMetadataHash": null,
+  "extraBodyHash": null,
+  "headersHash": null,
+  "model": "gemini-2.0-flash",
+  "perToolHashes": {
+    "bash": 1555047436,
+    "mcp__alpha": 1972413029
+  },
+  "provider": "google",
+  "sessionKey": "session-def",
+  "systemHash": 632589733,
+  "toolNames": [
+    "bash",
+    "mcp__alpha--read"
+  ],
+  "toolsHash": 1434648547
+}"
+`;
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > sanitizeMcpToolName — 4 representative tool names 1`] = `
+"{
+  "builtin": "bash",
+  "mcpFull": "mcp__myserver",
+  "mcpNoSep": "mcp__serveronly",
+  "mcpWithPath": "mcp__server"
+}"
+`;
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > sanitizeMcpToolNameForAnalytics — collapses MCP to bare 'mcp' 1`] = `
+"{
+  "builtin": "bash",
+  "mcpAny": "mcp",
+  "mcpFull": "mcp"
+}"
+`;
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > public API surface > createCacheBreakDetector — returned interface shape (Object.keys) 1`] = `
+"[
+  "aliasSession",
+  "checkResponseForCacheBreak",
+  "cleanupSession",
+  "notifyCompaction",
+  "notifyContentModification",
+  "notifyTtlExpiry",
+  "recordPromptState",
+  "reset"
+]"
+`;
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > public API surface > exports the expected named symbols 1`] = `
+"{
+  "types": [
+    "CacheBreakDetector",
+    "CacheBreakDetectorOptions",
+    "CacheBreakEvent",
+    "CacheBreakReason",
+    "CheckCacheBreakInput",
+    "PendingChanges",
+    "PromptStateSnapshot",
+    "RecordPromptStateInput"
+  ],
+  "values": [
+    "MAX_SNAPSHOT_CHARS",
+    "MAX_TRACKING_ENTRIES",
+    "clearCacheBreakDetectorSession",
+    "computeHash",
+    "createCacheBreakDetector",
+    "djb2",
+    "extractAnthropicPromptState",
+    "extractGeminiPromptState",
+    "sanitizeMcpToolName",
+    "sanitizeMcpToolNameForAnalytics"
+  ]
+}"
+`;
+
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > public API surface > module-level constants — exact values 1`] = `
+"{
+  "MAX_SNAPSHOT_CHARS": 50000,
+  "MAX_TRACKING_ENTRIES": 15
+}"
+`;
