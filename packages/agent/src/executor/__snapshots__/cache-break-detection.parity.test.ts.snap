@@ -38,7 +38,7 @@ exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — repr
 }"
 `;
 
-exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > djb2 — 3 representative strings 1`] = `
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > behavior matrix — representative inputs > djb2: returns hash for 3 representative strings 1`] = `
 "{
   "empty": 5381,
   "longer": 2012963070,
@@ -162,7 +162,7 @@ exports[`cache-break-detection parity (EXEC-SPLIT-01) > public API surface > exp
 }"
 `;
 
-exports[`cache-break-detection parity (EXEC-SPLIT-01) > public API surface > module-level constants — exact values 1`] = `
+exports[`cache-break-detection parity (EXEC-SPLIT-01) > public API surface > module-level constants: exact values 1`] = `
 "{
   "MAX_SNAPSHOT_CHARS": 50000,
   "MAX_TRACKING_ENTRIES": 15

@@ -106,7 +106,7 @@ describe("pi-executor parity (EXEC-SPLIT-01)", () => {
       expect(stableStringify(Object.keys(exports).sort())).toMatchSnapshot();
     });
 
-    it("createBeforeToolCallGuard / mergeSessionStats — typeof witness", () => {
+    it("createBeforeToolCallGuard and mergeSessionStats: typeof witness", () => {
       expect(
         stableStringify({
           createBeforeToolCallGuard: typeof createBeforeToolCallGuard,

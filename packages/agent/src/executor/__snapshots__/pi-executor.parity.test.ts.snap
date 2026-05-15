@@ -93,7 +93,7 @@ exports[`pi-executor parity (EXEC-SPLIT-01) > public API surface > PiExecutorDep
 ]"
 `;
 
-exports[`pi-executor parity (EXEC-SPLIT-01) > public API surface > createBeforeToolCallGuard / mergeSessionStats — typeof witness 1`] = `
+exports[`pi-executor parity (EXEC-SPLIT-01) > public API surface > createBeforeToolCallGuard and mergeSessionStats: typeof witness 1`] = `
 "{
   "createBeforeToolCallGuard": "function",
   "mergeSessionStats": "function"

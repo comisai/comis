@@ -13,7 +13,7 @@ exports[`executor-prompt-runner parity (EXEC-SPLIT-01) > public API surface > ex
 }"
 `;
 
-exports[`executor-prompt-runner parity (EXEC-SPLIT-01) > public API surface > runPrompt — function typeof + arity witness 1`] = `
+exports[`executor-prompt-runner parity (EXEC-SPLIT-01) > public API surface > runPrompt: function typeof + arity witness 1`] = `
 "{
   "length": 1,
   "name": "runPrompt",

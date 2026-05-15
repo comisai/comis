@@ -138,7 +138,7 @@ describe("request-body-injector parity (EXEC-SPLIT-01)", () => {
       expect(stableStringify(msg)).toMatchSnapshot();
     });
 
-    it("getMinCacheableTokens — per-model thresholds (3 representative model IDs)", () => {
+    it("getMinCacheableTokens: per-model thresholds (3 representative model IDs)", () => {
       const result = {
         sonnet35: getMinCacheableTokens("claude-3-5-sonnet-20241022"),
         sonnet37: getMinCacheableTokens("claude-3-7-sonnet-20250109"),
@@ -195,7 +195,7 @@ describe("request-body-injector parity (EXEC-SPLIT-01)", () => {
       ).toMatchSnapshot();
     });
 
-    it("identifyBreakpointZone — boundary cases", () => {
+    it("identifyBreakpointZone: boundary cases", () => {
       // Use synthetic position/count pairs that exercise each zone.
       expect(
         stableStringify({
@@ -208,7 +208,7 @@ describe("request-body-injector parity (EXEC-SPLIT-01)", () => {
       ).toMatchSnapshot();
     });
 
-    it("hashBreakpointContent — synthetic message history", () => {
+    it("hashBreakpointContent: synthetic message history", () => {
       const messages = [
         { role: "user", content: [{ type: "text", text: "hello" }] },
         {

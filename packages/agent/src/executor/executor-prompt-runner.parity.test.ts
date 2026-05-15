@@ -74,7 +74,7 @@ describe("executor-prompt-runner parity (EXEC-SPLIT-01)", () => {
       ).toMatchSnapshot();
     });
 
-    it("runPrompt — function typeof + arity witness", () => {
+    it("runPrompt: function typeof + arity witness", () => {
       // `runPrompt` is async ⇒ `typeof` is "function"; `length` is the
       // declared parameter count (1 — the destructured `params` object).
       expect(

@@ -116,7 +116,7 @@ describe("cache-break-detection parity (EXEC-SPLIT-01)", () => {
       ).toMatchSnapshot();
     });
 
-    it("module-level constants — exact values", () => {
+    it("module-level constants: exact values", () => {
       expect(
         stableStringify({ MAX_SNAPSHOT_CHARS, MAX_TRACKING_ENTRIES }),
       ).toMatchSnapshot();
@@ -133,7 +133,7 @@ describe("cache-break-detection parity (EXEC-SPLIT-01)", () => {
   });
 
   describe("behavior matrix — representative inputs", () => {
-    it("djb2 — 3 representative strings", () => {
+    it("djb2: returns hash for 3 representative strings", () => {
       expect(
         stableStringify({
           empty: djb2(""),
