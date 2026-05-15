@@ -1584,58 +1584,13 @@ export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [
   // collapse into one entry. The live grep yielded 61 raw cast sites
   // collapsing to 35 unique pairs across 14 files.
 
-  // context-store.ts — 8 unique symbols (CtxConversationRow, CtxMessageRow,
-  // CtxMessagePartRow, CtxSummaryRow, CtxContextItemRow, CtxLargeFileRow,
-  // CtxExpansionGrantRow, Array (inline anonymous row shapes for id-projection
-  // and parent/child queries)).
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "Array",
-    reason: "Inline anonymous row projections (id-list / parent-child id queries); Phase D TS-HYG-03 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxContextItemRow",
-    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxConversationRow",
-    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxExpansionGrantRow",
-    reason: "context-store .get() row cast; Phase D TS-HYG-03 retargets to mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxLargeFileRow",
-    reason: "context-store .get() row cast; Phase D TS-HYG-03 retargets to mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxMessagePartRow",
-    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxMessageRow",
-    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxSummaryRow",
-    reason: "context-store .get() / .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows / mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
+  // context-store.ts — DRAINED in Plan 41-04 Task 3 (TS-HYG-03).
+  // Previously held 8 `{file, symbol}` entries for {Array (inline id-projection
+  // and FTS hit shapes), CtxConversationRow, CtxMessageRow, CtxMessagePartRow,
+  // CtxSummaryRow, CtxContextItemRow, CtxLargeFileRow, CtxExpansionGrantRow}.
+  // All 17 cast sites retargeted to mapper.parseRows / parseOptionalRow with
+  // degrade-on-validation-error semantics (preserves ContextStorePort plain-
+  // return contract for the 16 production-file consumers in agent + daemon).
 
   // credential-mapping-store.ts — 1 symbol.
   {
