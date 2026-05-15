@@ -32,7 +32,14 @@ export interface CapturedSignalEvent {
   readonly type: "rpc-send" | "rpc-list-accounts" | "rpc-other" | "sse-connect" | "check";
   readonly payload: {
     readonly method?: string;
-    readonly recipient?: string;
+    /**
+     * signal-cli accepts EITHER a single recipient string OR an array of
+     * recipients. The production signal adapter wraps single-recipient DMs
+     * as a one-element array (`recipient: [chatId]`). Group sends use
+     * `groupId` instead and leave `recipient` undefined.
+     */
+    readonly recipient?: string | ReadonlyArray<string>;
+    readonly groupId?: string;
     readonly text?: string;
     readonly rawBody?: string;
   };
@@ -147,11 +154,20 @@ export function createMockSignalServer(): MockSignalServer {
       if (rpcMethod === "send") {
         bump("rpc-send");
         const params = parsed.params ?? {};
-        const recipient = (params["recipient"] as string | undefined) ?? "";
+        // signal-cli accepts both shapes; preserve verbatim so the test can
+        // assert on whichever the production adapter produced.
+        const recipient = (params["recipient"] as string | ReadonlyArray<string> | undefined);
+        const groupId = (params["groupId"] as string | undefined);
         const text = (params["message"] as string | undefined) ?? "";
         captured.push({
           type: "rpc-send",
-          payload: { method: rpcMethod, recipient, text, rawBody: body },
+          payload: {
+            method: rpcMethod,
+            ...(recipient !== undefined ? { recipient } : {}),
+            ...(groupId !== undefined ? { groupId } : {}),
+            text,
+            rawBody: body,
+          },
           timestamp: Date.now(),
         });
         nextTimestamp += 1;
@@ -227,24 +243,22 @@ export function createMockSignalServer(): MockSignalServer {
     },
     injectInboundMessage(opts) {
       nextTimestamp += 1;
-      // Signal-cli envelope shape per the adapter's expectations.
+      // Signal-cli envelope shape per the adapter's SignalEnvelope interface
+      // (packages/channels/src/signal/signal-client.ts:30). Flat keys (source,
+      // sourceUuid, dataMessage) — NOT wrapped in an outer `envelope:` key.
       const envelope = {
-        envelope: {
-          source: opts.from,
-          sourceNumber: opts.from,
-          sourceUuid: "00000000-0000-0000-0000-000000000000",
-          sourceName: opts.from,
-          sourceDevice: 1,
+        source: opts.from,
+        sourceNumber: opts.from,
+        sourceUuid: "00000000-0000-0000-0000-000000000000",
+        sourceName: opts.from,
+        timestamp: nextTimestamp,
+        dataMessage: {
           timestamp: nextTimestamp,
-          dataMessage: {
-            timestamp: nextTimestamp,
-            message: opts.content,
-            expiresInSeconds: 0,
-            viewOnce: false,
-            groupInfo: opts.channel.startsWith("group:") ? { groupId: opts.channel } : undefined,
-          },
+          message: opts.content,
+          ...(opts.channel.startsWith("group:")
+            ? { groupInfo: { groupId: opts.channel.slice("group:".length) } }
+            : {}),
         },
-        account: "+15555550100",
       };
       // If any SSE clients are connected, push immediately; else queue.
       if (sseClients.size > 0) {
