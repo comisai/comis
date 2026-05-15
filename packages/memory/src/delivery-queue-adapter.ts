@@ -155,9 +155,17 @@ export function createSqliteDeliveryQueue(
     WHERE status IN ('pending', 'in_flight')
   `);
 
-  const statusCountsStmt = db.prepare(`
+  // Two distinct statements (no channelType filter vs. with filter) because
+  // better-sqlite3 does not support SQLite's `?1` named-positional syntax
+  // for repeated parameters in `.all(value)` calls — passing one value
+  // raises "Too many parameter values were provided" (Plan 40-11 / Rule 1).
+  const statusCountsAllStmt = db.prepare(`
     SELECT status, COUNT(*) as count FROM delivery_queue
-    WHERE (?1 IS NULL OR channel_type = ?1)
+    GROUP BY status
+  `);
+  const statusCountsByChannelStmt = db.prepare(`
+    SELECT status, COUNT(*) as count FROM delivery_queue
+    WHERE channel_type = ?
     GROUP BY status
   `);
 
@@ -286,7 +294,9 @@ export function createSqliteDeliveryQueue(
 
     statusCounts(channelType?: string): Promise<Result<DeliveryQueueStatusCounts, Error>> {
       try {
-        const rows = statusCountsStmt.all(channelType ?? null) as Array<{ status: string; count: number }>;
+        const rows = (channelType === undefined
+          ? statusCountsAllStmt.all()
+          : statusCountsByChannelStmt.all(channelType)) as Array<{ status: string; count: number }>;
         const counts: DeliveryQueueStatusCounts = { pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 };
         for (const row of rows) {
           switch (row.status) {
