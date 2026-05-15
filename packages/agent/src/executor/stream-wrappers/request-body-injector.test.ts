@@ -22,7 +22,7 @@ import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, resolveBreakpointStrategy } from "./con
 import type { RequestBodyInjectorConfig } from "./request-body-injector.js";
 import { createSessionLatch } from "../session-latch.js";
 import type { SessionLatch } from "../session-latch.js";
-import { createMockLogger, createMockStreamFn, makeAssistantMessage, makeContext } from "./__test-helpers.js";
+import { createMockLogger, createMockStreamFn, makeAssistantMessage, makeContext } from "./__test-helpers/index.js";
 
 describe("createRequestBodyInjector", () => {
   let logger: ReturnType<typeof createMockLogger>;

@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Context, Message } from "@mariozechner/pi-ai";
 import { createTurnResultBudgetWrapper } from "./turn-result-budget-wrapper.js";
-import { createMockLogger, createMockStreamFn, makeAssistantMessage, makeContext } from "./__test-helpers.js";
+import { createMockLogger, createMockStreamFn, makeAssistantMessage, makeContext } from "./__test-helpers/index.js";
 
 describe("createTurnResultBudgetWrapper", () => {
   let logger: ReturnType<typeof createMockLogger>;

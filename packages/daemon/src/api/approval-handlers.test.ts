@@ -91,7 +91,7 @@ describe("createApprovalHandlers", () => {
   // admin.approval.resolve -- happy path
   // -------------------------------------------------------------------------
 
-  describe("admin.approval.resolve -- happy path", () => {
+  describe("admin.approval.resolve — approves a pending request and unblocks the tool call", () => {
     beforeEach(() => {
       const req = makePendingRequest({ requestId: "req-resolve" });
       mockGate = createMockApprovalGate([req]);
