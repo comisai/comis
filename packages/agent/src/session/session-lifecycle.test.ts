@@ -406,3 +406,189 @@ describe("ComisSessionManager.destroySession", () => {
     await expect(mgr.destroySession(sessionKey)).resolves.toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Abnormal-termination cleanup contract:
+//
+// ComisSessionManager.withSession() guarantees that the post-execution
+// JSONL secret sanitizer (`sanitizeSessionSecrets`) runs in a `finally`
+// block while the write lock is still held. This means a callback that
+// throws -- LLM stream aborts mid-tool-call, timeout, network error,
+// fault injector -- still leaves the on-disk JSONL transcript redacted.
+//
+// These tests assert the contract end-to-end by writing pre-built JSONL
+// fixtures containing unredacted API keys + env_value parameters into a
+// temp dir, then invoking `withSession` with a callback that throws, and
+// verifying the file content was rewritten with `[REDACTED]` substitutes.
+//
+// The path is "abnormal termination" because the callback never returns
+// successfully -- the only thing that runs is the `finally` cleanup.
+// ---------------------------------------------------------------------------
+
+describe("ComisSessionManager — abnormal-termination cleanup contract via withSession finally", () => {
+  // SDK-canonical JSONL header (matches CURRENT_SESSION_VERSION = 3 in
+  // pi-coding-agent's session-manager.js). If the header is malformed or
+  // uses an older shape, SessionManager.open() calls newSession() +
+  // _rewriteFile() to clobber the file with a fresh header -- which would
+  // delete our pre-written tool_use line before the sanitizer can run.
+  function sdkHeader(): string {
+    return JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "00000000-0000-0000-0000-000000000abc",
+      timestamp: "2026-05-15T00:00:00.000Z",
+      cwd: "/tmp/wd",
+    });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- helper return type is structural
+  async function bootstrap(testNameSuffix: string): Promise<any> {
+    const { mkdtemp, writeFile, mkdir } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join, dirname } = await import("node:path");
+    const { existsSync, readFileSync } = await import("node:fs");
+    const { createComisSessionManager } = await import("./comis-session-manager.js");
+    const { sessionKeyToPath } = await import("./session-key-mapper.js");
+    const { createFileLock } = await import("@comis/core");
+
+    const baseDir = await mkdtemp(join(tmpdir(), `csm-abnormal-${testNameSuffix}-`));
+    const lockDir = await mkdtemp(join(tmpdir(), `csm-lock-${testNameSuffix}-`));
+    const mgr = createComisSessionManager({
+      sessionBaseDir: baseDir,
+      lockDir,
+      cwd: baseDir,
+      fileLock: createFileLock(),
+    });
+    const sessionKey: SessionKey = {
+      tenantId: "tenant-abnormal",
+      userId: "user-abnormal",
+      channelId: `chan-${testNameSuffix}`,
+    };
+    const sessionPath = sessionKeyToPath(sessionKey, baseDir);
+    await mkdir(dirname(sessionPath), { recursive: true });
+    return { baseDir, lockDir, mgr, sessionKey, sessionPath, writeFile, existsSync, readFileSync };
+  }
+
+  it("redacts API keys in JSONL tool_use blocks when the withSession callback throws (finally still runs)", async () => {
+    const { mgr, sessionKey, sessionPath, writeFile, readFileSync } = await bootstrap("apikey");
+
+    // Pre-write JSONL with an assistant message containing a tool_use block
+    // whose `input.apiKey` value matches an OpenAI-pattern key. The SDK
+    // would normally flush this synchronously before the tool runs; we
+    // simulate by writing the line directly so the sanitizer has work.
+    const toolUseLine = JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", name: "set_secret", id: "tc-1", input: { apiKey: "sk-test-abc-xyz-1234567890-DEF" } },
+        ],
+      },
+    });
+    await writeFile(sessionPath, sdkHeader() + "\n" + toolUseLine + "\n");
+
+    // Invoke withSession with a callback that throws -- the finally block
+    // must still run sanitizeSessionSecrets.
+    const result = await mgr.withSession(sessionKey, async () => {
+      throw new Error("simulated mid-tool-call abort");
+    });
+    expect(result.ok).toBe(false);
+
+    const after = readFileSync(sessionPath, "utf-8");
+    expect(after).toContain("[REDACTED]");
+    expect(after).not.toContain("sk-test-abc-xyz-1234567890-DEF");
+  });
+
+  it("redacts gateway env_value parameter when the withSession callback throws (env_set secret-leak guard)", async () => {
+    const { mgr, sessionKey, sessionPath, writeFile, readFileSync } = await bootstrap("env-set");
+
+    // Gateway env_set with a sensitive env_value. The post-execution
+    // sanitizer's first rule targets exactly this shape.
+    const envSetLine = JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", name: "gateway", id: "tc-2", input: { action: "env_set", env_key: "BOT_TOKEN", env_value: "super-secret-bot-token-value" } },
+        ],
+      },
+    });
+    await writeFile(sessionPath, sdkHeader() + "\n" + envSetLine + "\n");
+
+    const result = await mgr.withSession(sessionKey, async () => {
+      throw new Error("simulated stream abort during env_set");
+    });
+    expect(result.ok).toBe(false);
+
+    const after = readFileSync(sessionPath, "utf-8");
+    expect(after).toContain('"env_value":"[REDACTED]"');
+    expect(after).not.toContain("super-secret-bot-token-value");
+  });
+
+  it("preserves clean (no-secret) JSONL content byte-identical when the finally sanitizer runs (idempotent no-op)", async () => {
+    const { mgr, sessionKey, sessionPath, writeFile, readFileSync } = await bootstrap("happy-path");
+
+    const cleanLine = JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hello user" }],
+      },
+    });
+    await writeFile(sessionPath, sdkHeader() + "\n" + cleanLine + "\n");
+
+    const before = readFileSync(sessionPath, "utf-8");
+    const result = await mgr.withSession(sessionKey, async () => "ok");
+    expect(result.ok).toBe(true);
+
+    const after = readFileSync(sessionPath, "utf-8");
+    // Clean content stays byte-identical; sanitizer detected no secrets.
+    expect(after).toBe(before);
+  });
+
+  it("returns err('error') when the withSession callback throws so callers can surface the failure", async () => {
+    const { mgr, sessionKey, sessionPath, writeFile } = await bootstrap("err-error-route");
+    await writeFile(sessionPath, sdkHeader() + "\n");
+
+    const result = await mgr.withSession(sessionKey, async () => {
+      throw new Error("simulated failure");
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("error");
+    }
+  });
+
+  it("destroySession after an abnormal-termination withSession still removes the redacted JSONL", async () => {
+    const { mgr, sessionKey, sessionPath, writeFile, existsSync, readFileSync } = await bootstrap("destroy-after");
+
+    // Write a JSONL with a secret-bearing toolCall arguments shape
+    // (sensitive-arg-names rule fires on { token: <non-empty string> }),
+    // run withSession that throws (triggering sanitize-on-finally),
+    // then assert destroySession still removes it.
+    const toolUseLine = JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", name: "set_secret", id: "tc-3", input: { token: "raw-bearer-token-value-zxc-9876" } },
+        ],
+      },
+    });
+    await writeFile(sessionPath, sdkHeader() + "\n" + toolUseLine + "\n");
+
+    const result = await mgr.withSession(sessionKey, async () => {
+      throw new Error("aborted");
+    });
+    expect(result.ok).toBe(false);
+
+    // Sanitizer should have redacted while the lock was still held.
+    const afterSanitize = readFileSync(sessionPath, "utf-8");
+    expect(afterSanitize).toContain("[REDACTED]");
+    expect(afterSanitize).not.toContain("raw-bearer-token-value-zxc-9876");
+
+    // destroySession unlinks the file even after the abort path.
+    await mgr.destroySession(sessionKey);
+    expect(existsSync(sessionPath)).toBe(false);
+  });
+});
