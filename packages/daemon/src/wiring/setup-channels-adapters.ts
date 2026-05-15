@@ -250,13 +250,24 @@ export async function bootstrapAdapters(deps: {
     const accessToken = (channelConfig.line.botToken as string | undefined) || getSecret("LINE_CHANNEL_ACCESS_TOKEN");
     const channelSecret = (channelConfig.line.channelSecret as string | undefined) || getSecret("LINE_CHANNEL_SECRET");
     if (accessToken && channelSecret) {
-      const validation = await validateLineCredentials({ channelAccessToken: accessToken, channelSecret });
+      // E2E redirection seam (Phase 40 / Plan 40-09 / COV-15): when
+      // line.apiRoot is set, the LINE SDK client targets the override URL
+      // (instead of api.line.me). Production leaves unset.
+      const lineApiRoot = channelConfig.line.apiRoot && channelConfig.line.apiRoot.length > 0
+        ? channelConfig.line.apiRoot
+        : undefined;
+      const validation = await validateLineCredentials({
+        channelAccessToken: accessToken,
+        channelSecret,
+        ...(lineApiRoot ? { apiRoot: lineApiRoot } : {}),
+      });
       if (validation.ok) {
         const plugin = createLinePlugin({
           channelAccessToken: accessToken,
           channelSecret,
           webhookPath: channelConfig.line.webhookPath,
           logger: channelsLogger,
+          ...(lineApiRoot ? { apiRoot: lineApiRoot } : {}),
         });
         linePlugin = plugin as LinePluginHandle;
         adaptersByType.set("line", plugin.adapter);

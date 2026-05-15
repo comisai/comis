@@ -96,4 +96,43 @@ describe("validateLineCredentials", () => {
       expect(result.error.message).toContain("Unauthorized");
     }
   });
+
+  it("passes baseURL to MessagingApiClient when apiRoot is provided (COV-15 E2E seam)", async () => {
+    // Phase 40 / Plan 40-09 / COV-15: apiRoot threads through as
+    // httpClientConfig.baseURL so getBotInfo() hits the 127.0.0.1 mock
+    // instead of api.line.me.
+    mockGetBotInfo.mockResolvedValueOnce({
+      displayName: "Mock", userId: "U", basicId: "@m", chatMode: "bot", markAsReadMode: "auto",
+    });
+    const sdk = await import("@line/bot-sdk");
+    const mockCtor = vi.mocked(sdk.messagingApi.MessagingApiClient);
+    mockCtor.mockClear();
+
+    await validateLineCredentials({
+      channelAccessToken: "tok",
+      channelSecret: "sec",
+      apiRoot: "http://127.0.0.1:54325",
+    });
+
+    expect(mockCtor).toHaveBeenCalledWith({
+      channelAccessToken: "tok",
+      baseURL: "http://127.0.0.1:54325",
+    });
+  });
+
+  it("omits baseURL from MessagingApiClient when apiRoot is undefined (production byte-identical)", async () => {
+    mockGetBotInfo.mockResolvedValueOnce({
+      displayName: "Mock", userId: "U", basicId: "@m", chatMode: "bot", markAsReadMode: "auto",
+    });
+    const sdk = await import("@line/bot-sdk");
+    const mockCtor = vi.mocked(sdk.messagingApi.MessagingApiClient);
+    mockCtor.mockClear();
+
+    await validateLineCredentials({
+      channelAccessToken: "tok",
+      channelSecret: "sec",
+    });
+
+    expect(mockCtor).toHaveBeenCalledWith({ channelAccessToken: "tok" });
+  });
 });

@@ -43,6 +43,17 @@ export interface LineAdapterDeps {
   channelSecret: string;
   webhookPath?: string;
   logger: ComisLogger;
+  /**
+   * Optional LINE Messaging API base URL override (e.g.
+   * `http://127.0.0.1:54325`). When set, both the `MessagingApiClient`
+   * and `MessagingApiBlobClient` are constructed with `baseURL=apiRoot`
+   * so their HTTP requests hit the override instead of `api.line.me` /
+   * `api-data.line.me`. Production callers leave this undefined.
+   *
+   * Phase 40 / Plan 40-09 / COV-15 — production seam for the wire-level
+   * E2E mock chat-platform fixture (test/e2e/mocks/line/).
+   */
+  apiRoot?: string;
 }
 
 export interface LineAdapterHandle extends ChannelPort {
@@ -64,12 +75,19 @@ export interface LineAdapterHandle extends ChannelPort {
  * via webhook events dispatched through handleWebhookEvents().
  */
 export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
+  // E2E seam: when deps.apiRoot is set, point both LINE SDK clients at the
+  // override base URL instead of api.line.me. Production omits the field
+  // entirely (byte-identical to the prior single-key shape). Phase 40 /
+  // Plan 40-09 / COV-15.
+  const baseUrlOverride = deps.apiRoot ? { baseURL: deps.apiRoot } : {};
   const client = new messagingApi.MessagingApiClient({
     channelAccessToken: deps.channelAccessToken,
+    ...baseUrlOverride,
   });
 
   const blobClient = new messagingApi.MessagingApiBlobClient({
     channelAccessToken: deps.channelAccessToken,
+    ...baseUrlOverride,
   });
 
   async function getBlobContent(messageId: string): Promise<Buffer> {

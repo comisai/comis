@@ -293,6 +293,25 @@ describe("bootstrapAdapters", () => {
     expect(result.linePlugin).toBe(mockLinePlugin);
   });
 
+  it("threads line.apiRoot through to validateLineCredentials + plugin factory (COV-15 E2E seam)", async () => {
+    const container = makeContainer({
+      line: {
+        enabled: true,
+        botToken: "line-access-tok",
+        channelSecret: "line-secret",
+        apiRoot: "http://127.0.0.1:54325",
+      },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateLineCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ apiRoot: "http://127.0.0.1:54325" }),
+    );
+    expect(createLinePlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ apiRoot: "http://127.0.0.1:54325" }),
+    );
+  });
+
   it("warns when LINE enabled but missing one credential", async () => {
     const container = makeContainer({
       line: { enabled: true, botToken: "line-tok" },
