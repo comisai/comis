@@ -39,6 +39,12 @@ import { chunkDiscordText } from "./format-discord.js";
 import { mapDiscordToNormalized } from "./message-mapper.js";
 import { renderDiscordButtons, renderDiscordCards } from "./rich-renderer.js";
 import { createDiscordVoiceSender } from "./voice-sender.js";
+// Phase 41 TS-HYG-06 (per 41-03-SUMMARY.md Decision 3): the 5 adjacent
+// untyped-cast sites in editMessage / reactToMessage / removeReaction /
+// deleteMessage / fetchMessages (previously at lines 426/453/475/500/521)
+// retarget to asTextLike, the structural-subset narrowing helper that the
+// new discord-actions.ts uses for the same purpose.
+import { asTextLike } from "./discord-adapter-types.js";
 import { systemNowMs } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -415,16 +421,15 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     ): Promise<Result<void, Error>> {
       try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
 
         // Truncate to 2000 chars as a defensive check
         const truncatedText = text.length > 2000 ? text.slice(0, 2000) : text;
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textChannel = channel as any;
-        const msg = await textChannel.messages.fetch(messageId);
+        const msg = await tc.messages.fetch(messageId);
         await msg.edit(truncatedText);
 
         deps.logger.debug(
@@ -445,13 +450,12 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     ): Promise<Result<void, Error>> {
       try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textChannel = channel as any;
-        const msg = await textChannel.messages.fetch(messageId);
+        const msg = await tc.messages.fetch(messageId);
         await msg.react(emoji);
         return ok(undefined);
       } catch (error) {
@@ -467,13 +471,12 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     ): Promise<Result<void, Error>> {
       try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textChannel = channel as any;
-        const msg = await textChannel.messages.fetch(messageId);
+        const msg = await tc.messages.fetch(messageId);
         const reaction = msg.reactions.cache.get(emoji);
         if (reaction) {
           await reaction.users.remove(client.user!.id);
@@ -492,13 +495,12 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     ): Promise<Result<void, Error>> {
       try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textChannel = channel as any;
-        const msg = await textChannel.messages.fetch(messageId);
+        const msg = await tc.messages.fetch(messageId);
         await msg.delete();
         return ok(undefined);
       } catch (error) {
@@ -513,12 +515,11 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
     ): Promise<Result<FetchedMessage[], Error>> {
       try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel || !channel.isTextBased()) {
+        const tc = asTextLike(channel);
+        if (!tc) {
           return err(new Error(`Channel ${channelId} is not a text-based channel`));
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const textChannel = channel as any;
         const fetchOptions: Record<string, unknown> = {
           limit: options?.limit ?? 20,
         };
@@ -526,7 +527,7 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
           fetchOptions.before = options.before;
         }
 
-        const messages = await textChannel.messages.fetch(fetchOptions);
+        const messages = await tc.messages.fetch(fetchOptions);
         const mapped: FetchedMessage[] = [];
         for (const [, m] of messages) {
           mapped.push({
