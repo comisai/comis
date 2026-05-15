@@ -13,7 +13,29 @@
 import type Database from "better-sqlite3";
 import { formatSessionKey, systemNowMs, type SessionData, type SessionDetailedEntry, type SessionKey, type SessionListEntry, type SessionStorePort } from "@comis/core";
 import { z } from "zod";
-import type { SessionRow } from "./types.js";
+import { createRowMapper } from "./row-mapper.js";
+import { SessionRowSchema } from "./row-schemas.js";
+
+// Row mappers (Phase 41 TS-HYG-03)
+const sessionRowMapper = createRowMapper(SessionRowSchema);
+const sessionListEntryRowMapper = createRowMapper(
+  z.strictObject({
+    session_key: z.string(),
+    updated_at: z.number(),
+  }),
+);
+const sessionDetailedEntryRowMapper = createRowMapper(
+  z.strictObject({
+    session_key: z.string(),
+    tenant_id: z.string(),
+    user_id: z.string(),
+    channel_id: z.string(),
+    metadata: z.string(),
+    created_at: z.number(),
+    updated_at: z.number(),
+    message_count: z.number(),
+  }),
+);
 
 const SessionMessagesSchema = z.array(z.unknown());
 const SessionMetadataSchema = z.record(z.string(), z.unknown());
@@ -115,7 +137,8 @@ export function createSessionStore(db: Database.Database): SessionStorePort {
 
     load(key: SessionKey): SessionData | undefined {
       const sessionKey = formatSessionKey(key);
-      const row = loadStmt.get(sessionKey) as SessionRow | undefined;
+      const parsed = sessionRowMapper.parseOptionalRow(loadStmt.get(sessionKey));
+      const row = parsed.ok ? parsed.value : undefined;
       if (!row) return undefined;
 
       return {
@@ -127,9 +150,10 @@ export function createSessionStore(db: Database.Database): SessionStorePort {
     },
 
     list(tenantId?: string): SessionListEntry[] {
-      const rows = (
-        tenantId !== undefined ? listByTenantStmt.all(tenantId) : listAllStmt.all()
-      ) as Array<{ session_key: string; updated_at: number }>;
+      const raw =
+        tenantId !== undefined ? listByTenantStmt.all(tenantId) : listAllStmt.all();
+      const parsed = sessionListEntryRowMapper.parseRows(raw);
+      const rows = parsed.ok ? parsed.value : [];
 
       return rows.map((r) => ({
         sessionKey: r.session_key,
@@ -150,7 +174,8 @@ export function createSessionStore(db: Database.Database): SessionStorePort {
     },
 
     loadByFormattedKey(sessionKey: string): SessionData | undefined {
-      const row = loadByKeyStmt.get(sessionKey) as SessionRow | undefined;
+      const parsed = sessionRowMapper.parseOptionalRow(loadByKeyStmt.get(sessionKey));
+      const row = parsed.ok ? parsed.value : undefined;
       if (!row) return undefined;
       return {
         messages: parseMessages(row.messages),
@@ -161,20 +186,12 @@ export function createSessionStore(db: Database.Database): SessionStorePort {
     },
 
     listDetailed(tenantId?: string): SessionDetailedEntry[] {
-      const rows = (
+      const raw =
         tenantId !== undefined
           ? listDetailedByTenantStmt.all(tenantId)
-          : listDetailedAllStmt.all()
-      ) as Array<{
-        session_key: string;
-        tenant_id: string;
-        user_id: string;
-        channel_id: string;
-        metadata: string;
-        created_at: number;
-        updated_at: number;
-        message_count: number;
-      }>;
+          : listDetailedAllStmt.all();
+      const parsed = sessionDetailedEntryRowMapper.parseRows(raw);
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map((r) => ({
         sessionKey: r.session_key,
         tenantId: r.tenant_id,

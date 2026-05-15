@@ -10,7 +10,16 @@
  */
 
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import { systemNowMs } from "@comis/core";
+import { createRowMapper } from "./row-mapper.js";
+import { IdentityLinkRowSchema } from "./row-schemas.js";
+
+// Row mappers (Phase 41 TS-HYG-03)
+const identityLinkMapper = createRowMapper(IdentityLinkRowSchema);
+const canonicalIdProjectionMapper = createRowMapper(
+  z.strictObject({ canonical_id: z.string() }),
+);
 
 /**
  * A single identity link mapping a provider identity to a canonical ID.
@@ -42,14 +51,10 @@ export interface IdentityLinkStore {
   listAll(): IdentityLink[];
 }
 
-/** Raw row shape from the identity_links table. */
-interface IdentityLinkRow {
-  canonical_id: string;
-  provider: string;
-  provider_user_id: string;
-  display_name: string | null;
-  linked_at: number;
-}
+/** Raw row shape from the identity_links table.
+ * SSOT: row-schemas.ts → IdentityLinkRowSchema (Phase 41 TS-HYG-03).
+ */
+type IdentityLinkRow = z.infer<typeof IdentityLinkRowSchema>;
 
 /** Map a raw DB row to the public IdentityLink interface. */
 function mapRow(row: IdentityLinkRow): IdentityLink {
@@ -107,19 +112,22 @@ export function createIdentityLinkStore(db: Database.Database): IdentityLinkStor
     },
 
     resolve(provider: string, providerUserId: string): string | undefined {
-      const row = resolveStmt.get(provider, providerUserId) as
-        | { canonical_id: string }
-        | undefined;
+      const parsed = canonicalIdProjectionMapper.parseOptionalRow(
+        resolveStmt.get(provider, providerUserId),
+      );
+      const row = parsed.ok ? parsed.value : undefined;
       return row?.canonical_id;
     },
 
     listByCanonical(canonicalId: string): IdentityLink[] {
-      const rows = listByCanonicalStmt.all(canonicalId) as IdentityLinkRow[];
+      const parsed = identityLinkMapper.parseRows(listByCanonicalStmt.all(canonicalId));
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map(mapRow);
     },
 
     listAll(): IdentityLink[] {
-      const rows = listAllStmt.all() as IdentityLinkRow[];
+      const parsed = identityLinkMapper.parseRows(listAllStmt.all());
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map(mapRow);
     },
   };
