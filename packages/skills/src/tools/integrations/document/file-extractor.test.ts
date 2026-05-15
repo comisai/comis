@@ -34,7 +34,7 @@ function bufferInput(
 
 // ─── Happy path tests ──────────────────────────────────────────────────────
 
-describe("createFileExtractor — happy path", () => {
+describe("createFileExtractor — extracts text from a valid document file", () => {
   it("extracts plain UTF-8 .txt file", async () => {
     const extractor = makeExtractor();
     const result = await extractor.extract(bufferInput("Hello, world!", "text/plain", "hello.txt"));

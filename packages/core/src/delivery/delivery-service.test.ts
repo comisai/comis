@@ -94,7 +94,7 @@ function makeDeps(
   };
 }
 
-describe("createDeliveryService — factory contract (CONFIG-DELIV-04, smoke)", () => {
+describe("createDeliveryService — factory contract (CONFIG-DELIV-04, smoke-level contract)", () => {
   it("Test 1: returns a DeliveryService with a deliverToChannel method", () => {
     const service: DeliveryService = createDeliveryService(makeDeps());
     expect(typeof service.deliverToChannel).toBe("function");

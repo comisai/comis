@@ -59,7 +59,7 @@ tooling:
 // happy path — mcp hint
 // ---------------------------------------------------------------------------
 
-describe("setHintFields — happy path", () => {
+describe("setHintFields — applies hint fields onto a tool-call argument map", () => {
   it("mcp hint — updates description + replacesPackages", () => {
     const doc = parseDocument(FIXTURE_YAML);
     const result = setHintFields(doc, "mcp", "yfinance", {

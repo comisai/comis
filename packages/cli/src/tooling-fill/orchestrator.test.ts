@@ -288,7 +288,7 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("runToolingFill — happy path single hint --yes --restart", () => {
+describe("runToolingFill — successful single-hint flow with --yes --restart flags", () => {
   it("returns exit 0, calls boundary helpers in correct order, mutates yfinance hint", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
