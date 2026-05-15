@@ -187,6 +187,14 @@ const SHRINK_ARRAYS: readonly ShrinkArrayConfig[] = [
     extractKey: (p) => `${p.file ?? ""}:${p.line ?? 0}`,
   },
   { name: "coverageWaiver", keyKind: "length" },
+  // testNamingAllowlist: per-(file,line,text) tuple key — but the text
+  // can contain commas / quotes / unicode, which the simple AST extractor
+  // does not faithfully reconstruct. We use length-only ratchet for COV-10
+  // (same model as coverageWaiver) — the gate's per-entry semantic is
+  // enforced by the test-naming.test.ts file itself (it builds the
+  // allowlistSet from canonical key strings). The length ratchet here
+  // guarantees the array shrinks monotonically across phases.
+  { name: "testNamingAllowlist", keyKind: "length" },
 ];
 
 describe.each(SHRINK_ARRAYS)(
