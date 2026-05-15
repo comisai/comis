@@ -261,6 +261,22 @@ describe("bootstrapAdapters", () => {
     expect(result.adaptersByType.get("whatsapp")).toBe(mockWhatsAppPlugin.adapter);
   });
 
+  it("threads whatsapp.apiRoot through to plugin factory (COV-15 E2E seam)", async () => {
+    const container = makeContainer({
+      whatsapp: {
+        enabled: true,
+        authDir: "/custom/auth",
+        printQR: false,
+        apiRoot: "ws://127.0.0.1:54324/ws/chat",
+      },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(createWhatsAppPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ apiRoot: "ws://127.0.0.1:54324/ws/chat" }),
+    );
+  });
+
   it("creates LINE adapter with both credentials", async () => {
     const container = makeContainer({
       line: { enabled: true, botToken: "line-access-tok", channelSecret: "line-secret" },

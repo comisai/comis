@@ -204,11 +204,18 @@ export async function bootstrapAdapters(deps: {
   if (channelConfig.whatsapp.enabled) {
     const authDir = channelConfig.whatsapp.authDir || safePath(safePath(os.homedir(), ".comis"), "whatsapp-auth");
     const validation = await validateWhatsAppAuth({ authDir, printQR: channelConfig.whatsapp.printQR });
+    // E2E redirection seam (Phase 40 / Plan 40-09 / COV-15): when
+    // whatsapp.apiRoot is set, Baileys's WebSocket connects to the override
+    // URL instead of wss://web.whatsapp.com/ws/chat. Production leaves unset.
+    const whatsappApiRoot = channelConfig.whatsapp.apiRoot && channelConfig.whatsapp.apiRoot.length > 0
+      ? channelConfig.whatsapp.apiRoot
+      : undefined;
     if (validation.ok) {
       const plugin = createWhatsAppPlugin({
         authDir,
         printQR: channelConfig.whatsapp.printQR,
         logger: channelsLogger,
+        ...(whatsappApiRoot ? { apiRoot: whatsappApiRoot } : {}),
       });
       adaptersByType.set("whatsapp", plugin.adapter);
       channelCapabilities.set("whatsapp", { supportsReactions: true, replyToMetaKey: "whatsappMessageId" });
