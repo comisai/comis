@@ -1638,184 +1638,230 @@ export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [
 ] as const;
 export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   // ============================================================================
-  // Phase D — TypeScript hygiene (TS-HYG-13 closes via per-declaration audit)
+  // Phase 41 Plan 08 Task 2 — TS-HYG-13 per-declaration audit (final state)
   // ============================================================================
   // NOTE: ChannelManagerDeps (44 optional fields, channel-manager.ts:83) is NOT
   // in this list — it is hard-excluded by the rule itself per HYG-06 because
   // v3 §9.2.5 owns its audit. Re-adding it here is a contract violation.
+  //
+  // Audit outcome per Plan 41-03-SUMMARY.md Decision 5 (TS-HYG-13):
+  //   - Reviewed each interface declaration line-by-line + every construction
+  //     site (single composition-root callers for the daemon deps bags, plus
+  //     CLI / API / wizard / DTO consumers).
+  //   - Classification taxonomy: (a) Genuinely conditional — fields capture
+  //     real config-driven variance with documented per-field rationale; KEEP
+  //     with specific reason. (b) Clustered-optional — interface mixes 2-3
+  //     distinct concerns; KEEP with future-refactor note recommending a
+  //     concern-split. (c) Cosmetic over-optional-marking — fields marked `?`
+  //     but supplied at every construction site; would DELETE entry + require
+  //     fields. ZERO entries classified as (c).
+  //   - Final count: 25 (unchanged). Decision 5 explicitly authorizes
+  //     "no target floor — the audit decisions ARE the gate". RESEARCH §
+  //     "Land-mine 8" reinforces audit-driven shrinkage, not mandate-to-count.
+  //     RESEARCH Assumption A5: "most >12-optional-field interfaces will be
+  //     audited and kept with documented reason" — confirmed by per-interface
+  //     inspection. No entry survived as cosmetic over-optional marking.
+  //
+  // Why no cosmetic deletions: every audited interface fell into one of three
+  // genuine-variance patterns:
+  //   1. Dependency-injection bags whose optional fields gate on config
+  //      booleans, secret/credential presence, or feature-flag state. The
+  //      single construction site at the composition root passes
+  //      `undefined` (or omits the key) when the underlying conditional is
+  //      false — e.g. setup-agents.ts:641 `authRotation = authProfileManager
+  //      ? createAuthRotationAdapter(...) : undefined`. Marking these
+  //      required would force the daemon to manufacture placeholders.
+  //   2. Wire-protocol / DTO shapes where field absence is semantic
+  //      (e.g. SessionEntry's dual `key | sessionKey` from daemon-side RPC
+  //      schema migration; AgentDetail.heartbeat.target absent = agent has
+  //      no scheduled delivery target). Tightening these would break the
+  //      JSON shape contract.
+  //   3. Mutually-exclusive directive / option bags where one invocation
+  //      sets ONE field (CommandDirectives is the canonical case: a single
+  //      `/think medium` or `/model claude-sonnet` sets one key; every
+  //      other directive field stays `undefined`).
+  //
+  // Future refactor flag (cluster-split candidates marked `(b)` below): some
+  // large deps bags mix 2-3 concerns and could be split into sub-interfaces
+  // for clarity. The architectural test would still pass after the split
+  // (each sub-interface stays under the 12-optional threshold). Out of scope
+  // for Phase 41 — KISS/YAGNI says defer until a real refactor wave brings
+  // the structural improvement.
+
+  // -- (b) Clustered-optional deps bags: split candidates for a future refactor --
   {
     file: "packages/agent/src/executor/pi-executor.ts",
     typeName: "PiExecutorDeps",
     optionalCount: 43,
-    reason: "Executor deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: optionals mix 8 concerns (safety controls, adapters/registries, tool wiring, media/prompts, provider compatibility, secret/output guards, delivery/cache, observability ports). Every optional field documented per-line; construction site (setup-agents.ts:645) conditionally supplies values from config + AppContainer. Future refactor: split into PiExecutorSafetyDeps + PiExecutorToolingDeps + PiExecutorProviderDeps + PiExecutorObservabilityDeps. (TS-HYG-13 — Plan 41-08 audit; keep until structural refactor wave).",
     removedIn: "phase-D",
   },
   {
     file: "packages/orchestrator/src/inbound/inbound-pipeline.ts",
     typeName: "InboundPipelineDeps",
     optionalCount: 40,
-    reason: "Inbound pipeline deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: optionals mix the 5 inbound-pipeline phases (resolve, preprocess, gate, setup, route) plus auxiliary concerns (voice pipeline, delivery queue, command/approval handling, debounce/group history buffers). Each `?` field is wired only when the corresponding feature is configured (e.g. approvalGate present only when approval workflow enabled). Future refactor: per-phase sub-Deps interfaces. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/agent/src/bootstrap/system-prompt-assembler.ts",
     typeName: "AssemblerParams",
     optionalCount: 34,
-    reason: "System-prompt assembler params; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: prompt-section assembly params — every `?` corresponds to ONE prompt section (skills XML, attribution, language hint, sub-agent role, sender trust, documentation, media directives, SEP, MCP inheritance, runtime info, etc). Each section's `includeIn` set determines whether the corresponding param is read in a given PromptMode; absent params skip the section. Future refactor: group by section family (identity / safety / tooling / media / sub-agent). (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
     typeName: "RequestBodyInjectorConfig",
     optionalCount: 32,
-    reason: "Stream-wrapper config; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: stream-wrapper config combines cache-control breakpoint strategy, beta-header latches, microcompact triggers, tool-deferral hooks, cadence trackers, eviction cooldown. Each callback/getter is wired ONLY when the corresponding feature path is active (e.g. sub-agent spawn sets `skipCacheWrite + cacheWriteTimestamp + parentCacheRetention`; root-agent execution leaves them undefined). Future refactor: split into CacheBreakpointConfig + ToolDeferralConfig + MicroCompactConfig. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/agent/src/bridge/pi-event-bridge.ts",
     typeName: "PiEventBridgeDeps",
     optionalCount: 30,
-    reason: "Event-bridge deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: event-bridge deps mix runtime callbacks (onAbort, onAbortRetry, onCacheReads, onTurnUsage) + safety controls (contextGuard, providerHealth, compactionSettings) + SEP execution-plan tracking + thinking-block hash diagnostics + drain-state gates. Construction site (pi-executor.ts:1173) supplies subsets based on per-execution feature flags (sepEnabled, capturedBridgeRetention). Future refactor: split runtime callbacks from observability sinks. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/daemon/src/wiring/setup-channels.ts",
     typeName: "ChannelsDeps",
     optionalCount: 26,
-    reason: "Channels wiring deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: channel-bootstrap deps span media handling (transcriber, ttsAdapter, audioConverter, imageAnalyzer, fileExtractor — each gated by config presence + native dep availability), session lifecycle (piSessionAdapters, costTrackers), inbound-routing callbacks (onMessageReceived, onMessageProcessed), and per-agent cron tracker maps. Single composition-root caller (daemon.ts:1594) builds optionals from config flags. Future refactor: split media-deps + session-tracking-deps from core channel-deps. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/agent/src/spawn/sub-agent-runner.ts",
     typeName: "SpawnParams",
     optionalCount: 25,
-    reason: "Sub-agent spawn params; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: spawn-call options mix top-level routing (announceChannel*, callerSession/Agent, requesterOrigin), graph-pipeline coordination (graphId, nodeId, graphSharedDir, graphTraceId, graphToolNames, graphNodeDepth, isLeafNode), and execution overrides (model, max_steps, expected_outputs, artifactRefs, objective, domainKnowledge, toolGroups, includeParentHistory, reuseSessionKey). Direct vs graph-driven spawns set different subsets — e.g. graph nodes set graphId+nodeId+graphToolNames, direct chat spawns leave them undefined. Future refactor: split into SpawnRouting + SpawnGraphMeta + SpawnExecutionOverrides. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/cli/src/wizard/non-interactive.ts",
     typeName: "NonInteractiveOptions",
     optionalCount: 25,
-    reason: "CLI non-interactive options (type alias); Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: CLI flag bag pre-grouped by `// Core / Gateway / Channels / Paths / Behavior` comment dividers — comment structure proves the conceptual clustering already exists. Each group's fields are independently optional (a CI invocation may set only --gateway-port + --gateway-token; another may set --channels + per-platform tokens). Future refactor: split type into the 5 groups already commented in source. Cannot mark required without forcing every CLI invocation to specify every flag. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/agent/src/executor/executor-post-execution.ts",
     typeName: "PostExecutionBridgeResult",
     optionalCount: 22,
-    reason: "Executor post-execution result; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Per-turn outcome aggregation: every `?` reflects real variance in what a single execution produced — cache write tokens only when caching active, signature scrubs only when scrubber fired, thinkingTokens only on reasoning-capable models, hashAssertion* only when bridge ran the cross-turn assertion path. Marking required would force the bridge to manufacture zeros at every callsite where the feature was inactive — losing the 'feature inactive' signal that downstream consumers (cost gates, observability) check via `field === undefined`. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/daemon/src/wiring/setup-agents.ts",
     typeName: "SingleAgentDeps",
     optionalCount: 21,
-    reason: "Single-agent wiring deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Daemon-internal per-agent deps; every `?` field gates on a daemon-global resource being wired (providerHealth, lastKnownModel, embeddingPort, deliveryMirror, geminiCacheManager — each is undefined unless the corresponding subsystem started successfully). The `secretsCrypto?` + `secretsDb?` pair is conditional on `oauth.storage === 'encrypted'` config. Construction site at setup-agents.ts wires from setupMemory/setupSecrets results. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/daemon/src/wiring/setup-shutdown.ts",
     typeName: "ShutdownDeps",
     optionalCount: 22,
-    reason: "Shutdown wiring deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Shutdown handle aggregator; every `?` field is a subsystem that MAY not be running at shutdown time (graphCoordinator absent in single-agent deployments, channelManager absent if no channels configured, heartbeatRunner absent if heartbeats disabled, mediaTempManager absent if media features off, etc). Marking required would force composition-root to fabricate no-op stubs; instead shutdown.ts:withStepTimeout skips absent subsystems. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/orchestrator/src/execution/execution-pipeline.ts",
     typeName: "ExecutionPipelineDeps",
     optionalCount: 19,
-    reason: "Execution pipeline deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: orchestrator's execution-pipeline deps include retry/followup machinery (retryEngine, followupTrigger, followupConfig), media pipeline (parseOutboundMedia, outboundMediaFetch, voiceResponsePipeline), streaming/policy config, command queue, response-prefix templating. Each is optional because feature paths are independently gated. Future refactor: split into ExecutionRetryDeps + ExecutionMediaDeps + ExecutionStreamingDeps. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/agent/src/executor/executor-tool-assembly.ts",
     typeName: "ToolAssemblyDeps",
     optionalCount: 18,
-    reason: "Tool-assembly deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: ToolAssemblyDeps is a documented `Subset of PiExecutorDeps used by the tool assembly pipeline` (file:69) — inherits the parent bag's cluster structure (media/skill/prompt/delivery). The subset cannot be tightened independently of PiExecutorDeps (the daemon wiring passes the same field references through). Future refactor: hold for the parent's cluster-split, then redrive this subset. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/skills/src/tools/builtin/web-search-tool.ts",
     typeName: "WebSearchConfig",
     optionalCount: 18,
-    reason: "Web-search built-in config; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: user-facing search-tool config — each `?` is either (i) a top-level setting (provider, apiKey, maxResults, timeoutSeconds, cacheTtlMinutes, fallbackProviders, deepFetch*, totalCharsBudget) or (ii) a per-provider sub-config (perplexity, grok, duckduckgo, searxng, tavily, exa, jina) that is undefined unless the user selected that provider. Future refactor: move per-provider configs into a discriminated-union providers field keyed by provider name. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/web/src/api/types/agent-types.ts",
     typeName: "AgentDetail",
     optionalCount: 18,
-    reason: "Web agent-detail API type; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Wire-protocol DTO mirroring the `agents.get` RPC response shape. Each `?` field corresponds to a config section that may be absent for any given agent (no heartbeat config → no `heartbeat.target`; no concurrency overrides → no `concurrency`; no broadcastGroups → undefined). The dual flat-and-nested layout is intentional: the web SPA reads each top-level group as a renderable card. Marking required would force the daemon to emit zero-valued placeholders for every absent feature, breaking the 'feature inactive' UI signal. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/daemon/src/graph/graph-coordinator-state.ts",
     typeName: "GraphCoordinatorDeps",
     optionalCount: 16,
-    reason: "Graph coordinator deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: graph-coordinator deps span subagent spawning (spawn/kill/getRunStatus surface), per-channel announcement plumbing (sendToChannel, announceToParent), tuning knobs (maxConcurrency, maxResultLength, graphRetentionMs, maxParallelSpawns, maxGlobalSubAgents, spawnStaggerMs, cacheWriteTimeoutMs — each defaulted in factory), and observability/batching extras (logger, batcher, activeRunRegistry, nodeTypeRegistry, preWarm, touchParentSession). Future refactor: split into GraphSpawnDeps + GraphAnnounceDeps + GraphTuningConfig. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/web/src/views/config-editor/schema-form.ts",
     typeName: "SchemaProperty",
     optionalCount: 16,
-    reason: "Schema-form property type; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) JSON Schema mirror: each `?` field corresponds to ONE JSON Schema keyword (type, description, properties, items, enum, minimum, maximum, minLength, maxLength, pattern, required, default, anyOf, oneOf, allOf, additionalProperties). Any individual JSON Schema declares only the subset of keywords relevant to its node — e.g. a `{ type: 'integer', minimum: 0 }` carries no `pattern` or `items`. This matches the JSON Schema spec semantics; tightening would force the editor to emit empty arrays/objects for every schema node. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/agent/src/context-engine/types-core.ts",
     typeName: "ContextEngineDeps",
     optionalCount: 15,
-    reason: "Context-engine deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(b) Cluster-split candidate: ContextEngineDeps mixes pipeline-layer getters (getSessionManager, getCompactionDeps, getRehydrationDeps — each `undefined` removes that layer from the pipeline), observability sinks (eventBus, agentId, sessionKey for log-context), feature callbacks (onContentModified, onAnchorReset, onSignatureReplayScrubbed), and replay-drift / token-anchor / thinking-keep override getters. Future refactor: split into ContextPipelineLayerDeps + ContextObservabilityDeps + ContextRecoveryDeps. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/agent/src/executor/command-directive-types.ts",
     typeName: "CommandDirectives",
     optionalCount: 14,
-    reason: "Executor command-directives shape; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Mutually-exclusive directive bag: parsing a single slash command (`/think medium`, `/model claude-sonnet`, `/branch xyz`, `/reset`, `/compact verbose`, `/budget 500k`, etc.) sets ONE of the 14 fields; all others are `undefined`. The shape is the AGENT-LOCAL MIRROR of orchestrator's CommandDirectives (intentional duplication to break a packaging cycle — see file header lines 1-32). Marking required would force every parse to populate all 14 directives. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/cli/src/commands/sessions.ts",
     typeName: "SessionEntry",
     optionalCount: 14,
-    reason: "CLI sessions list entry; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Dual-naming wire-compat shape (file:30 — 'Supports both canonical field names and daemon RPC field names'): `key|sessionKey`, `user|userId`, `channel|channelId`, `lastActive|updatedAt` carry the legacy + canonical names so the CLI renderer can fall back via nullish coalescing (file:125 `s.sessionKey ?? s.key ?? '-'`). Tightening either side would break the RPC-shape migration safety net. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/cli/src/wizard/types.ts",
     typeName: "WizardState",
     optionalCount: 14,
-    reason: "CLI wizard state (type alias); Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Immutable state accumulator (per file:128 JSDoc: 'All fields are optional because they get filled as steps execute'). Each wizard step's `execute(state)` reads only the fields populated by prior steps and returns a new state with its own field populated. Marking required would force INITIAL_STATE to fabricate placeholders for every field; the file explicitly documents this as the intended pattern. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/orchestrator/src/commands/types.ts",
     typeName: "CommandDirectives",
     optionalCount: 14,
-    reason: "Orchestrator command-directives shape (same name as agent peer; independent decl); Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Mutually-exclusive directive bag (orchestrator side of the agent-local-mirror pair documented in command-directive-types.ts:1-32). Slash-command parser sets ONE field per invocation; all others stay `undefined`. Identical optional-field structure to agent's mirror by maintenance contract — both must move in lockstep. Marking required would force every slash-command parse to emit all 14 fields. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/agent/src/spawn/sub-agent-runner.ts",
     typeName: "SubAgentRunnerDeps",
     optionalCount: 13,
-    reason: "Sub-agent runner deps bag (boundary: 13 optionals, strict >12 threshold); Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Audited in Plan 41-06 (TS-HYG-10) with documented when-absent behavior in packages/agent/AUDIT.md per field: logger (no-op silent diagnostics), memoryAdapter (no completion-summary persistence), batcher (per-spawn announcements not coalesced), deadLetterQueue (failed announcements dropped after retry budget), activeRunRegistry/sessionResolver (no abort-on-kill capability), resultCondenser/condenserModel/condenserApiKey (raw subagent output passes through unmodified), narrativeCaster (no tagged narrative wrapping), dataDir (defaults to process cwd for subagent-results), lifecycleHooks (no prepare-spawn rollback hooks). Boundary value: 13 optionals exceeds 12-threshold by exactly 1; future refactor would require removing one rarely-used field. (TS-HYG-13 — Plan 41-08 audit; see also TS-HYG-10 architecture-test in packages/agent/src/__tests__/architecture.test.ts).",
     removedIn: "phase-D",
   },
   {
     file: "packages/daemon/src/daemon-types.ts",
     typeName: "DaemonOverrides",
     optionalCount: 13,
-    reason: "Daemon overrides type; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Test injection bag (per file:111 JSDoc 'Overrides for dependency injection during testing'). Every `?` field is `typeof <productionFactory>` — production passes NONE of them; integration tests override the subset they want to fake (e.g. `timers: createFakeTimers()` for the .unref() preservation assertion at packages/daemon/src/__tests__). Marking required would force production daemon.ts to explicitly pass every production factory back through itself — pointless ceremony. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {
     file: "packages/skills/src/platform-tools/registry.ts",
     typeName: "PlatformToolBuildContext",
     optionalCount: 13,
-    reason: "Platform-tool build context; Phase D TS-HYG-13 audit per design §7.2.5",
+    reason: "(a) Tool-specific predicate signals (per file:95 JSDoc): each `?` corresponds to ONE platform tool's wiring requirement (approvalGate for tools needing approval, imageGenProvider for image_generate, backgroundTaskManager for background_tasks, toolCapabilityPort for capability index, contextEngineVersion for unified_context (gated on 'dag'), builtinToolsBrowserEnabled + browserSanitizeImage + browserPersistMedia + browserWorkspaceDir for the browser tool). Each descriptor's `conditional(ctx)` predicate inspects only the field it needs; marking all required would force unrelated tools to receive `undefined`-equivalent fabricated values. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
 ] as const;
