@@ -49,7 +49,7 @@ export default defineConfig({
         "packages/orchestrator/src/**/*.ts": { lines: 93, branches: 81, functions: 92,  statements: 92 },
         "packages/daemon/src/**/*.ts":       { lines: 78, branches: 65, functions: 75,  statements: 77 },
         "packages/gateway/src/**/*.ts":      { lines: 85, branches: 75, functions: 86,  statements: 84 },
-        "packages/web/src/**/*.ts":          { lines: 55, branches: 45, functions: 48,  statements: 55 },
+        "packages/web/src/**/*.ts":          { lines: 62, branches: 52, functions: 54,  statements: 62 },
         "packages/comis/src/**/*.ts":        { lines: 0,  branches: 0,  functions: 0,   statements: 0  },
       },
     },
