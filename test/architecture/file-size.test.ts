@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fileSizeAllowlist } from "../support/architecture-allowlist.js";
@@ -150,4 +150,82 @@ describe("file-size — production .ts ≤800 lines (HYG-03)", () => {
       "Landmine §3: *.generated.ts MUST be excluded at walker basename filter, NOT via the allowlist",
     ).toEqual([]);
   });
+});
+
+/**
+ * EXEC-SPLIT-10 — Phase 42 executor subdirectory stricter caps.
+ *
+ * Per design §8.4: each extracted module in the four new executor
+ * subdirectories has a stricter line cap than the project-wide 800L
+ * HYG-03 gate. The cap is enforced ONLY when the subdirectory exists
+ * (i.e., after each Wave 2-5 split commit lands).
+ *
+ * Pre-split (Wave 1) state: the four target directories do not exist
+ * yet; the assertion is vacuously satisfied (empty violations array).
+ *
+ * GREEN state: as each split commit (Wave 2 cache-detection → Wave 3
+ * request-body → Wave 4 prompt-runner → Wave 5 pi-executor) lands, the
+ * directory comes into existence and the test enforces the cap.
+ *
+ * Walker pattern + .split(/\r?\n/).length line counter + formatViolations
+ * error shape mirror the parent HYG-03 block above.
+ */
+describe("file-size — Phase 42 executor subdirectory caps (EXEC-SPLIT-10)", () => {
+  const CAPS: ReadonlyArray<{ dir: string; cap: number; req: string }> = [
+    {
+      dir: "packages/agent/src/executor/stream-wrappers/request-body",
+      cap: 600,
+      req: "EXEC-SPLIT-02",
+    },
+    {
+      dir: "packages/agent/src/executor/pi-executor",
+      cap: 400,
+      req: "EXEC-SPLIT-05",
+    },
+    {
+      dir: "packages/agent/src/executor/prompt-runner",
+      cap: 500,
+      req: "EXEC-SPLIT-07",
+    },
+    {
+      dir: "packages/agent/src/executor/cache-detection",
+      cap: 350,
+      req: "EXEC-SPLIT-09",
+    },
+  ];
+
+  for (const { dir, cap, req } of CAPS) {
+    it(`${dir}/* production .ts files ≤${cap} lines (${req})`, () => {
+      const absDir = resolve(REPO_ROOT, dir);
+      // Vacuously satisfied pre-split: directory does not exist yet.
+      if (!existsSync(absDir)) {
+        expect([]).toEqual([]);
+        return;
+      }
+      const files: string[] = [];
+      walkProductionFiles(absDir, files);
+      const violations = files
+        .map((file) => ({
+          file,
+          lines: readFileSync(file, "utf8").split(/\r?\n/).length,
+        }))
+        .filter((v) => v.lines > cap);
+
+      expect(
+        violations,
+        formatViolations({
+          description: `Phase 42 executor subdirectory cap (${req}): every production .ts file under ${dir}/ must be ≤${cap} lines.`,
+          violations: violations.map((v) => ({
+            file: repoRelative(v.file),
+            line: v.lines,
+            snippet: `${v.lines} lines (cap: ${cap})`,
+          })),
+          suggestedFix: `Extract additional helpers from the oversized module per design §8.2 decomposition. The barrel index.ts (≤80L) re-exports only canonical names — no aliases.`,
+          designRef: `code-quality-plan §8.4 / Phase 42 / ${req}`,
+          allowlistRef:
+            "(no allowlist — Phase 42 subdirectories have no exception path; split further if oversized)",
+        }),
+      ).toEqual([]);
+    });
+  }
 });
