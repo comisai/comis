@@ -3100,7 +3100,7 @@ describe("persistFailureRecord integration", () => {
 // ---------------------------------------------------------------------------
 
 describe("ANNOUNCE_PARENT_TIMEOUT_MS", () => {
-  it("equals 300000", () => {
+  it("equals 300000 milliseconds per sub-agent announce-parent timeout contract", () => {
     expect(ANNOUNCE_PARENT_TIMEOUT_MS).toBe(300_000);
   });
 });

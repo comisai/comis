@@ -186,7 +186,7 @@ describe("buildRuntimeMetadataSection", () => {
     expect(joined).toContain(" | ");
   });
 
-  it("omits empty fields", () => {
+  it("omits empty optional fields from rendered runtime metadata section", () => {
     const info: RuntimeInfo = { host: "myhost" };
     const lines = buildRuntimeMetadataSection(info, false);
     const joined = lines.join("\n");

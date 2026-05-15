@@ -496,11 +496,11 @@ describe("looksLikeApiKey", () => {
     expect(looksLikeApiKey("AIzaFAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_X")).toBe(true);
   });
 
-  it("detects OpenAI keys", () => {
+  it("detects OpenAI keys via the sk- prefix and length heuristic", () => {
     expect(looksLikeApiKey("sk-abcdefghij1234567890abcdefghij")).toBe(true);
   });
 
-  it("detects Groq keys", () => {
+  it("detects Groq keys via the gsk_ prefix and length heuristic", () => {
     expect(looksLikeApiKey("gsk_abcdefghij1234567890abcde")).toBe(true);
   });
 

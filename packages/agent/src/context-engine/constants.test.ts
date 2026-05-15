@@ -145,7 +145,7 @@ describe("TOOL_MASKING_TIERS", () => {
 });
 
 describe("EPHEMERAL_TOOL_KEEP_WINDOW", () => {
-  it("equals 10", () => {
+  it("equals 10 messages per ephemeral-tool keep-window contract", () => {
     expect(EPHEMERAL_TOOL_KEEP_WINDOW).toBe(10);
   });
 });

@@ -104,7 +104,7 @@ describe("response-safety-checks", () => {
         );
       });
 
-      it("is case-insensitive", () => {
+      it("detects broken follow-through case-insensitively against upper-case patterns", () => {
         const result = detectBrokenFollowThrough("LET ME RUN THE COMMAND", false);
         expect(result.broken).toBe(true);
       });

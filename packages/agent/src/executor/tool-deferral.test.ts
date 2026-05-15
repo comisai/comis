@@ -926,7 +926,7 @@ describe("applyToolDeferral - exclude model partition", () => {
 // ---------------------------------------------------------------------------
 
 describe("DEFERRAL_RULES", () => {
-  it("has 5 rules", () => {
+  it("declares exactly 5 deferral rules in the default registry", () => {
     expect(DEFERRAL_RULES.length).toBe(5);
   });
 

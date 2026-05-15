@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { createStepCounter, type StepCounter } from "./step-counter.js";
 
 describe("createStepCounter", () => {
-  it("starts at count 0", () => {
+  it("starts at count 0 before any increment is called", () => {
     const sc = createStepCounter(10);
     expect(sc.getCount()).toBe(0);
   });
