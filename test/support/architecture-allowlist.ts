@@ -1547,6 +1547,20 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
     removedIn: "phase-D",
   },
+  // ----- web package permanent (1 file) -----
+  // Phase 41 TS-HYG-12: requireGlobalState helper throws
+  // GlobalStateNotInitializedError when a Lit element queries GlobalState
+  // before firstUpdated() completes. The throw is the correct boundary
+  // signal — Lit catches it at the lifecycle boundary and surfaces it to
+  // the element's error handler. AGENTS.md §2.1 web-user-facing flows
+  // exception sanctions this; the file also bears the `@allow-throw:`
+  // annotation so this entry is defense-in-depth.
+  {
+    file: "packages/web/src/state/global-state.ts",
+    lineRanges: [[168, 168]],
+    reason: "GlobalStateNotInitializedError — Lit lifecycle invariant; caught at framework boundary per AGENTS.md §2.1 web-user-facing flows exception (Phase 41 TS-HYG-12).",
+    removedIn: "permanent",
+  },
 ] as const;
 export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [
   // ============================================================================
