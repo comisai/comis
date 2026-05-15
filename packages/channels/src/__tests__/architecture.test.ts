@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import { readFileSync } from "node:fs";
 import { findForbiddenImports } from "../../../../test/support/import-checker.js";
+import { findInSourceFiles } from "../../../../test/support/source-grep.js";
 import { formatViolations } from "../../../../test/support/architecture-helpers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -151,5 +152,45 @@ describe("@comis/channels -- architecture invariants", () => {
       "channels/package.json must not depend on @comis/infra (Phase 28 commit 2 / CORE-PORTS-05). " +
         "channels's logger contract usage is type-only and resolves through @comis/core.",
     ).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 41 plan 05 (TS-HYG-06): zero `as any` in the Discord adapter pair.
+  // Per 41-03-SUMMARY.md Decision 3, scope covers BOTH discord-actions.ts
+  // (the original TS-HYG-06 target, 18 sites) AND discord-adapter.ts (the
+  // 5 adjacent `const textChannel = channel as any` sites at lines
+  // 426/453/475/500/521, all collapsing to the same asTextLike narrowing).
+  // Narrowing helpers live in ./discord/discord-adapter-types.ts (Plan 41-02
+  // foundation): asTextLike() for text-like channels, asThreadInfo() for the
+  // threadList iteration sites.
+  // ---------------------------------------------------------------------------
+
+  it("discord adapter files contain zero `as any` casts (TS-HYG-06)", () => {
+    const result = findInSourceFiles({
+      rootDir: SRC_ROOT,
+      needle: /\bas\s+any\b/,
+      excludeDirs: ["__tests__", "__snapshots__", "dist", "node_modules", "fixtures"],
+      excludeFileSuffixes: [".test.ts"],
+    });
+    const offenders = result.matches.filter(
+      (m) =>
+        m.endsWith("discord/discord-actions.ts") ||
+        m.endsWith("discord/discord-adapter.ts"),
+    );
+    expect(
+      offenders,
+      formatViolations({
+        description:
+          "discord-actions.ts and discord-adapter.ts must contain zero `as any` casts after Phase 41 TS-HYG-06; use asTextLike() or asThreadInfo() from ./discord-adapter-types.js to narrow Discord channels.",
+        violations: offenders.map((file) => ({ file, line: 0 })),
+        suggestedFix:
+          "Replace `(channel as any).method()` with `const tc = asTextLike(channel); if (!tc) return err(...); tc.method()`. For thread iteration, use asThreadInfo(thread).",
+        designRef: "code-quality-plan §7.2.2 (TS-HYG-06) / 41-03-SUMMARY.md Decision 3 (adjacent-adapter scope expansion)",
+      }),
+    ).toEqual([]);
+    expect(
+      result.checkedFiles,
+      "sanity: findInSourceFiles walked at least one channels/src file",
+    ).toBeGreaterThan(0);
   });
 });
