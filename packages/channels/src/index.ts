@@ -29,6 +29,15 @@ export type { ChunkDiscordTextOpts } from "./discord/format-discord.js";
 export { createDiscordResolver } from "./discord/discord-resolver.js";
 export type { DiscordResolverDeps } from "./discord/discord-resolver.js";
 
+// Phase 41 TS-HYG-05: Discord channel narrowing types + asTextLike helper.
+// Consumed by Plan 41-05 (TS-HYG-06) to eliminate the 18 `as any` casts in
+// discord-actions.ts. Structural subset of discord.js runtime shape; no
+// module augmentation (RESEARCH §"Pattern 2"). asTextLike returns null
+// (not a Result) because narrowing is a typed-cast, not fallible
+// computation (RESEARCH §"Anti-Patterns" line 425).
+export { asTextLike } from "./discord/discord-adapter-types.js";
+export type { DiscordTextLikeChannel } from "./discord/discord-adapter-types.js";
+
 // Slack adapter
 export { createSlackAdapter } from "./slack/slack-adapter.js";
 export type { SlackAdapterDeps } from "./slack/slack-adapter.js";
