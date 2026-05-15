@@ -226,6 +226,26 @@ describe("bootstrapAdapters", () => {
     expect(result.adaptersByType.get("slack")).toBe(mockSlackPlugin.adapter);
   });
 
+  it("threads slack.apiRoot through to validateSlackCredentials + plugin factory (COV-15 E2E seam)", async () => {
+    const container = makeContainer({
+      slack: {
+        enabled: true,
+        botToken: "xoxb-slack",
+        mode: "http",
+        signingSecret: "sig",
+        apiRoot: "http://127.0.0.1:54323",
+      },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateSlackCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ botToken: "xoxb-slack", apiRoot: "http://127.0.0.1:54323" }),
+    );
+    expect(createSlackPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ botToken: "xoxb-slack", apiRoot: "http://127.0.0.1:54323" }),
+    );
+  });
+
   it("creates WhatsApp adapter with authDir resolution", async () => {
     const container = makeContainer({
       whatsapp: { enabled: true, authDir: "/custom/auth", printQR: true },

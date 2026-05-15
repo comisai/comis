@@ -165,7 +165,20 @@ export async function bootstrapAdapters(deps: {
     if (token) {
       const appToken = mode === "socket" ? ((channelConfig.slack.appToken as string | undefined) || getSecret("SLACK_APP_TOKEN")) : undefined;
       const signingSecret = mode === "http" ? ((channelConfig.slack.signingSecret as string | undefined) || getSecret("SLACK_SIGNING_SECRET")) : undefined;
-      const validation = await validateSlackCredentials({ botToken: token, mode, appToken, signingSecret });
+      // E2E redirection seam (Phase 40 / Plan 40-09 / COV-15): when slack.apiRoot
+      // is set, both auth.test() validation and runtime WebClient traffic hit
+      // the override URL via clientOptions.slackApiUrl. Socket-mode WebSocket
+      // connections cannot be redirected — E2E tests use mode='http'.
+      const slackApiRoot = channelConfig.slack.apiRoot && channelConfig.slack.apiRoot.length > 0
+        ? channelConfig.slack.apiRoot
+        : undefined;
+      const validation = await validateSlackCredentials({
+        botToken: token,
+        mode,
+        appToken,
+        signingSecret,
+        ...(slackApiRoot ? { apiRoot: slackApiRoot } : {}),
+      });
       if (validation.ok) {
         const plugin = createSlackPlugin({
           botToken: token,
@@ -173,6 +186,7 @@ export async function bootstrapAdapters(deps: {
           appToken,
           signingSecret,
           logger: channelsLogger,
+          ...(slackApiRoot ? { apiRoot: slackApiRoot } : {}),
         });
         adaptersByType.set("slack", plugin.adapter);
         channelCapabilities.set("slack", { supportsReactions: true, replyToMetaKey: "slackTs" });

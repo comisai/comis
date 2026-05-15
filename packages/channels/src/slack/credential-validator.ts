@@ -14,7 +14,6 @@
 
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { createCredentialValidator } from "../shared/credential-validator-factory.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -38,6 +37,13 @@ interface SlackValidateOpts {
   mode: "socket" | "http";
   appToken?: string;
   signingSecret?: string;
+  /**
+   * Optional Web API root URL override (e.g. `http://127.0.0.1:54321`).
+   * When set, the WebClient is constructed with `slackApiUrl=apiRoot` so
+   * `auth.test()` hits the mock instead of `slack.com/api`. Production
+   * leaves undefined. Phase 40 / Plan 40-09 / COV-15.
+   */
+  apiRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -52,44 +58,48 @@ interface SlackValidateOpts {
  * @param opts.mode - "socket" for Socket Mode, "http" for HTTP Mode
  * @param opts.appToken - App-level token for Socket Mode (xapp-*)
  * @param opts.signingSecret - Signing secret for HTTP Mode
+ * @param opts.apiRoot - Optional WebClient API URL override (E2E only).
  * @returns SlackBotInfo on success, Error on failure
  */
-export const validateSlackCredentials: (opts: SlackValidateOpts) => Promise<Result<SlackBotInfo, Error>> =
-  createCredentialValidator<SlackValidateOpts, SlackBotInfo>({
-    platform: "Slack",
-    validateInputs: (opts) => {
-      if (!opts.botToken || opts.botToken.trim() === "") {
-        return "botToken must not be empty";
-      }
-      if (opts.mode === "socket") {
-        if (!opts.appToken || opts.appToken.trim() === "") {
-          return "Socket Mode requires appToken (xapp-*)";
-        }
-        if (!opts.appToken.startsWith("xapp-")) {
-          return 'Socket Mode appToken must start with "xapp-" (got a different token type)';
-        }
-      }
-      if (opts.mode === "http") {
-        if (!opts.signingSecret || opts.signingSecret.trim() === "") {
-          return "HTTP Mode requires signingSecret";
-        }
-      }
-      return undefined;
-    },
-    callApi: async (opts) => {
-      try {
-        const { WebClient } = await import("@slack/web-api");
-        const client = new WebClient(opts.botToken);
-        const result = await client.auth.test();
+export async function validateSlackCredentials(
+  opts: SlackValidateOpts,
+): Promise<Result<SlackBotInfo, Error>> {
+  if (!opts.botToken || opts.botToken.trim() === "") {
+    return err(new Error("Invalid Slack credentials: botToken must not be empty"));
+  }
+  if (opts.mode === "socket") {
+    if (!opts.appToken || opts.appToken.trim() === "") {
+      return err(new Error("Invalid Slack credentials: Socket Mode requires appToken (xapp-*)"));
+    }
+    if (!opts.appToken.startsWith("xapp-")) {
+      return err(
+        new Error(
+          'Invalid Slack credentials: Socket Mode appToken must start with "xapp-" (got a different token type)',
+        ),
+      );
+    }
+  }
+  if (opts.mode === "http") {
+    if (!opts.signingSecret || opts.signingSecret.trim() === "") {
+      return err(new Error("Invalid Slack credentials: HTTP Mode requires signingSecret"));
+    }
+  }
+  try {
+    const { WebClient } = await import("@slack/web-api");
+    // E2E seam: pass slackApiUrl only when redirected — production path
+    // constructs the WebClient with the same single-arg shape as before.
+    const client = opts.apiRoot
+      ? new WebClient(opts.botToken, { slackApiUrl: opts.apiRoot })
+      : new WebClient(opts.botToken);
+    const result = await client.auth.test();
 
-        return ok({
-          userId: String(result.user_id ?? ""),
-          teamId: String(result.team_id ?? ""),
-          botId: String(result.bot_id ?? ""),
-        });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        return err(new Error(`Slack auth.test() failed: ${message}`));
-      }
-    },
-  });
+    return ok({
+      userId: String(result.user_id ?? ""),
+      teamId: String(result.team_id ?? ""),
+      botId: String(result.bot_id ?? ""),
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return err(new Error(`Slack auth.test() failed: ${message}`));
+  }
+}
