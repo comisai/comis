@@ -21,11 +21,11 @@ describe("ViewportTransform constants", () => {
     expect(DEFAULT_VIEWPORT).toEqual({ x: 0, y: 0, scale: 1.0 });
   });
 
-  it("MIN_SCALE is 0.25", () => {
+  it("declares MIN_SCALE constant equals 0.25 per viewport-zoom-out lower bound", () => {
     expect(MIN_SCALE).toBe(0.25);
   });
 
-  it("MAX_SCALE is 2.0", () => {
+  it("declares MAX_SCALE constant equals 2.0 per viewport-zoom-in upper bound", () => {
     expect(MAX_SCALE).toBe(2.0);
   });
 });

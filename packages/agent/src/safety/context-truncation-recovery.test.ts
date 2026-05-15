@@ -70,7 +70,7 @@ describe("context-truncation-recovery", () => {
       expect(isContextOverflowError({ status: 500, message: "internal error" })).toBe(false);
     });
 
-    it("is case-insensitive", () => {
+    it("matches overflow patterns case-insensitively across upper-case error messages", () => {
       expect(isContextOverflowError("CONTEXT_LENGTH_EXCEEDED")).toBe(true);
       expect(isContextOverflowError(new Error("PROMPT IS TOO LONG"))).toBe(true);
     });

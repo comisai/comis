@@ -86,31 +86,31 @@ describe("resolveOutputFormat", () => {
 // ---------------------------------------------------------------------------
 
 describe("inferMimeType", () => {
-  it('".opus" -> "audio/opus"', () => {
+  it('infers MIME type "audio/opus" from ".opus" extension per inferMimeType contract', () => {
     expect(inferMimeType(".opus")).toBe("audio/opus");
   });
 
-  it('".ogg" -> "audio/opus"', () => {
+  it('infers MIME type "audio/opus" from ".ogg" extension per inferMimeType contract', () => {
     expect(inferMimeType(".ogg")).toBe("audio/opus");
   });
 
-  it('".mp3" -> "audio/mpeg"', () => {
+  it('infers MIME type "audio/mpeg" from ".mp3" extension per inferMimeType contract', () => {
     expect(inferMimeType(".mp3")).toBe("audio/mpeg");
   });
 
-  it('".wav" -> "audio/wav"', () => {
+  it('infers MIME type "audio/wav" from ".wav" extension per inferMimeType contract', () => {
     expect(inferMimeType(".wav")).toBe("audio/wav");
   });
 
-  it('".aac" -> "audio/aac"', () => {
+  it('infers MIME type "audio/aac" from ".aac" extension per inferMimeType contract', () => {
     expect(inferMimeType(".aac")).toBe("audio/aac");
   });
 
-  it('".flac" -> "audio/flac"', () => {
+  it('infers MIME type "audio/flac" from ".flac" extension per inferMimeType contract', () => {
     expect(inferMimeType(".flac")).toBe("audio/flac");
   });
 
-  it('".pcm" -> "audio/pcm"', () => {
+  it('infers MIME type "audio/pcm" from ".pcm" extension per inferMimeType contract', () => {
     expect(inferMimeType(".pcm")).toBe("audio/pcm");
   });
 

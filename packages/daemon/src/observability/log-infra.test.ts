@@ -51,7 +51,7 @@ describe("createLogLevelManager", () => {
     expect(agent).not.toBe(memory);
   });
 
-  it('setLevel("agent", "debug") changes that logger\'s level', () => {
+  it('setLevel("agent", "debug") updates the agent logger level to debug for selective tracing', () => {
     const root = createTestLogger("info");
     const manager = createLogLevelManager(root);
 

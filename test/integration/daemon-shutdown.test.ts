@@ -66,7 +66,7 @@ describe("Daemon Shutdown", () => {
       expect(result.matched, result.error).toBe(true);
     });
 
-    it("gateway is running", () => {
+    it("logs 'Gateway server started' when daemon brings up gateway during startup", () => {
       const entries = logCapture.getEntries();
       const result = assertLogContains(entries, { msg: "Gateway server started" });
       expect(result.matched, result.error).toBe(true);

@@ -111,11 +111,11 @@ describe("CronPayloadSchema", () => {
 });
 
 describe("CronSessionTargetSchema", () => {
-  it("accepts main", () => {
+  it("accepts 'main' as a valid CronSessionTarget literal value", () => {
     expect(CronSessionTargetSchema.safeParse("main").success).toBe(true);
   });
 
-  it("accepts isolated", () => {
+  it("accepts 'isolated' as a valid CronSessionTarget literal value", () => {
     expect(CronSessionTargetSchema.safeParse("isolated").success).toBe(true);
   });
 
@@ -307,15 +307,15 @@ describe("CronJobSchema", () => {
 });
 
 describe("CronSessionStrategySchema", () => {
-  it("accepts fresh", () => {
+  it("accepts 'fresh' as a valid CronSessionStrategy literal value", () => {
     expect(CronSessionStrategySchema.safeParse("fresh").success).toBe(true);
   });
 
-  it("accepts rolling", () => {
+  it("accepts 'rolling' as a valid CronSessionStrategy literal value", () => {
     expect(CronSessionStrategySchema.safeParse("rolling").success).toBe(true);
   });
 
-  it("accepts accumulate", () => {
+  it("accepts 'accumulate' as a valid CronSessionStrategy literal value", () => {
     expect(CronSessionStrategySchema.safeParse("accumulate").success).toBe(true);
   });
 

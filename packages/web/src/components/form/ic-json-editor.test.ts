@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("IcJsonEditor", () => {
-  it("renders label", async () => {
+  it("renders the label text inside the IcJsonEditor shadow-DOM editor-label element", async () => {
     const el = await createElement({ label: "Permissions" });
     const label = el.shadowRoot?.querySelector(".editor-label");
     expect(label).toBeTruthy();

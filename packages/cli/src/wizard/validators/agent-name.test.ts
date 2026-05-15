@@ -79,13 +79,13 @@ describe("validateAgentName", () => {
       expect(result!.message).toContain("letters, numbers, and hyphens");
     });
 
-    it("rejects underscores", () => {
+    it("rejects agent names containing underscore characters per name-character contract", () => {
       const result = validateAgentName("my_agent");
       expect(result).toBeDefined();
       expect(result!.message).toContain("letters, numbers, and hyphens");
     });
 
-    it("rejects dots", () => {
+    it("rejects agent names containing dot characters per name-character contract", () => {
       const result = validateAgentName("my.agent");
       expect(result).toBeDefined();
       expect(result!.message).toContain("letters, numbers, and hyphens");

@@ -4,11 +4,11 @@ import { validateIpAddress, validateBindMode } from "./network.js";
 
 describe("validateIpAddress", () => {
   describe("valid addresses", () => {
-    it("accepts 192.168.1.1", () => {
+    it("accepts standard private-network IPv4 address 192.168.1.1 as valid", () => {
       expect(validateIpAddress("192.168.1.1")).toBeUndefined();
     });
 
-    it("accepts 0.0.0.0", () => {
+    it("accepts wildcard IPv4 address 0.0.0.0 as valid bind target", () => {
       expect(validateIpAddress("0.0.0.0")).toBeUndefined();
     });
 
@@ -16,13 +16,13 @@ describe("validateIpAddress", () => {
       expect(validateIpAddress("255.255.255.255")).toBeUndefined();
     });
 
-    it("accepts 127.0.0.1", () => {
+    it("accepts loopback IPv4 address 127.0.0.1 as valid bind target", () => {
       expect(validateIpAddress("127.0.0.1")).toBeUndefined();
     });
   });
 
   describe("invalid addresses", () => {
-    it("rejects octet > 255", () => {
+    it("rejects IPv4 octet greater than 255 as out-of-range per RFC", () => {
       const result = validateIpAddress("256.1.1.1");
       expect(result).toBeDefined();
       expect(result!.message).toContain("Invalid IPv4");
@@ -34,7 +34,7 @@ describe("validateIpAddress", () => {
       expect(result!.message).toContain("Invalid IPv4");
     });
 
-    it("rejects non-numeric", () => {
+    it("rejects non-numeric IPv4 string as invalid per format contract", () => {
       const result = validateIpAddress("abc");
       expect(result).toBeDefined();
       expect(result!.message).toContain("Invalid IPv4");
@@ -56,27 +56,27 @@ describe("validateIpAddress", () => {
 
 describe("validateBindMode", () => {
   describe("valid modes", () => {
-    it("accepts loopback", () => {
+    it("accepts 'loopback' as a valid bind-mode literal value", () => {
       expect(validateBindMode("loopback")).toBeUndefined();
     });
 
-    it("accepts lan", () => {
+    it("accepts 'lan' as a valid bind-mode literal value", () => {
       expect(validateBindMode("lan")).toBeUndefined();
     });
 
-    it("accepts custom", () => {
+    it("accepts 'custom' as a valid bind-mode literal value", () => {
       expect(validateBindMode("custom")).toBeUndefined();
     });
   });
 
   describe("invalid modes", () => {
-    it("rejects 'public'", () => {
+    it("rejects 'public' bind-mode value as invalid per bind-mode contract", () => {
       const result = validateBindMode("public");
       expect(result).toBeDefined();
       expect(result!.message).toContain("Invalid bind mode");
     });
 
-    it("rejects 'external'", () => {
+    it("rejects 'external' bind-mode value as invalid per bind-mode contract", () => {
       const result = validateBindMode("external");
       expect(result).toBeDefined();
       expect(result!.message).toContain("Invalid bind mode");

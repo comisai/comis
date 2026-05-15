@@ -113,7 +113,7 @@ describe("MockRpcClientBuilder", () => {
   });
 
   describe("close()", () => {
-    it("does not throw", () => {
+    it("does not throw when MockRpcClient.close() is invoked on a fresh instance", () => {
       const client = createMockRpcClient().build();
       expect(() => client.close()).not.toThrow();
     });

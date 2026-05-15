@@ -640,7 +640,7 @@ describe("runToolingFill — skills hint", () => {
 });
 
 describe("runToolingFill — call-order strict invariant", () => {
-  it("stopDaemon < writeBackup < atomicWriteFile < startDaemon (happy path)", async () => {
+  it("executes runToolingFill steps in order: stopDaemon < writeBackup < atomicWriteFile < startDaemon", async () => {
     const configPath = writeFixture(STUB_FIXTURE_YAML);
     vi.mocked(callAgent).mockResolvedValue(
       ok({

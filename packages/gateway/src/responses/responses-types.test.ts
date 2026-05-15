@@ -34,7 +34,7 @@ describe("ResponseRequestSchema", () => {
     }
   });
 
-  it("accepts stream:true", () => {
+  it("accepts stream:true flag for SSE streaming mode in ResponseRequest schema", () => {
     const result = ResponseRequestSchema.safeParse({
       model: "gpt-4",
       input: "Hello",
@@ -121,7 +121,7 @@ describe("ResponseRequestSchema", () => {
 });
 
 describe("createSequenceCounter", () => {
-  it("starts at 0", () => {
+  it("starts sequence counter at value 0 on creation per Responses API contract", () => {
     const counter = createSequenceCounter();
     expect(counter.next()).toBe(0);
   });

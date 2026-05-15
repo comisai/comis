@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("IcSelect", () => {
-  it("renders label text", async () => {
+  it("renders the label text inside the IcSelect shadow-DOM label element", async () => {
     const el = await createElement({ label: "Profile", options: OPTIONS });
     const label = el.shadowRoot?.querySelector("label");
     expect(label).toBeTruthy();

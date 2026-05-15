@@ -14,7 +14,7 @@ import type { HeartbeatResponseOutcome } from "./response-processor.js";
 // ---------------------------------------------------------------------------
 
 describe("stripMarkup", () => {
-  it("strips HTML tags", () => {
+  it("strips HTML tags from response text before token detection", () => {
     expect(stripMarkup("<p>HEARTBEAT_OK</p>")).toBe("HEARTBEAT_OK");
   });
 
@@ -46,7 +46,7 @@ describe("stripMarkup", () => {
     expect(stripMarkup("plain text")).toBe("plain text");
   });
 
-  it("trims whitespace", () => {
+  it("trims leading and trailing whitespace from stripped response text", () => {
     expect(stripMarkup("  HEARTBEAT_OK  ")).toBe("HEARTBEAT_OK");
   });
 
@@ -64,7 +64,7 @@ describe("stripMarkup", () => {
 // ---------------------------------------------------------------------------
 
 describe("stripHeartbeatToken", () => {
-  it("detects exact token", () => {
+  it("detects exact HEARTBEAT_OK token at start of input and strips it", () => {
     const result = stripHeartbeatToken("HEARTBEAT_OK");
     expect(result).toEqual({ stripped: "", hadToken: true });
   });
@@ -141,7 +141,7 @@ describe("stripResponsePrefix", () => {
     expect(stripResponsePrefix("hello", "")).toBe("hello");
   });
 
-  it("is case-sensitive", () => {
+  it("matches prefix case-sensitively when stripping response prefix from agent text", () => {
     expect(stripResponsePrefix("agent: hello", "Agent: ")).toBe("agent: hello");
   });
 });

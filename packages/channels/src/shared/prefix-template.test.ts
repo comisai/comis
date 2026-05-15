@@ -73,11 +73,11 @@ describe("FORMATTERS", () => {
     expect(FORMATTERS.short("gpt4")).toBe("gpt4");
   });
 
-  it("upper: uppercases", () => {
+  it("upper: uppercases all characters of the input prefix string", () => {
     expect(FORMATTERS.upper("telegram")).toBe("TELEGRAM");
   });
 
-  it("lower: lowercases", () => {
+  it("lower: lowercases all characters of the input prefix string", () => {
     expect(FORMATTERS.lower("TELEGRAM")).toBe("telegram");
   });
 

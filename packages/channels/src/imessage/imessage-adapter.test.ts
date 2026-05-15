@@ -69,7 +69,7 @@ describe("createIMessageAdapter", () => {
       expect(adapter.channelId).toBe("imessage-default");
     });
 
-    it("stops gracefully", async () => {
+    it("stops gracefully and closes underlying connection when stop() is called", async () => {
       const adapter = createIMessageAdapter({ logger: mockLogger });
       await adapter.start();
 

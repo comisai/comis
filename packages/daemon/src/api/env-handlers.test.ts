@@ -114,7 +114,7 @@ describe("env.set handler", () => {
     ).rejects.toThrow("Invalid key format");
   });
 
-  it("rejects empty key", async () => {
+  it("rejects empty key string in env.set request per parameter validation contract", async () => {
     const deps = makeDeps();
     const handlers = createEnvHandlers(deps);
 
@@ -141,7 +141,7 @@ describe("env.set handler", () => {
     ).rejects.toThrow("Invalid key format");
   });
 
-  it("rejects missing key", async () => {
+  it("rejects env.set request missing the key parameter entirely per validation contract", async () => {
     const deps = makeDeps();
     const handlers = createEnvHandlers(deps);
 
@@ -154,7 +154,7 @@ describe("env.set handler", () => {
   // Value validation
   // -----------------------------------------------------------------------
 
-  it("rejects empty value", async () => {
+  it("rejects empty value string in env.set request per parameter validation contract", async () => {
     const deps = makeDeps();
     const handlers = createEnvHandlers(deps);
 

@@ -164,7 +164,7 @@ describe("MemoryApi", () => {
       }
     });
 
-    it("filters by tags", () => {
+    it("filters inspect results by tag-array intersection per memory-api contract", () => {
       const entries = api.inspect({ tags: ["animals"] });
       expect(entries.length).toBe(2);
       for (const e of entries) {
@@ -193,7 +193,7 @@ describe("MemoryApi", () => {
       expect(entries.length).toBe(2);
     });
 
-    it("filters by tenantId", () => {
+    it("filters inspect results by tenantId for tenant isolation in memory-api", () => {
       const entries = api.inspect({ tenantId: "tenant-b" });
       expect(entries.length).toBe(1);
       expect(entries[0]!.content).toBe("tenant b data point");
@@ -304,7 +304,7 @@ describe("MemoryApi", () => {
       }
     });
 
-    it("clears by olderThan", () => {
+    it("clears entries with createdAt older than the olderThan boundary timestamp", () => {
       const now = Date.now();
       const removed = api.clear({ olderThan: now - 7500, tenantId: "default" });
       // Entries older than now - 7500:

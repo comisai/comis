@@ -54,7 +54,7 @@ describe("requireDaemonOrExit (MEM-CTX-PORTS-12)", () => {
     expect(isDaemonRunning).toHaveBeenCalledWith(50);
   });
 
-  it("DAEMON_PROBE_TIMEOUT_MS === 200 (MEM-CTX-PORTS-12 contract)", () => {
+  it("declares DAEMON_PROBE_TIMEOUT_MS === 200 ms per MEM-CTX-PORTS-12 contract", () => {
     expect(DAEMON_PROBE_TIMEOUT_MS).toBe(200);
   });
 

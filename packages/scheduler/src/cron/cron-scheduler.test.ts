@@ -99,7 +99,7 @@ describe("CronScheduler", () => {
     scheduler.stop();
   });
 
-  it("stop() clears timer", async () => {
+  it("stop() clears active cron-scheduler timer to release event-loop reference", async () => {
     const job = makeJob({ id: "j1", nextRunAtMs: clock + 30_000 });
     const { scheduler } = makeScheduler({ jobs: [job] });
     await scheduler.start();

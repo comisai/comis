@@ -29,7 +29,7 @@ describe("EventAwaiter", () => {
       expect(result).toEqual(payload);
     });
 
-    it("rejects on timeout", async () => {
+    it("rejects waitFor promise on timeout expiry per timeoutMs option contract", async () => {
       await expect(
         awaiter.waitFor("message:sent", { timeoutMs: 50 }),
       ).rejects.toThrow(
@@ -77,7 +77,7 @@ describe("EventAwaiter", () => {
   // ---------------------------------------------------------------------------
 
   describe("waitForAll", () => {
-    it("collects N events", async () => {
+    it("collects N events via waitForAll() and resolves with the array of payloads", async () => {
       const payloads = [
         { channelId: "ch-1", messageId: "msg-1", content: "first" },
         { channelId: "ch-1", messageId: "msg-2", content: "second" },
@@ -172,7 +172,7 @@ describe("EventAwaiter", () => {
       expect(results[1]).toEqual(messagePayload);
     });
 
-    it("rejects on timeout", async () => {
+    it("rejects waitForSequence promise on timeout expiry per timeoutMs option contract", async () => {
       const sessionPayload = {
         sessionKey: { tenantId: "t1", userId: "u1", channelId: "c1" },
         timestamp: Date.now(),

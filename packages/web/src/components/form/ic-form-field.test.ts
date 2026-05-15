@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe("IcFormField", () => {
-  it("renders label text", async () => {
+  it("renders the label text inside the IcFormField shadow-DOM label element", async () => {
     const el = await createElement<IcFormField>("ic-form-field", {
       label: "Email Address",
     });

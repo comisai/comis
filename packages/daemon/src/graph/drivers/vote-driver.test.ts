@@ -32,7 +32,7 @@ describe("createVoteDriver", () => {
 
   // -- Metadata ------------------------------------------------------------
 
-  it("has typeId 'vote'", () => {
+  it("declares typeId 'vote' for VoteDriver per graph-driver contract", () => {
     expect(driver.typeId).toBe("vote");
   });
 

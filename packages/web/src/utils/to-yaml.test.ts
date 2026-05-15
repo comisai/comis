@@ -57,7 +57,7 @@ describe("toYaml", () => {
     expect(result).toContain("target: helper");
   });
 
-  it("skips empty arrays", () => {
+  it("skips emitting empty array keys when serializing to YAML output", () => {
     const result = toYaml({ items: [], name: "test" });
     expect(result).not.toContain("items:");
     expect(result).toContain("name: test");

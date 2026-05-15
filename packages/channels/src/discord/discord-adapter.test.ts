@@ -222,7 +222,7 @@ describe("createDiscordAdapter", () => {
   });
 
   describe("channelType", () => {
-    it("returns 'discord'", () => {
+    it("returns 'discord' string for DiscordAdapter channelType getter", () => {
       const adapter = createDiscordAdapter(makeDeps());
       expect(adapter.channelType).toBe("discord");
     });

@@ -74,7 +74,7 @@ describe("IcSessionRow", () => {
     expect(displayName?.textContent).toBe("short");
   });
 
-  it("shows channel tag", async () => {
+  it("shows channel tag element inside the IcSessionRow shadow-DOM for the session", async () => {
     const el = await createElement<IcSessionRow>("ic-session-row", {
       session: makeSession(),
     });

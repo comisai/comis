@@ -71,7 +71,7 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/channels/telegram -> ic-channel-detail, params { type: 'telegram' }", () => {
+    it("routes hash '#/channels/telegram' to ic-channel-detail with params type=telegram", () => {
       window.location.hash = "#/channels/telegram";
       const router = createRouter(onChange);
       expect(router.current()).toEqual({
@@ -104,7 +104,7 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/chat/sess-123 -> ic-chat-console, params { sessionKey: 'sess-123' }", () => {
+    it("routes hash '#/chat/sess-123' to ic-chat-console with params sessionKey=sess-123", () => {
       window.location.hash = "#/chat/sess-123";
       const router = createRouter(onChange);
       expect(router.current()).toEqual({
@@ -159,7 +159,7 @@ describe("createRouter", () => {
       });
     });
 
-    it("#/scheduler/cron-1 -> ic-scheduler-view, params { jobId: 'cron-1' }", () => {
+    it("routes hash '#/scheduler/cron-1' to ic-scheduler-view with params jobId=cron-1", () => {
       window.location.hash = "#/scheduler/cron-1";
       const router = createRouter(onChange);
       expect(router.current()).toEqual({

@@ -31,7 +31,7 @@ describe("createRefineDriver", () => {
   const driver = createRefineDriver();
 
   describe("metadata", () => {
-    it("has typeId 'refine'", () => {
+    it("declares typeId 'refine' for RefineDriver per graph-driver contract", () => {
       expect(driver.typeId).toBe("refine");
     });
 

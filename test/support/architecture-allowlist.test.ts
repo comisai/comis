@@ -87,7 +87,7 @@ describe("architecture-allowlist -- schema integrity (ARCH-BASE-10, D-03)", () =
     }
   });
 
-  it("no duplicate L-IDs", () => {
+  it("declares no duplicate L-IDs across the ALLOWLIST array entries", () => {
     const ids = ALLOWLIST.map((e) => e.id);
     expect(new Set(ids).size, "every L-ID must be unique").toBe(ids.length);
   });

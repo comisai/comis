@@ -78,7 +78,7 @@ describe("IcLoading", () => {
     expect(spinner?.style.height).toBe("24px");
   });
 
-  it("has role='status'", async () => {
+  it("declares role='status' attribute on the IcLoading element for ARIA semantics", async () => {
     const el = await createElement<IcLoading>("ic-loading");
     const status = el.shadowRoot?.querySelector("[role='status']");
     expect(status).toBeTruthy();

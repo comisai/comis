@@ -195,7 +195,7 @@ describe("IcSkillsView", () => {
       ]);
     });
 
-    it("renders view title", () => {
+    it("renders the 'Skills & Tools' view title inside the skills view shadow-DOM", () => {
       const title = el.shadowRoot?.querySelector(".view-title");
       expect(title).not.toBeNull();
       expect(title?.textContent).toContain("Skills & Tools");

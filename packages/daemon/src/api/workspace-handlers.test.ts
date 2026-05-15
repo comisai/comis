@@ -1054,7 +1054,7 @@ describe("parseStatusLine (via workspace.git.status)", () => {
     expect(entries[0]).toEqual({ path: "unstaged.txt", status: "modified", staged: false });
   });
 
-  it("parses added files", async () => {
+  it("parses added-file entries from git status porcelain output", async () => {
     const entries = await getEntries("A  added.txt\n");
     expect(entries[0]).toEqual({ path: "added.txt", status: "added", staged: true });
   });

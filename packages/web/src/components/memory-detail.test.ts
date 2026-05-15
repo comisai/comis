@@ -112,7 +112,7 @@ describe("IcMemoryDetail", () => {
     expect(tags![1].textContent?.trim()).toBe("learned");
   });
 
-  it("renders agent ID", async () => {
+  it("renders the agent ID inside the IcMemoryDetail shadow-DOM detail section", async () => {
     const el = await createElement<IcMemoryDetail>("ic-memory-detail", {
       entry: testEntry,
     });

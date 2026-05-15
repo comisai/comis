@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("IcSecretInput", () => {
-  it("renders label", async () => {
+  it("renders the label text inside the IcSecretInput shadow-DOM label element", async () => {
     const el = await createElement({ label: "API Key" });
     const label = el.shadowRoot?.querySelector("label");
     expect(label).toBeTruthy();
@@ -79,7 +79,7 @@ describe("IcSecretInput", () => {
     expect(input.placeholder).toBe("Custom placeholder");
   });
 
-  it("disabled state", async () => {
+  it("propagates disabled state to the underlying input element when disabled prop is true", async () => {
     const el = await createElement({ disabled: true });
     const input = el.shadowRoot?.querySelector("input") as HTMLInputElement;
     expect(input.disabled).toBe(true);

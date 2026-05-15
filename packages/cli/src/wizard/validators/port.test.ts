@@ -22,13 +22,13 @@ describe("validatePort", () => {
   });
 
   describe("below range", () => {
-    it("rejects 1023", () => {
+    it("rejects port 1023 as below valid range (must be in 1024-65535)", () => {
       const result = validatePort(1023);
       expect(result).toBeDefined();
       expect(result!.message).toContain("1024-65535");
     });
 
-    it("rejects 0", () => {
+    it("rejects port 0 as below valid range (must be in 1024-65535)", () => {
       const result = validatePort(0);
       expect(result).toBeDefined();
       expect(result!.message).toContain("1024-65535");
@@ -42,13 +42,13 @@ describe("validatePort", () => {
   });
 
   describe("above range", () => {
-    it("rejects 65536", () => {
+    it("rejects port 65536 as above valid range (must be in 1024-65535)", () => {
       const result = validatePort(65536);
       expect(result).toBeDefined();
       expect(result!.message).toContain("1024-65535");
     });
 
-    it("rejects 99999", () => {
+    it("rejects port 99999 as above valid range (must be in 1024-65535)", () => {
       const result = validatePort(99999);
       expect(result).toBeDefined();
       expect(result!.message).toContain("1024-65535");
@@ -56,13 +56,13 @@ describe("validatePort", () => {
   });
 
   describe("not a number", () => {
-    it("rejects 'abc'", () => {
+    it("rejects non-numeric port string 'abc' per number-format contract", () => {
       const result = validatePort("abc");
       expect(result).toBeDefined();
       expect(result!.message).toContain("must be a number");
     });
 
-    it("rejects 'NaN'", () => {
+    it("rejects literal 'NaN' string as not a valid number per port-format contract", () => {
       const result = validatePort("NaN");
       expect(result).toBeDefined();
       expect(result!.message).toContain("must be a number");
@@ -70,7 +70,7 @@ describe("validatePort", () => {
   });
 
   describe("float", () => {
-    it("rejects 4766.5", () => {
+    it("rejects fractional port 4766.5 as not a whole-number value per contract", () => {
       const result = validatePort(4766.5);
       expect(result).toBeDefined();
       expect(result!.message).toContain("whole number");

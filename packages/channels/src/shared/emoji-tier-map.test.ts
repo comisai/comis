@@ -174,7 +174,7 @@ describe("emoji-tier-map", () => {
       });
     });
 
-    it("is case-insensitive", () => {
+    it("classifies tool phase case-insensitively against tier-map keys", () => {
       expect(classifyToolPhase("BASH")).toBe("coding");
       expect(classifyToolPhase("Web_Search")).toBe("web");
       expect(classifyToolPhase("IMAGE")).toBe("media");

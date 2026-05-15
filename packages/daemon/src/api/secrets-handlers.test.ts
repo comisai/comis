@@ -200,7 +200,7 @@ describe("createSecretsHandlers (MEM-CTX-PORTS-13)", () => {
       ).rejects.toThrow(/Invalid name format/);
     });
 
-    it("rejects empty value", async () => {
+    it("rejects empty value string in secrets.set request per parameter validation contract", async () => {
       const { handlers } = makeMockedDeps();
       await expect(
         handlers["secrets.set"]!({

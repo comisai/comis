@@ -41,34 +41,34 @@ describe("isRegexSafe", () => {
   // Unsafe patterns -- nested quantifiers
   // ---------------------------------------------------------------------------
 
-  it("rejects (a+)+", () => {
+  it("rejects ReDoS-vulnerable nested-quantifier pattern (a+)+", () => {
     const result = isRegexSafe("(a+)+");
     expect(result.safe).toBe(false);
     expect((result as { safe: false; reason: string }).reason).toContain("nested quantifiers");
   });
 
-  it("rejects (.*)*", () => {
+  it("rejects ReDoS-vulnerable nested-quantifier pattern (.*)*", () => {
     const result = isRegexSafe("(.*)*");
     expect(result.safe).toBe(false);
     expect((result as { safe: false; reason: string }).reason).toContain("nested quantifiers");
   });
 
-  it("rejects (.+)+", () => {
+  it("rejects ReDoS-vulnerable nested-quantifier pattern (.+)+", () => {
     const result = isRegexSafe("(.+)+");
     expect(result.safe).toBe(false);
   });
 
-  it("rejects (a*)*", () => {
+  it("rejects ReDoS-vulnerable nested-quantifier pattern (a*)*", () => {
     const result = isRegexSafe("(a*)*");
     expect(result.safe).toBe(false);
   });
 
-  it("rejects (a+)*", () => {
+  it("rejects ReDoS-vulnerable nested-quantifier pattern (a+)*", () => {
     const result = isRegexSafe("(a+)*");
     expect(result.safe).toBe(false);
   });
 
-  it("rejects (a*)+", () => {
+  it("rejects ReDoS-vulnerable nested-quantifier pattern (a*)+", () => {
     const result = isRegexSafe("(a*)+");
     expect(result.safe).toBe(false);
   });

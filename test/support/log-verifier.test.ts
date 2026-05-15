@@ -50,7 +50,7 @@ describe("log-verifier", () => {
       expect(entries[1]!.level).toBe("warn");
     });
 
-    it("handles empty input", () => {
+    it("handles empty input string by returning zero parsed log entries", () => {
       expect(parseLogLines("")).toHaveLength(0);
       expect(parseLogLines("   ")).toHaveLength(0);
       expect(parseLogLines("\n\n\n")).toHaveLength(0);
@@ -100,7 +100,7 @@ describe("log-verifier", () => {
   describe("assertLogContains", () => {
     const entries = parseLogLines(SAMPLE_LOGS);
 
-    it("matches by level", () => {
+    it("matches log entries by level filter when assertLogContains is given a level criterion", () => {
       const result = assertLogContains(entries, { level: "debug" });
       expect(result.matched).toBe(true);
       expect(result.entry!.msg).toBe("Memory services initialized");

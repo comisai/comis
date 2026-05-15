@@ -7,15 +7,15 @@ describe("xmlEscapeAttr", () => {
     expect(xmlEscapeAttr("hello world")).toBe("hello world");
   });
 
-  it("escapes & to &amp;", () => {
+  it("escapes ampersand & to &amp; entity in xmlEscapeAttr output", () => {
     expect(xmlEscapeAttr("a&b")).toBe("a&amp;b");
   });
 
-  it("escapes < to &lt;", () => {
+  it("escapes less-than < to &lt; entity in xmlEscapeAttr output", () => {
     expect(xmlEscapeAttr("a<b")).toBe("a&lt;b");
   });
 
-  it("escapes > to &gt;", () => {
+  it("escapes greater-than > to &gt; entity in xmlEscapeAttr output", () => {
     expect(xmlEscapeAttr("a>b")).toBe("a&gt;b");
   });
 
@@ -23,7 +23,7 @@ describe("xmlEscapeAttr", () => {
     expect(xmlEscapeAttr('say "hello"')).toBe("say &quot;hello&quot;");
   });
 
-  it("escapes ' to &apos;", () => {
+  it("escapes single-quote ' to &apos; entity in xmlEscapeAttr output", () => {
     expect(xmlEscapeAttr("it's fine")).toBe("it&apos;s fine");
   });
 

@@ -158,7 +158,7 @@ describe("context.search handler", () => {
     }
   });
 
-  it("limit is respected", async () => {
+  it("limit parameter is respected when capping context.search result count", async () => {
     for (let i = 1; i <= 10; i++) {
       store.insertMessage({
         conversationId: convId,

@@ -43,7 +43,7 @@ describe("withSpinner", () => {
     expect(mockSpinner.fail).not.toHaveBeenCalled();
   });
 
-  it("rethrows on failure", async () => {
+  it("rethrows the exception thrown inside spinner callback after calling spinner.fail()", async () => {
     await expect(
       withSpinner("Loading...", async () => {
         throw new Error("boom");
@@ -53,12 +53,12 @@ describe("withSpinner", () => {
     expect(mockSpinner.succeed).not.toHaveBeenCalled();
   });
 
-  it("passes text to ora", async () => {
+  it("passes the text argument to the ora constructor for spinner label", async () => {
     await withSpinner("Fetching data...", async () => "ok");
     expect(ora).toHaveBeenCalledWith("Fetching data...");
   });
 
-  it("calls start()", async () => {
+  it("calls spinner.start() before invoking the wrapped callback", async () => {
     await withSpinner("Starting...", async () => "done");
     expect(mockSpinner.start).toHaveBeenCalled();
   });
