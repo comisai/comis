@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("IcArrayEditor", () => {
-  it("renders label", async () => {
+  it("renders the label text inside the IcArrayEditor shadow-DOM editor-label element", async () => {
     const el = await createElement({ label: "Origins" });
     const label = el.shadowRoot?.querySelector(".editor-label");
     expect(label).toBeTruthy();

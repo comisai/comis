@@ -384,7 +384,7 @@ describe("IcApp", () => {
       expect(priv(el)._authenticated).toBe(false);
     });
 
-    it("nulls apiClient", async () => {
+    it("nulls the apiClient field on the app element after logout", async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve({ agents: [] }),

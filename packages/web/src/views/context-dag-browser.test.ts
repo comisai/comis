@@ -33,7 +33,7 @@ describe("IcContextDagBrowser", () => {
     expect(loading).toBeTruthy();
   });
 
-  it("has shadow root", async () => {
+  it("attaches a shadow-root to the IcContextDagBrowser custom element on creation", async () => {
     const el = await createElement<IcContextDagBrowser>("ic-context-dag-browser");
     expect(el.shadowRoot).toBeTruthy();
   });

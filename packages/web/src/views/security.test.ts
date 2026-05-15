@@ -194,7 +194,7 @@ describe("IcSecurityView", () => {
     expect(title!.textContent).toContain("Security");
   });
 
-  it("shows 7 tabs", async () => {
+  it("shows 7 tab elements inside the IcSecurityView ic-tabs container", async () => {
     const rpc = createSecurityMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);

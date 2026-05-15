@@ -62,7 +62,7 @@ describe("IcConnectionDot", () => {
     expect(dot?.style.backgroundColor).toContain("var(--ic-text-dim)");
   });
 
-  it("has role='status'", async () => {
+  it("declares role='status' attribute on the IcConnectionDot element for ARIA semantics", async () => {
     const el = await createElement<IcConnectionDot>("ic-connection-dot");
     const dot = el.shadowRoot?.querySelector("[role='status']");
     expect(dot).toBeTruthy();

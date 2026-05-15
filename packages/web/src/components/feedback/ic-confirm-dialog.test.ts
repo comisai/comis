@@ -41,7 +41,7 @@ describe("IcConfirmDialog", () => {
     expect(backdrop).toBeTruthy();
   });
 
-  it("renders title text", async () => {
+  it("renders the title text inside the IcConfirmDialog shadow-DOM heading", async () => {
     const el = await createElement<IcConfirmDialog>("ic-confirm-dialog", {
       open: true,
       title: "Delete Agent",

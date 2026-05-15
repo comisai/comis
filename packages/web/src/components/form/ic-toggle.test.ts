@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("IcToggle", () => {
-  it("renders label text", async () => {
+  it("renders the label text inside the IcToggle shadow-DOM toggle-label element", async () => {
     const el = await createElement({ label: "Enable feature" });
     const label = el.shadowRoot?.querySelector(".toggle-label");
     expect(label).toBeTruthy();

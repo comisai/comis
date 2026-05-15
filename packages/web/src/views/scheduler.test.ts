@@ -140,7 +140,7 @@ afterEach(() => {
 /* ------------------------------------------------------------------ */
 
 describe("IcSchedulerView", () => {
-  it("1 - renders 3 tabs", async () => {
+  it("renders ic-tabs with 3 tab elements inside the IcSchedulerView shadow-DOM", async () => {
     const rpc = createSchedulerMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
