@@ -88,7 +88,7 @@ import type { DiscoveryTracker } from "./discovery-tracker.js";
 import { resetTrackerTimers } from "./tool-lifecycle.js";
 import { applyCommandDirectives } from "./executor-command-handlers.js";
 import { setupContextEngine } from "./executor-context-engine-setup.js";
-import { runPrompt } from "./executor-prompt-runner.js";
+import { runPrompt } from "./prompt-runner/index.js";
 import { tryInjectSilentFailure } from "./fault-injector.js";
 import { wrapToolResultWithGuide } from "./jit-guide-injector.js";
 import { postExecution } from "./executor-post-execution.js";

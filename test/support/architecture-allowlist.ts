@@ -490,12 +490,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "Core executor; split in Phase E into pi-executor/ subdirectory per EXEC-SPLIT-05",
     removedIn: "phase-E",
   },
-  {
-    file: "packages/agent/src/executor/executor-prompt-runner.ts",
-    lines: 1370,
-    reason: "Prompt runner; split in Phase E into prompt-runner/ subdirectory per EXEC-SPLIT-07",
-    removedIn: "phase-E",
-  },
   // Phase E adjacent (6 agent files; reason cites the generic EXEC-SPLIT-15 group)
   {
     file: "packages/agent/src/bridge/pi-event-bridge.ts",
@@ -2136,6 +2130,19 @@ export const coverageWaiver: readonly CoverageWaiverEntry[] = [
   {
     file: "packages/agent/src/executor/stream-wrappers/request-body/tool-deferral-injection.ts",
     reason: "Phase 42 EXEC-SPLIT-02 factory phase (injectToolDeferral — defer_loading injection + server-side tool_search swap). Behavior covered by factory.test.ts (createRequestBodyInjector — defer_loading injection).",
+  },
+  // -- Phase 42 EXEC-SPLIT-07 (prompt-runner/) --
+  {
+    file: "packages/agent/src/executor/prompt-runner/index.ts",
+    reason: "Barrel re-export module (Phase 42 EXEC-SPLIT-07 split). Re-exports 4 canonical public symbols (runPrompt + 3 interfaces) from sibling leaf modules without aliases; surface is verified by the parity test (executor-prompt-runner.parity.test.ts) and by the EXEC-SPLIT-08 dependency-direction structural test.",
+  },
+  {
+    file: "packages/agent/src/executor/prompt-runner/prompt-runner-types.ts",
+    reason: "Pure type-only module (Phase 42 EXEC-SPLIT-07 split). Hosts 3 public interfaces (PromptRunnerBridge, RunPromptParams, PromptRunResult); no runtime values to test. Type-level surface is verified by the parity test (executor-prompt-runner.parity.test.ts) + compile-time imports.",
+  },
+  {
+    file: "packages/agent/src/executor/prompt-runner/failure-path.ts",
+    reason: "Phase 42 EXEC-SPLIT-07 Rule 3 sub-module of output-escalation.ts (failure-path overflow recovery + error classification + timeout ghost-cost emission + OutputGuard error scan). Was extracted to keep output-escalation.ts under the 500L cap. Each downstream symbol is independently tested (overflow-recovery.test.ts, error-classifier.test.ts, executor-response-filter.test.ts); end-to-end failure-path semantics are exercised by the integration suite.",
   },
 ] as const;
 

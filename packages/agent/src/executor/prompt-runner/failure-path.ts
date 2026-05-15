@@ -125,7 +125,7 @@ function emitFailureDiagnostics(
 ): PromptRunResult["ghostCost"] {
   const {
     sessionKey, result, executionStartMs,
-    config, effectiveTimeout, deps,
+    config, deps,
   } = params;
 
   deps.logger.warn(

@@ -67,10 +67,6 @@ export async function runRetryLoop(
     promptError: undefined,
   };
 
-  // Tracks whether we already attempted a silent-failure retry cycle
-  // to prevent infinite loops (capped at 1 retry).
-  let silentRetryAttempted = false;
-
   // Redact LLM input -- log only character count, never user
   // message text, canary tokens, or system prompt content.
   deps.logger.debug({ inputChars: messageText.length }, "LLM input");
@@ -136,14 +132,16 @@ export async function runRetryLoop(
       // then return an empty final turn after a bookkeeping tool call.
       // The textEmitted flag from the bridge tracks all text_delta events.
       if ((earlyBridgeResult.llmCalls ?? 0) > 0 && !earlyBridgeResult.textEmitted) {
-        silentRetryAttempted = await detectSilentFailure(
+        // Single-entry by construction: detectSilentFailure is called at most
+        // once per runPrompt invocation (the surrounding `if (promptSucceeded
+        // && !skipPrompt)` cannot re-enter this branch). The
+        // `silentRetryAttempted` parameter on detectSilentFailure is the
+        // pre-split file's gate-close shape — preserved for the defensive
+        // invariant the helper documents, threaded in as `false` here.
+        await detectSilentFailure(
           params, messageText, promptImages, earlyBridgeResult, retryState,
-          invokeRetry, silentRetryAttempted,
+          invokeRetry, false,
         );
-        // Suppress lint: written then no further reads — same shape as the
-        // pre-split file's `silentRetryAttempted = true` gate-close lines.
-        // eslint-disable-next-line no-useless-assignment
-        silentRetryAttempted = silentRetryAttempted;
       }
     }
   }
