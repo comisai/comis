@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { composeStreamWrappers } from "./compose.js";
 import type { StreamFnWrapper } from "./types.js";
-import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers.js";
+import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers/index.js";
 
 describe("composeStreamWrappers", () => {
   let logger: ReturnType<typeof createMockLogger>;

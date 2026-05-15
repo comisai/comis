@@ -4,7 +4,7 @@ import { createCacheTraceWriter, parseSize, rotateIfNeeded } from "./cache-trace
 import type { ClockPort } from "@comis/core";
 const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 import type { CacheTraceConfig } from "./cache-trace-writer.js";
-import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers.js";
+import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers/index.js";
 
 // Mock node:fs -- appendFileSync, statSync, renameSync, unlinkSync
 vi.mock("node:fs", async (importOriginal) => {

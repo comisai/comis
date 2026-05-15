@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Context, Message } from "@mariozechner/pi-ai";
 import { createToolResultSizeBouncer } from "./tool-result-size-bouncer.js";
-import { createMockLogger, createMockStreamFn, makeAssistantMessage, makeContext } from "./__test-helpers.js";
+import { createMockLogger, createMockStreamFn, makeAssistantMessage, makeContext } from "./__test-helpers/index.js";
 
 describe("createToolResultSizeBouncer", () => {
   let logger: ReturnType<typeof createMockLogger>;

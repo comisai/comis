@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createConfigResolver, resolveBreakpointStrategy } from "./config-resolver.js";
 import type { ConfigResolverConfig } from "./config-resolver.js";
-import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers.js";
+import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers/index.js";
 
 describe("createConfigResolver", () => {
   let logger: ReturnType<typeof createMockLogger>;

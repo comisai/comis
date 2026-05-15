@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createApiPayloadTraceWriter } from "./api-payload-trace-writer.js";
 import type { ApiPayloadTraceConfig } from "./api-payload-trace-writer.js";
-import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers.js";
+import { createMockLogger, createMockStreamFn, makeContext } from "./__test-helpers/index.js";
 import type { ClockPort } from "@comis/core";
 const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
