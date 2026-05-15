@@ -128,7 +128,7 @@ describe("convertIrToSignalTextStyles", () => {
     expect(boldStyle!.length).toBe(4);
   });
 
-  it("handles empty IR", () => {
+  it("handles empty Intermediate Representation by returning empty text and styles", () => {
     const ir: MarkdownIR = { blocks: [], sourceLength: 0 };
     const result = convertIrToSignalTextStyles(ir);
     expect(result.text).toBe("");

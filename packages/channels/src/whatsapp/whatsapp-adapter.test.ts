@@ -134,7 +134,7 @@ describe("createWhatsAppAdapter", () => {
   });
 
   describe("channelType", () => {
-    it("returns 'whatsapp'", () => {
+    it("returns 'whatsapp' string for WhatsAppAdapter channelType getter", () => {
       const adapter = createWhatsAppAdapter(makeDeps());
       expect(adapter.channelType).toBe("whatsapp");
     });

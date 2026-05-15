@@ -269,7 +269,7 @@ describe("EchoChannelAdapter", () => {
   });
 
   describe("reset", () => {
-    it("clears all state", async () => {
+    it("clears all internal adapter state on reset including handlers and queues", async () => {
       // Populate state
       await adapter.start();
       await adapter.sendMessage("ch-1", "Hello");

@@ -325,7 +325,7 @@ describe("createTelegramAdapter", () => {
   });
 
   describe("channelType", () => {
-    it("returns 'telegram'", () => {
+    it("returns 'telegram' string for TelegramAdapter channelType getter", () => {
       const adapter = createTelegramAdapter(makeDeps());
       expect(adapter.channelType).toBe("telegram");
     });

@@ -114,7 +114,7 @@ describe("createIrcAdapter", () => {
   });
 
   describe("channelType", () => {
-    it("returns 'irc'", () => {
+    it("returns 'irc' string for IrcAdapter channelType getter", () => {
       const adapter = createIrcAdapter(makeDeps());
       expect(adapter.channelType).toBe("irc");
     });

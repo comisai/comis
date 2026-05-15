@@ -4,15 +4,15 @@ import { escapeSlackMrkdwn } from "./format-slack.js";
 
 describe("format-slack", () => {
   describe("escapeSlackMrkdwn", () => {
-    it("escapes & to &amp;", () => {
+    it("escapes ampersand & to &amp; entity in Slack mrkdwn output", () => {
       expect(escapeSlackMrkdwn("foo & bar")).toBe("foo &amp; bar");
     });
 
-    it("escapes < to &lt;", () => {
+    it("escapes less-than < to &lt; entity in Slack mrkdwn output", () => {
       expect(escapeSlackMrkdwn("a < b")).toBe("a &lt; b");
     });
 
-    it("escapes > to &gt;", () => {
+    it("escapes greater-than > to &gt; entity in Slack mrkdwn output", () => {
       expect(escapeSlackMrkdwn("a > b")).toBe("a &gt; b");
     });
 
