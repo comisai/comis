@@ -80,7 +80,7 @@ describe("Daemon Lifecycle", () => {
       expect(result.matched, result.error).toBe(true);
     });
 
-    it("logs daemon started", () => {
+    it("emits 'Comis daemon started' INFO log line on successful daemon startup", () => {
       const entries = logCapture.getEntries();
       const result = assertLogContains(entries, { msg: "Comis daemon started" });
       expect(result.matched, result.error).toBe(true);

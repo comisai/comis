@@ -185,7 +185,7 @@ describe("no-cycles -- intra-package via madge (ARCH-BASE-05, source mode)", () 
 });
 
 describe("no-cycles -- cross-package via Tarjan SCC (ARCH-BASE-05)", () => {
-  it("tsconfig refs + package.json @comis/* deps form an acyclic graph", () => {
+  it("verifies tsconfig references + package.json @comis/* deps form an acyclic graph via Tarjan SCC", () => {
     const nodes = new Set<string>(WORKSPACE_PACKAGES);
     const edges = new Map<string, Set<string>>();
 

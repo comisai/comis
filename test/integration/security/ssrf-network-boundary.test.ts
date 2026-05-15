@@ -128,7 +128,7 @@ describe("SSRF Network Boundary -- protocol allowlist", () => {
     if (!r.ok) expect(r.error.message).toMatch(/protocol/i);
   });
 
-  it("blocks javascript:", async () => {
+  it("blocks javascript: protocol URLs as SSRF/XSS risk per validateUrl contract", async () => {
     const r = await validateUrl("javascript:alert(1)");
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.message).toMatch(/protocol/i);
@@ -140,7 +140,7 @@ describe("SSRF Network Boundary -- protocol allowlist", () => {
     if (!r.ok) expect(r.error.message).toMatch(/protocol/i);
   });
 
-  it("blocks data:", async () => {
+  it("blocks data: protocol URLs as untrusted-content risk per validateUrl contract", async () => {
     const r = await validateUrl("data:text/plain,hello");
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.message).toMatch(/protocol/i);
@@ -233,7 +233,7 @@ describe("SSRF Network Boundary -- per-call re-resolution", () => {
 // ---------------------------------------------------------------------------
 
 describe("SSRF Network Boundary -- public IP literals allowed", () => {
-  it("allows 1.1.1.1", async () => {
+  it("allows public IP literal 1.1.1.1 as valid target per validateUrl contract", async () => {
     const r = await validateUrl("http://1.1.1.1/");
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value.ip).toBe("1.1.1.1");

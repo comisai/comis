@@ -196,7 +196,7 @@ describe("SYSTEM LIFECYCLE TEST: Pre-flight, health, and auth", () => {
       expect([401, 403]).toContain(resp.status);
     });
 
-    it("RPC-scope token accesses REST (200)", async () => {
+    it("RPC-scope token accesses REST endpoints and receives status 200 per auth-scope contract", async () => {
       const resp = await fetch(`${handle.gatewayUrl}/v1/models`, {
         headers: makeAuthHeaders(rpcOnlyToken),
       });

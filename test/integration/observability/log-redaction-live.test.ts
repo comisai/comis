@@ -76,7 +76,7 @@ describe("Log redaction -- top-level credential fields via createLogger", () => 
     cap.restore();
   });
 
-  it("redacts apiKey", () => {
+  it("redacts apiKey field value in serialized log line per Pino redaction config", () => {
     const log = createLogger({ name: "test", level: "debug" });
     log.info({ apiKey: "sk-test-secret-1234" }, "outgoing call");
     const text = cap.getText();
