@@ -94,8 +94,14 @@ export function createMockDiscordServer(): MockDiscordServer {
     const method = req.method ?? "GET";
     const body = await readBody(req);
 
-    // GET /api/v10/users/@me — bot identity for validateDiscordToken.
-    if (method === "GET" && /^\/api\/v\d+\/users\/@me$/.test(url)) {
+    // GET /[api/]v10/users/@me — bot identity for validateDiscordToken.
+    //
+    // discord.js builds URLs as <api>/v<n>/users/@me where <api> is its
+    // default (https://discord.com/api) OR the apiRoot override (no
+    // /api/ prefix in that case — overriding `api:` REPLACES the prefix
+    // wholesale per @discordjs/rest 2.6.1). Accept either shape so the
+    // mock works for both code paths. The `@` may be URL-encoded as %40.
+    if (method === "GET" && /^(?:\/api)?\/v\d+\/users\/(@|%40)me(?:\?.*)?$/.test(url)) {
       bump("users-me");
       captured.push({
         type: "users-me",
@@ -111,8 +117,8 @@ export function createMockDiscordServer(): MockDiscordServer {
       return;
     }
 
-    // GET /api/v10/gateway/bot — returns the gateway URL.
-    if (method === "GET" && /^\/api\/v\d+\/gateway\/bot$/.test(url)) {
+    // GET /[api/]v10/gateway/bot — returns the gateway URL.
+    if (method === "GET" && /^(?:\/api)?\/v\d+\/gateway\/bot(?:\?.*)?$/.test(url)) {
       bump("gateway-bot");
       captured.push({
         type: "gateway-bot",
@@ -133,16 +139,16 @@ export function createMockDiscordServer(): MockDiscordServer {
       return;
     }
 
-    // GET /api/v10/gateway — public gateway URL (no auth).
-    if (method === "GET" && /^\/api\/v\d+\/gateway$/.test(url)) {
+    // GET /[api/]v10/gateway — public gateway URL (no auth).
+    if (method === "GET" && /^(?:\/api)?\/v\d+\/gateway(?:\?.*)?$/.test(url)) {
       bump("gateway-bot");
       const addr = server!.address() as AddressInfo;
       send(res, 200, { url: `ws://127.0.0.1:${addr.port}` });
       return;
     }
 
-    // POST /api/v10/channels/<id>/messages — bot outbound capture.
-    const sendMatch = url.match(/^\/api\/v\d+\/channels\/([^/]+)\/messages(?:\?.*)?$/);
+    // POST /[api/]v10/channels/<id>/messages — bot outbound capture.
+    const sendMatch = url.match(/^(?:\/api)?\/v\d+\/channels\/([^/]+)\/messages(?:\?.*)?$/);
     if (method === "POST" && sendMatch) {
       bump("send-message");
       let parsed: Record<string, unknown> = {};

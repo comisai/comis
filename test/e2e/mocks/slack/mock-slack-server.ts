@@ -110,7 +110,12 @@ export function createMockSlackServer(): MockSlackServer {
     const method = req.method ?? "GET";
     const body = await readBody(req);
 
-    if (method === "POST" && /^\/api\/auth\.test(?:\?.*)?$/.test(url)) {
+    // @slack/web-api builds URLs as `<slackApiUrl><method>`. The default
+    // slackApiUrl is `https://slack.com/api/` (trailing slash) so methods
+    // appear at `/api/<method>`. When callers pass `slackApiUrl: <base>`
+    // without `/api/`, methods appear at the root. Accept both so this
+    // mock works for both code paths.
+    if (method === "POST" && /^(?:\/api)?\/auth\.test(?:\?.*)?$/.test(url)) {
       bump("auth-test");
       captured.push({
         type: "auth-test",
@@ -129,7 +134,7 @@ export function createMockSlackServer(): MockSlackServer {
       return;
     }
 
-    if (method === "POST" && /^\/api\/chat\.postMessage(?:\?.*)?$/.test(url)) {
+    if (method === "POST" && /^(?:\/api)?\/chat\.postMessage(?:\?.*)?$/.test(url)) {
       bump("post-message");
       const parsed = parseBody(body, req.headers["content-type"]);
       const channel = (parsed["channel"] as string | undefined) ?? "";
