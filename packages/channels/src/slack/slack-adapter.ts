@@ -96,12 +96,14 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
     },
 
     async start(): Promise<Result<void, Error>> {
-      // Fail fast on invalid credentials
+      // Fail fast on invalid credentials. Pass apiRoot if set (Phase 40 /
+      // Plan 40-09 / COV-15) so auth.test() hits the redirection mock.
       const credResult = await validateSlackCredentials({
         botToken: deps.botToken,
         mode: deps.mode,
         appToken: deps.appToken,
         signingSecret: deps.signingSecret,
+        ...(deps.apiRoot ? { apiRoot: deps.apiRoot } : {}),
       });
 
       if (!credResult.ok) {

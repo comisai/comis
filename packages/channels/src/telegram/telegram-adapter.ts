@@ -245,8 +245,10 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
     },
 
     async start(): Promise<Result<void, Error>> {
-      // Fail fast on invalid token
-      const tokenResult = await validateBotToken(deps.botToken);
+      // Fail fast on invalid token. Pass apiRoot if set (Wave A1 / Plan 40-09)
+      // so the in-adapter validation also targets the redirection mock —
+      // otherwise the validator hits api.telegram.org and 401s in E2E tests.
+      const tokenResult = await validateBotToken(deps.botToken, deps.apiRoot);
       if (!tokenResult.ok) {
         deps.logger.error(
           {

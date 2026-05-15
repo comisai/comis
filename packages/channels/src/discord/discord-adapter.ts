@@ -114,7 +114,9 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
 
     async start(): Promise<Result<void, Error>> {
       // Fail fast on invalid token
-      const tokenResult = await validateDiscordToken(deps.botToken);
+      // Pass apiRoot if set (Phase 40 / Plan 40-09 / COV-15) so adapter
+      // self-validation hits the redirection mock instead of discord.com.
+      const tokenResult = await validateDiscordToken(deps.botToken, deps.apiRoot);
       if (!tokenResult.ok) {
         deps.logger.error(
           {
