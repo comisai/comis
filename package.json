@@ -23,6 +23,7 @@
     "lint:security": "eslint --config eslint.config.js",
     "test": "vitest",
     "test:architecture": "vitest run --project architecture",
+    "test:e2e": "vitest run --config test/e2e/vitest.config.ts",
     "smoke:tarball": "node scripts/smoke/tarball-smoke.mjs",
     "test:integration": "vitest run --config test/vitest.config.ts",
     "test:orchestrate": "npx tsx test/orchestrate.ts",
