@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: Plugin registration precondition guards (toolName / route / config-schema section non-empty); consumed at bootstrap entry (daemon.ts boundary catch) (Phase 41 TS-HYG-07).
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import type {

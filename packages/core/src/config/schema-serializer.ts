@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: Unknown config section guard in serializeSection(); consumed via daemon config-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).
 /**
  * Config schema serializer: converts Zod schemas to JSON Schema for agent introspection.
  *
