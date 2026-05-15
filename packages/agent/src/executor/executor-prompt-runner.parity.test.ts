@@ -5,7 +5,7 @@ import {
   type PromptRunnerBridge,
   type RunPromptParams,
   type PromptRunResult,
-} from "./executor-prompt-runner.js";
+} from "./prompt-runner/index.js";
 
 /**
  * Phase 42 parity protection — EXEC-SPLIT-01.
