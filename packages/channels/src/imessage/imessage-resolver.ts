@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: media-resolver throws inside fromPromise(); converted to Result.err (Phase 41 TS-HYG-07).
 /**
  * iMessage MediaResolverPort adapter.
  *

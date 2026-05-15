@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: file-tool validation guards; throws caught by AgentTool wrapper (returns AgentToolResult) — agent execution boundary catch (Phase 41 TS-HYG-07).
 /**
  * Native read tool: file reading with line numbers, pagination, encoding
  * awareness, notebook rendering, dedup, and security guards.

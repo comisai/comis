@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: task-store SQLite adapter precondition guards; consumed via daemon heartbeat handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).
 import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { safePath, systemNowMs } from "@comis/core";

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: monitoring source boundary re-raise; consumed via monitoring-source aggregator try/catch chain (daemon.ts bootstrap boundary) (Phase 41 TS-HYG-07).
 /**
  * Security Update HeartbeatSourcePort implementation.
  * Detects pending security updates by querying the system package

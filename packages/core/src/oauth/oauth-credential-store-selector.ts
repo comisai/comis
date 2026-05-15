@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: Unknown storage-backend guard; consumed at bootstrap composition-root (daemon.ts catch boundary per AGENTS.md §6.2) (Phase 41 TS-HYG-07).
 /**
  * OAuth credential store selector.
  *

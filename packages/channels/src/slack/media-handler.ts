@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: Slack media-handler boundary throws; consumed by slack-resolver/adapter try/catch chain converting to ResolvedMedia Result (Phase 41 TS-HYG-07).
 /**
  * Slack Media Handler: Attachment extraction and authenticated file download.
  *

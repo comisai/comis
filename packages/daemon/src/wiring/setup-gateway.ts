@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: gateway wiring re-raise; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
 /**
  * Gateway setup: RPC bridge (deferred dispatch), RPC adapter wiring, dynamic
  * method registration, webhook mounting, OpenAI-compatible route mounting,

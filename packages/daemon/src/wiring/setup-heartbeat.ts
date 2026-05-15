@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: heartbeat-executor lookup guard; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
 /**
  * Heartbeat wiring: creates PerAgentHeartbeatRunner with AgentHeartbeatSource
  * as its onTick callback for LLM-driven per-agent heartbeat turns.

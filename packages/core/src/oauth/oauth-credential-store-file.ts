@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: File-backed OAuth credential store throws: ENOENT re-raise (line 182) is unlink-cleanup pattern; lines 186/195/211 are file-format/decode boundary guards. Consumed by OAuthCredentialStorePort callers (auth-handlers daemon RPC @allow-throw per Decision 2) (Phase 41 TS-HYG-07).
 /**
  * Plaintext file-backed OAuthCredentialStorePort adapter.
  *

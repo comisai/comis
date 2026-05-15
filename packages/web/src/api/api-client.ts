@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: web API client dev-time validation guards; consumed by Lit element error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception (Phase 41 TS-HYG-07).
 /**
  * HTTP/SSE client for the Comis gateway REST API.
  *

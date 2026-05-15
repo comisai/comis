@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: coalescer precondition guard (>=1 message required); consumed by inbound-pipeline boundary catch (Phase 41 TS-HYG-07).
 /**
  * Message Coalescer: Merges multiple rapid messages into a single turn.
  *

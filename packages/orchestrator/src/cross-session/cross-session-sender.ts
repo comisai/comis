@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: cross-session-sender validation guards (invalid session key, session-not-found, deadlock-risk); consumed via daemon session-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).
 /**
  * Cross-session sender module.
  * Supports three messaging modes between agent sessions:

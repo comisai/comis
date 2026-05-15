@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: validation throw inside tryCatch() boundary wrapper (CredentialMappingPort.set); SQLite-backed adapter rethrows are caught and converted to Result by the port-internal tryCatch + caller via daemon RPC handler @allow-throw boundary (Decision 2 transitive) (Phase 41 TS-HYG-07).
 /**
  * CredentialMappingStore — CredentialMappingPort implementation with SQLite storage.
  *

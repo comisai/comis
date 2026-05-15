@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: ENOENT re-raise inside writeIfMissing 'wx' flag fallback (line 103); EEXIST is the silent-skip path, all other errors propagate. Consumed at workspace-init boundary (CLI wizard + daemon bootstrap, both @allow-throw entry points). (Phase 41 TS-HYG-07).
 // Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #5.
 import { safePath } from "../security/safe-path.js";
 import { execFile as execFileCb } from "node:child_process";

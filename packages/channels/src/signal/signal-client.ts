@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: signal-client SDK boundary throws; caught by adapter try/catch chain converting to inbound-pipeline errors (Phase 41 TS-HYG-07).
 /**
  * Signal JSON-RPC HTTP + SSE Client.
  *

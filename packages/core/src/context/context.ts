@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: getContext() invariant: AsyncLocalStorage scope assertion. Caller chose getContext() (vs tryGetContext()) signaling they require the context; throw is the contract per AGENTS.md §2.6. Consumed by request-path code which runs under the channel/RPC dispatch boundary. (Phase 41 TS-HYG-07).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { z } from "zod";
 import { DeliveryOriginSchema } from "../domain/delivery-origin.js";

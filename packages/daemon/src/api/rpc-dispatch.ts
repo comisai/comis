@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: RPC dispatcher boundary itself (line 304 unknown-method + line 320 re-throw); the re-throw IS the JSON-RPC error path -- gateway/method-router catches and converts to JSON-RPC error response (Phase 41 TS-HYG-07).
 /**
  * Central RPC dispatch router.
  * Merges all 14 domain handler modules into a single dispatch function

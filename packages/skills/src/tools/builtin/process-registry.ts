@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: builtin tool boundary; throws caught by AgentTool wrapper (Phase 41 TS-HYG-07).
 /**
  * ProcessRegistry: shared in-memory store for background process sessions.
  *

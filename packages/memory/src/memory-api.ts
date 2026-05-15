@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: MemoryApi.clear() requires non-empty scope to prevent accidental blanket wipe; throw is a guard rail consumed by the daemon RPC handler boundary (Decision 2 transitive — memory-handlers is @allow-throw) (Phase 41 TS-HYG-07).
 /**
  * MemoryApi: Programmatic interface for memory inspection, search,
  * management, and guardrail enforcement.

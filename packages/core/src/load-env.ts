@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: loadEnv() failure on missing dotenv file; consumed at daemon bootstrap entry (daemon.ts catch boundary). Bootstrap-time hard fail is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result, but env loader is a primitive consumed before composition root). (Phase 41 TS-HYG-07).
 /**
  * Minimal .env file loader.
  *

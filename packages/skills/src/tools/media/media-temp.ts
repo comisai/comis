@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: media-tool boundary; throws caught by AgentTool wrapper (image/video/audio tools) or upstream fromPromise() converter (Phase 41 TS-HYG-07).
 /**
  * Managed temp directory for media processing files with heartbeat cleanup.
  *

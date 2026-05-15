@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: 10MB session-size guard in SessionStore.save(); consumed by daemon RPC session-handlers (@allow-throw boundary per Decision 2) (Phase 41 TS-HYG-07).
 /**
  * Session store for conversation persistence.
  *

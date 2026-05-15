@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: @allow-throw boundary: gateway HTTP media-routes; throws caught by Hono framework error-handler boundary per AGENTS.md §2.1 web exception (Phase 41 TS-HYG-07).
 /**
  * Media file serving routes -- Hono sub-app for serving stored media files.
  *

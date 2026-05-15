@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary (Phase 41 TS-HYG-07).
 /**
  * MCP Client Manager: Connects to external Model Context Protocol servers
  * and discovers their tools for use by the Comis agent.

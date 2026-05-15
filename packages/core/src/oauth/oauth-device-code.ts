@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: OAuth device-code flow validation throws (state validation, response-shape guards); consumed via auth-handlers daemon RPC (@allow-throw per Decision 2). State-machine throws are caller-bounded — the device-code orchestrator catches at each transition boundary. (Phase 41 TS-HYG-07).
 /**
  * OAuth device-code login for OpenAI Codex.
  *
