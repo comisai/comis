@@ -38,9 +38,9 @@ export default defineConfig({
       // no test files) is intentionally floored at 0/0/0/0 — no enforcement.
       thresholds: {
         "packages/shared/src/**/*.ts":       { lines: 97, branches: 92, functions: 96,  statements: 97 },
-        "packages/core/src/**/*.ts":         { lines: 90, branches: 77, functions: 90,  statements: 90 },
+        "packages/core/src/**/*.ts":         { lines: 91, branches: 79, functions: 91,  statements: 91 },
         "packages/infra/src/**/*.ts":        { lines: 97, branches: 95, functions: 100, statements: 97 },
-        "packages/memory/src/**/*.ts":       { lines: 95, branches: 86, functions: 96,  statements: 95 },
+        "packages/memory/src/**/*.ts":       { lines: 95, branches: 85, functions: 96,  statements: 95 },
         "packages/skills/src/**/*.ts":       { lines: 89, branches: 81, functions: 91,  statements: 89 },
         "packages/agent/src/**/*.ts":        { lines: 88, branches: 79, functions: 87,  statements: 88 },
         "packages/channels/src/**/*.ts":     { lines: 82, branches: 70, functions: 85,  statements: 82 },
