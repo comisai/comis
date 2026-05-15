@@ -16,11 +16,35 @@ import { updateState, heading, CancelError } from "../index.js";
 // ---------- Security Notice ----------
 
 const SECURITY_NOTICE = `Comis agents can execute tools, read files, and interact
-with external services on your behalf. You are responsible
-for reviewing agent actions and configuring appropriate
-safety guardrails.
+with external services on your behalf. A bad prompt can
+trick an agent into doing unsafe things.
 
-Learn more: https://comis.dev/docs/security`;
+Trust model
+By default, Comis is a personal agent — one trusted operator
+boundary. If multiple users can message one tool-enabled
+agent, they share that delegated authority. That is a
+different trust mode and requires explicit lock-down.
+
+Recommended baseline
+- Keep channel allowMode: "allowlist" (shipped default —
+  default-deny; do not switch to "open" without review).
+- Keep session.dmScopeMode: "per-channel-peer" (default) to
+  isolate DM sessions between users.
+- Run agents with least-privilege tools and the exec sandbox
+  enabled.
+- Keep secrets (bot tokens, API keys) outside the agent's
+  reachable filesystem.
+- Use a strong model for any agent with tools or untrusted
+  inboxes.
+
+Run regularly
+  comis security audit
+  comis security audit --fix
+
+You are responsible for reviewing agent actions and
+configuring appropriate safety guardrails.
+
+Learn more: https://docs.comis.ai/security`;
 
 // ---------- Step Implementation ----------
 
@@ -40,7 +64,8 @@ export const welcomeStep: WizardStep = {
 
     // Risk acknowledgement -- must explicitly accept
     const accepted = await prompter.confirm({
-      message: "I understand and accept responsibility for agent actions.",
+      message:
+        "I understand Comis is personal-by-default; shared or multi-user use requires lock-down. Continue?",
       initialValue: false,
     });
 
