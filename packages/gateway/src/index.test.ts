@@ -2,7 +2,7 @@
 import { describe, it, expect } from "vitest";
 import * as gateway from "./index.js";
 
-describe("gateway barrel exports smoke test", () => {
+describe("gateway/src/index — barrel exports smoke contract", () => {
   // Server
   it("exports createGatewayServer", () => {
     expect(typeof gateway.createGatewayServer).toBe("function");
