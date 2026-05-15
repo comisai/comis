@@ -15,7 +15,11 @@
  */
 
 import { describe, it, expect, expectTypeOf } from "vitest";
-import { asTextLike, type DiscordTextLikeChannel } from "./discord-adapter-types.js";
+import {
+  asTextLike,
+  asThreadInfo,
+  type DiscordTextLikeChannel,
+} from "./discord-adapter-types.js";
 
 describe("asTextLike — Discord channel narrowing (TS-HYG-05)", () => {
   it("asTextLike returns null when channel is null", () => {
@@ -67,5 +71,44 @@ describe("asTextLike — Discord channel narrowing (TS-HYG-05)", () => {
     expectTypeOf<DiscordTextLikeChannel>().toHaveProperty("messages");
     expectTypeOf<DiscordTextLikeChannel>().toHaveProperty("setTopic");
     expectTypeOf<DiscordTextLikeChannel>().toHaveProperty("send");
+  });
+});
+
+describe("asThreadInfo — Discord thread iteration narrowing (TS-HYG-05 / TS-HYG-06)", () => {
+  it("asThreadInfo returns null when the input thread argument is undefined", () => {
+    expect(asThreadInfo(undefined)).toBeNull();
+  });
+
+  it("asThreadInfo returns null when input is missing the required id field", () => {
+    expect(
+      asThreadInfo({ name: "x", archived: false, memberCount: 0, messageCount: 0 }),
+    ).toBeNull();
+  });
+
+  it("asThreadInfo returns the typed DiscordThreadInfo when all fields are present", () => {
+    const result = asThreadInfo({
+      id: "abc",
+      name: "general",
+      archived: false,
+      memberCount: 5,
+      messageCount: 12,
+      extra: "ignored",
+    });
+    expect(result).not.toBeNull();
+    if (!result) return;
+    expect(result.id).toBe("abc");
+    expect(result.memberCount).toBe(5);
+  });
+
+  it("asThreadInfo returns null when memberCount is a string rather than a number", () => {
+    expect(
+      asThreadInfo({
+        id: "abc",
+        name: "x",
+        archived: false,
+        memberCount: "5", // wrong type
+        messageCount: 0,
+      }),
+    ).toBeNull();
   });
 });

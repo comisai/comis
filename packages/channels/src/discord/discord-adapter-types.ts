@@ -69,3 +69,45 @@ export function asTextLike(
   if (!(channel as { isTextBased: () => boolean }).isTextBased()) return null;
   return channel as unknown as DiscordTextLikeChannel;
 }
+
+/**
+ * Phase 41 TS-HYG-06 secondary shape — for the per-thread iteration sites
+ * in `discord-actions.ts` `threadList` action (RESEARCH §"Discord `as any`
+ * inventory" lines 223-231). The polymorphic iteration item from
+ * `ThreadManager.fetchActive()` is typed loosely; this is a stricter
+ * structural shape suitable for the read-only fields the action emits.
+ */
+export interface DiscordThreadInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly archived: boolean;
+  readonly memberCount: number;
+  readonly messageCount: number;
+}
+
+/**
+ * Narrow a per-thread iteration object to `DiscordThreadInfo`. Returns
+ * `null` if any required field is missing or wrong-typed.
+ *
+ * The function is intentionally defensive — `fetchActive()` returns
+ * differently-shaped objects across discord.js minor versions, and the
+ * iteration site logs `archived ?? false` / `memberCount ?? 0` /
+ * `messageCount ?? 0` defaults. Callers that want the lenient behavior
+ * should fall back to `0` / `false` on `null` return per their own policy.
+ */
+export function asThreadInfo(thread: unknown): DiscordThreadInfo | null {
+  if (!thread || typeof thread !== "object") return null;
+  const t = thread as Record<string, unknown>;
+  if (typeof t.id !== "string") return null;
+  if (typeof t.name !== "string") return null;
+  if (typeof t.archived !== "boolean") return null;
+  if (typeof t.memberCount !== "number") return null;
+  if (typeof t.messageCount !== "number") return null;
+  return {
+    id: t.id,
+    name: t.name,
+    archived: t.archived,
+    memberCount: t.memberCount,
+    messageCount: t.messageCount,
+  };
+}

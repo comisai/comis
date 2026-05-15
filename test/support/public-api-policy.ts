@@ -582,11 +582,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TELEGRAM_THREAD_META_KEYS",
       // Phase 41 plan 02 (TS-HYG-05): Discord channel narrowing surface.
       // Consumed by Plan 41-05 (TS-HYG-06) to retarget the 18 `as any` casts
-      // in `discord-actions.ts`. The plans land in separate waves of phase 41:
-      // plan 02 publishes the contract; plan 05 imports and consumes it.
-      // Both entries are removed when plan 05 retargets discord-actions.ts.
+      // in `discord-actions.ts` + the 5 thread-iteration sites. The plans
+      // land in separate waves of phase 41: plan 02 publishes the contract;
+      // plan 05 imports and consumes it. All four entries are removed when
+      // plan 05 retargets discord-actions.ts.
       "asTextLike",
       "DiscordTextLikeChannel",
+      "asThreadInfo",
+      "DiscordThreadInfo",
     ])],
     // @comis/cli: 3 documented external-API entries (withClient,
     // credentialsStep, RpcClient). All register*Command factories and
