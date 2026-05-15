@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: setup-agents wiring guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
 /**
  * Per-agent executor setup: session manager, per-agent workspace, safety
  * dependencies (circuit breaker, budget guard, cost tracker, step counter),

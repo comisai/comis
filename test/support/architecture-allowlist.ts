@@ -553,7 +553,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/daemon/src/daemon.ts",
     lines: 2600,
-    reason: "Daemon entrypoint; split in Phase F per FILE-SPLIT-01",
+    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits) (Phase 41 TS-HYG-07).",
     removedIn: "phase-F",
   },
   {
@@ -565,7 +565,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/daemon/src/wiring/setup-agents.ts",
     lines: 1149,
-    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-03",
+    reason: "@allow-throw boundary: setup-agents wiring guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
     removedIn: "phase-F",
   },
   {
@@ -589,7 +589,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   {
     file: "packages/daemon/src/wiring/setup-gateway.ts",
     lines: 973,
-    reason: "Daemon wiring module; split in Phase F per FILE-SPLIT-07",
+    reason: "@allow-throw boundary: gateway wiring re-raise; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
     removedIn: "phase-F",
   },
   {
@@ -712,38 +712,38 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/agent/src/background/background-task-persistence.ts",
     lineRanges: [[147, 147]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: background task persistence re-raise (line 147) inside try/catch wrapper; outer caller (executor) catches at PiExecutor boundary which is itself consumed by daemon RPC handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/agent/src/background/session-resolver.ts",
     lineRanges: [[112, 112]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: session-resolver session-not-found guard; consumed by daemon RPC handlers (subagent-handlers / session-handlers @allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/agent/src/bootstrap/sections/tool-descriptions.ts",
     lineRanges: [[774, 774], [780, 780]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: bootstrap-time invariant assertion (LEAN_TOOL_DESCRIPTIONS / TOOL_SUMMARIES / NATIVE_TOOLS keys must match); consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/agent/src/bootstrap/workspace-loader.ts",
     lineRanges: [[149, 149]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: workspace-loader re-raise (non-ENOENT errors); outer caller is daemon bootstrap which catches at daemon.ts entry (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/agent/src/identity/identity-loader.ts",
     lineRanges: [[52, 52]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: identity-loader re-raise of unexpected fs errors (PathTraversalError is the silent-skip path); consumed at agent bootstrap (daemon.ts catch boundary) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/agent/src/model/resolve-provider-api-key.ts",
     lineRanges: [[83, 83]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: OAuth credential resolution: explicit-profile request that store cannot satisfy is security-critical hard fail per the inline comment (line 79-81); caller chain is PiExecutor.execute -> gateway routes which lift to user-facing error (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/agent/src/spawn/sub-agent-runner.ts",
@@ -754,8 +754,8 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/agent/src/workspace/workspace-manager.ts",
     lineRanges: [[101, 101]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: workspace-manager re-raise of non-EEXIST fs errors (line 101); consumed by daemon bootstrap (daemon.ts catch boundary) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   // ----- channels package (9 files) -----
   {
@@ -1076,8 +1076,8 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/daemon/src/api/rpc-dispatch.ts",
     lineRanges: [[304, 304], [320, 320]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: RPC dispatcher boundary itself (line 304 unknown-method + line 320 re-throw); the re-throw IS the JSON-RPC error path -- gateway/method-router catches and converts to JSON-RPC error response (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/api/secrets-handlers.ts",
@@ -1118,62 +1118,62 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/daemon/src/daemon.ts",
     lineRanges: [[438, 438], [452, 452], [558, 558], [567, 567], [1435, 1435], [1801, 1801]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/monitoring/security-update-source.ts",
     lineRanges: [[99, 99]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: monitoring source boundary re-raise; consumed via monitoring-source aggregator try/catch chain (daemon.ts bootstrap boundary) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/monitoring/system-resources-source.ts",
     lineRanges: [[131, 131]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: monitoring source /proc/meminfo parse guard; consumed via monitoring-source aggregator try/catch chain (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/monitoring/systemd-service-source.ts",
     lineRanges: [[60, 60]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: monitoring source systemctl invocation error; consumed via monitoring-source aggregator try/catch chain (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/wiring/daemon-utils.ts",
     lineRanges: [[14, 14], [36, 36], [60, 60]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: channel-adapter / executor registry lookup guards; consumed at daemon bootstrap composition-root (daemon.ts catch boundary) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/wiring/setup-agents.ts",
     lineRanges: [[908, 908], [1085, 1085], [1109, 1109]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: setup-agents wiring guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/wiring/setup-gateway-routes.ts",
     lineRanges: [[135, 135], [175, 175]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: gateway-route wiring re-raise; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/wiring/setup-gateway.ts",
     lineRanges: [[136, 136]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: gateway wiring re-raise; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/wiring/setup-heartbeat.ts",
     lineRanges: [[191, 191]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: heartbeat-executor lookup guard; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/wiring/setup-schedulers.ts",
     lineRanges: [[295, 295], [322, 322]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: scheduler wiring guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   // ----- gateway package (4 files) -----
   {
@@ -1253,8 +1253,8 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/orchestrator/src/cross-session/cross-session-sender.ts",
     lineRanges: [[95, 95], [101, 101], [129, 129]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: cross-session-sender validation guards (invalid session key, session-not-found, deadlock-risk); consumed via daemon session-handlers (@allow-throw per Decision 2) (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/orchestrator/src/execution/execution-execute.ts",
@@ -1265,14 +1265,14 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/orchestrator/src/queue/coalescer.ts",
     lineRanges: [[32, 32]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: coalescer precondition guard (>=1 message required); consumed by inbound-pipeline boundary catch (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/orchestrator/src/queue/priority-scheduler.ts",
     lineRanges: [[177, 177]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: priority-scheduler shutdown guard; consumed by inbound-pipeline boundary catch (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   // ----- scheduler package (5 files) -----
   {
@@ -1710,8 +1710,8 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     file: "packages/daemon/src/wiring/setup-agents.ts",
     typeName: "SingleAgentDeps",
     optionalCount: 21,
-    reason: "Single-agent wiring deps bag; Phase D TS-HYG-13 audit per design §7.2.5",
-    removedIn: "phase-D",
+    reason: "@allow-throw boundary: setup-agents wiring guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).",
+    removedIn: "permanent",
   },
   {
     file: "packages/daemon/src/wiring/setup-shutdown.ts",

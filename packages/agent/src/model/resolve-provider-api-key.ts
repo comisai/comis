@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: OAuth credential resolution: explicit-profile request that store cannot satisfy is security-critical hard fail per the inline comment (line 79-81); caller chain is PiExecutor.execute -> gateway routes which lift to user-facing error (Phase 41 TS-HYG-07).
 /**
  * resolveProviderApiKey: shared dispatch helper that routes OAuth-eligible
  * providers through the OAuthTokenManager + AuthStorage.setRuntimeApiKey

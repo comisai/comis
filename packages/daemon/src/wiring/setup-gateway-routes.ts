@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: gateway-route wiring re-raise; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
 /**
  * Gateway HTTP route mounting: webhooks, media serving, and OpenAI-compatible API.
  * Extracted from setup-gateway.ts to isolate route mounting (webhook sub-app,

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: monitoring source /proc/meminfo parse guard; consumed via monitoring-source aggregator try/catch chain (Phase 41 TS-HYG-07).
 /**
  * System Resources HeartbeatSourcePort implementation.
  * Monitors CPU and memory usage with OS-aware memory detection:

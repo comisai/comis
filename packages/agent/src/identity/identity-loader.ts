@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: identity-loader re-raise of unexpected fs errors (PathTraversalError is the silent-skip path); consumed at agent bootstrap (daemon.ts catch boundary) (Phase 41 TS-HYG-07).
 import * as fs from "node:fs/promises";
 import { safePath, PathTraversalError, systemNowDate } from "@comis/core";
 

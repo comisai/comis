@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: scheduler wiring guards; consumed at daemon.ts bootstrap catch boundary (Phase 41 TS-HYG-07).
 /**
  * Per-agent scheduler, browser service, session reset, and task extraction
  * setup: cron schedulers with executeJob callbacks, BrowserService instances

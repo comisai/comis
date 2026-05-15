@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: session-resolver session-not-found guard; consumed by daemon RPC handlers (subagent-handlers / session-handlers @allow-throw per Decision 2) (Phase 41 TS-HYG-07).
 /**
  * BackgroundSessionResolver: composite-key wrapper around ActiveRunRegistry.
  *

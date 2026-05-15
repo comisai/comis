@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits) (Phase 41 TS-HYG-07).
 /**
  * Daemon Entry Point: thin orchestrator calling setupXxx() factories in sequence.
  * @module
