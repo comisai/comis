@@ -645,6 +645,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         hint: "Spawn rejected: depth limit exceeded; reduce spawn nesting or increase maxSpawnDepth config",
         errorKind: "resource" as const,
       }, "Subagent spawn rejected");
+      // @allow-throw: spawn() consumed exclusively by daemon RPC handlers (subagent-handlers, session-handlers, graph-*); these handlers are @allow-throw boundaries per 41-03-SUMMARY.md Decision 2 (rpc-dispatch.ts:306-321 wraps and converts to JSON-RPC error response). Phase 41 TS-HYG-07.
       throw new Error(
         `Spawn rejected: depth limit exceeded (current: ${currentDepth}, max: ${maxDepth}). This sub-agent cannot spawn further children at this nesting level.`,
       );
@@ -679,6 +680,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             hint: "Spawn rejected: active children limit exceeded; wait for existing sub-agents to complete",
             errorKind: "resource" as const,
           }, "Subagent spawn rejected");
+          // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary per 41-03-SUMMARY.md Decision 2. Phase 41 TS-HYG-07.
           throw new Error(
             `Spawn rejected: active children limit exceeded (current: ${activeChildren}, max: ${maxChildren}). Wait for existing sub-agents to complete before spawning more.`,
           );
@@ -709,6 +711,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             hint: "Spawn rejected: queue full; wait for queued or active sub-agents to complete",
             errorKind: "resource" as const,
           }, "Subagent spawn rejected");
+          // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary per 41-03-SUMMARY.md Decision 2. Phase 41 TS-HYG-07.
           throw new Error(
             `Spawn rejected: queue full (queued: ${queueSize}, max: ${maxQueuedPerAgent}). Wait for existing sub-agents to complete before spawning more.`,
           );
@@ -777,6 +780,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // line 889) so failure records and observability payloads don't grep
       // for the literal string "undefined".
       const callerLabel = params.callerAgentId ?? "unknown";
+      // @allow-throw: spawn() consumed exclusively by daemon RPC handlers; @allow-throw boundary per 41-03-SUMMARY.md Decision 2. Phase 41 TS-HYG-07.
       throw new Error(
         `Agent "${callerLabel}" is not allowed to spawn "${params.agentId}". Allowed: ${deps.config.allowAgents.join(", ")}`,
       );
