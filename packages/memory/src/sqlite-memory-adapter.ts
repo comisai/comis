@@ -24,10 +24,15 @@ import type Database from "better-sqlite3";
 import type { MemoryRow } from "./types.js";
 import { hybridSearch, searchByVector } from "./hybrid-search.js";
 import { initSchema } from "./schema.js";
-import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags } from "./row-mapper.js";
+import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags, createRowMapper } from "./row-mapper.js";
+import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
 import { truncateForEmbedding } from "./embedding-batch-indexer.js";
 import { openSqliteDatabase } from "./sqlite-adapter-base.js";
 import { systemNowMs } from "@comis/core";
+
+// Row mappers (Phase 41 TS-HYG-03)
+const memoryRowMapper = createRowMapper(MemoryRowSchema);
+const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
 
 /** Minimal pino-compatible logger interface for memory subsystem logging. */
 interface MemoryLogger {
@@ -192,9 +197,12 @@ export class SqliteMemoryAdapter implements MemoryPort {
         const now = systemNowMs();
         const results: MemorySearchResult[] = [];
         for (const vr of vecResults) {
-          const row = this.db
-            .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
-            .get(vr.id, tenantId) as MemoryRow | undefined;
+          const parsed = memoryRowMapper.parseOptionalRow(
+            this.db
+              .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
+              .get(vr.id, tenantId),
+          );
+          const row = parsed.ok ? parsed.value : undefined;
 
           if (!row) continue;
 
@@ -263,9 +271,12 @@ export class SqliteMemoryAdapter implements MemoryPort {
       const now = systemNowMs();
       const results: MemorySearchResult[] = [];
       for (const hr of hybridResults) {
-        const row = this.db
-          .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
-          .get(hr.id, tenantId) as MemoryRow | undefined;
+        const parsed = memoryRowMapper.parseOptionalRow(
+          this.db
+            .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
+            .get(hr.id, tenantId),
+        );
+        const row = parsed.ok ? parsed.value : undefined;
 
         if (!row) continue;
 
@@ -330,9 +341,15 @@ export class SqliteMemoryAdapter implements MemoryPort {
       const tid = tenantId ?? "default";
 
       // Verify entry exists
-      const existing = this.db
-        .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
-        .get(id, tid) as MemoryRow | undefined;
+      const existingParsed = memoryRowMapper.parseOptionalRow(
+        this.db
+          .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
+          .get(id, tid),
+      );
+      if (!existingParsed.ok) {
+        return err(new Error(`Row validation failed: ${existingParsed.error.message}`));
+      }
+      const existing = existingParsed.value;
 
       if (!existing) {
         return err(new Error(`Memory entry not found: ${id}`));
@@ -388,9 +405,19 @@ export class SqliteMemoryAdapter implements MemoryPort {
       tx();
 
       // Return updated entry
-      const updated = this.db
-        .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
-        .get(id, tid) as MemoryRow;
+      const updatedParsed = memoryRowMapper.parseOptionalRow(
+        this.db
+          .prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?")
+          .get(id, tid),
+      );
+      if (!updatedParsed.ok) {
+        return err(new Error(`Row validation failed: ${updatedParsed.error.message}`));
+      }
+      const updated = updatedParsed.value;
+      if (!updated) {
+        // Should not happen — we just updated. Surface as internal error.
+        return err(new Error(`Updated memory entry vanished: ${id}`));
+      }
 
       const durationMs = systemNowMs() - startMs;
       this.logger?.debug({ durationMs, op: "update" }, "Memory update complete");
@@ -434,9 +461,13 @@ export class SqliteMemoryAdapter implements MemoryPort {
 
       // Get IDs to delete from vec_memories first (per-instance)
       if (this.vecAvailable) {
-        const ids = this.db
-          .prepare("SELECT id FROM memories WHERE tenant_id = ?")
-          .all(tid) as Array<{ id: string }>;
+        const idsParsed = idProjectionMapper.parseRows(
+          this.db
+            .prepare("SELECT id FROM memories WHERE tenant_id = ?")
+            .all(tid),
+        );
+        // Degrade-on-validation-error: clear scope → no vec rows to cascade.
+        const ids = idsParsed.ok ? idsParsed.value : [];
 
         for (const { id } of ids) {
           this.db.prepare("DELETE FROM vec_memories WHERE memory_id = ?").run(id);

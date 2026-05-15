@@ -13,6 +13,40 @@
 
 import type Database from "better-sqlite3";
 import { systemNowMs } from "@comis/core";
+import { createRowMapper } from "./row-mapper.js";
+import {
+  TokenUsageDbRowSchema,
+  DeliveryDbRowSchema,
+  DiagnosticDbRowSchema,
+  ChannelSnapshotDbRowSchema,
+  ProviderAggDbRowSchema,
+  AgentAggDbRowSchema,
+  SessionAggDbRowSchema,
+  HourlyBucketDbRowSchema,
+  DeliveryStatsDbRowSchema,
+} from "./row-schemas.js";
+
+// ---------------------------------------------------------------------------
+// Row mappers (Phase 41 TS-HYG-03: typed row parsing via createRowMapper)
+//
+// Module-level mappers, prepared once. Each mapper wraps a Zod schema and
+// returns Result<TRow[]|TRow|undefined, MapperError> from raw better-sqlite3
+// .all()/.get() output. On validation failure the store DEGRADES SILENTLY
+// (empty array / undefined / zero-stats), preserving the existing return-shape
+// contract — observability metrics are non-fatal (plan 41-04 §"Use either
+// pattern... 2. Unwrap-with-default"). The plan explicitly sanctions this for
+// metrics emission where MapperError means "broken DB".
+// ---------------------------------------------------------------------------
+
+const tokenUsageMapper = createRowMapper(TokenUsageDbRowSchema);
+const deliveryMapper = createRowMapper(DeliveryDbRowSchema);
+const diagnosticMapper = createRowMapper(DiagnosticDbRowSchema);
+const channelSnapshotMapper = createRowMapper(ChannelSnapshotDbRowSchema);
+const providerAggMapper = createRowMapper(ProviderAggDbRowSchema);
+const agentAggMapper = createRowMapper(AgentAggDbRowSchema);
+const sessionAggMapper = createRowMapper(SessionAggDbRowSchema);
+const hourlyBucketMapper = createRowMapper(HourlyBucketDbRowSchema);
+const deliveryStatsMapper = createRowMapper(DeliveryStatsDbRowSchema);
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -274,47 +308,11 @@ interface ChannelSnapshotDbRow {
   uptime_ms: number;
 }
 
-interface ProviderAggDbRow {
-  provider: string;
-  model: string;
-  total_cost: number;
-  total_tokens: number;
-  call_count: number;
-  total_cache_saved: number;
-}
-
-interface AgentAggDbRow {
-  agent_id: string;
-  total_cost: number;
-  total_tokens: number;
-  call_count: number;
-  total_cache_saved: number;
-}
-
-interface SessionAggDbRow {
-  session_key: string;
-  total_cost: number;
-  total_tokens: number;
-  call_count: number;
-  total_cache_saved: number;
-}
-
-interface HourlyBucketDbRow {
-  hour: number;
-  total_cost: number;
-  total_tokens: number;
-  call_count: number;
-  total_cache_saved: number;
-}
-
-interface DeliveryStatsDbRow {
-  total: number;
-  success: number;
-  error: number;
-  timeout: number;
-  filtered: number;
-  avg_latency_ms: number;
-}
+// Aggregate row shapes (ProviderAggDbRow, AgentAggDbRow, SessionAggDbRow,
+// HourlyBucketDbRow, DeliveryStatsDbRow) are now defined as z.infer<>
+// via the schemas in row-schemas.ts — Phase 41 TS-HYG-03 retarget removed
+// the file-internal interface duplicates. The remaining four DbRow
+// interfaces below are still required as `xxxFromRow` parameter types.
 
 // ---------------------------------------------------------------------------
 // Row mapping helpers
@@ -604,14 +602,19 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
       const sql = `SELECT * FROM obs_token_usage ${where} ORDER BY timestamp DESC LIMIT ?`;
       values.push(limit);
 
-      const rows = db.prepare(sql).all(...values) as TokenUsageDbRow[];
+      const parsed = tokenUsageMapper.parseRows(db.prepare(sql).all(...values));
+      // Degrade-on-validation-error: observability query → empty result.
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map(tokenUsageFromRow);
     },
 
     aggregateByProvider(sinceMs) {
-      const rows = sinceMs != null
-        ? (aggByProviderSinceStmt.all(sinceMs) as ProviderAggDbRow[])
-        : (aggByProviderAllStmt.all() as ProviderAggDbRow[]);
+      const raw = sinceMs != null
+        ? aggByProviderSinceStmt.all(sinceMs)
+        : aggByProviderAllStmt.all();
+      const parsed = providerAggMapper.parseRows(raw);
+      // Degrade-on-validation-error: observability aggregate → empty.
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map((r) => ({
         provider: r.provider,
         model: r.model,
@@ -623,9 +626,12 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
     },
 
     aggregateByAgent(sinceMs) {
-      const rows = sinceMs != null
-        ? (aggByAgentSinceStmt.all(sinceMs) as AgentAggDbRow[])
-        : (aggByAgentAllStmt.all() as AgentAggDbRow[]);
+      const raw = sinceMs != null
+        ? aggByAgentSinceStmt.all(sinceMs)
+        : aggByAgentAllStmt.all();
+      const parsed = agentAggMapper.parseRows(raw);
+      // Degrade-on-validation-error: observability aggregate → empty.
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map((r) => ({
         agentId: r.agent_id,
         totalCost: r.total_cost,
@@ -636,10 +642,12 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
     },
 
     aggregateBySession(sessionKey, sinceMs) {
-      const row = sinceMs != null
-        ? (aggBySessionSinceStmt.get(sessionKey, sinceMs) as SessionAggDbRow | undefined)
-        : (aggBySessionStmt.get(sessionKey) as SessionAggDbRow | undefined);
-
+      const raw = sinceMs != null
+        ? aggBySessionSinceStmt.get(sessionKey, sinceMs)
+        : aggBySessionStmt.get(sessionKey);
+      const parsed = sessionAggMapper.parseOptionalRow(raw);
+      // Degrade-on-validation-error: missing OR invalid → zero-cost session.
+      const row = parsed.ok ? parsed.value : undefined;
       if (!row) {
         return { sessionKey, totalCost: 0, totalTokens: 0, callCount: 0, totalCacheSaved: 0 };
       }
@@ -653,9 +661,12 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
     },
 
     aggregateHourly(sinceMs) {
-      const rows = sinceMs != null
-        ? (aggHourlySinceStmt.all(sinceMs) as HourlyBucketDbRow[])
-        : (aggHourlyAllStmt.all() as HourlyBucketDbRow[]);
+      const raw = sinceMs != null
+        ? aggHourlySinceStmt.all(sinceMs)
+        : aggHourlyAllStmt.all();
+      const parsed = hourlyBucketMapper.parseRows(raw);
+      // Degrade-on-validation-error: observability aggregate → empty.
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map((r) => ({
         hour: r.hour,
         totalCost: r.total_cost,
@@ -706,15 +717,22 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
       const sql = `SELECT * FROM obs_delivery ${where} ORDER BY timestamp DESC LIMIT ?`;
       values.push(limit);
 
-      const rows = db.prepare(sql).all(...values) as DeliveryDbRow[];
+      const parsed = deliveryMapper.parseRows(db.prepare(sql).all(...values));
+      // Degrade-on-validation-error: observability query → empty result.
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map(deliveryFromRow);
     },
 
     deliveryStats(sinceMs) {
-      const row = sinceMs != null
-        ? (deliveryStatsSinceStmt.get(sinceMs) as DeliveryStatsDbRow)
-        : (deliveryStatsAllStmt.get() as DeliveryStatsDbRow);
-
+      const raw = sinceMs != null
+        ? deliveryStatsSinceStmt.get(sinceMs)
+        : deliveryStatsAllStmt.get();
+      const parsed = deliveryStatsMapper.parseOptionalRow(raw);
+      // Degrade-on-validation-error or missing row → zero-stats.
+      const row = parsed.ok ? parsed.value : undefined;
+      if (!row) {
+        return { total: 0, success: 0, error: 0, timeout: 0, filtered: 0, avgLatencyMs: 0 };
+      }
       return {
         total: row.total,
         success: row.success,
@@ -760,7 +778,9 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
       const sql = `SELECT * FROM obs_diagnostics ${where} ORDER BY timestamp DESC LIMIT ?`;
       values.push(limit);
 
-      const rows = db.prepare(sql).all(...values) as DiagnosticDbRow[];
+      const parsed = diagnosticMapper.parseRows(db.prepare(sql).all(...values));
+      // Degrade-on-validation-error: observability query → empty result.
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map(diagnosticFromRow);
     },
 
@@ -777,7 +797,9 @@ export function createObservabilityStore(db: Database.Database): ObservabilitySt
     },
 
     latestChannelSnapshots() {
-      const rows = latestSnapshotsStmt.all() as ChannelSnapshotDbRow[];
+      const parsed = channelSnapshotMapper.parseRows(latestSnapshotsStmt.all());
+      // Degrade-on-validation-error: observability snapshot → empty result.
+      const rows = parsed.ok ? parsed.value : [];
       return rows.map(snapshotFromRow);
     },
 

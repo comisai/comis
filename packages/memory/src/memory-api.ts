@@ -13,9 +13,13 @@
 import type { MemoryEntry, MemorySearchResult, MemoryConfig, SessionKey, SessionStorePort } from "@comis/core";
 import type Database from "better-sqlite3";
 import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
-import type { MemoryRow } from "./types.js";
-import { rowToEntry, buildFilterClause, countRows, groupCountRows } from "./row-mapper.js";
+import { rowToEntry, buildFilterClause, countRows, groupCountRows, createRowMapper } from "./row-mapper.js";
+import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
 import { systemNowMs } from "@comis/core";
+
+// Row mappers (Phase 41 TS-HYG-03)
+const memoryRowMapper = createRowMapper(MemoryRowSchema);
+const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
 
 // ── Filter & Scope Types ─────────────────────────────────────────────
 
@@ -137,7 +141,9 @@ export function createMemoryApi(
       const sql = `SELECT * FROM memories ${fullClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
       params.push(limit, offset);
 
-      const rows = db.prepare(sql).all(...params) as MemoryRow[];
+      const parsed = memoryRowMapper.parseRows(db.prepare(sql).all(...params));
+      // Degrade-on-validation-error: inspection query → empty result.
+      const rows = parsed.ok ? parsed.value : [];
       let entries = rows.map((row) => rowToEntry(row));
 
       // Post-filter by tags if specified (tags are JSON-encoded in DB)
@@ -234,9 +240,13 @@ export function createMemoryApi(
       const whereClause = conditions.join(" AND ");
 
       // First get IDs for vec_memories cleanup
-      const ids = db
-        .prepare(`SELECT id FROM memories WHERE ${whereClause}`)
-        .all(...params) as Array<{ id: string }>;
+      const idsParsed = idProjectionMapper.parseRows(
+        db
+          .prepare(`SELECT id FROM memories WHERE ${whereClause}`)
+          .all(...params),
+      );
+      // Degrade-on-validation-error: clear scope → no rows to delete.
+      const ids = idsParsed.ok ? idsParsed.value : [];
 
       if (ids.length === 0) return 0;
 
@@ -333,9 +343,13 @@ export function createMemoryApi(
         : "WHERE trust_level != 'system'";
 
       // Get IDs of entries to remove (oldest first)
-      const idsToRemove = db
-        .prepare(`SELECT id FROM memories ${tenantAndSystem} ORDER BY created_at ASC LIMIT ?`)
-        .all(...tenantParams, excess) as Array<{ id: string }>;
+      const idsToRemoveParsed = idProjectionMapper.parseRows(
+        db
+          .prepare(`SELECT id FROM memories ${tenantAndSystem} ORDER BY created_at ASC LIMIT ?`)
+          .all(...tenantParams, excess),
+      );
+      // Degrade-on-validation-error: eviction → empty list (eviction skipped).
+      const idsToRemove = idsToRemoveParsed.ok ? idsToRemoveParsed.value : [];
 
       if (idsToRemove.length === 0) {
         return null; // Only system entries remain, can't remove

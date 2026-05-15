@@ -179,6 +179,27 @@ export const ALLOWED_GROUP_COLUMNS = new Set(["memory_type", "trust_level", "age
 
 // ── Count Helpers (for MemoryApi.stats()) ─────────────────────────────
 
+// Module-local Zod schema for COUNT(*) projection. Built once and reused by
+// countRows and groupCountRows below. Declared HERE (not in row-schemas.ts)
+// to avoid a cyclic dependency between row-mapper.ts and row-schemas.ts —
+// row-mapper.ts is row-schemas.ts's downstream consumer in createRowMapper
+// usage, so the schemas it itself needs live inline.
+const countOnlySchema = z.strictObject({ count: z.number() });
+const countOnlyMapper = createRowMapper(countOnlySchema);
+// For groupCountRows: COUNT(*) plus a dynamic group-by column (string OR
+// number, depending on column type). Build per-call because the column
+// name is dynamic; the column-value union is `string | number | null` to
+// cover the in-tree group keys (memory_type/trust_level/agent_id are TEXT;
+// no NULL in our schema, but `nullable` adds defense-in-depth).
+function buildGroupCountSchema(
+  groupByColumn: string,
+): z.ZodType<Record<string, string | number | null>> {
+  return z.strictObject({
+    count: z.number(),
+    [groupByColumn]: z.union([z.string(), z.number(), z.null()]),
+  }) as unknown as z.ZodType<Record<string, string | number | null>>;
+}
+
 /**
  * Execute a COUNT(*) query against a table with an optional WHERE clause.
  *
@@ -197,10 +218,12 @@ export function countRows(
     );
   }
 
-  const row = db
+  const raw = db
     .prepare(`SELECT COUNT(*) as count FROM ${table} ${whereClause}`)
-    .get(...whereParams) as { count: number };
-  return row.count;
+    .get(...whereParams);
+  const parsed = countOnlyMapper.parseOptionalRow(raw);
+  // COUNT(*) always returns exactly one row; validation failure ⇒ 0.
+  return parsed.ok ? (parsed.value?.count ?? 0) : 0;
 }
 
 /**
@@ -227,15 +250,27 @@ export function groupCountRows(
     );
   }
 
-  const rows = db
-    .prepare(
-      `SELECT ${groupByColumn}, COUNT(*) as count FROM ${table} ${whereClause} GROUP BY ${groupByColumn}`,
-    )
-    .all(...whereParams) as Array<Record<string, unknown>>;
+  const groupCountMapper = createRowMapper(buildGroupCountSchema(groupByColumn));
+  const parsed = groupCountMapper.parseRows(
+    db
+      .prepare(
+        `SELECT ${groupByColumn}, COUNT(*) as count FROM ${table} ${whereClause} GROUP BY ${groupByColumn}`,
+      )
+      .all(...whereParams),
+  );
+  // Degrade-on-validation-error: aggregate is non-fatal; return empty.
+  const rows = parsed.ok ? parsed.value : [];
 
   const result: Record<string, number> = {};
   for (const row of rows) {
-    result[row[groupByColumn] as string] = row.count as number;
+    const key = row[groupByColumn];
+    // The group key is string|number|null per buildGroupCountSchema; SQLite
+    // never returns a value outside that range for our ALLOWED_GROUP_COLUMNS.
+    const stringKey = key === null ? "" : String(key);
+    // eslint-disable-next-line security/detect-object-injection -- stringKey
+    // is bounded by ALLOWED_GROUP_COLUMNS-typed values (memory_type, trust_level,
+    // agent_id); no attacker control over the index.
+    result[stringKey] = typeof row.count === "number" ? row.count : 0;
   }
   return result;
 }

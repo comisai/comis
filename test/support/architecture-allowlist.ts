@@ -674,11 +674,17 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "Channel adapter; split in Phase F per FILE-SPLIT-20",
     removedIn: "phase-F",
   },
-  // memory (1 file)
+  // memory (2 files)
   {
     file: "packages/memory/src/observability-store.ts",
     lines: 802,
     reason: "Memory observability store; split in Phase F per FILE-SPLIT-21",
+    removedIn: "phase-F",
+  },
+  {
+    file: "packages/memory/src/context-store.ts",
+    lines: 854,
+    reason: "Memory context store; grew from 769→854 lines during Plan 41-04 mapper retargeting (17 inline mapper factories + 7 named mappers added at module top to honor TS-HYG-03). Split in Phase F alongside observability-store per FILE-SPLIT-21 (memory-package decomposition).",
     removedIn: "phase-F",
   },
 ] as const;
@@ -1584,251 +1590,51 @@ export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [
   // collapse into one entry. The live grep yielded 61 raw cast sites
   // collapsing to 35 unique pairs across 14 files.
 
-  // context-store.ts — 8 unique symbols (CtxConversationRow, CtxMessageRow,
-  // CtxMessagePartRow, CtxSummaryRow, CtxContextItemRow, CtxLargeFileRow,
-  // CtxExpansionGrantRow, Array (inline anonymous row shapes for id-projection
-  // and parent/child queries)).
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "Array",
-    reason: "Inline anonymous row projections (id-list / parent-child id queries); Phase D TS-HYG-03 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxContextItemRow",
-    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxConversationRow",
-    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxExpansionGrantRow",
-    reason: "context-store .get() row cast; Phase D TS-HYG-03 retargets to mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxLargeFileRow",
-    reason: "context-store .get() row cast; Phase D TS-HYG-03 retargets to mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxMessagePartRow",
-    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxMessageRow",
-    reason: "context-store .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/context-store.ts",
-    symbol: "CtxSummaryRow",
-    reason: "context-store .get() / .all() row cast; Phase D TS-HYG-03 retargets to mapper.parseRows / mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
+  // context-store.ts — DRAINED in Plan 41-04 Task 3 (TS-HYG-03).
+  // Previously held 8 `{file, symbol}` entries for {Array (inline id-projection
+  // and FTS hit shapes), CtxConversationRow, CtxMessageRow, CtxMessagePartRow,
+  // CtxSummaryRow, CtxContextItemRow, CtxLargeFileRow, CtxExpansionGrantRow}.
+  // All 17 cast sites retargeted to mapper.parseRows / parseOptionalRow with
+  // degrade-on-validation-error semantics (preserves ContextStorePort plain-
+  // return contract for the 16 production-file consumers in agent + daemon).
 
-  // credential-mapping-store.ts — 1 symbol.
-  {
-    file: "packages/memory/src/credential-mapping-store.ts",
-    symbol: "CredentialMappingRow",
-    reason: "credential-mapping-store .get() / .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows / mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
+  // credential-mapping-store.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 
-  // delivery-mirror-adapter.ts — 1 symbol.
-  {
-    file: "packages/memory/src/delivery-mirror-adapter.ts",
-    symbol: "DeliveryMirrorDbRow",
-    reason: "delivery-mirror-adapter .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
+  // delivery-mirror-adapter.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
+  // Result-returning port; mapper failure flows through err() to the
+  // existing try/catch wrapper.
 
-  // delivery-queue-adapter.ts — 1 symbol (Array anonymous row shape).
-  {
-    file: "packages/memory/src/delivery-queue-adapter.ts",
-    symbol: "Array",
-    reason: "delivery-queue-adapter anonymous row projection (status/count); Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
+  // delivery-queue-adapter.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 
-  // embedding-cache-sqlite.ts — 1 symbol.
-  {
-    file: "packages/memory/src/embedding-cache-sqlite.ts",
-    symbol: "BatchCacheRow",
-    reason: "embedding-cache-sqlite .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
+  // embedding-cache-sqlite.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 
-  // hybrid-search.ts — 3 symbols.
-  {
-    file: "packages/memory/src/hybrid-search.ts",
-    symbol: "Array",
-    reason: "hybrid-search anonymous row projection (id-only query); Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/hybrid-search.ts",
-    symbol: "FtsSearchRow",
-    reason: "hybrid-search FTS .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/hybrid-search.ts",
-    symbol: "VecSearchRow",
-    reason: "hybrid-search vector .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
+  // hybrid-search.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 
-  // identity-link-store.ts — 1 symbol.
-  {
-    file: "packages/memory/src/identity-link-store.ts",
-    symbol: "IdentityLinkRow",
-    reason: "identity-link-store .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
+  // identity-link-store.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 
-  // memory-api.ts — 2 symbols.
-  {
-    file: "packages/memory/src/memory-api.ts",
-    symbol: "Array",
-    reason: "memory-api anonymous row projection (id-only retention/eviction queries); Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/memory-api.ts",
-    symbol: "MemoryRow",
-    reason: "memory-api .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
+  // memory-api.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 
-  // named-graph-store.ts — 2 symbols.
-  {
-    file: "packages/memory/src/named-graph-store.ts",
-    symbol: "Array",
-    reason: "named-graph-store anonymous row projection (list query); Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/named-graph-store.ts",
-    symbol: "NamedGraphRow",
-    reason: "named-graph-store .get() row cast; Phase D TS-HYG-02 retargets to mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
+  // named-graph-store.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 
-  // oauth-profile-store-encrypted.ts — 1 symbol.
-  {
-    file: "packages/memory/src/oauth-profile-store-encrypted.ts",
-    symbol: "OAuthProfileRow",
-    reason: "oauth-profile-store-encrypted .get() / .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows / mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
+  // oauth-profile-store-encrypted.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 
-  // observability-store.ts — 9 symbols.
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "AgentAggDbRow",
-    reason: "observability-store agent-aggregate .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "ChannelSnapshotDbRow",
-    reason: "observability-store channel-snapshot .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "DeliveryDbRow",
-    reason: "observability-store delivery-row .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "DeliveryStatsDbRow",
-    reason: "observability-store delivery-stats .get() cast; Phase D TS-HYG-02 retargets to mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "DiagnosticDbRow",
-    reason: "observability-store diagnostic .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "HourlyBucketDbRow",
-    reason: "observability-store hourly-bucket .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "ProviderAggDbRow",
-    reason: "observability-store provider-aggregate .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "SessionAggDbRow",
-    reason: "observability-store session-aggregate .get() cast (Row | undefined truncates to Row); Phase D TS-HYG-02 retargets to mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "TokenUsageDbRow",
-    reason: "observability-store token-usage .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
+  // observability-store.ts — DRAINED in Plan 41-04 Task 2 (TS-HYG-03).
+  // Previously held 9 `{file, symbol}` entries for {TokenUsageDbRow,
+  // DeliveryDbRow, DiagnosticDbRow, ChannelSnapshotDbRow, ProviderAggDbRow,
+  // AgentAggDbRow, SessionAggDbRow, HourlyBucketDbRow, DeliveryStatsDbRow}.
+  // Every site retargets to mapper.parseRows / parseOptionalRow with
+  // degrade-on-validation-error (observability metrics are non-fatal —
+  // see file header for the chosen Option 2 rationale).
 
-  // row-mapper.ts — 1 symbol (the Phase D mapper module itself currently
-  // contains an internal anonymous row-projection cast; closes when the
-  // module finishes its own TS-HYG-01 refactor).
-  {
-    file: "packages/memory/src/row-mapper.ts",
-    symbol: "Array",
-    reason: "row-mapper internal anonymous row projection (group-by aggregate); Phase D TS-HYG-01 closes when the mapper module finishes its own refactor",
-    removedIn: "phase-D",
-  },
+  // row-mapper.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
+  // The mapper module's own internal countRows / groupCountRows projections
+  // now go through local schemas + createRowMapper (self-closing TS-HYG-01).
 
-  // session-store.ts — 1 symbol.
-  {
-    file: "packages/memory/src/session-store.ts",
-    symbol: "SessionRow",
-    reason: "session-store .get() row cast; Phase D TS-HYG-02 retargets to mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
+  // session-store.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 
-  // sqlite-memory-adapter.ts — 2 symbols.
-  {
-    file: "packages/memory/src/sqlite-memory-adapter.ts",
-    symbol: "Array",
-    reason: "sqlite-memory-adapter anonymous row projection (id-only tenant query); Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/sqlite-memory-adapter.ts",
-    symbol: "MemoryRow",
-    reason: "sqlite-memory-adapter .get() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows / mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
+  // sqlite-memory-adapter.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 
-  // sqlite-secret-store.ts — 1 symbol (Array<{...}> anonymous decrypt-batch
-  // and list-secrets row shapes; both target Array generic).
-  {
-    file: "packages/memory/src/sqlite-secret-store.ts",
-    symbol: "Array",
-    reason: "sqlite-secret-store anonymous row shapes (decrypt-all batch, secret-list); Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
+  // sqlite-secret-store.ts — DRAINED in Plan 41-04 Task 4 (TS-HYG-03).
 ] as const;
 export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   // ============================================================================

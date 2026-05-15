@@ -15,24 +15,19 @@ import type { DeliveryMirrorPort, DeliveryMirrorEntry, DeliveryMirrorRecordInput
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { systemNowMs } from "@comis/core";
+import type { z } from "zod";
+import { createRowMapper } from "./row-mapper.js";
+import { DeliveryMirrorDbRowSchema } from "./row-schemas.js";
 
 // ---------------------------------------------------------------------------
-// Internal DB row type (snake_case -- what SQLite returns)
+// Internal DB row type — z.infer drops the file-internal duplicate now that
+// row-schemas.ts is the SSOT (Plan 41-01 / Phase 41 TS-HYG-03).
 // ---------------------------------------------------------------------------
 
-interface DeliveryMirrorDbRow {
-  id: string;
-  session_key: string;
-  text: string;
-  media_urls: string;
-  channel_type: string;
-  channel_id: string;
-  origin: string;
-  idempotency_key: string;
-  status: string;
-  created_at: number;
-  acknowledged_at: number | null;
-}
+type DeliveryMirrorDbRow = z.infer<typeof DeliveryMirrorDbRowSchema>;
+
+// Row mapper (Phase 41 TS-HYG-03)
+const deliveryMirrorMapper = createRowMapper(DeliveryMirrorDbRowSchema);
 
 // ---------------------------------------------------------------------------
 // Row mapper (snake_case -> camelCase with JSON parse)
@@ -118,8 +113,13 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
 
     pending(sessionKey: string): Promise<Result<DeliveryMirrorEntry[], Error>> {
       try {
-        const rows = pendingStmt.all(sessionKey) as DeliveryMirrorDbRow[];
-        return Promise.resolve(ok(rows.map(rowToEntry)));
+        const parsed = deliveryMirrorMapper.parseRows(pendingStmt.all(sessionKey));
+        if (!parsed.ok) {
+          return Promise.resolve(
+            err(new Error(`Row validation failed: ${parsed.error.message}`)),
+          );
+        }
+        return Promise.resolve(ok(parsed.value.map(rowToEntry)));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
       }

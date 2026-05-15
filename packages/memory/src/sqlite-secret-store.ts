@@ -13,6 +13,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import { err, tryCatch } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import type {
@@ -24,6 +25,32 @@ import type {
 import { initSecretSchema, validateCanary, CANARY_NAME } from "./secret-store-schema.js";
 import { openSqliteDatabase, chmodDbFiles } from "./sqlite-adapter-base.js";
 import { systemNowMs } from "@comis/core";
+import { createRowMapper } from "./row-mapper.js";
+
+// Anonymous-projection mappers (Phase 41 TS-HYG-03).
+// decryptAll: returns all encrypted-secret rows (name + 4 BLOB columns).
+const decryptAllRowMapper = createRowMapper(
+  z.strictObject({
+    name: z.string(),
+    ciphertext: z.instanceof(Buffer),
+    iv: z.instanceof(Buffer),
+    auth_tag: z.instanceof(Buffer),
+    salt: z.instanceof(Buffer),
+  }),
+);
+// list: returns secret metadata rows.
+const secretListRowMapper = createRowMapper(
+  z.strictObject({
+    name: z.string(),
+    provider: z.string().nullable(),
+    description: z.string().nullable(),
+    expires_at: z.number().nullable(),
+    last_used_at: z.number().nullable(),
+    usage_count: z.number(),
+    created_at: z.number(),
+    updated_at: z.number(),
+  }),
+);
 
 /**
  * Concrete return type of createSqliteSecretStore.
@@ -183,14 +210,12 @@ export function createSqliteSecretStore(
     },
 
     decryptAll(): Result<Map<string, string>, Error> {
+      const parsed = decryptAllRowMapper.parseRows(getAllStmt.all(CANARY_NAME));
+      if (!parsed.ok) {
+        return err(new Error(`Row validation failed: ${parsed.error.message}`));
+      }
       return tryCatch(() => {
-        const rows = getAllStmt.all(CANARY_NAME) as Array<{
-          name: string;
-          ciphertext: Buffer;
-          iv: Buffer;
-          auth_tag: Buffer;
-          salt: Buffer;
-        }>;
+        const rows = parsed.value;
 
         const map = new Map<string, string>();
 
@@ -220,17 +245,12 @@ export function createSqliteSecretStore(
     },
 
     list(): Result<SecretMetadata[], Error> {
+      const parsed = secretListRowMapper.parseRows(listStmt.all(CANARY_NAME));
+      if (!parsed.ok) {
+        return err(new Error(`Row validation failed: ${parsed.error.message}`));
+      }
       return tryCatch(() => {
-        const rows = listStmt.all(CANARY_NAME) as Array<{
-          name: string;
-          provider: string | null;
-          description: string | null;
-          expires_at: number | null;
-          last_used_at: number | null;
-          usage_count: number;
-          created_at: number;
-          updated_at: number;
-        }>;
+        const rows = parsed.value;
 
         return rows.map((row) => ({
           name: row.name,

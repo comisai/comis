@@ -18,27 +18,20 @@
  */
 
 import type Database from "better-sqlite3";
+import type { z } from "zod";
 import type { Result } from "@comis/shared";
 import { ok, err, fromPromise } from "@comis/shared";
 import type { OAuthCredentialStorePort, OAuthProfile, SecretsCrypto } from "@comis/core";
 import { systemNowMs, validateProfileId } from "@comis/core";
 import { initOAuthProfileSchema } from "./oauth-profile-schema.js";
+import { createRowMapper } from "./row-mapper.js";
+import { OAuthProfileRowSchema } from "./row-schemas.js";
 
 const SCHEMA_VERSION = 1;
 
-interface OAuthProfileRow {
-  profile_id: string;
-  provider: string;
-  identity: string;
-  credentials_ciphertext: Buffer;
-  credentials_iv: Buffer;
-  credentials_auth_tag: Buffer;
-  credentials_salt: Buffer;
-  expires_at: number;
-  version: number;
-  created_at: number;
-  updated_at: number;
-}
+// Row shape SSOT: OAuthProfileRowSchema in row-schemas.ts (Phase 41 TS-HYG-03).
+type OAuthProfileRow = z.infer<typeof OAuthProfileRowSchema>;
+const oauthProfileMapper = createRowMapper(OAuthProfileRowSchema);
 
 /**
  * Create an encrypted OAuthCredentialStorePort backed by a shared SQLite DB.
@@ -111,15 +104,15 @@ export function createOAuthProfileStoreEncrypted(
     async get(profileId: string): Promise<Result<OAuthProfile | undefined, Error>> {
       const validation = validateProfileId(profileId);
       if (!validation.ok) return err(validation.error);
-      return fromPromise(
-        (async () => {
-          const row = getStmt.get(profileId) as OAuthProfileRow | undefined;
-          if (!row) return undefined;
-          const r = rowToProfile(row);
-          if (!r.ok) throw r.error;
-          return r.value;
-        })(),
-      );
+      const parsed = oauthProfileMapper.parseOptionalRow(getStmt.get(profileId));
+      if (!parsed.ok) {
+        return err(new Error(`Row validation failed: ${parsed.error.message}`));
+      }
+      const row = parsed.value;
+      if (!row) return ok(undefined);
+      const r = rowToProfile(row);
+      if (!r.ok) return err(r.error);
+      return ok(r.value);
     },
 
     async set(profileId: string, profile: OAuthProfile): Promise<Result<void, Error>> {
@@ -162,20 +155,20 @@ export function createOAuthProfileStoreEncrypted(
     },
 
     async list(filter?: { provider?: string }): Promise<Result<OAuthProfile[], Error>> {
-      return fromPromise(
-        (async () => {
-          const rows = filter?.provider
-            ? (listByProviderStmt.all(filter.provider) as OAuthProfileRow[])
-            : (listAllStmt.all() as OAuthProfileRow[]);
-          const profiles: OAuthProfile[] = [];
-          for (const row of rows) {
-            const r = rowToProfile(row);
-            if (!r.ok) throw r.error;
-            profiles.push(r.value);
-          }
-          return profiles;
-        })(),
-      );
+      const raw = filter?.provider
+        ? listByProviderStmt.all(filter.provider)
+        : listAllStmt.all();
+      const parsed = oauthProfileMapper.parseRows(raw);
+      if (!parsed.ok) {
+        return err(new Error(`Row validation failed: ${parsed.error.message}`));
+      }
+      const profiles: OAuthProfile[] = [];
+      for (const row of parsed.value) {
+        const r = rowToProfile(row);
+        if (!r.ok) return err(r.error);
+        profiles.push(r.value);
+      }
+      return ok(profiles);
     },
 
     async has(profileId: string): Promise<Result<boolean, Error>> {

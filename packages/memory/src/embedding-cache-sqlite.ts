@@ -19,6 +19,11 @@ import type Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { computeEmbeddingIdentityHash } from "./embedding-hash.js";
 import { systemClearInterval, systemNowMs, systemSetInterval } from "@comis/core";
+import { createRowMapper } from "./row-mapper.js";
+import { BatchCacheRowSchema } from "./row-schemas.js";
+
+// Row mapper (Phase 41 TS-HYG-03)
+const batchCacheMapper = createRowMapper(BatchCacheRowSchema);
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -78,10 +83,8 @@ interface CacheRow {
   embedding: Buffer;
 }
 
-interface BatchCacheRow {
-  text_hash: string;
-  embedding: Buffer;
-}
+// BatchCacheRow is z.infer<typeof BatchCacheRowSchema> from row-schemas.ts —
+// see batchCacheMapper above.
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -161,7 +164,12 @@ export function createSqliteEmbeddingCache(
          WHERE provider = ? AND model = ? AND config_hash = ?
          AND text_hash IN (${placeholders})`,
       );
-      const rows = stmt.all(provider, modelId, configHash, ...chunk) as BatchCacheRow[];
+      const parsed = batchCacheMapper.parseRows(
+        stmt.all(provider, modelId, configHash, ...chunk),
+      );
+      // Degrade-on-validation-error: cache hits are non-fatal; on error,
+      // skip this chunk → callers fall through to provider miss path.
+      const rows = parsed.ok ? parsed.value : [];
       for (const row of rows) {
         hits.set(row.text_hash, row.embedding);
       }

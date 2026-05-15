@@ -15,8 +15,35 @@
  */
 
 import type Database from "better-sqlite3";
-import type { FtsSearchRow, VecSearchRow } from "./types.js";
+import { z } from "zod";
 import { isVecAvailable } from "./schema.js";
+import { createRowMapper } from "./row-mapper.js";
+import { IdProjectionRowSchema } from "./row-schemas.js";
+
+// Row mappers (Phase 41 TS-HYG-03).
+//
+// Note: the original code cast `as FtsSearchRow[]` (and `as VecSearchRow[]`),
+// but the SQL in `searchByText` only SELECTs `m.id, fts.rank` (NO content
+// column) and `searchByVector` only SELECTs `memory_id, distance`. The
+// FtsSearchRow / VecSearchRow interfaces in types.ts are aspirational —
+// the columns they declare were never all populated by these queries.
+// The previous fictional cast never crashed because the consumer reads only
+// `id` / `rank` / `distance` (subsets of the declared shape).
+//
+// Plan 41-04 TS-HYG-03 retargets to z.strictObject schemas that match the
+// ACTUAL SELECT shape (not the aspirational interface). This catches drift
+// going forward — extending the SELECT requires updating the schema.
+const ftsSearchActualShape = z.strictObject({
+  id: z.string(),
+  rank: z.number(),
+});
+const vecSearchActualShape = z.strictObject({
+  memory_id: z.string(),
+  distance: z.number(),
+});
+const ftsSearchMapper = createRowMapper(ftsSearchActualShape);
+const vecSearchMapper = createRowMapper(vecSearchActualShape);
+const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
 
 // ── Stop Words ───────────────────────────────────────────────────────
 
@@ -105,7 +132,9 @@ export function searchByText(
     LIMIT ?
   `);
 
-  const rows = stmt.all(ftsQuery, limit) as FtsSearchRow[];
+  const parsed = ftsSearchMapper.parseRows(stmt.all(ftsQuery, limit));
+  // Degrade-on-validation-error: FTS hit is non-fatal; return empty result.
+  const rows = parsed.ok ? parsed.value : [];
 
   return rows.map((r) => ({
     id: r.id,
@@ -138,7 +167,9 @@ export function searchByVector(
     AND k = ?
   `);
 
-  const rows = stmt.all(float32, k) as VecSearchRow[];
+  const parsed = vecSearchMapper.parseRows(stmt.all(float32, k));
+  // Degrade-on-validation-error: vector hit is non-fatal; return empty result.
+  const rows = parsed.ok ? parsed.value : [];
 
   return rows.map((r) => ({
     id: r.memory_id,
@@ -326,7 +357,10 @@ export function hybridSearch(
       `SELECT id FROM memories WHERE id IN (${placeholders}) AND ${whereClause}`,
     );
 
-    const rows = stmt.all(...candidateIds, ...params) as Array<{ id: string }>;
+    const parsed = idProjectionMapper.parseRows(stmt.all(...candidateIds, ...params));
+    // Degrade-on-validation-error: filter step is non-fatal; return empty
+    // → no rows pass filter → caller falls through to "no results".
+    const rows = parsed.ok ? parsed.value : [];
     const allowedSet = new Set(rows.map((r) => r.id));
 
     filteredIds = rrfResults.filter((r) => allowedSet.has(r.id)).map((r) => r.id);

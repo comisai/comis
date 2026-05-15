@@ -10,9 +10,27 @@
  */
 
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import { initNamedGraphSchema } from "./named-graph-schema.js";
-import type { NamedGraphRow } from "./types.js";
 import { systemNowMs } from "@comis/core";
+import { createRowMapper } from "./row-mapper.js";
+import { NamedGraphRowSchema } from "./row-schemas.js";
+
+// Row mappers (Phase 41 TS-HYG-03)
+type NamedGraphRow = z.infer<typeof NamedGraphRowSchema>;
+const namedGraphMapper = createRowMapper(NamedGraphRowSchema);
+const namedGraphListItemMapper = createRowMapper(
+  z.strictObject({
+    id: z.string(),
+    label: z.string(),
+    nodes: z.string(),
+    created_at: z.number(),
+    updated_at: z.number(),
+  }),
+);
+const namedGraphCountProjectionMapper = createRowMapper(
+  z.strictObject({ total: z.number() }),
+);
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -167,7 +185,8 @@ export function createNamedGraphStore(db: Database.Database): NamedGraphStore {
     },
 
     load(id, tenantId) {
-      const row = loadStmt.get(id, tenantId) as NamedGraphRow | undefined;
+      const parsed = namedGraphMapper.parseOptionalRow(loadStmt.get(id, tenantId));
+      const row = parsed.ok ? parsed.value : undefined;
       if (!row) return undefined;
       return rowToEntry(row);
     },
@@ -176,15 +195,15 @@ export function createNamedGraphStore(db: Database.Database): NamedGraphStore {
       const limit = opts?.limit ?? 50;
       const offset = opts?.offset ?? 0;
 
-      const rows = listStmt.all(tenantId, limit, offset) as Array<{
-        id: string;
-        label: string;
-        nodes: string;
-        created_at: number;
-        updated_at: number;
-      }>;
+      const listParsed = namedGraphListItemMapper.parseRows(
+        listStmt.all(tenantId, limit, offset),
+      );
+      const rows = listParsed.ok ? listParsed.value : [];
 
-      const countRow = countStmt.get(tenantId) as { total: number };
+      const countParsed = namedGraphCountProjectionMapper.parseOptionalRow(
+        countStmt.get(tenantId),
+      );
+      const countRow = countParsed.ok ? countParsed.value : undefined;
 
       const entries: NamedGraphSummary[] = rows.map((row) => ({
         id: row.id,
@@ -194,7 +213,7 @@ export function createNamedGraphStore(db: Database.Database): NamedGraphStore {
         updatedAt: row.updated_at,
       }));
 
-      return { entries, total: countRow.total };
+      return { entries, total: countRow?.total ?? 0 };
     },
 
     softDelete(id, tenantId) {
