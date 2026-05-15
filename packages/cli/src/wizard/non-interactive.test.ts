@@ -757,7 +757,7 @@ describe("NonInteractiveError", () => {
     expect(err.field).toBe("myField");
   });
 
-  it("has correct message", () => {
+  it("preserves the provided message argument on the NonInteractiveError instance", () => {
     const err = new NonInteractiveError("something went wrong", "x");
     expect(err.message).toBe("something went wrong");
   });

@@ -59,7 +59,7 @@ describe("FLOW_STEPS", () => {
     expect(FLOW_STEPS.advanced).toHaveLength(14);
   });
 
-  it("remote has 7 steps", () => {
+  it("declares the remote wizard flow has exactly 7 step transitions", () => {
     expect(FLOW_STEPS.remote).toHaveLength(7);
   });
 

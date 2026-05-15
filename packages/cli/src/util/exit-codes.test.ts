@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { ExitCode } from "./exit-codes.js";
 
 describe("ExitCode constants (MEM-CTX-PORTS-12)", () => {
-  it("ExitCode.DaemonRequired === 4", () => {
+  it("declares ExitCode.DaemonRequired === 4 per CLI exit-code numbering contract", () => {
     expect(ExitCode.DaemonRequired).toBe(4);
   });
 

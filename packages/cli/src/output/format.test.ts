@@ -104,7 +104,7 @@ describe("json", () => {
     expect(parsed).toEqual([1, 2, 3]);
   });
 
-  it("json() handles null", () => {
+  it("json() formatter serializes null input as JSON null literal", () => {
     consoleSpy = createConsoleSpy();
     json(null);
     const output = getSpyOutput(consoleSpy.log);

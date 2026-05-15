@@ -214,7 +214,7 @@ describe("getKeyPrefix", () => {
     expect(getKeyPrefix("some-custom")).toBeUndefined();
   });
 
-  it("is case insensitive", () => {
+  it("getKeyPrefix matches provider name case-insensitively against canonical providers", () => {
     expect(getKeyPrefix("Anthropic")).toBe("sk-ant-");
     expect(getKeyPrefix("OPENAI")).toBe("sk-");
   });
