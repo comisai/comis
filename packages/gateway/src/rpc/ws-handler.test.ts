@@ -36,7 +36,7 @@ describe("WsConnectionManager", () => {
     expect(manager.size).toBe(0);
   });
 
-  it("adds a connection", () => {
+  it("adds a connection to the connection-manager registry on add()", () => {
     const ws = createMockWs();
     manager.add("conn-1", "client-a", ws);
     expect(manager.size).toBe(1);
@@ -400,7 +400,7 @@ describe("createWsHandler", () => {
     }
   });
 
-  it("onError logs error", () => {
+  it("onError handler logs ERROR-level log line when WebSocket connection emits an error event", () => {
     const deps = createHandlerDeps();
     const events = createWsHandler(deps, TEST_CTX);
     const ws = createMockWs();

@@ -27,7 +27,7 @@ describe("normalizeMatchPath", () => {
     expect(normalizeMatchPath("/gmail/")).toBe("gmail");
   });
 
-  it("lowercases the path", () => {
+  it("lowercases the input path for case-insensitive webhook routing", () => {
     expect(normalizeMatchPath("GitHub")).toBe("github");
   });
 
@@ -62,11 +62,11 @@ describe("resolveTemplateExpr", () => {
     now: "2026-02-12T00:00:00Z",
   };
 
-  it("resolves path", () => {
+  it("resolves the 'path' template expression to the request path string", () => {
     expect(resolveTemplateExpr("path", ctx)).toBe("github");
   });
 
-  it("resolves now", () => {
+  it("resolves the 'now' template expression to the context now-timestamp value", () => {
     expect(resolveTemplateExpr("now", ctx)).toBe("2026-02-12T00:00:00Z");
   });
 
@@ -74,7 +74,7 @@ describe("resolveTemplateExpr", () => {
     expect(resolveTemplateExpr("payload.repository.full_name", ctx)).toBe("user/repo");
   });
 
-  it("resolves header", () => {
+  it("resolves header template expression to the matching request header value", () => {
     expect(resolveTemplateExpr("headers.x-github-event", ctx)).toBe("push");
   });
 
@@ -131,13 +131,13 @@ describe("renderTemplate", () => {
     if (result.ok) expect(result.value).toBe("Token: xyz");
   });
 
-  it("resolves {{now}}", () => {
+  it("resolves the {{now}} template placeholder to the context now-timestamp string", () => {
     const result = renderTemplate("Time: {{now}}", ctx);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toBe("Time: 2026-02-12T00:00:00Z");
   });
 
-  it("resolves {{path}}", () => {
+  it("resolves the {{path}} template placeholder to the normalized request-path string", () => {
     const result = renderTemplate("Path: {{path}}", ctx);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toBe("Path: github");
@@ -189,7 +189,7 @@ describe("resolveWebhookMapping", () => {
     { action: "wake", wakeMode: "next-heartbeat" }, // catch-all (no match)
   ];
 
-  it("matches by path", () => {
+  it("matches webhook mapping by normalized path string against the mappings list", () => {
     const result = resolveWebhookMapping(mappings, "/gmail/");
     expect(result).toBeDefined();
     expect(result?.match?.path).toBe("gmail");

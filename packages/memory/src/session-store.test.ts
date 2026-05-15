@@ -332,7 +332,7 @@ describe("createSessionStore", () => {
       expect(subAgent!.metadata.parentSessionKey).toBe("some-parent");
     });
 
-    it("filters by tenantId", () => {
+    it("filters session-store listDetailed results by tenantId for tenant isolation", () => {
       const key1: SessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" };
       const key2: SessionKey = { tenantId: "t2", userId: "u2", channelId: "c2" };
       store.save(key1, []);

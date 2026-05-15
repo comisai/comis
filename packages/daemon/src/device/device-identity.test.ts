@@ -99,7 +99,7 @@ describe("device-identity", () => {
   });
 
   describe("sign and verify", () => {
-    it("round-trip succeeds", () => {
+    it("device-identity sign-then-verify round-trip succeeds for the same key pair", () => {
       const identity = generateIdentity();
       const adapter = createDeviceIdentityAdapter(identity);
 

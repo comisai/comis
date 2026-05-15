@@ -16,7 +16,7 @@ describe("TimeoutError", () => {
     expect(error.name).toBe("TimeoutError");
   });
 
-  it("is instanceof Error", () => {
+  it("TimeoutError instance is instanceof Error per prototype-chain inheritance", () => {
     const error = new TimeoutError(5000);
     expect(error).toBeInstanceOf(Error);
   });

@@ -115,7 +115,7 @@ describe("NamedGraphStore", () => {
       expect(result.total).toBe(3);
     });
 
-    it("respects offset", () => {
+    it("respects offset parameter when paginating named-graph-store list results", () => {
       const result = store.list("t1", { limit: 2, offset: 2 });
       expect(result.entries).toHaveLength(1);
       expect(result.total).toBe(3);

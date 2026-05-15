@@ -271,7 +271,7 @@ describe("createSqliteSecretStore", () => {
   });
 
   describe("close", () => {
-    it("does not throw", () => {
+    it("does not throw when secret-store close() is invoked on an open instance", () => {
       const store = createSqliteSecretStore(dbPath, crypto);
       expect(() => store.close()).not.toThrow();
     });

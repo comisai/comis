@@ -484,7 +484,7 @@ describe("ActivityRingBuffer", () => {
     expect((entries[1].payload as { i: number }).i).toBe(4);
   });
 
-  it("clears all entries", () => {
+  it("clears all entries from the ActivityRingBuffer when clear() is invoked", () => {
     const buffer = new ActivityRingBuffer(10);
     buffer.push("a", {});
     buffer.push("b", {});

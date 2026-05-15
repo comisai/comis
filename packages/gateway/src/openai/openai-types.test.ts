@@ -151,7 +151,7 @@ describe("createOpenAIError", () => {
 });
 
 describe("mapFinishReason", () => {
-  it("maps stop to stop", () => {
+  it("maps provider 'stop' finish-reason to canonical 'stop' enum value", () => {
     expect(mapFinishReason("stop")).toBe("stop");
   });
 
@@ -167,7 +167,7 @@ describe("mapFinishReason", () => {
     expect(mapFinishReason("circuit_open")).toBe("stop");
   });
 
-  it("maps error to stop", () => {
+  it("maps provider 'error' finish-reason to canonical 'stop' enum value per safety contract", () => {
     expect(mapFinishReason("error")).toBe("stop");
   });
 

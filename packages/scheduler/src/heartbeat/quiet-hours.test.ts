@@ -8,11 +8,11 @@ describe("parseTimeToMinutes", () => {
     expect(parseTimeToMinutes("22:00")).toBe(1320);
   });
 
-  it("parses 07:00 -> 420", () => {
+  it("parses '07:00' time-of-day string to 420 minutes-since-midnight", () => {
     expect(parseTimeToMinutes("07:00")).toBe(420);
   });
 
-  it("parses 00:00 -> 0", () => {
+  it("parses '00:00' time-of-day string to 0 minutes-since-midnight", () => {
     expect(parseTimeToMinutes("00:00")).toBe(0);
   });
 
@@ -20,7 +20,7 @@ describe("parseTimeToMinutes", () => {
     expect(parseTimeToMinutes("23:59")).toBe(1439);
   });
 
-  it("parses 12:30 -> 750", () => {
+  it("parses '12:30' time-of-day string to 750 minutes-since-midnight", () => {
     expect(parseTimeToMinutes("12:30")).toBe(750);
   });
 
