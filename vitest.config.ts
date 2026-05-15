@@ -43,7 +43,7 @@ export default defineConfig({
         "packages/memory/src/**/*.ts":       { lines: 95, branches: 85, functions: 96,  statements: 95 },
         "packages/skills/src/**/*.ts":       { lines: 90, branches: 81, functions: 91,  statements: 90 },
         "packages/agent/src/**/*.ts":        { lines: 88, branches: 79, functions: 87,  statements: 88 },
-        "packages/channels/src/**/*.ts":     { lines: 82, branches: 70, functions: 85,  statements: 82 },
+        "packages/channels/src/**/*.ts":     { lines: 87, branches: 76, functions: 90,  statements: 87 },
         "packages/cli/src/**/*.ts":          { lines: 71, branches: 62, functions: 73,  statements: 71 },
         "packages/scheduler/src/**/*.ts":    { lines: 96, branches: 88, functions: 98,  statements: 96 },
         "packages/orchestrator/src/**/*.ts": { lines: 93, branches: 81, functions: 92,  statements: 92 },
