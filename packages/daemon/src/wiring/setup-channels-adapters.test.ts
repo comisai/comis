@@ -126,7 +126,9 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({ telegram: { enabled: true, botToken: "tok123" } });
     const result = await bootstrapAdapters({ container, channelsLogger });
 
-    expect(validateBotToken).toHaveBeenCalledWith("tok123");
+    // Phase 40 / Plan 40-09: validateBotToken now takes (token, apiRoot?);
+    // production path passes undefined for the second arg.
+    expect(validateBotToken).toHaveBeenCalledWith("tok123", undefined);
     expect(createTelegramPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ botToken: "tok123", logger: channelsLogger }),
     );
@@ -135,6 +137,26 @@ describe("bootstrapAdapters", () => {
     expect(channelsLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ channelType: "telegram", botUsername: "testbot" }),
       "Channel adapter initialized",
+    );
+  });
+
+  it("threads telegram.apiRoot through to validateBotToken + plugin factory when configured (COV-15 E2E seam)", async () => {
+    // Phase 40 / Plan 40-09 / COV-15: when channels.telegram.apiRoot is set,
+    // it MUST flow through to both validateBotToken (for the getMe redirect)
+    // and createTelegramPlugin (for the production-traffic redirect). E2E
+    // tests rely on this seam to point grammy at a 127.0.0.1 mock instead of
+    // api.telegram.org.
+    const container = makeContainer({
+      telegram: { enabled: true, botToken: "tok123", apiRoot: "http://127.0.0.1:54321" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateBotToken).toHaveBeenCalledWith("tok123", "http://127.0.0.1:54321");
+    expect(createTelegramPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        botToken: "tok123",
+        apiRoot: "http://127.0.0.1:54321",
+      }),
     );
   });
 
@@ -283,7 +305,7 @@ describe("bootstrapAdapters", () => {
     const result = await bootstrapAdapters({ container, channelsLogger });
 
     expect(container.secretManager.get).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
-    expect(validateBotToken).toHaveBeenCalledWith("secret-tok");
+    expect(validateBotToken).toHaveBeenCalledWith("secret-tok", undefined);
     expect(result.adaptersByType.get("telegram")).toBe(mockTelegramPlugin.adapter);
   });
 

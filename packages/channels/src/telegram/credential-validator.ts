@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ok, err, type Result } from "@comis/shared";
 import { Bot } from "grammy";
-import { createCredentialValidator } from "../shared/credential-validator-factory.js";
 
 /**
  * Bot identity information returned after successful token validation.
@@ -25,27 +24,33 @@ export interface BotInfo {
  * This should be called at adapter startup to fail fast on invalid tokens.
  *
  * @param token - The Telegram bot token (e.g. "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+ * @param apiRoot - Optional Bot API root URL override. Production: undefined
+ *   (grammy defaults to https://api.telegram.org). E2E tests: 127.0.0.1 mock.
  * @returns BotInfo on success, Error on failure
  */
-export const validateBotToken: (token: string) => Promise<Result<BotInfo, Error>> =
-  createCredentialValidator<string, BotInfo>({
-    platform: "Telegram",
-    validateInputs: (token) => (token.trim() === "" ? "token must not be empty" : undefined),
-    callApi: async (token) => {
-      try {
-        const bot = new Bot(token);
-        const me = await bot.api.getMe();
-        return ok({
-          id: me.id,
-          username: me.username ?? "",
-          isBot: me.is_bot,
-        });
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        return err(new Error(`Invalid Telegram bot token: ${message}`));
-      }
-    },
-  });
+export async function validateBotToken(
+  token: string,
+  apiRoot?: string,
+): Promise<Result<BotInfo, Error>> {
+  if (token.trim() === "") {
+    return err(new Error("Invalid Telegram credentials: token must not be empty"));
+  }
+  try {
+    // E2E seam: passing the grammy `client.apiRoot` option only when the
+    // caller redirected — production callers leave `apiRoot` undefined and
+    // grammy uses its default (https://api.telegram.org). Phase 40 / Plan 40-09.
+    const bot = apiRoot ? new Bot(token, { client: { apiRoot } }) : new Bot(token);
+    const me = await bot.api.getMe();
+    return ok({
+      id: me.id,
+      username: me.username ?? "",
+      isBot: me.is_bot,
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return err(new Error(`Invalid Telegram bot token: ${message}`));
+  }
+}
 
 /**
  * Validate a webhook secret token for Telegram's secret_token parameter.

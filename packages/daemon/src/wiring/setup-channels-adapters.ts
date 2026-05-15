@@ -100,13 +100,20 @@ export async function bootstrapAdapters(deps: {
   if (channelConfig.telegram.enabled) {
     const token = (channelConfig.telegram.botToken as string | undefined) || getSecret("TELEGRAM_BOT_TOKEN");
     if (token) {
-      const validation = await validateBotToken(token);
+      // E2E redirection seam: when channels.telegram.apiRoot is set
+      // (Phase 40 / Plan 40-09), point grammy's Bot constructor at the
+      // override URL. Production leaves it unset.
+      const telegramApiRoot = channelConfig.telegram.apiRoot && channelConfig.telegram.apiRoot.length > 0
+        ? channelConfig.telegram.apiRoot
+        : undefined;
+      const validation = await validateBotToken(token, telegramApiRoot);
       if (validation.ok) {
         const plugin = createTelegramPlugin({
           botToken: token,
           webhookSecret: channelConfig.telegram.webhookUrl ? (getSecret("TELEGRAM_WEBHOOK_SECRET") ?? undefined) : undefined,
           webhookUrl: channelConfig.telegram.webhookUrl,
           logger: channelsLogger,
+          ...(telegramApiRoot ? { apiRoot: telegramApiRoot } : {}),
         });
         tgPlugin = plugin as TelegramPluginHandle;
         adaptersByType.set("telegram", plugin.adapter);
