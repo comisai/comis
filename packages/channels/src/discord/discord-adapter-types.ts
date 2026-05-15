@@ -36,6 +36,16 @@ import type {
  *
  * Plan 41-05 (TS-HYG-06) imports this to eliminate the 18 `as any` casts
  * in `discord-actions.ts`.
+ *
+ * The `threads?` field combines the base `ThreadManager` (for `fetchActive()`)
+ * with the create overload from `GuildTextThreadManager` (which extends
+ * `ThreadManager<false>` and adds `create()`). Plan 41-05's `threadCreate`
+ * action call site needs both methods on the same narrowed reference, and
+ * the underlying discord.js types model them via the GuildTextThreadManager
+ * subclass rather than the ThreadManager base — the structural intersection
+ * captures both shapes in a single field type. The `create()` parameter
+ * type is intentionally permissive (`Record<string, unknown>`) because the
+ * action layer builds the payload defensively from RPC arguments.
  */
 export interface DiscordTextLikeChannel {
   readonly id: string;
@@ -47,8 +57,15 @@ export interface DiscordTextLikeChannel {
   edit(options: Record<string, unknown>): Promise<unknown>;
   delete(reason?: string): Promise<unknown>;
   sendTyping(): Promise<void>;
-  /** Present only on text channels that support threads; undefined elsewhere. */
-  readonly threads?: ThreadManager;
+  /**
+   * Present only on text channels that support threads; undefined elsewhere.
+   * `fetchActive()` lives on `ThreadManager` (base); `create()` lives on
+   * `GuildTextThreadManager` (subclass) — see interface JSDoc for the
+   * structural intersection rationale.
+   */
+  readonly threads?: ThreadManager & {
+    create?(options: Record<string, unknown>): Promise<{ id: string; name: string }>;
+  };
 }
 
 /**
