@@ -1733,61 +1733,13 @@ export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [
     removedIn: "phase-D",
   },
 
-  // observability-store.ts — 9 symbols.
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "AgentAggDbRow",
-    reason: "observability-store agent-aggregate .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "ChannelSnapshotDbRow",
-    reason: "observability-store channel-snapshot .all() row cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "DeliveryDbRow",
-    reason: "observability-store delivery-row .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "DeliveryStatsDbRow",
-    reason: "observability-store delivery-stats .get() cast; Phase D TS-HYG-02 retargets to mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "DiagnosticDbRow",
-    reason: "observability-store diagnostic .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "HourlyBucketDbRow",
-    reason: "observability-store hourly-bucket .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "ProviderAggDbRow",
-    reason: "observability-store provider-aggregate .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "SessionAggDbRow",
-    reason: "observability-store session-aggregate .get() cast (Row | undefined truncates to Row); Phase D TS-HYG-02 retargets to mapper.parseOptionalRow",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/memory/src/observability-store.ts",
-    symbol: "TokenUsageDbRow",
-    reason: "observability-store token-usage .all() cast; Phase D TS-HYG-02 retargets to mapper.parseRows",
-    removedIn: "phase-D",
-  },
+  // observability-store.ts — DRAINED in Plan 41-04 Task 2 (TS-HYG-03).
+  // Previously held 9 `{file, symbol}` entries for {TokenUsageDbRow,
+  // DeliveryDbRow, DiagnosticDbRow, ChannelSnapshotDbRow, ProviderAggDbRow,
+  // AgentAggDbRow, SessionAggDbRow, HourlyBucketDbRow, DeliveryStatsDbRow}.
+  // Every site retargets to mapper.parseRows / parseOptionalRow with
+  // degrade-on-validation-error (observability metrics are non-fatal —
+  // see file header for the chosen Option 2 rationale).
 
   // row-mapper.ts — 1 symbol (the Phase D mapper module itself currently
   // contains an internal anonymous row-projection cast; closes when the
