@@ -29,7 +29,7 @@ import { suppressError } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import { resolveModelPricing } from "@comis/core";
 import { getCacheProviderInfo } from "../executor/cache-usage-helpers.js";
-import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-break-detection.js";
+import { sanitizeMcpToolNameForAnalytics } from "../executor/cache-detection/index.js";
 import { classifyError } from "../executor/error-classifier.js";
 import type { BudgetGuard } from "../budget/budget-guard.js";
 import type { CostTracker } from "../budget/cost-tracker.js";
@@ -114,7 +114,7 @@ export interface PiEventBridgeDeps {
   /** Callback fired when cache break detection finds a break event.
    *  Receives the full CacheBreakEvent. PiExecutor uses this to trigger
    *  coordinated reset on server eviction. */
-  onCacheBreakDetected?: (event: import("../executor/cache-break-detection.js").CacheBreakEvent) => void;
+  onCacheBreakDetected?: (event: import("../executor/cache-detection/index.js").CacheBreakEvent) => void;
   /** Decrement eviction cooldown counter each turn (unconditional). */
   decrementEvictionCooldown?: () => void;
   /** Callback to record per-turn cache savings for cost gate evaluation.
@@ -135,7 +135,7 @@ export interface PiEventBridgeDeps {
   /** Execution start timestamp for SEP timing metrics. */
   sepExecutionStartMs?: number;
   /** Cache break detection callback. Returns CacheBreakEvent if break detected. */
-  checkCacheBreak?: (input: { sessionKey: string; provider: string; cacheReadTokens: number; cacheWriteTokens: number; totalInputTokens: number; apiError?: boolean }) => import("../executor/cache-break-detection.js").CacheBreakEvent | null;
+  checkCacheBreak?: (input: { sessionKey: string; provider: string; cacheReadTokens: number; cacheWriteTokens: number; totalInputTokens: number; apiError?: boolean }) => import("../executor/cache-detection/index.js").CacheBreakEvent | null;
   /** Called on each turn_end with the per-turn usage.input tokens.
    *  Used by pi-executor to update the TokenAnchor for API-grounded estimation. */
   onTurnUsage?: (inputTokens: number) => void;

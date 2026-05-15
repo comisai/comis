@@ -51,7 +51,7 @@ vi.mock("./discovery-tracker.js", () => ({
   clearDiscoveryTracker: mockClearDiscoveryTracker,
 }));
 
-vi.mock("./cache-break-detection.js", () => ({
+vi.mock("./cache-detection/index.js", () => ({
   clearCacheBreakDetectorSession: mockClearCacheBreakDetectorSession,
 }));
 

@@ -54,7 +54,7 @@ import { isAnthropicFamily, isGoogleFamily } from "../provider/capabilities.js";
 import type { TtlSplitEstimate } from "../bridge/pi-event-bridge.js";
 import { createGeminiCacheInjector } from "./gemini-cache-injector.js";
 import type { GeminiCacheManager } from "./gemini-cache-manager.js";
-import { extractAnthropicPromptState, extractGeminiPromptState } from "./cache-break-detection.js";
+import { extractAnthropicPromptState, extractGeminiPromptState } from "./cache-detection/index.js";
 import { createBlockStabilityTracker } from "./block-stability-tracker.js";
 import {
   clearSessionCacheWarm,

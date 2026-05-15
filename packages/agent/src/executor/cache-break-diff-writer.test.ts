@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { CacheBreakEvent } from "./cache-break-detection.js";
+import type { CacheBreakEvent } from "./cache-detection/index.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
 // Mock node:fs -- writeFileSync, mkdirSync, readdirSync, unlinkSync

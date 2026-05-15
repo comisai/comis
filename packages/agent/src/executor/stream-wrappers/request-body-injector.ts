@@ -24,7 +24,7 @@ import { createAccumulativeLatch } from "../session-latch.js";
 import { MIN_CACHEABLE_TOKENS, DEFAULT_MIN_CACHEABLE_TOKENS, CHARS_PER_TOKEN_RATIO, CHARS_PER_TOKEN_RATIO_STRUCTURED, CACHE_LOOKBACK_WINDOW } from "../../context-engine/index.js";
 import { isAnthropicFamily } from "../../provider/capabilities.js";
 import { estimateContextChars } from "../../safety/token-estimator.js";
-import { computeHash, djb2 } from "../cache-break-detection.js";
+import { computeHash, djb2 } from "../cache-detection/index.js";
 import type { BlockStabilityTracker } from "../block-stability-tracker.js";
 import { supportsToolSearch } from "../tool-deferral.js";
 
@@ -257,7 +257,7 @@ function parseHeaderList(header: string | undefined): string[] {
 
 /**
  * Compute a hash of rendered tools excluding cache_control.
- * Uses computeHash (djb2 over JSON.stringify) from cache-break-detection.
+ * Uses computeHash (djb2 over JSON.stringify) from cache-detection/.
  */
 function computeRenderedToolsHash(tools: Array<Record<string, unknown>>): number {
   const forHash = tools.map(t => ({

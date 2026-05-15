@@ -20,7 +20,7 @@ import {
   type PendingChanges,
   type PromptStateSnapshot,
   type RecordPromptStateInput,
-} from "./cache-break-detection.js";
+} from "./cache-detection/index.js";
 
 /**
  * Phase 42 parity protection — EXEC-SPLIT-01.

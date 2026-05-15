@@ -31,7 +31,7 @@ import { describe, it, expect } from "vitest";
 import {
   createCacheBreakDetector,
   extractAnthropicPromptState,
-} from "../../../packages/agent/dist/executor/cache-break-detection.js";
+} from "../../../packages/agent/dist/executor/cache-detection/index.js";
 
 function silentLogger() {
   return {

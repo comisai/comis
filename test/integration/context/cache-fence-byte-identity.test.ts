@@ -42,7 +42,7 @@ import { computeCacheContentHash, extractGeminiPromptState } from "@comis/agent"
 import {
   createCacheBreakDetector,
   extractAnthropicPromptState,
-} from "../../../packages/agent/dist/executor/cache-break-detection.js";
+} from "../../../packages/agent/dist/executor/cache-detection/index.js";
 
 // ---------------------------------------------------------------------------
 // Stub logger (the detector accepts duck-typed { debug, info, warn? })

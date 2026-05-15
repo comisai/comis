@@ -7,7 +7,7 @@ import type { ExecutionResult } from "./types.js";
 import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot } from "./prompt-assembly.js";
 import { clearSessionToolSchemaSnapshot } from "./executor-session-state.js";
 import { resetPairedMemoryDedupForTests } from "./executor-post-execution.js";
-import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "./cache-break-detection.js";
+import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "./cache-detection/index.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock setup -- vi.hoisted runs before vi.mock factories
