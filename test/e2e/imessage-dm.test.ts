@@ -50,6 +50,13 @@ describe("E2E: imessage × dm — file-based imsg shim roundtrip (COV-15)", () =
 
   it("captures a JSON-RPC 'send' request written to the shim's stdin", async () => {
     proc = spawn(binaryPath, [], { stdio: ["pipe", "pipe", "pipe"] });
+    // Wait for the shim to be ready (its tail subprocess must start before
+    // we write to stdin — otherwise the shim's main read loop may consume
+    // our request before the file-write side has flushed). Poll stdout for
+    // the first byte (the shim emits nothing until it gets a request, so
+    // we instead probe by checking process state).
+    await new Promise((r) => setTimeout(r, 200));
+
     // Send one JSON-RPC `send` request.
     proc.stdin.write(
       JSON.stringify({
@@ -60,8 +67,12 @@ describe("E2E: imessage × dm — file-based imsg shim roundtrip (COV-15)", () =
       }) + "\n",
     );
 
-    // Wait for the shim to flush its reply + write to outbox.
-    await new Promise((r) => setTimeout(r, 300));
+    // Poll-wait for the outbox to record the request — robust against
+    // platform-dependent stdin → file-append latency. Cap at 3s.
+    const start = Date.now();
+    while (mock.getRequestCount("send") === 0 && Date.now() - start < 3000) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
 
     expect(mock.getRequestCount("send")).toBe(1);
     const events = mock.getCapturedEvents();

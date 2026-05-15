@@ -182,7 +182,9 @@ describe("createTelegramAdapter", () => {
       const result = await adapter.start();
 
       expect(result.ok).toBe(true);
-      expect(validateBotToken).toHaveBeenCalledWith("123456:ABC-DEF");
+      // Phase 40 / Plan 40-09: validateBotToken now takes (token, apiRoot?);
+      // production path (no deps.apiRoot) passes undefined for the 2nd arg.
+      expect(validateBotToken).toHaveBeenCalledWith("123456:ABC-DEF", undefined);
     });
 
     it("returns err on invalid token", async () => {
