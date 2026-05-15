@@ -44,7 +44,7 @@ describe("E2E: slack × dm — Web API wire roundtrip against the 127.0.0.1 mock
 
   it("validates Slack credentials by hitting /api/auth.test through the redirected WebClient", async () => {
     const result = await validateSlackCredentials({
-      botToken: "xoxb-mock-test-token",
+      botToken: "test-bot-token",
       mode: "http",
       signingSecret: "mock-test-signing-secret",
       apiRoot: baseUrl,
@@ -62,7 +62,7 @@ describe("E2E: slack × dm — Web API wire roundtrip against the 127.0.0.1 mock
     // The WebClient builds URLs as `<slackApiUrl><method>`. Without a
     // trailing `/api/` the methods appear at the root — the mock accepts
     // either shape (with or without /api/ prefix).
-    const client = new WebClient("xoxb-mock-test-token", { slackApiUrl: `${baseUrl}/` });
+    const client = new WebClient("test-bot-token", { slackApiUrl: `${baseUrl}/` });
     const result = await client.chat.postMessage({
       channel: "C_SLACK_TEST_DM",
       text: "Hello slack user from comis-bot",
