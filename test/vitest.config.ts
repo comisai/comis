@@ -46,5 +46,46 @@ export default defineConfig({
       // and contributor checkouts.
       COMIS_REPO_ROOT: resolve(__dirname, ".."),
     },
+    // Phase 40 COV-04: integration-tier coverage threshold.
+    //
+    // Measures in-process imports the integration suite actually loads —
+    // `packages/*/dist/**/*.js` (the alias targets above). Subprocess daemon
+    // code is NOT measured here; that is the E2E tier's territory (Plan 40-09).
+    //
+    // Floor: Math.floor(measured) — same Math.floor protocol as the unit
+    // tier (COV-03). The Plan 40-07 measurement against the post-Wave 1
+    // codebase reports lines=34.64% globally (range 0–78% per package, with
+    // `web` excluded). The §3.5 aspirational target is ≥80% line coverage;
+    // closing the 80–34=46 percentage-point gap requires integration tests
+    // walking many more code paths (~hundreds of new tests), which is out
+    // of Plan 40-07 scope. The gap is recorded in
+    // `.planning/code-quality/coverage-ramp-2026-05-15/ramp-history.json`
+    // under the integration-tier section and deferred to Plan 40-10 (final
+    // composite green) for monotonic ramping. The threshold gate is now
+    // WIRED at floor=34 so CI catches any regression below today's floor;
+    // the §3.5 target ramps in future plans the same way the unit tier ramps.
+    //
+    // Branches/functions/statements deliberately omitted: the unit tier
+    // (COV-03) owns those at the unit level; integration focuses on
+    // line coverage of in-process seams only.
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json"],
+      include: ["packages/*/dist/**/*.js"],
+      exclude: [
+        "**/*.test.js",
+        "**/__tests__/**",
+        "**/__snapshots__/**",
+        "**/*.d.ts",
+        "**/*.d.js",
+        "**/*.generated.js",
+        "packages/web/dist/**",
+      ],
+      thresholds: {
+        // Wave 2 floor: Math.floor(34.64) = 34. Plan 40-10 ramps toward
+        // the §3.5 aspirational target (lines: 80).
+        lines: 34,
+      },
+    },
   },
 });

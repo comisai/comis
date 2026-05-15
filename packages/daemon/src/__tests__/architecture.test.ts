@@ -477,7 +477,12 @@ describe("@comis/daemon -- architecture invariants", () => {
     expect(lineCount, "daemon.ts must contain code").toBeGreaterThan(100);
   });
 
-  it("api/*-handlers.ts never imports another api/*-handlers.ts file (DAEMON-API-05)", () => {
+  // Phase 40 Plan 07: 30s timeout (default 5s) — under v8 coverage
+  // instrumentation, the 27-handler AST walk slows enough to exceed the
+  // default budget. Without coverage the test runs in ~1.5s.
+  it(
+    "api/*-handlers.ts never imports another api/*-handlers.ts file (DAEMON-API-05)",
+    () => {
     // DAEMON-API-05: handler files are siblings -- they MUST NOT import
     // each other. Any cross-handler shared logic lives in api/shared/
     // (4 helpers landed there in Phase 34 Plan 09: persist-to-config,
@@ -537,7 +542,9 @@ describe("@comis/daemon -- architecture invariants", () => {
         }),
       ).toEqual([]);
     }
-  });
+    },
+    30_000,
+  );
 
   // Phase 34 Plan 10 (DAEMON-API-04): per-domain audit-coverage invariants.
   // For each cluster slice in api/types.ts the matching AUDIT-<domain>.md
