@@ -569,6 +569,14 @@ const VERB_FORMS: ReadonlySet<string> = new Set([
   "fallback","fallbacks",
   "pre-fire","pre-fires","pre-fired","pre-firing",
   "snapshot","snapshots","snapshotted","snapshotting",
+  // Plan 40-17 — VERB_FORMS extension to close legitimate heuristic-miss
+  // entries from testNamingAllowlist. Each addition is reviewed for
+  // false-positive risk: it must be a common English verb / verb-form-noun
+  // whose presence in a description signals legitimate use-case intent.
+  // (BLOCKLIST_RE still catches bare anti-patterns like "works" alone.)
+  "declare","declares","declared","declaring",
+  "work","works","worked","working",
+  "isolation","enforcement",
 ]);
 
 const WORD_TOKEN_RE = /[a-zA-Z][a-zA-Z'-]*/g;
