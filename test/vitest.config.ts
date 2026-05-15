@@ -53,17 +53,22 @@ export default defineConfig({
     // code is NOT measured here; that is the E2E tier's territory (Plan 40-09).
     //
     // Floor: Math.floor(measured) — same Math.floor protocol as the unit
-    // tier (COV-03). The Plan 40-07 measurement against the post-Wave 1
-    // codebase reports lines=34.64% globally (range 0–78% per package, with
-    // `web` excluded). The §3.5 aspirational target is ≥80% line coverage;
-    // closing the 80–34=46 percentage-point gap requires integration tests
-    // walking many more code paths (~hundreds of new tests), which is out
-    // of Plan 40-07 scope. The gap is recorded in
-    // `.planning/code-quality/coverage-ramp-2026-05-15/ramp-history.json`
-    // under the integration-tier section and deferred to Plan 40-10 (final
-    // composite green) for monotonic ramping. The threshold gate is now
-    // WIRED at floor=34 so CI catches any regression below today's floor;
-    // the §3.5 target ramps in future plans the same way the unit tier ramps.
+    // tier (COV-03). The §3.5 aspirational target is ≥80% line coverage.
+    //
+    // Ramp history (most recent first):
+    //   - Plan 40-16-ramp1 (Path B): 34 → 35. Math.floor(measured=35.81)
+    //     after Plan 40-16 Tasks 1–4 added 19 new integration test files
+    //     across channels, cli, daemon, scheduler, skills, memory, agent,
+    //     orchestrator (1604 tests total vs. 1494 baseline). The §3.5
+    //     ≥80% target requires walking hundreds more code paths and is
+    //     bottlenecked by huge untested swaths in `skills/integrations/`
+    //     and `skills/tools/` whose v8 line counts dominate the gap. The
+    //     ramp is monotonic-forward; further closure is deferred to a
+    //     follow-on plan. Audit trail:
+    //     `.planning/code-quality/coverage-ramp-2026-05-15/ramp-history.json`
+    //     (integration_tier section, closure_type: "partial",
+    //     residual_gap: 45pp).
+    //   - Plan 40-07: wired the floor at lines=34 (Math.floor(34.64)).
     //
     // Branches/functions/statements deliberately omitted: the unit tier
     // (COV-03) owns those at the unit level; integration focuses on
@@ -82,9 +87,9 @@ export default defineConfig({
         "packages/web/dist/**",
       ],
       thresholds: {
-        // Wave 2 floor: Math.floor(34.64) = 34. Plan 40-10 ramps toward
-        // the §3.5 aspirational target (lines: 80).
-        lines: 34,
+        // Plan 40-16-ramp1 (Path B): Math.floor(35.81) = 35. Locks in
+        // forward gain from Tasks 1–4; residual 45pp deferred.
+        lines: 35,
       },
     },
   },
