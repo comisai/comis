@@ -143,7 +143,9 @@ describe("createDiscordAdapter", () => {
       const result = await adapter.start();
 
       expect(result.ok).toBe(true);
-      expect(validateDiscordToken).toHaveBeenCalledWith("discord-bot-token");
+      // Phase 40 / Plan 40-09: validateDiscordToken now takes (token, apiRoot?);
+      // production path (no deps.apiRoot) passes undefined for the 2nd arg.
+      expect(validateDiscordToken).toHaveBeenCalledWith("discord-bot-token", undefined);
     });
 
     it("returns err on invalid token and logs Adapter start failed", async () => {

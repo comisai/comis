@@ -72,6 +72,18 @@ export interface TelegramAdapterDeps {
   logger: ComisLogger;
   /** Optional callback for emitting poll result events */
   onPollResult?: (result: import("@comis/core").NormalizedPollResult) => void;
+  /**
+   * Optional Telegram Bot API root URL override. When set, the grammy `Bot`
+   * is constructed with this URL as the API root instead of the default
+   * `https://api.telegram.org`. Used by E2E tests that point the adapter at
+   * a 127.0.0.1 mock server (see `test/e2e/mocks/telegram/`). Production
+   * deployments leave this unset and rely on grammy's default. Must be a
+   * fully-qualified URL (e.g. `http://127.0.0.1:54321`); no trailing slash.
+   *
+   * Phase 40 / Plan 40-09 / COV-15 — production seam for the wire-level E2E
+   * mock chat-platform fixture.
+   */
+  apiRoot?: string;
 }
 
 export interface TelegramAdapterHandle extends ChannelPort {
@@ -164,7 +176,14 @@ function sanitizeTelegramHtml(text: string): string {
  * rate limiting and runner for concurrent update processing.
  */
 export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapterHandle {
-  const bot = new Bot(deps.botToken);
+  // E2E seam: if deps.apiRoot is set, point grammy at that URL instead of
+  // api.telegram.org. Production callers leave it unset and grammy uses its
+  // default (https://api.telegram.org). Per AGENTS.md §2.3, the `client`
+  // option is included ONLY when redirected — keeps the production code path
+  // byte-identical to before.
+  const bot = deps.apiRoot
+    ? new Bot(deps.botToken, { client: { apiRoot: deps.apiRoot } })
+    : new Bot(deps.botToken);
 
   // Install auto-retry transformer for 429 handling
   bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 10 }));
@@ -226,8 +245,10 @@ export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapte
     },
 
     async start(): Promise<Result<void, Error>> {
-      // Fail fast on invalid token
-      const tokenResult = await validateBotToken(deps.botToken);
+      // Fail fast on invalid token. Pass apiRoot if set (Wave A1 / Plan 40-09)
+      // so the in-adapter validation also targets the redirection mock —
+      // otherwise the validator hits api.telegram.org and 401s in E2E tests.
+      const tokenResult = await validateBotToken(deps.botToken, deps.apiRoot);
       if (!tokenResult.ok) {
         deps.logger.error(
           {

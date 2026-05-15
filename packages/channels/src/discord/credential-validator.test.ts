@@ -3,9 +3,13 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // Mock discord.js REST class
 const mockGet = vi.fn();
+const restConstructorArgs: Array<unknown> = [];
 
 vi.mock("discord.js", () => {
   class MockREST {
+    constructor(options?: unknown) {
+      restConstructorArgs.push(options);
+    }
     setToken(_token: string) {
       return this;
     }
@@ -25,6 +29,7 @@ import { validateDiscordToken } from "./credential-validator.js";
 describe("credential-validator / validateDiscordToken", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    restConstructorArgs.length = 0;
   });
 
   it("returns ok with DiscordBotInfo on valid token", async () => {
@@ -88,5 +93,29 @@ describe("credential-validator / validateDiscordToken", () => {
       expect(result.error.message).toContain("Invalid Discord bot token");
       expect(result.error.message).toContain("string error");
     }
+  });
+
+  it("passes 'api' option to discord.js REST when apiRoot is provided (COV-15 E2E seam)", async () => {
+    // Phase 40 / Plan 40-09 / COV-15: apiRoot threads through to
+    // @discordjs/rest constructor so E2E tests can redirect to a 127.0.0.1
+    // mock instead of discord.com/api.
+    mockGet.mockResolvedValueOnce({ id: "1", username: "bot", discriminator: "0" });
+
+    await validateDiscordToken("tok", "http://127.0.0.1:54321");
+
+    expect(restConstructorArgs).toHaveLength(1);
+    expect(restConstructorArgs[0]).toEqual({
+      version: "10",
+      api: "http://127.0.0.1:54321",
+    });
+  });
+
+  it("omits 'api' option when apiRoot is undefined (production-path byte-identical)", async () => {
+    mockGet.mockResolvedValueOnce({ id: "1", username: "bot", discriminator: "0" });
+
+    await validateDiscordToken("tok");
+
+    expect(restConstructorArgs).toHaveLength(1);
+    expect(restConstructorArgs[0]).toEqual({ version: "10" });
   });
 });

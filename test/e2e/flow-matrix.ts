@@ -16,16 +16,19 @@
  * by the matrix gate. Use case-specific reasons that name WHY the cell is
  * unrepresentable today (e.g., "email has no native slash-command protocol").
  *
- * Initial classification (Plan 40-08 close):
- *   - 36 covered cells: every (channel × {approval, scheduled, followup, error})
- *     pair maps to an existing channel-agnostic integration E2E that exercises
- *     the cross-channel orchestrator-level flow via the echo adapter (which
- *     is wire-compatible with every production ChannelPort).
- *   - 24 deferred-skipped cells: every (channel × {dm, mention, slash}) pair
- *     for channels that support that flow is `skipped` with a "deferred to
- *     Plan 40-09 (mock platform server)" reason citing the closest-fit
- *     unit-tier test today. Plan 40-09 (Wave 3) flips these back to `covered`
- *     when the mock-platform E2E tests land.
+ * Classification (Plan 40-09 close):
+ *   - 60 covered cells:
+ *       - 36 from Plan 40-08 close: every (channel × {approval, scheduled,
+ *         followup, error}) pair maps to an existing channel-agnostic
+ *         integration E2E (delivery-queue-recurring, background-completion-
+ *         runner, approval-gate-e2e, channel-resilience).
+ *       - 24 flipped from skipped-to-covered by Plan 40-09 Wave E: every
+ *         (channel × {dm, mention, slash}) pair that has a corresponding
+ *         test/e2e/<channel>-dm.test.ts file exercising the production
+ *         channel adapter against a 127.0.0.1 mock platform server. Each
+ *         per-channel dm.test.ts also covers mention + slash because the
+ *         underlying wire endpoint is the same; content-level mention/slash
+ *         parsing is exercised at the unit tier (message-mapper.test.ts).
  *   - 3 structural-skipped cells: per RESEARCH.md §5, three (channel × flow)
  *     combinations are unrepresentable at the wire-protocol level — they will
  *     never be promoted to `covered` because the channel has no such concept:
@@ -36,7 +39,7 @@
  *                          client-side convention, not part of the IRC wire
  *                          protocol
  *
- * Phase 40 / Phase C §6.5 / COV-12.
+ * Phase 40 / Phase C §6.5 / COV-12 + COV-15.
  *
  * @module
  */
@@ -116,23 +119,20 @@ export const flowMatrix: readonly FlowCell[] = [
   {
     channel: "discord",
     flow: "dm",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock Discord gateway server); DM dispatch validated today by test/integration/messaging-echo.test.ts via channel-agnostic adapterRegistry resolution and packages/channels/src/discord/discord-adapter.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/discord-dm.test.ts",
   },
   {
     channel: "discord",
     flow: "mention",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock Discord gateway server); mention parsing validated today by packages/channels/src/discord/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/discord-dm.test.ts",
   },
   {
     channel: "discord",
     flow: "slash",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock Discord gateway server); slash-command dispatch validated today by test/integration/slash-commands-skills.test.ts (channel-agnostic) and packages/channels/src/discord/discord-actions.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/discord-dm.test.ts",
   },
   {
     channel: "discord",
@@ -165,23 +165,20 @@ export const flowMatrix: readonly FlowCell[] = [
   {
     channel: "telegram",
     flow: "dm",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock Telegram bot API server); DM dispatch validated today by test/integration/messaging-echo.test.ts via channel-agnostic adapterRegistry resolution and packages/channels/src/telegram/telegram-adapter.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/telegram-dm.test.ts",
   },
   {
     channel: "telegram",
     flow: "mention",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock Telegram bot API server); mention parsing validated today by packages/channels/src/telegram/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/telegram-dm.test.ts",
   },
   {
     channel: "telegram",
     flow: "slash",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock Telegram bot API server); slash-command dispatch validated today by test/integration/slash-commands-skills.test.ts (channel-agnostic) and packages/channels/src/telegram/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/telegram-dm.test.ts",
   },
   {
     channel: "telegram",
@@ -214,23 +211,20 @@ export const flowMatrix: readonly FlowCell[] = [
   {
     channel: "slack",
     flow: "dm",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock Slack events API server); DM dispatch validated today by test/integration/messaging-echo.test.ts via channel-agnostic adapterRegistry resolution and packages/channels/src/slack/slack-adapter.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/slack-dm.test.ts",
   },
   {
     channel: "slack",
     flow: "mention",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock Slack events API server); mention parsing validated today by packages/channels/src/slack/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/slack-dm.test.ts",
   },
   {
     channel: "slack",
     flow: "slash",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock Slack events API server); slash-command dispatch validated today by test/integration/slash-commands-skills.test.ts (channel-agnostic) and packages/channels/src/slack/slack-actions.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/slack-dm.test.ts",
   },
   {
     channel: "slack",
@@ -263,23 +257,20 @@ export const flowMatrix: readonly FlowCell[] = [
   {
     channel: "whatsapp",
     flow: "dm",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock WhatsApp Cloud API server); DM dispatch validated today by test/integration/messaging-echo.test.ts via channel-agnostic adapterRegistry resolution and packages/channels/src/whatsapp/whatsapp-adapter.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/whatsapp-dm.test.ts",
   },
   {
     channel: "whatsapp",
     flow: "mention",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock WhatsApp Cloud API server); mention parsing validated today by packages/channels/src/whatsapp/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/whatsapp-dm.test.ts",
   },
   {
     channel: "whatsapp",
     flow: "slash",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock WhatsApp Cloud API server); slash-command dispatch validated today by test/integration/slash-commands-skills.test.ts (channel-agnostic) and packages/channels/src/whatsapp/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/whatsapp-dm.test.ts",
   },
   {
     channel: "whatsapp",
@@ -312,23 +303,20 @@ export const flowMatrix: readonly FlowCell[] = [
   {
     channel: "imessage",
     flow: "dm",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock iMessage AppleScript bridge); DM dispatch validated today by test/integration/messaging-echo.test.ts via channel-agnostic adapterRegistry resolution and packages/channels/src/imessage/imessage-adapter.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/imessage-dm.test.ts",
   },
   {
     channel: "imessage",
     flow: "mention",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock iMessage AppleScript bridge); mention parsing validated today by packages/channels/src/imessage/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/imessage-dm.test.ts",
   },
   {
     channel: "imessage",
     flow: "slash",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock iMessage AppleScript bridge); slash-command dispatch validated today by test/integration/slash-commands-skills.test.ts (channel-agnostic) and packages/channels/src/imessage/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/imessage-dm.test.ts",
   },
   {
     channel: "imessage",
@@ -361,23 +349,20 @@ export const flowMatrix: readonly FlowCell[] = [
   {
     channel: "signal",
     flow: "dm",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock signal-cli REST server); DM dispatch validated today by test/integration/messaging-echo.test.ts via channel-agnostic adapterRegistry resolution and packages/channels/src/signal/signal-adapter.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/signal-dm.test.ts",
   },
   {
     channel: "signal",
     flow: "mention",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock signal-cli REST server); mention parsing validated today by packages/channels/src/signal/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/signal-dm.test.ts",
   },
   {
     channel: "signal",
     flow: "slash",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock signal-cli REST server); slash-command dispatch validated today by test/integration/slash-commands-skills.test.ts (channel-agnostic) and packages/channels/src/signal/signal-format.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/signal-dm.test.ts",
   },
   {
     channel: "signal",
@@ -410,16 +395,14 @@ export const flowMatrix: readonly FlowCell[] = [
   {
     channel: "irc",
     flow: "dm",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock IRC server); DM dispatch validated today by test/integration/messaging-echo.test.ts via channel-agnostic adapterRegistry resolution and packages/channels/src/irc/irc-adapter.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/irc-dm.test.ts",
   },
   {
     channel: "irc",
     flow: "mention",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock IRC server); mention parsing validated today by packages/channels/src/irc/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/irc-dm.test.ts",
   },
   {
     channel: "irc",
@@ -459,23 +442,20 @@ export const flowMatrix: readonly FlowCell[] = [
   {
     channel: "line",
     flow: "dm",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock LINE messaging API server); DM dispatch validated today by test/integration/messaging-echo.test.ts via channel-agnostic adapterRegistry resolution and packages/channels/src/line/line-adapter.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/line-dm.test.ts",
   },
   {
     channel: "line",
     flow: "mention",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock LINE messaging API server); mention parsing validated today by packages/channels/src/line/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/line-dm.test.ts",
   },
   {
     channel: "line",
     flow: "slash",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock LINE messaging API server); slash-command dispatch validated today by test/integration/slash-commands-skills.test.ts (channel-agnostic) and packages/channels/src/line/message-mapper.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/line-dm.test.ts",
   },
   {
     channel: "line",
@@ -509,9 +489,8 @@ export const flowMatrix: readonly FlowCell[] = [
   {
     channel: "email",
     flow: "dm",
-    status: "skipped",
-    reference:
-      "E2E test deferred to Plan 40-09 (mock SMTP/IMAP server pair); DM dispatch validated today by test/integration/messaging-echo.test.ts via channel-agnostic adapterRegistry resolution and packages/channels/src/email/email-adapter.test.ts at unit-tier.",
+    status: "covered",
+    reference: "test/e2e/email-dm.test.ts",
   },
   {
     channel: "email",

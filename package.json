@@ -23,6 +23,7 @@
     "lint:security": "eslint --config eslint.config.js",
     "test": "vitest",
     "test:architecture": "vitest run --project architecture",
+    "test:e2e": "vitest run --config test/e2e/vitest.config.ts",
     "smoke:tarball": "node scripts/smoke/tarball-smoke.mjs",
     "test:integration": "vitest run --config test/vitest.config.ts",
     "test:orchestrate": "npx tsx test/orchestrate.ts",
@@ -34,6 +35,7 @@
     "@vitest/coverage-v8": "4.1.5",
     "@eslint/js": "10.0.1",
     "@types/node": "22.19.18",
+    "@types/ws": "8.18.1",
     "esbuild": "0.28.0",
     "eslint": "10.2.1",
     "eslint-plugin-security": "4.0.0",
@@ -45,6 +47,7 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.59.1",
     "vitest": "4.1.5",
+    "ws": "8.20.0",
     "yaml": "2.8.4",
     "zod": "4.4.3"
   },

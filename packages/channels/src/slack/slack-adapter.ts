@@ -45,6 +45,21 @@ export interface SlackAdapterDeps {
   appToken?: string;
   signingSecret?: string;
   logger: ComisLogger;
+  /**
+   * Optional Slack Web API root URL override (e.g. `http://127.0.0.1:54321`).
+   * When set, @slack/bolt's underlying `WebClient` is constructed with
+   * `clientOptions.slackApiUrl = apiRoot`. Production callers leave this
+   * undefined and bolt uses its default (`https://slack.com/api`).
+   *
+   * Phase 40 / Plan 40-09 / COV-15 — production seam for the wire-level E2E
+   * mock chat-platform fixture (test/e2e/mocks/slack/).
+   *
+   * Note: this only redirects Web API REST traffic. Socket Mode WebSocket
+   * connections go to `wss://wss-primary.slack.com` and cannot be redirected
+   * via this seam — E2E tests use Slack's HTTP/Events mode against the mock
+   * by setting mode='http'.
+   */
+  apiRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,12 +96,14 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
     },
 
     async start(): Promise<Result<void, Error>> {
-      // Fail fast on invalid credentials
+      // Fail fast on invalid credentials. Pass apiRoot if set (Phase 40 /
+      // Plan 40-09 / COV-15) so auth.test() hits the redirection mock.
       const credResult = await validateSlackCredentials({
         botToken: deps.botToken,
         mode: deps.mode,
         appToken: deps.appToken,
         signingSecret: deps.signingSecret,
+        ...(deps.apiRoot ? { apiRoot: deps.apiRoot } : {}),
       });
 
       if (!credResult.ok) {
@@ -117,17 +134,27 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         // Dynamic import to keep @slack/bolt optional at module level
         const { App } = await import("@slack/bolt");
 
+        // E2E seam: when deps.apiRoot is set, bolt's underlying WebClient
+        // receives slackApiUrl=apiRoot via clientOptions. Production path
+        // omits clientOptions entirely (byte-identical to the prior shape).
+        // Phase 40 / Plan 40-09 / COV-15.
+        const clientOptionsOverride = deps.apiRoot
+          ? { clientOptions: { slackApiUrl: deps.apiRoot } }
+          : {};
+
         // Create Bolt App with mode-dependent config
         if (deps.mode === "socket") {
           app = new App({
             token: deps.botToken,
             appToken: deps.appToken,
             socketMode: true,
+            ...clientOptionsOverride,
           });
         } else {
           app = new App({
             token: deps.botToken,
             signingSecret: deps.signingSecret,
+            ...clientOptionsOverride,
           });
         }
 

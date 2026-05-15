@@ -126,7 +126,9 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({ telegram: { enabled: true, botToken: "tok123" } });
     const result = await bootstrapAdapters({ container, channelsLogger });
 
-    expect(validateBotToken).toHaveBeenCalledWith("tok123");
+    // Phase 40 / Plan 40-09: validateBotToken now takes (token, apiRoot?);
+    // production path passes undefined for the second arg.
+    expect(validateBotToken).toHaveBeenCalledWith("tok123", undefined);
     expect(createTelegramPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ botToken: "tok123", logger: channelsLogger }),
     );
@@ -135,6 +137,26 @@ describe("bootstrapAdapters", () => {
     expect(channelsLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ channelType: "telegram", botUsername: "testbot" }),
       "Channel adapter initialized",
+    );
+  });
+
+  it("threads telegram.apiRoot through to validateBotToken + plugin factory when configured (COV-15 E2E seam)", async () => {
+    // Phase 40 / Plan 40-09 / COV-15: when channels.telegram.apiRoot is set,
+    // it MUST flow through to both validateBotToken (for the getMe redirect)
+    // and createTelegramPlugin (for the production-traffic redirect). E2E
+    // tests rely on this seam to point grammy at a 127.0.0.1 mock instead of
+    // api.telegram.org.
+    const container = makeContainer({
+      telegram: { enabled: true, botToken: "tok123", apiRoot: "http://127.0.0.1:54321" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateBotToken).toHaveBeenCalledWith("tok123", "http://127.0.0.1:54321");
+    expect(createTelegramPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        botToken: "tok123",
+        apiRoot: "http://127.0.0.1:54321",
+      }),
     );
   });
 
@@ -165,11 +187,28 @@ describe("bootstrapAdapters", () => {
     const container = makeContainer({ discord: { enabled: true, botToken: "disc-tok" } });
     const result = await bootstrapAdapters({ container, channelsLogger });
 
-    expect(validateDiscordToken).toHaveBeenCalledWith("disc-tok");
+    // Phase 40 / Plan 40-09: validateDiscordToken now takes (token, apiRoot?);
+    // production path passes undefined for the second arg.
+    expect(validateDiscordToken).toHaveBeenCalledWith("disc-tok", undefined);
     expect(createDiscordPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ botToken: "disc-tok" }),
     );
     expect(result.adaptersByType.get("discord")).toBe(mockDiscordPlugin.adapter);
+  });
+
+  it("threads discord.apiRoot through to validateDiscordToken + plugin factory (COV-15 E2E seam)", async () => {
+    const container = makeContainer({
+      discord: { enabled: true, botToken: "disc-tok", apiRoot: "http://127.0.0.1:54322" },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateDiscordToken).toHaveBeenCalledWith("disc-tok", "http://127.0.0.1:54322");
+    expect(createDiscordPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        botToken: "disc-tok",
+        apiRoot: "http://127.0.0.1:54322",
+      }),
+    );
   });
 
   it("creates Slack adapter with socket-mode credentials", async () => {
@@ -187,6 +226,26 @@ describe("bootstrapAdapters", () => {
     expect(result.adaptersByType.get("slack")).toBe(mockSlackPlugin.adapter);
   });
 
+  it("threads slack.apiRoot through to validateSlackCredentials + plugin factory (COV-15 E2E seam)", async () => {
+    const container = makeContainer({
+      slack: {
+        enabled: true,
+        botToken: "xoxb-slack",
+        mode: "http",
+        signingSecret: "sig",
+        apiRoot: "http://127.0.0.1:54323",
+      },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateSlackCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ botToken: "xoxb-slack", apiRoot: "http://127.0.0.1:54323" }),
+    );
+    expect(createSlackPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ botToken: "xoxb-slack", apiRoot: "http://127.0.0.1:54323" }),
+    );
+  });
+
   it("creates WhatsApp adapter with authDir resolution", async () => {
     const container = makeContainer({
       whatsapp: { enabled: true, authDir: "/custom/auth", printQR: true },
@@ -200,6 +259,22 @@ describe("bootstrapAdapters", () => {
       expect.objectContaining({ authDir: "/custom/auth", printQR: true }),
     );
     expect(result.adaptersByType.get("whatsapp")).toBe(mockWhatsAppPlugin.adapter);
+  });
+
+  it("threads whatsapp.apiRoot through to plugin factory (COV-15 E2E seam)", async () => {
+    const container = makeContainer({
+      whatsapp: {
+        enabled: true,
+        authDir: "/custom/auth",
+        printQR: false,
+        apiRoot: "ws://127.0.0.1:54324/ws/chat",
+      },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(createWhatsAppPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ apiRoot: "ws://127.0.0.1:54324/ws/chat" }),
+    );
   });
 
   it("creates LINE adapter with both credentials", async () => {
@@ -216,6 +291,25 @@ describe("bootstrapAdapters", () => {
     );
     expect(result.adaptersByType.get("line")).toBe(mockLinePlugin.adapter);
     expect(result.linePlugin).toBe(mockLinePlugin);
+  });
+
+  it("threads line.apiRoot through to validateLineCredentials + plugin factory (COV-15 E2E seam)", async () => {
+    const container = makeContainer({
+      line: {
+        enabled: true,
+        botToken: "line-access-tok",
+        channelSecret: "line-secret",
+        apiRoot: "http://127.0.0.1:54325",
+      },
+    });
+    await bootstrapAdapters({ container, channelsLogger });
+
+    expect(validateLineCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ apiRoot: "http://127.0.0.1:54325" }),
+    );
+    expect(createLinePlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ apiRoot: "http://127.0.0.1:54325" }),
+    );
   });
 
   it("warns when LINE enabled but missing one credential", async () => {
@@ -283,7 +377,7 @@ describe("bootstrapAdapters", () => {
     const result = await bootstrapAdapters({ container, channelsLogger });
 
     expect(container.secretManager.get).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
-    expect(validateBotToken).toHaveBeenCalledWith("secret-tok");
+    expect(validateBotToken).toHaveBeenCalledWith("secret-tok", undefined);
     expect(result.adaptersByType.get("telegram")).toBe(mockTelegramPlugin.adapter);
   });
 

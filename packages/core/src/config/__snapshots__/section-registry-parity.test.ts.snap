@@ -2012,6 +2012,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.discord.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.discord.appToken",
     "type": "string"
   },
@@ -2060,6 +2065,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
     "immutable": true,
     "path": "channels.discord.enabled",
     "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "channels.discord.gatewayUrl",
+    "type": "string"
   },
   {
     "default": {
@@ -2195,6 +2205,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   {
     "immutable": true,
     "path": "channels.email.apiKey.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.email.apiRoot",
     "type": "string"
   },
   {
@@ -2551,6 +2566,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.imessage.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.imessage.appToken",
     "type": "string"
   },
@@ -2723,6 +2743,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   {
     "immutable": true,
     "path": "channels.irc.apiKey.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.irc.apiRoot",
     "type": "string"
   },
   {
@@ -2944,6 +2969,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.line.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.line.appToken",
     "type": "string"
   },
@@ -3146,6 +3176,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.signal.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.signal.appToken",
     "type": "string"
   },
@@ -3327,6 +3362,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.slack.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.slack.appToken",
     "type": "string"
   },
@@ -3497,6 +3537,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.telegram.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.telegram.appToken",
     "type": "string"
   },
@@ -3663,6 +3708,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   {
     "immutable": true,
     "path": "channels.whatsapp.apiKey.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.whatsapp.apiRoot",
     "type": "string"
   },
   {
@@ -6796,6 +6846,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.discord.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.discord.appToken",
     "type": "string"
   },
@@ -6844,6 +6899,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
     "immutable": true,
     "path": "channels.discord.enabled",
     "type": "boolean"
+  },
+  {
+    "immutable": true,
+    "path": "channels.discord.gatewayUrl",
+    "type": "string"
   },
   {
     "default": {
@@ -6979,6 +7039,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   {
     "immutable": true,
     "path": "channels.email.apiKey.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.email.apiRoot",
     "type": "string"
   },
   {
@@ -7335,6 +7400,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.imessage.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.imessage.appToken",
     "type": "string"
   },
@@ -7507,6 +7577,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   {
     "immutable": true,
     "path": "channels.irc.apiKey.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.irc.apiRoot",
     "type": "string"
   },
   {
@@ -7728,6 +7803,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.line.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.line.appToken",
     "type": "string"
   },
@@ -7930,6 +8010,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.signal.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.signal.appToken",
     "type": "string"
   },
@@ -8111,6 +8196,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.slack.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.slack.appToken",
     "type": "string"
   },
@@ -8281,6 +8371,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   },
   {
     "immutable": true,
+    "path": "channels.telegram.apiRoot",
+    "type": "string"
+  },
+  {
+    "immutable": true,
     "path": "channels.telegram.appToken",
     "type": "string"
   },
@@ -8447,6 +8542,11 @@ exports[`section-registry parity (CONFIG-DELIV-03) > field-metadata view > getFi
   {
     "immutable": true,
     "path": "channels.whatsapp.apiKey.source",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "channels.whatsapp.apiRoot",
     "type": "string"
   },
   {
@@ -15191,6 +15291,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
             }
           ]
         },
+        "apiRoot": {
+          "type": "string"
+        },
         "appToken": {
           "anyOf": [
             {
@@ -15265,6 +15368,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
         "enabled": {
           "default": false,
           "type": "boolean"
+        },
+        "gatewayUrl": {
+          "type": "string"
         },
         "mediaProcessing": {
           "additionalProperties": false,
@@ -15435,6 +15541,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
               "type": "object"
             }
           ]
+        },
+        "apiRoot": {
+          "type": "string"
         },
         "appToken": {
           "anyOf": [
@@ -15895,6 +16004,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
             }
           ]
         },
+        "apiRoot": {
+          "type": "string"
+        },
         "appToken": {
           "anyOf": [
             {
@@ -16124,6 +16236,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
               "type": "object"
             }
           ]
+        },
+        "apiRoot": {
+          "type": "string"
         },
         "appToken": {
           "anyOf": [
@@ -16408,6 +16523,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
             }
           ]
         },
+        "apiRoot": {
+          "type": "string"
+        },
         "appToken": {
           "anyOf": [
             {
@@ -16677,6 +16795,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
             }
           ]
         },
+        "apiRoot": {
+          "type": "string"
+        },
         "appToken": {
           "anyOf": [
             {
@@ -16911,6 +17032,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
             }
           ]
         },
+        "apiRoot": {
+          "type": "string"
+        },
         "appToken": {
           "anyOf": [
             {
@@ -17137,6 +17261,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
             }
           ]
         },
+        "apiRoot": {
+          "type": "string"
+        },
         "appToken": {
           "anyOf": [
             {
@@ -17362,6 +17489,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
               "type": "object"
             }
           ]
+        },
+        "apiRoot": {
+          "type": "string"
         },
         "appToken": {
           "anyOf": [
@@ -23488,6 +23618,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
                 }
               ]
             },
+            "apiRoot": {
+              "type": "string"
+            },
             "appToken": {
               "anyOf": [
                 {
@@ -23562,6 +23695,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
             "enabled": {
               "default": false,
               "type": "boolean"
+            },
+            "gatewayUrl": {
+              "type": "string"
             },
             "mediaProcessing": {
               "additionalProperties": false,
@@ -23732,6 +23868,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
                   "type": "object"
                 }
               ]
+            },
+            "apiRoot": {
+              "type": "string"
             },
             "appToken": {
               "anyOf": [
@@ -24192,6 +24331,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
                 }
               ]
             },
+            "apiRoot": {
+              "type": "string"
+            },
             "appToken": {
               "anyOf": [
                 {
@@ -24421,6 +24563,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
                   "type": "object"
                 }
               ]
+            },
+            "apiRoot": {
+              "type": "string"
             },
             "appToken": {
               "anyOf": [
@@ -24705,6 +24850,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
                 }
               ]
             },
+            "apiRoot": {
+              "type": "string"
+            },
             "appToken": {
               "anyOf": [
                 {
@@ -24974,6 +25122,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
                 }
               ]
             },
+            "apiRoot": {
+              "type": "string"
+            },
             "appToken": {
               "anyOf": [
                 {
@@ -25208,6 +25359,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
                 }
               ]
             },
+            "apiRoot": {
+              "type": "string"
+            },
             "appToken": {
               "anyOf": [
                 {
@@ -25434,6 +25588,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
                 }
               ]
             },
+            "apiRoot": {
+              "type": "string"
+            },
             "appToken": {
               "anyOf": [
                 {
@@ -25659,6 +25816,9 @@ exports[`section-registry parity (CONFIG-DELIV-03) > schema-serializer view > ge
                   "type": "object"
                 }
               ]
+            },
+            "apiRoot": {
+              "type": "string"
             },
             "appToken": {
               "anyOf": [

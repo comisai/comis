@@ -46,6 +46,22 @@ export interface WhatsAppAdapterDeps {
   authDir: string;
   printQR?: boolean; // Default: true
   logger: ComisLogger;
+  /**
+   * Optional WhatsApp WebSocket URL override (e.g.
+   * `ws://127.0.0.1:54324/ws/chat`). When set, Baileys' SocketConfig.
+   * waWebSocketUrl is set to this URL instead of the default
+   * `wss://web.whatsapp.com/ws/chat`. Production callers leave this
+   * undefined and Baileys uses its built-in default.
+   *
+   * Phase 40 / Plan 40-09 / COV-15 — production seam for the wire-level
+   * E2E mock chat-platform fixture (test/e2e/mocks/whatsapp/).
+   *
+   * NOTE: this is the `apiRoot` field from ChannelEntrySchema (a single
+   * config key is documented to mean "the platform's primary backend
+   * endpoint" regardless of whether the underlying protocol is HTTP REST,
+   * WebSocket, or both). For WhatsApp/Baileys, that's the WebSocket URL.
+   */
+  apiRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,9 +100,13 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
   async function connect(): Promise<void> {
     const { state, saveCreds } = await useMultiFileAuthState(deps.authDir);
 
+    // E2E seam: when deps.apiRoot is set, point Baileys at the override
+    // WebSocket URL instead of wss://web.whatsapp.com/ws/chat. Production
+    // path omits the option entirely. Phase 40 / Plan 40-09 / COV-15.
     sock = makeWASocket({
       auth: state,
       printQRInTerminal: deps.printQR ?? true,
+      ...(deps.apiRoot ? { waWebSocketUrl: deps.apiRoot } : {}),
     });
 
     // Handle connection state changes (auto-reconnection)

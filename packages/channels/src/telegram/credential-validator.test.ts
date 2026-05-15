@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { validateBotToken, validateWebhookSecret } from "./credential-validator.js";
+import { Bot } from "grammy";
 
 // Mock the Grammy Bot class
 const mockGetMe = vi.fn();
@@ -94,6 +95,32 @@ describe("credential-validator", () => {
         expect(result.error.message).toContain("Invalid Telegram bot token");
         expect(result.error.message).toContain("string error");
       }
+    });
+
+    it("passes client.apiRoot to grammy Bot constructor when apiRoot is provided", async () => {
+      // Phase 40 / Plan 40-09 / COV-15: apiRoot threads through to grammy
+      // for E2E redirection to 127.0.0.1 mock. Production callers leave it
+      // undefined and grammy uses its default (https://api.telegram.org).
+      mockGetMe.mockResolvedValueOnce({ id: 1, is_bot: true, username: "bot" });
+      const mockBot = vi.mocked(Bot);
+      mockBot.mockClear();
+
+      await validateBotToken("123:token", "http://127.0.0.1:54321");
+
+      expect(mockBot).toHaveBeenCalledWith("123:token", {
+        client: { apiRoot: "http://127.0.0.1:54321" },
+      });
+    });
+
+    it("calls grammy Bot constructor with token only when apiRoot is omitted", async () => {
+      mockGetMe.mockResolvedValueOnce({ id: 1, is_bot: true, username: "bot" });
+      const mockBot = vi.mocked(Bot);
+      mockBot.mockClear();
+
+      await validateBotToken("123:token");
+
+      // Production-path call shape: positional token only, no options object.
+      expect(mockBot).toHaveBeenCalledWith("123:token");
     });
   });
 
