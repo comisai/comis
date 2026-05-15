@@ -17,7 +17,7 @@ import {
   resolveCacheRetention,
   sortToolsForCacheStability,
   type RequestBodyInjectorConfig,
-} from "./request-body-injector.js";
+} from "./request-body/index.js";
 
 /**
  * Phase 42 parity protection — EXEC-SPLIT-01.

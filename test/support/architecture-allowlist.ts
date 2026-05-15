@@ -485,12 +485,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   // Phase E — Executor splits (4 primary + 6 adjacent = 10 files) — closes Phase 42 (EXEC-SPLIT)
   // ============================================================================
   {
-    file: "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
-    lines: 2120,
-    reason: "Executor stream-wrapper; split in Phase E into request-body/ subdirectory per EXEC-SPLIT-02",
-    removedIn: "phase-E",
-  },
-  {
     file: "packages/agent/src/executor/pi-executor.ts",
     lines: 1641,
     reason: "Core executor; split in Phase E into pi-executor/ subdirectory per EXEC-SPLIT-05",
@@ -1705,10 +1699,10 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     removedIn: "phase-D",
   },
   {
-    file: "packages/agent/src/executor/stream-wrappers/request-body-injector.ts",
+    file: "packages/agent/src/executor/stream-wrappers/request-body/types.ts",
     typeName: "RequestBodyInjectorConfig",
     optionalCount: 32,
-    reason: "(b) Cluster-split candidate: stream-wrapper config combines cache-control breakpoint strategy, beta-header latches, microcompact triggers, tool-deferral hooks, cadence trackers, eviction cooldown. Each callback/getter is wired ONLY when the corresponding feature path is active (e.g. sub-agent spawn sets `skipCacheWrite + cacheWriteTimestamp + parentCacheRetention`; root-agent execution leaves them undefined). Future refactor: split into CacheBreakpointConfig + ToolDeferralConfig + MicroCompactConfig. (TS-HYG-13 — Plan 41-08 audit).",
+    reason: "(b) Cluster-split candidate: stream-wrapper config combines cache-control breakpoint strategy, beta-header latches, microcompact triggers, tool-deferral hooks, cadence trackers, eviction cooldown. Each callback/getter is wired ONLY when the corresponding feature path is active (e.g. sub-agent spawn sets `skipCacheWrite + cacheWriteTimestamp + parentCacheRetention`; root-agent execution leaves them undefined). Future refactor: split into CacheBreakpointConfig + ToolDeferralConfig + MicroCompactConfig. (TS-HYG-13 — Plan 41-08 audit; file path updated post-Phase-42 EXEC-SPLIT-02 split).",
     removedIn: "phase-D",
   },
   {
@@ -2062,6 +2056,86 @@ export const coverageWaiver: readonly CoverageWaiverEntry[] = [
   {
     file: "packages/agent/src/executor/cache-detection/index.ts",
     reason: "Barrel re-export module (Phase 42 EXEC-SPLIT-09 split). Re-exports 18 canonical public symbols from 4 leaf modules without aliases or transformation; surface is verified by the parity test (cache-break-detection.parity.test.ts).",
+  },
+  // -- Phase 42 EXEC-SPLIT-02 (request-body/) --
+  // The Rule-3 split of request-body-injector.ts produced 22 modules. The 4
+  // module-aligned test neighbors (factory.test.ts, cache-breakpoints.test.ts,
+  // breakpoint-placement.test.ts, tool-result-clearing.test.ts) cover ~95% of
+  // the surface. The remaining 18 modules are waived below because they are
+  // either pure types, barrels, or factory-pipeline phase extractions whose
+  // behavior is exercised end-to-end by factory.test.ts (the renamed-and-
+  // shrunk 6,800L integration suite — was request-body-injector.test.ts).
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/index.ts",
+    reason: "Barrel re-export module (Phase 42 EXEC-SPLIT-02 split). Re-exports 15 canonical public symbols + RequestBodyInjectorConfig type from sibling leaf modules without aliases; surface is verified by the parity test (request-body-injector.parity.test.ts) and stream-wrappers/index.test.ts.",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/types.ts",
+    reason: "Pure type-only module (Phase 42 EXEC-SPLIT-02 split). Hosts RequestBodyInjectorConfig (32 optional fields); no runtime values to test. Type-level surface is verified by the parity test + compile-time imports.",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/cache-control-block.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 internal leaf. Hosts CACHEABLE_BLOCK_TYPES + addCacheControlToLastBlock. Public symbols are tested via cache-breakpoints.test.ts (re-exports the canonical names).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/cadence-tracker.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 module-state extraction (sessionCadenceTracker + threshold constants + clearSessionCadenceTracker). State mutated by the factory; behavior covered by factory.test.ts (sticky-on / promotion-on-slow-cadence flows).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/context-window.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 module-state extraction (sessionBetaHeaderLatches + CONTEXT_1M_BETA + parseHeaderList + clearSessionBetaHeaderLatches). State mutated by the factory; behavior covered by factory.test.ts (sticky-on beta header latches flow).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/service-tier.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 leaf injector — Concern 3 (service_tier flag for Responses API + fastMode). Behavior covered by factory.test.ts (service_tier integration tests inside createRequestBodyInjector).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/store-flag.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 leaf injector — Concern 4 (store flag for Responses API + storeCompletions) + isResponsesApiProvider helper. Behavior covered by factory.test.ts (store integration tests inside createRequestBodyInjector).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/token-estimation.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 single-function leaf (estimateBlockTokens). Behavior covered by factory.test.ts (TTL estimation cleanup + gap closure: single TTL estimation pass).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/tool-cache.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 factory phase (rendered tool cache + per-tool memoization). Behavior covered by factory.test.ts (Rendered tool cache, all-deferred tool hash skip, per-tool content-addressed memoization).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/microcompact.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 factory phase (runTimeBasedMicrocompact + runTokenCeilingMicrocompact). Behavior covered by factory.test.ts (Time-based microcompact, token-ceiling microcompact, selective tool-type clearing, dual-category tool clearing, fence-aware microcompaction).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/prefix-stability.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 factory phase (runPrefixStabilityDiagnostic). Behavior covered by factory.test.ts (prefix stability diagnostic describe inside skipCacheWrite shared-prefix marker placement).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/breakpoint-orchestration.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 factory phase (runCacheBreakpointPhase — Concern 1: multi-block system prompt, defer_loading, graph-context, placement, cache fence callback). Behavior covered by factory.test.ts (createRequestBodyInjector, Multi-block system prompt injection, breakpoint cap increase, breakpoint strategy config, Rendered tool cache, defer_loading injection, skipCacheWrite for sub-agent spawns, Per-model kill switch, zone-aware retention).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/cadence-tracking.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 factory phase (trackRecentZoneCadence — post-payload cadence promote/demote). Behavior covered by factory.test.ts (zone-aware retention describe: recent-zone promotion on slow cadence + demotion on fast cadence).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/marker-upgrade.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 factory phase (upgradeSdkMarkers — SDK 5m → 1h upgrade when retention is long). Behavior covered by factory.test.ts (zone-aware retention, TTL estimation cleanup describe).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/skip-cache-write-marker.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 factory phase (placeSkipCacheWriteMarker — shared-prefix marker for sub-agent spawns). Behavior covered by factory.test.ts (skipCacheWrite for sub-agent spawns, skipCacheWrite shared-prefix marker placement).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/kill-switch.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 factory phase (applyKillSwitch — strip all cache_control when retention=none). Behavior covered by factory.test.ts (Per-model kill switch strips ALL cache_control markers).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/ttl-split-estimation.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 factory phase (estimateTtlSplit — per-TTL token attribution via onTtlSplitEstimate). Behavior covered by factory.test.ts (TTL estimation cleanup, gap closure: single TTL estimation pass).",
+  },
+  {
+    file: "packages/agent/src/executor/stream-wrappers/request-body/tool-deferral-injection.ts",
+    reason: "Phase 42 EXEC-SPLIT-02 factory phase (injectToolDeferral — defer_loading injection + server-side tool_search swap). Behavior covered by factory.test.ts (createRequestBodyInjector — defer_loading injection).",
   },
 ] as const;
 

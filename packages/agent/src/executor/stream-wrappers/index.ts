@@ -40,8 +40,8 @@ export {
   getMinCacheableTokens,
   resolveCacheRetention,
   clearSessionBetaHeaderLatches,
-} from "./request-body-injector.js";
-export type { RequestBodyInjectorConfig } from "./request-body-injector.js";
+} from "./request-body/index.js";
+export type { RequestBodyInjectorConfig } from "./request-body/index.js";
 
 // Tool schema cache extracted to leaf module
 export {

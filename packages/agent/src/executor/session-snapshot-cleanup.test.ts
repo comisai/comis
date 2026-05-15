@@ -59,7 +59,7 @@ vi.mock("./ttl-guard.js", () => ({
   clearSessionLastResponseTs: mockClearSessionLastResponseTs,
 }));
 
-vi.mock("./stream-wrappers/request-body-injector.js", () => ({
+vi.mock("./stream-wrappers/request-body/index.js", () => ({
   clearSessionBetaHeaderLatches: mockClearSessionBetaHeaderLatches,
   clearSessionPrefixStability: mockClearSessionPrefixStability,
   clearSessionCadenceTracker: mockClearSessionCadenceTracker,
