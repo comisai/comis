@@ -54,6 +54,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
 const PKG_ROOT = resolve(SRC_ROOT, "..");
 
+// Audit-coverage paths (Phase 41 Plan 41-06 Task 2 / TS-HYG-10).
+// The audit doc at packages/agent/AUDIT.md mirrors packages/orchestrator/AUDIT.md
+// and is parsed by the architecture test below to assert bidirectional set
+// equality between SubAgentRunnerDeps fields and the audit table.
+const AUDIT_PATH = resolve(PKG_ROOT, "AUDIT.md");
+const SUB_AGENT_RUNNER_PATH = resolve(SRC_ROOT, "spawn/sub-agent-runner.ts");
+
 describe("@comis/agent -- architecture invariants", () => {
   // FORBIDDEN_PARSER_RE: catches the canonical inline mcp__server--tool parser shape
   // (`.slice(5)` followed by `.indexOf("--")` within ~200 characters). No production
@@ -611,4 +618,110 @@ describe("@comis/agent -- architecture invariants", () => {
       ).toBeGreaterThan(0);
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // Phase 41 Plan 41-06 Task 2 (TS-HYG-10) — SubAgentRunnerDeps audit-coverage.
+  // Mirrors packages/orchestrator/src/__tests__/architecture.test.ts:166-263.
+  // The audit doc at packages/agent/AUDIT.md must align row-for-row with
+  // SubAgentRunnerDeps. CI failure on field drift forces audit refresh.
+  // ---------------------------------------------------------------------------
+
+  it("every SubAgentRunnerDeps field appears in the agent AUDIT.md audit table", () => {
+    // 1. Parse the audit Markdown table at packages/agent/AUDIT.md.
+    const auditContent = readFileSync(AUDIT_PATH, "utf8");
+    const tableLines = auditContent
+      .split("\n")
+      .filter((l) => l.startsWith("| ") && !l.startsWith("|-"));
+    // Skip the header row (first line); subsequent lines are data rows.
+    // Header text uses bold markdown (`**Field**`, `**Classification**`, ...) so
+    // ordinary field-name rows do not collide with the header.
+    const rows = tableLines
+      .slice(1)
+      .map((l) => {
+        const cells = l.split("|").map((s) => s.trim());
+        return {
+          field: cells[1] ?? "",
+          classification: cells[2] ?? "",
+          whenAbsent: cells[3] ?? "",
+          evidenceLink: cells[4] ?? "",
+        };
+      })
+      .filter((r) => r.field.length > 0 && !r.field.startsWith("**"));
+
+    // 2. Parse the SubAgentRunnerDeps interface body via regex.
+    const srContent = readFileSync(SUB_AGENT_RUNNER_PATH, "utf8");
+    const interfaceMatch = srContent.match(
+      /export interface SubAgentRunnerDeps\s*\{([\s\S]*?)^\}/m,
+    );
+    expect(
+      interfaceMatch,
+      `SubAgentRunnerDeps interface not found in ${SUB_AGENT_RUNNER_PATH}`,
+    ).not.toBeNull();
+    const body = interfaceMatch![1];
+    const fieldRegex = /^\s{2}([a-zA-Z_][a-zA-Z0-9_]*)(\??):/gm;
+    const interfaceFields = new Map<string, "required" | "optional">();
+    let m: RegExpExecArray | null;
+    while ((m = fieldRegex.exec(body)) !== null) {
+      interfaceFields.set(m[1], m[2] === "?" ? "optional" : "required");
+    }
+
+    // 3. Bidirectional set equality between audit rows and interface fields.
+    const auditFieldNames = new Set(rows.map((r) => r.field));
+    const interfaceFieldNames = new Set(interfaceFields.keys());
+    const inAuditOnly = [...auditFieldNames].filter(
+      (f) => !interfaceFieldNames.has(f),
+    );
+    const inInterfaceOnly = [...interfaceFieldNames].filter(
+      (f) => !auditFieldNames.has(f),
+    );
+    expect(
+      inAuditOnly,
+      `AUDIT.md has fields not in SubAgentRunnerDeps: ${inAuditOnly.join(", ")}`,
+    ).toEqual([]);
+    expect(
+      inInterfaceOnly,
+      `SubAgentRunnerDeps has fields not in AUDIT.md: ${inInterfaceOnly.join(", ")}`,
+    ).toEqual([]);
+
+    // 4. No forbidden "delete-this-field" classification values; every row must
+    //    classify as `required` or `optional` (the third "stale-fallback" value
+    //    is forbidden as a terminal classification at every commit).
+    const forbidden = rows.filter(
+      (r) =>
+        r.classification !== "required" && r.classification !== "optional",
+    );
+    expect(
+      forbidden,
+      `every row must classify as required|optional; bad rows: ${forbidden
+        .map((r) => `${r.field}=${r.classification}`)
+        .join(", ")}`,
+    ).toEqual([]);
+
+    // 5. Classification matches optional/required from the interface.
+    const mismatches: string[] = [];
+    for (const r of rows) {
+      const expected = interfaceFields.get(r.field);
+      if (!expected) continue; // covered by set-equality above
+      if (r.classification !== expected) {
+        mismatches.push(
+          `${r.field}: audit=${r.classification} interface=${expected}`,
+        );
+      }
+    }
+    expect(
+      mismatches,
+      `classification mismatches: ${mismatches.join("; ")}`,
+    ).toEqual([]);
+
+    // 6. Every row has a non-empty evidence-link cell.
+    const missingEvidence = rows.filter(
+      (r) => !r.evidenceLink || r.evidenceLink === "",
+    );
+    expect(
+      missingEvidence,
+      `rows missing evidence-link: ${missingEvidence
+        .map((r) => r.field)
+        .join(", ")}`,
+    ).toEqual([]);
+  });
 });
