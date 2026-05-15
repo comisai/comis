@@ -1,0 +1,577 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Tests for assembleTools — the executor's tool assembly pipeline.
+ *
+ * assembleTools runs once per execute() and:
+ *   1. Merges per-request AgentTool[] with deps.customTools (dedup by name).
+ *   2. Constructs a SettingsManager (file-backed, with in-memory fallback).
+ *   3. Applies Comis config overrides (sdkRetry, thinkingLevel, compaction).
+ *   4. Calls assembleExecutionPrompt(), then estimates system token count.
+ *   5. Configures DefaultResourceLoader options (skills filter, system prompt override).
+ *   6. Runs the tool deferral + lifecycle + JIT/pruning/snapshot/normalize chain.
+ *   7. Builds the per-turn capability-index render result.
+ *
+ * Strategy: vi.mock every heavy collaborator (SettingsManager, prompt-assembly,
+ * tool-deferral, lifecycle, JIT wrapper, capability index, schema pipeline,
+ * discovery tracker) so the test focuses on the merge / override / wiring
+ * decisions in this module itself.
+ *
+ * Use-case design (Phase 40 / Phase C §3.3 / COV-10): every `it("...")`
+ * description names a use case ≥20 chars ending in a recognizable shape.
+ *
+ * @module
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// ---------------------------------------------------------------------------
+// Module mocks — must precede SUT import (vi.mock hoists).
+// vi.hoisted lifts the spies above vi.mock so they're initialized first.
+// ---------------------------------------------------------------------------
+
+const mocks = vi.hoisted(() => ({
+  settingsApplyOverrides: vi.fn(),
+  settingsManagerInstance: { applyOverrides: vi.fn() },
+  settingsManagerCreate: vi.fn(),
+  settingsManagerInMemory: vi.fn(),
+  assembleExecutionPromptMock: vi.fn(),
+  applyToolDeferralMock: vi.fn(),
+  buildDeferredToolsContextMock: vi.fn(),
+  createDiscoverToolMock: vi.fn(),
+  createAutoDiscoveryStubsMock: vi.fn(),
+  extractRecentlyUsedToolNamesMock: vi.fn(),
+  resolveModelTierMock: vi.fn(),
+  buildCapabilityIndexContextMock: vi.fn(),
+  getOrCreateDiscoveryTrackerMock: vi.fn(),
+  getOrCreateTrackerMock: vi.fn(),
+  createJitGuideWrapperMock: vi.fn(),
+  applySchemasPruningMock: vi.fn(),
+  applySchemaSnapshotMock: vi.fn(),
+  applyProviderNormalizationMock: vi.fn(),
+  applyMutationSerializerMock: vi.fn(),
+}));
+
+// Re-bind applyOverrides spy to the shared instance so applyOverrides records
+// the call via mocks.settingsApplyOverrides.
+mocks.settingsManagerInstance.applyOverrides = mocks.settingsApplyOverrides;
+
+vi.mock("@mariozechner/pi-coding-agent", () => ({
+  SettingsManager: {
+    create: mocks.settingsManagerCreate,
+    inMemory: mocks.settingsManagerInMemory,
+  },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- DefaultResourceLoader is class
+  DefaultResourceLoader: class MockDefaultResourceLoader {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- options shape varies
+    constructor(_opts: any) {
+      // Mock: capture options as needed via spy.
+    }
+  },
+}));
+
+vi.mock("./prompt-assembly.js", () => ({
+  assembleExecutionPrompt: mocks.assembleExecutionPromptMock,
+}));
+
+vi.mock("./tool-deferral.js", () => ({
+  applyToolDeferral: mocks.applyToolDeferralMock,
+  buildDeferredToolsContext: mocks.buildDeferredToolsContextMock,
+  createDiscoverTool: mocks.createDiscoverToolMock,
+  createAutoDiscoveryStubs: mocks.createAutoDiscoveryStubsMock,
+  extractRecentlyUsedToolNames: mocks.extractRecentlyUsedToolNamesMock,
+  resolveModelTier: mocks.resolveModelTierMock,
+  CORE_TOOLS: new Set(["bash", "file_read"]),
+}));
+
+vi.mock("./capability-index-context.js", () => ({
+  buildCapabilityIndexContext: mocks.buildCapabilityIndexContextMock,
+}));
+
+vi.mock("./discovery-tracker.js", () => ({
+  getOrCreateDiscoveryTracker: mocks.getOrCreateDiscoveryTrackerMock,
+}));
+
+vi.mock("./tool-lifecycle.js", () => ({
+  getOrCreateTracker: mocks.getOrCreateTrackerMock,
+  DEFAULT_LIFECYCLE_CONFIG: { enabled: false, demotionThreshold: 50 },
+}));
+
+vi.mock("./jit-guide-injector.js", () => ({
+  createJitGuideWrapper: mocks.createJitGuideWrapperMock,
+}));
+
+vi.mock("./executor-tool-pipeline.js", () => ({
+  applySchemasPruning: mocks.applySchemasPruningMock,
+  applySchemaSnapshot: mocks.applySchemaSnapshotMock,
+  applyProviderNormalization: mocks.applyProviderNormalizationMock,
+  applyMutationSerializer: mocks.applyMutationSerializerMock,
+}));
+
+// ---------------------------------------------------------------------------
+// SUT + co-imports
+// ---------------------------------------------------------------------------
+
+import { assembleTools } from "./executor-tool-assembly.js";
+import type { ToolAssemblyDeps, ToolAssemblyParams } from "./executor-tool-assembly.js";
+import { TypedEventBus, type SessionKey } from "@comis/core";
+import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers/tool-capability-stub.js";
+import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
+
+// ---------------------------------------------------------------------------
+// Test fixtures
+// ---------------------------------------------------------------------------
+
+function makeTool(name: string, description = "test tool", parameters?: unknown): unknown {
+  return {
+    name,
+    label: name,
+    description,
+    parameters: parameters ?? { type: "object", properties: {} },
+    execute: vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
+      isError: false,
+      details: undefined,
+    }),
+  };
+}
+
+const TEST_SESSION_KEY: SessionKey = {
+  tenantId: "tenant-a",
+  userId: "user_a",
+  channelId: "chan-a",
+};
+
+function makeDeps(overrides?: Partial<ToolAssemblyDeps>): ToolAssemblyDeps {
+  return {
+    customTools: [],
+    workspaceDir: "/tmp/workspace",
+    agentDir: "/tmp/agentdir",
+    logger: createMockLogger(),
+    eventBus: new TypedEventBus(),
+    toolCapabilityPort: createCapabilityPortStub({ isCapabilityIndexEnabled: () => false }),
+    clock: createFakeClock(1_700_000_000_000),
+    ...overrides,
+  };
+}
+
+function makeMsg(): { id: string; text: string; senderId: string; channelId: string; channelType: string; timestamp: number; attachments: never[]; metadata: Record<string, never> } {
+  return {
+    id: "00000000-0000-4000-8000-000000000001",
+    text: "hello",
+    senderId: "user_a",
+    channelId: "chan-a",
+    channelType: "test",
+    timestamp: 1_700_000_000_000,
+    attachments: [],
+    metadata: {},
+  };
+}
+
+function makeSm(): { buildSessionContext(): { messages: unknown[] }; getSessionDir(): string } {
+  return {
+    buildSessionContext: () => ({ messages: [] }),
+    getSessionDir: () => "/tmp/agentdir/sessions/test",
+  };
+}
+
+function makeParams(overrides?: Partial<ToolAssemblyParams>): ToolAssemblyParams {
+  const deps = overrides?.deps ?? makeDeps();
+  return {
+    config: {
+      name: "test-agent",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5-20250929",
+      contextEngine: { enabled: true, version: "pipeline" },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig has many fields
+    } as any,
+    deps,
+    sessionKey: TEST_SESSION_KEY,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- NormalizedMessage shape simplified
+    msg: makeMsg() as any,
+    isFirstMessageInSession: true,
+    sm: makeSm(),
+    formattedKeyForGuides: "tenant-a:user_a:chan-a",
+    deliveredGuides: new Set<string>(),
+    resolvedModel: {
+      id: "claude-sonnet-4-5-20250929",
+      provider: "anthropic",
+      contextWindow: 200_000,
+      reasoning: false,
+    },
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Mock defaults — reset between tests
+// ---------------------------------------------------------------------------
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.settingsManagerCreate.mockReturnValue(mocks.settingsManagerInstance);
+  mocks.settingsManagerInMemory.mockReturnValue(mocks.settingsManagerInstance);
+  mocks.assembleExecutionPromptMock.mockResolvedValue({
+    systemPrompt: "x".repeat(400),
+    dynamicPreamble: "",
+    inlineMemory: undefined,
+  });
+  mocks.extractRecentlyUsedToolNamesMock.mockReturnValue(new Set());
+  mocks.resolveModelTierMock.mockReturnValue("large");
+  mocks.getOrCreateTrackerMock.mockReturnValue({
+    recordTurn: vi.fn(),
+    getCurrentTurn: () => 1,
+    getDemotedToolNames: vi.fn().mockReturnValue(new Set()),
+  });
+  mocks.getOrCreateDiscoveryTrackerMock.mockReturnValue({
+    serialize: vi.fn().mockReturnValue([]),
+    restore: vi.fn(),
+    getDiscoveredNames: vi.fn().mockReturnValue(new Set()),
+  });
+  mocks.applyToolDeferralMock.mockImplementation((tools: unknown[]) => ({
+    activeTools: tools,
+    discoveredTools: [],
+    deferredEntries: [],
+    deferredNames: [],
+    discoverTool: undefined,
+  }));
+  mocks.buildDeferredToolsContextMock.mockReturnValue("");
+  mocks.createAutoDiscoveryStubsMock.mockReturnValue([]);
+  mocks.buildCapabilityIndexContextMock.mockReturnValue({
+    text: "",
+    builtinCount: 0,
+    mcpCount: 0,
+    skillCount: 0,
+  });
+  mocks.createJitGuideWrapperMock.mockImplementation((tools: unknown[]) => tools);
+  mocks.applySchemasPruningMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
+  mocks.applySchemaSnapshotMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
+  mocks.applyProviderNormalizationMock.mockImplementation((params: { tools: unknown[] }) => params.tools);
+  mocks.applyMutationSerializerMock.mockImplementation((tools: unknown[]) => tools);
+});
+
+// ---------------------------------------------------------------------------
+// Custom tools merging
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — per-request tool merging with deps.customTools", () => {
+  it("returns deps.customTools unchanged when no per-request tools are supplied (no merge needed)", async () => {
+    const customTools = [makeTool("a"), makeTool("b")] as unknown[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolDefinition[] cast
+    const result = await assembleTools(makeParams({ deps: makeDeps({ customTools: customTools as any }) }));
+    expect(mocks.applyToolDeferralMock).toHaveBeenCalled();
+    const passed = mocks.applyToolDeferralMock.mock.calls[0][0] as unknown[];
+    expect(passed.length).toBe(2);
+    expect(result.mergedCustomTools.length).toBeGreaterThan(0);
+  });
+
+  it("merges deps.customTools with converted per-request AgentTool[] when convertTools is provided", async () => {
+    const customTools = [makeTool("a")];
+    const convertedTool = makeTool("b-converted");
+    const convertTools = vi.fn().mockReturnValue([convertedTool]);
+    await assembleTools(makeParams({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolDefinition[] cast
+      deps: makeDeps({ customTools: customTools as any, convertTools }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool[] minimal stub
+      tools: [{ name: "b-converted" } as any],
+    }));
+    expect(convertTools).toHaveBeenCalled();
+    const passedToDeferral = mocks.applyToolDeferralMock.mock.calls[0][0] as Array<{ name: string }>;
+    expect(passedToDeferral.map((t) => t.name).sort()).toEqual(["a", "b-converted"]);
+  });
+
+  it("does NOT duplicate a per-request tool that has the same name as an existing deps.customTools tool (name-key dedup)", async () => {
+    const customTools = [makeTool("a", "from-custom")];
+    const convertTools = vi.fn().mockReturnValue([makeTool("a", "from-converted")]);
+    await assembleTools(makeParams({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolDefinition[] cast
+      deps: makeDeps({ customTools: customTools as any, convertTools }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool[] minimal stub
+      tools: [{ name: "a" } as any],
+    }));
+    const passedToDeferral = mocks.applyToolDeferralMock.mock.calls[0][0] as Array<{ name: string; description?: string }>;
+    // Only one tool named "a" should survive, and it must be the deps.customTools copy.
+    expect(passedToDeferral.filter((t) => t.name === "a").length).toBe(1);
+    expect(passedToDeferral.find((t) => t.name === "a")?.description).toBe("from-custom");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SettingsManager creation + fallback
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — SettingsManager initialization with in-memory fallback", () => {
+  it("uses file-backed SettingsManager.create() on the happy path and reports persistent=true", async () => {
+    const result = await assembleTools(makeParams());
+    expect(mocks.settingsManagerCreate).toHaveBeenCalledWith("/tmp/workspace", "/tmp/agentdir");
+    expect(mocks.settingsManagerInMemory).not.toHaveBeenCalled();
+    expect(result.persistentSettings).toBe(true);
+  });
+
+  it("falls back to SettingsManager.inMemory() with persistent=false when SettingsManager.create() throws", async () => {
+    mocks.settingsManagerCreate.mockImplementation(() => {
+      throw new Error("ENOENT: settings file not found");
+    });
+    const logger = createMockLogger();
+    const result = await assembleTools(makeParams({ deps: makeDeps({ logger }) }));
+    expect(mocks.settingsManagerInMemory).toHaveBeenCalled();
+    expect(result.persistentSettings).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "config" }),
+      "Settings file load failed",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Settings overrides
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — Comis config overrides applied via settingsManager.applyOverrides()", () => {
+  it("disables SDK auto-compaction (compaction.enabled=false) when Comis contextEngine is enabled", async () => {
+    await assembleTools(makeParams());
+    const passedOverrides = mocks.settingsApplyOverrides.mock.calls[0][0] as { compaction: { enabled: boolean } };
+    expect(passedOverrides.compaction.enabled).toBe(false);
+  });
+
+  it("enables SDK auto-compaction (compaction.enabled=true) when Comis contextEngine is explicitly disabled", async () => {
+    await assembleTools(makeParams({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig partial cast
+      config: { provider: "anthropic", contextEngine: { enabled: false } } as any,
+    }));
+    const passedOverrides = mocks.settingsApplyOverrides.mock.calls[0][0] as { compaction: { enabled: boolean } };
+    expect(passedOverrides.compaction.enabled).toBe(true);
+  });
+
+  it("uses config.sdkRetry values when provided, otherwise applies documented defaults (5 retries, 4000ms)", async () => {
+    await assembleTools(makeParams({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig partial cast
+      config: { provider: "anthropic", contextEngine: { enabled: true }, sdkRetry: { enabled: true, maxRetries: 9, baseDelayMs: 1000 } } as any,
+    }));
+    const passedOverrides = mocks.settingsApplyOverrides.mock.calls[0][0] as { retry: { maxRetries: number; baseDelayMs: number } };
+    expect(passedOverrides.retry.maxRetries).toBe(9);
+    expect(passedOverrides.retry.baseDelayMs).toBe(1000);
+
+    mocks.settingsApplyOverrides.mockClear();
+    await assembleTools(makeParams());
+    const defaultOverrides = mocks.settingsApplyOverrides.mock.calls[0][0] as { retry: { maxRetries: number; baseDelayMs: number } };
+    expect(defaultOverrides.retry.maxRetries).toBe(5);
+    expect(defaultOverrides.retry.baseDelayMs).toBe(4000);
+  });
+
+  it("emits a WARN with errorKind=config when reserveTokens is supplied but is not a positive number", async () => {
+    const logger = createMockLogger();
+    await assembleTools(makeParams({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig partial cast
+      config: {
+        provider: "anthropic",
+        contextEngine: { enabled: true },
+        session: { compaction: { reserveTokens: -1 } },
+      } as any,
+      deps: makeDeps({ logger }),
+    }));
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        field: "session.compaction.reserveTokens",
+        errorKind: "config",
+      }),
+      "Invalid settings override skipped",
+    );
+  });
+
+  it("forwards the directive thinkingLevel to overrides.defaultThinkingLevel when valid", async () => {
+    await assembleTools(makeParams({
+      _directives: { thinkingLevel: "high" },
+    }));
+    const passedOverrides = mocks.settingsApplyOverrides.mock.calls[0][0] as { defaultThinkingLevel?: string };
+    expect(passedOverrides.defaultThinkingLevel).toBe("high");
+  });
+
+  it("ignores and WARNs when directive thinkingLevel is outside the canonical set (defaults preserved)", async () => {
+    const logger = createMockLogger();
+    await assembleTools(makeParams({
+      _directives: { thinkingLevel: "ludicrous" },
+      deps: makeDeps({ logger }),
+    }));
+    const passedOverrides = mocks.settingsApplyOverrides.mock.calls[0][0] as { defaultThinkingLevel?: string };
+    expect(passedOverrides.defaultThinkingLevel).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ field: "thinkingLevel", errorKind: "config" }),
+      "Invalid settings override skipped",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Model-capability validation (thinking on non-reasoning model)
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — thinkingLevel vs resolvedModel.reasoning capability mismatch", () => {
+  it("emits a WARN when a non-off thinkingLevel is set on a model whose reasoning capability is false", async () => {
+    const logger = createMockLogger();
+    await assembleTools(makeParams({
+      _directives: { thinkingLevel: "medium" },
+      resolvedModel: { id: "non-reasoning", provider: "anthropic", reasoning: false },
+      deps: makeDeps({ logger }),
+    }));
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        thinkingLevel: "medium",
+        model: "non-reasoning",
+        errorKind: "config",
+      }),
+      "Thinking level exceeds model capability",
+    );
+  });
+
+  it("does NOT warn when thinkingLevel='off' is set on a non-reasoning model (off is always valid)", async () => {
+    const logger = createMockLogger();
+    await assembleTools(makeParams({
+      _directives: { thinkingLevel: "off" },
+      resolvedModel: { id: "non-reasoning", provider: "anthropic", reasoning: false },
+      deps: makeDeps({ logger }),
+    }));
+    expect((logger.warn as unknown as { mock: { calls: unknown[][] } }).mock.calls.find((c) =>
+      (c as Array<{ thinkingLevel?: string }>)[0]?.thinkingLevel,
+    )).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cachedSystemTokensEstimate calculation
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — system token estimate from systemPrompt length + tool def overhead", () => {
+  it("estimates more tokens when systemPrompt grows (length proportional to ceil(chars / 4))", async () => {
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(400),
+      dynamicPreamble: "",
+    });
+    const r1 = await assembleTools(makeParams());
+    mocks.assembleExecutionPromptMock.mockResolvedValueOnce({
+      systemPrompt: "x".repeat(800),
+      dynamicPreamble: "",
+    });
+    const r2 = await assembleTools(makeParams());
+    expect(r2.cachedSystemTokensEstimate).toBeGreaterThan(r1.cachedSystemTokensEstimate);
+  });
+
+  it("includes tool definition overhead (name + description + JSON.stringify(parameters)) in the estimate", async () => {
+    // Both calls share an identical systemPrompt; only the tool overhead differs.
+    mocks.assembleExecutionPromptMock.mockResolvedValue({
+      systemPrompt: "x".repeat(200),
+      dynamicPreamble: "",
+    });
+    const r1 = await assembleTools(makeParams({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolDefinition[] cast
+      deps: makeDeps({ customTools: [makeTool("a", "")] as any }),
+    }));
+    const fatParams = { type: "object", properties: { x: { type: "string", description: "y".repeat(500) } } };
+    const r2 = await assembleTools(makeParams({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ToolDefinition[] cast
+      deps: makeDeps({ customTools: [makeTool("a", "z".repeat(500), fatParams)] as any }),
+    }));
+    expect(r2.cachedSystemTokensEstimate).toBeGreaterThan(r1.cachedSystemTokensEstimate);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tool pipeline chain — every stage is invoked
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize, mutation-serialize)", () => {
+  it("invokes createJitGuideWrapper, applySchemasPruning, applySchemaSnapshot, applyProviderNormalization, applyMutationSerializer exactly once each", async () => {
+    await assembleTools(makeParams());
+    expect(mocks.createJitGuideWrapperMock).toHaveBeenCalledTimes(1);
+    expect(mocks.applySchemasPruningMock).toHaveBeenCalledTimes(1);
+    expect(mocks.applySchemaSnapshotMock).toHaveBeenCalledTimes(1);
+    expect(mocks.applyProviderNormalizationMock).toHaveBeenCalledTimes(1);
+    expect(mocks.applyMutationSerializerMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips applyProviderNormalization when resolvedModel is undefined (no provider context)", async () => {
+    await assembleTools(makeParams({ resolvedModel: undefined }));
+    expect(mocks.applyProviderNormalizationMock).not.toHaveBeenCalled();
+    expect(mocks.applyMutationSerializerMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the modelTier resolved from contextWindow into applySchemasPruning", async () => {
+    mocks.resolveModelTierMock.mockReturnValueOnce("small");
+    await assembleTools(makeParams({
+      resolvedModel: { id: "tiny", provider: "anthropic", contextWindow: 32_000, reasoning: false },
+    }));
+    expect(mocks.resolveModelTierMock).toHaveBeenCalledWith(32_000);
+    const pruneCallArg = mocks.applySchemasPruningMock.mock.calls[0][0] as { modelTier: string };
+    expect(pruneCallArg.modelTier).toBe("small");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Capability index + deferred context
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — capability-index render result + deferred-context passthrough", () => {
+  it("forwards the toolCapabilityPort into buildCapabilityIndexContext and returns its result on the result object", async () => {
+    const portStub = createCapabilityPortStub({ isCapabilityIndexEnabled: () => true });
+    const stubResult = { text: "CAP-INDEX-CONTENT", builtinCount: 3, mcpCount: 1, skillCount: 0 };
+    mocks.buildCapabilityIndexContextMock.mockReturnValueOnce(stubResult);
+    const result = await assembleTools(makeParams({
+      deps: makeDeps({ toolCapabilityPort: portStub }),
+    }));
+    expect(mocks.buildCapabilityIndexContextMock).toHaveBeenCalledWith(expect.any(Object), portStub);
+    expect(result.capabilityIndexResult).toBe(stubResult);
+  });
+
+  it("returns an empty deferredContext string when applyToolDeferral reports zero deferredEntries", async () => {
+    mocks.applyToolDeferralMock.mockReturnValueOnce({
+      activeTools: [],
+      discoveredTools: [],
+      deferredEntries: [],
+      deferredNames: [],
+      discoverTool: undefined,
+    });
+    const result = await assembleTools(makeParams());
+    expect(mocks.buildDeferredToolsContextMock).not.toHaveBeenCalled();
+    expect(result.deferredContext).toBe("");
+  });
+
+  it("populates deferredContext from buildDeferredToolsContext when applyToolDeferral reports any deferredEntries", async () => {
+    mocks.applyToolDeferralMock.mockReturnValueOnce({
+      activeTools: [],
+      discoveredTools: [],
+      deferredEntries: [{ name: "deferred-a" } as never],
+      deferredNames: ["deferred-a"],
+      discoverTool: undefined,
+    });
+    mocks.buildDeferredToolsContextMock.mockReturnValueOnce("<DEFERRED-CONTEXT-BODY>");
+    const result = await assembleTools(makeParams());
+    expect(mocks.buildDeferredToolsContextMock).toHaveBeenCalled();
+    expect(result.deferredContext).toBe("<DEFERRED-CONTEXT-BODY>");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Discovery state restoration paths
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — discovery-state restore from SpawnPacket on subagent inheritance", () => {
+  it("restores discovered tool names from executionOverrides.spawnPacket.discoveredDeferredTools when present", async () => {
+    const restore = vi.fn();
+    mocks.getOrCreateDiscoveryTrackerMock.mockReturnValueOnce({
+      serialize: vi.fn().mockReturnValue([]),
+      restore,
+      getDiscoveredNames: vi.fn().mockReturnValue(new Set()),
+    });
+    const logger = createMockLogger();
+    await assembleTools(makeParams({
+      deps: makeDeps({ logger }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ExecutionOverrides partial
+      executionOverrides: { spawnPacket: { discoveredDeferredTools: ["mcp-a", "mcp-b"] } } as any,
+    }));
+    expect(restore).toHaveBeenCalledWith(["mcp-a", "mcp-b"]);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ restoredCount: 2 }),
+      "Discovery state restored from parent SpawnPacket",
+    );
+  });
+});
