@@ -157,7 +157,7 @@ describe("@comis/orchestrator -- architecture invariants", () => {
     // ChannelManager + processInboundMessage are types, not runtime values — the
     // type-presence check is enforced at compile time by tsc consuming this file.
     // The `createOrchestrator` runtime check above is the falsifiable signal.
-  });
+  }, 30_000); // Plan 40-11: extend timeout for runtime import under v8 coverage instrumentation
 
   // Audit-coverage architecture test (ACTIVATED at Phase 32 commit 4 — OQ-2 resolution).
   // channel-manager.ts moved to packages/orchestrator/src/ at commit 4 (this commit);
