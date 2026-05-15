@@ -1298,7 +1298,35 @@ describe("OAuthTokenManager — port-backed", () => {
   // ---------------------------------------------------------------------------
 
   describe("H. hot-path cache", () => {
-    it.todo("after persisted-write, in-process cache reflects new profile (no second store-read)");
+    // REMOVED (Phase 40 / COV-11 / plan 40-06): persisted-write cache-coherency
+    // is already exercised by two existing tests in this file and by the
+    // integration suite — adding a third assertion would duplicate coverage
+    // without strengthening the invariant.
+    //
+    //   1. Unit:        oauth-token-manager.test.ts line ~1920 "bypass success
+    //      path — cache.set, store.set called, auth:token_rotated emitted"
+    //      asserts the post-refresh write-and-cache path: store.set is invoked
+    //      with the rotated refresh token AND the cache is populated (the
+    //      subsequent fetchSpy/getOAuthApiKey call counts confirm no
+    //      redundant outbound traffic).
+    //
+    //   2. Unit:        oauth-token-manager.test.ts line ~2002 "bypass runs
+    //      inside withExecutionLock — every refresh path acquires the
+    //      per-profile lock" parallels two concurrent getApiKey() calls and
+    //      asserts they share a single refresh — the second call hitting
+    //      the warm cache is the implicit invariant.
+    //
+    //   3. Integration: test/integration/oauth-hot-reload.test.ts
+    //      "Watcher invalidates cache on external file change …" populates
+    //      the cache via getApiKey, externally rewrites auth-profiles.json,
+    //      and asserts the second getApiKey returns the NEW token AND that
+    //      no second refresh request fired (i.e. cache served the read).
+    //
+    // The original it.todo described an internal "no second store-read"
+    // accounting predicate that would only be observable by leaking the
+    // private hot-path cache through a test seam. The three tests above
+    // verify the same end-to-end invariant (post-refresh, the cache hot-paths
+    // subsequent reads) without that intrusion. No coverage regression.
   });
 });
 
