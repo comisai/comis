@@ -920,12 +920,15 @@ export class IcChatConsole extends LitElement {
     }
 
     try {
+      // Closed-union retype per Phase 41 TS-HYG-11: session.list returns kind ∈
+      // {"dm", "group", "sub-agent"} per session-handlers.ts:413-417 derivation
+      // (parentSessionKey -> "sub-agent" | guildId -> "group" | else "dm").
       const result = await this.rpcClient.call<{
         sessions: Array<{
           sessionKey: string;
           agentId: string;
           channelId: string;
-          kind: string;
+          kind: "dm" | "group" | "sub-agent";
           messageCount?: number;
           updatedAt: number;
         }>;

@@ -146,9 +146,13 @@ export function createMemoryApi(
       const rows = parsed.ok ? parsed.value : [];
       let entries = rows.map((row) => rowToEntry(row));
 
-      // Post-filter by tags if specified (tags are JSON-encoded in DB)
+      // Post-filter by tags if specified (tags are JSON-encoded in DB).
+      // Phase 41 TS-HYG-12: pin the narrowed value to drop the non-null
+      // assertion. TypeScript can't carry the `filters?.tags && ...` narrowing
+      // into the filter callback's closure scope; the pinned local does.
       if (filters?.tags && filters.tags.length > 0) {
-        entries = entries.filter((entry) => filters.tags!.every((tag) => entry.tags.includes(tag)));
+        const requiredTags = filters.tags;
+        entries = entries.filter((entry) => requiredTags.every((tag) => entry.tags.includes(tag)));
       }
 
       return entries;

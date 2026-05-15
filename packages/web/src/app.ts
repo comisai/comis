@@ -4,7 +4,7 @@ import { customElement, state } from "lit/decorators.js";
 import { createApiClient, type ApiClient } from "./api/api-client.js";
 import { createRouter, type Router, type RouteMatch } from "./router.js";
 import { createRpcClient, type RpcClient } from "./api/rpc-client.js";
-import { createGlobalState, type GlobalState } from "./state/global-state.js";
+import { createGlobalState, requireGlobalState, type GlobalState } from "./state/global-state.js";
 import { createEventDispatcher, type EventDispatcher } from "./state/event-dispatcher.js";
 import { PollingController } from "./state/polling-controller.js";
 import type { ConnectionStatus } from "./api/types/index.js";
@@ -435,12 +435,15 @@ export class IcApp extends LitElement {
         this._eventDispatcher = createEventDispatcher();
         this._eventDispatcher.start(baseUrl, token);
 
-        // Wire SSE events to globalState for badge counts
+        // Wire SSE events to globalState for badge counts.
+        // Phase 41 TS-HYG-12: use requireGlobalState (from Plan 41-03) to surface
+        // null misuse as a typed throw instead of silent non-null assertions.
         this._approvalUnsub = this._eventDispatcher.addEventListener(
           "approval:requested",
           () => {
-            const snap = this._globalState!.getSnapshot();
-            this._globalState!.update({
+            const state = requireGlobalState(this);
+            const snap = state.getSnapshot();
+            state.update({
               pendingApprovals: snap.pendingApprovals + 1,
             });
           },
@@ -449,8 +452,9 @@ export class IcApp extends LitElement {
         this._approvalResolvedUnsub = this._eventDispatcher.addEventListener(
           "approval:resolved",
           () => {
-            const snap = this._globalState!.getSnapshot();
-            this._globalState!.update({
+            const state = requireGlobalState(this);
+            const snap = state.getSnapshot();
+            state.update({
               pendingApprovals: Math.max(0, snap.pendingApprovals - 1),
             });
           },
@@ -459,8 +463,9 @@ export class IcApp extends LitElement {
         this._errorUnsub = this._eventDispatcher.addEventListener(
           "system:error",
           () => {
-            const snap = this._globalState!.getSnapshot();
-            this._globalState!.update({
+            const state = requireGlobalState(this);
+            const snap = state.getSnapshot();
+            state.update({
               errorCount: (snap.errorCount ?? 0) + 1,
             });
           },
@@ -468,7 +473,8 @@ export class IcApp extends LitElement {
 
         // Subscribe to global state for reactive UI updates
         this._stateUnsubscribe = this._globalState.subscribe(() => {
-          const snap = this._globalState!.getSnapshot();
+          const state = requireGlobalState(this);
+          const snap = state.getSnapshot();
           this._connectionStatus = snap.connectionStatus;
           this._pendingApprovals = snap.pendingApprovals;
           this._errorCount = snap.errorCount;

@@ -747,9 +747,9 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   },
   {
     file: "packages/agent/src/spawn/sub-agent-runner.ts",
-    lineRanges: [[645, 645], [679, 679], [709, 709], [777, 777]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    lineRanges: [[649, 649], [684, 684], [715, 715], [784, 784]],
+    reason: "@allow-throw boundary: spawn() consumed exclusively by daemon RPC handlers (subagent-handlers, session-handlers, graph-*); these handlers are @allow-throw boundaries per 41-03-SUMMARY.md Decision 2 (rpc-dispatch.ts:306-321 wraps and converts to JSON-RPC error response). Phase 41 TS-HYG-07.",
+    removedIn: "permanent",
   },
   {
     file: "packages/agent/src/workspace/workspace-manager.ts",
@@ -1246,9 +1246,9 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   // ----- orchestrator package (5 files) -----
   {
     file: "packages/orchestrator/src/cross-session/announcement-dead-letter.ts",
-    lineRanges: [[108, 108], [316, 316]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    lineRanges: [[110, 110], [319, 319]],
+    reason: "@allow-throw boundary: atomicWrite (line 110) wraps node:fs/promises (writeFile + rename), callers wrap via try/catch (drain() catch at line 325-330). ENOENT re-raise (line 318) is conventional rethrow inside unlink-cleanup pattern, also caught by drain() outer catch. Phase 41 TS-HYG-07.",
+    removedIn: "permanent",
   },
   {
     file: "packages/orchestrator/src/cross-session/cross-session-sender.ts",
@@ -1258,9 +1258,9 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   },
   {
     file: "packages/orchestrator/src/execution/execution-execute.ts",
-    lineRanges: [[215, 215]],
-    reason: "Raw throw in production source; Phase D TS-HYG-07/08 retrofits to Result.err per design §7.2.3",
-    removedIn: "phase-D",
+    lineRanges: [[217, 217]],
+    reason: "@allow-throw boundary: re-raise non-TimeoutError from executeLlm to the inbound orchestrator pipeline (executeAndDeliver -> inbound-route); channel-adapter context catches and converts to user-visible degraded response. Boundary adapter pattern per 41-03-SUMMARY.md Decision 2 (channel/RPC inbound boundaries). Phase 41 TS-HYG-07.",
+    removedIn: "permanent",
   },
   {
     file: "packages/orchestrator/src/queue/coalescer.ts",

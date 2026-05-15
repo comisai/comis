@@ -58,7 +58,7 @@ export interface CtxMessagePartRow {
 export interface CtxSummaryRow {
   summary_id: string;
   conversation_id: string;
-  kind: string;
+  kind: "leaf" | "condensed";
   depth: number;
   content: string;
   token_count: number;

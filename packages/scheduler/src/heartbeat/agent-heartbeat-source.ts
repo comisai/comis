@@ -67,14 +67,19 @@ interface HeartbeatSessionResolver {
 }
 
 /** Tool policy filter function signature -- matches applyToolPolicy from @comis/skills.
- *  Injected as a dep so scheduler doesn't take a hard dependency on skills. */
+ *  Injected as a dep so scheduler doesn't take a hard dependency on skills.
+ *
+ *  Per Phase 41 TS-HYG-11: `reason.kind` is the closed-union mirror of
+ *  `ToolFilterReason` from @comis/skills/policy/tool-policy.ts (two variants:
+ *  "not_in_profile" + "explicit_deny"). Plain TS union, not Zod — internal
+ *  scheduler-skills boundary, not a parsed-payload contract. */
 export interface HeartbeatToolPolicyFilter {
   (
     tools: unknown[],
     policy: { profile: string; allow: string[]; deny: string[] },
   ): {
     tools: unknown[];
-    filtered: Array<{ toolName: string; reason: { kind: string } }>;
+    filtered: Array<{ toolName: string; reason: { kind: "not_in_profile" | "explicit_deny" } }>;
   };
 }
 

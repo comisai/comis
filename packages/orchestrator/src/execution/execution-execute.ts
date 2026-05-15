@@ -213,6 +213,7 @@ export async function executeLlm(
         timedOut: true,
       };
     }
+    // @allow-throw: re-raise non-TimeoutError to the inbound orchestrator pipeline (executeAndDeliver -> inbound-route); channel-adapter context catches and converts to user-visible degraded response. Boundary adapter pattern per 41-03-SUMMARY.md Decision 2 (channel/RPC inbound boundaries). Phase 41 TS-HYG-07.
     throw err;
   }
 
