@@ -98,3 +98,9 @@ export { initContextSchema } from "./context-schema.js";
 
 // Context store (DAG mode CRUD)
 export { createContextStore } from "./context-store.js";
+
+// Generic Row mapper factory (TS-HYG-01, TS-HYG-02)
+// Plan 41-04 consumes createRowMapper(schema) at every SQLite call-site
+// retarget to replace `db.prepare(...).all() as Foo[]` casts.
+export { createRowMapper } from "./row-mapper.js";
+export type { RowMapper, MapperError } from "./row-mapper.js";

@@ -9,7 +9,9 @@
 
 import type { MemoryEntry } from "@comis/core";
 import type Database from "better-sqlite3";
-import { z } from "zod";
+import { z, type ZodType } from "zod";
+import type { Result } from "@comis/shared";
+import { ok, err } from "@comis/shared";
 import type { MemoryRow } from "./types.js";
 import { isVecAvailable } from "./schema.js";
 
@@ -236,4 +238,134 @@ export function groupCountRows(
     result[row[groupByColumn] as string] = row.count as number;
   }
   return result;
+}
+
+// ===== Generic RowMapper factory (TS-HYG-01, TS-HYG-02) =============
+// Phase 41 — generic factory for typed SQLite row parsing.
+// Existing domain-specific helpers above (rowToEntry, parseTags, etc.) stay.
+// Plan 41-04 consumes this factory at every SQLite call-site retarget to
+// replace `db.prepare(...).all() as Foo[]` casts with
+// `mapper.parseRows(stmt.all(...))` + Result-handling.
+
+/**
+ * Error value returned by RowMapper.parse* methods. NOT thrown — this is a
+ * Result.err payload per AGENTS.md §2.1.
+ *
+ * The `path` field includes the row index on per-row failures
+ * (e.g. "row[3].column_name") so error messages pinpoint the failing column
+ * in a multi-row result set.
+ */
+export interface MapperError {
+  readonly code: "row-validation-failed";
+  readonly message: string;
+  /** Includes row index on per-row failures (e.g. "row[3].column_name"). */
+  readonly path: string;
+  readonly issues: readonly { path: (string | number)[]; message: string }[];
+}
+
+/**
+ * Generic typed row mapper. Wraps a Zod schema with Result-returning
+ * parseRow / parseOptionalRow / parseRows methods.
+ *
+ * Created via createRowMapper(schema). Used at every memory-package SQLite
+ * call site to replace `db.prepare(...).all() as Foo[]` casts
+ * (Phase 41 TS-HYG-03).
+ *
+ * @template TRow The parsed row type (matches the Zod schema's output).
+ */
+export interface RowMapper<TRow> {
+  /** Parse a single row from `Statement.get()` or single-row results. */
+  parseRow(raw: unknown): Result<TRow, MapperError>;
+  /**
+   * Parse a single row that may be absent (`Statement.get()` returns
+   * `undefined` when no row matched). Distinguishes:
+   * - `raw === undefined` → `ok(undefined)` (no row matched).
+   * - Row present but malformed → `err(MapperError)`.
+   * - Row present and valid → `ok(row)`.
+   */
+  parseOptionalRow(raw: unknown | undefined): Result<TRow | undefined, MapperError>;
+  /**
+   * Parse an array of rows from `Statement.all()`. On per-row failure,
+   * `MapperError.path` includes the row index (e.g. "row[3].column_name").
+   */
+  parseRows(raw: unknown[]): Result<TRow[], MapperError>;
+}
+
+function issuesFromZod(
+  zodError: z.ZodError,
+): readonly { path: (string | number)[]; message: string }[] {
+  return zodError.issues.map((iss) => ({
+    path: iss.path as (string | number)[],
+    message: iss.message,
+  }));
+}
+
+/**
+ * Build a RowMapper<TRow> from a Zod schema.
+ *
+ * The schema is run via `safeParse` — never throws (AGENTS.md §2.1).
+ * Failures are surfaced as `Result.err(MapperError)`; callers chain via
+ * early-return per AGENTS.md §2.1.
+ *
+ * @example
+ * ```ts
+ * const mapper = createRowMapper(MemoryRowSchema);
+ * const result = mapper.parseRows(stmt.all(tenantId, limit));
+ * if (!result.ok) return err(result.error);
+ * return ok(result.value);
+ * ```
+ */
+export function createRowMapper<TRow>(schema: ZodType<TRow>): RowMapper<TRow> {
+  return {
+    parseRow(raw) {
+      const parsed = schema.safeParse(raw);
+      if (!parsed.success) {
+        const issues = issuesFromZod(parsed.error);
+        const path = issues[0]?.path.join(".") ?? "<root>";
+        return err({
+          code: "row-validation-failed",
+          message: `Row validation failed at ${path}`,
+          path,
+          issues,
+        });
+      }
+      return ok(parsed.data);
+    },
+    parseOptionalRow(raw) {
+      // Critical wrinkle (RESEARCH §"Pattern 1" line 223): undefined input
+      // → ok(undefined) (no row matched). Malformed-but-present → err.
+      if (raw === undefined) return ok(undefined);
+      const parsed = schema.safeParse(raw);
+      if (!parsed.success) {
+        const issues = issuesFromZod(parsed.error);
+        const path = issues[0]?.path.join(".") ?? "<root>";
+        return err({
+          code: "row-validation-failed",
+          message: `Row validation failed at ${path}`,
+          path,
+          issues,
+        });
+      }
+      return ok(parsed.data);
+    },
+    parseRows(raw) {
+      const out: TRow[] = [];
+      for (let i = 0; i < raw.length; i++) {
+        const parsed = schema.safeParse(raw[i]);
+        if (!parsed.success) {
+          const issues = issuesFromZod(parsed.error);
+          const firstIssuePath = issues[0]?.path.join(".") ?? "<root>";
+          const path = `row[${i}].${firstIssuePath}`;
+          return err({
+            code: "row-validation-failed",
+            message: `Row validation failed at ${path}`,
+            path,
+            issues,
+          });
+        }
+        out.push(parsed.data);
+      }
+      return ok(out);
+    },
+  };
 }
