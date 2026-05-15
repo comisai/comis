@@ -33,11 +33,31 @@ export interface AnnouncementLogger {
 // Public types
 // ---------------------------------------------------------------------------
 
+/**
+ * Canonical 9-channel set covering production platform adapters. Used as the
+ * closed-union discriminator for sendToChannel(type, ...) instead of an open
+ * `string` per Phase 41 TS-HYG-11. Local definition (no @comis/core export
+ * currently aggregates the platform-adapter channel types — the rest of the
+ * codebase carries this set implicitly as adapter-specific channelType strings).
+ * "echo" is included for development/testing parity with channels/echo-adapter.
+ */
+export type ChannelType =
+  | "discord"
+  | "telegram"
+  | "slack"
+  | "whatsapp"
+  | "imessage"
+  | "signal"
+  | "irc"
+  | "line"
+  | "email"
+  | "echo";
+
 /** A single dead-letter queue entry representing a failed announcement. */
 export interface DeadLetterEntry {
   id: string;
   announcementText: string;
-  channelType: string;
+  channelType: ChannelType;
   channelId: string;
   runId: string;
   /** Timestamp when the original delivery failed. */
@@ -63,7 +83,7 @@ export interface AnnouncementDeadLetterQueue {
    * Retry delivery of queued entries via the provided sendToChannel callback.
    * Processes entries sequentially, drops expired entries, uses atomic write.
    */
-  drain(sendToChannel: (type: string, id: string, text: string, options?: { threadId?: string }) => Promise<boolean>): Promise<void>;
+  drain(sendToChannel: (type: ChannelType, id: string, text: string, options?: { threadId?: string }) => Promise<boolean>): Promise<void>;
   /** Return the current number of entries in the queue. */
   size(): number;
 }
@@ -229,7 +249,7 @@ export function createAnnouncementDeadLetterQueue(
     },
 
     async drain(
-      sendToChannel: (type: string, id: string, text: string, options?: { threadId?: string }) => Promise<boolean>,
+      sendToChannel: (type: ChannelType, id: string, text: string, options?: { threadId?: string }) => Promise<boolean>,
     ): Promise<void> {
       // Concurrent drain protection
       if (draining) return;

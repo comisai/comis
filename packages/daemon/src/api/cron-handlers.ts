@@ -41,6 +41,7 @@ import {
   systemNowMs,
 } from "@comis/core";
 import { buildCronSchedule } from "../wiring/daemon-utils.js";
+import type { CronSchedule } from "@comis/scheduler";
 import { randomUUID } from "node:crypto";
 
 import type { RpcHandler } from "./types.js";
@@ -153,7 +154,7 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       const normalized = normalizeCronAddParams(rawParams);
 
       const name = normalized.name as string;
-      const scheduleKind = normalized.schedule_kind as string;
+      const scheduleKind = normalized.schedule_kind as CronSchedule["kind"];
       const payloadKind = normalized.payload_kind as string;
       const payloadText = normalized.payload_text as string;
 
@@ -274,7 +275,9 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       if (rawParams.sessionTarget !== undefined) job.sessionTarget = rawParams.sessionTarget as "main" | "isolated";
       // Schedule: accept raw schedule object (web UI) or build from schedule_kind (chat tool)
       if (rawParams.schedule !== undefined) {
-        const sched = rawParams.schedule as { kind: string; everyMs?: number; expr?: string; tz?: string; at?: string };
+        // Closed-union retype per Phase 41 TS-HYG-11: Zod-validated upstream, structurally compatible with CronSchedule.
+        // We narrow via discriminator + presence checks rather than `as CronSchedule` to preserve the existing partial-shape tolerance for legacy payloads.
+        const sched = rawParams.schedule as { kind: CronSchedule["kind"]; everyMs?: number; expr?: string; tz?: string; at?: string };
         if (sched.kind === "every" && sched.everyMs) {
           job.schedule = { kind: "every" as const, everyMs: sched.everyMs };
         } else if (sched.kind === "cron" && sched.expr) {

@@ -320,12 +320,22 @@ export async function executeAction(
       case "close":
         await handleClose(page);
         break;
-      default:
+      default: {
+        // Inline exhaustive check per Phase 41 TS-HYG-11 + 41-03-SUMMARY.md Decision 1
+        // (STAY INLINE — no shared assertNever helper). Since BrowserAction is a
+        // closed union, this branch is unreachable at compile time; the runtime
+        // fallback to ActionResult handles ill-typed inputs from untyped callers.
+        const _exhaustive: never = action;
+        // Defensive runtime cast for the never-reachable branch only — access the
+        // unknown shape's kind for the ActionResult error message.
+        const unknownAction = _exhaustive as { kind?: unknown };
+        const unknownKind = typeof unknownAction.kind === "string" ? unknownAction.kind : "unknown";
         return {
           ok: false,
-          action: (action as { kind: string }).kind ?? "unknown",
-          error: `Unknown action kind: ${(action as { kind: string }).kind}`,
+          action: unknownKind,
+          error: `Unknown action kind: ${unknownKind}`,
         };
+      }
     }
 
     return { ok: true, action: action.kind };

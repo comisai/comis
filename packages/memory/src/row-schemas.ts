@@ -201,7 +201,7 @@ export type CtxMessagePartRowFromSchema = z.infer<typeof CtxMessagePartRowSchema
 export const CtxSummaryRowSchema = z.strictObject({
   summary_id: z.string(),
   conversation_id: z.string(),
-  kind: z.string(),
+  kind: z.enum(["leaf", "condensed"]),
   depth: z.number(),
   content: z.string(),
   token_count: z.number(),

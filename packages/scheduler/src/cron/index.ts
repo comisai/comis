@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @comis/scheduler/cron — cron scheduling
 
-export type { CronJob } from "./cron-types.js";
+export type { CronJob, CronSchedule } from "./cron-types.js";
 
 // Cron expression evaluation
 export { computeNextRunAtMs } from "./cron-expression.js";
