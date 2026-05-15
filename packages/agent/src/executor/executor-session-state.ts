@@ -18,7 +18,7 @@ import type { CacheRetention } from "@mariozechner/pi-ai";
 import type { ClockPort } from "@comis/core";
 import { createSessionLatch } from "./session-latch.js";
 import type { SessionLatch } from "./session-latch.js";
-import { createCacheBreakDetector } from "./cache-break-detection.js";
+import { createCacheBreakDetector } from "./cache-detection/index.js";
 
 // ---------------------------------------------------------------------------
 // Module-level clock provider (Phase 39 PORTS-11)

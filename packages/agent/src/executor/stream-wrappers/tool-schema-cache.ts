@@ -3,12 +3,12 @@
  * Extracted tool schema cache module.
  *
  * Pure data structures for session-scoped rendered tool caching.
- * Leaf module: imports only from cache-break-detection.ts (computeHash).
+ * Leaf module: imports only from cache-detection/ (computeHash).
  * Zero imports from request-body-injector.ts.
  *
  * @module
  */
-import { computeHash } from "../cache-break-detection.js";
+import { computeHash } from "../cache-detection/index.js";
 
 // ---------------------------------------------------------------------------
 // Session-scoped rendered tool cache.

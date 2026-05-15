@@ -3,7 +3,7 @@
  * Session state cleanup: wires `session:expired` event to all 17
  * module-level `clearSession*()` functions in prompt-assembly.ts,
  * pi-executor.ts, tool-lifecycle.ts, discovery-tracker.ts,
- * cache-break-detection.ts, ttl-guard.ts, stream-wrappers.ts,
+ * cache-detection/, ttl-guard.ts, stream-wrappers.ts,
  * and block-stability-tracker.ts.
  *
  * Provides clearSessionState() as the single authoritative cleanup
@@ -19,7 +19,7 @@ import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearS
 import { clearSessionDeliveredGuides, clearSessionToolSchemaSnapshot, clearSessionToolSchemaSnapshotHash, clearSessionBreakpointIndex, clearSessionCacheWarm, clearSessionLatches, clearSessionEvictionCooldown, clearSessionCacheSavings } from "./executor-session-state.js";
 import { clearSessionTracker } from "./tool-lifecycle.js";
 import { clearDiscoveryTracker } from "./discovery-tracker.js";
-import { clearCacheBreakDetectorSession } from "./cache-break-detection.js";
+import { clearCacheBreakDetectorSession } from "./cache-detection/index.js";
 import { clearSessionLastResponseTs } from "./ttl-guard.js";
 import { clearSessionBetaHeaderLatches, clearSessionPrefixStability, clearSessionCadenceTracker } from "./stream-wrappers/request-body-injector.js";
 import { clearSessionRenderedToolCache, clearSessionPerToolCache } from "./stream-wrappers/tool-schema-cache.js";

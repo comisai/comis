@@ -110,7 +110,7 @@ const BC_REM_02_PATH_TAIL_ALLOWLIST: readonly string[] = [
   "packages/agent/src/model/model-allowlist.ts", // doc-string: empty array = "allow all models (backward compatible)" — default rationale
   "packages/agent/src/model/compaction-model-resolver.ts", // doc-string: "No backward-compat shim per feedback_no_backward_compat.md" — POLICY citation, not BC code
   "packages/agent/src/model/model-registry-adapter.ts", // doc-string mentioning "legacy aliases that ..." — describes local inference catalog
-  "packages/agent/src/executor/cache-break-detection.ts", // doc-comment on optional field default-0 rationale
+  "packages/agent/src/executor/cache-detection/cache-state.ts", // doc-comment on optional field default-0 rationale (post-EXEC-SPLIT-09)
   "packages/agent/src/executor/cache-break-diff-writer.ts", // doc-comment on `?? false` default rationale for newer fields
   "packages/agent/src/spawn/sub-agent-runner.ts", // legacy-fallback branch — out of Phase 38 scope (spawn pipeline rewrites tracked separately)
   "packages/agent/src/session/comis-session-manager.ts", // doc-string about session-mapping carry-over (pre-v2.1 paths still resolvable)

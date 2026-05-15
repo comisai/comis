@@ -266,8 +266,8 @@ export { createActiveRunRegistry } from "./executor/active-run-registry.js";
 export type { ActiveRunRegistry, RunHandle } from "./executor/active-run-registry.js";
 
 // Cache break detection
-export { clearCacheBreakDetectorSession, extractGeminiPromptState } from "./executor/cache-break-detection.js";
-export type { CacheBreakDetector, CacheBreakEvent, CacheBreakReason, RecordPromptStateInput, CheckCacheBreakInput, PendingChanges, PromptStateSnapshot } from "./executor/cache-break-detection.js";
+export { clearCacheBreakDetectorSession, extractGeminiPromptState } from "./executor/cache-detection/index.js";
+export type { CacheBreakDetector, CacheBreakEvent, CacheBreakReason, RecordPromptStateInput, CheckCacheBreakInput, PendingChanges, PromptStateSnapshot } from "./executor/cache-detection/index.js";
 
 // Cache break diff writer
 export { createCacheBreakDiffWriter } from "./executor/cache-break-diff-writer.js";

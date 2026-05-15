@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for cache break detection module.
+ * Unit tests for cache-detection/cache-state.ts (Phase 42 split per
+ * EXEC-SPLIT-09 / EXEC-SPLIT-03).
  *
- * Covers two-phase detection, per-tool attribution,
- * CacheBreakEvent structure, Anthropic adapter,
- * aliasSession, and sanitizeMcpToolNameForAnalytics.
+ * Covers `createCacheBreakDetector`, `clearCacheBreakDetectorSession`,
+ * `MAX_TRACKING_ENTRIES`, and all detector behavior (recordPromptState,
+ * checkResponseForCacheBreak, notifyCompaction, notifyTtlExpiry,
+ * notifyContentModification, aliasSession, LRU bounds, model exclusion,
+ * tiered server-side attribution, lookback-aware attribution, API error
+ * suppression, effort value tracking, cacheControlHash, lazy
+ * buildDiffableContent).
+ *
+ * Behavior moved from the pre-split cache-break-detection.test.ts file;
+ * identical describe block contents (cross-cutting tests that exercise
+ * the Anthropic adapter together with the detector remain here, not in
+ * anthropic-extractor.test.ts).
  *
  * @module
  */
@@ -16,23 +26,20 @@ import type { ClockPort } from "@comis/core";
 const testClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 import {
-  createCacheBreakDetector,
-  extractAnthropicPromptState,
-  extractGeminiPromptState,
-  clearCacheBreakDetectorSession,
-  djb2,
-  computeHash,
-  sanitizeMcpToolName,
-  sanitizeMcpToolNameForAnalytics,
   MAX_TRACKING_ENTRIES,
-  type CacheBreakDetector,
-  type CacheBreakEvent,
-  type RecordPromptStateInput,
-} from "./cache-break-detection.js";
+  clearCacheBreakDetectorSession,
+  createCacheBreakDetector,
+} from "./cache-state.js";
+import type {
+  CacheBreakDetector,
+  CacheBreakEvent,
+  RecordPromptStateInput,
+} from "./cache-state-types.js";
+import { extractAnthropicPromptState } from "./anthropic-extractor.js";
 import {
   CACHE_BREAK_RELATIVE_THRESHOLD,
   CACHE_BREAK_ABSOLUTE_THRESHOLD,
-} from "../context-engine/constants.js";
+} from "../../context-engine/constants.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -83,156 +90,6 @@ describe("cache break threshold constants", () => {
   it("CACHE_BREAK_ABSOLUTE_THRESHOLD equals 2000", () => {
     expect(CACHE_BREAK_ABSOLUTE_THRESHOLD).toBe(2000);
   });
-});
-
-// ---------------------------------------------------------------------------
-// djb2 / computeHash
-// ---------------------------------------------------------------------------
-
-describe("djb2 / computeHash", () => {
-  it("djb2 empty string returns 5381", () => {
-    expect(djb2("")).toBe(5381);
-  });
-
-  it("djb2 hello returns consistent unsigned 32-bit integer", () => {
-    const h = djb2("hello");
-    expect(h).toBeTypeOf("number");
-    expect(h).toBeGreaterThanOrEqual(0);
-    expect(h).toBeLessThanOrEqual(0xFFFFFFFF);
-    // Idempotent
-    expect(djb2("hello")).toBe(h);
-  });
-
-  it("computeHash produces same hash for identical JSON", () => {
-    const obj = { a: 1, b: "two" };
-    expect(computeHash(obj)).toBe(computeHash({ a: 1, b: "two" }));
-  });
-
-  it("computeHash produces different hash for different JSON", () => {
-    expect(computeHash({ a: 1 })).not.toBe(computeHash({ a: 2 }));
-  });
-
-  it("computeHash handles undefined without crashing", () => {
-    // JSON.stringify(undefined) returns undefined (not a string).
-    // computeHash must handle this gracefully.
-    const h = computeHash(undefined);
-    expect(h).toBeTypeOf("number");
-    expect(h).toBeGreaterThanOrEqual(0);
-  });
-
-  it("computeHash handles null", () => {
-    const h = computeHash(null);
-    expect(h).toBeTypeOf("number");
-    expect(h).not.toBe(computeHash(undefined));
-  });
-});
-
-// ---------------------------------------------------------------------------
-// sanitizeMcpToolName
-// ---------------------------------------------------------------------------
-
-describe("sanitizeMcpToolName", () => {
-  it("collapses mcp__myserver--read_file to mcp__myserver", () => {
-    expect(sanitizeMcpToolName("mcp__myserver--read_file")).toBe("mcp__myserver");
-  });
-
-  it("collapses mcp__myserver--write_file to mcp__myserver", () => {
-    expect(sanitizeMcpToolName("mcp__myserver--write_file")).toBe("mcp__myserver");
-  });
-
-  it("returns regular_tool unchanged", () => {
-    expect(sanitizeMcpToolName("regular_tool")).toBe("regular_tool");
-  });
-
-  it("returns mcp__server unchanged when no -- suffix", () => {
-    expect(sanitizeMcpToolName("mcp__server")).toBe("mcp__server");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// extractAnthropicPromptState
-// ---------------------------------------------------------------------------
-
-describe("extractAnthropicPromptState", () => {
-  it("extracts systemHash from system blocks (strips cache_control before hashing)", () => {
-    const result = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    expect(result.systemHash).toBeTypeOf("number");
-    expect(result.systemHash).toBeGreaterThan(0);
-
-    // Verify stripping: same content with different cache_control should produce same systemHash
-    const paramsWithDifferentCacheControl = {
-      ...fixtureParams,
-      system: [
-        { type: "text", text: "You are a helpful assistant", cache_control: { type: "permanent" } },
-      ],
-    };
-    const result2 = extractAnthropicPromptState(paramsWithDifferentCacheControl, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    expect(result2.systemHash).toBe(result.systemHash);
-  });
-
-  it("extracts per-tool hashes using input_schema field", () => {
-    const result = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    expect(result.perToolHashes).toHaveProperty("bash");
-    expect(result.perToolHashes).toHaveProperty("file_read");
-    expect(result.perToolHashes["bash"]).toBeTypeOf("number");
-    expect(result.perToolHashes["file_read"]).toBeTypeOf("number");
-    // Different schemas -> different hashes
-    expect(result.perToolHashes["bash"]).not.toBe(result.perToolHashes["file_read"]);
-  });
-
-  it("hashes cache_control metadata separately as cacheMetadataHash", () => {
-    const result = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    // fixtureParams has cache_control on system[0] and tools[0]
-    expect(result.cacheMetadataHash).toBeTypeOf("number");
-    expect(result.cacheMetadataHash).not.toBe(null);
-  });
-
-  it("does NOT mutate the original params object", () => {
-    const original = JSON.parse(JSON.stringify(fixtureParams));
-    extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    expect(fixtureParams).toEqual(original);
-  });
-
-  it("with empty tools array, perToolHashes is empty and toolsHash is stable", () => {
-    const params = { system: fixtureParams.system, tools: [] };
-    const result = extractAnthropicPromptState(params, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    expect(result.perToolHashes).toEqual({});
-    expect(result.toolNames).toEqual([]);
-    expect(result.toolsHash).toBeTypeOf("number");
-
-    // Stable across calls
-    const result2 = extractAnthropicPromptState(params, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    expect(result2.toolsHash).toBe(result.toolsHash);
-  });
-
-  it("returns correct provider, model, retention, sessionKey, agentId", () => {
-    const result = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "long", "sess-42", "bot-7");
-    expect(result.provider).toBe("anthropic");
-    expect(result.model).toBe("claude-sonnet-4-5");
-    expect(result.retention).toBe("long");
-    expect(result.sessionKey).toBe("sess-42");
-    expect(result.agentId).toBe("bot-7");
-  });
-
-  it("handles server-side tools (tool_search_tool_regex) without crashing", () => {
-    // tool_search_tool_regex has type + name but no input_schema.
-    // Previously crashed: computeHash(undefined) → djb2(JSON.stringify(undefined)) → str.length on undefined.
-    const paramsWithServerTool = {
-      ...fixtureParams,
-      tools: [
-        ...fixtureParams.tools,
-        { type: "tool_search_tool_regex_20251119", name: "tool_search_tool_regex" },
-      ],
-    };
-    const result = extractAnthropicPromptState(paramsWithServerTool, "claude-opus-4-6", "long", "sess-1", "agent-1");
-    // Server-side tool should be excluded from per-tool hashes and toolNames
-    expect(result.perToolHashes).not.toHaveProperty("tool_search_tool_regex");
-    expect(result.toolNames).not.toContain("tool_search_tool_regex");
-    // Regular tools are still hashed
-    expect(result.perToolHashes).toHaveProperty("bash");
-    expect(result.perToolHashes).toHaveProperty("file_read");
-  });
-
 });
 
 // ---------------------------------------------------------------------------
@@ -781,129 +638,6 @@ describe("CacheBreakEvent structure", () => {
 });
 
 // ---------------------------------------------------------------------------
-// extractGeminiPromptState
-// ---------------------------------------------------------------------------
-
-describe("extractGeminiPromptState", () => {
-  const geminiPayload = {
-    model: "gemini-2.5-flash",
-    contents: [{ role: "user", parts: [{ text: "Hello" }] }],
-    config: {
-      systemInstruction: "You are a helpful assistant",
-      tools: [{
-        functionDeclarations: [
-          { name: "bash", description: "Run bash commands", parametersJsonSchema: { type: "object", properties: { cmd: { type: "string" } } } },
-          { name: "file_read", description: "Read file", parametersJsonSchema: { type: "object", properties: { path: { type: "string" } } } },
-        ],
-      }],
-      toolConfig: { functionCallingConfig: { mode: "AUTO" } },
-      temperature: 0.7,
-      maxOutputTokens: 8192,
-    },
-  };
-
-  it("hashes systemInstruction string correctly", () => {
-    const result = extractGeminiPromptState(geminiPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.systemHash).toBe(computeHash("You are a helpful assistant"));
-  });
-
-  it("hashes functionDeclarations array (not the wrapper tools array)", () => {
-    const result = extractGeminiPromptState(geminiPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    const expectedDecls = geminiPayload.config.tools[0].functionDeclarations;
-    expect(result.toolsHash).toBe(computeHash(expectedDecls));
-  });
-
-  it("always returns cacheMetadataHash: null", () => {
-    const result = extractGeminiPromptState(geminiPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.cacheMetadataHash).toBeNull();
-  });
-
-  it("returns provider: 'google'", () => {
-    const result = extractGeminiPromptState(geminiPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.provider).toBe("google");
-  });
-
-  it("returns retention: undefined (Gemini reads static config, not adaptive)", () => {
-    const result = extractGeminiPromptState(geminiPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.retention).toBeUndefined();
-  });
-
-  it("extracts tool names from functionDeclarations", () => {
-    const result = extractGeminiPromptState(geminiPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.toolNames).toEqual(["bash", "file_read"]);
-  });
-
-  it("builds perToolHashes using parametersJsonSchema", () => {
-    const result = extractGeminiPromptState(geminiPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.perToolHashes).toHaveProperty("bash");
-    expect(result.perToolHashes).toHaveProperty("file_read");
-    expect(result.perToolHashes["bash"]).toBe(
-      computeHash({ type: "object", properties: { cmd: { type: "string" } } }),
-    );
-    expect(result.perToolHashes["file_read"]).toBe(
-      computeHash({ type: "object", properties: { path: { type: "string" } } }),
-    );
-    // Different schemas -> different hashes
-    expect(result.perToolHashes["bash"]).not.toBe(result.perToolHashes["file_read"]);
-  });
-
-  it("with empty tools returns toolsHash of computeHash([]) and empty toolNames/perToolHashes", () => {
-    const emptyPayload = {
-      ...geminiPayload,
-      config: { ...geminiPayload.config, tools: [] },
-    };
-    const result = extractGeminiPromptState(emptyPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.toolsHash).toBe(computeHash([]));
-    expect(result.toolNames).toEqual([]);
-    expect(result.perToolHashes).toEqual({});
-  });
-
-  it("handles MCP tool names via sanitizeMcpToolName in perToolHashes keys", () => {
-    const mcpPayload = {
-      ...geminiPayload,
-      config: {
-        ...geminiPayload.config,
-        tools: [{
-          functionDeclarations: [
-            { name: "mcp__myserver--read_file", description: "Read", parametersJsonSchema: { type: "object" } },
-          ],
-        }],
-      },
-    };
-    const result = extractGeminiPromptState(mcpPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.toolNames).toEqual(["mcp__myserver--read_file"]);
-    // perToolHashes key uses sanitized name
-    expect(result.perToolHashes).toHaveProperty("mcp__myserver");
-    expect(result.perToolHashes["mcp__myserver"]).toBe(computeHash({ type: "object" }));
-  });
-
-  it("returns correct sessionKey, agentId, and model", () => {
-    const result = extractGeminiPromptState(geminiPayload, "gemini-2.5-flash", "sess-42", "bot-7");
-    expect(result.sessionKey).toBe("sess-42");
-    expect(result.agentId).toBe("bot-7");
-    expect(result.model).toBe("gemini-2.5-flash");
-  });
-
-  it("handles missing systemInstruction (hashes empty string)", () => {
-    const noSysPayload = {
-      ...geminiPayload,
-      config: { ...geminiPayload.config, systemInstruction: undefined },
-    };
-    const result = extractGeminiPromptState(noSysPayload as Record<string, unknown>, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.systemHash).toBe(computeHash(""));
-  });
-
-  it("handles missing config object gracefully", () => {
-    const noConfigPayload = { model: "gemini-2.5-flash", contents: [] };
-    const result = extractGeminiPromptState(noConfigPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.systemHash).toBe(computeHash(""));
-    expect(result.toolsHash).toBe(computeHash([]));
-    expect(result.toolNames).toEqual([]);
-    expect(result.perToolHashes).toEqual({});
-  });
-});
-
-// ---------------------------------------------------------------------------
 // notifyContentModification (G-09)
 // ---------------------------------------------------------------------------
 
@@ -1054,173 +788,91 @@ describe("notifyContentModification (G-09)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Header and extra-body tracking
+// Detector integration for header / extra-body changes
+// (extractor-only header / extraBody assertions live in
+//  anthropic-extractor.test.ts)
 // ---------------------------------------------------------------------------
 
-describe("header and extra-body tracking", () => {
-  // --- extractAnthropicPromptState header hashing ---
+describe("attributeReason priority for headers/extra-body", () => {
+  let detector: CacheBreakDetector;
 
-  it("extractAnthropicPromptState returns headersHash when headers provided", () => {
-    const result = extractAnthropicPromptState(
-      fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1",
-      { "anthropic-beta": "prompt-caching-2024-07-31", "anthropic-version": "2024-01-01" },
-    );
-    expect(result.headersHash).toBeTypeOf("number");
-    expect(result.headersHash).not.toBeNull();
+  beforeEach(() => {
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
+    detector.reset();
   });
 
-  it("extractAnthropicPromptState returns null headersHash when no headers", () => {
-    const result = extractAnthropicPromptState(
-      fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1",
-    );
-    expect(result.headersHash).toBeNull();
+  function triggerBreakWithChanges(changes: Partial<RecordPromptStateInput>): CacheBreakEvent | null {
+    detector.recordPromptState(makeBaseInput());
+    detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
+    detector.recordPromptState(makeBaseInput(changes));
+    return detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 0, cacheWriteTokens: 0, totalInputTokens: 60000 });
+  }
+
+  it("attributeReason returns headers_changed when headersChanged is true", () => {
+    const event = triggerBreakWithChanges({ headersHash: 99999 });
+    expect(event).not.toBeNull();
+    expect(event!.reason).toBe("headers_changed");
   });
 
-  // --- extractAnthropicPromptState extra body hashing ---
-
-  it("extractAnthropicPromptState returns extraBodyHash for non-standard params", () => {
-    const paramsWithExtra = { ...fixtureParams, custom_field: "some-value" };
-    const result = extractAnthropicPromptState(
-      paramsWithExtra, "claude-sonnet-4-5", "short", "sess-1", "agent-1",
-    );
-    expect(result.extraBodyHash).toBeTypeOf("number");
-    expect(result.extraBodyHash).not.toBeNull();
+  it("attributeReason returns extra_body_changed when extraBodyChanged is true", () => {
+    const event = triggerBreakWithChanges({ extraBodyHash: 88888 });
+    expect(event).not.toBeNull();
+    expect(event!.reason).toBe("extra_body_changed");
   });
 
-  it("extractAnthropicPromptState returns null extraBodyHash for standard-only params", () => {
-    // fixtureParams only has system and tools (both standard)
-    const result = extractAnthropicPromptState(
-      fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1",
-    );
-    expect(result.extraBodyHash).toBeNull();
+  it("headers_changed has lower priority than cache_metadata_changed", () => {
+    const event = triggerBreakWithChanges({ cacheMetadataHash: 55555, headersHash: 99999 });
+    expect(event).not.toBeNull();
+    expect(event!.reason).toBe("cache_metadata_changed");
   });
 
-  it("standard fields (including cache_control, betas) do not trigger extraBodyHash", () => {
-    const standardParams = {
-      model: "claude-sonnet-4-5",
-      max_tokens: 4096,
-      messages: [],
-      system: fixtureParams.system,
-      tools: fixtureParams.tools,
-      stream: true,
-      temperature: 0.7,
-      top_p: 0.9,
-      top_k: 40,
-      tool_choice: { type: "auto" },
-      cache_control: { type: "ephemeral" },
-      betas: ["prompt-caching-2024-07-31"],
-      stop_sequences: ["END"],
-      thinking: { type: "enabled", budget_tokens: 1024 },
-      output_config: {},
-      container: {},
-      inference_geo: "us",
-      service_tier: "standard",
-      metadata: { user_id: "abc" },
-    };
-    const result = extractAnthropicPromptState(
-      standardParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1",
-    );
-    expect(result.extraBodyHash).toBeNull();
+  it("extra_body_changed has lower priority than headers_changed", () => {
+    const event = triggerBreakWithChanges({ headersHash: 99999, extraBodyHash: 88888 });
+    expect(event).not.toBeNull();
+    expect(event!.reason).toBe("headers_changed");
   });
 
-  // --- attributeReason priority for new reasons ---
+  it("headers_changed has higher priority than ttl_expiry", () => {
+    detector.recordPromptState(makeBaseInput());
+    detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
+    detector.notifyTtlExpiry("test-session");
+    detector.recordPromptState(makeBaseInput({ headersHash: 99999 }));
+    const event = detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 0, cacheWriteTokens: 0, totalInputTokens: 60000 });
+    expect(event).not.toBeNull();
+    expect(event!.reason).toBe("headers_changed");
+  });
+});
 
-  describe("attributeReason priority for headers/extra-body", () => {
-    let detector: CacheBreakDetector;
+describe("detector integration for new reasons", () => {
+  let detector: CacheBreakDetector;
 
-    beforeEach(() => {
-      detector = createCacheBreakDetector(noopLogger, { clock: testClock });
-      detector.reset();
-    });
-
-    function triggerBreakWithChanges(changes: Partial<RecordPromptStateInput>): CacheBreakEvent | null {
-      detector.recordPromptState(makeBaseInput());
-      detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
-      detector.recordPromptState(makeBaseInput(changes));
-      return detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 0, cacheWriteTokens: 0, totalInputTokens: 60000 });
-    }
-
-    it("attributeReason returns headers_changed when headersChanged is true", () => {
-      const event = triggerBreakWithChanges({ headersHash: 99999 });
-      expect(event).not.toBeNull();
-      expect(event!.reason).toBe("headers_changed");
-    });
-
-    it("attributeReason returns extra_body_changed when extraBodyChanged is true", () => {
-      const event = triggerBreakWithChanges({ extraBodyHash: 88888 });
-      expect(event).not.toBeNull();
-      expect(event!.reason).toBe("extra_body_changed");
-    });
-
-    it("headers_changed has lower priority than cache_metadata_changed", () => {
-      const event = triggerBreakWithChanges({ cacheMetadataHash: 55555, headersHash: 99999 });
-      expect(event).not.toBeNull();
-      expect(event!.reason).toBe("cache_metadata_changed");
-    });
-
-    it("extra_body_changed has lower priority than headers_changed", () => {
-      const event = triggerBreakWithChanges({ headersHash: 99999, extraBodyHash: 88888 });
-      expect(event).not.toBeNull();
-      expect(event!.reason).toBe("headers_changed");
-    });
-
-    it("headers_changed has higher priority than ttl_expiry", () => {
-      detector.recordPromptState(makeBaseInput());
-      detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
-      detector.notifyTtlExpiry("test-session");
-      detector.recordPromptState(makeBaseInput({ headersHash: 99999 }));
-      const event = detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 0, cacheWriteTokens: 0, totalInputTokens: 60000 });
-      expect(event).not.toBeNull();
-      expect(event!.reason).toBe("headers_changed");
-    });
+  beforeEach(() => {
+    detector = createCacheBreakDetector(noopLogger, { clock: testClock });
+    detector.reset();
   });
 
-  // --- Integration: detector emits correct reason for header/extra-body changes ---
-
-  describe("detector integration for new reasons", () => {
-    let detector: CacheBreakDetector;
-
-    beforeEach(() => {
-      detector = createCacheBreakDetector(noopLogger, { clock: testClock });
-      detector.reset();
-    });
-
-    it("detector emits headers_changed when header hash differs between turns", () => {
-      // Turn 1: no headers hash
-      detector.recordPromptState(makeBaseInput({ headersHash: null }));
-      detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
-      // Turn 2: headers hash present (changed)
-      detector.recordPromptState(makeBaseInput({ headersHash: 12345 }));
-      const event = detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 0, cacheWriteTokens: 0, totalInputTokens: 60000 });
-      expect(event).not.toBeNull();
-      expect(event!.reason).toBe("headers_changed");
-      expect(event!.changes.headersChanged).toBe(true);
-    });
-
-    it("detector emits extra_body_changed when extra body hash differs between turns", () => {
-      // Turn 1: no extra body
-      detector.recordPromptState(makeBaseInput({ extraBodyHash: null }));
-      detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
-      // Turn 2: extra body hash present
-      detector.recordPromptState(makeBaseInput({ extraBodyHash: 54321 }));
-      const event = detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 0, cacheWriteTokens: 0, totalInputTokens: 60000 });
-      expect(event).not.toBeNull();
-      expect(event!.reason).toBe("extra_body_changed");
-      expect(event!.changes.extraBodyChanged).toBe(true);
-    });
+  it("detector emits headers_changed when header hash differs between turns", () => {
+    // Turn 1: no headers hash
+    detector.recordPromptState(makeBaseInput({ headersHash: null }));
+    detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
+    // Turn 2: headers hash present (changed)
+    detector.recordPromptState(makeBaseInput({ headersHash: 12345 }));
+    const event = detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 0, cacheWriteTokens: 0, totalInputTokens: 60000 });
+    expect(event).not.toBeNull();
+    expect(event!.reason).toBe("headers_changed");
+    expect(event!.changes.headersChanged).toBe(true);
   });
 
-  // --- Gemini returns null for both new fields ---
-
-  it("extractGeminiPromptState returns headersHash: null and extraBodyHash: null", () => {
-    const geminiPayload = {
-      model: "gemini-2.5-flash",
-      contents: [],
-      config: { systemInstruction: "test", tools: [] },
-    };
-    const result = extractGeminiPromptState(geminiPayload, "gemini-2.5-flash", "sess-1", "agent-1");
-    expect(result.headersHash).toBeNull();
-    expect(result.extraBodyHash).toBeNull();
+  it("detector emits extra_body_changed when extra body hash differs between turns", () => {
+    // Turn 1: no extra body
+    detector.recordPromptState(makeBaseInput({ extraBodyHash: null }));
+    detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 50000, cacheWriteTokens: 0, totalInputTokens: 60000 });
+    // Turn 2: extra body hash present
+    detector.recordPromptState(makeBaseInput({ extraBodyHash: 54321 }));
+    const event = detector.checkResponseForCacheBreak({ sessionKey: "test-session", provider: "anthropic", cacheReadTokens: 0, cacheWriteTokens: 0, totalInputTokens: 60000 });
+    expect(event).not.toBeNull();
+    expect(event!.reason).toBe("extra_body_changed");
+    expect(event!.changes.extraBodyChanged).toBe(true);
   });
 });
 
@@ -1536,7 +1188,7 @@ describe("lookback-aware cache break attribution", () => {
 });
 
 // ---------------------------------------------------------------------------
-// effort value tracking
+// effort value tracking (detector integration)
 // ---------------------------------------------------------------------------
 
 describe("effort value tracking", () => {
@@ -1545,20 +1197,6 @@ describe("effort value tracking", () => {
   beforeEach(() => {
     detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
-  });
-
-  it("extractAnthropicPromptState with params.thinking returns effortValue as JSON string", () => {
-    const params = {
-      ...fixtureParams,
-      thinking: { type: "enabled", budget_tokens: 1024 },
-    };
-    const result = extractAnthropicPromptState(params, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    expect(result.effortValue).toBe(JSON.stringify({ type: "enabled", budget_tokens: 1024 }));
-  });
-
-  it("extractAnthropicPromptState without params.thinking returns effortValue as undefined", () => {
-    const result = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    expect(result.effortValue).toBeUndefined();
   });
 
   it("when effortValue changes between turns, buildPendingChanges sets effortChanged: true", () => {
@@ -1647,46 +1285,15 @@ describe("effort value tracking", () => {
 });
 
 // ---------------------------------------------------------------------------
-// cacheControlHash tracking
+// cacheControlHash tracking (detector integration)
 // ---------------------------------------------------------------------------
 
-describe("cacheControlHash", () => {
+describe("cacheControlHash detector integration", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
     detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
-  });
-
-  it("extractAnthropicPromptState returns cacheControlHash from raw system blocks (with cache_control)", () => {
-    const result = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    expect(result.cacheControlHash).toBeTypeOf("number");
-    expect(result.cacheControlHash).not.toBeNull();
-  });
-
-  it("cacheControlHash differs when cache_control markers change but system text is identical", () => {
-    // System with ephemeral cache_control
-    const paramsEphemeral = {
-      ...fixtureParams,
-      system: [
-        { type: "text", text: "You are a helpful assistant", cache_control: { type: "ephemeral" } },
-      ],
-    };
-    const resultEphemeral = extractAnthropicPromptState(paramsEphemeral, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-
-    // System with no cache_control (same text)
-    const paramsNone = {
-      ...fixtureParams,
-      system: [
-        { type: "text", text: "You are a helpful assistant" },
-      ],
-    };
-    const resultNone = extractAnthropicPromptState(paramsNone, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-
-    // systemHash should be the SAME (text unchanged)
-    expect(resultEphemeral.systemHash).toBe(resultNone.systemHash);
-    // cacheControlHash should be DIFFERENT (markers changed)
-    expect(resultEphemeral.cacheControlHash).not.toBe(resultNone.cacheControlHash);
   });
 
   it("when cacheControlChanged is true, buildPendingChanges sets cacheControlChanged: true", () => {
@@ -1755,38 +1362,15 @@ describe("cacheControlHash", () => {
 });
 
 // ---------------------------------------------------------------------------
-// lazy buildDiffableContent
+// lazy buildDiffableContent (detector integration)
 // ---------------------------------------------------------------------------
 
-describe("lazy buildDiffableContent", () => {
+describe("lazy buildDiffableContent detector integration", () => {
   let detector: CacheBreakDetector;
 
   beforeEach(() => {
     detector = createCacheBreakDetector(noopLogger, { clock: testClock });
     detector.reset();
-  });
-
-  it("extractAnthropicPromptState returns buildDiffableContent as a function (not eager strings)", () => {
-    const result = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    expect(result.buildDiffableContent).toBeTypeOf("function");
-    // Should NOT have serializedSystem or serializedTools
-    expect((result as Record<string, unknown>).serializedSystem).toBeUndefined();
-    expect((result as Record<string, unknown>).serializedTools).toBeUndefined();
-  });
-
-  it("lazy getter produces same output as previous eager serialization", () => {
-    const result = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
-    const content = result.buildDiffableContent!();
-
-    // System: joined text blocks
-    expect(content.system).toBe("You are a helpful assistant");
-
-    // Tools: JSON stringified with cache_control stripped
-    const expectedTools = JSON.stringify([
-      { name: "bash", description: "Run bash", input_schema: { type: "object", properties: { cmd: { type: "string" } } } },
-      { name: "file_read", description: "Read file", input_schema: { type: "object", properties: { path: { type: "string" } } } },
-    ], null, 2);
-    expect(content.tools).toBe(expectedTools);
   });
 
   it("when no cache break detected (tokenDrop <= 0), buildDiffableContent getter is never called", () => {
@@ -1904,32 +1488,6 @@ describe("aliasSession", () => {
       cacheReadTokens: 30000, cacheWriteTokens: 5000, totalInputTokens: 60000,
     });
     expect(event).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// sanitizeMcpToolNameForAnalytics
-// ---------------------------------------------------------------------------
-
-describe("sanitizeMcpToolNameForAnalytics", () => {
-  it("collapses mcp__myserver--sometool to 'mcp'", () => {
-    expect(sanitizeMcpToolNameForAnalytics("mcp__myserver--sometool")).toBe("mcp");
-  });
-
-  it("collapses mcp__myserver (no tool suffix) to 'mcp'", () => {
-    expect(sanitizeMcpToolNameForAnalytics("mcp__myserver")).toBe("mcp");
-  });
-
-  it("collapses mcp__anything to 'mcp'", () => {
-    expect(sanitizeMcpToolNameForAnalytics("mcp__anything")).toBe("mcp");
-  });
-
-  it("returns non-MCP tool name unchanged (read_file)", () => {
-    expect(sanitizeMcpToolNameForAnalytics("read_file")).toBe("read_file");
-  });
-
-  it("returns empty string unchanged", () => {
-    expect(sanitizeMcpToolNameForAnalytics("")).toBe("");
   });
 });
 
@@ -2073,3 +1631,10 @@ describe("cache break detector LRU eviction warning", () => {
     expect(MAX_TRACKING_ENTRIES).toBe(15);
   });
 });
+
+// Sentinel: ensure the imported fixtureParams and extractAnthropicPromptState
+// reference is consumed (one of the integration tests indirectly verified
+// extractor + detector compose correctly before split).
+const _crossCheck = extractAnthropicPromptState(fixtureParams, "claude-sonnet-4-5", "short", "sess-1", "agent-1");
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _ensureUsed: unknown = _crossCheck;

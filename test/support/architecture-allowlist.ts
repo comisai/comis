@@ -502,12 +502,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "Prompt runner; split in Phase E into prompt-runner/ subdirectory per EXEC-SPLIT-07",
     removedIn: "phase-E",
   },
-  {
-    file: "packages/agent/src/executor/cache-break-detection.ts",
-    lines: 970,
-    reason: "Cache-break detection; split in Phase E into cache-detection/ subdirectory per EXEC-SPLIT-09",
-    removedIn: "phase-E",
-  },
   // Phase E adjacent (6 agent files; reason cites the generic EXEC-SPLIT-15 group)
   {
     file: "packages/agent/src/bridge/pi-event-bridge.ts",
@@ -2060,7 +2054,16 @@ export const noBackwardCompatAllowlist: readonly NoBackwardCompatAllowlistEntry[
     reason: "Streaming-config schema migration (defaultPacingMinMs/Max + coalesceMaxChars -> defaultDeliveryTiming/coalescer). @migration-since: 2026-04-22; remove-after: v2.2. Operator-side migration is still realistic; remove when no production config still uses the pre-migration shape.",
   },
 ] as const;
-export const coverageWaiver: readonly CoverageWaiverEntry[] = [] as const;
+export const coverageWaiver: readonly CoverageWaiverEntry[] = [
+  {
+    file: "packages/agent/src/executor/cache-detection/cache-state-types.ts",
+    reason: "Pure type-only module (Phase 42 EXEC-SPLIT-09 split). 8 public interfaces + 1 union type; no runtime values to test. Type-level surface is verified by the parity test (cache-break-detection.parity.test.ts) and by the consumers that compile-check the imports.",
+  },
+  {
+    file: "packages/agent/src/executor/cache-detection/index.ts",
+    reason: "Barrel re-export module (Phase 42 EXEC-SPLIT-09 split). Re-exports 18 canonical public symbols from 4 leaf modules without aliases or transformation; surface is verified by the parity test (cache-break-detection.parity.test.ts).",
+  },
+] as const;
 
 /**
  * COV-10 test-naming allowlist — see TestNamingAllowlistEntry doc.

@@ -174,10 +174,11 @@ describe("@comis/agent -- architecture invariants", () => {
     //   - request-body-injector.ts — appends the server-side tool to the API
     //     payload (type discriminant + name field) when supportsToolSearch
     //     gates a tool-search-eligible model.
-    //   - cache-break-detection.ts — skip-list comments + per-tool-hash skip
-    //     for server-side tools that lack input_schema (the literal appears
+    //   - cache-detection/anthropic-extractor.ts — skip-list comments + per-tool-hash
+    //     skip for server-side tools that lack input_schema (the literal appears
     //     in comments naming what gets skipped; the runtime check uses the
-    //     `tool_search_tool_` prefix).
+    //     `tool_search_tool_` prefix). Post-Phase-42 split (EXEC-SPLIT-09); was
+    //     previously cache-break-detection.ts.
     //   - stub-filter-injector.ts — JSDoc cross-reference explaining how the
     //     stub-filter interacts with the payload-reshape that appends this
     //     tool to the rendered Anthropic payload.
@@ -192,7 +193,7 @@ describe("@comis/agent -- architecture invariants", () => {
     });
     const ALLOWED_FILES = [
       "request-body-injector.ts",  // surviving Anthropic-payload-reshape file
-      "cache-break-detection.ts",  // server-side-tool skip-list comments + tool_search_tool_ prefix-match
+      "anthropic-extractor.ts",    // post-EXEC-SPLIT-09: cache-detection/ extractor module
       "stub-filter-injector.ts",   // JSDoc cross-reference to the payload reshape
     ];
     const offenders = result.matches.filter(
@@ -201,7 +202,7 @@ describe("@comis/agent -- architecture invariants", () => {
     expect(
       offenders,
       "tool_search_tool_regex literal must not appear outside the allowlist " +
-        "(request-body-injector.ts, cache-break-detection.ts, stub-filter-injector.ts)",
+        "(request-body-injector.ts, cache-detection/anthropic-extractor.ts, stub-filter-injector.ts)",
     ).toEqual([]);
     expect(result.checkedFiles, "sanity: helper walked at least one production source file").toBeGreaterThan(0);
   });
