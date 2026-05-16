@@ -622,13 +622,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "Config schema module; split in Phase F per FILE-SPLIT-17",
     removedIn: "phase-F",
   },
-  // cli (1 file remaining; tooling-fill/orchestrator.ts split in Plan 43-05 per FILE-SPLIT-10)
-  {
-    file: "packages/cli/src/commands/config.ts",
-    lines: 807,
-    reason: "CLI command module; split in Phase F per FILE-SPLIT-19",
-    removedIn: "phase-F",
-  },
+  // cli (0 files remaining; tooling-fill/orchestrator.ts split in Plan 43-05 per FILE-SPLIT-10; commands/config.ts dropped below 800L in Plan 43-05 via config-parsers.ts helper extraction per FILE-SPLIT-10)
   // channels (0 files remaining; telegram-adapter.ts split in Plan 43-04 per FILE-SPLIT-12)
   // memory (1 file remaining; observability-store.ts split in Plan 43-03)
   {
