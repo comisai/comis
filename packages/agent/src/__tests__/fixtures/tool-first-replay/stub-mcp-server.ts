@@ -6,7 +6,8 @@
  *   The agent package has no dependency on the skills package (see
  *   `packages/agent/package.json:44-60`). We redeclare the relevant pieces of
  *   `McpToolDefinition` and `McpConnectionStatus` (defined in
- *   `packages/skills/src/integrations/mcp-client.ts:53,96-105`) inline so this
+ *   `packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts`,
+ *   post-Phase-43-FILE-SPLIT-11) inline so this
  *   fixture stays self-contained. Precedent:
  *   `packages/agent/src/executor/__test-helpers/capturing-provider-stub.ts:1-50`
  *   redeclares pi-ai's Message types inline for the same reason.

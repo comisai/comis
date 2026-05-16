@@ -7,7 +7,7 @@
 import { ok, err } from "@comis/shared";
 import { Type } from "typebox";
 import { describe, it, expect, vi } from "vitest";
-import type { McpToolDefinition, McpClientManager } from "../integrations/mcp-client.js";
+import type { McpToolDefinition, McpClientManager } from "../integrations/mcp-client/index.js";
 import { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, extractMcpServerName, classifyMcpErrorType } from "./mcp-tool-bridge.js";
 
 // ---------------------------------------------------------------------------

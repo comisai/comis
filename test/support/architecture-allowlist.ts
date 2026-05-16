@@ -602,13 +602,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
     removedIn: "phase-F",
   },
-  // skills (3 files remaining — exec-tool.ts + exec-security.ts both dropped in Phase 43 plan 02a per FILE-SPLIT-02 + FILE-SPLIT-11 + FILE-SPLIT-16)
-  {
-    file: "packages/skills/src/skills/integrations/mcp-client.ts",
-    lines: 1041,
-    reason: "MCP integration client; split in Phase F per FILE-SPLIT-12",
-    removedIn: "phase-F",
-  },
+  // skills (0 files remaining — exec-tool.ts + exec-security.ts dropped in Phase 43 plan 02a, web-search-tool.ts + skill-registry.ts dropped in 43-02b, mcp-client.ts dropped in 43-02c per FILE-SPLIT-02 + FILE-SPLIT-11 + FILE-SPLIT-16)
   // core (3 files)
   {
     file: "packages/core/src/api-contracts/workspace.ts",
@@ -1319,12 +1313,6 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/skills/src/skills/bridge/tool-metadata-enforcement.ts",
     lineRanges: [[87, 87], [97, 97]],
-    reason: "@allow-throw boundary: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary (Phase 41 TS-HYG-07).",
-    removedIn: "permanent",
-  },
-  {
-    file: "packages/skills/src/skills/integrations/mcp-client.ts",
-    lineRanges: [[293, 293], [305, 305], [314, 314], [322, 322]],
     reason: "@allow-throw boundary: skill bridge / integration boundary; throws caught by AgentTool wrapper or skill loader boundary (Phase 41 TS-HYG-07).",
     removedIn: "permanent",
   },

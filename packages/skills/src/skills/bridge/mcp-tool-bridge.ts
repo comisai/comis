@@ -19,7 +19,7 @@ import { registerToolMetadata } from "@comis/core";
 import { extractMcpServerName } from "@comis/shared";
 export { extractMcpServerName };
 import { resolveSourceProfile, type ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
-import type { McpToolDefinition, McpClientManager, McpToolCallResult } from "../integrations/mcp-client.js";
+import type { McpToolDefinition, McpClientManager, McpToolCallResult } from "../integrations/mcp-client/index.js";
 import { sanitizeMcpToolResult } from "../../tools/integrations/mcp-result-sanitizer.js";
 import { truncateJsonAware } from "./json-truncate.js";
 

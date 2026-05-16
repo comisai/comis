@@ -95,7 +95,8 @@
  *     are optional and conditional on success/failure paths.
  *
  * Status enum is the 5-value `McpConnectionStatus` from
- * `packages/skills/src/skills/integrations/mcp-client.ts` line 53:
+ * `packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts`
+ * (post-Phase-43-FILE-SPLIT-11):
  * `"connected" | "disconnected" | "connecting" | "reconnecting" | "error"`.
  *
  * Capabilities is `Record<string, unknown>` from the SDK
@@ -115,14 +116,16 @@ import { defineContract } from "./types.js";
 
 /**
  * MCP transport protocols. Mirrors the `McpServerConfig.transport` union
- * in `packages/skills/src/skills/integrations/mcp-client.ts` line 33:
+ * in `packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts`
+ * (post-Phase-43-FILE-SPLIT-11):
  * `"stdio" | "sse" | "http"`. The 12-shape allowlist permits `z.enum`.
  */
 const McpTransportEnum = z.enum(["stdio", "sse", "http"]);
 
 /**
  * MCP connection statuses. Mirrors `McpConnectionStatus` in
- * `packages/skills/src/skills/integrations/mcp-client.ts` line 53.
+ * `packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts`
+ * (post-Phase-43-FILE-SPLIT-11).
  * The 5-value union is closed (no new states without an SDK change).
  */
 const McpConnectionStatusEnum = z.enum([
@@ -136,7 +139,7 @@ const McpConnectionStatusEnum = z.enum([
 /**
  * Server-info / serverVersion shape from the MCP SDK
  * (`getServerVersion()` returns `{ name, version }` or undefined).
- * Mirrors `McpConnection.serverInfo` in mcp-client.ts line 90.
+ * Mirrors `McpConnection.serverInfo` in mcp-client/mcp-client-types.ts (post-Phase-43-FILE-SPLIT-11).
  */
 const McpServerInfoSchema = z.object({
   name: z.string(),
@@ -145,7 +148,7 @@ const McpServerInfoSchema = z.object({
 
 /**
  * MCP tool-definition shape returned by the SDK after connect. Mirrors
- * `McpToolDefinition` in mcp-client.ts lines 96-105. The response side
+ * `McpToolDefinition` in mcp-client/mcp-client-types.ts (post-Phase-43-FILE-SPLIT-11). The response side
  * for `mcp.status` projects to the 3 user-facing fields the handler
  * exposes (line 64-68): `name`, `qualifiedName`, `description`.
  * `inputSchema` is intentionally omitted from the wire response shape —
