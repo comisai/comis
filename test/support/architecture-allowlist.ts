@@ -603,13 +603,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "phase-F",
   },
   // skills (0 files remaining — exec-tool.ts + exec-security.ts dropped in Phase 43 plan 02a, web-search-tool.ts + skill-registry.ts dropped in 43-02b, mcp-client.ts dropped in 43-02c per FILE-SPLIT-02 + FILE-SPLIT-11 + FILE-SPLIT-16)
-  // core (2 files remaining; api-contracts/workspace.ts split in Plan 43-06 per FILE-SPLIT-14/16)
-  {
-    file: "packages/core/src/api-contracts/orchestrator.ts",
-    lines: 1129,
-    reason: "API contract module; split in Phase F per FILE-SPLIT-16",
-    removedIn: "phase-F",
-  },
+  // core (1 file remaining; api-contracts/workspace.ts + api-contracts/orchestrator.ts split in Plan 43-06 per FILE-SPLIT-14/16)
   {
     file: "packages/core/src/config/schema-agent.ts",
     lines: 936,
