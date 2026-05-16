@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { createConfigHandlers, type ConfigHandlerDeps, coerceConfigValue } from "./config-handlers.js";
+import { createConfigHandlers, type ConfigHandlerDeps, coerceConfigValue } from "./config-handlers/index.js";
 import { z } from "zod";
 import { bootstrap } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -1606,7 +1606,7 @@ describe("config.patch type coercion", () => {
   // -------------------------------------------------------------------------
   it("config.apply-style section coercion preserves z.record(string,string) env values", async () => {
     const { AppConfigSchema } = await import("@comis/core");
-    const { resolveSchemaForPath } = await import("./config-handlers.js");
+    const { resolveSchemaForPath } = await import("./config-handlers/index.js");
 
     const sectionValue = {
       mcp: {

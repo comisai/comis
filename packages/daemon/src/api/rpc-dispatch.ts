@@ -24,7 +24,7 @@ import { createMemoryHandlers } from "./memory-handlers.js";
 import { createSessionHandlers } from "./session-handlers/index.js";
 import { createMessageHandlers } from "./message-handlers.js";
 import { createMediaHandlers } from "./media-handlers.js";
-import { createConfigHandlers } from "./config-handlers.js";
+import { createConfigHandlers } from "./config-handlers/index.js";
 import { createEnvHandlers } from "./env-handlers.js";
 import { createSecretsHandlers } from "./secrets-handlers.js";
 import { createAuthHandlers } from "./auth-handlers.js";

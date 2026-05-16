@@ -59,7 +59,7 @@ vi.mock("./media-handlers.js", () => ({
   })),
 }));
 
-vi.mock("./config-handlers.js", () => ({
+vi.mock("./config-handlers/index.js", () => ({
   createConfigHandlers: vi.fn(() => ({
     "config.get": vi.fn(async () => ({})),
     "config.set": vi.fn(async () => ({ updated: true })),

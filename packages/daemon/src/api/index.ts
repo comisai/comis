@@ -6,7 +6,7 @@ export { createMemoryHandlers, type MemoryHandlerDeps } from "./memory-handlers.
 export { createSessionHandlers, type SessionHandlerDeps } from "./session-handlers/index.js";
 export { createMessageHandlers, type MessageHandlerDeps } from "./message-handlers.js";
 export { createMediaHandlers, type MediaHandlerDeps } from "./media-handlers.js";
-export { createConfigHandlers, type ConfigHandlerDeps } from "./config-handlers.js";
+export { createConfigHandlers, type ConfigHandlerDeps } from "./config-handlers/index.js";
 export { createBrowserHandlers, type BrowserHandlerDeps } from "./browser-handlers.js";
 export { createSubagentHandlers } from "./subagent-handlers.js";
 export { createApprovalHandlers, type ApprovalHandlerDeps } from "./approval-handlers.js";
