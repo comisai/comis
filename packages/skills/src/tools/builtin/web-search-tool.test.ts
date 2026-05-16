@@ -5,11 +5,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// Phase 43 plan 02b (FILE-SPLIT-11): web-search-tool.ts split into web-search-tool/ subdirectory
+// barrel preserves canonical exports; test imports retargeted to ./web-search-tool/index.js.
 import {
   createWebSearchTool,
   __clearSearchCache,
   __testing,
-} from "./web-search-tool.js";
+} from "./web-search-tool/index.js";
 
 // Mock @comis/core: keep real wrapWebContent
 vi.mock("@comis/core", async (importOriginal) => {

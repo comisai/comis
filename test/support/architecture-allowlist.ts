@@ -610,12 +610,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "phase-F",
   },
   {
-    file: "packages/skills/src/tools/builtin/web-search-tool.ts",
-    lines: 957,
-    reason: "Built-in web-search tool; split in Phase F per FILE-SPLIT-13",
-    removedIn: "phase-F",
-  },
-  {
     file: "packages/skills/src/skills/registry/skill-registry.ts",
     lines: 812,
     reason: "Skill registry; split in Phase F per FILE-SPLIT-14",
@@ -1497,12 +1491,6 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
   {
-    file: "packages/skills/src/tools/builtin/web-search-tool.ts",
-    lineRanges: [[631, 631], [650, 650]],
-    reason: "@allow-throw boundary: web-search SDK boundary wrapper; throws caught by web-search-tool dispatcher AgentTool wrapper (Phase 41 TS-HYG-07).",
-    removedIn: "permanent",
-  },
-  {
     file: "packages/skills/src/tools/integrations/image-gen/fal-adapter.ts",
     lineRanges: [[39, 39], [44, 44]],
     reason: "@allow-throw boundary: integration/SDK boundary wrapper; throws caught by AgentTool wrapper at consumer site (Phase 41 TS-HYG-07).",
@@ -1758,13 +1746,6 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     typeName: "ToolAssemblyDeps",
     optionalCount: 18,
     reason: "(b) Cluster-split candidate: ToolAssemblyDeps is a documented `Subset of PiExecutorDeps used by the tool assembly pipeline` (file:69) — inherits the parent bag's cluster structure (media/skill/prompt/delivery). The subset cannot be tightened independently of PiExecutorDeps (the daemon wiring passes the same field references through). Future refactor: hold for the parent's cluster-split, then redrive this subset. (TS-HYG-13 — Plan 41-08 audit).",
-    removedIn: "phase-D",
-  },
-  {
-    file: "packages/skills/src/tools/builtin/web-search-tool.ts",
-    typeName: "WebSearchConfig",
-    optionalCount: 18,
-    reason: "(b) Cluster-split candidate: user-facing search-tool config — each `?` is either (i) a top-level setting (provider, apiKey, maxResults, timeoutSeconds, cacheTtlMinutes, fallbackProviders, deepFetch*, totalCharsBudget) or (ii) a per-provider sub-config (perplexity, grok, duckduckgo, searxng, tavily, exa, jina) that is undefined unless the user selected that provider. Future refactor: move per-provider configs into a discriminated-union providers field keyed by provider name. (TS-HYG-13 — Plan 41-08 audit).",
     removedIn: "phase-D",
   },
   {

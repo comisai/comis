@@ -25,7 +25,7 @@
  */
 
 // Built-in tools (web-search, web-fetch)
-export { createWebSearchTool, __clearSearchCache } from "./builtin/web-search-tool.js";
+export { createWebSearchTool, __clearSearchCache } from "./builtin/web-search-tool/index.js";
 export { createWebFetchTool, fetchUrlContent, __clearFetchCache } from "./builtin/web-fetch-tool.js";
 
 // Built-in tools -- Source profiles (per-tool limits and extraction config)

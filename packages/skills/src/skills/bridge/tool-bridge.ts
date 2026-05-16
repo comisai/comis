@@ -29,7 +29,7 @@ import { createComisFileTools } from "../../tools/builtin/file/file-tools.js";
 import type { FileStateTracker } from "../../tools/builtin/file/file-state-tracker.js";
 import type { LazyPaths } from "../../tools/builtin/file/safe-path-wrapper.js";
 import { createWebFetchTool } from "../../tools/builtin/web-fetch-tool.js";
-import { createWebSearchTool } from "../../tools/builtin/web-search-tool.js";
+import { createWebSearchTool } from "../../tools/builtin/web-search-tool/index.js";
 import { resolveSourceProfile, type ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
 import { systemNowMs } from "@comis/core";
 
