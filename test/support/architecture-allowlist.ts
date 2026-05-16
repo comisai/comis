@@ -603,25 +603,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "phase-F",
   },
   // skills (0 files remaining — exec-tool.ts + exec-security.ts dropped in Phase 43 plan 02a, web-search-tool.ts + skill-registry.ts dropped in 43-02b, mcp-client.ts dropped in 43-02c per FILE-SPLIT-02 + FILE-SPLIT-11 + FILE-SPLIT-16)
-  // core (3 files)
-  {
-    file: "packages/core/src/api-contracts/workspace.ts",
-    lines: 1152,
-    reason: "API contract module; split in Phase F per FILE-SPLIT-15",
-    removedIn: "phase-F",
-  },
-  {
-    file: "packages/core/src/api-contracts/orchestrator.ts",
-    lines: 1129,
-    reason: "API contract module; split in Phase F per FILE-SPLIT-16",
-    removedIn: "phase-F",
-  },
-  {
-    file: "packages/core/src/config/schema-agent.ts",
-    lines: 936,
-    reason: "Config schema module; split in Phase F per FILE-SPLIT-17",
-    removedIn: "phase-F",
-  },
+  // core (0 files remaining; api-contracts/workspace.ts + api-contracts/orchestrator.ts + config/schema-agent.ts split in Plan 43-06 per FILE-SPLIT-14/16)
   // cli (0 files remaining; tooling-fill/orchestrator.ts split in Plan 43-05 per FILE-SPLIT-10; commands/config.ts dropped below 800L in Plan 43-05 via config-parsers.ts helper extraction per FILE-SPLIT-10)
   // channels (0 files remaining; telegram-adapter.ts split in Plan 43-04 per FILE-SPLIT-12)
   // memory (1 file remaining; observability-store.ts split in Plan 43-03)

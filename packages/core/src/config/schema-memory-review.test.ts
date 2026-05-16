@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { MemoryReviewConfigSchema } from "./schema-memory-review.js";
-import { PerAgentConfigSchema } from "./schema-agent.js";
+import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryReviewConfigSchema", () => {
   it("parses empty object with correct defaults", () => {

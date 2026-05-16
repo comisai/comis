@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Relocated from @comis/agent in Phase 35 per WEB-CONTRACTS-02 D-01 #5.
-import type { AgentConfig } from "../config/schema-agent.js";
+import type { AgentConfig } from "../config/schema-agent/index.js";
 import { safePath } from "../security/safe-path.js";
 import os from "node:os";
 import path from "node:path";

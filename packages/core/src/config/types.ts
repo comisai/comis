@@ -51,7 +51,7 @@ export type {
   SessionResetPolicyConfig,
   SourceGateConfig,
   TracingConfig,
-} from "./schema-agent.js";
+} from "./schema-agent/index.js";
 export type { ChannelConfig, ChannelEntry, ChannelHealthCheckConfig, AckReactionConfig, MediaProcessingConfig, EmailChannelEntry } from "./schema-channel.js";
 export type { MemoryConfig, CompactionConfig, RetentionConfig } from "./schema-memory.js";
 export type {

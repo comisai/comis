@@ -41,11 +41,11 @@ import { MCP_CONTRACTS } from "./mcp.js";
 import { MEDIA_CONTRACTS } from "./media.js";
 import { MEMORY_CONTRACTS } from "./memory.js";
 import { OBSERVABILITY_CONTRACTS } from "./observability.js";
-import { ORCHESTRATOR_CONTRACTS } from "./orchestrator.js";
+import { ORCHESTRATOR_CONTRACTS } from "./orchestrator/index.js";
 import { SECRETS_CONTRACTS } from "./secrets.js";
 import { SESSIONS_CONTRACTS } from "./sessions.js";
 import { TOKENS_CONTRACTS } from "./tokens.js";
-import { WORKSPACE_CONTRACTS } from "./workspace.js";
+import { WORKSPACE_CONTRACTS } from "./workspace/index.js";
 
 /**
  * Ordered array — codegen-deterministic iteration. Alphabetical by domain
@@ -89,8 +89,8 @@ export * from "./mcp.js";
 export * from "./media.js";
 export * from "./memory.js";
 export * from "./observability.js";
-export * from "./orchestrator.js";
+export * from "./orchestrator/index.js";
 export * from "./secrets.js";
 export * from "./sessions.js";
 export * from "./tokens.js";
-export * from "./workspace.js";
+export * from "./workspace/index.js";

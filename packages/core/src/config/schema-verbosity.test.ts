@@ -69,7 +69,7 @@ describe("VerbosityOverrideSchema", () => {
 describe("PerAgentConfigSchema integration", () => {
   it("accepts verbosity as optional field", async () => {
     // Dynamic import to avoid circular issues at test time
-    const { PerAgentConfigSchema } = await import("./schema-agent.js");
+    const { PerAgentConfigSchema } = await import("./schema-agent/index.js");
     const base = PerAgentConfigSchema.parse({ name: "test" });
     expect(base.verbosity).toBeUndefined();
 

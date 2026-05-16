@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
-import { PerAgentConfigSchema, RoutingConfigSchema } from "./schema-agent.js";
+import { PerAgentConfigSchema, RoutingConfigSchema } from "./schema-agent/index.js";
 import { ApprovalsConfigSchema } from "./schema-approvals.js";
 import { AutoReplyEngineConfigSchema } from "./schema-auto-reply-engine.js";
 import { BrowserConfigSchema } from "./schema-browser.js";

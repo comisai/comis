@@ -79,7 +79,7 @@ export {
   SourceGateConfigSchema,
   ToolLifecycleConfigSchema,
   TracingConfigSchema,
-} from "./schema-agent.js";
+} from "./schema-agent/index.js";
 export { ChannelConfigSchema, ChannelEntrySchema, AckReactionConfigSchema, MediaProcessingSchema, ChannelHealthCheckSchema, EmailChannelEntrySchema } from "./schema-channel.js";
 export {
   MemoryConfigSchema,
@@ -233,7 +233,7 @@ export type {
   SourceGateConfig,
   ToolLifecycleConfig,
   TracingConfig,
-} from "./schema-agent.js";
+} from "./schema-agent/index.js";
 export type {
   AppConfig,
   AgentConfig,
