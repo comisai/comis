@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { getConfigSchema, getConfigSections } from "./schema-serializer.js";
 import { getFieldMetadata } from "./field-metadata.js";
 import { MANAGED_SECTIONS, getManagedSectionRedirect } from "./managed-sections.js";
+import { stableStringify } from "../../../../test/support/stable-stringify.js";
 
 /**
  * Phase 30 parity protection — CONFIG-DELIV-03.
@@ -21,27 +22,13 @@ import { MANAGED_SECTIONS, getManagedSectionRedirect } from "./managed-sections.
  * Captured: at end of Phase 30 plan 01 (after the worktree base is on the
  * architecture-redesign branch which already contains every Phase 28 + 29
  * change). Subsequent Phase 30 plans (02-07) must keep this test green.
+ *
+ * Phase 43 Wave 1 update (FILE-SPLIT-17): the inline `stableStringify`
+ * helper was extracted to `test/support/stable-stringify.ts` per AGENTS.md
+ * §2.3 rule-of-three (17 total consumers after Phase 43 adds 16 parity
+ * test files). The helper is byte-identical to the prior inline body —
+ * snapshots remain stable.
  */
-
-function stableStringify(value: unknown): string {
-  // Sort keys deterministically; drop `description: undefined` keys consistently;
-  // produces a snapshot string that does not vary across Node patch versions.
-  return JSON.stringify(
-    value,
-    (_key, val) => {
-      if (val !== null && typeof val === "object" && !Array.isArray(val)) {
-        const sorted: Record<string, unknown> = {};
-        for (const k of Object.keys(val as Record<string, unknown>).sort()) {
-          const v = (val as Record<string, unknown>)[k];
-          if (v !== undefined) sorted[k] = v;
-        }
-        return sorted;
-      }
-      return val;
-    },
-    2,
-  );
-}
 
 describe("section-registry parity (CONFIG-DELIV-03)", () => {
   describe("schema-serializer view", () => {
