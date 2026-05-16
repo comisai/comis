@@ -1,0 +1,306 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > DANGEROUS_COMMAND_PATTERNS: shape is stable (regex source + reason) 1`] = `
+"[
+  {
+    "flags": "",
+    "reason": "Recursive delete on root or home directory",
+    "source": "\\\\brm\\\\s+(-[a-zA-Z]*[rR][a-zA-Z]*\\\\s+)+(\\\\/|~)"
+  },
+  {
+    "flags": "",
+    "reason": "Filesystem format command",
+    "source": "\\\\bmkfs\\\\b"
+  },
+  {
+    "flags": "",
+    "reason": "Direct write to block device",
+    "source": "\\\\bdd\\\\b.*\\\\bof\\\\s*=\\\\s*\\\\/dev\\\\/"
+  },
+  {
+    "flags": "",
+    "reason": "World-writable permissions on system path",
+    "source": "\\\\bchmod\\\\b.*\\\\b777\\\\b.*\\\\/"
+  },
+  {
+    "flags": "",
+    "reason": "Fork bomb pattern",
+    "source": ":\\\\(\\\\)\\\\s*\\\\{.*\\\\|.*&\\\\s*\\\\}"
+  },
+  {
+    "flags": "",
+    "reason": "Access to sensitive system file",
+    "source": "\\\\/etc\\\\/(passwd|shadow|sudoers)"
+  },
+  {
+    "flags": "",
+    "reason": "Access to SSH key directory",
+    "source": "\\\\/\\\\.ssh\\\\/"
+  },
+  {
+    "flags": "",
+    "reason": "Access to secret envfile is blocked. Use the gateway tool with action='env_list' to see which secret names are configured (names only, no values). Secret values are never returned to the agent.",
+    "source": "\\\\.comis\\\\/\\\\.env"
+  },
+  {
+    "flags": "",
+    "reason": "Access to the OAuth credential store (auth-profiles.json) is blocked. It contains refresh and access tokens for every connected provider. Use the gateway tool to manage OAuth profiles -- token values are never returned to the agent.",
+    "source": "\\\\.comis\\\\/auth-profiles\\\\.json"
+  },
+  {
+    "flags": "",
+    "reason": "Direct config file modification bypasses validation and audit. Use gateway tool's config.patch instead.",
+    "source": "(?:sed|awk|tee|cp|mv|perl|ruby)\\\\b.*(?:\\\\.comis\\\\/config|comis.*config\\\\.yaml|config\\\\.local\\\\.yaml)"
+  },
+  {
+    "flags": "",
+    "reason": "Direct config file modification bypasses validation and audit. Use gateway tool's config.patch instead.",
+    "source": "(?:echo|cat)\\\\s*>.*(?:\\\\.comis\\\\/config|comis.*config\\\\.yaml|config\\\\.local\\\\.yaml)"
+  },
+  {
+    "flags": "",
+    "reason": "Direct config file modification bypasses validation and audit. Use gateway tool's config.patch instead.",
+    "source": "(?:\\\\.comis\\\\/config|comis.*config\\\\.yaml|config\\\\.local\\\\.yaml).*(?:sed|awk|tee|cat\\\\s*>|echo\\\\s*>)"
+  },
+  {
+    "flags": "",
+    "reason": "Shell eval executes arbitrary code",
+    "source": "\\\\beval\\\\s"
+  },
+  {
+    "flags": "",
+    "reason": "Shell source executes arbitrary script file. For virtualenvs, call the venv binary directly (e.g. .venv/bin/python3, .venv/bin/pip) instead of sourcing activate",
+    "source": "\\\\bsource\\\\s"
+  },
+  {
+    "flags": "",
+    "reason": "POSIX source (.) executes arbitrary script file. For virtualenvs, call the venv binary directly (e.g. .venv/bin/python3, .venv/bin/pip) instead of sourcing activate",
+    "source": "^\\\\.\\\\s+\\\\/"
+  },
+  {
+    "flags": "",
+    "reason": "find -exec can execute arbitrary commands",
+    "source": "\\\\bfind\\\\b.*-exec\\\\s"
+  },
+  {
+    "flags": "",
+    "reason": "xargs piping to dangerous command",
+    "source": "\\\\bxargs\\\\s+(?!-[0tI])(?:sudo\\\\s+)?(?:rm|chmod|chown|mv|shred|dd|mkfs)\\\\b"
+  },
+  {
+    "flags": "",
+    "reason": "ANSI-C quoting ($'...') with escape sequences can encode arbitrary commands, bypassing command validation",
+    "source": "\\\\$'[^']*\\\\\\\\[xuU0-7]"
+  },
+  {
+    "flags": "",
+    "reason": "sed 'e' command executes pattern space as shell command",
+    "source": "\\\\bsed\\\\b.*'(?:\\\\s*e\\\\b|[^']*;\\\\s*e\\\\b)"
+  },
+  {
+    "flags": "",
+    "reason": "sed 'w' command writes pattern space to arbitrary file",
+    "source": "\\\\bsed\\\\b.*'(?:\\\\s*w\\\\s|[^']*;\\\\s*w\\\\s)"
+  },
+  {
+    "flags": "",
+    "reason": "sed substitution with 'e' (execute) or 'w' (write) flag",
+    "source": "\\\\bsed\\\\b.*'[^']*\\\\/[ew]\\\\b"
+  },
+  {
+    "flags": "",
+    "reason": "Direct .env file modification bypasses SecretManager and audit. Credentials must be managed through secure channels.",
+    "source": "(?:sed|awk|tee|cp|mv|perl|ruby)\\\\b.*\\\\.comis\\\\/\\\\.env"
+  },
+  {
+    "flags": "",
+    "reason": "Direct .env file modification bypasses SecretManager and audit. Credentials must be managed through secure channels.",
+    "source": "(?:echo|cat)\\\\b.*>.*\\\\.comis\\\\/\\\\.env"
+  },
+  {
+    "flags": "",
+    "reason": "Direct .env file modification bypasses SecretManager and audit. Credentials must be managed through secure channels.",
+    "source": "\\\\.comis\\\\/\\\\.env.*(?:sed|awk|tee|cat\\\\s*>|echo\\\\s*>)"
+  },
+  {
+    "flags": "",
+    "reason": "Direct OAuth credential store (auth-profiles.json) modification bypasses atomic-write, per-profile-lock, and schema-version validation in oauth-credential-store-file.ts. Use the gateway tool to manage OAuth profiles.",
+    "source": "(?:sed|awk|tee|cp|mv|perl|ruby)\\\\b.*\\\\.comis\\\\/auth-profiles\\\\.json"
+  },
+  {
+    "flags": "",
+    "reason": "Direct OAuth credential store (auth-profiles.json) modification bypasses atomic-write, per-profile-lock, and schema-version validation in oauth-credential-store-file.ts. Use the gateway tool to manage OAuth profiles.",
+    "source": "(?:echo|cat)\\\\b.*>.*\\\\.comis\\\\/auth-profiles\\\\.json"
+  },
+  {
+    "flags": "",
+    "reason": "Direct OAuth credential store (auth-profiles.json) modification bypasses atomic-write, per-profile-lock, and schema-version validation in oauth-credential-store-file.ts. Use the gateway tool to manage OAuth profiles.",
+    "source": "\\\\.comis\\\\/auth-profiles\\\\.json.*(?:sed|awk|tee|cat\\\\s*>|echo\\\\s*>)"
+  },
+  {
+    "flags": "",
+    "reason": "Bash /dev/tcp/<host>/<port> opens a raw TCP socket — reverse-shell primitive.",
+    "source": "\\\\/dev\\\\/tcp\\\\/"
+  },
+  {
+    "flags": "",
+    "reason": "netcat -e (--exec) attaches a process to the socket — reverse-shell primitive.",
+    "source": "\\\\bnc(?:at)?\\\\b[^|;&]*\\\\s-e\\\\b"
+  },
+  {
+    "flags": "",
+    "reason": "socat exec: target attaches a process to the socket — reverse-shell primitive.",
+    "source": "\\\\bsocat\\\\b[^|;&]*\\\\bexec\\\\s*:"
+  }
+]"
+`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > SAFE_ENV_PREFIXES: contents are stable 1`] = `
+"[
+  "LC_"
+]"
+`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > SAFE_ENV_VARS: contents are stable 1`] = `
+"[
+  "CI",
+  "CLICOLOR",
+  "CLICOLOR_FORCE",
+  "COLORTERM",
+  "COLUMNS",
+  "DEBUG",
+  "FORCE_COLOR",
+  "HOME",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_COLLATE",
+  "LC_CTYPE",
+  "LC_MESSAGES",
+  "LC_MONETARY",
+  "LC_NUMERIC",
+  "LC_TIME",
+  "LINES",
+  "LOG_LEVEL",
+  "LS_COLORS",
+  "NODE_ENV",
+  "NO_COLOR",
+  "PATH",
+  "PYTHONDONTWRITEBYTECODE",
+  "PYTHONUNBUFFERED",
+  "RUST_BACKTRACE",
+  "RUST_LOG",
+  "SHELL",
+  "TERM",
+  "TMPDIR",
+  "TZ",
+  "USER",
+  "VERBOSE",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME"
+]"
+`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > ShellQuoteTracker: tracks single/double/backtick states 1`] = `
+"[
+  {
+    "ch": "a",
+    "inSingle": false,
+    "state": "NORMAL"
+  },
+  {
+    "ch": "'",
+    "inSingle": true,
+    "state": "SINGLE_QUOTE"
+  },
+  {
+    "ch": "b",
+    "inSingle": true,
+    "state": "SINGLE_QUOTE"
+  },
+  {
+    "ch": "\\"",
+    "inSingle": true,
+    "state": "SINGLE_QUOTE"
+  },
+  {
+    "ch": "c",
+    "inSingle": true,
+    "state": "SINGLE_QUOTE"
+  },
+  {
+    "ch": "\`",
+    "inSingle": true,
+    "state": "SINGLE_QUOTE"
+  },
+  {
+    "ch": "d",
+    "inSingle": true,
+    "state": "SINGLE_QUOTE"
+  },
+  {
+    "ch": "\`",
+    "inSingle": true,
+    "state": "SINGLE_QUOTE"
+  },
+  {
+    "ch": "\\"",
+    "inSingle": true,
+    "state": "SINGLE_QUOTE"
+  },
+  {
+    "ch": "e",
+    "inSingle": true,
+    "state": "SINGLE_QUOTE"
+  },
+  {
+    "ch": "'",
+    "inSingle": false,
+    "state": "NORMAL"
+  },
+  {
+    "ch": "f",
+    "inSingle": false,
+    "state": "NORMAL"
+  }
+]"
+`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > detectDangerousPipeTargets: flags pipe to bash 1`] = `""Pipe to 'bash' detected (potential data exfiltration or remote code execution). Piping data to shell interpreters or network tools is blocked.""`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > detectDangerousPipeTargets: returns null for safe pipe 1`] = `"null"`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > detectShellSubstitutions: flags backtick substitution 1`] = `""Backtick substitution detected""`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > detectShellSubstitutions: flags dollar-paren substitution 1`] = `""Shell command substitution $(...) detected""`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > detectShellSubstitutions: returns null on safe command 1`] = `"null"`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > splitCommandSegments: splits compound commands with && and ; 1`] = `
+"[
+  "cd /tmp",
+  "ls -la",
+  "echo done"
+]"
+`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > behavior matrix - representative inputs > splitCommandSegments: splits piped commands 1`] = `
+"[
+  "cat file",
+  "grep foo",
+  "sort"
+]"
+`;
+
+exports[`exec-security parity (FILE-SPLIT-11) > public API surface > exports the expected named symbols 1`] = `
+"[
+  "DANGEROUS_COMMAND_PATTERNS",
+  "SAFE_ENV_PREFIXES",
+  "SAFE_ENV_VARS",
+  "ShellQuoteTracker",
+  "detectDangerousPipeTargets",
+  "detectShellSubstitutions",
+  "splitCommandSegments"
+]"
+`;
