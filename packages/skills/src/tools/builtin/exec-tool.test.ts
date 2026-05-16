@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createExecTool, buildSpawnCommand, killTree } from "./exec-tool.js";
+import { createExecTool, buildSpawnCommand, killTree } from "./exec-tool/index.js";
 import { createProcessRegistry } from "./process-registry.js";
 import type { ProcessRegistry } from "./process-registry.js";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
@@ -897,7 +897,9 @@ describe("createExecTool", () => {
       // Verify the dead code (fullOutputBuf.length > MAX_PERSIST_BYTES) has been removed
       // by checking the source code structure. The _spillCapped flag is the correct driver.
       const sourceDir = dirname(fileURLToPath(import.meta.url));
-      const sourceCode = readFileSync(join(sourceDir, "exec-tool.ts"), "utf-8");
+      // Phase 43 plan 02a (FILE-SPLIT-02): foreground-mode persistence logic
+      // moved from exec-tool.ts to exec-tool/exec-foreground.ts.
+      const sourceCode = readFileSync(join(sourceDir, "exec-tool", "exec-foreground.ts"), "utf-8");
       // The old dead code pattern should NOT exist
       expect(sourceCode).not.toContain("fullOutputBuf.length > MAX_PERSIST_BYTES");
       // The _spillCapped flag should be used in the persistence block
@@ -2158,7 +2160,9 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner", () =>
     const path = await import("node:path");
     const url = await import("node:url");
     const here = path.dirname(url.fileURLToPath(import.meta.url));
-    const src = fs.readFileSync(path.resolve(here, "exec-tool.ts"), "utf-8");
+    // Phase 43 plan 02a (FILE-SPLIT-02): escalateToBackground moved to
+    // exec-tool/exec-background.ts in the subdirectory split.
+    const src = fs.readFileSync(path.resolve(here, "exec-tool", "exec-background.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n")
@@ -2179,7 +2183,9 @@ describe("exec-tool: internal escalation is the SOLE backgrounding owner", () =>
     const path = await import("node:path");
     const url = await import("node:url");
     const here = path.dirname(url.fileURLToPath(import.meta.url));
-    const src = fs.readFileSync(path.resolve(here, "exec-tool.ts"), "utf-8");
+    // Phase 43 plan 02a (FILE-SPLIT-02): buildExecEnv (data-env merge site)
+    // moved to exec-tool/exec-shared.ts in the subdirectory split.
+    const src = fs.readFileSync(path.resolve(here, "exec-tool", "exec-shared.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n")

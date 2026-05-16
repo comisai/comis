@@ -47,7 +47,7 @@ export type { FileStateTracker, FileReadState } from "./builtin/file/file-state-
 export { createApplyPatchTool } from "./builtin/file/apply-patch-tool.js";
 
 // Built-in tools -- Exec + Process
-export { createExecTool } from "./builtin/exec-tool.js";
+export { createExecTool } from "./builtin/exec-tool/index.js";
 export { createProcessTool } from "./builtin/process-tool.js";
 export { createProcessRegistry } from "./builtin/process-registry.js";
 export type { ProcessRegistry } from "./builtin/process-registry.js";

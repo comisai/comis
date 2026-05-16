@@ -602,13 +602,7 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "@allow-throw boundary: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321 (Phase 41 TS-HYG-07; per 41-03-SUMMARY.md Decision 2).",
     removedIn: "phase-F",
   },
-  // skills (5 files)
-  {
-    file: "packages/skills/src/tools/builtin/exec-tool.ts",
-    lines: 1625,
-    reason: "Built-in tool; split in Phase F per FILE-SPLIT-10",
-    removedIn: "phase-F",
-  },
+  // skills (4 files remaining — exec-tool.ts dropped in Phase 43 plan 02a per FILE-SPLIT-02 + FILE-SPLIT-16)
   {
     file: "packages/skills/src/tools/builtin/exec-security.ts",
     lines: 1153,
@@ -1386,12 +1380,6 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     file: "packages/skills/src/tools/browser/screenshots.ts",
     lineRanges: [[68, 68], [78, 78]],
     reason: "@allow-throw boundary: browser/playwright SDK boundary wrapper; throws caught by AgentTool wrapper (browser-action-tool) — agent execution boundary catch (Phase 41 TS-HYG-07).",
-    removedIn: "permanent",
-  },
-  {
-    file: "packages/skills/src/tools/builtin/exec-tool.ts",
-    lineRanges: [[166, 166]],
-    reason: "@allow-throw boundary: builtin tool boundary; throws caught by AgentTool wrapper (Phase 41 TS-HYG-07).",
     removedIn: "permanent",
   },
   {
@@ -2329,7 +2317,7 @@ export const testNamingAllowlist: readonly TestNamingAllowlistEntry[] = [
   { file: "packages/skills/src/tools/browser/profiles.test.ts", line: 39, kind: "test", text: "with!special", reason: "Plan-40-10 captured (min-length=12); shrink in follow-on plan" },
   { file: "packages/skills/src/tools/builtin/exec-tool.test.ts", line: 87, kind: "it", text: "stderr is captured", reason: "Plan-40-10 captured (min-length=18); shrink in follow-on plan" },
   { file: "packages/skills/src/tools/builtin/exec-tool.test.ts", line: 231, kind: "it", text: "mkfs is rejected", reason: "Plan-40-10 captured (min-length=16); shrink in follow-on plan" },
-  { file: "packages/skills/src/tools/builtin/exec-tool.test.ts", line: 1292, kind: "it", text: "stderr is captured", reason: "Plan-40-10 captured (min-length=18); shrink in follow-on plan" },
+  { file: "packages/skills/src/tools/builtin/exec-tool.test.ts", line: 1294, kind: "it", text: "stderr is captured", reason: "Plan-40-10 captured (min-length=18); shrink in follow-on plan. Phase 43 plan 02a shifted line 1292 → 1294 via source-grep target retargeting (FILE-SPLIT-02)." },
   { file: "packages/skills/src/tools/builtin/file-tools/notebook-edit-tool.test.ts", line: 409, kind: "it", text: "delete cell by ID", reason: "Plan-40-10 captured (min-length=17); shrink in follow-on plan" },
   { file: "packages/skills/src/tools/builtin/file-tools/shared/edit-diff.test.ts", line: 83, kind: "it", text: "applies single edit", reason: "Plan-40-10 captured (min-length=19); shrink in follow-on plan" },
   { file: "packages/skills/src/tools/builtin/file-tools/shared/file-encoding.test.ts", line: 108, kind: "it", text: "restores CR endings", reason: "Plan-40-10 captured (min-length=19); shrink in follow-on plan" },

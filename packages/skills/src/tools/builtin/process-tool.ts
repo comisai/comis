@@ -24,7 +24,7 @@ import {
 } from "../../platform-tools/tool-helpers.js";
 import type { ProcessRegistry } from "./process-registry.js";
 import type { ToolCapabilityPort } from "@comis/core";
-import { buildInstallDetourHint } from "./exec-tool.js";
+import { buildInstallDetourHint } from "./exec-tool/index.js";
 // `InstallDetourDecision` is imported transitively via
 // ProcessSession.installDetourDecision (process-registry.ts type-only import);
 // no direct import here — never re-derive at status-query time.
