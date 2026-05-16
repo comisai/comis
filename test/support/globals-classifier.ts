@@ -86,6 +86,13 @@ export interface GlobalsViolation {
  */
 const BOOTSTRAP_PATH_PATTERNS: readonly RegExp[] = [
   /packages\/daemon\/src\/daemon\.ts$/,
+  // Phase 43 FILE-SPLIT-06: helpers extracted from daemon.ts in Plan 43-08c
+  // live under packages/daemon/src/stages/ and are part of the daemon
+  // composition root (each is consumed by exactly one daemon.ts stage*
+  // function). They inherit the bootstrap-path exemption — moving these
+  // helpers out of daemon.ts must not surface direct process.env / Date.now
+  // calls as new globals violations.
+  /packages\/daemon\/src\/stages\//,
   /packages\/cli\/src\/cli\.ts$/,
   /packages\/cli\/src\/index\.ts$/,
   /packages\/cli\/src\/commands\/[^/]+\.ts$/,
